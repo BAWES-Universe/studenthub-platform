@@ -756,6 +756,62 @@ const stagePython = (dir, behaviour, { version = 'Python 3.99.0' } = {}) => {
   return dir;
 };
 
+// THE IMPORT REPORT AN HONEST INTERPRETER WRITES, so that a stub which wants ONE field wrong says only that.
+// The tool reads five things out of it now: the three flags `-I` sets, named one by one rather than
+// summarised, the `sys.path` entries resolving to the working directory, and the file `zipfile` came out of -
+// which has to resolve inside one of the two prefixes the same report states.
+const HONEST_REPORT = { cwd: '/', prefix: '/usr', base_prefix: '/usr', isolated: 1, no_user_site: 1,
+  ignore_environment: 1, zip_reader: '/usr/lib/python3/zipfile/__init__.py', working_directory_on_path: [] };
+// A stub body that writes that report - patched as the case asks - and then a receipt body of the case's
+// choosing, which is the shape of every interpreter substitution below.
+const stubAnswering = (report, body) => `
+    out(Buffer.from(${JSON.stringify(JSON.stringify({ ...HONEST_REPORT, ...report }))} + '\\n'));
+    out(Buffer.from(${JSON.stringify(JSON.stringify(body))}));
+  `;
+
+// A CANDIDATE TREE HOLDING A `zipfile.py` THAT ANSWERS WITH WHATEVER ITS AUTHOR WANTS. One builder, because
+// three cases below reach it by three different routes - the working directory, `PYTHONPATH`, and a `.pth`
+// file in user site-packages - and the module they reach has to be the same module for the comparison between
+// the routes to mean anything.
+const shadowTree = (body = receipt) => {
+  const candidate = fs.mkdtempSync(path.join(os.tmpdir(), 'candidate-tree-'));
+  fs.writeFileSync(path.join(candidate, 'zipfile.py'), [
+    'import json, io',
+    `GREEN = ${JSON.stringify(JSON.stringify(body))}`,
+    'class ZipFile:',
+    '    def __init__(self, *a, **k):',
+    '        try: a[0].read()',
+    '        except Exception: pass',
+    '    def __enter__(self): return self',
+    '    def __exit__(self, *a): return False',
+    '    def namelist(self): return ["receipt.json"]',
+    '    def read(self, name): return GREEN.encode()',
+    '',
+  ].join('\n'));
+  return candidate;
+};
+// A RED, AUTHORITY-ABSENT ARCHIVE: nothing in it may be pinned, so a run that produces a pin from it produced
+// the shadow's body and not this one. Every digest still checks out either way, because the digests are over
+// the ARCHIVE and a shadowed reader substitutes what comes out of it.
+const redBody = () => {
+  const red = JSON.parse(JSON.stringify(receipt));
+  red.conclusion = { ...red.conclusion, suite_state: 'red' };
+  red.suite = { ...red.suite, state: 'red', ok: 8, not_ok: 2, exit: '1',
+    failing_tests: ['a test the candidate needed to pass', 'another'] };
+  red.candidate = { ...red.candidate,
+    authority_identity: [{ path: '.github/verifier-receipt', protected_sha: null, change: 'none' }] };
+  return red;
+};
+// What the real interpreter imports as `zipfile` under a given set of flags, in a given environment. Every
+// isolation case measures the ROUTE with this before it asserts anything about the tool, so a case that would
+// prove nothing fails loudly instead of passing quietly.
+const readerUnder = (flags, { cwd = '/', env = {} } = {}) => {
+  const childEnv = { ...process.env, ...env };
+  for (const [name, value] of Object.entries(env)) if (value === null) delete childEnv[name];
+  return execFileSync(REAL_PYTHON, [...flags, '-c', 'import zipfile; print(zipfile.__file__)'],
+    { encoding: 'utf8', cwd, env: childEnv }).trim();
+};
+
 test('ITEM 1(B): the pin records the python3 the receipt body was read through, beside the gh', () => {
   const dir = stage({ zip: receipt, attestations: [envelope()] });
   const result = runTool(dir);
@@ -807,7 +863,9 @@ test('ITEM 1(B): a run that says which python3 it expects is refused when PATH r
   red.conclusion = { ...red.conclusion, suite_state: 'red' };
   red.suite = { ...red.suite, state: 'red', ok: 8, not_ok: 2, exit: '1', failing_tests: ['one', 'another'] };
   const dishonest = stagePython(stage({ zip: red, attestations: [envelope()] }), `
-    out(Buffer.from(JSON.stringify({ cwd: '/tmp', zip_reader: '/usr/lib/python3/zipfile.py',
+    out(Buffer.from(JSON.stringify({ cwd: '/tmp', prefix: '/usr', base_prefix: '/usr',
+      isolated: 1, no_user_site: 1, ignore_environment: 1,
+      zip_reader: '/usr/lib/python3/zipfile.py',
       working_directory_on_path: [] }) + '\\n'));
     out(Buffer.from(${JSON.stringify(JSON.stringify(receipt))}));
   `);
@@ -925,32 +983,38 @@ test('ITEM 1(B): an interpreter that reports its working directory on the import
   // subprocess what its `sys.path` actually was and refuses an answer that still names the working directory
   // - an interpreter too old for the flag, or one invoked in some way that put the entry back.
   const reinstated = stagePython(stage({ zip: receipt, attestations: [envelope()] }), `
-    out(Buffer.from(JSON.stringify({ cwd: '/somewhere/the/candidate/owns',
+    out(Buffer.from(JSON.stringify({ cwd: '/somewhere/the/candidate/owns', prefix: '/usr',
+      base_prefix: '/usr', isolated: 1, no_user_site: 1, ignore_environment: 1,
       zip_reader: '/somewhere/the/candidate/owns/zipfile.py',
       working_directory_on_path: ['', '.'] }) + '\\n'));
     out(Buffer.from(${JSON.stringify(JSON.stringify(receipt))}));
   `);
   const result = runTool(reinstated);
   assert.notEqual(result.code, 0, 'an interpreter that is not isolated must be refused');
-  assert.match(result.stderr, /was run with `-P` and still reports its working directory on the import path/);
+  assert.match(result.stderr, /was run with `-I` and still reports its working directory on the import path/);
   assert.match(result.stderr, /\["","\."\] resolving to "\/somewhere\/the\/candidate\/owns"/);
   assert.match(result.stderr, /a file sitting beside it could have been the zip reader/);
   assert.equal(result.stdout, '', 'an unisolated interpreter emits no pin');
 
-  // AND AN INTERPRETER THAT WILL NOT TAKE `-P` AT ALL is refused by name rather than silently read without
-  // it. This is what a python older than the flag does, and the refusal says what the tool will not do.
+  // AND AN INTERPRETER THAT WILL NOT TAKE `-I` AT ALL is refused by name rather than silently read without
+  // it. This is what a python older than the flag does, and the refusal names the flag, the version that
+  // provides it, the remedy, and - the part the round before this one got wrong - says explicitly that the
+  // archive is not what it is complaining about.
   const refusesFlag = stagePython(stage({ zip: receipt, attestations: [envelope()] }), `
-    if (argv.includes('-P')) {
-      process.stderr.write("Unknown option: -P\\nusage: python3 [option] ...\\n");
+    if (argv.includes('-I')) {
+      process.stderr.write("Unknown option: -I\\nusage: python3 [option] ...\\n");
       process.exit(2);
     }
     out(stdin);
   `);
   const old = runTool(refusesFlag);
-  assert.notEqual(old.code, 0, 'a python3 that will not take -P must be refused');
-  assert.match(old.stderr, /holds no single receipt\.json this tool could read with [^\s]*python3 -P/);
-  assert.match(old.stderr, /Unknown option: -P/);
-  assert.match(old.stderr, /will not read a receipt through an interpreter it cannot isolate/);
+  assert.notEqual(old.code, 0, 'a python3 that will not take -I must be refused');
+  assert.match(old.stderr, /will not run `-I`/);
+  assert.match(old.stderr, /Unknown option: -I/);
+  assert.match(old.stderr, /has provided it since 3\.4/);
+  assert.match(old.stderr, /This says nothing about the archive, which has not been opened yet/);
+  assert.doesNotMatch(old.stderr, /holds no single receipt\.json this tool could read/,
+    'the archive must not be blamed for an interpreter that will not take the flag');
   assert.equal(old.stdout, '', 'an un-isolatable interpreter emits no pin');
 });
 

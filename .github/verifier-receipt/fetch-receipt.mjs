@@ -11,9 +11,10 @@
 //     - an artifact digest is computed by GitHub, not supplied by the uploader;
 //   * the downloaded ARCHIVE's bytes are hashed and must equal `artifact.digest`, which is the check that the
 //     container is the one GitHub served rather than one substituted in flight; the receipt is then taken out
-//     of THAT verified archive, in memory, by the named and isolated interpreter described under WHAT THIS
-//     TOOL'S TRUST ROOTS ACTUALLY ARE - so the bytes this tool goes on to read are the ones inside it as far
-//     as that interpreter can be relied on, and no further. The archive never becomes a file and no other
+//     of THAT verified archive, in memory, by the interpreter named under WHAT THIS TOOL'S TRUST ROOTS
+//     ACTUALLY ARE, run with `-I` so that it reads no `PYTHONPATH`, no user site-packages and no working
+//     directory - so the bytes this tool goes on to read are the ones inside it as far as that interpreter's
+//     OWN INSTALLATION can be relied on, and no further. The archive never becomes a file and no other
 //     copy of it exists, so nothing but the reader itself stands between the digest and the parse. The
 //     receipt's own sha256 is a DIFFERENT quantity from the artifact digest - the artifact digest is over the
 //     ZIP and the receipt hash is over `receipt.json` inside it - and this file does not claim otherwise: the
@@ -70,13 +71,23 @@
 // tool refuses an observation that contradicts one. A binary that cannot be resolved, or that will not say
 // what it is, is a refusal outright: a trust root that cannot be named is not one a pin may rest on.
 //
-// AND THE INTERPRETER IS ISOLATED FROM THE TREE IT RUNS BESIDE, which is a second defect in the same channel
-// and needed no control of PATH. `verify-claim.yml` does `cd candidate` before invoking this tool, and
-// `python3 -c` puts the working directory FIRST on `sys.path`: a `zipfile.py` committed in a candidate's own
-// repository was therefore the zip reader, and the review got a pin over a body that had decided nothing,
-// recording main's real blob id as the rule that admitted it. The interpreter is now given `-P` and an
-// explicit `cwd` that is not the candidate's tree, and it REPORTS BACK its own `sys.path` entries resolving
-// to that directory - any at all being a refusal. See THE CONTAINER IS CHECKED BEFORE IT IS OPENED below.
+// AND THE INTERPRETER IS KEPT OFF EVERY IMPORT ROUTE A CANDIDATE CAN REACH, which is a second defect in the
+// same channel and needed no control of PATH. `verify-claim.yml` does `cd candidate` before invoking this
+// tool, and `python3 -c` puts the working directory FIRST on `sys.path`: a `zipfile.py` committed in a
+// candidate's own repository was therefore the zip reader, and the review got a pin over a body that had
+// decided nothing, recording main's real blob id as the rule that admitted it.
+//
+// THE FLAG IS `-I`, AND THE ROUND BEFORE THIS ONE USED `-P`, WHICH CLOSED ONE ROUTE OF THREE. `-P` stops the
+// working directory being prepended and does nothing else: with `-P`, an explicit `cwd` of `/` and a genuine
+// `/usr/bin/python3`, a review still got the candidate's `zipfile.py` through `PYTHONPATH`, and got it again
+// through one line in a `.pth` file in user site-packages with no environment variable set at all. Both are
+// reproduced in the suite. `-I` is `-E -s -P` together - no `PYTHON*` environment variables, no user
+// site-packages, no working directory - and it has been in CPython since 3.4, so nothing is traded for it.
+//
+// WHAT THAT LEAVES, stated rather than implied: the reader may still come from the interpreter's own
+// installation, because that installation IS the trust root this file names. So the subprocess reports which
+// `zipfile` it imported and where its prefixes are, and a reader resolving outside them is a refusal. See
+// THE CONTAINER IS CHECKED BEFORE IT IS OPENED below.
 //
 // THE PROTECTED-REF GROUND: A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN. IT IS A GUARD RAIL.
 //
@@ -185,8 +196,14 @@ if (!ghVersion) {
 // here would be folklore: the runner image changes, and a constant nobody measured is the defect this
 // repository keeps paying for. So the observation is always RECORDED, and it is a REFUSAL only where the run
 // itself said what it expected and got something else.
-const expectedGh = process.env.VERIFIER_EXPECTED_GH ?? null;
-const expectedGhVersion = process.env.VERIFIER_EXPECTED_GH_VERSION ?? null;
+//
+// AN EMPTY STRING IS NOT AN EXPECTATION, AND SAYING SO IS WHAT LETS A WORKFLOW WIRE THE LEVER UP BEFORE IT HAS
+// A VALUE TO PUT IN IT. `verify-claim.yml` now passes all four of these through from repository variables, so
+// an unset variable arrives here as `''` rather than as an absent name; `?? null` would have turned that into
+// an expectation of the empty path and written `""` into the pin. `||` reads it as what it is: unstated.
+const stated = name => process.env[name] || null;
+const expectedGh = stated('VERIFIER_EXPECTED_GH');
+const expectedGhVersion = stated('VERIFIER_EXPECTED_GH_VERSION');
 if (expectedGh && expectedGh !== GH) {
   fail(`this run expects its \`gh\` at ${JSON.stringify(expectedGh)} (VERIFIER_EXPECTED_GH) and PATH resolved `
     + `${JSON.stringify(GH)}: the binary that would answer every API question here is not the one this run `
@@ -220,8 +237,8 @@ if (!pyVersion) {
   fail(`the \`python3\` this run resolved (${PY}) would not state its version, so the binary the receipt body `
     + 'is read through cannot be identified in the pin that rests on it');
 }
-const expectedPython = process.env.VERIFIER_EXPECTED_PYTHON ?? null;
-const expectedPythonVersion = process.env.VERIFIER_EXPECTED_PYTHON_VERSION ?? null;
+const expectedPython = stated('VERIFIER_EXPECTED_PYTHON');
+const expectedPythonVersion = stated('VERIFIER_EXPECTED_PYTHON_VERSION');
 if (expectedPython && expectedPython !== PY) {
   fail(`this run expects its \`python3\` at ${JSON.stringify(expectedPython)} (VERIFIER_EXPECTED_PYTHON) and `
     + `PATH resolved ${JSON.stringify(PY)}: the binary that would turn the verified archive into the receipt `
@@ -241,9 +258,26 @@ if (expectedPythonVersion && expectedPythonVersion !== pyVersion) {
 //
 // The directory chosen is the filesystem root of this tool's own location. It is not a value read out of the
 // inherited environment, no checkout can be it, and nothing this run writes goes there - so no relative
-// resolution the subprocess performs can land in the tree under judgement. It is the belt; `-P` below is the
+// resolution the subprocess performs can land in the tree under judgement. It is the belt; `-I` below is the
 // braces, and the braces are what actually decide.
 const SUBPROCESS_CWD = path.parse(import.meta.dirname).root;
+
+// AND THE FLAG IS TRIED BEFORE THE ARCHIVE IS, SO THAT ONE FAILURE IS NOT REPORTED AS ANOTHER. An interpreter
+// that will not run `-I` and an archive that holds no readable receipt are unrelated faults, and the round
+// before this one had them in a single `catch`: a python too old for the flag was reported as "the
+// verifier-receipt archive of run <id> holds no single receipt.json", which led with a false clause about an
+// archive that was fine. This costs one `python3 -c pass` and buys a refusal that names the real fault.
+try {
+  execFileSync(PY, ['-I', '-c', 'pass'], { stdio: ['ignore', 'ignore', 'pipe'] });
+} catch (error) {
+  fail(`the \`python3\` this run resolved (${PY}, reporting ${JSON.stringify(pyVersion)}) will not run \`-I\` `
+    + `(${String(error.stderr ?? error.message).trim()}). \`-I\` is what keeps the interpreter off PYTHONPATH, `
+    + 'off user site-packages and off the directory it was started in, all three of which a candidate can '
+    + 'reach; CPython has provided it since 3.4. THE REMEDY is an interpreter of 3.4 or later on this run\'s '
+    + 'PATH, named in VERIFIER_EXPECTED_PYTHON so that the substitution is refused rather than discovered - '
+    + 'and not a receipt read without the flag. This says nothing about the archive, which has not been '
+    + 'opened yet');
+}
 
 const api = (endpoint, options = {}) => execFileSync(GH, ['api', ...(options.headers ?? []), endpoint],
   { encoding: options.binary ? 'buffer' : 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -299,8 +333,9 @@ if (artifact.workflow_run?.head_sha && artifact.workflow_run.head_sha !== run.he
 //
 // AND THEN THE RECEIPT IS TAKEN OUT OF THAT VERIFIED ARCHIVE, never from anywhere else, so "the receipt used
 // is the one inside the artifact GitHub digested" holds to the extent the READER can be relied on - and the
-// reader is named, resolved, version-read, isolated and recorded rather than being the bare word `python3` at
-// a call site, which is what it was when a review last read this sentence. What the order of these lines
+// reader is named, resolved, version-read, recorded, run with `-I` and required to have come out of the
+// interpreter's own prefix, rather than being the bare word `python3` at a call site, which is what it was
+// when a review last read this sentence. What the order of these lines
 // establishes on its own is narrower and worth saying separately: these bytes were hashed before they were
 // opened, and the only thing they were ever handed to is the interpreter below. The receipt's own
 // sha256, computed further down, is a different quantity and is used as a different thing: the attestation's
@@ -320,37 +355,70 @@ if (zipDigest !== artifact.digest) {
 // now go to python3 on stdin and the receipt comes back on stdout, so the bytes parsed below are the bytes
 // that hashed to `artifact.digest` by construction rather than by the absence of an interloper.
 //
-// AND THE INTERPRETER IS ISOLATED FROM THE TREE IT IS RUN BESIDE, which is the other half of that sentence and
-// the half a review found missing. `python3 -c` prepends `''` - the working directory - to `sys.path`, so
-// until this round a `zipfile.py` in the candidate's checkout was the zip reader, and a candidate could hand
-// this tool any receipt body it liked while every digest above still checked out. `-P` stops that prepending;
-// `cwd` is set so that the working directory is not the candidate's anyway.
+// AND THE INTERPRETER IS KEPT OFF EVERY IMPORT ROUTE A CANDIDATE CAN REACH, which is the other half of that
+// sentence and the half two rounds of review have now corrected.
 //
-// THE ISOLATION IS THEN MEASURED RATHER THAN ASSUMED, because `-P` is a flag and a flag is a claim about an
-// interpreter this file did not build. The subprocess reports its own `sys.path` entries that resolve to its
-// working directory, and any at all is a refusal naming `-P`: an interpreter too old for the flag, or one
-// invoked in some way that reinstated the entry, is refused instead of silently trusted.
+// WHAT THE FLAG IS, AND WHY IT IS NOT `-P`. `python3 -c` prepends `''` - the working directory - to
+// `sys.path`, so a `zipfile.py` in the candidate's checkout was the zip reader and a candidate could hand this
+// tool any receipt body it liked while every digest above still checked out. `-P` stops THAT prepending and
+// nothing else, and the round that shipped it called the result isolation. A review measured what `-P` leaves
+// open, with a genuine `/usr/bin/python3`, a genuine `-P` and `cwd=/`:
+//   $ PYTHONPATH=/tmp/rig/candidate python3 -P -c 'import zipfile; print(zipfile.__file__)'
+//   /tmp/rig/candidate/zipfile.py
+//   $ echo 'import sys; sys.path.insert(0, "/tmp/rig/candidate")' > ~/.local/.../site-packages/zz.pth
+//   $ python3 -P -c 'import zipfile; print(zipfile.__file__)'      # no environment variable at all
+//   /tmp/rig/candidate/zipfile.py
+// Both are reproduced in the suite, before and after. `-I` is `-E -s -P` in one flag - it ignores every
+// `PYTHON*` environment variable, disables user site-packages, and does not prepend the working directory -
+// and both routes close under it. It has been in CPython since 3.4, so the compatibility trade the `-P` round
+// worried about does not exist; an interpreter that will not run it is refused above, by itself, before the
+// archive is touched. `cwd` is still set so that the working directory is not the candidate's anyway.
 //
-// WHAT THAT MEASUREMENT DOES NOT ESTABLISH, said here rather than left to be inferred: the report is produced
-// BY the interpreter, so it is a description and not a proof. A `python3` that lies about `sys.path` lies
-// about this too. That is the same standing this file gives `gh`, and it is handled the same way - the binary
-// is resolved once, read back, recorded in the pin, and refuseable against an expectation the run states.
+// WHAT `-I` DOES NOT ESTABLISH, and what is checked because of it: the reader may still come from the
+// interpreter's own installation. That is not a gap - that installation IS the trust root this file names -
+// but "the standard library's zipfile" and "some module this interpreter can import" are different claims, so
+// the subprocess reports the file its `zipfile` came from and its two prefixes, and a reader resolving inside
+// neither is refused by name.
+//
+// THE FLAGS ARE THEN MEASURED RATHER THAN ASSUMED, because a flag is a claim about an interpreter this file
+// did not build. The subprocess reports `sys.flags.isolated`, `sys.flags.no_user_site` and
+// `sys.flags.ignore_environment` - the three things `-I` sets, named one by one rather than summarised - and
+// any of them unset is a refusal, as is any `sys.path` entry still resolving to the working directory.
+//
+// WHAT THAT MEASUREMENT DOES NOT ESTABLISH, said here rather than left to be inferred, and corrected this
+// round because it understated by one actor. The report is produced BY the interpreter, so it is a
+// description and not a proof, and TWO parties can make it lie: the interpreter itself - the trust root this
+// file names, handled the way `gh` is, resolved once, read back, recorded and refuseable against an
+// expectation - and any module that runs before the report is written. The previous round's probe imported
+// `zipfile` on line 1 and built the report on lines 2-4, so the untrusted module ran FIRST and could write
+// the answer; the order is reversed below, which is cheap and is not what the file relies on, because
+// anything running in this process can still overwrite a value before it is printed. What actually keeps
+// such a module out of the process is `-I` plus the prefix check, and not the order of these lines.
+const PROBE = [
+  // The flags and the path are read BEFORE `zipfile` is imported, so the report is taken before any module
+  // this program does not already depend on has run. See the paragraph above for what that is and is not.
+  'import sys, os, json',
+  'report = {"cwd": os.getcwd(), "prefix": sys.prefix, "base_prefix": sys.base_prefix,',
+  '          "isolated": int(sys.flags.isolated), "no_user_site": int(sys.flags.no_user_site),',
+  '          "ignore_environment": int(sys.flags.ignore_environment)}',
+  'report["working_directory_on_path"] = [p for p in sys.path if os.path.abspath(p) == report["cwd"]]',
+  'import io, zipfile',
+  'report["zip_reader"] = getattr(zipfile, "__file__", None)',
+  'with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as archive:',
+  '    names = [n for n in archive.namelist() if n.endswith("receipt.json")]',
+  '    if len(names) != 1:',
+  // Its own exit code, so that "this archive does not hold one receipt" is not reported as "this archive
+  // could not be opened". The parent branches on it below.
+  '        print(f"expected one receipt.json, found {names}", file=sys.stderr); sys.exit(3)',
+  '    body = archive.read(names[0])',
+  'sys.stdout.buffer.write(json.dumps(report).encode("utf8") + b"\\n")',
+  'sys.stdout.buffer.write(body)',
+].join('\n');
 let receiptBytes;
 let importReport;
 try {
-  const answer = execFileSync(PY, ['-P', '-c', [
-    'import sys, os, io, json, zipfile',
-    'here = os.getcwd()',
-    'report = {"cwd": here, "zip_reader": getattr(zipfile, "__file__", None),',
-    '          "working_directory_on_path": [p for p in sys.path if os.path.abspath(p) == here]}',
-    'with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as archive:',
-    '    names = [n for n in archive.namelist() if n.endswith("receipt.json")]',
-    '    if len(names) != 1:',
-    '        print(f"expected one receipt.json, found {names}", file=sys.stderr); sys.exit(1)',
-    '    body = archive.read(names[0])',
-    'sys.stdout.buffer.write(json.dumps(report).encode("utf8") + b"\\n")',
-    'sys.stdout.buffer.write(body)',
-  ].join('\n')], { input: zip, cwd: SUBPROCESS_CWD, maxBuffer: 256 * 1024 * 1024 });
+  const answer = execFileSync(PY, ['-I', '-c', PROBE],
+    { input: zip, cwd: SUBPROCESS_CWD, maxBuffer: 256 * 1024 * 1024 });
   // The report is one line, then the bytes. Splitting at the first newline rather than parsing the whole
   // answer keeps the receipt's bytes untouched - JSON may carry newlines, and these bytes are hashed.
   const newline = answer.indexOf(0x0a);
@@ -358,16 +426,66 @@ try {
   importReport = JSON.parse(answer.subarray(0, newline).toString('utf8'));
   receiptBytes = answer.subarray(newline + 1);
 } catch (error) {
-  fail(`the ${ARTIFACT_NAME} archive of run ${runId} holds no single receipt.json this tool could read with `
-    + `${PY} -P (${String(error.stderr ?? error.message).trim()}). A \`python3\` that does not accept \`-P\` `
-    + 'cannot be kept off the working directory it was started in, and this tool will not read a receipt '
-    + 'through an interpreter it cannot isolate');
+  // THREE FAULTS, THREE SENTENCES. The interpreter's own has already been said above, before the archive was
+  // opened; what is left here belongs to the archive, and the two ways it can be wrong are told apart by the
+  // exit code the reader uses rather than blamed on each other.
+  const said = String(error.stderr ?? error.message).trim();
+  if (error.status === 3) {
+    fail(`the ${ARTIFACT_NAME} archive of run ${runId} does not hold exactly one receipt.json (${said}): an `
+      + 'archive holding none says nothing about what that run produced, and one holding two has not said '
+      + 'which of them it produced');
+  }
+  fail(`the ${ARTIFACT_NAME} archive of run ${runId} could not be read as a zip by ${PY} -I (${said}), so `
+    + 'there is nothing this tool can take out of the bytes GitHub digested');
+}
+// THE REPORT'S OWN SHAPE IS REQUIRED, because a reader that answers with a report missing the field the check
+// below reads would otherwise crash on a property access instead of refusing by name.
+for (const field of ['isolated', 'no_user_site', 'ignore_environment']) {
+  if (typeof importReport[field] !== 'number') {
+    fail(`${PY} wrote an import report carrying no numeric ${field} (${JSON.stringify(importReport[field]
+      ?? null)}), so nothing in it says whether \`-I\` took effect in the process that read the receipt`);
+  }
+}
+if (!Array.isArray(importReport.working_directory_on_path)) {
+  fail(`${PY} wrote an import report carrying no working_directory_on_path list `
+    + `(${JSON.stringify(importReport.working_directory_on_path ?? null)}), so nothing in it says whether the `
+    + 'directory it was started in was on its import path');
+}
+const notInEffect = ['isolated', 'no_user_site', 'ignore_environment']
+  .filter(field => importReport[field] !== 1);
+if (notInEffect.length > 0) {
+  fail(`${PY} was run with \`-I\` and reports ${notInEffect.map(field => `sys.flags.${field}=`
+    + `${JSON.stringify(importReport[field])}`).join(', ')}: the flag that keeps this reader off PYTHONPATH, `
+    + 'off user site-packages and off its working directory did not take effect, and a receipt body read by '
+    + 'an interpreter a candidate could have supplied a module to is not evidence of anything');
 }
 if (importReport.working_directory_on_path.length > 0) {
-  fail(`${PY} was run with \`-P\` and still reports its working directory on the import path `
+  fail(`${PY} was run with \`-I\` and still reports its working directory on the import path `
     + `(${JSON.stringify(importReport.working_directory_on_path)} resolving to `
     + `${JSON.stringify(importReport.cwd)}), so a file sitting beside it could have been the zip reader that `
     + 'produced the receipt body every check below reads');
+}
+// AND THE READER CAME OUT OF THE INTERPRETER THIS PIN NAMES. `fetched_with.zip_reader` was written into the
+// pin and never looked at, and a review pointed out that looking at it catches every route above BY NAME:
+// each of them ends with a `zipfile` resolving somewhere that is not the interpreter's own installation.
+// BOTH prefixes are accepted because both are the interpreter's: in a virtual environment `sys.prefix` is the
+// environment and `sys.base_prefix` is the installation the standard library actually lives in, so requiring
+// `sys.prefix` alone would refuse every venv - measured on a venv python3 here, whose `zipfile` resolves
+// under `base_prefix`. A reader inside neither is a second trust root nobody named.
+const insidePrefix = (file, prefix) => {
+  if (typeof prefix !== 'string' || prefix === '') return false;
+  const root = path.resolve(prefix);
+  return file === root || file.startsWith(root + path.sep);
+};
+const zipReader = typeof importReport.zip_reader === 'string' && importReport.zip_reader !== ''
+  ? path.resolve(importReport.zip_reader) : null;
+if (!zipReader || !(insidePrefix(zipReader, importReport.prefix)
+  || insidePrefix(zipReader, importReport.base_prefix))) {
+  fail(`${PY} reports it read the archive with the zipfile at ${JSON.stringify(importReport.zip_reader ?? null)}, `
+    + `which resolves inside neither its own prefix (${JSON.stringify(importReport.prefix ?? null)}) nor the `
+    + `installation it was built from (${JSON.stringify(importReport.base_prefix ?? null)}): the module that `
+    + 'turns the verified archive into the receipt body must come out of the interpreter this pin names as a '
+    + 'trust root, and one from anywhere else is a second trust root the pin does not name');
 }
 const receipt = JSON.parse(receiptBytes.toString('utf8'));
 
@@ -658,8 +776,9 @@ const pin = {
   // WHAT THIS FETCH ACTUALLY RESTED ON, MEASURED AT RUN TIME. Two binaries, because there are two channels:
   // `gh` answered every API question above, and `python3` turned the verified archive into the receipt body.
   // Naming both is the difference between a pin that states its trust roots and one that leaves a reader to
-  // assume GitHub. `zip_reader` is the file the isolated interpreter reported for its `zipfile` module - the
-  // interpreter's own answer, recorded as such, not a fact this file established about it.
+  // assume GitHub. `zip_reader` is the file the interpreter reported for its `zipfile` module under `-I` - the
+  // interpreter's own answer, recorded as such, not a fact this file established about it, though it is no
+  // longer only recorded: a reader resolving outside that interpreter's own prefixes was refused above.
   //
   // It describes THIS run's channels and not the receipt, which is why `compare-pin.mjs` names it as
   // deliberately not compared: the candidate's committed pin was produced by another run on another machine,

@@ -84,10 +84,17 @@ export const loadToleratedSkips = (source = TOLERATED_SKIPS_PATH) => {
   return { names: new Set(entries.map(entry => entry.test)), entries, problem: null };
 };
 
-// A count the rule reads: a non-negative integer, or an absence that is its own reason.
+// A count the rule reads: a non-negative SAFE integer, or an absence that is its own reason.
+//
+// SAFE, and the word is doing work. `Number.isInteger` accepts every integral double, including ones whose
+// neighbours are not representable, and the identity below is float arithmetic - so a review admitted two
+// bodies through it: `tests = ok = 1e308`, which reconciles because `1e308 + 0` is `1e308`, and
+// `tests = 2**53 + 1` beside `ok = 2**53`, which reconciles because the two parse to the SAME double. Neither
+// is a suite any runner measured and neither smuggles a failure past anything else in this file, but a count
+// this rule cannot do arithmetic on is not a count it has read, and `Number.isSafeInteger` says so in a word.
 const readCount = (holder, field, reasons, where) => {
   const value = holder?.[field];
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     reasons.push(`this receipt records no readable ${where}.${field} (${quote(value)}), so nothing in it says `
       + 'whether the measured suite was clean, and an absent field is not a satisfied condition');
     return null;
@@ -170,8 +177,10 @@ const suiteIsClean = (receipt, reasons, toleratedSkips) => {
   // which is why requiring it costs nothing.
   const testsCount = readCount(suite, 'tests', reasons, 'suite');
   const okCount = readCount(suite, 'ok', reasons, 'suite');
+  // The other four are read to the SAME standard as `tests` and `ok` above - safe integers, for the reason
+  // given at `readCount`: an unsafe one makes the sum below arithmetic nobody can check.
   const counts = [testsCount, okCount, ...['not_ok', 'cancelled', 'skipped', 'todo']
-    .map(field => (typeof suite[field] === 'number' && Number.isInteger(suite[field]) && suite[field] >= 0
+    .map(field => (typeof suite[field] === 'number' && Number.isSafeInteger(suite[field]) && suite[field] >= 0
       ? suite[field] : null))];
   if (counts.every(value => value !== null)) {
     const [tests, ok, notOk, cancelledCount, skippedCount, todoCount] = counts;

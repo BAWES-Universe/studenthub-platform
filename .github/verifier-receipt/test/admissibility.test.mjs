@@ -402,6 +402,55 @@ test('NEXT-1(E): a count rendered as a string is refused by name, and suite.exit
   assert.match(joined(withSuite({ exit: 1 })), /exited "1", not "0"/);
 });
 
+// NEXT-1(E), THE LAST WAY INTO THE IDENTITY: A COUNT TOO LARGE TO DO ARITHMETIC ON.
+//
+// `Number.isInteger` accepts every integral double, including ones whose neighbours are not representable,
+// and the reconciliation is float arithmetic - so a review walked two bodies past it. Neither smuggles a
+// failing test past anything else in this rule; both are bodies whose own counters this file cannot add up
+// while claiming it checked them, which is the property the identity exists to assert.
+test('NEXT-1(E): a count too large to be a safe integer is refused instead of reconciling with itself', () => {
+  // THE ARITHMETIC THAT USED TO ADMIT THEM, asserted first so the cases below are about the rule and not
+  // about a claim made in a comment.
+  assert.equal(1e308 + 0 + 0 + 0 + 0, 1e308, 'the sum that used to reconcile');
+  assert.equal(2 ** 53 + 1, 2 ** 53, 'two different JSON literals, one double');
+  assert.equal(Number.isInteger(1e308) && Number.isInteger(2 ** 53 + 1), true,
+    'both are integers by the old test, which is why it admitted them');
+
+  // The review's first shape: tests and ok both 1e308, every exclusion counter zero, nothing else touched.
+  const huge = withSuite({ tests: 1e308, ok: 1e308 });
+  const why = joined(huge);
+  assert.match(why, /records no readable suite\.tests \(1e\+308\)/, `got: ${why}`);
+  assert.match(why, /records no readable suite\.ok \(1e\+308\)/);
+  assert.equal(deriveAdmissibility(huge).admissible, false, '1e308 test(s) must not be admissible');
+  // And it is refused for being unreadable, not accused of arithmetic it did not get wrong.
+  assert.doesNotMatch(why, /accounts for/);
+
+  // The review's second shape: 2**53 + 1 tests beside 2**53 ok, which are the same double and so reconcile.
+  const unsafe = withSuite({ tests: 2 ** 53 + 1, ok: 2 ** 53 });
+  assert.equal(deriveAdmissibility(unsafe).admissible, false, '2**53+1 tests must not be admissible');
+  assert.match(joined(unsafe), /records no readable suite\.tests \(9007199254740992\)/);
+
+  // The other four counts are read to the same standard, because an unsafe one there makes the same sum
+  // uncheckable: `tests` honest, one category beyond the safe range.
+  for (const field of ['not_ok', 'cancelled', 'skipped', 'todo']) {
+    const body = withSuite({ [field]: Number.MAX_SAFE_INTEGER + 2 });
+    assert.equal(deriveAdmissibility(body).admissible, false,
+      `suite.${field} beyond the safe range must not be admissible`);
+    // The identity is not asserted over an unreadable term: that count is null, so the sum does not run.
+    assert.doesNotMatch(joined(body), /accounts for/, `suite.${field}: ${joined(body)}`);
+  }
+
+  // THE BOUNDARY, BOTH SIDES, so this is a rule about safety and not about size. The largest safe integer is
+  // read; one more is not. A body of 2**53 - 1 tests is refused for its arithmetic, which is the sentence a
+  // body with readable counts that do not add up is supposed to get.
+  const atTheEdge = withSuite({ tests: Number.MAX_SAFE_INTEGER, ok: 1 });
+  assert.match(joined(atTheEdge), /accounts for 1 of them/, `got: ${joined(atTheEdge)}`);
+  assert.doesNotMatch(joined(atTheEdge), /records no readable suite\.tests/);
+
+  // The positive control: this repository's real counts are ordinary safe integers and satisfy every ground.
+  assert.deepEqual(reasonsOf(admissibleBody()), []);
+});
+
 // NEXT-3. The emitter builds `named_tests_summary` by counting `named_tests`, so the two can only disagree in
 // a body somebody wrote. Every block above reads the ROWS, so a summary claiming failures the rows do not
 // carry went unread entirely.
