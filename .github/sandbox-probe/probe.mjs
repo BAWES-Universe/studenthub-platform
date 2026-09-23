@@ -157,22 +157,33 @@ function report(o) { process.stdout.write('\\n${MARKER}' + JSON.stringify(o) + '
 function errnoOf(fn) { try { fn(); return null; } catch (e) { return e.code || e.errno || e.message; } }
 `;
 
-// P0 - the environment and the mount, observed from inside.
+// P0 - the environment and the mounts, observed from inside.
+//
+// THE MOUNTS ARE READ, NOT ASSERTED. This program used to carry a literal `source_mount_is_readonly: false`
+// beside the measured fields - a claim about the source mount that the probe never took, and one that
+// contradicted the probe's own P2 observation that a write to /src fails EROFS. A Sentry review of the merged
+// probe caught it, correctly: an evidence file whose fields are typed rather than measured is exactly the
+// defect this whole boundary exists to refuse. Every mount option here now comes out of /proc/mounts.
 const p0 = runInSandbox(`${REPORT}
 const fs = require('node:fs');
-const mounts = fs.readFileSync('/proc/mounts', 'utf8').split('\\n').filter(l => l.includes(' /tmp '));
+const mountLines = fs.readFileSync('/proc/mounts', 'utf8').split('\\n');
+const mountAt = target => {
+  const line = mountLines.find(l => l.split(' ')[1] === target);
+  return { target, line: line || null, options: line ? (line.split(' ')[3] || '').split(',') : null };
+};
 const st = fs.statfsSync('/tmp');
 report({
   uid: process.getuid(), gid: process.getgid(),
   env_names: Object.keys(process.env).sort(),
   cwd: process.cwd(),
   tmp_entries_before: fs.readdirSync('/tmp'),
-  tmp_mount_line: mounts.join(' | '),
+  tmp_mount: mountAt('/tmp'),
+  scratch_mount: mountAt('/scratch'),
+  source_mount: mountAt('/src'),
   tmp_total_bytes: st.bsize * st.blocks,
   tmp_free_bytes: st.bsize * st.bavail,
-  source_mount_is_readonly: false,
 });
-`, 'P0 environment and the kernel mount line');
+`, 'P0 environment and the kernel mount lines');
 evidence.proofs.p0_environment = p0;
 
 // P1 - an ordinary /tmp write works.
@@ -277,16 +288,27 @@ const r0 = p0.result;
 check(!!r0, 'P0 produced no observation');
 if (r0) {
   check(r0.uid === 10001, `P0: the measurement ran as uid ${r0.uid}, not 10001`);
-  // The options live in the fourth field, separated from the fstype by a space, so this parses that field
-  // rather than searching the line - a substring test for "rw" would match inside another word and a test
-  // anchored on commas would miss the first option, which is exactly the mistake this line used to make.
-  const mountOptions = ((r0.tmp_mount_line || '').split(' ')[3] || '').split(',');
+  // The options live in the fourth field of the mount line, separated from the fstype by a space, so this
+  // reads that field rather than searching the line - a substring test for "rw" would match inside another
+  // word and a test anchored on commas would miss the first option, which is exactly the mistake this line
+  // used to make. Nothing here is a literal: every option below is the kernel's own answer.
+  const tmpOptions = (r0.tmp_mount && r0.tmp_mount.options) || [];
   for (const option of ['rw', 'noexec', 'nosuid', 'nodev']) {
-    check(mountOptions.includes(option),
-      `P1: the kernel's /tmp mount options do not carry ${option}: ${r0.tmp_mount_line}`);
+    check(tmpOptions.includes(option),
+      `P1: the kernel's /tmp mount options do not carry ${option}: ${r0.tmp_mount && r0.tmp_mount.line}`);
   }
-  check(mountOptions.some(o => o === 'size=65536k' || o === 'size=64m' || o === 'size=67108864'),
-    `P3: the kernel's /tmp mount options do not carry the configured size: ${r0.tmp_mount_line}`);
+  check(tmpOptions.some(o => o === 'size=65536k' || o === 'size=64m' || o === 'size=67108864'),
+    `P3: the kernel's /tmp mount options do not carry the configured size: ${r0.tmp_mount && r0.tmp_mount.line}`);
+  // THE SOURCE MOUNT, MEASURED. P2 proves a write to /src fails; this proves the kernel says why it must
+  // fail, and that the two agree. The old form of this line was a hardcoded `false` that contradicted P2.
+  const srcOptions = (r0.source_mount && r0.source_mount.options) || [];
+  check(srcOptions.includes('ro'),
+    `P2: the kernel's /src mount options do not carry ro: ${r0.source_mount && r0.source_mount.line}`);
+  check(tmpOptions.length > 0, 'P1: /tmp is not a mount of its own');
+  check((r0.scratch_mount && r0.scratch_mount.options || []).length > 0,
+    'P2: /scratch is not a mount of its own, so the probe cannot say what the measurement may write');
+  check(!((r0.scratch_mount && r0.scratch_mount.options) || []).includes('ro'),
+    'P1: /scratch is mounted read-only, so the measurement has nowhere to write at all');
   check(r0.tmp_total_bytes === tmpfsBoundBytes(), `P3: the kernel reports ${r0.tmp_total_bytes} bytes of /tmp, the flag asks for ${tmpfsBoundBytes()}`);
   const leaked = r0.env_names.filter(n => /^GITHUB_|^ACTIONS_|^RUNNER_|^CI$|TOKEN|SECRET|PASSWORD/i.test(n));
   check(leaked.length === 0, `P2: the measurement holds environment names it must not: ${leaked.join(', ')}`);
