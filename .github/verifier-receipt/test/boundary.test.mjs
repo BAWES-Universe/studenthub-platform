@@ -77,9 +77,14 @@ const CLAIM = { entries: [{ id: TERM.id, control: { test_names: TERM.control.tes
 
 const run = async ({ candidateDir, terms = [TERM], claim = CLAIM }) => {
   const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-scratch-'));
+  // The one directory the measurement may write, prepared by the caller - as the workflow does, with a
+  // `sudo chown` to 10001 that this process cannot do and must not be able to.
+  const measurementScratch = path.join(scratchDir, 'measurement');
+  fs.mkdirSync(path.join(measurementScratch, 'tmp'), { recursive: true });
+  fs.mkdirSync(path.join(measurementScratch, 'home'), { recursive: true });
   try {
     return await measure({ matrix: matrixWith(terms), scope: 'boundary', runners: RUNNERS, runnerKey: 'boundary',
-      candidateDir, scratchDir, image: IMAGE, claim, io: { exec: stubExec },
+      candidateDir, scratchDir, measurementScratch, image: IMAGE, claim, io: { exec: stubExec },
       // The normal run is handed in, because these tests are about the per-term measurement and a whole-suite
       // run would add nothing to any of them.
       normalRun: { run_id: 'run-0000', label: 'normal-run', observed_by: 'controller', exit: 0, signal: null,
@@ -249,6 +254,15 @@ test('a mutant whose anchor is no longer in the candidate refuses the term rathe
   assert.equal(term.mutants[0].patch.applied, false);
   assert.match(term.why_not.join(' | '),
     /the protected mutation's anchor is not present in src\/guard\.mjs at this candidate/);
+});
+
+test('the controller refuses to measure at all without a scratch the measurement can write', async () => {
+  // Chowning a directory to another uid needs root, which this process does not have and must not have. So
+  // the caller prepares it and hands the path in; a controller that created it itself would own it as the
+  // runner user, and every test needing a temporary file would fail for a reason that is not about the test.
+  await assert.rejects(measure({ matrix: matrixWith([TERM]), scope: 'boundary', runners: RUNNERS,
+    runnerKey: 'boundary', candidateDir: candidate(), scratchDir: fs.mkdtempSync(path.join(os.tmpdir(), 'no-scratch-')),
+    image: IMAGE, claim: CLAIM, io: { exec: stubExec } }), /the controller was given no measurement scratch/);
 });
 
 test('a term the protected matrix requires no mutant for is not establishable, and says why', async () => {

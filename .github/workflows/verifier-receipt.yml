@@ -459,14 +459,22 @@ jobs:
           RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
           MATRIX_SCOPE: coordinator
           MEASURE_JOB_ID: measure
+          MEASUREMENT_SCRATCH: ${{ steps.scratch.outputs.measurement }}
           NORMAL_RUN_META: ${{ steps.scratch.outputs.controller }}/capture/capture-meta.json
           OUT_PATH: ${{ steps.scratch.outputs.controller }}/capture/controller-observed.json
         run: node authority/.github/verifier-receipt/measure-terms.mjs
 
       # The trusted job's OWN artifact, holding only files this job wrote. No candidate file is uploaded, and the
       # emitting job downloads no candidate file at all.
+      # EVEN WHEN THE CONTROLLER REFUSED. A run that measured a candidate and correctly concluded "no" is the
+      # product of this authority just as much as one that says yes - the emit job already carries that rule
+      # step by step, and the measure job did not: a controller step that refused left no artifact at all, so
+      # from outside it was indistinguishable from a job that broke, with no capture anyone could read to find
+      # out why. The upload is bounded by `hashFiles` so a refusal before the capture exists still uploads
+      # nothing rather than failing on an empty directory.
       - name: Upload the trusted job's capture, and nothing else
         id: upload
+        if: always() && hashFiles(format('{0}/capture/suite.out', steps.scratch.outputs.controller)) != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: measure-capture
@@ -476,6 +484,7 @@ jobs:
 
       - name: Normalise the digest GitHub computed for the artifact
         id: artifact
+        if: always() && steps.upload.outputs.artifact-id != ''
         env:
           DIGEST: ${{ steps.upload.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}

@@ -210,7 +210,8 @@ async function observe(label, spec, io, extra = {}) {
   return record;
 }
 
-export async function measure({ matrix, scope, runners, runnerKey, candidateDir, scratchDir, image, claim, io, normalRun = null }) {
+export async function measure({ matrix, scope, runners, runnerKey, candidateDir, scratchDir, image, claim, io,
+  normalRun = null, measurementScratch = null }) {
   const scopeSpec = matrix.scopes?.[scope];
   if (!scopeSpec) throw new Error(`the protected matrix has no scope ${JSON.stringify(scope)}`);
   const runner = runners.runners?.[runnerKey];
@@ -219,15 +220,20 @@ export async function measure({ matrix, scope, runners, runnerKey, candidateDir,
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error(`the protected runner enum's ${runnerKey} command carries no --test-timeout, so a scoped run of it would be unbounded`);
 
-  const measurementScratch = path.join(scratchDir, 'measurement');
+  // THE ONE DIRECTORY THE MEASUREMENT MAY WRITE, AND WHY THIS FUNCTION DOES NOT CREATE IT.
+  //
+  // It has to be owned by 10001, and chowning a directory to another uid needs root - which this process does
+  // not have and must not have. So the caller prepares it (the workflow does, with one `sudo chown`) and
+  // hands the path in. A first attempt had this function create `<scratchDir>/measurement` itself and swallow
+  // the EPERM from its own chown; the directory was then owned by the runner user, the container could not
+  // write its own TMPDIR, and the preflight refused the whole run with EACCES. That refusal was right - a
+  // measurement whose tests cannot write a temporary file fails for reasons that are not about the tests -
+  // and the fix is to stop pretending this process can create that directory.
+  //
+  // Everything else under `scratchDir` stays 0700 under the runner's own uid and is never mounted anywhere.
+  if (!measurementScratch) throw new Error('the controller was given no measurement scratch: the one directory the measurement may write has to be created and chowned to 10001 by the caller, because chowning to another uid needs root');
   const overlayRoot = path.join(scratchDir, 'overlays');
-  fs.mkdirSync(path.join(measurementScratch, 'tmp'), { recursive: true });
-  fs.mkdirSync(path.join(measurementScratch, 'home'), { recursive: true });
   fs.mkdirSync(overlayRoot, { recursive: true });
-  // The one directory the measurement may write to, handed to the uid that will write it. Everything else
-  // the controller owns stays 0700 under the runner's own uid and is never mounted.
-  try { fs.chownSync(path.join(measurementScratch, 'tmp'), 10001, 10001); fs.chownSync(path.join(measurementScratch, 'home'), 10001, 10001); fs.chownSync(measurementScratch, 10001, 10001); }
-  catch (error) { if (error.code !== 'EPERM') throw error; }
 
   const sandboxFor = (sourceDir, argv) => ({ image, sourceDir, scratchDir: measurementScratch, argv, env: measurementEnv() });
 

@@ -122,7 +122,7 @@ async function main() {
   // controller-observed record live here. The measurement's scratch is a DIFFERENT directory, created
   // inside it by the controller and handed to uid 10001; nothing else under this root is reachable from a
   // container at all, because nothing else under this root is mounted into one.
-  const scratchDir = fs.mkdtempSync(path.join(scratchRoot, 'controller-'));
+  const scratchDir = fs.mkdtempSync(path.join(scratchRoot, 'overlays-'));
   fs.chmodSync(scratchDir, 0o700);
 
   const claimPath = path.join(candidateDir, matrix.scopes[scope]?.claim_path ?? '');
@@ -134,11 +134,16 @@ async function main() {
   }
 
   const io = { exec: dockerExec(docker) };
-  const measurementScratch = path.join(scratchDir, 'measurement');
-  fs.mkdirSync(path.join(measurementScratch, 'tmp'), { recursive: true });
-  fs.mkdirSync(path.join(measurementScratch, 'home'), { recursive: true });
-  try { for (const dir of [measurementScratch, path.join(measurementScratch, 'tmp'), path.join(measurementScratch, 'home')]) fs.chownSync(dir, 10001, 10001); }
-  catch (error) { if (error.code !== 'EPERM') throw error; }
+  // Prepared and chowned to 10001 by the workflow, because chowning to another uid needs root. See the note
+  // in controller.mjs: an earlier form created this here and swallowed its own EPERM, and every measurement
+  // then failed its preflight with EACCES on its own TMPDIR.
+  const measurementScratch = need('MEASUREMENT_SCRATCH');
+  for (const dir of ['tmp', 'home']) {
+    if (!fs.existsSync(path.join(measurementScratch, dir))) {
+      console.error(`::error::the measurement scratch ${measurementScratch} has no ${dir}/ - the job has to create it and chown it to 10001 before this runs`);
+      process.exit(2);
+    }
+  }
   const environment = await preflight({ image, sourceDir: candidateDir, scratchDir: measurementScratch,
     controllerScratch: scratchDir, io, requires: imagePin.requires });
   console.log(`sandbox preflight: node ${environment.node} ${environment.platform}/${environment.arch}, ${environment.git}, uid ${environment.uid}:${environment.gid}, env ${environment.env.join(' ')}`);
@@ -167,7 +172,8 @@ async function main() {
     };
     if (!Number.isInteger(normalRun.exit)) throw new Error(`the capture's meta records suite_exit ${JSON.stringify(meta.suite_exit)}, which is not a status a process exited with`);
   }
-  const observation = await measure({ matrix, scope, runners, runnerKey, candidateDir, scratchDir, image, claim, io, normalRun });
+  const observation = await measure({ matrix, scope, runners, runnerKey, candidateDir, scratchDir, image, claim,
+    io, normalRun, measurementScratch });
   observation.sandbox_preflight = environment;
   observation.candidate_sha = process.env.CANDIDATE_SHA ?? null;
   observation.claim = { path: matrix.scopes[scope].claim_path, entries: (claim.entries ?? []).length,
