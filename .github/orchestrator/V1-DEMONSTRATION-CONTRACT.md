@@ -17,6 +17,12 @@ and any second lane, so v1 could not run under its own §5 → **§1.1 chooses a
 **revision binding was missing entirely** → §2 and §4 rows 13–15. The host is named, not addressed → §3, §4. Row 10
 now states the **assignee** requirement, not only the state.
 
+*Re-check after that revision.* Both findings confirmed fixed on re-check, and row 12 reproduced independently
+(204/204 at `01409cc`). Two further requirements are folded in: the run is **bound to the seeded starting commit
+`S`** (§2, §4 row 17) — `initial_target_sha: S`, with `DISPATCH_TARGET_SHA` derived from it and never independently
+supplied — and **row 15's cost is corrected by measurement**: the config change fails 100 of 444 tests across six
+files, so it carries an autonomous test repair and must be green on CI before row 13.
+
 ## What v1 demonstrates, in one sentence
 
 The orchestrator runs **one unattended sequence on one fixture** — build, independent review, automatic revision,
@@ -113,6 +119,22 @@ portability note about the host, not a defect in the path.
 The property that makes this "unattended": steps 2 → 3 and 3 → 4 are triggered by the previous step's own receipt.
 No step waits for a person to read a message and start the next one.
 
+**The seeded starting commit — `S`.** Let `S` be the commit on `coordinator/SHU-140` at which
+`/srv/shu/shu63-oracle-check.mjs` exits **1**. The run is bound to it, and this binding is not negotiable:
+
+- `S` is **where the checker exits 1** — §4 row 4 measures it at `S`, not merely somewhere on the branch;
+- `S` is the **branch head at arming**, so the run starts from the tree that was measured;
+- `S` is bound in the single-run record as **`initial_target_sha: S`**, and the run's `DISPATCH_TARGET_SHA` equals
+  `S`, so the coordinator **refuses to start from any other commit**;
+- **`DISPATCH_TARGET_SHA` is derived from, or equality-checked against, `initial_target_sha` in the armed record. It
+  is never a second, independently supplied target value** — one target, one source;
+- **if the seed is absent, or the head differs from `S`, the run is REFUSED before launch.** No fallback, and no
+  discovering the target at dispatch time.
+
+Because the defect is planted deliberately, **the first independent review is expected to BLOCK on it, and a clean
+first pass is a v1 failure** (§8): a PASS at step 2 means either the seed was absent or the reviewer missed it, and
+neither is the demonstration.
+
 **The gate state, stated accurately.** Committed `enable_dispatch: false` **stays false**. What allows worker
 launches is the runtime environment switch `ENABLE_DISPATCH`, and under (b) the dispatch decision is
 `envGate && activation.state === "armed"` (`reconcile.mjs:487`). Merging is a **separate** lever:
@@ -164,9 +186,11 @@ The verifier is **independent: non-author, its own session, no stake in this pro
 `/srv/shu/state/verifier-evidence/v1-<run>.json` plus a human-readable log, and records, with the command it ran
 and the output it got:
 
-1. **The seeded defect was present at the step-1 head** — `/srv/shu/shu63-oracle-check.mjs <laneTree>` exits **1**
-   there, and the seed commit is present with the **seeder recorded** (the card requires a third party who is
-   neither the builder nor the reviewer).
+1. **The seeded defect was present at the step-1 head, and that head IS `S`** — `/srv/shu/shu63-oracle-check.mjs
+   <laneTree>` exits **1** there, the seed commit is present with the **seeder recorded** (the card requires a third
+   party who is neither the builder nor the reviewer), `S` was the **branch head at arming**, and the armed record's
+   `initial_target_sha` equals `S` with `DISPATCH_TARGET_SHA` derived from — or equality-checked against — it rather
+   than independently supplied.
 2. **Two push receipts with different `result_sha`** on `coordinator/SHU-140` (§2's detector for a false step-2
    PASS), and that the second head descends from the first.
 3. **Step 2 returned BLOCK at the exact step-1 head**, and step 4 returned `stage: PASS` at the exact revised head
@@ -201,8 +225,10 @@ Measured on the orchestrator host unless stated. Readings are 2026-09-23 and are
 | 12 | **the single-run path still arms and dispatches** | its own suites at the contract's main commit: `node --test .github/coordinator/test/*activation*.test.mjs .github/coordinator/test/*dispatch*.test.mjs` | **204/204 pass** at `01409cc` (one test is `TMPDIR`-sensitive; with `TMPDIR=/tmp` the set is 204/204) |
 | 13 | **the host clone equals the main commit that carries v1's config** | clone HEAD (row 9) vs `git ls-remote origin refs/heads/main`, **after** row 15's change lands | **FAILING — clone `a51c8490`, main `01409cc`.** Remedy: advance the clone = **host privilege** (§7) |
 | 14 | **nothing merges to `main` during the run window** | main's HEAD before and after the window are identical, and the window's branch carries no merge commit | holds today under the freeze on #161/#162/#167, and is a **precondition**, not a hope |
-| 15 | **the config change (b) rests on** | `config.json`: `dispatch_scope.issue_ids` and `max_dispatch` — because `slots` must **equal** the committed `max_dispatch` and can never raise capacity | today `["SHU-140","SHU-254"]` / `2`; **must become `["SHU-140"]` / `1`** — **KHALID'S DECISION** |
+| 15 | **the config change (b) rests on, and its cost** | `config.json`: `dispatch_scope.issue_ids` and `max_dispatch` — because `slots` must **equal** the committed `max_dispatch` and can never raise capacity. **Measured cost at `01409cc`: applying `["SHU-140"]` + `1` fails 100 of 444 tests in the 19 files that read the committed config — `two-fixture-progression` 58, `two-fixture-activation` 34, `two-fixture-lanes` 4, `shu71-composition` 2, `shu224-dispatch-scope` 1, `activation-window-reconciliation` 1 — because most of them load `../config.json` directly for two-fixture cases.** So the config PR also: **(a)** gives those tests an explicit two-fixture config instead of the committed file, and **(b)** updates the tests that deliberately pin the committed scope, with the reason. | today `["SHU-140","SHU-254"]` / `2`; **must become `["SHU-140"]` / `1`** — **KHALID'S DECISION on the values**; the accompanying test repair is **autonomous**, and the PR must be **green on CI before row 13** (row 18) |
 | 16 | dispatch off and nothing armed at rest | config `enable_dispatch: false`, `ENABLE_DISPATCH` unset, no `/srv/shu/state/shu71-activation.json` | **TRUE** — `enable_dispatch: false`, `routine_merge_authority.enabled: false`, activation absent |
+| 17 | **the run is bound to the seed commit `S`** | `S` = the commit where `node /srv/shu/shu63-oracle-check.mjs <laneTree>` exits 1; `git ls-remote origin refs/heads/coordinator/SHU-140` must equal `S` **at arming**; the armed record's `initial_target_sha` must equal `S`, and `DISPATCH_TARGET_SHA` must be derived from or equality-checked against it | **FAILING — there is no seed commit today**: the branch head is the corrected, clean tree (row 4 exits 0). Absent or differing ⇒ **refuse before launch** |
+| 18 | **the config PR is green on CI before row 13** | the required contexts on the commit carrying row 15's values **and** its test repair | **not started** — the values are Khalid's decision; the test repair is autonomous |
 
 **What stops the run today, and whose call each one is:** row 4 the seeder (§7, autonomous); rows 10, 11, 13 and 15
 Khalid, **in this order — 15 before 13, because the clone must carry the config.**
@@ -217,7 +243,8 @@ record, SHU-71 key custody, seeding or building SHU-254, and any record that nam
 **except row 15's named one**; editing any systemd unit; re-running a failed sequence beyond what the failure names;
 moving any Linear card other than as row 10 requires; and any merge. **The single-run operator record (§1.1) is the
 one activation v1 includes, and authoring and arming it is live dispatch — Khalid's escalation, not autonomy.** A
-reader can tell scope creep from the text.
+reader can tell scope creep from the text. The test repair the config change requires (row 15a/b) **is** in v1 and
+is autonomous; only the config **values** are Khalid's.
 
 **Does v1's evidence need #167?** **No, and the first review confirmed it by inspection:** every receipt v1 rests on
 (`push-*`, `workspace-result-*`, `*.workspace.json`, `*.review-test.1.json`, `*.claude-envelope.1.stdout`) carries
@@ -244,14 +271,16 @@ broken part, and this contract no longer says it was.
 
 ## 7. Autonomy and escalation
 
-**Autonomous:** ordinary implementation and test repairs; measurement; drafting; work inside the fixture's declared
+**Autonomous:** ordinary implementation and test repairs — **including the test repair row 15 requires, whose
+config values stay Khalid's**; measurement; drafting; work inside the fixture's declared
 paths, **including re-seeding the trap** — the fixture card names the seeder as the **Hermes orchestration lane,
 third party to the run, recorded on the seed commit**, and `seeded_defect_path` is a declared path. The gate on
 seeding is objective: `/srv/shu/shu63-oracle-check.mjs` must exit **1** before the run starts.
 
 **Escalate to Khalid, in this order:**
 
-1. **§4 row 15** — the `config.json` change (b) rests on.
+1. **§4 row 15** — the `config.json` **values** (b) rests on. The test repair that accompanies them (row 15a/b) is
+   **autonomous**, and the change must be **green on CI** (row 18) before row 13.
 2. **§4 row 13** — advancing the host clone to the commit carrying that config: **host privilege**.
 3. **§4 row 10** — moving SHU-140 to `Todo` **and clearing its assignee**.
 4. **§4 row 11** — turning the launching switch on and authoring/arming the single-run record: **live dispatch**,
