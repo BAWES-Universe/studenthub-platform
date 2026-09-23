@@ -13,9 +13,13 @@ name: Verifier receipt
 #   trust   - resolves the authority commit (the workflow, the emitter, the runner enum), the candidate, and the
 #             runner key. Nothing it resolves comes from the candidate's tree.
 #   measure - checks out the candidate, invokes the command the PROTECTED runner enum names for the chosen key -
-#             never the candidate's package.json, never a shell string anyone supplied - captures stdout and
-#             stderr into files it owns, and uploads those files as its own artifact. No id-token, no attestation
-#             permission.
+#             never the candidate's package.json, never a shell string anyone supplied - and HASHES THE OUTPUT
+#             STREAM AS IT PASSES THROUGH a trusted process, which then writes the capture and its meta after the
+#             runner is gone and uploads them as this job's own artifact. No id-token, no attestation permission.
+#             A review defeated the earlier form, which hashed a file in a later step: the measured suite could
+#             rename a forged stream over that file. What that fix establishes and what it cannot is stated in
+#             full at the capture step and in capture-stream.mjs - the measured tests print into the very stream
+#             being hashed, so this authenticates the bytes' origin, never their truthfulness.
 #   emit    - checks out the authority by SHA and runs the emitter. It never checks out the candidate and never
 #             downloads any artifact into its workspace: it locates the measure job's artifact through the API by
 #             run id and name, checks the digest GitHub computed, and reads the capture out of the archive GitHub
@@ -251,59 +255,41 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "runner \"$RUNNER_KEY\": $command"
 
-      # The trusted job captures stdout and stderr itself, into a directory it owns outside the candidate
-      # checkout. Nothing the candidate writes is collected, and the candidate is never asked where its output is.
-      - name: Run the protected runner against the candidate, capturing its output
+      # THE CAPTURE IS HASHED AS IT PASSES THROUGH A TRUSTED PROCESS, NOT READ BACK FROM A FILE.
+      #
+      # A review defeated the previous form of this step. It redirected the runner's output into
+      # $RUNNER_TEMP/capture/suite.out and the NEXT step hashed that file - but the candidate's own test bodies
+      # run inside THIS step, as this step's user, with RUNNER_TEMP in their environment, so a test could write
+      # a forged TAP stream beside the capture and rename(2) it over the top. The reporter's still-open fd was
+      # detached onto the unlinked inode, the forged bytes were whole, and the trusted step then hashed THEM:
+      # the artifact digest, the meta and the attestation were all computed over bytes the candidate wrote.
+      # Every provenance check downstream authenticated which JOB uploaded the artifact; none authenticated who
+      # wrote the bytes inside it.
+      #
+      # So the capture program below spawns the runner itself, hashes every byte in its own memory as it
+      # arrives, takes the suite's exit status from waitpid rather than from a step output the measured code can
+      # append to, and creates the capture directory and writes both files only after the stream has closed -
+      # when the runner and its children are gone. While the candidate's code is running there is no capture
+      # file to rename over, and the digest never touches the disk the candidate can write.
+      #
+      # WHAT THAT DOES NOT DO, said plainly here because the header of this file used to overclaim it: the
+      # measured tests SHARE this output stream. A candidate whose test bodies print their own well-formed TAP
+      # into stdout are hashed exactly as faithfully as the reporter's own lines. This step establishes that the
+      # artifact holds the bytes the runner produced; it does not establish that those bytes are truthful, and
+      # nothing in this workflow can, because the measurement and the measured code write to one fd. See
+      # capture-stream.mjs for the full statement, including the background-process race that remains open.
+      - name: Run the protected runner against the candidate, hashing its output as it passes through
         id: suite
-        env:
-          RUNNER_COMMAND: ${{ steps.runner.outputs.command }}
-        run: |
-          set -uo pipefail
-          mkdir -p "$RUNNER_TEMP/capture"
-          set +e
-          ( cd candidate && bash -euo pipefail -c "$RUNNER_COMMAND" ) > "$RUNNER_TEMP/capture/suite.out" 2>&1
-          exit_code=$?
-          set -e
-          echo "exit=$exit_code" >> "$GITHUB_OUTPUT"
-          echo "captured $(wc -c < "$RUNNER_TEMP/capture/suite.out") bytes, suite exit $exit_code"
-
-      # The measure job's own statement about its own capture. The emitter checks every field of it against the
-      # API and against the capture's bytes, so this is a binding, not an assertion to be taken on trust.
-      - name: Write the capture's meta
         env:
           RUNNER_COMMAND: ${{ steps.runner.outputs.command }}
           RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
           CANDIDATE_SHA: ${{ steps.candidate.outputs.head }}
           CANDIDATE_TREE: ${{ steps.candidate.outputs.tree }}
           TRUSTED_SOURCE_SHA: ${{ needs.trust.outputs.trusted_sha }}
-          SUITE_EXIT: ${{ steps.suite.outputs.exit }}
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CAPTURE_DIR: ${{ runner.temp }}/capture
           JOB_NAME: measure
-        run: |
-          set -euo pipefail
-          node -e '
-            const fs = require("node:fs");
-            const crypto = require("node:crypto");
-            const dir = process.env.RUNNER_TEMP + "/capture";
-            const bytes = fs.readFileSync(dir + "/suite.out");
-            const meta = {
-              schema: 1,
-              job_name: process.env.JOB_NAME,
-              run_id: process.env.GITHUB_RUN_ID,
-              run_attempt: process.env.GITHUB_RUN_ATTEMPT,
-              workflow_path: ".github/workflows/verifier-receipt.yml",
-              trusted_source_sha: process.env.TRUSTED_SOURCE_SHA,
-              candidate_sha: process.env.CANDIDATE_SHA,
-              candidate_tree: process.env.CANDIDATE_TREE,
-              runner_key: process.env.RUNNER_KEY,
-              runner_command: process.env.RUNNER_COMMAND,
-              capture_file: "suite.out",
-              capture_bytes: bytes.length,
-              capture_sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
-              suite_exit: process.env.SUITE_EXIT,
-            };
-            fs.writeFileSync(dir + "/capture-meta.json", JSON.stringify(meta, null, 2) + "\n");
-            console.log("capture sha256:" + meta.capture_sha256 + " (" + meta.capture_bytes + " bytes)");
-          '
+        run: node authority/.github/verifier-receipt/capture-stream.mjs
 
       # The trusted job's OWN artifact, holding only files this job wrote. No candidate file is uploaded, and the
       # emitting job downloads no candidate file at all.
@@ -414,6 +400,54 @@ jobs:
             // verdict; this step refuses them again, by test name and by the status it was given.
             const unmeasured = (receipt.named_tests ?? []).filter(named => named.status !== 'pass');
             if (unmeasured.length > 0) { console.error('::error::these named tests were not measured as passing in this run: ' + unmeasured.map(named => named.name + ' [' + named.status + ']').join(', ')); process.exit(1); }
+            // TERMS RECONCILED AGAINST THE ROWS THEY CLAIM TO COUNT. A review found this line missing and it
+            // is the one line that made the rest of this step a re-read rather than a second reading: every
+            // check above takes terms[].named on trust, so a receipt whose terms[] row claims coverage that no
+            // named_tests row supports passed with admissible=true. Three forgeries did exactly that - a second
+            // terms[] row for an entry with no test of its own, terms[].named as the string '1' (which
+            // satisfies !(term.named > 0) without being a count), and named_tests emptied while the summary and
+            // the terms still said one pass. None of them is reachable by a candidate, which is why the review
+            // ruled it MEDIUM; all three are reachable by an emitter bug, which is the whole reason a second
+            // reader exists.
+            //
+            // So the counts are recomputed here from named_tests, which is the receipt's own per-test evidence
+            // and one step closer to the capture, and a term whose row does not agree with the rows attributed
+            // to its entry is refused by name. The totals are reconciled too, so a row attributed to no term at
+            // all - or counted under two - cannot hide inside agreeing per-term numbers.
+            const rows = Array.isArray(receipt.named_tests) ? receipt.named_tests : null;
+            if (rows === null) { console.error('::error::the receipt carries no named_tests list, so nothing supports what its terms claim'); process.exit(1); }
+            const tallied = new Map();
+            for (const row of rows) {
+              const bucket = tallied.get(row.entry) ?? { named: 0, pass: 0 };
+              bucket.named += 1;
+              if (row.status === 'pass') bucket.pass += 1;
+              tallied.set(row.entry, bucket);
+            }
+            const unsupported = [];
+            let claimedNamed = 0;
+            let claimedPass = 0;
+            for (const term of terms) {
+              if (!Number.isInteger(term.named) || !Number.isInteger(term.pass)) {
+                unsupported.push(String(term.id) + ' reports named=' + JSON.stringify(term.named) + ' pass=' + JSON.stringify(term.pass) + ', which are not counts');
+                continue;
+              }
+              claimedNamed += term.named;
+              claimedPass += term.pass;
+              const bucket = tallied.get(term.entry) ?? { named: 0, pass: 0 };
+              if (term.named !== bucket.named || term.pass !== bucket.pass) {
+                unsupported.push(String(term.id) + ' (entry ' + JSON.stringify(term.entry) + ') claims named=' + term.named + ' pass=' + term.pass + ', but named_tests holds ' + bucket.named + ' test(s) for that entry, ' + bucket.pass + ' of them passing');
+              }
+            }
+            if (unsupported.length > 0) { console.error('::error::these terms claim coverage that no named test row of this receipt supports: ' + unsupported.join('; ')); process.exit(1); }
+            const passingRows = rows.filter(row => row.status === 'pass').length;
+            if (claimedNamed !== rows.length || claimedPass !== passingRows) {
+              console.error('::error::the terms account for ' + claimedNamed + ' named test(s) and ' + claimedPass + ' passing, but the receipt lists ' + rows.length + ' and ' + passingRows);
+              process.exit(1);
+            }
+            if (summary.named !== rows.length || summary.pass !== passingRows) {
+              console.error('::error::named_tests_summary says named=' + JSON.stringify(summary.named) + ' pass=' + JSON.stringify(summary.pass) + ', but the receipt lists ' + rows.length + ' named test(s), ' + passingRows + ' passing');
+              process.exit(1);
+            }
             const admissible = receipt.provenance?.admissible_as_pin === true;
             require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + admissible + '\n');
           "

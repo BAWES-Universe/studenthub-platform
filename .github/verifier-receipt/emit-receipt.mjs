@@ -10,6 +10,12 @@
 //   * the `measure` job of that run must have concluded success;
 //   * the capture must arrive as that run's own artifact, located by name through the API, whose digest GitHub
 //     computed and which the archive GitHub serves actually hashes to;
+//   * the capture's digest must have been taken IN THE TRUSTED JOB AS THE STREAM PASSED THROUGH IT, which the
+//     meta records and this emitter requires by name. A review defeated the previous arrangement, where the
+//     measure job redirected the runner into a file and hashed that file in the next step: the candidate's own
+//     test bodies run in that step, as that user, so one of them renamed a forged stream over the capture and
+//     the trusted job hashed the forgery. Every check in this list authenticates WHICH JOB uploaded the
+//     artifact; this is the one that binds WHO WROTE THE BYTES INSIDE IT, as far as that can be bound at all;
 //   * the artifact must carry the measure job's own capture-meta, and that meta must agree with the candidate
 //     commit, the candidate tree the API reports for it, the trusted authority commit, and the runner key and
 //     command taken from the protected enum - not from the candidate;
@@ -18,6 +24,17 @@
 //
 // Nothing here is a path, a field, a command or an artifact the candidate chose. The candidate contributes the
 // code under test and the claim it commits, and nothing else reaches this process.
+//
+// AND HERE IS THE LIMIT OF THAT SENTENCE, because a review showed the earlier version of it to be false. The
+// candidate also writes bytes into the capture - it cannot not, since the capture IS its suite's output stream.
+// Streaming the hash in the trusted job closes the route by which a candidate replaced the measurement AFTER it
+// was taken. It does not, and no arrangement of jobs can, tell the reporter's lines from lines a test printed on
+// the same fd. A candidate whose test bodies print plausible, internally consistent TAP - a full run's worth of
+// points, a plan that matches, a summary that reconciles, and now an exit code that agrees with its own counts -
+// produces a capture this authority accepts, because that IS what the runner producing it would look like. What
+// this workflow proves is the ORIGIN of the bytes and the identity of the code they were taken over; what it
+// cannot prove is that a test named in the claim did the work the claim says it did. That boundary is recorded
+// in every receipt as `provenance.limits` so no consumer has to infer it from what this file does not say.
 //
 // WHICH CODE WAS MEASURED, AND WHAT THAT ESTABLISHES. Two more questions decide whether a verdict means
 // anything, and a review found both answered by a list GitHub truncates:
@@ -118,6 +135,10 @@ const listing = (names, limit = 10) => (names.length <= limit
   ? names.join(', ')
   : `${names.slice(0, limit).join(', ')}, and ${names.length - limit} more`);
 const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
+// Names what a value IS, for a refusal that has to be read by someone fixing a manifest.
+const shapeOf = value => (value === null ? 'literal `null`'
+  : Array.isArray(value) ? 'a list'
+    : typeof value === 'object' ? 'an object' : `a ${typeof value}`);
 const need = name => {
   // An unset expression in a workflow arrives as the empty string, not as an absent variable, so both are the
   // same failure: the trusted workflow did not say which evidence this is.
@@ -278,6 +299,26 @@ if (meta.capture_sha256 !== captureDigest) {
   refuse('capture.sha256', `the measure job recorded ${meta.capture_sha256} for its capture, but the bytes in `
     + `the artifact hash to ${captureDigest}`);
 }
+// WHERE THAT DIGEST CAME FROM IS PART OF THE EVIDENCE. The check above is only worth something if the two sides
+// of it are independent. It used to compare a file the measure job had read back from disk against the same
+// file's bytes in the artifact - and a review defeated exactly that: the candidate's own suite renamed a forged
+// stream over the capture BEFORE the trusted step hashed it, so both sides read the forgery and agreed.
+//
+// The measure job now hashes the stream in a trusted process as it passes through, and records HOW in the meta.
+// A meta that does not say `stream` is a meta produced by a job that hashed something it had read back, which is
+// the defeated shape, and it is refused by name rather than trusted. This cannot be satisfied by a candidate
+// saying so: the field is checked against the digest above, which is over the artifact's bytes, and the whole
+// meta is bound to this run by the fields in section 6.
+if (meta.capture_hash_source !== 'stream') {
+  refuse('capture.hash_source', `the capture records its digest as ${JSON.stringify(meta.capture_hash_source ?? null)}, `
+    + 'not as `stream`: this authority accepts only a capture whose digest was taken in the trusted job as the '
+    + 'bytes passed through it, because a digest taken over a file the measured suite could have replaced '
+    + 'authenticates nothing about who wrote those bytes');
+}
+if (Number(meta.capture_bytes) !== captureBytes.length) {
+  refuse('capture.bytes', `the capture records ${JSON.stringify(meta.capture_bytes ?? null)} bytes, but the `
+    + `artifact holds ${captureBytes.length}`);
+}
 
 // 6. The meta must describe this run, this candidate, this authority and this runner. Each of these is a field
 //    the emitter also knows from somewhere else, so a capture lifted from another run fails one of them by name.
@@ -372,6 +413,16 @@ const claimBytes = Buffer.from(claimResponse.content, 'base64');
 let manifest;
 try { manifest = JSON.parse(claimBytes.toString('utf8')); }
 catch { refuse('claim.json', `${CLAIM_PATH} at ${candidateSha.slice(0, 12)} is not readable JSON`); }
+
+// THE CLAIM BODY IS A CONTAINER TOO, AND A WRONG CONTAINER IS A REFUSAL RATHER THAN A CRASH. A review found a
+// claim of literal `null` crashing the next line with an unhandled TypeError - fail-closed in effect, but in the
+// log indistinguishable from a broken workflow, so a malformed candidate manifest read as an infrastructure
+// fault instead of as a refused claim. A bare string, a number and a list already refused by name below; `null`
+// did not, because `null.code_revision` throws before any refusal is reached.
+if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+  refuse('claim.json', `${CLAIM_PATH} at ${candidateSha.slice(0, 12)} is ${shapeOf(manifest)}, not an object, `
+    + 'so it states no code revision and names no terms');
+}
 
 const claimedHead = manifest.code_revision?.head ?? null;
 const short = String(claimedHead).slice(0, 12);
@@ -489,6 +540,46 @@ if (unnamed.length > 0) {
     + `${candidateSha.slice(0, 12)} carry no term id, so the claim does not say which term they are about, and `
     + `a term this run cannot name is a term it cannot measure: entry ${listing(unnamed)}`);
 }
+// AND THE TWO CONTAINERS THE COVERAGE JOIN ITERATES. The block above validated `entries` and `entries[].id`
+// but not `control.test_names` or `killing_mutants`, which a review then supplied as strings: `.map is not a
+// function` and `.filter is not a function`, unhandled, with no field named. A container of the wrong type is
+// the candidate's mistake in the candidate's own file and it is refused as one. `absent` stays absent - a term
+// that names no control and no mutant is a term this run establishes nothing about, which the verdict already
+// records - so only a PRESENT value of the wrong shape refuses here.
+const containers = [];
+claimEntries.forEach((entry, index) => {
+  const control = entry.control;
+  if (control !== undefined && control !== null && (typeof control !== 'object' || Array.isArray(control))) {
+    containers.push(['claim.entries.control', index, `\`control\` as ${shapeOf(control)}, not an object`]);
+    return;
+  }
+  const names = control?.test_names;
+  if (names !== undefined && names !== null && !Array.isArray(names)) {
+    containers.push(['claim.entries.control.test_names', index,
+      `\`control.test_names\` as ${shapeOf(names)}, not a list of test names`]);
+  }
+  const mutants = entry.killing_mutants;
+  if (mutants !== undefined && mutants !== null && !Array.isArray(mutants)) {
+    containers.push(['claim.entries.killing_mutants', index,
+      `\`killing_mutants\` as ${shapeOf(mutants)}, not a list of mutants`]);
+  } else if (Array.isArray(mutants)) {
+    // `[null]` and `['x']` are the same mistake one level down: the join reads `mutant.test_name`, which throws
+    // on null and is silently undefined on a string, so an element that is not an object is named here too.
+    const bad = mutants.flatMap((mutant, at) => (mutant !== null && typeof mutant === 'object' && !Array.isArray(mutant)
+      ? []
+      : [`${at} (${shapeOf(mutant)})`]));
+    if (bad.length > 0) {
+      containers.push(['claim.entries.killing_mutants', index,
+        `\`killing_mutants\` element ${listing(bad)}, which names no test`]);
+    }
+  }
+});
+if (containers.length > 0) {
+  const [field] = containers[0];
+  refuse(field, `${containers.length} entry/entries of ${CLAIM_PATH} at ${candidateSha.slice(0, 12)} carry a `
+    + `container this run cannot read as one: ${listing(containers.map(([, index, what]) => `entry ${index} carries ${what}`))}`);
+}
+
 const idIndices = new Map();
 claimEntries.forEach((entry, index) => { idIndices.set(entry.id, [...(idIndices.get(entry.id) ?? []), index]); });
 const collisions = [...idIndices.entries()].filter(([, at]) => at.length > 1)
@@ -553,6 +644,7 @@ const problems = [];
 const pointsAtIndent = new Map();  // nesting indent -> points reported at it since that level's last plan
 const plans = [];                  // every plan line, with what was reported under it
 const typed = { test: 0, suite: 0 };
+const tally = { pass: 0, fail: 0, skip: 0, todo: 0 };  // test points, by the status the runner reported them with
 let headers = 0;
 let footers = 0;
 let yamlIndent = null;             // indent of the `---` of the YAML block currently open, or null
@@ -596,6 +688,11 @@ const close = () => {
   // files of one glob are ordinary, so this collapses pessimistically rather than refusing: the worst status
   // any point under that name reported wins, and the repeat itself is recorded.
   const status = statusOf(open);
+  // Tallied here so the summary block can be reconciled against the POINTS, status by status, rather than only
+  // against the total. `# pass` excludes a directive and a suite point; `# skipped` and `# todo` are where the
+  // directives land; a cancelled test is reported as an undirected `not ok` point and counted in `# cancelled`,
+  // so the point line cannot tell a cancellation from a failure and the reconciliation below adds the two.
+  if (open.type === 'test') tally[open.directive ?? (open.ok ? 'pass' : 'fail')] += 1;
   const prior = observed.get(open.name);
   observed.set(open.name, prior
     ? { status: STATUS_RANK[status] > STATUS_RANK[prior.status] ? status : prior.status,
@@ -717,6 +814,64 @@ if (Object.values(counts).every(count => count !== null)) {
 }
 if (problems.length > 0) {
   fail(`the captured output is not a measurement a runner produced:\n  - ${problems.join('\n  - ')}`);
+}
+
+// A CAPTURE WHOSE OWN NUMBERS DISAGREE WITH ITSELF IS REFUSED BY NAME.
+//
+// A review produced a capture reporting `# tests 3 / # pass 3 / # fail 0` beside a suite exit code of 1 - the
+// residue of a forgery that replaced the stream but could not reach the exit status the trusted job recorded -
+// and the emitter accepted it: verdict success, admissible, attested. The structural checks above reconcile the
+// summary against the plan and against the count of points, but nothing reconciled the capture against the one
+// number that does not come from the stream at all.
+//
+// So every invariant `node --test --test-reporter=tap` holds over its own output is enforced here, and each is
+// a refusal naming the field that broke:
+//
+//   1. `# pass`      == the ok test points carrying no directive.
+//   2. `# fail` + `# cancelled` == the `not ok` test points carrying no directive. Added together because a
+//      cancelled test is reported as an undirected `not ok` point exactly like a failing one - the difference is
+//      in the YAML block, which this emitter deliberately never reads as evidence.
+//   3. `# skipped`   == the test points carrying a `# SKIP` directive.
+//   4. `# todo`      == the test points carrying a `# TODO` directive.
+//   5. `# tests`     == the count of `type: 'test'` points          (checked above, with the plan).
+//   6. `# suites`    == the count of `type: 'suite'` points         (checked above, with the plan).
+//   7. `# tests`     == pass + fail + skipped + todo                (checked above).
+//   8. exit != 0     -> `# fail` + `# cancelled` > 0. A run the runner exited non-zero on reported at least one
+//      failing or cancelled point; `ok 3 / fail 0 / exit 1` is not a state this runner can produce.
+//   9. exit == 0     -> `# fail` + `# cancelled` == 0. The mirror: this runner exits non-zero whenever a test
+//      failed or was cancelled, so a failure beside exit 0 means the exit code and the stream describe
+//      different runs.
+//
+// 8 and 9 are the only two checks in this file that read a fact from OUTSIDE the stream - the exit status the
+// trusted capture process took from waitpid - so they are the only well-formedness checks a candidate cannot
+// satisfy from inside its own output. They are refusals and not receipt `reasons` because a capture that
+// contradicts itself is not a measurement to report a verdict about. The direction of the risk is stated
+// plainly: if some future runner legitimately exits non-zero with no failing point (a coverage threshold, say),
+// this refuses a genuine run rather than passing a forged one. That is the direction this authority errs in,
+// and the enum's commands are `node --test` with no such flag.
+const exitCode = Number(suiteExit);
+const unfinished = counts.not_ok + counts.cancelled;
+const summaryChecks = [
+  ['capture.summary.pass', counts.ok, tally.pass, '`# pass` against the ok test points carrying no directive'],
+  ['capture.summary.fail', unfinished, tally.fail, '`# fail` + `# cancelled` against the `not ok` test points carrying no directive'],
+  ['capture.summary.skipped', counts.skipped, tally.skip, '`# skipped` against the test points carrying a `# SKIP` directive'],
+  ['capture.summary.todo', counts.todo, tally.todo, '`# todo` against the test points carrying a `# TODO` directive'],
+];
+for (const [field, reported, counted, what] of summaryChecks) {
+  if (reported !== counted) {
+    refuse(field, `the capture contradicts itself: ${what} is ${reported} against ${counted}, so its summary `
+      + 'does not describe the points it enumerated');
+  }
+}
+if (exitCode !== 0 && unfinished === 0) {
+  refuse('capture.suite_exit', `the capture contradicts itself: the trusted job recorded suite exit ${suiteExit}, `
+    + `but the stream reports ${counts.not_ok} failing and ${counts.cancelled} cancelled point(s) out of `
+    + `${counts.tests} test(s) - a run this runner exited non-zero on reported at least one of them`);
+}
+if (exitCode === 0 && unfinished > 0) {
+  refuse('capture.suite_exit', `the capture contradicts itself: the stream reports ${counts.not_ok} failing and `
+    + `${counts.cancelled} cancelled point(s), but the trusted job recorded suite exit 0 - this runner exits `
+    + 'non-zero whenever a test failed or was cancelled');
 }
 
 const perTest = [...named.values()].map(test => {
@@ -862,7 +1017,27 @@ const receipt = {
   // part of it. Each field below is something GitHub reports, not something a job asserted.
   provenance: {
     statement: 'the capture this receipt reads was produced by the trusted measure job of this run, which chose '
-      + 'and invoked the runner; the candidate contributed only the code under test and the claim it commits',
+      + 'and invoked the runner and hashed its output stream as the bytes passed through it; the candidate chose '
+      + 'the code under test and the claim it commits, and no path, field, command or artifact this process read',
+    // WHAT THIS RECEIPT DOES NOT ESTABLISH, carried in the receipt itself rather than left to a reader to infer.
+    // An earlier version of the statement above said the candidate contributed "only the code under test and the
+    // claim it commits", full stop. A review showed that to be false as written - the candidate also wrote the
+    // capture's bytes, by renaming a forged stream over the file the trusted job hashed in a later step. That
+    // route is closed (the digest is now taken in the trusted process as the stream passes through, and a
+    // replacement is refused at capture.sha256), but the deeper limit below is NOT closed and cannot be closed
+    // by anything in this workflow, so it is stated as a field of every receipt this authority emits.
+    limits: [
+      'the measured tests print into the very stream this capture is: a candidate whose test bodies emit '
+        + 'plausible, internally consistent TAP of their own put those bytes into the stream the trusted job '
+        + 'hashed, and this receipt cannot distinguish them from the reporter own lines. What is established is '
+        + 'the origin of the bytes, never the truthfulness of what they say.',
+      'the capture is written by a process running as the same user as the measured suite, so a candidate that '
+        + 'detaches a process outliving its own run could still race the write of the capture and its meta. Such '
+        + 'a forgery has to satisfy every field of the meta against the API, one at a time, but nothing here '
+        + 'makes the race impossible; only a different uid or a container the suite cannot escape would.',
+      'admissible_as_pin has no independent enforcer in this repository: this workflow refuses to attest a '
+        + 'receipt marked false, and nothing else reads the field. A consumer must read it themselves.',
+    ],
     measure_job: {
       name: measureJob.name,
       id: String(measureJob.id),
@@ -884,6 +1059,13 @@ const receipt = {
       sha256: captureDigest,
       bytes: captureBytes.length,
       suite_exit: suiteExit,
+      // HOW the digest was taken, because it is the difference between a capture whose origin is established and
+      // one whose bytes the measured code could have replaced after the fact. `stream` is the only value this
+      // emitter accepts; a meta saying anything else is refused at capture.hash_source.
+      hashed: 'in the trusted job, as the stream passed through it',
+      hashed_by: meta.capture_hashed_by ?? null,
+      hash_source: meta.capture_hash_source,
+      suite_signal: meta.suite_signal ?? null,
     },
     runner: {
       key: runnerKey,

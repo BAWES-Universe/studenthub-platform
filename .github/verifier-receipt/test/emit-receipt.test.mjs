@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import * as world from './world.mjs';
 
 const refusedOn = (result, field) => {
@@ -1007,4 +1008,292 @@ test('a well-formed manifest carries its entry index into every term row and eve
   assert.deepEqual(receipt.named_tests.map(test => [test.entry, test.term, test.kind]),
     [[0, 'TERM-1', 'control'], [0, 'TERM-1', 'mutant'], [1, 'TERM-2', 'control']]);
   assert.equal(receipt.conclusion.verdict, 'success');
+});
+
+// ---- the capture is hashed as it passes through, and a capture that contradicts itself is refused -------------
+
+// A review defeated the whole provenance chain here. The measure job used to redirect the runner's output into
+// $RUNNER_TEMP/capture/suite.out and hash that file in the NEXT step, so the candidate's own test bodies - which
+// run inside the capture step, as the same user, with RUNNER_TEMP in their environment - could stage a forged TAP
+// stream and rename(2) it over the capture. The trusted step then hashed the forgery, and twenty-seven
+// provenance checks all passed: every one of them authenticates WHICH JOB uploaded the artifact, and none
+// authenticated WHO WROTE THE BYTES INSIDE IT.
+//
+// The attack is kept as a fixture (fixtures/rewriting-suite.mjs) and run for real against the capture program,
+// because the only honest way to show a defence holds is to point the defeat at it.
+test('the capture program hashes the stream as it passes through, so the rename that replaced the capture cannot', () => {
+  const taken = world.runCapture({ fixture: 'rewriting-suite.mjs' });
+  assert.equal(taken.code, 0, `${taken.stdout}${taken.stderr}`);
+  assert.deepEqual(taken.entries, ['capture-meta.json', 'suite.out']);
+  // The forged stream is nowhere in the capture: the capture did not exist as a file while the suite ran, so
+  // there was nothing to rename over, and the attempt itself is recorded as the failing test point it is.
+  assert.doesNotMatch(taken.bytes, /^ok 3 - the push broker retries only reads$/m);
+  assert.match(taken.bytes, /^not ok 2 - the coordinator refuses a stale head$/m);
+  assert.match(taken.bytes, /ENOENT/, 'the rewriting test failed to reach the capture, and said so in the stream');
+  assert.match(taken.bytes, /^# fail 3$/m);
+  // The digest in the meta is the streaming one, and the bytes on disk still hash to it.
+  assert.equal(taken.meta.capture_hash_source, 'stream');
+  assert.equal(taken.meta.capture_sha256,
+    crypto.createHash('sha256').update(taken.bytes).digest('hex'));
+  assert.equal(taken.meta.capture_bytes, Buffer.byteLength(taken.bytes));
+  // And the exit status comes from waitpid in the trusted process, not from a $GITHUB_OUTPUT line the measured
+  // code can append to - the adjacent finding of the same review.
+  assert.equal(taken.meta.suite_exit, '1');
+});
+
+test('a capture directory the measured code created first is refused, not written into', () => {
+  const taken = world.runCapture({ fixture: 'claim-suite.mjs', preCreateDir: true });
+  assert.equal(taken.code, 1);
+  assert.match(taken.stderr, /REFUSING: capture\.directory: .* already exists before the runner has been invoked/);
+  // Fail closed: no meta is written, so the artifact cannot hold the two files the emitter demands.
+  assert.equal(taken.meta, null);
+});
+
+test('the capture program refuses rather than defaulting anything that identifies the measurement', () => {
+  for (const missing of ['CAPTURE_DIR', 'CANDIDATE_DIR', 'RUNNER_COMMAND', 'RUNNER_KEY', 'CANDIDATE_SHA',
+    'CANDIDATE_TREE', 'TRUSTED_SOURCE_SHA', 'JOB_NAME', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT']) {
+    const taken = world.runCapture({ fixture: 'claim-suite.mjs', env: { [missing]: '' } });
+    assert.equal(taken.code, 1, `${missing} was defaulted`);
+    assert.match(taken.stderr, new RegExp(`REFUSING: env\\.${missing}:`));
+  }
+});
+
+// The capture this authority really produces, fed to the emitter as the artifact's contents - so the two halves
+// of the chain are tested joined, not each against a fixture of the other.
+const worldFromCapture = (taken, patch = {}) => world.build({
+  capture: taken.bytes,
+  meta: { ...taken.meta, ...(patch.meta ?? {}) },
+  ...patch,
+});
+// The emitter checks the meta's runner command against the PROTECTED ENUM, so a world whose capture was taken
+// over a fixture suite needs an enum that names that fixture - the check stays live, over an enum this test owns
+// rather than over a command the world asserts twice.
+const enumNaming = (built, command) => {
+  const spec = path.join(built.root, 'runners.json');
+  fs.writeFileSync(spec, `${JSON.stringify({ runners: { coordinator: { command } } }, null, 2)}\n`);
+  return spec;
+};
+
+test('a capture the trusted program really took is what the emitter accepts', () => {
+  const taken = world.runCapture({ fixture: 'claim-suite.mjs' });
+  assert.equal(taken.code, 0, `${taken.stdout}${taken.stderr}`);
+  const built = worldFromCapture(taken);
+  const emitted = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, taken.meta.runner_command) });
+  assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.equal(receipt.named_tests_summary.pass, 3);
+  assert.equal(receipt.provenance.capture.sha256, taken.meta.capture_sha256);
+  assert.equal(receipt.provenance.capture.hashed, 'in the trusted job, as the stream passed through it');
+});
+
+test('a capture replaced after the trusted process hashed it is refused, naming the capture digest', () => {
+  const taken = world.runCapture({ fixture: 'claim-suite.mjs' });
+  // The residual the streaming hash leaves: a detached process that outlives the suite could still overwrite the
+  // file. It no longer overwrites the digest, because that was taken as the bytes passed through - so the
+  // substitution is refused on `capture.sha256` instead of being hashed as if it were the measurement.
+  const built = world.build({ capture: world.tapFor(world.NAMED_TESTS), meta: taken.meta });
+  const emitted = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, taken.meta.runner_command) });
+  assert.equal(emitted.code, 3);
+  assert.match(emitted.stderr, /REFUSING: capture\.sha256:/);
+});
+
+test('a capture whose meta does not say its digest came from the stream is refused, naming the hash source', () => {
+  for (const source of [undefined, 'file', 'read-back-after-the-run']) {
+    const built = world.build({ meta: { capture_hash_source: source } });
+    const emitted = world.emit(built);
+    assert.equal(emitted.code, 3);
+    assert.match(emitted.stderr, /REFUSING: capture\.hash_source:/);
+  }
+});
+
+test('a capture whose recorded byte count is not the artifact bytes is refused, naming the count', () => {
+  const built = world.build({ meta: { capture_bytes: 17 } });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 3);
+  assert.match(emitted.stderr, /REFUSING: capture\.bytes: the capture records 17 bytes/);
+});
+
+// THE SELF-CONTRADICTORY CAPTURE. The review's probe: a stream reporting `# tests 3 / # pass 3 / # fail 0`
+// beside the exit code 1 the trusted job recorded - the residue of a forgery that could replace the stream but
+// not the exit status - accepted as verdict success, admissible, attested.
+test('a capture reporting no failure beside a non-zero suite exit is refused, naming the exit', () => {
+  const built = world.build({ meta: { suite_exit: '1' } });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 3);
+  assert.match(emitted.stderr, /REFUSING: capture\.suite_exit: the capture contradicts itself/);
+  assert.match(emitted.stderr, /recorded suite exit 1/);
+  assert.equal(fs.existsSync(built.receiptPath), false, 'a refusal writes no receipt for the gate to read');
+});
+
+test('a capture reporting a failure beside a suite exit of 0 is refused, naming the exit', () => {
+  const built = world.build({
+    capture: world.tapFor(world.NAMED_TESTS, { failing: [world.NAMED_TESTS[0]] }),
+    meta: { suite_exit: '0' },
+  });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 3);
+  assert.match(emitted.stderr, /REFUSING: capture\.suite_exit: the capture contradicts itself/);
+  assert.match(emitted.stderr, /recorded suite exit 0/);
+});
+
+test('a summary whose per-status counts do not match the points it enumerated is refused, status by status', () => {
+  // Three ok test points, a summary that adds up and a plan that matches - but the summary attributes one of
+  // them to `# fail`. Everything the well-formedness check reconciled before this agrees; the point statuses do
+  // not, and the names are what a term is established by.
+  const lines = world.tapFor(world.NAMED_TESTS).split('\n')
+    .map(line => (line === '# pass 3' ? '# pass 2' : line === '# fail 0' ? '# fail 1' : line));
+  const built = world.build({ capture: lines.join('\n'), meta: { suite_exit: '1' } });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 3);
+  assert.match(emitted.stderr, /REFUSING: capture\.summary\.pass: the capture contradicts itself/);
+});
+
+test('the genuine capture of a skipped test, a todo and an empty describe reconciles status by status', () => {
+  // The guard on the four new per-status checks: a REAL reporter's output, where `# pass` excludes a directive
+  // and a suite point, `# skipped` and `# todo` hold the directives, and `# suites` holds the describe. If the
+  // checks were stricter than the reporter, this would refuse a genuine measurement.
+  const built = world.build({
+    capture: world.genuineTap('skipped-and-suite.mjs'),
+    claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+      entries: [{ id: 'TERM-1', control: { test_names: ['the coordinator refuses a stale head'] } }] },
+  });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual([receipt.suite.tests, receipt.suite.suites, receipt.suite.ok, receipt.suite.skipped,
+    receipt.suite.todo, receipt.suite.exit], [3, 1, 1, 1, 1, '0']);
+  assert.equal(receipt.conclusion.verdict, 'success');
+});
+
+// ---- a container of the wrong type is a named refusal, not an unhandled TypeError ----------------------------
+
+// A review supplied `control.test_names` as a string and `killing_mutants` as a string, and got
+// `.map is not a function` and `.filter is not a function` - fail-closed in effect, but in the log
+// indistinguishable from a broken workflow, so a malformed candidate manifest read as an infrastructure fault
+// rather than as a refused claim. The file claims every refusal names the field that did not match.
+test('a control.test_names that is not a list is refused, naming the container', () => {
+  const built = world.build({ claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-A', control: { test_names: 'the coordinator refuses a stale head' } }] } });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 3, emitted.stderr);
+  assert.match(emitted.stderr, /REFUSING: claim\.entries\.control\.test_names:/);
+  assert.match(emitted.stderr, /entry 0 carries `control\.test_names` as a string, not a list of test names/);
+});
+
+test('a killing_mutants that is not a list, and an element of one that names no test, are refused by name', () => {
+  const claim = entry => ({ code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE }, entries: [entry] });
+  const string = world.build({ claim: claim({ id: 'TERM-A', killing_mutants: 'x' }) });
+  assert.match(world.emit(string).stderr, /REFUSING: claim\.entries\.killing_mutants: .*`killing_mutants` as a string/);
+  const nulls = world.build({ claim: claim({ id: 'TERM-A', killing_mutants: [null] }) });
+  assert.match(world.emit(nulls).stderr, /REFUSING: claim\.entries\.killing_mutants: .*element 0 \(literal `null`\)/);
+  const strings = world.build({ claim: claim({ id: 'TERM-A', killing_mutants: ['a name, not a mutant'] }) });
+  assert.match(world.emit(strings).stderr, /REFUSING: claim\.entries\.killing_mutants: .*element 0 \(a string\)/);
+  const control = world.build({ claim: claim({ id: 'TERM-A', control: 'a name, not an object' }) });
+  assert.match(world.emit(control).stderr, /REFUSING: claim\.entries\.control: .*`control` as a string, not an object/);
+});
+
+test('an entry that names neither a control nor a mutant is still a term establishing nothing, not a refusal', () => {
+  // The line between the refusal above and the verdict: an ABSENT container is a term this run establishes
+  // nothing about, which the verdict already records by name. Only a PRESENT container of the wrong type is
+  // refused, so this distinction cannot be collapsed later by accident.
+  const built = world.build({ claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-A' }] } });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 0, emitted.stderr);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' '), /1 term\(s\) name no tests/);
+});
+
+test('a claim body that is not an object at all is refused, naming what it is', () => {
+  const route = `/repos/${world.REPO}/contents/${world.CLAIM_PATH}?ref=${world.CANDIDATE_SHA}`;
+  for (const [body, what] of [['null\n', 'literal `null`'], ['[]\n', 'a list'], ['"x"\n', 'a string'], ['7\n', 'a number']]) {
+    const built = world.build({ routes: { [route]: { json: { sha: 'f'.repeat(40),
+      content: Buffer.from(body).toString('base64') } } } });
+    const emitted = world.emit(built);
+    assert.equal(emitted.code, 3, emitted.stderr);
+    assert.match(emitted.stderr, new RegExp(`REFUSING: claim\\.json: .* is ${what.replace(/[`[\]]/g, m => `\\${m}`)}, not an object`));
+  }
+});
+
+// ---- the gate reconciles the terms against the rows they claim to count --------------------------------------
+
+// The one line the review found missing, and the reason the rest of the gate was a re-read rather than a second
+// reading: terms[].named was never reconciled against named_tests, so a receipt whose term claimed coverage that
+// no per-test row supported passed with admissible=true. None of these is reachable by a candidate; all three
+// are reachable by an emitter bug, which is what a second reader is for.
+const forgeReceipt = (built, edit) => {
+  const receipt = world.receiptOf(built);
+  edit(receipt);
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  return receipt;
+};
+const ONE_TERM = {
+  code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+  entries: [{ id: 'TERM-A', control: { test_names: ['the coordinator refuses a stale head'] } }],
+};
+
+test('the gate refuses a terms row claiming coverage no named test row supports', () => {
+  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  assert.equal(world.emit(built).code, 0);
+  forgeReceipt(built, receipt => {
+    receipt.terms.push({ entry: 1, id: 'TERM-B', named: 1, pass: 1, fail: 0, absent: 0, skipped: 0, todo: 0,
+      suite_points: 0, establishes: true });
+    receipt.terms_summary.total = 2;
+    receipt.terms_summary.establishing = 2;
+  });
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
+  assert.match(gate.stderr, /::error::these terms claim coverage that no named test row of this receipt supports/);
+  assert.match(gate.stderr, /TERM-B \(entry 1\) claims named=1 pass=1, but named_tests holds 0 test\(s\)/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a terms row whose counts are not counts', () => {
+  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  assert.equal(world.emit(built).code, 0);
+  // `!(term.named > 0)` is satisfied by the string '1', which is why reading that field was never a check.
+  forgeReceipt(built, receipt => { receipt.terms[0].named = '1'; });
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
+  assert.match(gate.stderr, /TERM-A reports named="1" pass=1, which are not counts/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a receipt whose named_tests were emptied under an unchanged summary', () => {
+  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  assert.equal(world.emit(built).code, 0);
+  forgeReceipt(built, receipt => { receipt.named_tests = []; });
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
+  assert.match(gate.stderr, /::error::these terms claim coverage that no named test row of this receipt supports/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a named test row attributed to no term at all', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  forgeReceipt(built, receipt => { receipt.named_tests[0].entry = 7; });
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a summary that disagrees with the rows the receipt lists', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  forgeReceipt(built, receipt => { receipt.named_tests_summary.named = 4; });
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
+  assert.match(gate.stderr, /::error::named_tests_summary says named=4/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate still passes a whole receipt this emitter produced, terms and rows reconciled', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const gate = runGate(built);
+  assert.equal(gate.code, 0, `${gate.stdout}${gate.stderr}`);
+  assert.equal(gate.output, 'admissible=true\n');
 });

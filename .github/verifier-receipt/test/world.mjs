@@ -34,6 +34,13 @@ export const AUTHORITY_WORKFLOW_SHA = '1a'.repeat(20);
 export const AUTHORITY_DIR_SHA = '2b'.repeat(20);
 
 const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
+// What `node --test` would have exited with for a capture: non-zero if and only if it reported a failing or a
+// cancelled point. A capture with no summary at all (a truncated or hand-written stream, which several tests
+// supply deliberately) reads as 0, and is refused on its structure long before the exit code is reconciled.
+const exitFor = capture => {
+  const of = field => Number(new RegExp(`^# ${field} (\\d+)$`, 'm').exec(capture)?.[1] ?? 0);
+  return of('fail') + of('cancelled') > 0 ? '1' : '0';
+};
 
 // A genuine capture: `node --test --test-reporter=tap` run over a fixture file, so what the parser is fed is
 // the reporter's own bytes rather than a hand-shaped imitation of them. Used where the point of the test is
@@ -65,6 +72,54 @@ export const tapFor = (names, { failing = [] } = {}) => {
   lines.push(`1..${names.length}`, `# tests ${names.length}`, '# suites 0', `# pass ${names.length - failing.length}`,
     `# fail ${failing.length}`, '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 12.5', '');
   return lines.join('\n');
+};
+
+export const CAPTURE_PROGRAM = path.join(HERE, '..', 'capture-stream.mjs');
+
+// RUN THE TRUSTED CAPTURE PROGRAM FOR REAL, the way the measure job runs it: a fresh RUNNER_TEMP, the capture
+// directory it is expected to create itself, a candidate directory to run in, and the runner command the
+// protected enum would have supplied. What comes back is what that program really wrote - the bytes, its meta,
+// its exit code and its diagnostics - so the tests below are about a capture this authority produced rather than
+// one a test assembled.
+export const runCapture = ({ fixture, runnerCommand, preCreateDir = false, env: envPatch = {} } = {}) => {
+  const runnerTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-temp-'));
+  const captureDir = path.join(runnerTemp, 'capture');
+  if (preCreateDir) fs.mkdirSync(captureDir);
+  const childEnv = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    RUNNER_TEMP: runnerTemp,
+    CAPTURE_DIR: captureDir,
+    CANDIDATE_DIR: HERE,
+    RUNNER_COMMAND: runnerCommand ?? `node --test --test-reporter=tap fixtures/${fixture}`,
+    RUNNER_KEY,
+    CANDIDATE_SHA,
+    CANDIDATE_TREE,
+    TRUSTED_SOURCE_SHA: TRUSTED_SHA,
+    JOB_NAME: MEASURE_JOB_NAME,
+    GITHUB_RUN_ID: RUN_ID,
+    GITHUB_RUN_ATTEMPT: RUN_ATTEMPT,
+    ...envPatch,
+  };
+  // NODE_TEST_CONTEXT is deliberately absent: a nested `node --test` that sees it reports to its parent in
+  // v8-serialised frames instead of writing TAP, and what these tests need is the reporter's own bytes.
+  let out;
+  try {
+    out = { code: 0, stdout: execFileSync(process.execPath, [CAPTURE_PROGRAM],
+      { env: childEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }), stderr: '' };
+  } catch (error) {
+    out = { code: error.status, stdout: String(error.stdout ?? ''), stderr: String(error.stderr ?? '') };
+  }
+  const capturePath = path.join(captureDir, 'suite.out');
+  const metaPath = path.join(captureDir, 'capture-meta.json');
+  return {
+    ...out,
+    captureDir,
+    runnerTemp,
+    entries: fs.existsSync(captureDir) ? fs.readdirSync(captureDir).sort() : [],
+    bytes: fs.existsSync(capturePath) ? fs.readFileSync(capturePath, 'utf8') : null,
+    meta: fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf8')) : null,
+  };
 };
 
 export const CLAIM = {
@@ -101,7 +156,18 @@ export const build = (patch = {}) => {
     capture_file: 'suite.out',
     capture_bytes: Buffer.byteLength(capture),
     capture_sha256: sha256(Buffer.from(capture)),
-    suite_exit: '0',
+    // The exit status the runner really returned, DERIVED FROM THE CAPTURE the world holds rather than fixed at
+    // '0'. The emitter now refuses a capture whose counts contradict the exit code the trusted job recorded, so a
+    // world whose capture reports a failing point beside `suite_exit: '0'` is a self-contradictory world and
+    // would be refused on that rather than on the fact each test is about. `node --test` exits non-zero exactly
+    // when it reports a failing or cancelled point, and this reproduces that rule.
+    suite_exit: exitFor(capture),
+    suite_signal: null,
+    // The measure job hashes the stream as it passes through a trusted process and records that it did. The
+    // emitter refuses any other value, because a digest taken over a file the measured suite could have replaced
+    // authenticates nothing about who wrote the bytes.
+    capture_hash_source: 'stream',
+    capture_hashed_by: '.github/verifier-receipt/capture-stream.mjs',
     ...(patch.meta ?? {}),
   };
   fs.writeFileSync(path.join(captureDir, 'capture-meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
