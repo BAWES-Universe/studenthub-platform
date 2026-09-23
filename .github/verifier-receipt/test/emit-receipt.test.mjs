@@ -718,3 +718,120 @@ test('a capture that records no candidate tree is refused, naming the capture\'s
   const built = world.build({ meta: { candidate_tree: '' } });
   refusedOn(world.emit(built), 'capture.candidate_tree');
 });
+
+// ---- the workflow's own bounds, and its own gate, read out of the workflow file --------------------------------
+
+// Everything above tests the emitter. The two things below test the WORKFLOW, because a receipt's authority
+// rests on the job that measured and on the step that refuses - and neither of those is code the emitter's
+// tests would otherwise touch.
+const WORKFLOW_PATH = path.join(world.HERE, '..', '..', 'workflows', 'verifier-receipt.yml');
+const WORKFLOW = fs.readFileSync(WORKFLOW_PATH, 'utf8');
+
+// `grep -n timeout .github/workflows/verifier-receipt.yml` once returned nothing. With no bound, a job that
+// wedges - the measure job runs a candidate's suite, and a suite can hang - holds a hosted runner until
+// GitHub cancels it at the 360-minute default: fail-closed, since `emit` needs `measure` and nothing is
+// minted, but six hours spent on a cancellation that names nothing, on a workflow that triggers on every pull
+// request touching this authority. This asserts the bound for EVERY job, so a job added later without one
+// fails here rather than on a runner.
+test('every job of this workflow bounds how long it may hold a runner', () => {
+  const jobsBlock = WORKFLOW.slice(WORKFLOW.indexOf('\njobs:\n') + 1);
+  const heads = [...jobsBlock.matchAll(/^ {2}([a-z][\w-]*):$/gm)];
+  const jobs = heads.map((head, index) => ({
+    name: head[1],
+    body: jobsBlock.slice(head.index, heads[index + 1]?.index ?? jobsBlock.length),
+  }));
+  assert.deepEqual(jobs.map(job => job.name), ['trust', 'measure', 'emit'],
+    'the jobs this workflow declares - if this changed, the bounds below were not re-read');
+  for (const job of jobs) {
+    const bound = /^ {4}timeout-minutes: (\d+)$/m.exec(job.body);
+    assert.ok(bound, `job \`${job.name}\` declares no timeout-minutes, so it runs to GitHub's 360-minute default`);
+    const minutes = Number(bound[1]);
+    assert.ok(minutes > 0 && minutes < 360,
+      `job \`${job.name}\` is bounded at ${minutes} minutes, which is not below GitHub's 360-minute default`);
+  }
+  // And the measure job's bound in particular is the one chosen against a measurement: the pinned `coordinator`
+  // runner completes its 3667 tests in 289s (4m49s), so a bound near that would fail a green suite on a hosted
+  // runner only slightly slower than the machine that was measured.
+  const measure = jobs.find(job => job.name === 'measure');
+  assert.ok(Number(/^ {4}timeout-minutes: (\d+)$/m.exec(measure.body)[1]) >= 10,
+    'the measure job must leave real room above the 4m49s the pinned runner takes');
+});
+
+// THE GATE STEP, LIFTED OUT OF THE YAML AND RUN. The gate is the receipt's second reader: the emitter writes a
+// verdict, and this step refuses to let `emit`'s attest step see an `admissible` output unless the receipt it
+// reads says what it must. Until now nothing executed it - it was asserted to be right by reading it. Its body
+// is extracted here verbatim, so a change to the step changes what these tests run.
+const GATE_SOURCE = (() => {
+  const step = WORKFLOW.indexOf('\n        id: gate\n');
+  assert.ok(step > 0, 'the workflow no longer declares a step with `id: gate`');
+  const opens = '\n          node -e "\n';
+  const from = WORKFLOW.indexOf(opens, step);
+  assert.ok(from > 0, 'the gate step no longer runs its body through `node -e`');
+  const rest = WORKFLOW.slice(from + opens.length);
+  const to = rest.indexOf('\n          "\n');
+  assert.ok(to > 0, 'the gate step\'s `node -e` body is not closed where this test expects it');
+  // The body is a double-quoted shell word, so the shell turns each `\`` back into a backtick before node sees
+  // it. Nothing else in it is escaped - it carries no `$` and no backslash the shell would eat.
+  const body = rest.slice(0, to);
+  assert.ok(!body.includes('$('), 'the gate body gained a shell substitution this extraction does not model');
+  return body.replace(/\\`/g, '`');
+})();
+
+// The gate is run where the emitter just wrote, because the step reads `receipt.json` from the job's workspace.
+const runGate = built => {
+  const outputFile = path.join(built.root, 'github-output');
+  fs.writeFileSync(outputFile, '');
+  const gate = world.runNode(['-e', GATE_SOURCE],
+    { cwd: path.dirname(built.receiptPath), env: { GITHUB_OUTPUT: outputFile } });
+  return { ...gate, output: fs.readFileSync(outputFile, 'utf8') };
+};
+
+test('the gate step, lifted from the workflow, passes a receipt this emitter really produced', () => {
+  const built = world.build();
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 0, `${gate.stdout}${gate.stderr}`);
+  // The positive control of the gate: it writes the output the attest step's `if:` reads, and writes it false
+  // or true from the receipt rather than from the fact that the gate passed.
+  assert.equal(gate.output, 'admissible=true\n');
+  assert.match(gate.stdout, /^verdict success named 3 pass 3 fail 0 absent 0$/m);
+});
+
+test('the gate step refuses a named test the runner only skipped, even when the verdict says success', () => {
+  // Built from a receipt this emitter really produced over a genuine `# SKIP` capture, then forged in exactly
+  // the two places the emitter would have refused it - the verdict and the summary - so that what reaches the
+  // gate is a receipt whose every claim-level field says the run established its term, and whose per-test
+  // record still says the runner never executed the test. That is the one path the verdict cannot catch, and
+  // it is the whole reason the gate is a second reader rather than a restatement of the first.
+  const built = world.build({
+    capture: world.genuineTap('skipped-and-suite.mjs'),
+    claim: {
+      code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+      entries: [{ id: 'TERM-SKIP', control: { test_names: ['the stale-head guard holds'] }, killing_mutants: [] }],
+    },
+  });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
+  const receipt = world.receiptOf(built);
+  // What the emitter really wrote for a test the runner really skipped.
+  assert.equal(receipt.named_tests[0].status, 'skip');
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  // The forgery, and nothing else: every field the gate reads before the per-test rule now says success.
+  receipt.conclusion.verdict = 'success';
+  receipt.conclusion.reasons = [];
+  receipt.named_tests_summary = { named: 1, pass: 1, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0 };
+  receipt.terms = [{ id: 'TERM-SKIP', named: 1, pass: 1, fail: 0, absent: 0, skipped: 0, todo: 0,
+    suite_points: 0, establishes: true }];
+  receipt.terms_summary = { total: 1, establishing: 1, naming_no_tests: 0, without_evidence: [] };
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
+  // And it says which test and which status, rather than that something was wrong.
+  assert.match(gate.stderr, /::error::these named tests were not measured as passing in this run: /);
+  assert.match(gate.stderr, /the stale-head guard holds \[skip\]/);
+  // Nothing is written on a refusal, so `if: steps.gate.outputs.admissible == \'true\'` cannot select the
+  // attest step even if the step\'s own failure were somehow tolerated.
+  assert.equal(gate.output, '');
+});

@@ -201,3 +201,17 @@ export const emit = (world, envPatch = {}) => {
 };
 
 export const receiptOf = world => JSON.parse(fs.readFileSync(world.receiptPath, 'utf8'));
+
+// Run a node process and REPORT what it did rather than throwing, so a test can assert on a non-zero exit and
+// on what was written to stderr. Used to run the workflow's gate step - whose body the tests lift verbatim out
+// of the YAML - against receipts this emitter really produced, so that second check is exercised rather than
+// assumed to say what its source says.
+export const runNode = (args, { cwd, env = {} } = {}) => {
+  try {
+    const stdout = execFileSync(process.execPath, args,
+      { cwd, env: { PATH: process.env.PATH, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { code: 0, stdout, stderr: '' };
+  } catch (error) {
+    return { code: error.status, stdout: String(error.stdout ?? ''), stderr: String(error.stderr ?? '') };
+  }
+};

@@ -60,6 +60,10 @@ jobs:
   trust:
     name: Resolve the authority commit, the candidate and the runner
     runs-on: ubuntu-latest
+    # Two checkouts and a handful of API reads; nothing here invokes candidate code and nothing here can loop.
+    # Bounded anyway, so that NO job of this workflow can hold a hosted runner for GitHub's 360-minute default
+    # on the way to a cancellation that says nothing. 10 minutes is far above anything this job has taken.
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -339,6 +343,11 @@ jobs:
     name: Emit and attest the receipt from this run's own capture
     needs: [trust, measure]
     runs-on: ubuntu-latest
+    # This job runs no candidate code - it fetches this run's own evidence through the API and judges it - so
+    # its bound is set by the emitter's own test suite, the API reads and the artifact download rather than by
+    # a candidate's suite. 15 minutes is well above anything observed and still refuses a wedged download
+    # rather than holding a runner for six hours.
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
