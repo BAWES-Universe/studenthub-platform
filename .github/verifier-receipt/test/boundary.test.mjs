@@ -24,7 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { sandboxArgv, assertNoEscape, measurementEnv, SANDBOX_FLAGS } from '../sandbox.mjs';
+import { sandboxArgv, assertNoEscape, measurementEnv, SANDBOX_FLAGS, TMPFS_TMP } from '../sandbox.mjs';
 import { measure, checkMatrixFidelity, buildOverlay, namePattern, runnerArgv, expandGlobs } from '../controller.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -134,6 +134,65 @@ test('a weakened flag is refused before anything runs, and the refusal names the
       return true;
     }, `weakening matching ${expected} was not refused`);
   }
+});
+
+// THE ONE FLAG HERE THAT GRANTS RATHER THAN REMOVES, PINNED BY ITS EXACT OPTION STRING.
+//
+// /tmp is inside the container's own rootfs, which `--read-only` makes immutable, and this repository's suite
+// has call sites that name /tmp literally instead of asking where TMPDIR points. On the first real dispatch
+// that killed 27 of 122 test files with `EROFS: mkdtemp '/tmp/...'`, each dying file emitted its own plan into
+// the parent stream, and the emitter correctly refused a capture carrying three TAP plans.
+//
+// So the sandbox grants a tmpfs at /tmp - and a grant is the thing a reviewer has to be able to read back
+// exactly. This asserts the OPTION STRING, character for character, and then asserts that loosening any one
+// of its options is refused. A `--tmpfs /tmp` that quietly lost its `noexec` or its `size=` would still be a
+// `--tmpfs /tmp`, and a test that only looked for the flag would pass it.
+test('the sandbox grants a writable /tmp, on exactly the options it says, and no other', () => {
+  const argv = assertNoEscape(sandboxArgv({ image: IMAGE, sourceDir: '/ctl/src', scratchDir: '/ctl/scratch',
+    argv: ['/usr/local/bin/node', '--version'] }));
+  const at = argv.indexOf('--tmpfs');
+  assert.ok(at >= 0, '--tmpfs is absent, so /tmp is inside the read-only rootfs and every literal /tmp call site dies EROFS');
+  // The exact string, written out here rather than imported into the comparison, so that an edit to
+  // TMPFS_TMP has to be made in two places and read in both.
+  assert.equal(argv[at + 1], '/tmp:rw,noexec,nosuid,nodev,size=512m');
+  assert.equal(argv[at + 1], TMPFS_TMP, 'the flag the sandbox ships and the constant it exports have drifted apart');
+  // Exactly one tmpfs: a second one is a second writable directory nobody argued for.
+  assert.equal(argv.filter((_, i) => argv[i - 1] === '--tmpfs').length, 1);
+  // AND IT CHANGED NOTHING ELSE. /src is still mounted readonly - the grant is a directory that leads
+  // nowhere, not a loosening of the mount the mutation matrix rests on.
+  assert.match(argv.join(' '), /type=bind,source=\/ctl\/src,target=\/src,readonly/);
+  assert.ok(argv.includes('--read-only'), 'the container rootfs is no longer immutable');
+});
+
+test('a loosened /tmp option is refused before anything runs, and the refusal names the option', () => {
+  const sound = sandboxArgv({ image: IMAGE, sourceDir: '/ctl/src', scratchDir: '/ctl/scratch', argv: ['/usr/local/bin/node'] });
+  const withTmpfs = spec => sound.map((part, i) => (sound[i - 1] === '--tmpfs' ? spec : part));
+  const loosenings = [
+    // Each option dropped one at a time. noexec is the one that matters most - without it a candidate can
+    // drop a binary into /tmp and run it - but nosuid and nodev are refused by name too, because "which of
+    // these three actually mattered" is not a question this authority wants to be having at a review.
+    ['/tmp:rw,nosuid,nodev,size=512m', /drops noexec/],
+    ['/tmp:rw,noexec,nodev,size=512m', /drops nosuid/],
+    ['/tmp:rw,noexec,nosuid,size=512m', /drops nodev/],
+    // The size bound removed: a tmpfs is memory, and an unbounded one is a test body exhausting the runner.
+    ['/tmp:rw,noexec,nosuid,nodev', /carries no size= bound/],
+    // And the mount point moved. A tmpfs SHADOWS its mount point, so one at /src would cover the read-only
+    // source and one at /scratch would cover the directory the uid boundary rests on.
+    ['/src:rw,noexec,nosuid,nodev,size=512m', /a tmpfs is mounted at \/src/],
+    ['/scratch:rw,noexec,nosuid,nodev,size=512m', /a tmpfs is mounted at \/scratch/],
+  ];
+  for (const [spec, expected] of loosenings) {
+    assert.throws(() => assertNoEscape(withTmpfs(spec)), error => {
+      assert.match(error.message, /would not be sandboxed/);
+      assert.match(error.message, expected);
+      return true;
+    }, `the loosening ${spec} was not refused`);
+  }
+  // The flag removed outright, and a SECOND tmpfs added beside the sound one.
+  assert.throws(() => assertNoEscape(sound.filter((part, i) => part !== '--tmpfs' && sound[i - 1] !== '--tmpfs')),
+    /--tmpfs \/tmp:rw,noexec,nosuid,nodev,size=512m is absent/);
+  assert.throws(() => assertNoEscape([...sound.slice(0, 1), '--tmpfs', '/scratch:rw,size=1g', ...sound.slice(1)]),
+    /carries 2 tmpfs mounts/);
 });
 
 test('the flag list is frozen, and the measurement environment is the whole environment', () => {

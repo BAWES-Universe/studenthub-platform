@@ -40,10 +40,54 @@ import crypto from 'node:crypto';
 //                               this authority; bounded so the failure is a refusal rather than a hung job.
 //   --cgroupns private          The container does not observe the runner's cgroup tree.
 //   --rm                        No container state survives one measurement into the next.
+//   --tmpfs /tmp:...            A writable /tmp that belongs to this container and to nothing else. See the
+//                               block below: it is the newest flag here and the only one that grants rather
+//                               than removes, so it is argued for at length rather than listed.
 //
 // NOT PRESENT, AND THAT IS THE POINT: no --privileged, no --cap-add, no --security-opt seccomp=unconfined,
 // no --pid host, no --userns host, and above all NO DOCKER SOCKET. A mounted /var/run/docker.sock is root
 // on the runner in one command and would make every flag above decorative.
+//
+// ---------------------------------------------------------------------------------------------------------
+// THE SANDBOX-LOCAL /tmp: WHY IT IS HERE, AND WHY IT IS NOT A WEAKENING.
+// ---------------------------------------------------------------------------------------------------------
+//
+// WHY. TMPDIR points inside the measurement's own scratch and that scratch IS writable - the preflight probes
+// it and refuses the run if it is not. But a writable TMPDIR only helps the call sites that ASK where the
+// temporary directory is. This repository's suite has call sites that do not ask: they name `/tmp` literally,
+// in `fs.mkdtempSync("/tmp/shu-...")` and friends, and `/tmp` is inside the container's own rootfs, which
+// `--read-only` makes immutable. On the first real dispatch (run 35838458874) that cost 27 of 122 test files:
+// each died with `EROFS: mkdtemp '/tmp/...'` before declaring anything, node forwarded each dying file's own
+// plan into the parent stream, the capture came out carrying three TAP plans instead of one, and the emitter
+// correctly refused it as `capture.structure`. The measurement did not measure the suite; it measured the
+// absence of a directory.
+//
+// AND WHY THIS IS NOT A WEAKENING, stated against each thing a reader would reasonably fear:
+//
+//   IT IS FRESH, AND IT IS THIS CONTAINER'S ALONE. A tmpfs is created empty at container start and shared
+//   with nothing - not the host, not the runner, not the next measurement. `--rm` discards it. So it carries
+//   nothing into a measurement and nothing out of one, which is the property `--read-only` was protecting.
+//
+//   IT CREATES NO CHANNEL TO ANY AUTHORITY EVIDENCE. This is the question that matters, and the answer is by
+//   name: it is not /src (the candidate source, still mounted `readonly`, still asserted below and still
+//   probed EROFS by the preflight); it is not the controller's scratch (which is 0700 under the runner uid
+//   and is NEVER MOUNTED into any container, so it is ENOENT from in here); it is not a receipt path; it is
+//   not $GITHUB_OUTPUT, which is neither mounted nor named in the environment. A tmpfs at /tmp adds a
+//   directory that leads nowhere. The preflight proves each of those four still refuses, by name, every run.
+//
+//   IT IS noexec, nosuid AND nodev. A suite cannot drop a binary into /tmp and execute it, cannot gain a uid
+//   through a setuid bit there, and cannot open a device node there. Those are exactly the escapes a writable
+//   directory would otherwise reopen, and `no-new-privileges` and `--cap-drop ALL` still stand behind them.
+//
+//   IT IS BOUNDED. `size=` is not decoration: a tmpfs is memory, and an unbounded one is a candidate's test
+//   body exhausting the runner rather than failing. The bound is measured, not guessed - see the record in
+//   /home/bawes/work/d1-tmpfs.json for the peak it was taken from - and the preflight fills it every run to
+//   prove the bound is the kernel's rather than this comment's.
+//
+// WHAT THIS DOES NOT DO: it does not patch the call sites. Naming `/tmp` literally instead of `os.tmpdir()`
+// is still a defect in the measured repository, and moving those 218 call sites is a separate change on a
+// separate branch, made after the first genuine receipt and not before it.
+export const TMPFS_TMP = '/tmp:rw,noexec,nosuid,nodev,size=512m';
 export const SANDBOX_FLAGS = Object.freeze([
   '--rm',
   '--user', '10001:10001',
@@ -53,6 +97,7 @@ export const SANDBOX_FLAGS = Object.freeze([
   '--network', 'none',
   '--cgroupns', 'private',
   '--pids-limit', '2048',
+  '--tmpfs', TMPFS_TMP,
 ]);
 
 // WHERE THE CANDIDATE'S SOURCE AND ITS SCRATCH APPEAR INSIDE THE CONTAINER. Both are fixed: a path the
@@ -69,6 +114,11 @@ export const SCRATCH_MOUNT = '/scratch';
 // HOME and TMPDIR are both inside the controller-owned scratch mount because node, npm and this
 // repository's own fixtures all write there; pointing them anywhere else means a test failing on a
 // read-only filesystem for a reason that has nothing to do with what it tests.
+//
+// AND TMPDIR IS STILL NOT /tmp, WHICH IS THE POINT OF BOTH. TMPDIR names the scratch so that everything
+// asking where to write lands in a directory the controller created and can inspect afterwards; the /tmp
+// tmpfs above exists for the call sites that never ask. The two are different directories on purpose, and a
+// change that pointed TMPDIR at /tmp would throw away the controller's only view of what the suite wrote.
 export function measurementEnv({ nodeOptions = null } = {}) {
   const env = {
     PATH: '/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin',
@@ -135,7 +185,36 @@ const REQUIRED = [
   [['--cap-drop', 'ALL'], 'the measurement would keep capabilities'],
   [['--security-opt', 'no-new-privileges'], 'a setuid binary could raise the uid back'],
   [['--network', 'none'], 'the measurement could reach the network'],
+  // THE OPTION STRING, EXACTLY, not merely the flag. A `--tmpfs /tmp` with the options edited off is a
+  // different flag wearing the same name, and the thing this line is here to catch is an edit that keeps the
+  // /tmp and quietly loses the `noexec` or the `size=`.
+  [['--tmpfs', TMPFS_TMP], 'the measurement has no writable /tmp of its own, so every call site naming /tmp '
+    + 'literally dies EROFS against the read-only rootfs and its file never reports a plan'],
 ];
+
+// AND THE SAME STRING READ STRUCTURALLY, WHICH IS THE CHECK THAT SURVIVES AN EDIT TO TMPFS_TMP ITSELF.
+// The REQUIRED entry above compares against the constant, so a call site that passed some other tmpfs spec is
+// caught - but an edit to the constant moves both sides at once and would pass. This reads the options that
+// are ABOUT TO BE EXECUTED and refuses them on their own terms, so loosening the constant fails closed at the
+// first measurement rather than at a review that may not happen.
+const TMPFS_MUST_CARRY = ['rw', 'noexec', 'nosuid', 'nodev'];
+function checkTmpfs(argv, broken) {
+  const specs = argv.filter((_, at) => argv[at - 1] === '--tmpfs');
+  if (specs.length > 1)
+    broken.push(`the measurement carries ${specs.length} tmpfs mounts (${specs.join(' ')}), and this sandbox has exactly one`);
+  for (const spec of specs) {
+    const [where, ...options] = String(spec).split(/[:,]/);
+    // A tmpfs is writable and it SHADOWS whatever is under its mount point. At /tmp that is an empty
+    // directory of the image's; at /src it would cover the read-only source, and at /scratch the one
+    // directory whose ownership the uid boundary rests on. So the mount point is named, not merely bounded.
+    if (where !== '/tmp')
+      broken.push(`a tmpfs is mounted at ${where}: a tmpfs shadows its mount point, and the only path this sandbox may shadow is /tmp`);
+    for (const option of TMPFS_MUST_CARRY)
+      if (!options.includes(option)) broken.push(`the ${where} tmpfs drops ${option}, which is not this authority's to drop: ${spec}`);
+    if (!options.some(option => /^size=\S+$/.test(option)))
+      broken.push(`the ${where} tmpfs carries no size= bound, and a tmpfs is memory: an unbounded one is a candidate's test body exhausting the runner rather than failing: ${spec}`);
+  }
+}
 
 export function assertNoEscape(argv) {
   const broken = [];
@@ -144,6 +223,7 @@ export function assertNoEscape(argv) {
     const at = argv.indexOf(pair[0]);
     if (at < 0 || (pair.length > 1 && argv[at + 1] !== pair[1])) broken.push(`${pair.join(' ')} is absent, so ${why}`);
   }
+  checkTmpfs(argv, broken);
   // The source mount, read-only, by name. A bind that lost `readonly` lets a suite rewrite the code between
   // the run that measures it and the run that measures its mutant, which is the one thing a mutation matrix
   // must not permit.

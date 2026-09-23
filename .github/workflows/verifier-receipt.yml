@@ -358,20 +358,30 @@ jobs:
           echo "measurement image $reference"
           docker image inspect --format 'id {{.Id}} created {{.Created}} os {{.Os}}/{{.Architecture}}' "$reference"
 
-      # TWO SCRATCH DIRECTORIES, AND THE DIFFERENCE BETWEEN THEM IS THE POINT.
+      # TWO SCRATCH DIRECTORIES ON THE RUNNER, AND THE DIFFERENCE BETWEEN THEM IS THE POINT.
       #
       #   $CONTROLLER_SCRATCH      0700, owned by the RUNNER user, and NEVER MOUNTED into any container. The
       #                            capture, its meta, the controller's observation and the receipt live under
       #                            here. Nothing inside a container can name this path, because nothing inside
       #                            a container has it mounted; and if one somehow could, 0700 under another
       #                            uid is a permission error rather than a write.
-      #   .../measurement          the ONE directory the measurement may write, chowned to 10001:10001 and
-      #                            mounted at /scratch. HOME and TMPDIR both point inside it, because node and
-      #                            this repository's own fixtures need somewhere to write and a read-only
-      #                            filesystem everywhere turns tests red for a reason that is not about them.
+      #   .../measurement          the only directory ON THE RUNNER that the measurement may write, chowned to
+      #                            10001:10001 and mounted at /scratch. HOME and TMPDIR both point inside it,
+      #                            because node and this repository's own fixtures need somewhere to write and
+      #                            a read-only filesystem everywhere turns tests red for a reason that is not
+      #                            about them.
       #
       # The chown is what makes the uid boundary real in both directions: the measurement can write its own
       # scratch, and it cannot write the controller's.
+      #
+      # AND ONE MORE WRITABLE DIRECTORY THAT IS NOT ON THE RUNNER AT ALL: /tmp, a tmpfs the sandbox grants per
+      # container (see SANDBOX_FLAGS in .github/verifier-receipt/sandbox.mjs, where it is argued for in full).
+      # It exists because this repository's suite has call sites that name /tmp literally instead of asking
+      # where TMPDIR points, and without it 27 of 122 test files die EROFS before declaring a plan. It is
+      # listed here so that "the one directory the measurement may write" is not read as a complete sentence:
+      # the complete one is that the measurement may write its own scratch on the runner, and a fresh tmpfs
+      # that is backed by nothing on the runner's filesystem, is noexec/nosuid/nodev, is bounded by size=, and
+      # is discarded with --rm. The preflight proves all four of those properties every run.
       - name: Create the controller's scratch, and the one directory the measurement may write
         id: scratch
         run: |
