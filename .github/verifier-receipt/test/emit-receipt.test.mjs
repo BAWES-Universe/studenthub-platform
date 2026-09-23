@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import * as world from './world.mjs';
 
 const refusedOn = (result, field) => {
@@ -475,6 +476,208 @@ test('a truncated capture is still refused by the well-formedness check, naming 
 test('two runs concatenated into one capture are refused by the well-formedness check', () => {
   const built = world.build({ capture: world.tapFor(world.NAMED_TESTS) + world.tapFor(world.NAMED_TESTS) });
   refusedOn(world.emit(built), 'capture.structure');
+});
+
+// ---- the one numbering anomaly the runner writes itself -------------------------------------------------------
+//
+// `capture.structure` refused run 35843658922 - a real dispatch, a green measure job, 41 terms established by
+// the controller - with `line 21875: point numbered 100 where the runner would have numbered it 3179`, and no
+// receipt was produced. That point is the file-level point of a test file that dies at import because it writes
+// into the read-only source mount, and the number on it is the file's position in the runner's own SORTED file
+// list rather than the run's next number. The runner counts the point everywhere else, so the stream still
+// reconciles; what it does not do is number it in sequence.
+//
+// The whole measurement - the runtime sources it was read out of, the ordinal arithmetic, the raw reproduction -
+// is in fixtures/crashed-file-numbering/README.md. These tests hold the two halves of the rule: the runtime
+// really does this, and nothing OTHER than this shape is tolerated.
+
+const CRASH_FIXTURES = path.join(import.meta.dirname, 'fixtures', 'crashed-file-numbering');
+const CAPTURE_FIXTURES = path.join(import.meta.dirname, 'fixtures', 'captures');
+const crashFixture = name => fs.readFileSync(path.join(CRASH_FIXTURES, name), 'utf8');
+// The two real captures. The CI one is the artifact of the refused run, trailer and all; the body is the
+// runner's own output, which is what the measure job hashes and what this check reads.
+const realCapture = name => {
+  const whole = fs.readFileSync(path.join(CAPTURE_FIXTURES, name), 'utf8');
+  const at = whole.lastIndexOf('\n# verifier-capture v1 ');
+  return at === -1 ? whole : whole.slice(0, at + 1);
+};
+const structureRefusal = result => {
+  assert.equal(result.code, 3, `expected a refusal, got exit ${result.code}\n${result.stdout}${result.stderr}`);
+  assert.match(result.stderr, /^REFUSING: capture\.structure: /m, result.stderr);
+  return result.stderr;
+};
+
+// THE MEASUREMENT ITSELF, RE-RUN. The tolerance below is only as good as the claim that `node --test` really
+// numbers a crashed file's point this way, so this does not read the recorded output - it runs the minimal
+// reproduction through whatever runtime is installed and asserts the shape, then feeds what came back to the
+// emitter. If a future runtime stops doing this, this test says so before the tolerance can hide it.
+test('the installed runtime numbers a crashed file\'s own point from its sorted file list, not from the run', () => {
+  // A nested `node --test` that sees NODE_TEST_CONTEXT reports to its parent in v8 frames instead of TAP.
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const repro = path.join(CRASH_FIXTURES, 'repro');
+  let capture;
+  try {
+    capture = execFileSync(process.execPath,
+      ['--test', '--test-reporter=tap', '--test-concurrency=1', './1-reports.test.mjs', './2-crashes.test.mjs'],
+      { cwd: repro, encoding: 'utf8', env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.fail('the reproduction is supposed to exit non-zero: one of its files dies at import');
+  } catch (error) {
+    assert.equal(error.status, 1, error.message);
+    capture = String(error.stdout ?? '');
+  }
+  const lines = capture.split('\n');
+  const at = lines.findIndex(line => /^not ok \d+ - 2-crashes\.test\.mjs$/.test(line));
+  assert.notEqual(at, -1, `no file-level point for the crashing file:\n${capture}`);
+
+  // The number it printed, against the number the run's own sequence had reached.
+  const printed = Number(/^not ok (\d+) - /.exec(lines[at])[1]);
+  const before = lines.slice(0, at).filter(line => /^(ok|not ok) \d+ - /.test(line)).length;
+  assert.equal(printed, 2, `expected the crashing file's position in the sorted list of two files\n${capture}`);
+  assert.equal(before + 1, 4, `expected the run's next number to be 4\n${capture}`);
+  assert.notEqual(printed, before + 1, 'the reproduction no longer reproduces the anomaly');
+
+  // The three facts the tolerance reads, all of them present and none of them assumed.
+  assert.equal(lines[at - 1], '# Subtest: 2-crashes.test.mjs');
+  // The point's own YAML block, read as the emitter reads it: from its `---` to its `...`, at one indent in.
+  assert.equal(lines[at + 1], '  ---', capture);
+  const block = lines.slice(at + 2, lines.indexOf('  ...', at));
+  assert.ok(block.includes("  type: 'test'"), capture);
+  assert.equal(block.filter(line => /^ {2}location: /.test(line)).length, 1, capture);
+  assert.match(block.find(line => /^ {2}location: /.test(line)),
+    /^ {2}location: '.+\/2-crashes\.test\.mjs:1:1'$/, capture);
+  assert.equal(lines.slice(0, at).filter(line => /^1\.\.\d+$/.test(line)).length, 0,
+    'a file that died before reporting anything emits no plan of its own');
+  // And the runner counted it anyway: the plan covers it and every later number is past it.
+  assert.ok(lines.includes('1..4'), `expected the run's plan to count the crashed file's point\n${capture}`);
+
+  // What the emitter must now do with exactly those bytes.
+  const built = world.build({ capture });
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const crashed = world.receiptOf(built).structure_check.crashed_file_points;
+  assert.equal(crashed.length, 1);
+  assert.equal(crashed[0].numbered, 2);
+  assert.equal(crashed[0].global_next, 4);
+  assert.match(crashed[0].file, /\/2-crashes\.test\.mjs$/);
+});
+
+test('a capture carrying one crashed file\'s point is accepted, and the receipt names it and both numbers', () => {
+  const built = world.build({ capture: crashFixture('accepted-one-crashed-file.tap') });
+  assert.equal(world.emit(built).code, 0);
+  assert.deepEqual(world.receiptOf(built).structure_check.crashed_file_points,
+    [{ file: '/src/b.test.mjs', line: 19, numbered: 2, global_next: 3 }]);
+});
+
+test('two different files that each died once are both tolerated, and both are named', () => {
+  const built = world.build({ capture: crashFixture('accepted-two-crashed-files.tap') });
+  assert.equal(world.emit(built).code, 0);
+  assert.deepEqual(world.receiptOf(built).structure_check.crashed_file_points,
+    [{ file: '/src/b.test.mjs', line: 12, numbered: 7, global_next: 2 },
+      { file: '/src/d.test.mjs', line: 33, numbered: 9, global_next: 4 }]);
+});
+
+// THE EXACT PRE-FIX FAILURE, as a regression. Run 35843658922's capture was refused with
+// `line 21875: point numbered 100 where the runner would have numbered it 3179`; those three numbers are
+// asserted here, from the real artifact's own bytes, so a future change that re-breaks this breaks this test
+// with the sentence it used to fail with.
+test('the capture run 35843658922 was refused over is accepted, at the line and the numbers it was refused on', () => {
+  const built = world.build({ capture: realCapture('run-35843658922-measure.out') });
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual(receipt.structure_check.crashed_file_points,
+    [{ file: '/src/.github/coordinator/test/shu249-role-authority.test.mjs',
+      line: 21875, numbered: 100, global_next: 3179 }]);
+  // The counts the runner reported, unchanged by the tolerance: the crashed file's point is inside all of them.
+  assert.equal(receipt.suite.tests, 3652);
+  assert.equal(receipt.suite.ok + receipt.suite.not_ok + receipt.suite.skipped, 3652);
+  assert.equal(receipt.suite.exit, '1');
+});
+
+test('the same suite reproduced outside CI, in the same container flags, is accepted on the same anomaly', () => {
+  const built = world.build({ capture: realCapture('local-in-container-7e7ac70e.out') });
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  assert.deepEqual(world.receiptOf(built).structure_check.crashed_file_points,
+    [{ file: '/src/.github/coordinator/test/shu249-role-authority.test.mjs',
+      line: 21860, numbered: 100, global_next: 3179 }]);
+});
+
+// ---- and everything that is NOT that shape is still refused, by the same sentence ------------------------------
+
+test('a second run concatenated onto a capture that carries a crashed file is still refused', () => {
+  const built = world.build({ capture: crashFixture('negative-second-run-concatenated.tap') });
+  const stderr = structureRefusal(world.emit(built));
+  assert.match(stderr, /2 `TAP version` headers/);
+  assert.match(stderr, /2 top-level plan lines/);
+  // The anomaly that would have been tolerated is reported too: the stream stopped reconciling.
+  assert.match(stderr, /line 19: point numbered 2 where the runner would have numbered it 3/);
+});
+
+test('a numbering reset that is not a crashed file\'s point is refused, naming its line and both numbers', () => {
+  const built = world.build({ capture: crashFixture('negative-reset-not-tied-to-a-crash.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 31: point numbered 1 where the runner would have numbered it 4/);
+});
+
+test('a duplicate point number that is not a crashed file\'s point is refused', () => {
+  const built = world.build({ capture: crashFixture('negative-duplicate-number-not-tied-to-a-crash.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 10: point numbered 1 where the runner would have numbered it 2/);
+});
+
+test('a second file-level point for one file is refused: a file dies once', () => {
+  const built = world.build({ capture: crashFixture('negative-two-anomalies-in-one-file.tap') });
+  const stderr = structureRefusal(world.emit(built));
+  assert.match(stderr, /line 33: point numbered 7 where the runner would have numbered it 4/);
+  // And the first one, held aside until the second broke the stream, is reported with it.
+  assert.match(stderr, /line 12: point numbered 7 where the runner would have numbered it 2/);
+});
+
+test('a file that reported a plan of its own before dying is refused, plan and numbering both', () => {
+  const built = world.build({ capture: crashFixture('negative-the-file-reported-its-own-plan.tap') });
+  const stderr = structureRefusal(world.emit(built));
+  assert.match(stderr, /2 top-level plan lines/);
+  assert.match(stderr, /line 20: point numbered 2 where the runner would have numbered it 1/);
+});
+
+test('an anomaly in a stream whose counts do not reconcile is reported with the count that broke', () => {
+  const built = world.build({ capture: crashFixture('negative-counts-do-not-reconcile.tap'),
+    meta: { suite_exit: '1' } });
+  const stderr = structureRefusal(world.emit(built));
+  assert.match(stderr, /the summary does not reconcile: `# tests 4`/);
+  assert.match(stderr, /line 19: point numbered 2 where the runner would have numbered it 3/);
+});
+
+test('an out-of-sequence `ok` point is refused however file-shaped the rest of it is', () => {
+  const built = world.build({ capture: crashFixture('negative-anomaly-on-an-ok-point.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 17: point numbered 2 where the runner would have numbered it 3/);
+});
+
+test('an out-of-sequence point whose location is not the file\'s first line and column is refused', () => {
+  const built = world.build({ capture: crashFixture('negative-location-is-not-the-file-start.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 19: point numbered 2 where the runner would have numbered it 3/);
+});
+
+test('an out-of-sequence point the preceding `# Subtest:` header names another file is refused', () => {
+  const built = world.build({ capture: crashFixture('negative-header-names-another-file.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 19: point numbered 2 where the runner would have numbered it 3/);
+});
+
+test('an out-of-sequence point the runner did not announce on the line before it is refused', () => {
+  const built = world.build({ capture: crashFixture('negative-header-is-not-adjacent.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 20: point numbered 2 where the runner would have numbered it 3/);
+});
+
+test('an out-of-sequence point nested inside another point is refused: a file point is never nested', () => {
+  const built = world.build({ capture: crashFixture('negative-anomaly-on-a-nested-point.tap') });
+  assert.match(structureRefusal(world.emit(built)),
+    /line 4: point numbered 2 where the runner would have numbered it 1/);
 });
 
 // ---- admissibility is separate from the verdict ---------------------------------------------------------------

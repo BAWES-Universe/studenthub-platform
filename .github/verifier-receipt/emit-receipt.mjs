@@ -1290,6 +1290,12 @@ let footers = 0;
 let yamlIndent = null;             // indent of the `---` of the YAML block currently open, or null
 let open = null;                   // the point whose YAML block is expected next, until its type is read
 let lineNo = 0;
+// THE ONE NUMBERING ANOMALY `node --test` PRODUCES ITSELF, held aside rather than refused outright. See the
+// block above the point branch below for what it is, why the runner writes it, and what still refuses it.
+const toleratedNumbering = [];     // the file-level crash points whose number was not the global next one
+const crashPointsPerFile = new Map();  // file -> how many such points have been tolerated for it
+let lastSubtest = null;            // the `# Subtest:` header most recently read at indent 0, with its line
+let planSincePoint = false;        // a top-level plan line has appeared since the last top-level point
 
 // A SKIPPED TEST IS NOT A MEASUREMENT, AND A DESCRIBE BLOCK IS NOT A TEST. A point line says `ok`, and two
 // different things that are not a passing test say it too:
@@ -1319,6 +1325,38 @@ const statusOf = point => {
 const close = () => {
   if (!open) return;
   if (!open.type) problems.push(`point "${open.name}" carries no \`type:\` diagnostic, which the runner writes on every point`);
+  // A NUMBERING ANOMALY IS DECIDED HERE, NOT AT THE POINT LINE, because the two facts that identify the one
+  // shape a genuine runner produces - `type:` and `location:` - arrive in the YAML block that FOLLOWS the
+  // point. Everything about this is measured, at v22.22.3, and written out above the point branch below.
+  if (open.numbering) {
+    const anomaly = open.numbering;
+    const file = open.location;
+    // The runner names a file test by the argv path and resolves its `location:` against the cwd, so the two
+    // agree without being equal: a capture taken with relative argv carries `not ok N - a/b.test.mjs` beside
+    // `location: '/src/a/b.test.mjs:1:1'`. The point's name must NAME the file its location gives, by that
+    // relation and no looser one.
+    const namesItsFile = file !== null && (file === open.name
+      || (!open.name.startsWith('/') && file.endsWith(`/${open.name}`)));
+    const already = file === null ? 0 : (crashPointsPerFile.get(file) ?? 0);
+    const isCrashedFilePoint = open.indent === 0
+      && open.ok === false
+      && open.directive === null
+      && open.type === 'test'
+      && open.at_file_start === true
+      && namesItsFile
+      && anomaly.header !== null
+      && anomaly.header.line === anomaly.line - 1
+      && anomaly.header.name === open.name
+      && anomaly.plan_before === false
+      && already === 0;
+    if (isCrashedFilePoint) {
+      crashPointsPerFile.set(file, already + 1);
+      toleratedNumbering.push({ file, line: anomaly.line, numbered: anomaly.numbered,
+        global_next: anomaly.expected, message: anomaly.message });
+    } else {
+      problems.push(anomaly.message);
+    }
+  }
   // Recorded here, not at the point line, because the point's `type:` arrives in the YAML block that follows
   // it: what a point MEANS is not known until its block closes.
   //
@@ -1391,7 +1429,16 @@ for (const raw of tap.split('\n')) {
       // holds many tests and they all share it.
       if (!open.location) {
         const where = /^location: '(.+):(\d+):(\d+)'$/.exec(body);
-        if (where) { open.location = where[1]; open.point_at = `${where[1]}:${where[2]}`; }
+        // THE LINE AND COLUMN ARE ALSO WEIGHED, not only kept: `node --test` gives a FILE test - the point
+        // that stands for a whole test file - a location of exactly `<file>:1:1`, because `FileTest` builds
+        // its `loc` as `{ line: 1, column: 1, file: resolve(this.name) }` and never from a call site. That
+        // is the only thing in the stream that distinguishes a file's own point from a test declared inside
+        // it, and the numbering tolerance below rests on it.
+        if (where) {
+          open.location = where[1];
+          open.point_at = `${where[1]}:${where[2]}`;
+          open.at_file_start = where[2] === '1' && where[3] === '1';
+        }
       }
     }
     continue;
@@ -1409,11 +1456,20 @@ for (const raw of tap.split('\n')) {
   if (plan) {
     close();
     plans.push({ indent, line: lineNo, planned: Number(plan[1]), reported: pointsAtIndent.get(indent) ?? 0 });
+    // A plan a DYING FILE emitted is a top-level plan that arrives between two top-level points. The runner
+    // flushes a crashed file's buffered output - its own plan included - immediately before it reports that
+    // file's point, so this flag is what tells the two crash shapes apart at the point below.
+    if (indent === 0) planSincePoint = true;
     for (const at of [...pointsAtIndent.keys()]) if (at >= indent) pointsAtIndent.delete(at);
     continue;
   }
 
   if (indent === 0) {
+    // The header the runner writes before every top-level point it is about to report. It is a DIAGNOSTIC and
+    // is never read as evidence of a result; it is read here for one thing only - whether the point on the
+    // next line is the point the runner had just announced, which is the shape a crashed file's point has.
+    const header = /^# Subtest: (.*)$/.exec(body);
+    if (header) { close(); lastSubtest = { name: header[1], line: lineNo }; continue; }
     const summary = /^# (tests|suites|pass|fail|cancelled|skipped|todo) (\d+)$/.exec(body);
     if (summary) {
       close();
@@ -1429,9 +1485,39 @@ for (const raw of tap.split('\n')) {
     close();
     const seen = (pointsAtIndent.get(indent) ?? 0) + 1;
     pointsAtIndent.set(indent, seen);
-    if (Number(point[2]) !== seen) {
-      problems.push(`line ${lineNo}: point numbered ${point[2]} where the runner would have numbered it ${seen}`);
-    }
+    // A POINT NUMBERED OUT OF SEQUENCE IS NOT DECIDED HERE. `node --test --test-reporter=tap` at v22.22.3 -
+    // the pinned runtime - writes exactly one such point itself, and the emitter refused a real capture over
+    // it: run 35843658922 carried `line 21875: point numbered 100 where the runner would have numbered it
+    // 3179`, which is the file-level point of a test file that died before it reported anything.
+    //
+    // WHY THE RUNNER WRITES IT, read out of the runtime's own source and reproduced against it:
+    //   * `createTestFileList` SORTS the expanded file list (runner.js), and `FileTest.start()` takes the
+    //     file's number from that order - `this.testNumber = ++this.parent.outputSubtestCount` (test.js).
+    //     The refused point's `100` is exactly the 1-based position of
+    //     `/src/.github/coordinator/test/shu249-role-authority.test.mjs` in that sorted list of 122 files.
+    //   * Every point a file REPORTS is renumbered into the parent's running sequence on its way through:
+    //     `item.data.testNumber = isTopLevel ? (this.root.harness.counters.topLevel + 1) : ...` (runner.js).
+    //     That is why the rest of the stream is one unbroken sequence.
+    //   * A file's OWN point does not take that path. It is written by `Test.report()` with the file's
+    //     untouched `testNumber`, and only when `#skipReporting()` is false - that is, when the file reported
+    //     no children at all, or died of something other than a failing subtest.
+    //   * The runner still COUNTS it: `report()` calls `countCompletedTest`, so the point is inside the plan
+    //     total and every later point is numbered past it. Tolerating the number weakens no count.
+    // Minimal reproduction, its raw output, and the negatives are committed beside the tests; see
+    // test/fixtures/crashed-file-numbering/.
+    //
+    // So the anomaly is recorded against the point and resolved when its YAML block closes, where the facts
+    // that identify a file's own point are readable. Anything that is not that exact shape is still refused
+    // here, by the same sentence and the same two numbers.
+    const numbering = Number(point[2]) === seen ? null : {
+      line: lineNo,
+      numbered: Number(point[2]),
+      expected: seen,
+      message: `line ${lineNo}: point numbered ${point[2]} where the runner would have numbered it ${seen}`,
+      header: indent === 0 ? lastSubtest : null,
+      plan_before: planSincePoint,
+    };
+    if (indent === 0) planSincePoint = false;
     const directive = TAP_DIRECTIVE.exec(point[3]);
     open = {
       indent,
@@ -1440,6 +1526,8 @@ for (const raw of tap.split('\n')) {
       directive: directive ? directive[1].toLowerCase() : null,
       type: null,
       location: null,
+      at_file_start: false,
+      numbering,
     };
     continue;
   }
@@ -1490,6 +1578,15 @@ if (Object.values(counts).every(count => count !== null)) {
   if (counts.suites !== typed.suite) {
     problems.push(`the summary claims ${counts.suites} suite(s) but ${typed.suite} suite point(s) were reported`);
   }
+}
+// THE TOLERANCE IS CONDITIONAL ON THE REST OF THE STREAM HOLDING TOGETHER, and this is where that is spent.
+// A crashed file's point is counted by the runner in the plan, in `# tests` and in every later point's number,
+// so a stream carrying one and nothing else wrong reconciles exactly. A stream that does NOT reconcile - a
+// second plan, a second `TAP version`, a summary that does not add up, a count that disagrees with the points -
+// has given up the property that made the anomaly readable, and every anomaly held aside is reported after all,
+// by the same sentence and the same numbers it would have carried before this tolerance existed.
+if (problems.length > 0 && toleratedNumbering.length > 0) {
+  for (const anomaly of toleratedNumbering) problems.push(anomaly.message);
 }
 if (problems.length > 0) {
   fail(`the captured output is not a measurement a runner produced:\n  - ${problems.join('\n  - ')}`);
@@ -2238,6 +2335,12 @@ const receipt = {
     note: 'the capture parses as one runner\'s TAP and its counts reconcile. This says the capture is WELL '
       + 'FORMED. It does not say it is GENUINE - that is what the provenance block above establishes, and '
       + 'nothing in this check would notice a candidate suite printing a well-formed stream of its own.',
+    // THE POINTS WHOSE NUMBER THE RUNNER TOOK FROM ITS FILE LIST INSTEAD OF ITS RUNNING SEQUENCE - a file that
+    // died before it could report. Carried by name and by both numbers rather than silently accepted, so a
+    // reader can see exactly which files crashed and what the stream said about them.
+    crashed_file_points: toleratedNumbering.map(anomaly => ({
+      file: anomaly.file, line: anomaly.line, numbered: anomaly.numbered, global_next: anomaly.global_next,
+    })),
   },
   // THE CONTROLLER'S OBSERVATION, AS A BLOCK OF THIS RECEIPT rather than only as per-term rows, because a
   // consumer deciding whether to believe this receipt has to be able to find - in one place - what actually
