@@ -5,18 +5,51 @@
     "command - not through a dispatch input, not through its package.json, not through a file in its own tree.",
     "A dispatch may only pick a KEY from this table; the command text is whatever this file says it is."
   ],
+  "_timeout_comment": [
+    "WHY EVERY COMMAND CARRIES --test-timeout, AND WHERE THE NUMBER COMES FROM.",
+    "",
+    "Without it a single hung test consumes the whole job. The measure job is bounded at 20 minutes and the",
+    "suite it runs takes about five, so one test that never settles spends the remaining fifteen producing",
+    "nothing, and the job ends as a CANCELLATION - which carries no diagnostic naming what hung, which leaves",
+    "no capture to look at, and which the emitter can only refuse downstream as `measure_job.conclusion`",
+    "without ever being able to say why. A review reproduced exactly that hang on this repository's own",
+    "coordinator suite under an unusual TMPDIR. The job bound is the outer limit and it stays; this is the",
+    "inner one, and what it buys is that a hang becomes a NAMED cancelled point inside a complete capture,",
+    "with every other file of the suite still measured.",
+    "",
+    "600000 ms, AND THE FIRST NUMBER TRIED WAS WRONG, which is why this paragraph states the measurement",
+    "rather than the intention. `--test-timeout` in node 22 bounds EVERY test, and a test file is itself a",
+    "test whose duration is the whole file's run - so the flag is a per-FILE bound as much as a per-test one.",
+    "Chosen from the slowest single test point of the pinned candidate's real capture (32.4s), 120000 looked",
+    "like 3.7x headroom; run for real it killed two whole files at 120s and the measurement came back with",
+    "3538 tests instead of 3667, 2 cancelled points, and 129 tests that never ran. Measured properly, the two",
+    "files are 273s and 176s standalone - the 273s file is the critical path of a suite whose whole wall clock",
+    "is 300s - so the smallest honest value is one that clears the slowest FILE, not the slowest test.",
+    "600000 is 2.2x the slowest file measured standalone and 2x its in-suite worst case, and it is half the",
+    "measure job's own 20-minute bound.",
+    "",
+    "THE DIRECTION THE ERROR RUNS, stated because this flag can turn a green suite red: a test - or a file -",
+    "that legitimately needs more than 600s now FAILS, and a failing point that a term names means that term",
+    "establishes nothing. That is the safe direction for an authority whose only job is to refuse what it",
+    "cannot vouch for, but it is a real cost. Re-derive the number from a measured run if a runner key is ever",
+    "added, or if this suite grows a slower file - and never raise it to accommodate a hang.",
+    "",
+    "WHAT IT DOES NOT BUY: the bound is 600s against a job bound of 1200s, so a hung test still costs half the",
+    "job. Node offers no per-test bound that is not also a per-file bound, so tightening this further means",
+    "splitting the suite across runner keys, not lowering this number."
+  ],
   "runners": {
     "coordinator": {
       "description": "the coordinator suite and the coordinator service suite, reported as TAP",
-      "command": "node --test --test-reporter=tap .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs"
+      "command": "node --test --test-reporter=tap --test-timeout=600000 .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs"
     },
     "coordinator-core": {
       "description": "the coordinator suite alone, reported as TAP",
-      "command": "node --test --test-reporter=tap .github/coordinator/test/*.test.mjs"
+      "command": "node --test --test-reporter=tap --test-timeout=600000 .github/coordinator/test/*.test.mjs"
     },
     "coordinator-service": {
       "description": "the coordinator service suite alone, reported as TAP",
-      "command": "node --test --test-reporter=tap .github/coordinator/service/test/*.test.mjs"
+      "command": "node --test --test-reporter=tap --test-timeout=600000 .github/coordinator/service/test/*.test.mjs"
     }
   }
 }

@@ -67,12 +67,16 @@ export const genuineTap = fixture => {
 // by default, because that is what the real reporter does: at node v22.22.3 a `location:` key is written on a
 // FAILING point and on no other, so a world whose every point carried one would not be a world this runner
 // produces. The tests that exercise the artifact binding supply it deliberately.
-export const tapFor = (names, { failing = [], locations = {} } = {}) => {
+// `at` overrides the LINE a point is declared at, which is otherwise distinct per point - because a real
+// runner declares two different tests on two different lines, and two points sharing one `<file>:<line>` is
+// the shape the emitter refuses as one test reported under two names. A test that wants that shape asks for
+// it here.
+export const tapFor = (names, { failing = [], locations = {}, at = {} } = {}) => {
   const lines = ['TAP version 13'];
   names.forEach((name, index) => {
     const ok = failing.includes(name) ? 'not ok' : 'ok';
     lines.push(`# Subtest: ${name}`, `${ok} ${index + 1} - ${name}`, '  ---', '  duration_ms: 1.5', "  type: 'test'");
-    if (locations[name]) lines.push(`  location: '${locations[name]}:12:1'`);
+    if (locations[name]) lines.push(`  location: '${locations[name]}:${at[name] ?? 12 + index}:1'`);
     lines.push('  ...');
   });
   lines.push(`1..${names.length}`, `# tests ${names.length}`, '# suites 0', `# pass ${names.length - failing.length}`,

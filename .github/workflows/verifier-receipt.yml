@@ -25,7 +25,11 @@ name: Verifier receipt
 #             run id and name, checks the digest GitHub computed, and reads the capture out of the archive GitHub
 #             serves. The claim is fetched from the candidate commit through the contents API. It holds NO
 #             signing permission: a review found the rehearsal posture running head-supplied code in a job that
-#             held `attestations: write`, so minting moved out of it.
+#             held `attestations: write`, so minting moved out of it. Its gate step is the receipt's second
+#             reader, and it DERIVES rather than re-reads: the emitter writes out the capture it authenticated,
+#             the gate hashes it against the digests the measure job published through GitHub, and it parses
+#             the measured run's failing tests out of those bytes instead of reading the list the receipt
+#             carries.
 #   attest  - the only job holding `id-token: write` and `attestations: write`, and it runs only on a
 #             workflow_dispatch of the default branch. It re-reads admissibility out of the receipt it is about
 #             to sign. What that does and does not bind is written out in full at the job itself.
@@ -217,14 +221,14 @@ jobs:
       contents: read
     steps:
       - name: Check out the authority at the trusted commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.trust.outputs.trusted_sha }}
           path: authority
           persist-credentials: false
 
       - name: Check out the candidate at exactly the requested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.trust.outputs.candidate_sha }}
           path: candidate
@@ -315,7 +319,7 @@ jobs:
       # emitting job downloads no candidate file at all.
       - name: Upload the trusted job's capture, and nothing else
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: measure-capture
           path: ${{ runner.temp }}/capture
@@ -348,6 +352,13 @@ jobs:
       # it into the hashed stream as the capture's trailer, and publishes it here; the emitter refuses any
       # disagreement between the three by name.
       exit: ${{ steps.suite.outputs.exit }}
+      # AND THE TWO DIGESTS, WHICH ARE NOW READ. A review found both of these declared here and consumed
+      # nowhere in the repository - work that looks load-bearing and is not, which is worse than absent
+      # because a reader counts it as a check. The emit job's gate step reads them: it hashes the capture the
+      # emitter authenticated and derives the measured run's failing tests from those bytes rather than from
+      # the list the receipt carries, and these are what say the bytes it parsed are the bytes this job took.
+      # Like `exit`, they travel through GitHub rather than through the artifact - and, like `exit`, a forger
+      # that can append to this job's $GITHUB_OUTPUT moves them with everything else.
       capture_sha256: ${{ steps.suite.outputs.capture_sha256 }}
       body_sha256: ${{ steps.suite.outputs.body_sha256 }}
       artifact_id: ${{ steps.artifact.outputs.id }}
@@ -376,7 +387,7 @@ jobs:
       receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
     steps:
       - name: Check out the authority at the trusted commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.trust.outputs.trusted_sha }}
           path: authority
@@ -410,6 +421,12 @@ jobs:
           RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
           RUNNER_SPEC_PATH: ${{ github.workspace }}/authority/.github/verifier-receipt/runners.json
           OUT_PATH: ${{ github.workspace }}/receipt.json
+          # THE BYTES THE EMITTER AUTHENTICATED, WRITTEN OUT FOR THE STEP THAT JUDGES THE RECEIPT. The gate
+          # below derives the measured run's failing tests from this file rather than reading the list the
+          # receipt carries, and binds it to the digests the measure job published as its own outputs. The
+          # emitter defaults this beside OUT_PATH; it is named here so that a change to either path is a change
+          # to both, in one place.
+          CAPTURE_OUT_PATH: ${{ github.workspace }}/capture.out
         run: node authority/.github/verifier-receipt/emit-receipt.mjs
 
       - name: Refuse to emit a receipt that establishes nothing
@@ -422,6 +439,13 @@ jobs:
           REF: ${{ github.ref }}
           THIS_RUN_ID: ${{ github.run_id }}
           TRUSTED_ORIGIN: ${{ needs.trust.outputs.trusted_origin }}
+          # THE MEASURE JOB'S OWN DIGESTS, through GitHub rather than through the artifact or the receipt. A
+          # review found both of these declared as outputs of the measure job and read by nothing at all - work
+          # that looks load-bearing and is not. They are what lets this step derive the measurement from bytes
+          # instead of reading the emitter's account of it: the capture the emit job wrote beside its receipt
+          # must hash to `capture_sha256`, and the runner's own output inside it to `body_sha256`.
+          MEASURE_CAPTURE_SHA256: ${{ needs.measure.outputs.capture_sha256 }}
+          MEASURE_BODY_SHA256: ${{ needs.measure.outputs.body_sha256 }}
         run: |
           set -euo pipefail
           node -e "
@@ -511,20 +535,104 @@ jobs:
             // still about the named tests - that is what a term is established by - but this step refuses to
             // publish an admissible output for a red run unless the receipt enumerates its failing tests, says
             // in its conclusion that the suite was red, and none of those failing tests is one the claim names.
+            // WHICH TESTS FAILED, DERIVED FROM THE MEASURED BYTES RATHER THAN READ OFF THE RECEIPT.
+            //
+            // A review put the limit of the block below it precisely: every rule here about the red suite -
+            // that its failing tests are enumerated, and that none of them is a name the claim rests on - was
+            // computed over \`receipt.suite.failing_tests\`, A LIST THE RECEIPT ITSELF CARRIES. The emitter
+            // wrote that list and this step read it back, so an emitter that omitted a failing name from it
+            // passed its own second reader: the check and the thing checked came out of one computation, which
+            // is the defect this step exists not to have.
+            //
+            // So the set is derived here from the capture the emit job authenticated and wrote beside the
+            // receipt - and the capture is not taken on trust either. It is hashed, and the digest must be the
+            // one THE MEASURE JOB published as its own output: \`capture_sha256\` over the whole capture and
+            // \`body_sha256\` over the runner's own output inside it. Both travel through GitHub's job outputs,
+            // outside the artifact and outside the receipt, and both were declared by the measure job with no
+            // consumer anywhere until this step - work that looked load-bearing and was not.
+            //
+            // WHAT THIS IS WORTH, EXACTLY. It closes the emitter's word about the failing set: a receipt whose
+            // \`suite.failing_tests\` disagrees with the bytes it was computed from is refused here by name.
+            // It does NOT close the \$GITHUB_OUTPUT defeat: a candidate that rewrites the capture after the
+            // trusted write and appends its own \`capture_sha256\` and \`body_sha256\` lines to the measure
+            // job's output file moves both sides of this comparison together, exactly as it moves \`exit\`.
+            // Only a uid boundary for the measured suite closes that, and nothing in this file is it.
+            const crypto = require('node:crypto');
+            const digestOf = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+            if (!require('node:fs').existsSync('capture.out')) { console.error('::error::the emit job wrote no capture beside its receipt, so this step has nothing to derive the measurement from and will not take the receipt s word for it'); process.exit(1); }
+            const captureBytes = require('node:fs').readFileSync('capture.out');
+            const publishedCapture = process.env.MEASURE_CAPTURE_SHA256;
+            const publishedBody = process.env.MEASURE_BODY_SHA256;
+            if (!publishedCapture || !publishedBody) { console.error('::error::this step was not told the digests the measure job published for its own capture, so it cannot tell that capture from any other bytes'); process.exit(1); }
+            const wholeDigest = digestOf(captureBytes);
+            if (wholeDigest !== publishedCapture) { console.error('::error::the capture beside this receipt hashes to ' + wholeDigest + ', but the measure job published ' + publishedCapture + ' for the bytes it took'); process.exit(1); }
+            const whole = captureBytes.toString('utf8');
+            const TRAILER = '# verifier-capture v1 ';
+            const trailerLine = whole.endsWith('\n') ? whole.slice(0, -1).split('\n').pop() : '';
+            if (!trailerLine.startsWith(TRAILER)) { console.error('::error::the capture beside this receipt does not end in the trusted capture process s trailer, so this step cannot say where its bytes end'); process.exit(1); }
+            const trailerFields = {};
+            for (const part of trailerLine.slice(TRAILER.length).split(' ')) { const at = part.indexOf('='); if (at > 0) trailerFields[part.slice(0, at)] = part.slice(at + 1); }
+            const bodyBytes = Number(trailerFields.body_bytes);
+            if (!Number.isInteger(bodyBytes) || bodyBytes < 0 || bodyBytes > captureBytes.length) { console.error('::error::the capture s trailer states body_bytes=' + JSON.stringify(trailerFields.body_bytes) + ', which is not where a ' + captureBytes.length + '-byte capture s runner output ends'); process.exit(1); }
+            const bodyDigest = digestOf(captureBytes.subarray(0, bodyBytes));
+            if (bodyDigest !== publishedBody) { console.error('::error::the runner output inside this capture hashes to ' + bodyDigest + ', but the measure job published ' + publishedBody + ' for the bytes its runner wrote'); process.exit(1); }
+            // The runner's own output, parsed the way the emitter parses it: a point is failing when it is a
+            // 'not ok' line carrying no TAP directive whose YAML block says type: 'test'. A cancelled test is
+            // reported as an undirected 'not ok' exactly like a failing one, so it lands in this set too -
+            // which is what the emitter does with it as well. The directive is matched unanchored because the
+            // reporter escapes a '#' inside a description, so the only unescaped one on a point line is the
+            // directive at its end.
+            const derivedFailing = new Set();
+            let openPoint = null;
+            let yamlAt = null;
+            for (const raw of captureBytes.subarray(0, bodyBytes).toString('utf8').split('\n')) {
+              const line = raw.trimEnd();
+              const indent = line.length - line.trimStart().length;
+              const text = line.trimStart();
+              if (yamlAt !== null) {
+                if (text === '...' && indent === yamlAt) {
+                  if (openPoint && openPoint.type === 'test' && openPoint.failed) derivedFailing.add(openPoint.name);
+                  yamlAt = null; openPoint = null;
+                } else if (openPoint && indent === yamlAt && !openPoint.type) {
+                  const typed = /^type: '(test|suite)'/.exec(text);
+                  if (typed) openPoint.type = typed[1];
+                }
+                continue;
+              }
+              if (text === '---' && openPoint && indent === openPoint.indent + 2) { yamlAt = indent; continue; }
+              const point = /^(ok|not ok) (\d+) - (.*)/.exec(text);
+              if (point) {
+                const directive = /\s+#\s*(SKIP|TODO)\b/i.exec(point[3]);
+                openPoint = { indent, type: null, failed: point[1] === 'not ok' && !directive, name: directive ? point[3].slice(0, directive.index) : point[3] };
+                continue;
+              }
+              openPoint = null;
+            }
             const suite = receipt.suite ?? {};
             const conclusion = receipt.conclusion ?? {};
-            const red = suite.state === 'red' || String(suite.exit) !== '0' || (suite.not_ok ?? 0) + (suite.cancelled ?? 0) > 0;
+            // The receipt's own enumeration, against the one just derived. Order and repetition are not the
+            // question; membership is, in both directions - a name the capture failed and the receipt omits is
+            // the forgery this closes, and a name the receipt invents is an emitter that does not know what it
+            // measured.
+            const declared = Array.isArray(suite.failing_tests) ? suite.failing_tests : null;
+            if (declared === null) { console.error('::error::this receipt carries no suite.failing_tests list, so nothing in it says which tests the measured run failed'); process.exit(1); }
+            const omitted = [...derivedFailing].filter(name => !declared.includes(name));
+            const invented = declared.filter(name => !derivedFailing.has(name));
+            if (omitted.length > 0 || invented.length > 0) { console.error('::error::this receipt s suite.failing_tests does not describe the capture it was computed from: ' + (omitted.length > 0 ? omitted.length + ' test(s) the capture reports failing are not in it (' + omitted.join(', ') + ')' : '') + (omitted.length > 0 && invented.length > 0 ? '; ' : '') + (invented.length > 0 ? invented.length + ' name(s) in it failed no point of that capture (' + invented.join(', ') + ')' : '')); process.exit(1); }
+            if (String(suite.exit) !== String(trailerFields.exit)) { console.error('::error::this receipt records suite exit ' + JSON.stringify(suite.exit) + ', but the capture s own trailer records ' + JSON.stringify(trailerFields.exit)); process.exit(1); }
+            console.log('derived from the capture (' + captureBytes.length + ' bytes, ' + bodyBytes + ' of runner output): exit ' + trailerFields.exit + ', ' + derivedFailing.size + ' failing name(s)');
+            // AND WHETHER THE SUITE WAS RED IS DERIVED TOO, from the exit status inside the hashed bytes and
+            // from the points just counted, rather than from the three receipt fields that used to decide it.
+            const red = String(trailerFields.exit) !== '0' || derivedFailing.size > 0;
             if (red) {
               if (suite.state !== 'red' || conclusion.suite_state !== 'red') { console.error('::error::the measured suite is red, but this receipt does not say so: suite.state=' + JSON.stringify(suite.state) + ' conclusion.suite_state=' + JSON.stringify(conclusion.suite_state)); process.exit(1); }
               if (!Array.isArray(conclusion.qualifications) || conclusion.qualifications.length === 0) { console.error('::error::this receipt records an UNQUALIFIED success beside a suite the runner reported red; a success beside a red run must state what it does and does not cover'); process.exit(1); }
-              const failing = suite.failing_tests;
-              if (!Array.isArray(failing)) { console.error('::error::the measured suite is red and this receipt does not enumerate which tests failed, so nothing shows they are outside what the claim rests on'); process.exit(1); }
-              if ((suite.not_ok ?? 0) > 0 && failing.length === 0) { console.error('::error::this receipt reports ' + suite.not_ok + ' failing point(s) and names none of them'); process.exit(1); }
+              if ((suite.not_ok ?? 0) > 0 && derivedFailing.size === 0) { console.error('::error::this receipt reports ' + suite.not_ok + ' failing point(s) and the capture it was computed from names none of them'); process.exit(1); }
               const measured = new Set(rows.map(row => row.name));
-              const inside = failing.filter(name => measured.has(name));
+              const inside = [...derivedFailing].filter(name => measured.has(name));
               if (inside.length > 0) { console.error('::error::these failing tests of the measured run ARE named by this claim, so this run establishes nothing about the terms that name them: ' + inside.join(', ')); process.exit(1); }
-              console.log('qualified success: the suite is red and all ' + failing.length + ' failing test(s) are outside the ' + measured.size + ' name(s) this claim rests on');
-            }
+              console.log('qualified success: the suite is red and all ' + derivedFailing.size + ' failing test(s) are outside the ' + measured.size + ' name(s) this claim rests on');
+            } else if (suite.state !== 'green' || conclusion.suite_state !== 'green') { console.error('::error::the capture this receipt was computed from reports exit ' + trailerFields.exit + ' and no failing point, but the receipt calls the suite ' + JSON.stringify(suite.state)); process.exit(1); }
             // A NAMED TEST THE RUNNER REPORTED IN ANOTHER FILE IS NOT EVIDENCE FOR THIS TERM. Every manifest
             // entry names the file its term's test lives in, and the runner writes the file it reported a point
             // in; the emitter binds the two and records the result per test. This re-reads that binding from the
@@ -667,7 +775,7 @@ jobs:
       - name: Upload the receipt as an artifact
         id: upload
         if: always() && hashFiles('receipt.json') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verifier-receipt
           path: receipt.json
@@ -738,7 +846,7 @@ jobs:
       attestations: write
     steps:
       - name: Fetch the receipt this run's emit job produced
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: verifier-receipt
 
@@ -796,7 +904,30 @@ jobs:
             console.log('re-derived from the subject: every admissibility ground is satisfied, verdict success, ' + terms.length + ' term(s) all permitted by their own manifest entries, run ' + receipt.run?.id + ' dispatched on main');
           "
 
+      # WHY EVERY THIRD-PARTY ACTION IN THIS WORKFLOW IS PINNED TO A COMMIT, AND WHY THAT MATTERS MOST HERE.
+      #
+      # A tag is a POINTER, and the person who can move it is not this repository. `@v1` resolves to whatever
+      # commit the action's owner last pointed that tag at, at the moment the run starts - so a workflow that
+      # says `@v1` is saying "run whatever code that account publishes under this name, whenever I next run".
+      # Every other input to this authority is named by content: the authority itself is checked out BY SHA,
+      # the candidate is checked out BY SHA and re-read with `git rev-parse` to prove it, the runner command
+      # comes from a protected enum rather than from any tree, and the capture is bound to a digest GitHub
+      # computed. A floating action tag was the one input left that could change under a rerun of an identical
+      # dispatch, with no line of this repository changing and nothing in any receipt recording that it had.
+      #
+      # In THIS job that is not a supply-chain abstraction, it is the signing key. This is the only job of this
+      # workflow holding `id-token: write` and `attestations: write`; the action below is what exchanges that
+      # token and signs the subject. Code that runs here can read the OIDC token from the runner environment
+      # and obtain a Sigstore signature that says "the verifier authority of this repository vouches for this",
+      # over any bytes it likes. A moved tag therefore does not merely change what this step does - it changes
+      # who can make this repository's attestation, after the fact, without touching this file. The whole point
+      # of the three-job split above is that the job holding the signing permission runs no code anyone
+      # supplied for this run; an unpinned action would hand that back through the one door left open.
+      #
+      # The pin is the commit; the `# vX.Y.Z` beside it is a human label and nothing checks it. Updating one
+      # means reading the diff between the pinned commit and the new one, not trusting the new tag - and the
+      # update is a commit on this repository, which is where a change to what this authority runs belongs.
       - name: Attest the receipt
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
         with:
           subject-path: receipt.json

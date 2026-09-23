@@ -47,6 +47,22 @@
 // these is recorded in the receipt itself as `provenance.limits`, so no consumer has to infer any of them from
 // what this file does not say.
 //
+// WHAT IS TAKEN OFF THAT LIMIT, AND EXACTLY HOW MUCH. A name is no longer free of a file or free of a point:
+//
+//   * the name is bound to the file its own manifest entry names, through the `location:` the runner writes
+//     (section 10c). The entry's artifact, not the manifest's - a point in a sibling term's file is misplaced;
+//   * a point may be the evidence for ONE named test, so two of the claim's names declared at one
+//     `<file>:<line>` are refused outright (section 10d): a loop that generates names emits one test body
+//     under many, and a claim naming two of them would report two passes off one;
+//   * and a term may not name one test twice - as its control and as its own killing mutant, or twice in one
+//     list - which is refused on the claim's own text before anything is measured.
+//
+// The first two reach exactly as far as the runner reports a location, which at node v22.22.3 is the FAILING
+// points and no others: a moved or generated name whose empty body PASSES is still not caught, the count of
+// such names travels in every receipt as `named_tests_summary.location_bound.unreported`, and closing it needs
+// a reporter this authority owns rather than the one node ships. The third does not depend on the runner at
+// all. None of the three touches what the named test DOES, which is the limit above and is unchanged.
+//
 // WHICH CODE WAS MEASURED, AND WHAT THAT ESTABLISHES. Two more questions decide whether a verdict means
 // anything, and a review found both answered by a list GitHub truncates:
 //
@@ -249,6 +265,18 @@ if (!/^\d+$/.test(jobOutputExit)) {
     + 'status, which is not a number a process exited with');
 }
 const outPath = env.OUT_PATH ?? path.join(process.cwd(), 'receipt.json');
+// THE BYTES THIS PROCESS AUTHENTICATED, WRITTEN OUT BESIDE THE RECEIPT SO THE SECOND READER DERIVES RATHER
+// THAN BELIEVES.
+//
+// The workflow's gate step is the receipt's second reader, and a review found the limit of that: for the
+// suite's failing tests it read `suite.failing_tests`, a LIST THE RECEIPT ITSELF CARRIES, and then checked
+// that no name on it was one the claim names. A receipt whose emitter enumerated that list wrongly - or
+// omitted a failing name from it - passed its own check, because the check and the thing checked came out of
+// the same computation. So this process writes the capture it authenticated to a file beside the receipt, and
+// the gate re-derives the failing set from those bytes. The gate is not asked to trust the file either: it
+// hashes it and requires the digest to be the one THE MEASURE JOB published as its own output, through
+// GitHub, outside both the artifact and the receipt.
+const captureOutPath = env.CAPTURE_OUT_PATH ?? path.join(path.dirname(outPath), 'capture.out');
 if (!/^[0-9a-f]{40}$/.test(candidateSha)) {
   refuse('candidate.sha', `not a full commit sha: ${candidateSha}`);
 }
@@ -436,9 +464,25 @@ const trailer = (() => {
       + 'the trusted process appends it after the runner\'s last byte, so anything after it was written later');
   }
   const line = lines[at[0]];
+  // A TRAILER THIS PROCESS CANNOT DECODE IS A REFUSAL WITH A NAME ON IT, NOT A STACK TRACE.
+  //
+  // The fields are percent-encoded by the capture program, so `decodeURIComponent` is what reads them back -
+  // and `decodeURIComponent('%')` throws URIError. The trailer is a line of a file a candidate's detached
+  // process can rewrite, so `exit=%` is an input a candidate reaches: it used to abort this process with an
+  // unhandled URIError, exit code 1, no `REFUSING:` line, and nothing anywhere naming the field that broke.
+  // Exit 1 is the exit code a crash and a refusal would then have shared, and a reader of the job log could
+  // not tell a forged trailer from an emitter bug. Every other malformation in this section is already a
+  // refusal by name; this is the last one that was not.
+  const decode = (key, raw) => {
+    try { return decodeURIComponent(raw); } catch {
+      return refuse('capture.trailer', `the capture's trailer carries ${JSON.stringify(raw)} for \`${key}\`, `
+        + 'which is not the percent-encoding the trusted capture process writes, so this line is not a trailer '
+        + 'this authority can read');
+    }
+  };
   const pairs = line.slice(TRAILER_PREFIX.length).split(' ').map(part => {
     const split = part.indexOf('=');
-    return split < 0 ? [part, null] : [part.slice(0, split), decodeURIComponent(part.slice(split + 1))];
+    return split < 0 ? [part, null] : [part.slice(0, split), decode(part.slice(0, split), part.slice(split + 1))];
   });
   if (JSON.stringify(pairs.map(([key]) => key)) !== JSON.stringify(TRAILER_FIELDS)) {
     refuse('capture.trailer', `the capture's trailer carries ${JSON.stringify(pairs.map(([key]) => key))}, not `
@@ -871,8 +915,8 @@ const entryTests = claimEntries.map(entry => [
 // So a measured NAME may belong to exactly one entry. This is a rule about the claim, checked before anything
 // is measured, and it is refused rather than reported: a manifest in which two terms rest on one test does not
 // say which of them that test is evidence for, and a receipt that picked one would be inventing the answer.
-// A term may of course name several tests, and may name one test as both its control and the mutant that kills
-// it - what it may not do is be the second claimant of a name another term already rests on.
+// A term may of course name several tests; what it may not do is be the second claimant of a name another term
+// already rests on - nor, by the rule below this one, name a single test twice and count it as two.
 const nameClaimants = new Map();
 entryTests.forEach((tests, index) => {
   for (const test of tests) {
@@ -885,6 +929,43 @@ if (sharedNames.length > 0) {
   refuse('claim.entries.control.test_names', `${sharedNames.length} test name(s) in ${CLAIM_PATH} at `
     + `${candidateSha.slice(0, 12)} are named by more than one entry, so one measurement would be the evidence `
     + `for more than one term and this run cannot say which term it establishes: ${listing(sharedNames)}`);
+}
+
+// AND A TERM MAY NOT NAME ONE TEST TWICE AND COUNT IT AS TWO.
+//
+// The rule above says a name belongs to exactly one ENTRY. This is the same finding one level in, and the
+// previous commit left it open in writing: "a term may still name one test as both its control and its own
+// killing mutant, reporting named 2 pass 2 off one point". That is the shape the coverage numbers are read
+// through - `terms[].named` and `terms[].pass` are what a consumer counts, and what the gate reconciles - so
+// an entry naming "X" as its control and "X" as the test that kills its mutant reported two named tests, two
+// passes and `establishes: true` off ONE measured point, with the claim's own registry of mutants contributing
+// nothing but a repeated string. The worst case is the one this authority exists to refuse: the mutant that is
+// supposed to DIE when the term is removed is the very control that is supposed to PASS while it is there, so
+// the pair can never disagree and the claim's own structure guarantees its own verdict.
+//
+// The other spelling is duplication inside one list - `test_names: ['X', 'X']` - which used to be silently
+// deduplicated (the key of the `named` map is entry + kind + name, so the second write landed on the first)
+// and reported `named: 1`. Neither is a claim this run can measure as written, so both are refused here, by
+// name, before anything is measured. A term that genuinely rests on two tests names two tests.
+//
+// What this does NOT refuse: two entries each naming the same name (that is the rule above), or one name
+// reported by the runner more than once (that is `duplicate_points`, which collapses to the worst status).
+const reusedWithinEntry = [];
+entryTests.forEach((tests, index) => {
+  const at = new Map();
+  for (const test of tests) at.set(test.name, [...(at.get(test.name) ?? []), test.kind]);
+  for (const [name, kinds] of at) {
+    if (kinds.length > 1) {
+      reusedWithinEntry.push(`"${name}" (entry ${index}, ${claimEntries[index].id}: named as `
+        + `${kinds.join(' and as ')})`);
+    }
+  }
+});
+if (reusedWithinEntry.length > 0) {
+  refuse('claim.entries.control.test_names', `${reusedWithinEntry.length} test name(s) in ${CLAIM_PATH} at `
+    + `${candidateSha.slice(0, 12)} are named more than once by a single entry, so that entry's coverage counts `
+    + `one measurement as two and a term this run measured once would be reported as resting on two tests: `
+    + `${listing(reusedWithinEntry)}`);
 }
 
 // The entry's `artifact`, resolved against the manifest's own directory into a repository path, so the binding
@@ -1004,12 +1085,17 @@ const close = () => {
   const locations = open.location
     ? [...new Set([...(prior?.locations ?? []), open.location])]
     : (prior?.locations ?? []);
+  // The same collapse for the point's identity: every `<file>:<line>` this name was reported at, as a set.
+  const pointsAt = open.point_at
+    ? [...new Set([...(prior?.points_at ?? []), open.point_at])]
+    : (prior?.points_at ?? []);
   observed.set(open.name, prior
     ? { status: STATUS_RANK[status] > STATUS_RANK[prior.status] ? status : prior.status,
       points: prior.points + 1,
       statuses: prior.statuses.includes(status) ? prior.statuses : [...prior.statuses, status],
-      locations }
-    : { status, points: 1, statuses: [status], locations });
+      locations,
+      points_at: pointsAt }
+    : { status, points: 1, statuses: [status], locations, points_at: pointsAt });
   open = null;
 };
 
@@ -1041,9 +1127,16 @@ for (const raw of tap.split('\n')) {
       // `location: '<file>:<line>:<column>'`; only the file is kept, because a term is bound to the file its
       // claim names and not to a line number that moves with every edit. The first such key wins, so a block
       // carrying two cannot promote the second over the runner's own.
+      // THE LINE IS KEPT AS WELL AS THE FILE, because the two answer different questions and this parser used
+      // to throw the second one away. The FILE is what an entry's `artifact` is bound to - a term's test must
+      // live where its claim says it lives. The `<file>:<line>` pair is the POINT'S IDENTITY: it is what the
+      // runner says this point was declared at, and two points declared at one `<file>:<line>` are one test
+      // reported twice, whatever the two names on them say. Section 10d refuses a claim that rests two of its
+      // named tests on one such point; it cannot ask that question from the file alone, because an artifact
+      // holds many tests and they all share it.
       if (!open.location) {
         const where = /^location: '(.+):(\d+):(\d+)'$/.exec(body);
-        if (where) open.location = where[1];
+        if (where) { open.location = where[1]; open.point_at = `${where[1]}:${where[2]}`; }
       }
     }
     continue;
@@ -1250,8 +1343,51 @@ const perTest = [...named.values()].map(test => {
     points: seen?.points ?? 0,
     location_bound: bound,
     locations,
+    // The `<file>:<line>` the runner declared each of this name's points at. `locations` is what the artifact
+    // binding reads; this is what identifies the POINT, and it is what section 10d refuses a second claimant
+    // of. Empty wherever the runner reported no location, which at v22.22.3 is every point it did not fail.
+    points_at: seen?.points_at ?? [],
   };
 });
+// 10d. ONE POINT IS THE EVIDENCE FOR ONE NAMED TEST, AND TWO NAMES ON IT DO NOT MAKE IT TWO.
+//
+// The rule two sections up refuses a claim that names one test twice. This refuses the same thing measured
+// rather than spelled: two DIFFERENT names that the runner declared at one `<file>:<line>`. `node --test`
+// writes the location of the declaration, so a loop - `for (const name of [...]) test(name, () => {})` - emits
+// as many named points as the list is long, all of them the same test body, all of them reported at the same
+// line. A claim that names two of those has two names, two rows, two passes and one test: exactly the pooling
+// the entry-keying and the shared-name rule close for names, reopened through the candidate's freedom to
+// generate them.
+//
+// It is refused rather than reported, for the same reason as its sibling: a claim resting two of its terms'
+// tests on one point does not say which of them that point is evidence for, and a receipt that picked one
+// would be inventing the answer.
+//
+// HOW FAR IT REACHES, and it is the same reach as the artifact binding because it reads the same key: only
+// points the runner reported a `location:` on can be compared, and at node v22.22.3 that is the FAILING points
+// and no others. So this refuses a generated pair whose tests fail and cannot see a generated pair whose empty
+// bodies pass. That is carried into the receipt's limits rather than implied to be closed, and closing it
+// needs the same thing the binding needs: a location on every point, from a reporter this authority owns.
+//
+// THE COST, stated because it is a real one and it falls on honest claims: a table-driven suite that declares
+// its cases on one line CAN have two genuinely distinct executions at one location, and a claim naming two of
+// them is refused here. That is the direction this authority errs in - it refuses a claim it cannot tell from
+// pooling, rather than accepting a pooled one - and the fix on the claim's side is to name one of them.
+const pointClaimants = new Map();
+for (const test of perTest) {
+  for (const at of test.points_at) {
+    pointClaimants.set(at, [...new Set([...(pointClaimants.get(at) ?? []), test.name])]);
+  }
+}
+const pooledPoints = [...pointClaimants.entries()].filter(([, names]) => names.length > 1)
+  .map(([at, names]) => `${at} (named by ${names.map(name => `"${name}"`).join(', ')})`);
+if (pooledPoints.length > 0) {
+  refuse('capture.point_identity', `${pooledPoints.length} point(s) of this capture carry more than one of the `
+    + `name(s) this claim rests on: the runner declared them at one file and line, so they are one test `
+    + `reported under two names, and this run cannot say which named test each of them measures: `
+    + `${listing(pooledPoints)}`);
+}
+
 const duplicatePoints = [...observed.entries()]
   .filter(([, seen]) => seen.points > 1)
   .map(([name, seen]) => ({ name, points: seen.points, statuses: seen.statuses, collapsed_to: seen.status }));
@@ -1543,6 +1679,14 @@ const receipt = {
         + 'count of unreported names is in `named_tests_summary.location_bound` and is the honest measure of '
         + 'this gap. Closing it needs a location on every point, which needs a reporter this authority owns '
         + 'writing on a channel the trusted capture process hashes; that is not done.',
+      'AND THE SAME KEY BOUNDS WHAT A POINT MAY BE THE EVIDENCE FOR. The `<file>:<line>` the runner declared '
+        + 'each point at travels per test as `points_at`, and a capture in which two of the claim\'s names sit '
+        + 'on ONE such point is refused outright at `capture.point_identity`: a loop that generates named '
+        + 'tests emits one body under many names, and a claim naming two of them would report two passes off '
+        + 'one test. A claim that names one test twice - as its control and as its own killing mutant, or '
+        + 'twice in one list - is refused earlier still, on the claim\'s own text, at '
+        + '`claim.entries.control.test_names`. The first of those two reaches exactly as far as the location '
+        + 'does, which is the failing points and no others; the second does not depend on the runner at all.',
       'THE CLAIM\'S OWN VERDICT IS NOW LOAD-BEARING, AND IT IS STILL THE CANDIDATE\'S FILE. A term is '
         + 'established only when the measurement is green AND the manifest entry it comes from carries '
         + '`disposition: PASS` and not `approvable: false`; `terms[].measured` records the measurement '
@@ -1709,6 +1853,10 @@ const receipt = {
 };
 
 fs.rmSync(work, { recursive: true, force: true });
+// The capture first, then the receipt: the gate reads both, and a receipt beside a capture from some earlier
+// run would be worse than a receipt beside none. Written verbatim - every byte the artifact held, trailer and
+// all - so the digest the gate computes over it is the digest the measure job published.
+fs.writeFileSync(captureOutPath, captureBytes);
 fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
 console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice(0, 8)}: verdict `
   + `${receipt.conclusion.verdict}; named ${summary.named} pass ${summary.pass} fail ${summary.fail} `
