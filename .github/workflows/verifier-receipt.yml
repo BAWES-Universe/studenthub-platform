@@ -135,7 +135,11 @@ jobs:
             else
               trusted_sha="$PR_HEAD_SHA"
               trusted_origin="pull-request-head"
-              echo "::warning::the receipt authority is not present on $PR_BASE_REF at $PR_BASE_SHA, so this rehearsal runs the authority from the pull request head; its receipt is not admissible as a pin"
+              # TWO TRIGGERS, AND THE WARNING NAMES BOTH. The condition above is a conjunction: this run trusts
+              # the base only when the authority is readable there AND the base is the default branch. A pull
+              # request based on any non-default branch therefore lands here with runners.json fully present, so
+              # "the authority is not present" was true of only one of the two ways in.
+              echo "::warning::this run will not trust the authority from this pull request's base ($PR_BASE_REF at $PR_BASE_SHA): either it carries no .github/verifier-receipt/runners.json or it is not the default branch (${DEFAULT_BRANCH:-main}). This rehearsal runs the authority from the pull request head instead; its receipt is not admissible as a pin"
             fi
             rehearsal=$(gh api "/repos/$REPO/contents/.github/verifier-receipt/pull-request-rehearsal.json?ref=$trusted_sha" --jq '.content' | base64 -d)
             candidate_sha=$(printf '%s' "$rehearsal" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).candidate_sha))")
@@ -164,48 +168,90 @@ jobs:
       # An early, cheap refusal. The emitter re-checks this from the API itself and refuses independently, so a
       # drift here loosens nothing - it only wastes a suite run before the refusal lands.
       #
-      # It asks the same question the emitter asks, the same way: the OBJECT ID of each authority path on main
-      # and at the candidate. This step used to read `.files[].filename` from `compare/main...<candidate>`,
-      # which has two holes the emitter's comment records in full - GitHub caps that list at 300 entries and
-      # truncates it silently in filename order, and it reports a rename under its new name only. An id is
-      # neither a page of a list nor a name.
+      # It asks the same question the emitter asks, BY RUNNING THE SAME CODE: .github/verifier-receipt/
+      # authority-scope.mjs, fetched here from the trusted commit because this job checks out nothing on
+      # purpose. It used to be a second spelling of that question written out inline, and when the question
+      # itself turned out to be the wrong one (see below) the same defect had to be corrected in two places or
+      # the refusal would only have moved from here to the emitter.
+      #
+      # THE OBJECT ID, NOT A DIFF LISTING. An earlier form read `.files[].filename` from
+      # `compare/main...<candidate>`, which has two holes the emitter's section 8 comment records in full:
+      # GitHub caps that list at 300 entries and truncates it silently in filename order, and it reports a
+      # rename under its new name only. An id is neither a page of a list nor a name. The comparison is still
+      # fetched, but only for its `merge_base_commit.sha`.
+      #
+      # AND THE BASELINE IS THE MERGE BASE, NOT MAIN. Comparing ids with main answers a different question.
+      # The first workflow_dispatch of this authority on main (run 35852850002, candidate 6feac016) refused a
+      # candidate that had altered nothing: cut from an older main, it carries no authority at all, and
+      # equality-against-main reads ABSENT as ALTERED. Measured at the fork point - the one revision where the
+      # candidate's copy and what it started from are the same object - it changes nothing and is admitted.
       - name: Refuse a candidate that alters the receipt authority
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          TRUSTED_SHA: ${{ steps.resolve.outputs.trusted_sha }}
           CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          object_id() {  # directory, entry name, ref -> the entry's sha, or empty if the entry is not there
-            local listing
-            if ! listing=$(gh api "/repos/$REPO/contents/$1?ref=$3" 2>/dev/null); then
-              # This function is called in a command substitution, so its diagnostics go to stderr or they are
-              # captured as its result and lost. `set -e` in the caller turns the non-zero exit into a refusal.
-              echo "::error::cannot list $1 at $3, so this run cannot establish what $1/$2 is there" >&2
-              exit 1
-            fi
-            printf '%s' "$listing" | node -e '
-              let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
-                const found = JSON.parse(s).find(item => item.name === process.argv[1]);
-                process.stdout.write(found?.sha ?? "");
-              });
-            ' "$2"
-          }
-          altered=""
-          for pair in ".github/workflows:verifier-receipt.yml" ".github:verifier-receipt"; do
-            dir="${pair%%:*}"; name="${pair##*:}"
-            on_main=$(object_id "$dir" "$name" main)
-            on_candidate=$(object_id "$dir" "$name" "$CANDIDATE_SHA")
-            echo "$dir/$name: main=${on_main:-<absent>} candidate=${on_candidate:-<absent>}"
-            if [ "$on_main" != "$on_candidate" ]; then
-              altered="$altered $dir/$name"
-            fi
-          done
-          if [ -n "$altered" ]; then
-            echo "::error::this candidate alters the receipt authority ($altered), so its receipt may not approve it"
+          scope="$RUNNER_TEMP/authority-scope.mjs"
+          # FROM THE TRUSTED COMMIT, WITH NO FALLBACK TO ANOTHER REF - and precisely what that does and does not
+          # guarantee, because an earlier version of this comment stated it as an absolute and it is not one. The
+          # resolve step sets trusted_sha to the PULL REQUEST HEAD on EITHER of two conditions, and this comment
+          # named only the first until a review pointed out that it therefore still was not true in every clause:
+          # when the contents API will not serve runners.json at the pull request's base sha, OR when the pull
+          # request's base ref is not the default branch - a pull request based on any other branch takes the
+          # head-trusted path with runners.json fully present. In that state the candidate's own copy of this
+          # module is what judges it, resolve emits a warning saying so, and the receipt is marked inadmissible
+          # as a pin. Neither condition is met by a pull request against main today, and both are named here
+          # instead of being implied away.
+          #
+          # A TRUSTED COMMIT THAT PREDATES THE MODULE REFUSES HERE. That is the closed direction, and it is the
+          # bootstrap itself: this authority cannot rehearse an amendment to itself until the amendment lands.
+          #
+          # AN EMPTY FETCH IS A REFUSAL, NOT A PASS. GitHub's contents API answers `"content": ""` with
+          # `"encoding": "none"` for a file it will not inline (over 1 MB). Piping that through `base64 -d` writes
+          # a zero-byte file, node runs it happily, the step exits 0 - and nothing was compared. Latent rather
+          # than live (this module is ~15 KB), but a check that can pass by fetching nothing is not a check, so
+          # the shape is refused rather than trusted: the encoding must be base64, the decoded module must be
+          # non-empty, and it must be exactly the size the API declared.
+          meta="$RUNNER_TEMP/authority-scope.meta"
+          if ! gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
+               --jq '"\(.encoding) \(.size)"' > "$meta"; then
+            echo "::error::the trusted commit $TRUSTED_SHA carries no .github/verifier-receipt/authority-scope.mjs, so this run cannot decide whether the candidate changes the receipt authority"
             exit 1
           fi
-          echo "the candidate leaves every authority object exactly as main holds it"
+          read -r encoding declared < "$meta"
+          if [ "$encoding" != "base64" ]; then
+            echo "::error::the contents API would not inline .github/verifier-receipt/authority-scope.mjs at $TRUSTED_SHA (encoding=$encoding), so this run cannot decide anything from it"
+            exit 1
+          fi
+          gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
+            --jq '.content' | base64 -d > "$scope"
+          got=$(wc -c < "$scope")
+          if [ "$got" -eq 0 ]; then
+            echo "::error::the module fetched from $TRUSTED_SHA decoded to nothing, so this run would have compared nothing"
+            exit 1
+          fi
+          if [ "$got" != "$declared" ]; then
+            echo "::error::the module fetched from $TRUSTED_SHA is $got bytes and the API declared $declared bytes"
+            exit 1
+          fi
+          # AND THE STEP ASSERTS THE MODULE REPORTED ON BOTH AUTHORITY PATHS. It used to assert that the output
+          # contained "merge base of", which renderAuthorityScope emits unconditionally as its first line: a
+          # review built a module identical to the real one except `AUTHORITY_PATHS = []`, ran it through this
+          # step body, and the step exited 0 having compared nothing. So what is counted here is the per-path
+          # line - `<path>: base=... candidate=... main=... -> <change>` - and the count is the length of
+          # AUTHORITY_PATHS in the module, which is 2. A module that reports on fewer paths than the authority
+          # has fails here; a third authority path means this number changes with it. Nothing about the VERDICT
+          # is asserted here - an admissible candidate and a refused one both print two of these lines, and the
+          # refusal itself is the module's own non-zero exit, caught above.
+          verdict=$(node "$scope" "$REPO" main "$CANDIDATE_SHA") || { printf '%s\n' "$verdict"; exit 1; }
+          printf '%s\n' "$verdict"
+          reported=$(printf '%s\n' "$verdict" | grep -c ' -> ' || true)
+          if [ "$reported" -ne 2 ]; then
+            echo "::error::the module reported on $reported authority paths and this authority has 2, so this run cannot say it compared the authority"
+            exit 1
+          fi
 
   measure:
     name: measure
