@@ -2928,7 +2928,7 @@
     "TWO_LANES: issue resolution preserves legacy shape and isolates initial and revision paths",
     "LANE_MISMATCH: swapped attempt paths are refused before workspace I/O in both phases",
     "TWO_SUCCESSORS: exact-head BLOCK routes each writer to its own revision lane",
-    "TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254",
+    "TWO_SCOPE: two-fixture selection admits exactly SHU-140 and SHU-254",
     "TWO_CAPACITY: two active receipts fit and a third is refused by capacity",
     "DISPATCH_DISABLED: two-lane tick has zero launches and zero writes with runtime gate true",
     "TWO_LANES MUTATION: swapped lane receipt accepted",
@@ -23834,7 +23834,7 @@
       "capabilities": []
     },
     {
-      "name": "TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254",
+      "name": "TWO_SCOPE: two-fixture selection admits exactly SHU-140 and SHU-254",
       "capabilities": []
     },
     {
