@@ -7,8 +7,11 @@ import cp from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { singleRunActivationStatus } from '../single-run-activation.mjs';
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from '../push-broker.mjs';
+import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
 
-const config = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url)));
+// Two-fixture world stated explicitly: these cases stop just after execution
+// binding on a slots-2 record, which the committed one-fixture scope refuses.
+const config = twoFixtureConfig();
 const realExec = cp.execFileSync;
 const sha = 'a'.repeat(40);
 function status(dir, revision = sha) {
