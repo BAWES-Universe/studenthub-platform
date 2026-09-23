@@ -137,19 +137,30 @@ const suiteIsClean = (receipt, reasons, toleratedSkips) => {
       + 'reported as failing cannot establish an admissible pin, whatever suite.state records beside it');
   }
 
-  // NEXT-1. THE COUNTS MUST RECONCILE WHEN THE BODY CARRIES THEM.
+  // NEXT-1. THE COUNTS MUST RECONCILE, AND ALL SIX OF THEM ARE REQUIRED.
   //
   // `suite.tests` is the runner's total and the five category counts partition it, so a body claiming ten
   // tests while accounting for three has not said what happened to the other seven - and every exclusion
   // counter reading zero is precisely how such a body passes every check above.
   //
-  // AND IT IS CHECKED ONLY WHEN ALL SIX NUMBERS ARE READABLE, which is the brief's "when the body carries
-  // them" and is stated here because it is a LIMIT and not a subtlety. `not_ok`, `cancelled`, `skipped` and
-  // `todo` are each required in their own right further down, so a body omitting one of those is refused
-  // anyway and a second sentence about it would say nothing new. `tests` and `ok` are NOT required anywhere -
-  // a body that omits either escapes this ground rather than failing it. Requiring them is a new refusal on
-  // fields nothing reads today, which is a wider change than this round was asked for; it is named here so
-  // that the next reader finds the gap written down instead of assuming it closed.
+  // THE ESCAPE THAT USED TO BE LEFT OPEN HERE IS CLOSED. The round that wrote this block checked the identity
+  // only when all six numbers were readable, and required just four of them: `not_ok`, `cancelled`, `skipped`
+  // and `todo` are each read further down, but `tests` and `ok` were required nowhere, so DELETING EITHER made
+  // the identity not run rather than fail - a review demonstrated `[ADMISSIBLE] ok DELETED, tests 3649`. The
+  // argument this file already makes for requiring `suite.exit` applies to both of them verbatim: the emitter
+  // always writes them (`emit-receipt.mjs` builds this block from `counts.tests` and `counts.ok`), so asking
+  // for them refuses nothing a real receipt carries, and an absent field is a reason on the standing rule that
+  // an absent field is not a satisfied condition. They are read with `readCount` like the other four, which
+  // means the identity below now runs on every body that is not already refused for missing one of its terms.
+  //
+  // AND A NUMBER RENDERED AS A STRING IS REFUSED BY NAME, WHICH IS A DECISION AND NOT AN ACCIDENT. `readCount`
+  // requires a JSON number, so `"tests": "3649"` is refused as unreadable rather than coerced: a body whose
+  // own counters are not numbers is not a body any run of the emitter produced, and parsing it leniently would
+  // be this file guessing what it meant. `suite.exit` is the deliberate exception beside it and reads as a
+  // STRING, because that is what the emitter writes - `const suiteExit = String(meta.suite_exit ?? '')` - so
+  // the comparison there is `String(exit) !== '0'`. The two rules differ because the two fields differ, and
+  // the suite pins both: a forged body carrying `"exit":"0"` is read on its merits, and one carrying
+  // `"tests":"3649"` is refused.
   //
   // MEASURED RATHER THAN ASSUMED, because the arithmetic is the runner's and not this file's. On node
   // v22.22.3, a file with one passing, one failing, one timing-out, one skipped and one `todo` test reports:
@@ -157,9 +168,11 @@ const suiteIsClean = (receipt, reasons, toleratedSkips) => {
   // so `cancelled` is a category of its own that sums into `tests` alongside the other four, and it is in the
   // sum below. This repository's real 3649-test receipt satisfies the same identity (3581 + 60 + 0 + 8 + 0),
   // which is why requiring it costs nothing.
-  const counts = ['tests', 'ok', 'not_ok', 'cancelled', 'skipped', 'todo']
+  const testsCount = readCount(suite, 'tests', reasons, 'suite');
+  const okCount = readCount(suite, 'ok', reasons, 'suite');
+  const counts = [testsCount, okCount, ...['not_ok', 'cancelled', 'skipped', 'todo']
     .map(field => (typeof suite[field] === 'number' && Number.isInteger(suite[field]) && suite[field] >= 0
-      ? suite[field] : null));
+      ? suite[field] : null))];
   if (counts.every(value => value !== null)) {
     const [tests, ok, notOk, cancelledCount, skippedCount, todoCount] = counts;
     const accounted = ok + notOk + cancelledCount + skippedCount + todoCount;

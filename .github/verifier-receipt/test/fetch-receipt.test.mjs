@@ -33,8 +33,13 @@
 //     cases below are the evidence: nothing is written into TMPDIR at all, and an adversary that owns TMPDIR
 //     and overwrites every file appearing in it - the review's own attack, with the guesswork removed - gets
 //     no pin;
-//   * the pin records the `gh` binary and version this fetch actually read the API through, because that
-//     binary, and not GitHub, is where every fact in a pin comes from;
+//   * the pin records BOTH binaries this fetch rested on - the `gh` it read the API through and the
+//     `python3` it opened the archive with - because those, and not GitHub, are where every fact in a pin
+//     comes from. An earlier round named only the first and the file claimed there was only one channel; the
+//     ITEM 1(B) cases are the second one, closed: a `python3` resolved once and refuseable against an
+//     expectation, and an interpreter given `-P` and a working directory that is not the candidate's, so a
+//     `zipfile.py` committed in the tree being judged is no longer the thing that decides what the receipt
+//     said;
 //   * and a run that is not the protected branch's emits no pin at all, whatever it found. That is a GUARD
 //     RAIL and is labelled one: it stops an accident, and a run that sets GITHUB_REF and GITHUB_EVENT_NAME
 //     itself gets past it. What binds is `verify-claim.yml`, dispatched from protected main.
@@ -154,15 +159,39 @@ const stage = ({ run = RUN, artifacts = { artifacts: [ARTIFACT] }, zip = null, a
 // THE RUN THE TOOL IS PART OF. The tool refuses to emit a pin unless its OWN run is on the protected branch,
 // so every case that expects a pin has to say it is one; a case that wants the refusal overrides `env`.
 const PROTECTED_RUN = { GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch' };
-const runTool = (dir, { runId = '4242', repo = REPO, env = PROTECTED_RUN } = {}) => {
+// `cwd` is a parameter because the WORKING DIRECTORY is an attack surface of its own: `verify-claim.yml` does
+// `cd candidate` before invoking this tool, so in production the inherited cwd is the tree being judged. The
+// default here is the staging directory, which is nobody's checkout; the ITEM 1 cases below pass a candidate
+// tree deliberately.
+const runTool = (dir, { runId = '4242', repo = REPO, env = PROTECTED_RUN, cwd = dir } = {}) => {
   try {
     return { code: 0, stdout: execFileSync('node', [TOOL, '--run', runId, '--repo', repo],
-      { encoding: 'utf8', env: { ...process.env, ...env, PATH: `${dir}:${process.env.PATH}` } }), stderr: '' };
+      { encoding: 'utf8', cwd, env: { ...process.env, ...env, PATH: `${dir}:${process.env.PATH}` } }),
+    stderr: '' };
   } catch (error) {
     return { code: error.status ?? 1, stdout: error.stdout?.toString() ?? '',
       stderr: error.stderr?.toString() ?? '' };
   }
 };
+
+// WHAT PATH REALLY RESOLVES, WALKED THE WAY THE TOOL WALKS IT. The pin records an ABSOLUTE path, and a test
+// that hard-coded `/usr/bin/python3` would be asserting this machine's layout rather than the tool's
+// behaviour. This is `resolveOnPath` from the tool, kept here so the expectation is computed and not folklore.
+const onPath = name => {
+  for (const entry of String(process.env.PATH ?? '').split(path.delimiter)) {
+    if (entry === '') continue;
+    const candidate = path.join(entry, name);
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch (error) { /* not this directory's; keep walking */ }
+  }
+  return null;
+};
+const REAL_PYTHON = onPath('python3');
+const REAL_PYTHON_VERSION = REAL_PYTHON
+  && String(execFileSync(REAL_PYTHON, ['--version'], { encoding: 'utf8' })).split('\n')[0].trim();
 
 // A staged healthy world with one field of the RECEIPT replaced, which is what every identity case needs.
 const withReceipt = body => runTool(stage({ zip: body, attestations: [envelope()] }));
@@ -691,6 +720,239 @@ test('ITEM 1: an adversary holding TMPDIR and replacing every file that appears 
       try { process.kill(-attacker.pid); } catch (error) { attacker.kill('SIGKILL'); }
     }
   });
+
+// ITEM 1(B). THE SECOND CHANNEL, WHICH THE ROUND ABOVE LEFT OPEN AND THE FILE SAID DID NOT EXIST.
+//
+// The header used to say "Every fact above arrives through one channel: `gh api`, run as a subprocess". It
+// was false while it was written. `python3` opens the archive, and the RECEIPT BODY - what every check below
+// reads - comes back out of it. A review found two ways in, and both are exercised here:
+//
+//   * the binary was a BARE NAME resolved through PATH at call time, so a dishonest `python3` ahead of the
+//     real one produced a pin saying `{"verdict":"success","suite_state":"green"}` over the digest of a red
+//     archive, with nothing in the pin naming the binary that had said so;
+//   * and it needed no control of PATH at all: `verify-claim.yml` does `cd candidate`, the subprocess
+//     inherited that directory, and `python3 -c` puts the working directory FIRST on `sys.path` - so a
+//     `zipfile.py` COMMITTED IN THE CANDIDATE'S OWN REPOSITORY was the zip reader. Out came a pin over a body
+//     that had decided nothing, recording main's real blob id as the rule that admitted it.
+//
+// The fix is the three things the review asked for, and each has a case: `-P`, an explicit `cwd` that is not
+// the candidate's, and a `python3` resolved, version-read, recorded and refuseable on the same terms as `gh`.
+
+// A stand-in for `python3` staged on PATH ahead of the real one, so a case can make the interpreter behave in
+// a way no real one would. `behaviour` is JavaScript run with `argv` and `stdin` in scope; whatever it writes
+// with `out(...)` is this interpreter's stdout.
+const stagePython = (dir, behaviour, { version = 'Python 3.99.0' } = {}) => {
+  fs.writeFileSync(path.join(dir, 'python-stub.cjs'), `
+    const fs = require('node:fs');
+    const argv = process.argv.slice(2);
+    if (argv.includes('--version')) { process.stdout.write(${JSON.stringify(`${version}\n`)}); process.exit(0); }
+    const stdin = fs.readFileSync(0);
+    const out = buffer => process.stdout.write(buffer);
+    ${behaviour}
+  `);
+  fs.writeFileSync(path.join(dir, 'python3'),
+    `#!/bin/sh\nexec ${process.execPath} "${path.join(dir, 'python-stub.cjs')}" "$@"\n`);
+  fs.chmodSync(path.join(dir, 'python3'), 0o755);
+  return dir;
+};
+
+test('ITEM 1(B): the pin records the python3 the receipt body was read through, beside the gh', () => {
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  const result = runTool(dir);
+  assert.equal(result.code, 0, `expected success, got: ${result.stderr}`);
+  const pin = JSON.parse(result.stdout);
+  // The ABSOLUTE path PATH resolved, not the name `python3` - which is what the call site used to carry.
+  assert.equal(pin.fetched_with.python, REAL_PYTHON);
+  assert.equal(pin.fetched_with.python_version, REAL_PYTHON_VERSION);
+  assert.equal(pin.fetched_with.expected_python, null);
+  assert.equal(pin.fetched_with.expected_python_version, null);
+  // And what that interpreter said its zip reader was. It is the interpreter's own answer, recorded as such;
+  // the isolation is what makes it trustworthy, not this field. Under `-P` it is the standard library's.
+  assert.match(pin.fetched_with.zip_reader, /zipfile/);
+  assert.doesNotMatch(pin.fetched_with.zip_reader, new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+  // The advisory report names both binaries too, since it is the same statement in the channel a run that may
+  // not pin gets.
+  const advisory = runTool(dir, { env: { GITHUB_REF: 'refs/pull/1/merge', GITHUB_EVENT_NAME: 'pull_request' } });
+  assert.match(advisory.stderr, new RegExp(`opened with ${REAL_PYTHON.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+});
+
+test('ITEM 1(B): a run that says which python3 it expects is refused when PATH resolves another', () => {
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+
+  // The expectation is the RUN's to state, so stating the right one changes nothing.
+  const agreed = runTool(dir, { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_PYTHON: REAL_PYTHON } });
+  assert.equal(agreed.code, 0, `expected success, got: ${agreed.stderr}`);
+  assert.equal(JSON.parse(agreed.stdout).fetched_with.expected_python, REAL_PYTHON);
+
+  const wrongPath = runTool(dir, { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_PYTHON: '/opt/elsewhere/python3' } });
+  assert.notEqual(wrongPath.code, 0, 'a python3 that is not the expected one must be refused');
+  assert.match(wrongPath.stderr,
+    /this run expects its `python3` at "\/opt\/elsewhere\/python3" \(VERIFIER_EXPECTED_PYTHON\)/);
+  assert.match(wrongPath.stderr, /is not the one this run says it trusts/);
+  assert.equal(wrongPath.stdout, '', 'an unexpected python3 emits no pin');
+
+  const wrongVersion = runTool(dir,
+    { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_PYTHON_VERSION: 'Python 9.9.9' } });
+  assert.notEqual(wrongVersion.code, 0, 'a python3 of the wrong version must be refused');
+  assert.match(wrongVersion.stderr, /expects python3 "Python 9\.9\.9" \(VERIFIER_EXPECTED_PYTHON_VERSION\)/);
+  assert.match(wrongVersion.stderr, new RegExp(`reports ${JSON.stringify(REAL_PYTHON_VERSION)}`));
+  assert.equal(wrongVersion.stdout, '', 'an unexpected python3 version emits no pin');
+
+  // AND THE ATTACK THE EXPECTATION IS FOR, RUN: the review's dishonest `python3` staged ahead of the real
+  // one, everything else honest. The archive is RED; the interpreter hands back a GREEN body and an
+  // innocent-looking report, and every digest above still checks out because the digests are over the
+  // ARCHIVE and this substitutes what comes out of it.
+  const red = JSON.parse(JSON.stringify(receipt));
+  red.conclusion = { ...red.conclusion, suite_state: 'red' };
+  red.suite = { ...red.suite, state: 'red', ok: 8, not_ok: 2, exit: '1', failing_tests: ['one', 'another'] };
+  const dishonest = stagePython(stage({ zip: red, attestations: [envelope()] }), `
+    out(Buffer.from(JSON.stringify({ cwd: '/tmp', zip_reader: '/usr/lib/python3/zipfile.py',
+      working_directory_on_path: [] }) + '\\n'));
+    out(Buffer.from(${JSON.stringify(JSON.stringify(receipt))}));
+  `);
+  const caught = runTool(dishonest,
+    { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_PYTHON: REAL_PYTHON } });
+  assert.notEqual(caught.code, 0, 'a substituted python3 must be refused where the run named the real one');
+  assert.match(caught.stderr, /PATH resolved/);
+  assert.equal(caught.stdout, '', 'a substituted python3 emits no pin');
+
+  // WITHOUT an expectation it is not refused - it is RECORDED, and that is the honest limit of this defence,
+  // asserted here rather than left implied. It is the same standing `gh` has: this file cannot make a channel
+  // trustworthy, it can stop assuming one. What changed is that the pin the review got with nothing in it
+  // naming the binary now names the binary, so a reader sees the trust root instead of assuming python3.
+  const unstated = runTool(dishonest);
+  assert.notEqual(unstated.stdout, '', `expected a pin, got: ${unstated.stderr}`);
+  const bought = JSON.parse(unstated.stdout);
+  assert.equal(bought.receipt.conclusion.suite_state, 'green', 'the substituted body is what was pinned');
+  assert.equal(bought.fetched_with.python, path.join(dishonest, 'python3'));
+  assert.equal(bought.fetched_with.python_version, 'Python 3.99.0');
+  assert.notEqual(bought.fetched_with.python, REAL_PYTHON);
+});
+
+test('ITEM 1(B): a python3 this run cannot resolve, or that will not say what it is, is a refusal', () => {
+  // NO `python3` ON PATH, BUT `gh` STILL THERE - otherwise the refusal would be about `gh` and this case
+  // would prove nothing. The stub's shim is rewritten to an absolute interpreter so the bare PATH still runs.
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  fs.writeFileSync(path.join(dir, 'gh'),
+    `#!/bin/sh\nexec ${process.execPath} "${path.join(dir, 'gh.cjs')}" "$@"\n`);
+  fs.chmodSync(path.join(dir, 'gh'), 0o755);
+  const spawned = env => {
+    try {
+      return { code: 0, stdout: execFileSync(process.execPath, [TOOL, '--run', '4242', '--repo', REPO],
+        { encoding: 'utf8', cwd: dir, env }), stderr: '' };
+    } catch (error) {
+      return { code: error.status ?? 1, stdout: error.stdout?.toString() ?? '',
+        stderr: error.stderr?.toString() ?? '' };
+    }
+  };
+  const unresolvable = spawned({ ...PROTECTED_RUN, PATH: dir });
+  assert.notEqual(unresolvable.code, 0, 'a run with no python3 on PATH must be refused');
+  assert.match(unresolvable.stderr, /no executable named `python3` is on this run's PATH/);
+  assert.match(unresolvable.stderr, /has no trust root to rest a pin on/);
+  assert.equal(unresolvable.stdout, '', 'a run with no python3 emits no pin');
+
+  // A `python3` that will not state its version cannot be identified in the pin that would rest on it.
+  const mute = stagePython(stage({ zip: receipt, attestations: [envelope()] }),
+    'out(stdin);', { version: '' });
+  const silent = runTool(mute);
+  assert.notEqual(silent.code, 0, 'a python3 that will not identify itself must be refused');
+  assert.match(silent.stderr, /would not state its version/);
+  assert.match(silent.stderr, /cannot be identified in the pin that rests on it/);
+  assert.equal(silent.stdout, '', 'an unidentifiable python3 emits no pin');
+});
+
+test('ITEM 1(B): a candidate tree holding a module that shadows a stdlib name decides nothing', () => {
+  // THE WORKING DIRECTORY IS THE CANDIDATE'S, exactly as `verify-claim.yml` leaves it after `cd candidate`.
+  // The tree holds one file: a `zipfile.py` that answers with whatever body its author wants.
+  const candidate = fs.mkdtempSync(path.join(os.tmpdir(), 'candidate-tree-'));
+  const green = JSON.stringify(receipt);
+  fs.writeFileSync(path.join(candidate, 'zipfile.py'), [
+    'import json, io',
+    `GREEN = ${JSON.stringify(green)}`,
+    'class ZipFile:',
+    '    def __init__(self, *a, **k):',
+    '        try: a[0].read()',
+    '        except Exception: pass',
+    '    def __enter__(self): return self',
+    '    def __exit__(self, *a): return False',
+    '    def namelist(self): return ["receipt.json"]',
+    '    def read(self, name): return GREEN.encode()',
+    '',
+  ].join('\n'));
+
+  // THE SHADOW IS REAL, MEASURED BEFORE IT IS DEFENDED AGAINST. Without `-P` this interpreter imports the
+  // candidate's file; with `-P` it imports the standard library's. Asserting the flag's effect here rather
+  // than asserting the tool's outcome alone is what makes the case below about the tool and not about python.
+  const importedBy = flags => execFileSync(REAL_PYTHON, [...flags, '-c', 'import zipfile; print(zipfile.__file__)'],
+    { encoding: 'utf8', cwd: candidate }).trim();
+  assert.equal(importedBy([]), path.join(candidate, 'zipfile.py'),
+    'the shadow does not shadow, so this case would prove nothing: fix the fixture, not the assertion');
+  assert.notEqual(importedBy(['-P']), path.join(candidate, 'zipfile.py'));
+
+  // THE ARCHIVE IS RED AND AUTHORITY-ABSENT: nothing in it may be pinned. The shadow would hand back the
+  // green body above instead, and the whole chain of digests would still check out, because the digests are
+  // over the ARCHIVE and the shadow substitutes what comes out of it.
+  const red = JSON.parse(JSON.stringify(receipt));
+  red.conclusion = { ...red.conclusion, suite_state: 'red' };
+  red.suite = { ...red.suite, state: 'red', ok: 8, not_ok: 2, exit: '1',
+    failing_tests: ['a test the candidate needed to pass', 'another'] };
+  red.candidate = { ...red.candidate,
+    authority_identity: [{ path: '.github/verifier-receipt', protected_sha: null, change: 'none' }] };
+  const dir = stage({ zip: red, attestations: [envelope()] });
+
+  const result = runTool(dir, { cwd: candidate });
+  assert.notEqual(result.code, 0, 'a candidate that supplies the zip reader must get no pin');
+  assert.equal(result.stdout, '', `a pin came out of the shadowed run: ${result.stdout}`);
+  // Refused on the grounds the REAL body says no on, which is only possible if the real archive was read.
+  assert.match(result.stderr, /the measured suite reports 2 failing test\(s\) out of 10/);
+  assert.match(result.stderr, /the runner that measured this suite exited "1", not "0"/);
+  assert.match(result.stderr, /the receipt authority is absent on main/);
+
+  // And the honest world, run from the same poisoned directory, still produces the honest pin: the isolation
+  // is not the tool failing to work near a candidate tree, it is the tool ignoring it.
+  const honest = runTool(stage({ zip: receipt, attestations: [envelope()] }), { cwd: candidate });
+  assert.equal(honest.code, 0, `expected success beside the shadow, got: ${honest.stderr}`);
+  const pin = JSON.parse(honest.stdout);
+  assert.equal(pin.admissibility.module_blob, blobOf(MODULE));
+  assert.deepEqual(pin.admissibility.derived_reasons, []);
+  assert.doesNotMatch(pin.fetched_with.zip_reader,
+    new RegExp(candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
+test('ITEM 1(B): an interpreter that reports its working directory on the import path is refused', () => {
+  // `-P` IS A FLAG, AND A FLAG IS A CLAIM ABOUT AN INTERPRETER THIS TOOL DID NOT BUILD. So the tool asks the
+  // subprocess what its `sys.path` actually was and refuses an answer that still names the working directory
+  // - an interpreter too old for the flag, or one invoked in some way that put the entry back.
+  const reinstated = stagePython(stage({ zip: receipt, attestations: [envelope()] }), `
+    out(Buffer.from(JSON.stringify({ cwd: '/somewhere/the/candidate/owns',
+      zip_reader: '/somewhere/the/candidate/owns/zipfile.py',
+      working_directory_on_path: ['', '.'] }) + '\\n'));
+    out(Buffer.from(${JSON.stringify(JSON.stringify(receipt))}));
+  `);
+  const result = runTool(reinstated);
+  assert.notEqual(result.code, 0, 'an interpreter that is not isolated must be refused');
+  assert.match(result.stderr, /was run with `-P` and still reports its working directory on the import path/);
+  assert.match(result.stderr, /\["","\."\] resolving to "\/somewhere\/the\/candidate\/owns"/);
+  assert.match(result.stderr, /a file sitting beside it could have been the zip reader/);
+  assert.equal(result.stdout, '', 'an unisolated interpreter emits no pin');
+
+  // AND AN INTERPRETER THAT WILL NOT TAKE `-P` AT ALL is refused by name rather than silently read without
+  // it. This is what a python older than the flag does, and the refusal says what the tool will not do.
+  const refusesFlag = stagePython(stage({ zip: receipt, attestations: [envelope()] }), `
+    if (argv.includes('-P')) {
+      process.stderr.write("Unknown option: -P\\nusage: python3 [option] ...\\n");
+      process.exit(2);
+    }
+    out(stdin);
+  `);
+  const old = runTool(refusesFlag);
+  assert.notEqual(old.code, 0, 'a python3 that will not take -P must be refused');
+  assert.match(old.stderr, /holds no single receipt\.json this tool could read with [^\s]*python3 -P/);
+  assert.match(old.stderr, /Unknown option: -P/);
+  assert.match(old.stderr, /will not read a receipt through an interpreter it cannot isolate/);
+  assert.equal(old.stdout, '', 'an un-isolatable interpreter emits no pin');
+});
 
 // ITEM 2. THE TRUST ROOT, MEASURED AND NAMED. `api()` is `gh api` in a subprocess, so every fact in a pin came
 // out of whatever binary answered to `gh` - not out of GitHub. The tool cannot make that channel trustworthy;

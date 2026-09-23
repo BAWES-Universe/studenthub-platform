@@ -11,7 +11,10 @@
 //     - an artifact digest is computed by GitHub, not supplied by the uploader;
 //   * the downloaded ARCHIVE's bytes are hashed and must equal `artifact.digest`, which is the check that the
 //     container is the one GitHub served rather than one substituted in flight; the receipt is then taken out
-//     of THAT verified archive, so the bytes this tool goes on to read are provably the ones inside it. The
+//     of THAT verified archive, in memory, by the named and isolated interpreter described under WHAT THIS
+//     TOOL'S TRUST ROOTS ACTUALLY ARE - so the bytes this tool goes on to read are the ones inside it as far
+//     as that interpreter can be relied on, and no further. The archive never becomes a file and no other
+//     copy of it exists, so nothing but the reader itself stands between the digest and the parse. The
 //     receipt's own sha256 is a DIFFERENT quantity from the artifact digest - the artifact digest is over the
 //     ZIP and the receipt hash is over `receipt.json` inside it - and this file does not claim otherwise: the
 //     receipt hash is used as the attestation SUBJECT, never compared with the artifact's digest;
@@ -33,22 +36,47 @@
 //     THAT DECIDES below;
 //   * the receipt must be schema 2, which is the schema of the fields above.
 //
-// WHAT THIS TOOL'S TRUST ROOT ACTUALLY IS, STATED RATHER THAN ASSUMED.
+// WHAT THIS TOOL'S TRUST ROOTS ACTUALLY ARE, STATED RATHER THAN ASSUMED.
 //
-// Every fact above arrives through one channel: `gh api`, run as a subprocess. So the root of every claim this
-// file makes is THE `gh` BINARY THIS RUN FOUND ON ITS PATH, AND THE CREDENTIAL THAT BINARY CARRIES - not
-// GitHub. A `gh` on PATH that answers from a file, an attacker who can prepend a directory to PATH, a wrapper
-// that forges the contents API's reply, a token minted for another repository: any of those and this tool
-// reports whatever it is handed, carefully checked against itself. Nothing here can tell a spoofed API from a
-// real one, and no arrangement of checks over a channel that cannot be trusted makes it trustworthy.
+// There are TWO SUBPROCESSES, and both are trust roots. An earlier round of this comment said "Every fact
+// above arrives through one channel: `gh api`, run as a subprocess", and a review showed that sentence was
+// false while it was written: `python3` opens the archive, and the RECEIPT BODY - the thing every downstream
+// check reads - comes back out of it. With that binary left as a bare name resolved through PATH at call
+// time, the review put a dishonest `python3` ahead of the real one, left everything else honest, and got a
+// pin reporting `{"verdict":"success","suite_state":"green"}` over the digest of a red archive.
 //
-// What this file does about that is name it and MEASURE it rather than assert it. The `gh` on PATH is resolved
-// to an absolute path before the first call, every call goes to THAT path rather than through a fresh PATH
-// lookup, its `--version` is read back, and both travel in the pin as `fetched_with` - so a reader of a pin
-// can see which binary the evidence rested on instead of being asked to assume. A run that knows which binary
-// it expects may say so in `VERIFIER_EXPECTED_GH` / `VERIFIER_EXPECTED_GH_VERSION` and this tool refuses an
-// observation that contradicts it. A `gh` that cannot be resolved, or that will not say what it is, is a
-// refusal outright: a trust root that cannot be named is not one a pin may rest on.
+//   * `gh api` answers every API QUESTION: the run, the artifact, the archive bytes, the attestation, and the
+//     protected branch's copy of the rule. So the root of every such claim is THE `gh` BINARY THIS RUN FOUND
+//     ON ITS PATH, AND THE CREDENTIAL THAT BINARY CARRIES - not GitHub.
+//   * `python3` turns the VERIFIED ARCHIVE into the receipt's bytes, because node has no zip reader in its
+//     standard library and this path must not depend on a package a candidate could supply. So the root of
+//     every claim about what the receipt SAYS is that interpreter and the `zipfile` module it imported.
+//
+// A `gh` on PATH that answers from a file, an attacker who can prepend a directory to PATH, a wrapper that
+// forges the contents API's reply, a token minted for another repository, a `python3` that returns a body
+// nobody put in the archive: any of those and this tool reports whatever it is handed, carefully checked
+// against itself. Nothing here can tell a spoofed channel from a real one, and no arrangement of checks over
+// a channel that cannot be trusted makes it trustworthy.
+//
+// What this file does about that is name them and MEASURE them rather than assert them, and it does the same
+// thing for both. Each binary is resolved on PATH to an absolute path before it is used, every call goes to
+// THAT path rather than through a fresh PATH lookup, and its `--version` is read back; both paths and both
+// versions travel in the pin as `fetched_with`, beside the `zipfile` module the interpreter reported loading
+// - so a reader of a pin can see which binaries this fetch rested on instead of being asked to assume. That
+// is true of the pin THIS TOOL EMITS; the pin a candidate COMMITS carries an unverified copy of the block,
+// which `compare-pin.mjs` prints beside this one rather than comparing or trusting, and says so in the log.
+// A run that knows which binaries it expects may say so in `VERIFIER_EXPECTED_GH` /
+// `VERIFIER_EXPECTED_GH_VERSION` / `VERIFIER_EXPECTED_PYTHON` / `VERIFIER_EXPECTED_PYTHON_VERSION`, and this
+// tool refuses an observation that contradicts one. A binary that cannot be resolved, or that will not say
+// what it is, is a refusal outright: a trust root that cannot be named is not one a pin may rest on.
+//
+// AND THE INTERPRETER IS ISOLATED FROM THE TREE IT RUNS BESIDE, which is a second defect in the same channel
+// and needed no control of PATH. `verify-claim.yml` does `cd candidate` before invoking this tool, and
+// `python3 -c` puts the working directory FIRST on `sys.path`: a `zipfile.py` committed in a candidate's own
+// repository was therefore the zip reader, and the review got a pin over a body that had decided nothing,
+// recording main's real blob id as the rule that admitted it. The interpreter is now given `-P` and an
+// explicit `cwd` that is not the candidate's tree, and it REPORTS BACK its own `sys.path` entries resolving
+// to that directory - any at all being a refusal. See THE CONTAINER IS CHECKED BEFORE IT IS OPENED below.
 //
 // THE PROTECTED-REF GROUND: A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN. IT IS A GUARD RAIL.
 //
@@ -169,6 +197,54 @@ if (expectedGhVersion && expectedGhVersion !== ghVersion) {
     + `reports ${JSON.stringify(ghVersion)}`);
 }
 
+// THE SECOND TRUST ROOT, ON THE SAME TERMS AS THE FIRST. `gh` is not the only subprocess this file's evidence
+// comes out of: node has no zip reader in its standard library, so the RECEIPT BODY - the thing every
+// downstream check reads - is taken out of the verified archive by `python3`. A review measured what that
+// cost while this binary was a bare name resolved through PATH at call time: a dishonest `python3` ahead of
+// the real one on PATH, everything else honest, and out came a pin whose `receipt.conclusion` said
+// `{"verdict":"success","suite_state":"green"}` over the digest of an archive that was red. So it is resolved
+// once, read back, recorded and refuseable here, exactly as `gh` is above, rather than named at the call site.
+const PY = resolveOnPath('python3');
+if (!PY) {
+  fail('no executable named `python3` is on this run\'s PATH, and this tool has no other way to open the '
+    + 'artifact archive: the receipt body every check below reads comes out of that binary, so a run that '
+    + 'cannot even name it has no trust root to rest a pin on');
+}
+let pyVersion = null;
+try {
+  pyVersion = String(execFileSync(PY, ['--version'], { encoding: 'utf8' })).split('\n')[0].trim();
+} catch (error) {
+  pyVersion = null;
+}
+if (!pyVersion) {
+  fail(`the \`python3\` this run resolved (${PY}) would not state its version, so the binary the receipt body `
+    + 'is read through cannot be identified in the pin that rests on it');
+}
+const expectedPython = process.env.VERIFIER_EXPECTED_PYTHON ?? null;
+const expectedPythonVersion = process.env.VERIFIER_EXPECTED_PYTHON_VERSION ?? null;
+if (expectedPython && expectedPython !== PY) {
+  fail(`this run expects its \`python3\` at ${JSON.stringify(expectedPython)} (VERIFIER_EXPECTED_PYTHON) and `
+    + `PATH resolved ${JSON.stringify(PY)}: the binary that would turn the verified archive into the receipt `
+    + 'body is not the one this run says it trusts');
+}
+if (expectedPythonVersion && expectedPythonVersion !== pyVersion) {
+  fail(`this run expects python3 ${JSON.stringify(expectedPythonVersion)} (VERIFIER_EXPECTED_PYTHON_VERSION) `
+    + `and ${PY} reports ${JSON.stringify(pyVersion)}`);
+}
+
+// AND IT IS RUN SOMEWHERE THAT IS NOT THE TREE BEING JUDGED. `verify-claim.yml` does `cd candidate` before it
+// invokes this tool, so a subprocess started with no `cwd` inherits the CANDIDATE'S REPOSITORY ROOT - and
+// `python3 -c` puts `''`, the working directory, FIRST on `sys.path`. A review dropped a `zipfile.py` in the
+// candidate tree and got a pin over a body that decided nothing, recording main's real blob id as the rule
+// that admitted it: the round that moved the filesystem out of the MODULE chain had left it in the
+// RECEIPT-BYTES chain. Reproduced here before the fix and refused after it; see the test named for it.
+//
+// The directory chosen is the filesystem root of this tool's own location. It is not a value read out of the
+// inherited environment, no checkout can be it, and nothing this run writes goes there - so no relative
+// resolution the subprocess performs can land in the tree under judgement. It is the belt; `-P` below is the
+// braces, and the braces are what actually decide.
+const SUBPROCESS_CWD = path.parse(import.meta.dirname).root;
+
 const api = (endpoint, options = {}) => execFileSync(GH, ['api', ...(options.headers ?? []), endpoint],
   { encoding: options.binary ? 'buffer' : 'utf8', maxBuffer: 64 * 1024 * 1024 });
 const apiJson = endpoint => JSON.parse(api(endpoint));
@@ -222,7 +298,11 @@ if (artifact.workflow_run?.head_sha && artifact.workflow_run.head_sha !== run.he
 // what made the sentence this comment replaces impossible to hold. See the fixture's README.md.
 //
 // AND THEN THE RECEIPT IS TAKEN OUT OF THAT VERIFIED ARCHIVE, never from anywhere else, so "the receipt used
-// is the one inside the artifact GitHub digested" is a property of the order of these lines. The receipt's own
+// is the one inside the artifact GitHub digested" holds to the extent the READER can be relied on - and the
+// reader is named, resolved, version-read, isolated and recorded rather than being the bare word `python3` at
+// a call site, which is what it was when a review last read this sentence. What the order of these lines
+// establishes on its own is narrower and worth saying separately: these bytes were hashed before they were
+// opened, and the only thing they were ever handed to is the interpreter below. The receipt's own
 // sha256, computed further down, is a different quantity and is used as a different thing: the attestation's
 // subject. It is never compared with the artifact digest, because the two are hashes of different objects.
 const zip = api(`/repos/${repo}/actions/artifacts/${artifact.id}/zip`, { binary: true });
@@ -239,19 +319,55 @@ if (zipDigest !== artifact.digest) {
 // time-of-check-to-time-of-use gap, and `os.tmpdir()` is `TMPDIR`, an environment variable. The verified bytes
 // now go to python3 on stdin and the receipt comes back on stdout, so the bytes parsed below are the bytes
 // that hashed to `artifact.digest` by construction rather than by the absence of an interloper.
+//
+// AND THE INTERPRETER IS ISOLATED FROM THE TREE IT IS RUN BESIDE, which is the other half of that sentence and
+// the half a review found missing. `python3 -c` prepends `''` - the working directory - to `sys.path`, so
+// until this round a `zipfile.py` in the candidate's checkout was the zip reader, and a candidate could hand
+// this tool any receipt body it liked while every digest above still checked out. `-P` stops that prepending;
+// `cwd` is set so that the working directory is not the candidate's anyway.
+//
+// THE ISOLATION IS THEN MEASURED RATHER THAN ASSUMED, because `-P` is a flag and a flag is a claim about an
+// interpreter this file did not build. The subprocess reports its own `sys.path` entries that resolve to its
+// working directory, and any at all is a refusal naming `-P`: an interpreter too old for the flag, or one
+// invoked in some way that reinstated the entry, is refused instead of silently trusted.
+//
+// WHAT THAT MEASUREMENT DOES NOT ESTABLISH, said here rather than left to be inferred: the report is produced
+// BY the interpreter, so it is a description and not a proof. A `python3` that lies about `sys.path` lies
+// about this too. That is the same standing this file gives `gh`, and it is handled the same way - the binary
+// is resolved once, read back, recorded in the pin, and refuseable against an expectation the run states.
 let receiptBytes;
+let importReport;
 try {
-  receiptBytes = execFileSync('python3', ['-c', [
-    'import sys, zipfile, io',
+  const answer = execFileSync(PY, ['-P', '-c', [
+    'import sys, os, io, json, zipfile',
+    'here = os.getcwd()',
+    'report = {"cwd": here, "zip_reader": getattr(zipfile, "__file__", None),',
+    '          "working_directory_on_path": [p for p in sys.path if os.path.abspath(p) == here]}',
     'with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as archive:',
     '    names = [n for n in archive.namelist() if n.endswith("receipt.json")]',
     '    if len(names) != 1:',
     '        print(f"expected one receipt.json, found {names}", file=sys.stderr); sys.exit(1)',
-    '    sys.stdout.buffer.write(archive.read(names[0]))',
-  ].join('\n')], { input: zip, maxBuffer: 256 * 1024 * 1024 });
+    '    body = archive.read(names[0])',
+    'sys.stdout.buffer.write(json.dumps(report).encode("utf8") + b"\\n")',
+    'sys.stdout.buffer.write(body)',
+  ].join('\n')], { input: zip, cwd: SUBPROCESS_CWD, maxBuffer: 256 * 1024 * 1024 });
+  // The report is one line, then the bytes. Splitting at the first newline rather than parsing the whole
+  // answer keeps the receipt's bytes untouched - JSON may carry newlines, and these bytes are hashed.
+  const newline = answer.indexOf(0x0a);
+  if (newline < 0) throw new Error('the reader wrote no import report before the receipt');
+  importReport = JSON.parse(answer.subarray(0, newline).toString('utf8'));
+  receiptBytes = answer.subarray(newline + 1);
 } catch (error) {
-  fail(`the ${ARTIFACT_NAME} archive of run ${runId} holds no single receipt.json this tool could read `
-    + `(${String(error.stderr ?? error.message).trim()})`);
+  fail(`the ${ARTIFACT_NAME} archive of run ${runId} holds no single receipt.json this tool could read with `
+    + `${PY} -P (${String(error.stderr ?? error.message).trim()}). A \`python3\` that does not accept \`-P\` `
+    + 'cannot be kept off the working directory it was started in, and this tool will not read a receipt '
+    + 'through an interpreter it cannot isolate');
+}
+if (importReport.working_directory_on_path.length > 0) {
+  fail(`${PY} was run with \`-P\` and still reports its working directory on the import path `
+    + `(${JSON.stringify(importReport.working_directory_on_path)} resolving to `
+    + `${JSON.stringify(importReport.cwd)}), so a file sitting beside it could have been the zip reader that `
+    + 'produced the receipt body every check below reads');
 }
 const receipt = JSON.parse(receiptBytes.toString('utf8'));
 
@@ -539,16 +655,27 @@ const pin = {
     protected_ref: PROTECTED_REF,
     derived_reasons: derived.reasons,
   },
-  // WHAT THIS FETCH ACTUALLY RESTED ON, MEASURED AT RUN TIME. Every field above came out of this binary, so
-  // naming it is the difference between a pin that states its trust root and one that leaves a reader to
-  // assume GitHub. It describes THIS run's channel and not the receipt, which is why `compare-pin.mjs` names
-  // it as deliberately not compared: the candidate's committed pin was produced on another machine, so
-  // requiring the two to agree would refuse honest pins and establish nothing.
+  // WHAT THIS FETCH ACTUALLY RESTED ON, MEASURED AT RUN TIME. Two binaries, because there are two channels:
+  // `gh` answered every API question above, and `python3` turned the verified archive into the receipt body.
+  // Naming both is the difference between a pin that states its trust roots and one that leaves a reader to
+  // assume GitHub. `zip_reader` is the file the isolated interpreter reported for its `zipfile` module - the
+  // interpreter's own answer, recorded as such, not a fact this file established about it.
+  //
+  // It describes THIS run's channels and not the receipt, which is why `compare-pin.mjs` names it as
+  // deliberately not compared: the candidate's committed pin was produced by another run on another machine,
+  // so requiring the two to agree would refuse honest pins and establish nothing. What that step does instead
+  // is PRINT the committed block beside this one, so the durable record's unverified trust-root statement is
+  // in the log rather than passing silently.
   fetched_with: {
     gh: GH,
     gh_version: ghVersion,
     expected_gh: expectedGh,
     expected_gh_version: expectedGhVersion,
+    python: PY,
+    python_version: pyVersion,
+    expected_python: expectedPython,
+    expected_python_version: expectedPythonVersion,
+    zip_reader: importReport.zip_reader,
   },
   receipt: {
     // The two fields this pin rests on, recorded so that the pin states the basis on which it was admitted
@@ -583,7 +710,8 @@ if (!mayPin) {
     + `${derived.reasons.length} derived reason(s)`);
   console.error(`ADVISORY   decided with ${MODULE_PATH} blob ${moduleBlob} and ${TOLERATED_SKIPS} blob `
     + `${toleratedSkipsBlob}, both fetched from ${PROTECTED_REF}`);
-  console.error(`ADVISORY   read through ${GH} (${ghVersion}), which is what all of the above rests on`);
+  console.error(`ADVISORY   read through ${GH} (${ghVersion}) and opened with ${PY} (${pyVersion}), which is `
+    + 'what all of the above rests on');
   console.error('ADVISORY - no pin was emitted, and nothing above may be committed as one.');
   process.exit(4);
 }

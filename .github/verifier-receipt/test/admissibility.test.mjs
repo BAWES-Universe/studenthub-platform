@@ -339,12 +339,67 @@ test('NEXT-1: the suite counts must reconcile with suite.tests when the body car
     'a body whose counts DO reconcile must not be accused of arithmetic');
   assert.match(joined(cancelled), /the measured run did not finish/);
 
-  // Checked only when every count is readable: a missing one is already its own reason and a second sentence
-  // about it would say nothing new.
+  // Checked only when every count is READABLE: an unreadable one is its own reason (see the case below, which
+  // is what closed the escape) and a second sentence accusing the body of arithmetic would say nothing new.
   assert.doesNotMatch(joined(withSuite({ ok: undefined })), /accounts for/);
 
   // The real receipt's own numbers satisfy the identity, which is why requiring it costs nothing.
   assert.equal(3581 + 60 + 0 + 8 + 0, 3649);
+});
+
+// NEXT-1(E). THE ESCAPE FROM THE IDENTITY, CLOSED. The block above ran only when all six counts were readable,
+// and only four of them were required anywhere - so DELETING `tests` or `ok` made the reconciliation not run
+// rather than fail. A review demonstrated it: `[ADMISSIBLE] ok DELETED, tests 3649`. The argument this rule
+// already made for requiring `suite.exit` - the emitter always writes it - holds for both of these verbatim.
+test('NEXT-1(E): deleting suite.tests or suite.ok is a reason, not an escape from the identity', () => {
+  for (const field of ['tests', 'ok']) {
+    // DELETED, which is the review's word: the key is not there at all, not set to something unreadable.
+    const gutted = admissibleBody();
+    delete gutted.suite[field];
+    const why = joined(gutted);
+    assert.match(why, new RegExp(`records no readable suite\\.${field} \\(null\\)`),
+      `suite.${field} deleted must be a reason, got: ${why}`);
+    assert.match(why, /an absent field is not a satisfied condition/);
+    assert.equal(deriveAdmissibility(gutted).admissible, false,
+      `a body with suite.${field} deleted must not be admissible`);
+    // Exactly one reason: the identity does not ALSO fire, because a body missing one of its terms has not
+    // got the arithmetic wrong - it has not stated it. One defect, one sentence.
+    assert.equal(reasonsOf(gutted).length, 1, `expected exactly one reason, got: ${why}`);
+  }
+
+  // The review's own shape, with the counts of this repository's real 3649-test receipt: `ok` gone and
+  // everything else honest. It used to read ADMISSIBLE.
+  const review = withSuite({ tests: 3649, ok: undefined, not_ok: 0, cancelled: 0, skipped: 0, todo: 0 });
+  assert.equal(deriveAdmissibility(review).admissible, false, 'ok DELETED, tests 3649 must be refused');
+  assert.match(joined(review), /records no readable suite\.ok \(null\)/);
+});
+
+// NEXT-1(E), THE OTHER HALF: WHICH FIELDS ARE NUMBERS AND WHICH IS A STRING, DECIDED AND PINNED HERE.
+//
+// The forged body a review built carried `"exit":"0"` as a STRING, so the coercion rule is not academic. The
+// emitter writes `suite.exit` as a string - `const suiteExit = String(meta.suite_exit ?? '')` - and the
+// counts as JSON numbers, so the rule reads each as what its producer writes: `exit` is compared as a string,
+// and a count that is not a number is REFUSED BY NAME rather than parsed. This case is the record of that
+// choice, so that changing either side fails here instead of going unnoticed.
+test('NEXT-1(E): a count rendered as a string is refused by name, and suite.exit is a string by design', () => {
+  for (const field of ['tests', 'ok', 'not_ok', 'cancelled', 'skipped', 'todo']) {
+    const stringy = withSuite({ [field]: String(admissibleBody().suite[field]) });
+    const why = joined(stringy);
+    assert.match(why, new RegExp(`records no readable suite\\.${field} \\("\\d+"\\)`),
+      `suite.${field} as a string must be refused by name, got: ${why}`);
+    assert.equal(deriveAdmissibility(stringy).admissible, false);
+  }
+  // Nor is a number-shaped string accepted anywhere it would change the arithmetic: `tests` as "4" beside an
+  // `ok` of 4 is not a body that reconciles, it is a body that did not say how many tests there were.
+  assert.doesNotMatch(joined(withSuite({ tests: '4' })), /accounts for/);
+
+  // AND THE DELIBERATE EXCEPTION, ASSERTED SO THAT IT IS ONE. `exit: "0"` is what the emitter writes and what
+  // the shipped admissible body carries; it is read on its merits and satisfies the ground.
+  assert.equal(typeof admissibleBody().suite.exit, 'string');
+  assert.deepEqual(reasonsOf(admissibleBody()), []);
+  // A numeric exit is read the same way, which is the existing NEXT-2 rule and is restated here only to make
+  // the contrast with the counts explicit: `exit` is compared as text either way, a count never is.
+  assert.match(joined(withSuite({ exit: 1 })), /exited "1", not "0"/);
 });
 
 // NEXT-3. The emitter builds `named_tests_summary` by counting `named_tests`, so the two can only disagree in

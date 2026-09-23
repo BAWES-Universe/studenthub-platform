@@ -118,12 +118,39 @@ const SCALARS = ['schema', 'repository', 'workflow_path', 'workflow_ref', 'workf
 // previously write anything into.
 const BODIES = ['receipt', 'admissibility'];
 // AND THE ONE BLOCK THAT IS DELIBERATELY NOT COMPARED, NAMED HERE SO THAT "never compared" IS A STATEMENT
-// RATHER THAN AN OVERSIGHT. `fetched_with` records the `gh` binary and version THIS verification read the API
-// through. It is a fact about the verifying run's channel, not about the receipt: the candidate's pin was
-// produced by a different run on a different machine, so requiring the two to agree would refuse honest pins
-// and establish nothing. The value a reader should trust is the fetched pin's, which this run measured.
-const NOT_COMPARED = { fetched_with: 'it describes the binary THIS verification read the API through, not the '
-  + 'receipt, so the candidate\'s copy of it is not evidence of anything and is not required to match' };
+// RATHER THAN AN OVERSIGHT. `fetched_with` records the binaries THIS verification read the API and opened the
+// archive through. It is a fact about the verifying run's channels, not about the receipt: the candidate's pin
+// was produced by a different run on a different machine, so requiring the two to agree would refuse honest
+// pins and establish nothing. The value a reader should trust is the fetched pin's, which this run measured.
+const NOT_COMPARED = { fetched_with: 'it describes the binaries THIS verification read the API and opened the '
+  + 'archive through, not the receipt, so the candidate\'s copy of it is not evidence of anything and is not '
+  + 'required to match' };
+
+// ITEM 3. AND IT IS PRINTED, BECAUSE NOT COMPARED WAS BEING READ AS NOT THERE.
+//
+// The reasoning above is right and the conclusion drawn from it was not. A review committed a pin whose
+// `fetched_with` named a `gh` that never existed, and this step said ACCEPTED without a word; it committed a
+// pin with no `fetched_with` at all and got the same silence. So the DURABLE record - the file in the
+// repository, which is the only pin a reader ever opens - carried an unchecked trust-root statement that
+// nothing in the log contradicted, while `fetch-receipt.mjs` claimed a reader could see which binaries the
+// evidence rested on.
+//
+// LOGGED RATHER THAN REFUSED, and the reason is that the honest workflow is to commit the pin the fetch tool
+// emitted, and that pin carries this block. Refusing its presence would refuse the tool's own output, so the
+// rule would be "delete a field the producer writes" - a trap rather than a check. Printing both values costs
+// nothing, cannot refuse an honest candidate, and turns a silent claim into one a reader can see and
+// disbelieve. Nothing here is evidence, and this function says so in the line it prints.
+const channels = value => (value === undefined ? 'absent'
+  : value === null || typeof value !== 'object' || Array.isArray(value) ? JSON.stringify(value)
+    : Object.keys(value).length === 0 ? '{}'
+      : Object.keys(value).sort().map(key => `${key}=${JSON.stringify(value[key])}`).join(' '));
+const reportFetchedWith = claimed => {
+  console.log(`note: fetched_with is not compared (${NOT_COMPARED.fetched_with}). This run measured: `
+    + `${channels(fetched.fetched_with)}`);
+  console.log(`note: the committed pin for run ${fetched.run_id} states: ${channels(claimed.fetched_with)}. `
+    + 'That statement was not verified by anything and establishes nothing: it is printed so that a trust '
+    + 'root a candidate wrote into the durable record is visible rather than silent');
+};
 
 // A field of the fetched pin that is in none of the three lists is a field nobody decided about. That is
 // exactly how `artifact_id` and `attestation_digest` came to be uncompared, so it is refused here: this step
@@ -184,6 +211,7 @@ for (const claimed of claimedPins) {
   // owner's decision, not this step's, and refusing them here would settle it by accident. They establish
   // nothing, so they are named in the log rather than left silent: a reader can then see everything the
   // committed pin says that this step did not check.
+  reportFetchedWith(claimed);
   const extra = Object.keys(claimed).filter(field => !(field in fetched));
   if (extra.length > 0) {
     console.log(`note: the committed pin for run ${fetched.run_id} carries ${extra.length} field(s) the `

@@ -40,8 +40,12 @@ const FETCHED = {
     protected_ref: 'refs/heads/main',
     derived_reasons: [],
   },
+  // BOTH CHANNELS, because the fetch tool records both: `gh` answered the API and `python3` opened the
+  // archive the receipt body came out of. This block is never compared - see the module - and since a review
+  // showed that "not compared" was being read as "not there", it is now PRINTED, which the cases below pin.
   fetched_with: { gh: '/usr/bin/gh', gh_version: 'gh version 2.0.0', expected_gh: null,
-    expected_gh_version: null },
+    expected_gh_version: null, python: '/usr/bin/python3', python_version: 'Python 3.11.16',
+    expected_python: null, expected_python_version: null, zip_reader: '/usr/lib/python3.11/zipfile.py' },
   receipt: {
     schema: 2,
     admissible_as_pin: true,
@@ -245,6 +249,59 @@ test('ITEM 4: fetched_with is deliberately not compared, and an unknown field fa
   assert.match(extended.stderr, /carries 1 field\(s\) this comparison does not know about \(something_new\)/);
   assert.match(extended.stderr,
     /a field that is neither compared nor named as uncompared is a field a candidate is free to write anything into/);
+});
+
+// ITEM 3. NOT COMPARED WAS BEING READ AS NOT THERE, AND THE DURABLE RECORD IS THE ONE A READER OPENS.
+//
+// The reasoning behind not comparing this block is right; the silence that came with it was not. A review
+// committed a pin whose `fetched_with` named a trust root that never existed and got ACCEPTED without a word,
+// and committed a pin with no `fetched_with` at all and got the same - while `fetch-receipt.mjs` claimed a
+// reader of a pin can see which binaries the evidence rested on. The pin a reader gets is the COMMITTED one.
+//
+// LOGGED, NOT REFUSED, and the reason is in the module: the honest workflow is to commit the pin the fetch
+// tool emitted, and that pin carries this block, so refusing its presence would refuse the producer's own
+// output. These cases pin the log line, its wording about what it establishes, and that it is not a refusal.
+test('ITEM 3: a committed fetched_with is printed beside the fetched one, fabricated or absent', () => {
+  // FABRICATED: a trust root that never existed, on a pin that matches the API on every compared field.
+  const fabricated = claimedFrom({ fetched_with: { gh: '/opt/attacker/gh',
+    gh_version: 'gh version 99.0.0 (trust me)', expected_gh: null, expected_gh_version: null,
+    python: '/opt/attacker/python3', python_version: 'Python 9.9.9', expected_python: null,
+    expected_python_version: null, zip_reader: '/opt/attacker/zipfile.py' } });
+  const said = run({ manifest: { pins: [fabricated] } });
+  assert.equal(said.code, 0, `a pin fetched on another machine must not be refused for saying so: ${said.stderr}`);
+  assert.match(said.stdout, /matches the API on every compared field/);
+
+  // Both values are in the log, each attributed: what THIS run measured, and what the committed file states.
+  assert.match(said.stdout, /This run measured: [^\n]*gh="\/usr\/bin\/gh"/);
+  assert.match(said.stdout, /This run measured: [^\n]*python="\/usr\/bin\/python3"/);
+  assert.match(said.stdout, /the committed pin for run 4242 states: [^\n]*gh="\/opt\/attacker\/gh"/);
+  assert.match(said.stdout, /the committed pin for run 4242 states: [^\n]*gh_version="gh version 99\.0\.0 \(trust me\)"/);
+  assert.match(said.stdout, /the committed pin for run 4242 states: [^\n]*zip_reader="\/opt\/attacker\/zipfile\.py"/);
+  // And the line says what it is worth, so a reader cannot mistake a printed claim for a checked one.
+  assert.match(said.stdout,
+    /That statement was not verified by anything and establishes nothing: it is printed so that a trust root a candidate wrote into the durable record is visible rather than silent/);
+
+  // OMITTED ENTIRELY: the other half of the review's finding. An absence is reported as an absence rather
+  // than as an empty line, and it is still not a refusal.
+  const bare = claimedFrom();
+  delete bare.fetched_with;
+  const quiet = run({ manifest: { pins: [bare] } });
+  assert.equal(quiet.code, 0, `a committed pin may omit an uncompared block: ${quiet.stderr}`);
+  assert.match(quiet.stdout, /the committed pin for run 4242 states: absent\./);
+
+  // A block of the wrong SHAPE is printed as what it is, not crashed on: this step's whole reason for
+  // existing is that a property read on an unexpected shape is not a refusal a reader can act on.
+  for (const [value, expected] of [[null, /states: null\./], [{}, /states: \{\}\./],
+    ['a string', /states: "a string"\./], [['a list'], /states: \["a list"\]\./]]) {
+    const odd = run({ manifest: { pins: [claimedFrom({ fetched_with: value })] } });
+    assert.equal(odd.code, 0, `fetched_with ${JSON.stringify(value)} must not be a refusal: ${odd.stderr}`);
+    assert.match(odd.stdout, expected);
+  }
+
+  // Every pin naming the run gets its own line, because every one of them is a statement somebody committed.
+  // (Duplicates for one run are refused elsewhere; this is the shape the filter exists to keep honest.)
+  const honest = run();
+  assert.equal((honest.stdout.match(/the committed pin for run 4242 states:/g) ?? []).length, 1);
 });
 
 // ITEM 5. `pins.find(...)` answers the FIRST match. A manifest carrying an honest pin for run 4242 and a
