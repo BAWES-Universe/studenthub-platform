@@ -13,7 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { measure, readJson } from './controller.mjs';
-import { sandboxArgv, assertNoEscape, measurementEnv, runSandbox, forbiddenEnvNames, SCRATCH_MOUNT, SOURCE_MOUNT } from './sandbox.mjs';
+import { sandboxArgv, assertNoEscape, measurementEnv, runSandbox, forbiddenEnvNames, tmpfsBoundBytes, TMPFS_TMP, SCRATCH_MOUNT, SOURCE_MOUNT } from './sandbox.mjs';
 import { refuseAnyWriteScope } from './job-scope.mjs';
 
 const need = name => { const value = process.env[name]; if (!value) { console.error(`::error::${name} is not set, and this controller does not guess its inputs`); process.exit(2); } return value; };
@@ -63,10 +63,12 @@ async function preflight({ image, sourceDir, scratchDir, controllerScratch, io, 
   //       files died on it without declaring a plan.
   //   (b) THE FOUR DENIALS ABOVE STILL HOLD. A writable /tmp is only safe if it did not become a route to
   //       anything else, so the same run that proves (a) re-proves each refusal BY NAME.
-  //   (c) FILLING /tmp REACHES THE CONFIGURED BOUND. A tmpfs is memory; an unbounded one is a candidate's
-  //       test body exhausting the runner. The probe writes until the filesystem refuses and records the
-  //       byte count at refusal beside the bound statfs reports - then REMOVES the fill file, so nothing
-  //       measured afterwards is measured on a full filesystem.
+  //   (c) FILLING /tmp REACHES THE CONFIGURED BOUND, AND IT IS THE BOUND THE FLAG ASKED FOR. A tmpfs is
+  //       memory; an unbounded one is a candidate's test body exhausting the runner. statfs is read back
+  //       against the `size=` this authority shipped, the probe writes until the filesystem refuses, and the
+  //       byte count at refusal is recorded beside the bound - then the fill file is REMOVED, so nothing
+  //       measured afterwards is measured on a full filesystem. The write itself is bounded by that same
+  //       number rather than by ENOSPC, so a /tmp that is not this tmpfs is declined instead of filled.
   //   (d) noexec IS STILL ENFORCED. A script and a COPIED BINARY are both executed from /tmp and both must be
   //       refused by the kernel. A script alone would not do: it could fail on its interpreter rather than on
   //       the mount, and the binary is the case an attacker would actually use.
@@ -96,14 +98,25 @@ async function preflight({ image, sourceDir, scratchDir, controllerScratch, io, 
     'catch(e){out.tmpfs.exec_binary=(e.code||"no-errno")+": "+String(e.message||"").split("\\n")[0];}}',
     'catch(e){out.tmpfs.exec_binary_setup=e.code||String(e);}',
     // (c) the size bound, reached rather than grown through, and then handed back.
+    //
+    // THE FILL IS BOUNDED BY CONSTRUCTION, NOT BY THE FLAG IT IS TESTING. `write until ENOSPC` fills whatever
+    // it is pointed at. If /tmp is ever NOT this tmpfs - the flag dropped, a runtime that ignored it - that is
+    // the runner's disk, and the job hangs to its 45-minute bound instead of refusing in a second. So the
+    // probe is told what bound the flag asked for, refuses to fill at all if statfs disagrees with it, and
+    // writes at most that bound plus one block. Reaching the ceiling without ENOSPC is itself a refusal.
     'try{const before=fs.statfsSync("/tmp");out.tmpfs.bound_bytes=before.blocks*before.bsize;',
+    'const asked=Number(process.env.PROBE_TMPFS_BOUND||0);out.tmpfs.bound_asked_for_bytes=asked;',
+    'out.tmpfs.bound_matches_flag=asked>0&&out.tmpfs.bound_bytes===asked;',
+    'if(!out.tmpfs.bound_matches_flag){out.tmpfs.fill_skipped="the tmpfs at /tmp is "+out.tmpfs.bound_bytes+" bytes where the flag asked for "+asked+", so this probe will not write into it";}',
+    'else{const ceiling=asked+1048576;',
     'const fd=fs.openSync("/tmp/fill.bin","w");const block=Buffer.alloc(1048576);let written=0;',
-    'try{for(;;){fs.writeSync(fd,block);written+=block.length;}}catch(e){out.tmpfs.fill_errno=e.code||String(e);}',
+    'try{while(written<ceiling){fs.writeSync(fd,block);written+=block.length;}out.tmpfs.fill_stopped_at_ceiling=true;}',
+    'catch(e){out.tmpfs.fill_errno=e.code||String(e);}',
     'finally{fs.closeSync(fd);}',
     'out.tmpfs.fill_bytes_at_refusal=written;',
     'const full=fs.statfsSync("/tmp");out.tmpfs.free_bytes_when_full=full.bavail*full.bsize;',
     'fs.rmSync("/tmp/fill.bin",{force:true});out.tmpfs.fill_file_removed=!fs.existsSync("/tmp/fill.bin");',
-    'const after=fs.statfsSync("/tmp");out.tmpfs.free_bytes_after_removal=after.bavail*after.bsize;}',
+    'const after=fs.statfsSync("/tmp");out.tmpfs.free_bytes_after_removal=after.bavail*after.bsize;}}',
     'catch(e){out.tmpfs.fill_error=e.code||String(e);}',
     'for(const f of ["/tmp/noexec-probe.sh","/tmp/noexec-probe-binary"])fs.rmSync(f,{force:true});',
     'process.stdout.write("PREFLIGHT "+JSON.stringify(out));',
@@ -120,7 +133,8 @@ async function preflight({ image, sourceDir, scratchDir, controllerScratch, io, 
     measurement_scratch: `${SCRATCH_MOUNT}/tmp/.probe-write`,
   };
   const observed = await runSandbox({ image, sourceDir, scratchDir, argv: probe,
-    env: { ...measurementEnv(), PROBE_PATHS: JSON.stringify(probePaths) } }, io);
+    env: { ...measurementEnv(), PROBE_PATHS: JSON.stringify(probePaths),
+      PROBE_TMPFS_BOUND: String(tmpfsBoundBytes()) } }, io);
   const line = /PREFLIGHT (\{.*\})/.exec(observed.stdout.toString('utf8'));
   if (observed.sandbox_fault !== null || !line)
     throw new Error(`the sandbox could not run the pinned image ${image} (exit ${observed.exit}): ${observed.stdout.toString('utf8').slice(-2000)}`);
@@ -131,7 +145,7 @@ async function preflight({ image, sourceDir, scratchDir, controllerScratch, io, 
   if (report.uid !== 10001 || report.gid !== 10001) wrong.push(`the measurement runs as ${report.uid}:${report.gid}, not as 10001:10001`);
   const leaked = forbiddenEnvNames(report.env);
   if (leaked.length > 0) wrong.push(`the measurement's environment carries ${leaked.join(', ')}`);
-  const allowed = new Set([...Object.keys(measurementEnv()), 'PROBE_PATHS']);
+  const allowed = new Set([...Object.keys(measurementEnv()), 'PROBE_PATHS', 'PROBE_TMPFS_BOUND']);
   const extra = report.env.filter(name => !allowed.has(name));
   if (extra.length > 0) wrong.push(`the measurement's environment carries ${extra.join(', ')}, which this controller did not put there`);
   // WHAT MUST NOT BE WRITABLE, BY NAME. `WROTE` on any of these is the boundary not holding, and the run
@@ -149,14 +163,24 @@ async function preflight({ image, sourceDir, scratchDir, controllerScratch, io, 
   // carry one dead file per literal /tmp call site - which is the defect this flag exists to fix.
   if (tmpfs.ordinary_write !== 'WROTE_AND_READ_BACK')
     wrong.push(`an ordinary write under /tmp reports ${JSON.stringify(tmpfs.ordinary_write)} rather than writing and reading back, so every call site that names /tmp literally will die before its file declares a plan`);
-  // (c) the grant is bounded, and the bound is the kernel's. ENOSPC is the only refusal that means "this
-  // filesystem is the size it was configured to be"; anything else, including no refusal at all, is a tmpfs
-  // whose ceiling nothing here has established.
-  if (tmpfs.fill_errno !== 'ENOSPC')
+  // (c) the grant is bounded, the bound is the kernel's, and it is the bound THIS AUTHORITY ASKED FOR. The
+  // size check comes first because it is the one that explains the others: a /tmp that is not this tmpfs
+  // fails every question below for the same uninformative reason, and the probe refuses to fill it at all.
+  if (tmpfs.bound_matches_flag !== true)
+    wrong.push(`/tmp reports ${tmpfs.bound_bytes} bytes where ${TMPFS_TMP} asks for ${tmpfs.bound_asked_for_bytes}`
+      + `${tmpfs.fill_skipped ? `, so the fill probe declined to run (${tmpfs.fill_skipped})` : ''}`
+      + ' - the directory the measurement writes is not the one this sandbox configured');
+  else if (tmpfs.fill_stopped_at_ceiling === true)
+    wrong.push(`filling /tmp wrote past its ${tmpfs.bound_asked_for_bytes}-byte bound to the probe's own ceiling without a refusal, so nothing is bounding it`);
+  // ENOSPC is the only refusal that means "this filesystem is the size it was configured to be"; anything
+  // else, including no refusal at all, is a tmpfs whose ceiling nothing here has established.
+  else if (tmpfs.fill_errno !== 'ENOSPC')
     wrong.push(`filling /tmp stopped with ${JSON.stringify(tmpfs.fill_errno ?? tmpfs.fill_error ?? 'no refusal at all')} after ${tmpfs.fill_bytes_at_refusal} bytes rather than ENOSPC, so the size= bound is not the one holding it`);
   else if (!(tmpfs.fill_bytes_at_refusal > 0) || tmpfs.fill_bytes_at_refusal > tmpfs.bound_bytes)
     wrong.push(`filling /tmp wrote ${tmpfs.fill_bytes_at_refusal} bytes against a bound statfs reports as ${tmpfs.bound_bytes}, which is not a bound being reached`);
-  if (tmpfs.fill_file_removed !== true)
+  // And it hands the space back. Only asked when a fill actually ran: if the probe declined to fill, the
+  // line above has already said why, and a second complaint about a file that was never created is noise.
+  else if (tmpfs.fill_file_removed !== true)
     wrong.push('the preflight could not remove its own fill file, so every measurement after it would run against a full /tmp');
   // (d) noexec stands. `RAN` here is the escape a writable directory would otherwise reopen, and it is the
   // one outcome that must stop the run outright.

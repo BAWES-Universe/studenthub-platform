@@ -24,7 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { sandboxArgv, assertNoEscape, measurementEnv, SANDBOX_FLAGS, TMPFS_TMP } from '../sandbox.mjs';
+import { sandboxArgv, assertNoEscape, measurementEnv, SANDBOX_FLAGS, TMPFS_TMP, tmpfsBoundBytes } from '../sandbox.mjs';
 import { measure, checkMatrixFidelity, buildOverlay, namePattern, runnerArgv, expandGlobs } from '../controller.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -193,6 +193,22 @@ test('a loosened /tmp option is refused before anything runs, and the refusal na
     /--tmpfs \/tmp:rw,noexec,nosuid,nodev,size=512m is absent/);
   assert.throws(() => assertNoEscape([...sound.slice(0, 1), '--tmpfs', '/scratch:rw,size=1g', ...sound.slice(1)]),
     /carries 2 tmpfs mounts/);
+});
+
+// THE BOUND AS A NUMBER, because the preflight compares statfs against it and then declines to fill a /tmp
+// that disagrees. If this parse is wrong the comparison always fails and the fill never runs, so the proof
+// that the tmpfs is bounded would quietly stop being taken.
+test('the size= bound reads back as the number of bytes the kernel reports for it', () => {
+  // 512m is 512 MiB, not 512 MB: mount(8)'s suffixes are binary, and this is the value statfs reported for
+  // this exact flag in a real container - 536870912, observed in run 35842415093.
+  assert.equal(tmpfsBoundBytes(), 536870912);
+  assert.equal(tmpfsBoundBytes('/tmp:rw,size=1g'), 1073741824);
+  assert.equal(tmpfsBoundBytes('/tmp:rw,size=262144k'), 268435456);
+  assert.equal(tmpfsBoundBytes('/tmp:rw,size=1048576'), 1048576);
+  // A spec with no readable bound is an error rather than a zero: zero would compare unequal to whatever
+  // statfs reports, which reads like a boundary failure instead of like the parse failure it is.
+  assert.throws(() => tmpfsBoundBytes('/tmp:rw,noexec'), /carries no size=/);
+  assert.throws(() => tmpfsBoundBytes('/tmp:rw,size=lots'), /carries no size=/);
 });
 
 test('the flag list is frozen, and the measurement environment is the whole environment', () => {

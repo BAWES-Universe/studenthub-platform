@@ -100,6 +100,25 @@ export const SANDBOX_FLAGS = Object.freeze([
   '--tmpfs', TMPFS_TMP,
 ]);
 
+// THE BOUND AS A NUMBER, SO THAT SOMETHING CAN CHECK THE KERNEL AGREES WITH THE FLAG.
+//
+// `size=512m` is a request. What the tmpfs actually got is a statfs away, and the preflight reads it back and
+// refuses a run where the two disagree - which catches a runtime that silently ignored the option as surely
+// as it catches an edit here. It is also what lets the fill probe be bounded BY CONSTRUCTION rather than by
+// the very flag it is testing: a probe that writes until ENOSPC is a probe that fills whatever it is pointed
+// at, and on a /tmp that was NOT this tmpfs that is the runner's disk and a job that hangs to its bound
+// instead of refusing in a second. (Measured, not imagined: run on a workstation where /tmp is real disk, the
+// unbounded form wrote a 686 GiB file before it was killed.)
+export function tmpfsBoundBytes(spec = TMPFS_TMP) {
+  const size = String(spec).split(/[:,]/).find(option => option.startsWith('size='));
+  const match = /^size=(\d+)([kmg])?$/i.exec(size ?? '');
+  if (!match) throw new Error(`the tmpfs spec ${JSON.stringify(spec)} carries no size= this authority can read as a number of bytes`);
+  // No suffix is bytes; k, m and g are BINARY, which is what mount(8) means by them and what the kernel
+  // reported back through statfs when this was measured (`size=512m` -> 536870912).
+  const multiplier = { '': 1, k: 1024, m: 1048576, g: 1073741824 }[(match[2] ?? '').toLowerCase()];
+  return Number(match[1]) * multiplier;
+}
+
 // WHERE THE CANDIDATE'S SOURCE AND ITS SCRATCH APPEAR INSIDE THE CONTAINER. Both are fixed: a path the
 // caller could choose is a path a matrix could choose, and the matrix is read from a file.
 export const SOURCE_MOUNT = '/src';
