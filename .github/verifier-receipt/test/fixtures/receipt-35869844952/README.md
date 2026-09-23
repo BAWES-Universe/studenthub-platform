@@ -17,9 +17,13 @@ from a real dispatch of the authority on `refs/heads/main`, that a real consumer
 
 The candidate's suite ran 3649 tests with 60 failing, none of them named by the claim
 (`conclusion.verdict: "failure"`, `suite.state: "red"`). The authority's `attest` job refused to attest it,
-so **GitHub recorded no attestation over these bytes**. Any attestation in a test that uses this fixture is
-one the test supplies; `fetch-receipt.test.mjs` refuses this receipt on admissibility before it ever asks
-the API for an attestation, so the case that reads this file supplies none.
+so **GitHub recorded no attestation over these bytes** - read back on 2026-09-23:
+
+    $ gh api /repos/BAWES-Universe/studenthub-platform/attestations/sha256:74947a1b7ece2db76a723b245078012e867b0aecadb913ef26769371979cf815
+    gh: Not Found (HTTP 404)
+
+`fetch-receipt.test.mjs` refuses this receipt on admissibility before it ever asks the API for an
+attestation, so the case that reads this file supplies none.
 
 Every identity field in it is genuine and passes the consumer's identity checks - the path, the ref, the
 repository and the head_sha are what that dispatch recorded - which is what makes the refusal land where it
@@ -28,7 +32,19 @@ should: on admissibility, not on shape.
 ## What the real bytes are
 
 Retrieved through GitHub's API as an Actions artifact of run 35869844952, never written by a lane. The
-artifact is `verifier-receipt`; the digest below is the one **GitHub itself reports** for it.
+artifact is `verifier-receipt`, id `10754354187`, created `2026-09-23T13:56:11Z`; the digest below is the
+one **GitHub itself reports** for it:
+
+    $ gh api /repos/BAWES-Universe/studenthub-platform/actions/runs/35869844952/artifacts \
+        --jq '.artifacts[] | select(.name == "verifier-receipt") | {id, size_in_bytes, digest}'
+    {"digest":"sha256:b6c84e8325aec145cad7b912bbef0a29a560a85b4ed2d96d92668b39127736ff",
+     "id":10754354187,"size_in_bytes":61770}
+
+The run itself is `{"event":"workflow_dispatch","head_branch":"main","status":"completed",`
+`"conclusion":"failure","head_sha":"01409cc7e4ad5ab9aab2c24a9e3b1f6f45df2a1e","run_attempt":1}`. The
+**failure** conclusion is the run's, and the consumer refuses on it before reading any receipt at all -
+which is why the admissibility case in `fetch-receipt.test.mjs` stages this run with `conclusion: "success"`
+and says so in the one place it departs from the API's record. Everything else it stages is the API's.
 
 | object | bytes | sha256 |
 | --- | --- | --- |

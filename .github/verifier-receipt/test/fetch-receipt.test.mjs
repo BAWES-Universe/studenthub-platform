@@ -274,33 +274,45 @@ test('the fetch tool refuses an attestation that names another workflow, or a re
 const REAL_DIR = path.join(import.meta.dirname, 'fixtures', 'receipt-35869844952');
 const REAL_TRIMMED_SHA256 = '93595c1e7238434d9df7377fa28d5b98924fce52116d5cd2e613ab8fdb7baad3';
 
-test('the real receipt of run 35869844952 is refused as a pin, in the authority\'s own words', () => {
+// The API records of run 35869844952, read back with `gh api` on 2026-09-23 and copied here rather than
+// invented. The run itself CONCLUDED FAILURE, and the artifact is the one GitHub digested.
+const REAL_RUN = { path: WORKFLOW, event: 'workflow_dispatch', head_branch: 'main', status: 'completed',
+  conclusion: 'failure', id: 35869844952, head_sha: '01409cc7e4ad5ab9aab2c24a9e3b1f6f45df2a1e', run_attempt: 1 };
+const REAL_ARTIFACT = { id: 10754354187, name: 'verifier-receipt', expired: false, size_in_bytes: 61770,
+  digest: 'sha256:b6c84e8325aec145cad7b912bbef0a29a560a85b4ed2d96d92668b39127736ff',
+  created_at: '2026-09-23T13:56:11Z', workflow_run: { head_sha: '01409cc7e4ad5ab9aab2c24a9e3b1f6f45df2a1e' } };
+
+const realReceipt = () => {
   const bytes = fs.readFileSync(path.join(REAL_DIR, 'receipt.trimmed.json'));
   assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), REAL_TRIMMED_SHA256,
     'the trimmed fixture has been edited; re-read its README.md before touching this digest');
-  const real = JSON.parse(bytes.toString('utf8'));
+  return { bytes, receipt: JSON.parse(bytes.toString('utf8')) };
+};
+const REAL_ARGS = { runId: String(REAL_RUN.id), repo: 'BAWES-Universe/studenthub-platform' };
+
+test('the real receipt of run 35869844952 is refused as a pin, in the authority\'s own words', () => {
+  const { bytes, receipt: real } = realReceipt();
   assert.equal(real.schema, 2);
+  assert.equal(real.repository, REAL_ARGS.repo);
+  assert.equal(real.workflow.head_sha, REAL_RUN.head_sha);
   assert.equal(real.provenance.admissible_as_pin, false);
   const [reason] = real.provenance.inadmissibility_reasons;
 
-  const runId = String(real.run.id);
   const result = runTool(stage({
-    runId,
-    repo: real.repository,
-    // What GitHub reports for that run: a completed, successful dispatch of the authority on main. The run
-    // is healthy; it is the receipt that says it may not be pinned.
-    run: { path: WORKFLOW, event: 'workflow_dispatch', head_branch: 'main', status: 'completed',
-      conclusion: 'success', id: Number(runId), head_sha: real.workflow.head_sha, run_attempt: 1 },
-    // The artifact's digest and size are the ones GitHub reported for the real `verifier-receipt` artifact
-    // of this run (61,770 bytes of zip). Its id is this suite's, because the API record was not kept.
-    artifacts: { artifacts: [{ id: 77, name: 'verifier-receipt', expired: false, size_in_bytes: 61770,
-      digest: 'sha256:b6c84e8325aec145cad7b912bbef0a29a560a85b4ed2d96d92668b39127736ff',
-      workflow_run: { head_sha: real.workflow.head_sha } }] },
+    ...REAL_ARGS,
+    // COUNTERFACTUAL IN ONE FIELD, SAID PLAINLY: GitHub reports `conclusion: "failure"` for this run, which
+    // the case below asserts is refused on its own. It is flipped here so that the RECEIPT's body is what
+    // decides, which is the whole point of the fixture - admissibility is not a restatement of the run's
+    // conclusion, and a consumer that only read the run would have nothing to say about a green run whose
+    // receipt says it may not be pinned. Every other field is the API's own.
+    run: { ...REAL_RUN, conclusion: 'success' },
+    artifacts: { artifacts: [REAL_ARTIFACT] },
     zip: bytes.toString('utf8'),
-    // None is supplied, and none is needed: the authority's attest job refused to attest this receipt, and
-    // the refusal below lands before the attestations API is asked.
+    // None is supplied, and none is needed twice over: GitHub records no attestation over these bytes (the
+    // authority's attest job refused it, and `gh api /attestations/sha256:74947a1b...` answers 404), and the
+    // refusal below lands before the attestations API is asked at all.
     attestations: [],
-  }), { runId, repo: real.repository });
+  }), REAL_ARGS);
 
   assert.notEqual(result.code, 0, 'a failure receipt must never be pinned');
   assert.match(result.stderr, /says provenance\.admissible_as_pin=false/);
@@ -315,6 +327,14 @@ test('the real receipt of run 35869844952 is refused as a pin, in the authority\
     assert.doesNotMatch(result.stderr, notThis, `refused on the wrong ground: ${result.stderr}`);
   }
   assert.equal(result.stdout, '', 'a refused receipt emits no pin');
+});
+
+test('the real run 35869844952, as GitHub reports it, is refused before its receipt is read', () => {
+  const { bytes } = realReceipt();
+  const result = runTool(stage({ ...REAL_ARGS, run: REAL_RUN,
+    artifacts: { artifacts: [REAL_ARTIFACT] }, zip: bytes.toString('utf8') }), REAL_ARGS);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /run 35869844952 concluded failure/);
 });
 
 // An in-toto statement as GitHub's attestation service records it, wrapped the way the API returns it.
