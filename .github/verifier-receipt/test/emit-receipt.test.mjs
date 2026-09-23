@@ -26,7 +26,12 @@ test('provenance held: the trusted job\'s own capture for this run yields succes
   const receipt = world.receiptOf(built);
   assert.equal(receipt.conclusion.verdict, 'success');
   assert.deepEqual(receipt.named_tests_summary,
-    { named: 3, distinct_names: 3, pass: 3, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0 });
+    { named: 3, distinct_names: 3, pass: 3, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0,
+      misplaced: 0,
+      // The default world's capture is what the real reporter writes: no `location:` on a passing point, so
+      // every name is `unreported`. That is not a refusal - it is the measured size of the gap, and it is
+      // carried here rather than inferred.
+      location_bound: { matched: 0, mismatched: 0, unreported: 3, unclaimed: 0 } });
   assert.equal(receipt.provenance.artifact.digest, built.archiveDigest);
   assert.equal(receipt.provenance.artifact.archive_sha256, built.archiveDigest);
   assert.equal(receipt.provenance.capture.sha256, built.meta.capture_sha256);
@@ -515,14 +520,22 @@ test('a name the genuine capture reports as fail then pass is recorded fail, not
   const capture = world.genuineTap('duplicate-name.mjs');
   assert.match(capture, /^not ok 3 - a duplicated name$/m, 'the fixture must really fail first');
   assert.match(capture, /^ok 4 - a duplicated name$/m, 'the fixture must really pass second');
+  // The entry names the file the fixture really is, spelled the way a manifest spells it - relative to the
+  // manifest's own directory - so the `location:` this genuine capture carries on its failing point binds to the
+  // artifact instead of contradicting it. That makes this test a positive control for the binding too: a real
+  // reporter's real location, matched against the claim's real artifact.
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-    entries: [{ id: 'TERM-DUP', control: { test_names: ['a duplicated name'] }, killing_mutants: [] }],
+    entries: [{ id: 'TERM-DUP', artifact: '../../../verifier-receipt/test/fixtures/duplicate-name.mjs',
+      control: { test_names: ['a duplicated name'] }, killing_mutants: [] }],
   };
   const built = world.build({ capture, claim, meta: { suite_exit: '1' } });
   const result = world.emit(built);
   assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
   const receipt = world.receiptOf(built);
+  assert.equal(receipt.named_tests[0].location_bound, 'matched');
+  assert.deepEqual(receipt.named_tests[0].locations,
+    [path.join(world.HERE, 'fixtures', 'duplicate-name.mjs')]);
   assert.deepEqual(receipt.named_tests.map(test => [test.name, test.status]), [['a duplicated name', 'fail']]);
   assert.equal(receipt.named_tests_summary.fail, 1);
   assert.equal(receipt.conclusion.verdict, 'failure');
@@ -591,7 +604,8 @@ test('a test the runner reported `# SKIP` is not pass, and the marker is not par
     ['the coordinator refuses a stale head', 'pass'],
   ]);
   assert.deepEqual(receipt.named_tests_summary,
-    { named: 4, distinct_names: 4, pass: 1, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1 });
+    { named: 4, distinct_names: 4, pass: 1, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1,
+      misplaced: 0, location_bound: { matched: 0, mismatched: 0, unreported: 4, unclaimed: 0 } });
   // Each of the three is a term this run establishes nothing about, and each is named as such.
   assert.deepEqual(receipt.terms.map(term => [term.id, term.establishes]),
     [['TERM-SKIP', false], ['TERM-SUITE', false], ['TERM-TODO', false], ['TERM-REAL', true]]);
@@ -684,7 +698,9 @@ test('terms that name no tests cannot ride to success on a sibling term\'s cover
   // Every term the manifest lists appears, with what this run establishes about it.
   assert.deepEqual(receipt.terms.map(term => [term.id, term.named, term.establishes]), [
     ['TERM-covered', 1, true], ['TERM-empty-a', 0, false], ['TERM-empty-b', 0, false], ['TERM-no-control', 0, false]]);
-  assert.deepEqual(receipt.terms_summary, { total: 4, establishing: 1, naming_no_tests: 3,
+  assert.deepEqual(receipt.terms_summary, { total: 4, establishing: 1, measured: 1,
+    permitted_by_the_manifest: 4, naming_no_tests: 3, barred_by_the_manifest: [],
+    dispositions: { PASS: 4 },
     without_evidence: ['TERM-empty-a', 'TERM-empty-b', 'TERM-no-control'] });
   // And the run still establishes what it did establish, term by term.
   assert.equal(receipt.named_tests_summary.pass, 1);
@@ -818,11 +834,24 @@ const GATE_SOURCE = (() => {
 })();
 
 // The gate is run where the emitter just wrote, because the step reads `receipt.json` from the job's workspace.
-const runGate = built => {
+// THE FOUR FACTS ABOUT THE RUN come from the step's `env:` block in the workflow - `github.event_name`,
+// `github.ref`, `github.run_id` and the trust job's resolved origin - and are what let the gate check the
+// receipt against something the receipt does not supply. A world is a dispatch of main by default, exactly as
+// `world.build` builds it, and the tests that measure a rehearsal say so here.
+const runGate = (built, run = {}) => {
   const outputFile = path.join(built.root, 'github-output');
   fs.writeFileSync(outputFile, '');
-  const gate = world.runNode(['-e', GATE_SOURCE],
-    { cwd: path.dirname(built.receiptPath), env: { GITHUB_OUTPUT: outputFile } });
+  const gate = world.runNode(['-e', GATE_SOURCE], {
+    cwd: path.dirname(built.receiptPath),
+    env: {
+      GITHUB_OUTPUT: outputFile,
+      EVENT: 'workflow_dispatch',
+      REF: 'refs/heads/main',
+      THIS_RUN_ID: world.RUN_ID,
+      TRUSTED_ORIGIN: 'protected-main',
+      ...run,
+    },
+  });
   return { ...gate, output: fs.readFileSync(outputFile, 'utf8') };
 };
 
@@ -1657,12 +1686,13 @@ test('THE BYPASS: admissible=true beside a receipt whose body says false is refu
   const built = world.build({ run: { event: 'pull_request', head_branch: 'verifier/bootstrap-receipt-producer' } });
   assert.equal(world.emit(built, { TRUSTED_SOURCE_ORIGIN: 'pull-request-head' }).code, 0);
   assert.equal(world.receiptOf(built).provenance.admissible_as_pin, false);
-  // The gate, run honestly, publishes false.
-  assert.equal(runGate(built).output, 'admissible=false\n');
+  // The gate, run honestly on the rehearsal this receipt really records, publishes false.
+  assert.equal(runGate(built, { EVENT: 'pull_request', REF: 'refs/pull/1/merge', TRUSTED_ORIGIN: 'pull-request-head' }).output,
+    'admissible=false\n');
   // And the bypass - the output written independently of the receipt - is a red job.
   const bypassed = runGuard(built, 'true');
   assert.equal(bypassed.code, 1, bypassed.stdout);
-  assert.match(bypassed.stderr, /the gate published admissible="true" for a receipt whose own body says admissible_as_pin=false/);
+  assert.match(bypassed.stderr, /the gate published admissible="true" where this receipt s own body supports false/);
   // The honest output passes it, so the guard is not simply refusing everything.
   assert.equal(runGuard(built, 'false').code, 0);
 });
@@ -1758,4 +1788,513 @@ test('the signing job cannot run on a rehearsal, and re-reads admissibility out 
   // The subject is the receipt the emit job recorded, by digest, not whatever arrives under that name.
   assert.match(JOBS.attest, /needs\.emit\.outputs\.receipt_sha256/);
   assert.match(JOBS.attest, /actions\/attest-build-provenance/);
+});
+
+// ---- the receipt may not contradict the manifest it validates --------------------------------------------------
+
+// THE FINDING, AND IT IS THE ONE THAT DECIDES WHAT THIS AUTHORITY IS FOR. A cold review measured it on this
+// repository's own pinned rehearsal candidate: all 53 entries of 7e7ac70e's claim-manifest.json carry
+// `"disposition": "BLOCK"`, 12 of them carry `"approvable": false` with reasons like "no mutant is paired with
+// this control in the registry", and the emitter read neither field, carried neither in the receipt, and
+// reported `terms: 53 listed, 53 established`, `without_evidence: []`, `admissible as pin: true`. The consumer
+// edit specified for this chain passes a receipt whose every `term.establishes === true` - which that receipt
+// satisfied - so the authority's word "established" silently overrode the claim's own word "BLOCK".
+//
+// `disposition` is the authoritative field and `PASS` is the only value of it this repository's generator has
+// ever written that permits establishment (53/53 BLOCK at 7e7ac70e; 2 PASS at 07fb13d, the commit whose message
+// is "the verifier's receipt, and the manifest regenerated to carry it"). `approvable: false` bars it
+// independently. Both are tested here, on their own and together, and the measurement is shown to survive: a
+// blocked term still reports `measured: true`, because what this run SAW is a fact and only what it may
+// CONCLUDE is bounded.
+
+const dispositionClaim = entries => ({ code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE }, entries });
+
+test('a term whose manifest entry says BLOCK is measured green and establishes nothing', () => {
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-BLOCKED', artifact: world.ARTIFACT, approvable: true,
+      disposition: 'BLOCK', reason: 'no verifying receipt names this control at the code revision',
+      control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // The measurement is intact and is reported as one.
+  assert.equal(receipt.named_tests[0].status, 'pass');
+  assert.equal(receipt.terms[0].measured, true);
+  assert.equal(receipt.terms[0].pass, 1);
+  // And the conclusion is bounded by the claim's own word for itself, which the receipt now carries verbatim.
+  assert.equal(receipt.terms[0].disposition, 'BLOCK');
+  assert.equal(receipt.terms[0].approvable, true);
+  assert.equal(receipt.terms[0].permits_establishment, false);
+  assert.equal(receipt.terms[0].establishes, false);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.deepEqual(receipt.terms_summary.barred_by_the_manifest, ['TERM-BLOCKED']);
+  assert.deepEqual(receipt.terms_summary.dispositions, { BLOCK: 1 });
+  assert.equal(receipt.terms_summary.measured, 1);
+  assert.equal(receipt.terms_summary.establishing, 0);
+  assert.match(receipt.conclusion.reasons.join(' | '),
+    /1 term\(s\) were measured green and are not in a state this claim permits establishment from.*1 carry a disposition other than PASS \(BLOCK\)/);
+  // And such a receipt is not a pin.
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  // The gate refuses it, and writes no admissible output for the attest job to select on.
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.equal(gate.output, '');
+});
+
+test('a term whose manifest entry says approvable: false establishes nothing even beside disposition PASS', () => {
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-UNAPPROVABLE', artifact: world.ARTIFACT, approvable: false,
+      disposition: 'PASS', reason: 'no mutant is paired with this control in the registry',
+      control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.terms[0].measured, true);
+  assert.equal(receipt.terms[0].permits_establishment, false);
+  assert.equal(receipt.terms[0].establishes, false);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '), /1 carry `approvable: false`/);
+});
+
+test('a term whose entry states no disposition at all is not read as permission', () => {
+  // The default is fail-closed and it is stated: an entry that states no verdict on itself states no permission
+  // either, so a manifest that predates these fields is measurable and simply establishes nothing.
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-SILENT', artifact: world.ARTIFACT,
+      control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.terms[0].disposition, null);
+  assert.equal(receipt.terms[0].measured, true);
+  assert.equal(receipt.terms[0].establishes, false);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '), /1 state no disposition at all: TERM-SILENT/);
+});
+
+test('a manifest whose disposition, approvable or artifact is of the wrong shape is refused by name', () => {
+  const cases = [
+    [{ disposition: 7 }, /REFUSING: claim\.entries\.disposition:.*entry 0 carries `disposition` as a number, not a verdict this run can read/],
+    [{ approvable: 'yes' }, /REFUSING: claim\.entries\.approvable:.*entry 0 carries `approvable` as a string/],
+    [{ artifact: '   ' }, /REFUSING: claim\.entries\.artifact:.*entry 0 carries `artifact` as a string/],
+  ];
+  for (const [patch, expected] of cases) {
+    const built = world.build({
+      rawClaim: dispositionClaim([{ id: 'TERM-1', approvable: true, disposition: 'PASS', artifact: world.ARTIFACT,
+        control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [], ...patch }]),
+      capture: world.tapFor(['the coordinator refuses a stale head']),
+    });
+    const result = world.emit(built);
+    assert.equal(result.code, 3, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, expected);
+    assert.equal(fs.existsSync(built.receiptPath), false, 'nothing is written for a claim this run refuses');
+  }
+});
+
+test('a manifest whose entries really are PASS establishes, so the rule is not refusing every manifest', () => {
+  // The positive control of the rule: the same shape with the disposition the repository's generator writes
+  // when a term has a paired mutant and a verifying receipt at the code revision.
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-PASS', artifact: world.ARTIFACT, approvable: true, disposition: 'PASS',
+      reason: null, control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.terms[0].establishes, true);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.deepEqual(receipt.terms_summary.dispositions, { PASS: 1 });
+  assert.equal(runGate(built).output, 'admissible=true\n');
+});
+
+test('the gate refuses a receipt that reports a BLOCKed term established, and says which term', () => {
+  // The second reader of the same rule. What reaches the gate here is a receipt whose claim-level fields all say
+  // the run established its term, and whose term row still carries the manifest's own BLOCK - which is the one
+  // shape an emitter bug (or an emitter the candidate supplied on a pull_request run) would produce.
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-BLOCKED', artifact: world.ARTIFACT, approvable: false,
+      disposition: 'BLOCK', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  // The forgery, and nothing else.
+  receipt.conclusion.verdict = 'success';
+  receipt.conclusion.reasons = [];
+  receipt.terms[0].establishes = true;
+  receipt.terms[0].permits_establishment = true;
+  receipt.terms_summary = { total: 1, establishing: 1, measured: 1, permitted_by_the_manifest: 1,
+    naming_no_tests: 0, barred_by_the_manifest: [], dispositions: { BLOCK: 1 }, without_evidence: [] };
+  receipt.provenance.admissible_as_pin = true;
+  receipt.provenance.inadmissibility_reasons = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr,
+    /these terms are reported established while their own manifest entry says they may not be: TERM-BLOCKED \(disposition="BLOCK" approvable=false\)/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a term row whose establishes does not follow from its own two fields', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // permits_establishment inflated where the disposition beside it does not support it. `establishes` is left
+  // false, so what is being tested is the RECOMPUTATION of the rule rather than the blunt refusal above it: the
+  // row would pass every count reconciliation and every disposition check and still not follow from its fields.
+  receipt.terms[0].disposition = 'BLOCK';
+  receipt.terms[0].establishes = false;
+  receipt.conclusion.verdict = 'success';
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /TERM-1 says permits_establishment=true for disposition="BLOCK"/);
+});
+
+test('the gate refuses a receipt whose terms carry no disposition at all', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  for (const term of receipt.terms) { delete term.disposition; delete term.approvable; }
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /these terms do not carry the disposition their own manifest entry states/);
+});
+
+// ---- the name is bound to the file the claim says it lives in --------------------------------------------------
+
+// B3(i). A term was established by a NAME matched anywhere in the stream: the emitter read neither the manifest's
+// own `artifact` field nor the `location:` key the runner writes, so moving a name into a one-line empty test in
+// another file was indistinguishable from the real test. The two are bound now. What that closes and what it does
+// not is measured in the test after these, not asserted.
+
+const MOVED = 'the coordinator refuses a stale head';
+const movedClaim = dispositionClaim([{ id: 'TERM-BOUND', artifact: world.ARTIFACT, approvable: true,
+  disposition: 'PASS', control: { test_names: [MOVED] }, killing_mutants: [] }]);
+
+test('a named test the runner reported in the file its claim names is bound to it, and establishes the term', () => {
+  const built = world.build({
+    rawClaim: movedClaim,
+    capture: world.tapFor([MOVED], { locations: { [MOVED]: world.ARTIFACT_LOCATION } }),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.named_tests[0].location_bound, 'matched');
+  assert.deepEqual(receipt.named_tests[0].locations, [world.ARTIFACT_LOCATION]);
+  assert.equal(receipt.named_tests[0].artifact, world.ARTIFACT_PATH);
+  assert.equal(receipt.named_tests[0].status, 'pass');
+  assert.equal(receipt.terms[0].establishes, true);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.deepEqual(receipt.named_tests_summary.location_bound,
+    { matched: 1, mismatched: 0, unreported: 0, unclaimed: 0 });
+});
+
+test('THE MOVED NAME: a test of that name in another file is misplaced, not pass, and refuses by name', () => {
+  // The attack, exactly: the claim's name, carried by a point the runner really reported `ok`, in a file that is
+  // not the one the manifest entry names. Nothing else about the world is wrong.
+  const stub = '/home/runner/work/repo/repo/candidate/packages/somewhere/empty-stub.test.mjs';
+  const built = world.build({
+    rawClaim: movedClaim,
+    capture: world.tapFor([MOVED], { locations: { [MOVED]: stub } }),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // The runner really said ok; this receipt says what that is worth for THIS term.
+  assert.equal(receipt.named_tests[0].reported_status, 'pass');
+  assert.equal(receipt.named_tests[0].status, 'misplaced');
+  assert.equal(receipt.named_tests[0].location_bound, 'mismatched');
+  assert.deepEqual(receipt.named_tests[0].locations, [stub]);
+  assert.equal(receipt.named_tests_summary.misplaced, 1);
+  assert.equal(receipt.terms[0].misplaced, 1);
+  assert.equal(receipt.terms[0].measured, false);
+  assert.equal(receipt.terms[0].establishes, false);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '),
+    /1 named test\(s\) were reported by the runner in a file other than the one their own manifest entry names.*empty-stub\.test\.mjs/);
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  // And the gate refuses it - first on the verdict, which is the honest order.
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /the receipt does not record a successful measurement/);
+  assert.equal(gate.output, '');
+  // And with the verdict forged to success - the one shape the verdict cannot catch - it refuses by test name,
+  // by the status that says why, and again by the file the runner reported against the file the claim names.
+  receipt.conclusion.verdict = 'success';
+  receipt.conclusion.reasons = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const forged = runGate(built);
+  assert.equal(forged.code, 1, forged.stdout);
+  assert.match(forged.stderr, /these named tests were not measured as passing in this run: the coordinator refuses a stale head \[misplaced\]/);
+  assert.equal(forged.output, '');
+  // And with the per-test status ALSO forged back to pass, the binding itself is what refuses it.
+  receipt.named_tests[0].status = 'pass';
+  receipt.named_tests_summary.pass = 1;
+  receipt.named_tests_summary.misplaced = 0;
+  receipt.terms[0].pass = 1;
+  receipt.terms[0].misplaced = 0;
+  receipt.terms[0].measured = true;
+  receipt.terms[0].establishes = true;
+  receipt.terms_summary.establishing = 1;
+  receipt.terms_summary.measured = 1;
+  receipt.terms_summary.without_evidence = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const bound = runGate(built);
+  assert.equal(bound.code, 1, bound.stdout);
+  assert.match(bound.stderr, /these named tests were reported by the runner in a file other than the one their claim names: the coordinator refuses a stale head claimed in ".github\/coordinator\/service\/test\/coordinator-checks.mjs", reported in \["\/home\/runner\/work\/repo\/repo\/candidate\/packages\/somewhere\/empty-stub.test.mjs"\]/);
+  assert.equal(bound.output, '');
+});
+
+test('the binding is component-aligned, so a stub nested under a similar name does not satisfy it', () => {
+  const nearly = '/home/runner/work/repo/repo/candidate/vendor/.github/coordinator/service/x/test/coordinator-checks.mjs';
+  const built = world.build({
+    rawClaim: movedClaim,
+    capture: world.tapFor([MOVED], { locations: { [MOVED]: nearly } }),
+  });
+  assert.equal(world.emit(built).code, 0);
+  assert.equal(world.receiptOf(built).named_tests[0].location_bound, 'mismatched');
+  // And the suffix that really does line up, component for component, is accepted.
+  const nested = '/somewhere/else/entirely/.github/coordinator/service/test/coordinator-checks.mjs';
+  const ok = world.build({ rawClaim: movedClaim, capture: world.tapFor([MOVED], { locations: { [MOVED]: nested } }) });
+  assert.equal(world.emit(ok).code, 0);
+  assert.equal(world.receiptOf(ok).named_tests[0].location_bound, 'matched');
+});
+
+test('one name reported from two files is not bound to either claim, however green both points are', () => {
+  const capture = [
+    'TAP version 13',
+    `# Subtest: ${MOVED}`, `ok 1 - ${MOVED}`, '  ---', '  duration_ms: 1.5', "  type: 'test'",
+    `  location: '${world.ARTIFACT_LOCATION}:12:1'`, '  ...',
+    `# Subtest: ${MOVED}`, `ok 2 - ${MOVED}`, '  ---', '  duration_ms: 1.5', "  type: 'test'",
+    "  location: '/candidate/packages/elsewhere/stub.test.mjs:1:1'", '  ...',
+    '1..2', '# tests 2', '# suites 0', '# pass 2', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
+    '# duration_ms 12.5', ''].join('\n');
+  const built = world.build({ rawClaim: movedClaim, capture });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.named_tests[0].location_bound, 'mismatched');
+  assert.equal(receipt.named_tests[0].status, 'misplaced');
+  assert.equal(receipt.conclusion.verdict, 'failure');
+});
+
+test('a term whose entry names no artifact is unclaimed, and the receipt says so rather than passing it quietly', () => {
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-NO-ARTIFACT', approvable: true, disposition: 'PASS',
+      control: { test_names: [MOVED] }, killing_mutants: [] }]),
+    capture: world.tapFor([MOVED], { locations: { [MOVED]: '/anywhere/at/all.mjs' } }),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.named_tests[0].artifact, null);
+  assert.equal(receipt.named_tests[0].location_bound, 'unclaimed');
+  assert.deepEqual(receipt.named_tests_summary.location_bound,
+    { matched: 0, mismatched: 0, unreported: 0, unclaimed: 1 });
+});
+
+// HOW FAR THE BINDING REACHES, MEASURED ON THE RUNNER ITSELF. The review that asked for this said `node --test`
+// writes `location:` on EVERY point. It does not, at the version this repository measures with: it writes one on
+// a point it reports FAILING and on no other. This test pins that, from a real capture, because it is the
+// difference between "the moved name is caught" and "the moved name is caught when it also fails" - and a
+// receipt that overstated it would be the same defect as the one being closed.
+test('the runner writes `location:` only on a failing point, which is the reach of this binding', () => {
+  const capture = world.genuineTap('duplicate-name.mjs');
+  const points = [...capture.matchAll(/^(ok|not ok) \d+ - (.*)$/gm)];
+  assert.ok(points.length >= 4, 'the fixture must report several points');
+  const blockOf = name => {
+    const at = capture.indexOf(`- ${name}\n`, capture.indexOf('TAP version'));
+    return capture.slice(at, capture.indexOf('\n  ...', at));
+  };
+  const failing = points.filter(point => point[1] === 'not ok');
+  const passing = points.filter(point => point[1] === 'ok');
+  assert.ok(failing.length > 0 && passing.length > 0, 'the fixture must report both');
+  for (const point of failing) assert.match(blockOf(point[2]), /^ {2}location: '.+:\d+:\d+'$/m,
+    `the runner reported no location for the failing point "${point[2]}"`);
+  // And the passing points carry none - which is why `location_bound: 'unreported'` exists and is counted.
+  const capturedPassing = capture.split('\n').filter(line => line.startsWith('  location:'));
+  assert.equal(capturedPassing.length, failing.length,
+    'this runner writes exactly one location per failing point and none for a passing one');
+});
+
+// ---- admissible_as_pin is re-derived in three places, not computed once and echoed twice ------------------------
+
+// THE FINDING: "one computation and two echoes". The emitter derived the field from six grounds; the gate
+// re-read the boolean; the guard compared the boolean to the same boolean; the attest job re-derived only the
+// run id, the event and the head branch - two of the six. The ground that is LIVE in this repository right now,
+// "the receipt authority is absent on main", was re-derived by nobody. A review took a receipt whose body still
+// recorded authority_identity as null on both sides, flipped ONLY provenance.admissible_as_pin to true, and all
+// three so-called enforcers passed it. Each of the three now recomputes the field from the six grounds in the
+// receipt's own body; this is that receipt, through all three.
+
+// THE ATTEST JOB'S SUBJECT RE-READ, LIFTED OUT OF THE YAML the way the gate and the guard are.
+const ATTEST_SOURCE = (() => {
+  const step = WORKFLOW.indexOf('\n      - name: Re-derive admissibility from the subject itself');
+  assert.ok(step > 0, 'the attest job no longer declares the step this test runs');
+  const opens = '\n          node -e "\n';
+  const from = WORKFLOW.indexOf(opens, step);
+  assert.ok(from > 0, 'the attest subject re-read no longer runs its body through `node -e`');
+  const rest = WORKFLOW.slice(from + opens.length);
+  const to = rest.indexOf('\n          "\n');
+  assert.ok(to > 0, 'the attest step\'s `node -e` body is not closed where this test expects it');
+  const body = rest.slice(0, to);
+  assert.ok(!body.includes('$('), 'the attest body gained a shell substitution this extraction does not model');
+  return body.replace(/\\`/g, '`');
+})();
+const runAttest = (built, env = {}) => world.runNode(['-e', ATTEST_SOURCE], {
+  cwd: path.dirname(built.receiptPath),
+  env: { RUN_ID: world.RUN_ID, EVENT: 'workflow_dispatch', REF: 'refs/heads/main', ...env },
+});
+
+// The world this repository is really in: `.github/verifier-receipt` does not exist on the protected branch, so
+// the receipt records `protected_sha: null` for it and is inadmissible on that ground alone.
+const authorityAbsentWorld = () => world.build({ routes: {
+  [`/repos/${world.REPO}/contents/.github?ref=main`]: { json: [{ name: 'coordinator', type: 'dir', sha: '4d'.repeat(20) },
+    { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+  [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
+    { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+} });
+
+test('THE FLIPPED FLAG: a receipt whose body records the authority as absent is refused by all three readers', () => {
+  const built = authorityAbsentWorld();
+  assert.equal(world.emit(built).code, 0);
+  const honest = world.receiptOf(built);
+  assert.equal(honest.provenance.admissible_as_pin, false);
+  assert.deepEqual(honest.candidate.authority_identity.map(entry => entry.protected_sha),
+    [world.AUTHORITY_WORKFLOW_SHA, null]);
+  // The flip, and nothing else: the body still says the authority is absent on main.
+  honest.provenance.admissible_as_pin = true;
+  honest.provenance.inadmissibility_reasons = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(honest, null, 2)}\n`);
+  const after = world.receiptOf(built);
+  assert.equal(after.candidate.authority_identity[1].protected_sha, null, 'the body is untouched');
+
+  // 1. The gate, which used to publish admissible=true from that flag alone.
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /this receipt says admissible_as_pin=true, but its own body says false: the receipt authority is absent on the protected branch \(\.github\/verifier-receipt\)/);
+  assert.equal(gate.output, '', 'nothing is published for the attest job to select on');
+
+  // 2. The guard, which used to compare that flag to itself.
+  const guard = runGuard(built, 'true');
+  assert.equal(guard.code, 1, guard.stdout);
+  assert.match(guard.stderr, /this receipt says admissible_as_pin=true while its own body says false: the authority is absent on the protected branch \(\.github\/verifier-receipt\)/);
+
+  // 3. The attest job's subject re-read, which used to check the run id, the event and the branch and nothing else.
+  const attest = runAttest(built);
+  assert.equal(attest.code, 1, attest.stdout);
+  assert.match(attest.stderr, /this authority will not sign this receipt: the authority is absent on the protected branch/);
+});
+
+test('the three readers pass an honestly admissible receipt, so none of them is simply refusing everything', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  assert.equal(world.receiptOf(built).provenance.admissible_as_pin, true);
+  assert.equal(runGate(built).output, 'admissible=true\n');
+  assert.equal(runGuard(built, 'true').code, 0);
+  const attest = runAttest(built);
+  assert.equal(attest.code, 0, `${attest.stdout}${attest.stderr}`);
+  assert.match(attest.stdout, /re-derived from the subject: every admissibility ground is satisfied/);
+});
+
+test('each of the six grounds, flipped alone in the body, is re-derived by the gate and the guard', () => {
+  // The six the emitter computes the field from. Each is turned off in the receipt's body with the flag left
+  // saying true, so what is being tested is whether the reader derives the answer or reads it.
+  const grounds = [
+    ['the verdict', receipt => { receipt.conclusion.verdict = 'failure'; }, /its verdict is "failure"/],
+    ['the authority on main', receipt => { receipt.candidate.authority_identity[0].protected_sha = null; },
+      /the authority is absent on the protected branch/],
+    ['the event', receipt => { receipt.workflow.event = 'pull_request'; }, /its event is "pull_request"/],
+    ['the branch', receipt => { receipt.workflow.head_branch = 'a-lane'; }, /it was made on "a-lane"/],
+    ['the origin', receipt => { receipt.workflow.trusted_source_origin = 'pull-request-head'; },
+      /its authority came from "pull-request-head"/],
+    ['the authority commit', receipt => { receipt.workflow.trusted_source_on_main = false; },
+      /its authority commit is not contained in main/],
+  ];
+  for (const [what, breakIt, expected] of grounds) {
+    const built = world.build();
+    assert.equal(world.emit(built).code, 0);
+    const receipt = world.receiptOf(built);
+    breakIt(receipt);
+    receipt.provenance.admissible_as_pin = true;
+    receipt.provenance.inadmissibility_reasons = [];
+    fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    const gate = runGate(built);
+    assert.equal(gate.code, 1, `${what}: the gate passed it\n${gate.stdout}`);
+    assert.equal(gate.output, '', `${what}: the gate published something`);
+    const guard = runGuard(built, 'true');
+    assert.equal(guard.code, 1, `${what}: the guard passed it\n${guard.stdout}`);
+    assert.match(guard.stderr, expected, `${what}: the guard did not name the ground`);
+  }
+});
+
+test('the gate refuses a receipt that records a run other than the one this job is judging', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const other = runGate(built, { THIS_RUN_ID: '34900000999' });
+  assert.equal(other.code, 1, other.stdout);
+  assert.match(other.stderr, /this receipt was produced by run "34900000001", not by run 34900000999/);
+  // And a receipt that calls itself an admissible dispatch of main while the job is a pull request run.
+  const rehearsal = runGate(built, { EVENT: 'pull_request', REF: 'refs/pull/9/merge' });
+  assert.equal(rehearsal.code, 1, rehearsal.stdout);
+  assert.match(rehearsal.stderr, /calls itself admissible as a pin while this job is running on pull_request/);
+});
+
+test('the attest job re-reads the manifest disposition out of the subject before it signs', () => {
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-BLOCKED', artifact: world.ARTIFACT, approvable: false,
+      disposition: 'BLOCK', control: { test_names: [MOVED] }, killing_mutants: [] }]),
+    capture: world.tapFor([MOVED]),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // Everything the attest job reads before the term rows, forged to say yes.
+  receipt.conclusion.verdict = 'success';
+  receipt.conclusion.reasons = [];
+  receipt.terms[0].establishes = true;
+  receipt.provenance.admissible_as_pin = true;
+  receipt.provenance.inadmissibility_reasons = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const attest = runAttest(built);
+  assert.equal(attest.code, 1, attest.stdout);
+  assert.match(attest.stderr,
+    /these terms are reported established while their own manifest entry says they may not be: TERM-BLOCKED/);
+});
+
+test('the gate step is told the four facts about the run that the receipt does not supply', () => {
+  // The gate re-derives admissibility from the receipt's body AND checks it against what GitHub says about the
+  // run. If the step's `env:` block ever loses one of these, the gate refuses at runtime rather than passing
+  // quietly - but it should fail here, where it is cheap, instead of on a runner.
+  const step = WORKFLOW.indexOf('\n        id: gate\n');
+  assert.ok(step > 0);
+  const block = WORKFLOW.slice(step, WORKFLOW.indexOf('\n        run: |\n', step));
+  for (const [name, expression] of [['EVENT', 'github.event_name'], ['REF', 'github.ref'],
+    ['THIS_RUN_ID', 'github.run_id'], ['TRUSTED_ORIGIN', 'needs.trust.outputs.trusted_origin']]) {
+    assert.ok(block.includes(`${name}: \${{ ${expression} }}`),
+      `the gate step no longer takes ${name} from ${expression}`);
+  }
+});
+
+test('a receipt that says NO is still published: the steps after the gate run when it refused', () => {
+  // A review found the gate exiting 1 on any verdict other than success with nothing after it carrying `if:`,
+  // so the digest, the warning, the upload and the summary were all implicitly `if: success()` and skipped. A
+  // run that correctly concluded failure left no receipt artifact. That is now the ordinary result over this
+  // repository's own pinned manifest, so it is asserted rather than described.
+  const block = WORKFLOW.slice(WORKFLOW.indexOf('\n        id: gate\n'), WORKFLOW.indexOf('\n  # THE ONLY JOB'));
+  for (const name of ['Record the receipt\'s digest for the job that may sign it',
+    'Say, in the log, why this receipt was not attested', 'Upload the receipt as an artifact',
+    'Print what a manifest must pin']) {
+    const at = block.indexOf(`- name: ${name}\n`);
+    assert.ok(at > 0, `the emit job no longer declares the step "${name}"`);
+    const step = block.slice(at, block.indexOf('\n      - name:', at + 1) + 1 || undefined);
+    assert.match(step, /^ {8}if: always\(\)/m, `the step "${name}" is skipped when the gate refuses`);
+    assert.ok(step.includes("hashFiles('receipt.json') != ''"),
+      `the step "${name}" would run even when the emitter wrote no receipt`);
+  }
+  // And the job still goes red, so nothing downstream can read a refusal as a pass: the attest job needs both
+  // a green `emit` and the admissible output the gate does not write when it refuses.
+  assert.match(WORKFLOW, /needs\.emit\.outputs\.admissible == 'true'/);
+  assert.doesNotMatch(WORKFLOW, /^ {8}continue-on-error: true$/m);
 });

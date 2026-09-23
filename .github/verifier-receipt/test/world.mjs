@@ -63,11 +63,17 @@ export const genuineTap = fixture => {
 };
 
 // A capture shaped exactly as `node --test --test-reporter=tap` writes one, naming the tests the claim names.
-export const tapFor = (names, { failing = [] } = {}) => {
+// `locations` maps a test name to the file the runner would have reported the point in. It is opt-in and empty
+// by default, because that is what the real reporter does: at node v22.22.3 a `location:` key is written on a
+// FAILING point and on no other, so a world whose every point carried one would not be a world this runner
+// produces. The tests that exercise the artifact binding supply it deliberately.
+export const tapFor = (names, { failing = [], locations = {} } = {}) => {
   const lines = ['TAP version 13'];
   names.forEach((name, index) => {
     const ok = failing.includes(name) ? 'not ok' : 'ok';
-    lines.push(`# Subtest: ${name}`, `${ok} ${index + 1} - ${name}`, '  ---', '  duration_ms: 1.5', "  type: 'test'", '  ...');
+    lines.push(`# Subtest: ${name}`, `${ok} ${index + 1} - ${name}`, '  ---', '  duration_ms: 1.5', "  type: 'test'");
+    if (locations[name]) lines.push(`  location: '${locations[name]}:12:1'`);
+    lines.push('  ...');
   });
   lines.push(`1..${names.length}`, `# tests ${names.length}`, '# suites 0', `# pass ${names.length - failing.length}`,
     `# fail ${failing.length}`, '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 12.5', '');
@@ -131,12 +137,35 @@ export const runCapture = ({ fixture, runnerCommand, preCreateDir = false, env: 
   };
 };
 
+// The artifact a manifest entry names, in the manifest's own spelling (relative to the manifest's directory)
+// and in the repository spelling the emitter resolves it to. The real manifest looks exactly like this: it says
+// `test/shu71-postpush-readback-checks.mjs` for a file the repository holds under
+// `.github/coordinator/service/test/`.
+export const ARTIFACT = 'test/coordinator-checks.mjs';
+export const ARTIFACT_PATH = `.github/coordinator/service/${ARTIFACT}`;
+// Where the runner would report a point of that file: an absolute path into whatever directory the candidate was
+// checked out to, which is why the emitter matches it as a component-aligned suffix rather than for equality.
+export const ARTIFACT_LOCATION = `/home/runner/work/repo/repo/candidate/${ARTIFACT_PATH}`;
+
+// THE TWO FIELDS EVERY ENTRY OF THE REAL MANIFEST CARRIES AND THIS WORLD DEFAULTS. `disposition` is the
+// manifest's own verdict on the term and `PASS` is the only value that permits establishment; `approvable: false`
+// bars it independently. The worlds below are worlds that HOLD TOGETHER, so their entries say PASS - a claim
+// stating no disposition establishes nothing, which is a refusal several tests provoke deliberately by setting
+// the field themselves. `'disposition' in entry` is the test, so an entry that says `null` keeps saying null.
+const PERMITTED = { approvable: true, disposition: 'PASS' };
+const withDisposition = claim => (claim === null || typeof claim !== 'object' || !Array.isArray(claim.entries)
+  ? claim
+  : { ...claim, entries: claim.entries.map(entry => (entry === null || typeof entry !== 'object' || Array.isArray(entry)
+    ? entry
+    : { ...PERMITTED, artifact: ARTIFACT, ...entry })) });
+
 export const CLAIM = {
   code_revision: { head: CLAIM_HEAD, tree: CLAIM_TREE },
   entries: [
-    { id: 'TERM-1', control: { test_names: ['the coordinator refuses a stale head'] },
-      killing_mutants: [{ test_name: 'the mutant that removes the stale-head guard dies' }] },
-    { id: 'TERM-2', control: { test_names: ['the push broker retries only reads'] }, killing_mutants: [] },
+    { id: 'TERM-1', artifact: ARTIFACT, control: { test_names: ['the coordinator refuses a stale head'] },
+      killing_mutants: [{ test_name: 'the mutant that removes the stale-head guard dies' }], ...PERMITTED },
+    { id: 'TERM-2', artifact: ARTIFACT, control: { test_names: ['the push broker retries only reads'] },
+      killing_mutants: [], ...PERMITTED },
   ],
 };
 export const NAMED_TESTS = ['the coordinator refuses a stale head',
@@ -223,7 +252,7 @@ export const build = (patch = {}) => {
   ].join('\n'), captureDir, zipPath]);
   const archiveDigest = `sha256:${sha256(fs.readFileSync(zipPath))}`;
 
-  const claim = patch.claim ?? CLAIM;
+  const claim = patch.rawClaim ?? withDisposition(patch.claim ?? CLAIM);
   const claimBytes = Buffer.from(`${JSON.stringify(claim, null, 2)}\n`);
 
   const run = {

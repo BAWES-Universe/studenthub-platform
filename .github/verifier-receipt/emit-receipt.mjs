@@ -91,6 +91,49 @@ const AUTHORITY_PATHS = [
 ];
 const PROTECTED_REF = 'main';
 const CLAIM_PATH = '.github/coordinator/service/claim-manifest.json';
+// Paths inside a manifest entry's `artifact` field are relative to the manifest's own directory: the real
+// manifest says `test/shu71-postpush-readback-checks.mjs` for a file this repository holds at
+// `.github/coordinator/service/test/shu71-postpush-readback-checks.mjs`. Resolved here once, so the binding in
+// section 10c compares repository paths rather than two different spellings of one.
+const CLAIM_DIR = CLAIM_PATH.slice(0, CLAIM_PATH.lastIndexOf('/'));
+
+// THE MANIFEST'S OWN VERDICT ON EACH TERM, AND THE ONLY VALUE OF IT THAT PERMITS THE WORD "ESTABLISHED".
+//
+// A cold review measured this on the repository's own pinned candidate and it is the finding that decides what
+// this authority is for: all 53 entries of 7e7ac70e's claim-manifest.json carry `"disposition": "BLOCK"`, 12 of
+// them carry `"approvable": false`, and this emitter read neither field, mentioned neither in the receipt, and
+// reported `terms: 53 listed, 53 established`, `without_evidence: []`, `admissible as pin: true`. The receipt
+// contradicted the claim it was validating: the authority's word "established" silently overrode the claim's own
+// word "BLOCK", and a consumer that requires every `term.establishes === true` would have armed a change off 53
+// terms the manifest itself says are not approvable.
+//
+// WHICH FIELD IS AUTHORITATIVE: `entries[].disposition`. It is the manifest's own per-term verdict, and this
+// repository's generator writes exactly two values into it - measured over every commit that ever touched the
+// manifest: `BLOCK` (53/53 at 7e7ac70e, 6feac01, e7e72ec; 46/46 at the seven older manifests) and `PASS` (2
+// entries at 07fb13d, the commit whose message is "the verifier's receipt, and the manifest regenerated to carry
+// it"). `PASS` is therefore the only value in this vocabulary that says the term is in a state where a term may
+// be called established, and it is the only value this emitter accepts as one. An absent, null or unrecognised
+// disposition is NOT read as permission: an entry that states no verdict states no permission.
+//
+// `approvable: false` is a SECOND and INDEPENDENT bar, and a permanent one: the 12 entries that carry it carry
+// the reason "no mutant is paired with this control in the registry", and the manifest's own coverage block
+// counts them as `controls_never_approvable_through_this_path: 12`. It is checked separately from the
+// disposition so that a manifest which ever flipped one without the other is refused on whichever still says no.
+//
+// WHAT THIS CHECK IS, AND WHAT IT IS NOT. It is a CONTRADICTION check: it stops this receipt from saying more
+// about a term than the term's own claim says. It is NOT an anti-forgery boundary - the candidate writes the
+// manifest, so a candidate that wants `PASS` can write `PASS`, exactly as it can write the test names. What it
+// buys is that such a candidate has to put the lie in its own committed file, where the receipt now carries it
+// verbatim (`terms[].disposition`, `terms[].approvable`) for a reader and for the gate to re-read.
+//
+// AND THE ORDER THIS IMPLIES, because it is not circular and it must not be read as circular. A fresh manifest
+// says BLOCK with the reason "no verifying receipt names this control at the code revision" precisely because no
+// receipt exists yet. This authority does not resolve that inside one document. It emits a receipt that records
+// the MEASUREMENT (`terms[].measured`) while establishing nothing; that receipt is what this repository's
+// manifest routine consumes to regenerate the manifest with `disposition: PASS` for the entries that also have a
+// paired mutant - which is what commit 07fb13d did - and a SECOND run against the regenerated manifest is the
+// one that may establish them. The 12 entries with `approvable: false` never flip, by construction.
+const ESTABLISHING_DISPOSITIONS = ['PASS'];
 const CAPTURE_FILE = 'suite.out';
 const META_FILE = 'capture-meta.json';
 // A claim is normally committed on top of the code revision it names - the manifest cannot name the commit that
@@ -758,6 +801,31 @@ if (containers.length > 0) {
     + `container this run cannot read as one: ${listing(containers.map(([, index, what]) => `entry ${index} carries ${what}`))}`);
 }
 
+// AND THE THREE FIELDS THE RECEIPT MUST NOT CONTRADICT OR MISREAD: the entry's own verdict on itself, and the
+// file it says its term's test lives in. Each is refused when PRESENT and of the wrong shape, because a
+// disposition this run cannot read is a disposition it cannot honour, and silently ignoring it is the defect
+// this block exists to close. Absent stays absent: it is answered below by `permits_establishment: false` and by
+// an unbindable artifact, not by a refusal, so a manifest that predates these fields is measurable and simply
+// establishes nothing.
+const fields = [];
+claimEntries.forEach((entry, index) => {
+  const { disposition, approvable, artifact } = entry;
+  if (disposition !== undefined && disposition !== null && typeof disposition !== 'string') {
+    fields.push(['claim.entries.disposition', `entry ${index} carries \`disposition\` as ${shapeOf(disposition)}, not a verdict this run can read`]);
+  }
+  if (approvable !== undefined && approvable !== null && typeof approvable !== 'boolean') {
+    fields.push(['claim.entries.approvable', `entry ${index} carries \`approvable\` as ${shapeOf(approvable)}, not a yes or a no`]);
+  }
+  if (artifact !== undefined && artifact !== null && (typeof artifact !== 'string' || artifact.trim() === '')) {
+    fields.push(['claim.entries.artifact', `entry ${index} carries \`artifact\` as ${shapeOf(artifact)}, not a path this run can bind a test to`]);
+  }
+});
+if (fields.length > 0) {
+  const [field] = fields[0];
+  refuse(field, `${fields.length} entry/entries of ${CLAIM_PATH} at ${candidateSha.slice(0, 12)} carry a field `
+    + `this run cannot read: ${listing(fields.map(([, what]) => what))}`);
+}
+
 const idIndices = new Map();
 claimEntries.forEach((entry, index) => { idIndices.set(entry.id, [...(idIndices.get(entry.id) ?? []), index]); });
 const collisions = [...idIndices.entries()].filter(([, at]) => at.length > 1)
@@ -819,16 +887,42 @@ if (sharedNames.length > 0) {
     + `for more than one term and this run cannot say which term it establishes: ${listing(sharedNames)}`);
 }
 
+// The entry's `artifact`, resolved against the manifest's own directory into a repository path, so the binding
+// in section 10c compares repository paths rather than two spellings of one. `null` where the entry names none:
+// such a term says nothing about where its test lives, so there is nothing to bind it to, and the receipt
+// records that rather than inventing a path.
+const artifactOf = entry => {
+  const artifact = typeof entry.artifact === 'string' ? entry.artifact.trim() : '';
+  if (artifact === '') return null;
+  if (artifact.startsWith('/')) return path.posix.normalize(artifact);
+  return path.posix.normalize(`${CLAIM_DIR}/${artifact}`);
+};
+
 const named = new Map();
 const claimTerms = [];
 claimEntries.forEach((entry, index) => {
   const term = entry.id;
   const tests = entryTests[index];
+  const artifact = artifactOf(entry);
   for (const test of tests) {
     named.set(`${index}\u0000${test.kind}\u0000${test.name}`,
-      { entry: index, term, kind: test.kind, name: test.name });
+      { entry: index, term, kind: test.kind, name: test.name, artifact });
   }
-  claimTerms.push({ entry: index, id: term, names: tests.length });
+  // THE ENTRY'S OWN VERDICT ON ITSELF, carried term by term into the receipt rather than discarded.
+  // `disposition` is authoritative and `PASS` is the only value of it that permits establishment; `approvable:
+  // false` bars establishment independently and permanently. Both are read here, once, so every later reading -
+  // the term row, the claim-wide verdict, and the workflow's gate - reads the same two fields.
+  const disposition = typeof entry.disposition === 'string' ? entry.disposition : null;
+  const approvable = typeof entry.approvable === 'boolean' ? entry.approvable : null;
+  claimTerms.push({
+    entry: index,
+    id: term,
+    names: tests.length,
+    artifact,
+    disposition,
+    approvable,
+    permits: approvable !== false && disposition !== null && ESTABLISHING_DISPOSITIONS.includes(disposition),
+  });
 });
 // DEFENCE IN DEPTH: is the capture WELL FORMED? This is not, and may not be reported as, a check that it is
 // GENUINE - genuineness is settled above, by provenance, and by nothing in this section. The candidate's own
@@ -904,11 +998,18 @@ const close = () => {
   // so the point line cannot tell a cancellation from a failure and the reconciliation below adds the two.
   if (open.type === 'test') tally[open.directive ?? (open.ok ? 'pass' : 'fail')] += 1;
   const prior = observed.get(open.name);
+  // EVERY FILE THIS NAME WAS REPORTED IN, not the last one. A name reported twice from two files is exactly the
+  // shape the binding below has to see, so the locations collapse into a set rather than overwriting: if any one
+  // of them is outside the entry's artifact, the name is not bound to that artifact.
+  const locations = open.location
+    ? [...new Set([...(prior?.locations ?? []), open.location])]
+    : (prior?.locations ?? []);
   observed.set(open.name, prior
     ? { status: STATUS_RANK[status] > STATUS_RANK[prior.status] ? status : prior.status,
       points: prior.points + 1,
-      statuses: prior.statuses.includes(status) ? prior.statuses : [...prior.statuses, status] }
-    : { status, points: 1, statuses: [status] });
+      statuses: prior.statuses.includes(status) ? prior.statuses : [...prior.statuses, status],
+      locations }
+    : { status, points: 1, statuses: [status], locations });
   open = null;
 };
 
@@ -927,11 +1028,22 @@ for (const raw of tap.split('\n')) {
     if (body === '...' && indent === yamlIndent) {
       yamlIndent = null;
       close();
-    } else if (open && !open.type && indent === yamlIndent) {
-      const type = /^type: '(test|suite)'$/.exec(body);
-      if (type) {
-        open.type = type[1];
-        typed[type[1]] += 1;
+    } else if (open && indent === yamlIndent) {
+      if (!open.type) {
+        const type = /^type: '(test|suite)'$/.exec(body);
+        if (type) {
+          open.type = type[1];
+          typed[type[1]] += 1;
+        }
+      }
+      // WHERE THE RUNNER SAYS THIS POINT IS, read out of the same YAML block and at the same indent as `type:`,
+      // so a failing test's own error text - which is indented deeper - cannot supply one. `node --test` writes
+      // `location: '<file>:<line>:<column>'`; only the file is kept, because a term is bound to the file its
+      // claim names and not to a line number that moves with every edit. The first such key wins, so a block
+      // carrying two cannot promote the second over the runner's own.
+      if (!open.location) {
+        const where = /^location: '(.+):(\d+):(\d+)'$/.exec(body);
+        if (where) open.location = where[1];
       }
     }
     continue;
@@ -979,6 +1091,7 @@ for (const raw of tap.split('\n')) {
       ok: point[1] === 'ok',
       directive: directive ? directive[1].toLowerCase() : null,
       type: null,
+      location: null,
     };
     continue;
   }
@@ -1091,9 +1204,53 @@ if (exitCode === 0 && unfinished > 0) {
     + 'non-zero whenever a test failed or was cancelled');
 }
 
+// 10c. BIND THE NAME TO THE FILE THE CLAIM SAYS IT LIVES IN.
+//
+// A term is established by a NAME matched anywhere in the stream, and a cold review put the consequence plainly:
+// two empty function bodies carrying the claim's names, in a file of the candidate's choosing, produce a wholly
+// genuine `verdict: success` with every provenance check telling the truth. Every manifest entry already carries
+// an `artifact` naming the file its term's test lives in, and `node --test --test-reporter=tap` writes
+// `location: '<file>:<line>:<column>'` into the YAML block this parser already reads for `type:`. So the two are
+// bound here: a named test the runner reported in a file other than its entry's artifact is NOT a measurement of
+// that term, it is recorded `misplaced`, and the term establishes nothing.
+//
+// The location is a path on the runner - an absolute path into whatever directory the candidate was checked out
+// to - and the artifact is a repository path, so the match is a component-aligned SUFFIX: the reported file must
+// be the artifact, or must end with `/` followed by it. `/elsewhere/test/x.mjs` therefore does not match
+// `test/x.mjs` resolved to `.github/coordinator/service/test/x.mjs`, and a candidate cannot satisfy the rule by
+// nesting a stub under a similarly named directory, because every component of the resolved path must line up.
+//
+// HOW FAR THIS REACHES, MEASURED RATHER THAN ASSERTED, because the review that asked for it states the premise
+// too widely and a receipt may not inherit the error. `node --test --test-reporter=tap` at v22.22.3 - the
+// runtime this repository measures with - writes `location:` ONLY on a point it reports as FAILING. On this
+// repository's own pinned capture that is 28 points out of 3667: 28 of 28 failing points carry one, 0 of 3631
+// passing points and 0 of 8 skipped points do. So the binding below refuses a moved name whose test FAILED, and
+// cannot see a moved name whose empty stub PASSED - which is the case the attack actually uses. What is closed
+// is therefore: the location is now read, carried in the receipt per test, reconciled by the gate, and a
+// DISAGREEMENT between the claim and the runner is a refusal by name. What is not closed is the silence: a
+// passing point reports no file, so `location_bound: 'unreported'` is carried per test and counted in the
+// summary, and it is the honest measure of how much of this claim rests on names no file was reported for.
+// Closing the rest needs a location for every point, which needs a reporter this authority owns writing on a
+// channel the trusted capture process hashes - an authority change, not an emitter change, and it is named as
+// open in the record rather than described here as done.
+const bindsTo = (reported, artifact) => reported === artifact || reported.endsWith(`/${artifact}`);
 const perTest = [...named.values()].map(test => {
   const seen = observed.get(test.name);
-  return { ...test, status: seen?.status ?? 'absent', points: seen?.points ?? 0 };
+  const status = seen?.status ?? 'absent';
+  const locations = seen?.locations ?? [];
+  const bound = test.artifact === null ? 'unclaimed'
+    : locations.length === 0 ? 'unreported'
+      : locations.every(where => bindsTo(where, test.artifact)) ? 'matched' : 'mismatched';
+  return {
+    ...test,
+    // `misplaced` outranks the status the point itself reported: a point in the wrong file is not evidence for
+    // this term whatever the runner said about it, and calling it `pass` is the exact reading this closes.
+    status: bound === 'mismatched' ? 'misplaced' : status,
+    reported_status: status,
+    points: seen?.points ?? 0,
+    location_bound: bound,
+    locations,
+  };
 });
 const duplicatePoints = [...observed.entries()]
   .filter(([, seen]) => seen.points > 1)
@@ -1115,6 +1272,15 @@ const summary = {
   skipped: withStatus('skip').length,
   todo: withStatus('todo').length,
   suite_points: withStatus('suite').length,
+  // A named test the runner reported in a file other than the one its claim names. Its own point may have said
+  // `ok`; it is not a measurement of this term.
+  misplaced: withStatus('misplaced').length,
+  // HOW MUCH OF THIS CLAIM IS ACTUALLY BOUND TO A FILE, carried as four counts rather than left to a reader to
+  // infer from the rows. `matched` is a name the runner reported in the file the claim names; `mismatched` is
+  // the refusal above; `unreported` is a point the runner gave no location for at all (every passing point, at
+  // node v22.22.3) and is the open part of this; `unclaimed` is an entry that names no artifact to bind to.
+  location_bound: Object.fromEntries(['matched', 'mismatched', 'unreported', 'unclaimed']
+    .map(kind => [kind, perTest.filter(test => test.location_bound === kind).length])),
 };
 
 // EVERY TERM, NAMED. The claim-wide `named > 0` rule let a term that names no test at all ride to `success` on
@@ -1129,9 +1295,19 @@ const termReport = claimTerms.map(term => {
   // agree - this one just cannot be made to disagree.
   const tests = perTest.filter(test => test.entry === term.entry);
   const counted = status => tests.filter(test => test.status === status).length;
+  // WHAT THIS RUN MEASURED about the term: every test it names ran and passed, in the file its claim names.
+  // Failed, absent, skipped, marked todo, matched by a suite point rather than a test point, or reported in
+  // another file: none of those is a measurement of the term.
+  const measured = tests.length > 0 && tests.every(test => test.status === 'pass');
   return {
     entry: term.entry,
     id: term.id,
+    // The entry's own verdict on itself, verbatim, so that no reader - and no gate - has to fetch the manifest
+    // to see what the claim said about the term this row reports on.
+    artifact: term.artifact,
+    disposition: term.disposition,
+    approvable: term.approvable,
+    permits_establishment: term.permits,
     named: tests.length,
     pass: counted('pass'),
     fail: counted('fail'),
@@ -1139,12 +1315,19 @@ const termReport = claimTerms.map(term => {
     skipped: counted('skip'),
     todo: counted('todo'),
     suite_points: counted('suite'),
-    // A term is established only by tests that RAN and PASSED. Failed, absent, skipped, marked todo, or
-    // matched by a suite point rather than a test point: none of those is a measurement of the term.
-    establishes: tests.length > 0 && tests.every(test => test.status === 'pass'),
+    misplaced: counted('misplaced'),
+    measured,
+    // AND ESTABLISHED IS MEASURED **AND** PERMITTED. A term whose own manifest entry says `disposition: BLOCK`
+    // or `approvable: false` is not in a state where this authority may call it established, however green its
+    // named tests are - the measurement is still recorded, above, under its own name.
+    establishes: measured && term.permits,
   };
 });
 const uncoveredTerms = termReport.filter(term => term.named === 0).map(term => String(term.id));
+// Terms this run really measured green and still may not call established, because the claim itself says they
+// are not in a state to be. Kept apart from every other reason so that a reader can tell "the tests did not
+// pass" from "the tests passed and the claim says that is not enough".
+const barredTerms = termReport.filter(term => term.measured && !term.permits_establishment);
 
 // THE SUITE'S OWN RESULT, AND WHAT A VERDICT MAY SAY BESIDE IT.
 //
@@ -1214,6 +1397,29 @@ if (summary.suite_points > 0) {
   reasons.push(`${summary.suite_points} named test(s) were matched only by a \`type: 'suite'\` point - a `
     + `describe() block, which reports \`ok\` whether or not it contains a test: `
     + `${listing(withStatus('suite').map(t => t.name))}`);
+}
+if (summary.misplaced > 0) {
+  reasons.push(`${summary.misplaced} named test(s) were reported by the runner in a file other than the one `
+    + `their own manifest entry names, so this run measured a test of that name and not the test the claim `
+    + `describes: ${listing(withStatus('misplaced')
+      .map(t => `"${t.name}" claimed in ${t.artifact}, reported in ${t.locations.join(', ')}`))}`);
+}
+// THE CLAIM'S OWN VERDICT, AS A REASON THIS RECEIPT ESTABLISHES NOTHING. This is the finding that decides what
+// the word "established" may be read as: on this repository's own pinned manifest every entry says
+// `disposition: BLOCK` and twelve say `approvable: false`, and this emitter used to report all 53 established.
+// The measurement is not discarded - `terms[].measured` still records that every named test passed - but the
+// claim as a whole is not established, and the reason names the field and the count.
+if (barredTerms.length > 0) {
+  const blocked = barredTerms.filter(term => term.disposition !== null
+    && !ESTABLISHING_DISPOSITIONS.includes(term.disposition));
+  const unapprovable = barredTerms.filter(term => term.approvable === false);
+  const silent = barredTerms.filter(term => term.disposition === null);
+  reasons.push(`${barredTerms.length} term(s) were measured green and are not in a state this claim permits `
+    + `establishment from, so this run establishes nothing about them: `
+    + `${blocked.length} carry a disposition other than ${ESTABLISHING_DISPOSITIONS.join('/')} `
+    + `(${listing([...new Set(blocked.map(term => term.disposition))])}), `
+    + `${unapprovable.length} carry \`approvable: false\`, `
+    + `${silent.length} state no disposition at all: ${listing(barredTerms.map(term => String(term.id)))}`);
 }
 for (const duplicate of duplicatePoints) {
   // Every repeat is recorded in `duplicate_points`; only a repeat whose points DISAGREE is a reason, because a
@@ -1327,6 +1533,25 @@ const receipt = {
         + 'the claim describes, and nothing in a receipt of this shape can; that would take coverage of the '
         + 'term\'s own source attributed to the named test, a mutation run whose kill result the candidate does '
         + 'not write, or a second independent measurement.',
+      'THE NAME IS BOUND TO A FILE ONLY AS FAR AS THE RUNNER REPORTS ONE. Every named test carries '
+        + '`location_bound` and `locations`: the file `node --test` reported the point in, checked against the '
+        + 'manifest entry\'s own `artifact` path. A disagreement is recorded `misplaced`, establishes nothing, '
+        + 'and is refused again by this workflow\'s gate. But `node --test --test-reporter=tap` at v22.22.3 '
+        + 'writes `location:` only on a point it reports FAILING - measured on this repository\'s own pinned '
+        + 'capture: 28 of 28 failing points carry one, 0 of 3631 passing and 0 of 8 skipped do - so a name '
+        + 'whose empty stub in another file PASSES is `location_bound: "unreported"` and is not caught. The '
+        + 'count of unreported names is in `named_tests_summary.location_bound` and is the honest measure of '
+        + 'this gap. Closing it needs a location on every point, which needs a reporter this authority owns '
+        + 'writing on a channel the trusted capture process hashes; that is not done.',
+      'THE CLAIM\'S OWN VERDICT IS NOW LOAD-BEARING, AND IT IS STILL THE CANDIDATE\'S FILE. A term is '
+        + 'established only when the measurement is green AND the manifest entry it comes from carries '
+        + '`disposition: PASS` and not `approvable: false`; `terms[].measured` records the measurement '
+        + 'separately, so a blocked term still shows what this run saw. That stops this receipt from '
+        + 'contradicting the claim it validates - a review found all 53 entries of this repository\'s pinned '
+        + 'manifest saying BLOCK while the receipt said 53 established - but it is a CONTRADICTION check, not '
+        + 'an anti-forgery boundary: the candidate writes the manifest, so a candidate that wants PASS writes '
+        + 'PASS. What it buys is that the lie has to be in the candidate\'s own committed file, and this '
+        + 'receipt carries that file\'s words verbatim in every term row.',
       'the measured tests print into the very stream this capture is, so a candidate whose test bodies emit '
         + 'plausible TAP of their own put those bytes into the stream the trusted job hashed. A correction a '
         + 'review measured and this file previously had backwards: at Node 22 `node --test --test-reporter=tap` '
@@ -1344,15 +1569,19 @@ const receipt = {
         + 'through GitHub (`capture.suite_exit` refuses any disagreement). A forger that also appends to '
         + '$GITHUB_OUTPUT - whose path a same-uid process can read out of /proc - defeats that too. Only a '
         + 'different uid for the measured suite, or a container it cannot escape, closes this.',
-      'admissible_as_pin is enforced in this producer by three places - this emitter, the gate step (which '
-        + 'refuses to publish an `admissible` output disagreeing with this receipt\'s body) and a separate '
-        + 'attest job that holds the only `attestations: write` in this workflow, runs only on a '
-        + 'workflow_dispatch of the default branch, and re-reads this field out of the subject before signing. '
-        + 'That enforcement is in workflow FILES, and on a pull_request event GitHub runs the workflow '
+      'admissible_as_pin is RE-DERIVED, not re-read, in three places. A review found the previous wording of '
+        + 'this item false: it said "enforced in three places" when one place computed the field and the other '
+        + 'two compared the computed boolean to itself, so a receipt whose body still recorded the authority as '
+        + 'absent on main, with only this flag flipped to true, passed the gate, the guard and the attest '
+        + 'job\'s subject re-read. Each of the three now recomputes the field from the six grounds recorded in '
+        + 'this receipt\'s own body - conclusion.verdict, candidate.authority_identity[].protected_sha, '
+        + 'workflow.event, workflow.head_branch, workflow.trusted_source_origin and '
+        + 'workflow.trusted_source_on_main - and refuses when the recomputation disagrees with the flag. That '
+        + 'enforcement is still in workflow FILES, and on a pull_request event GitHub runs the workflow '
         + 'definition from the pull request head, so for such a run all three are the candidate author\'s. A '
-        + 'consumer must therefore read this field itself, require conclusion.verdict === "success", and '
-        + 'require any attestation it trusts to name a workflow ref on the protected branch rather than merely '
-        + 'to exist.',
+        + 'consumer must therefore re-derive this field itself from the same six grounds, require '
+        + 'conclusion.verdict === "success", and require any attestation it trusts to name a workflow ref on '
+        + 'the protected branch rather than merely to exist.',
     ],
     measure_job: {
       name: measureJob.name,
@@ -1451,7 +1680,15 @@ const receipt = {
   terms_summary: {
     total: termReport.length,
     establishing: termReport.filter(term => term.establishes).length,
+    // WHAT THIS RUN MEASURED, kept apart from what it ESTABLISHES. The two are equal only on a manifest whose
+    // every entry is in a state that permits establishment; on this repository's own pinned manifest, measured
+    // is 53 and establishing is 0, and a receipt that reported one number for both is what this separates.
+    measured: termReport.filter(term => term.measured).length,
+    permitted_by_the_manifest: termReport.filter(term => term.permits_establishment).length,
     naming_no_tests: uncoveredTerms.length,
+    barred_by_the_manifest: barredTerms.map(term => String(term.id)),
+    dispositions: Object.fromEntries([...new Set(termReport.map(term => String(term.disposition)))].sort()
+      .map(value => [value, termReport.filter(term => String(term.disposition) === value).length])),
     without_evidence: termReport.filter(term => !term.establishes).map(term => String(term.id)),
   },
   // Names the capture reported more than once. Recorded because a repeated name is not a measurement of that
@@ -1479,7 +1716,15 @@ console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice
   + `suite-points ${summary.suite_points} over ${summary.distinct_names} distinct name(s); suite `
   + `${receipt.suite.state} (exit ${suiteExit}, tests ${counts.tests})`);
 if (suiteRed) console.log(`qualified: ${qualifications.join(' ')}`);
-console.log(`terms: ${termReport.length} listed, ${receipt.terms_summary.establishing} established`
+console.log(`terms: ${termReport.length} listed, ${receipt.terms_summary.measured} measured, `
+  + `${receipt.terms_summary.establishing} established`
+  + (barredTerms.length > 0
+    ? `; ${barredTerms.length} measured term(s) the manifest does not permit establishment from `
+      + `(${listing([...new Set(barredTerms.map(term => `disposition=${term.disposition}`
+        + (term.approvable === false ? ' approvable=false' : '')))], 4)})`
+    : '')
+  + (summary.misplaced > 0 ? `; ${summary.misplaced} named test(s) reported outside their claimed artifact` : '')
+  + `; names bound to a file: ${JSON.stringify(summary.location_bound)}`
   + (uncoveredTerms.length > 0 ? `; naming no tests: ${uncoveredTerms.join(', ')}` : '')
   + (duplicatePoints.length > 0 ? `; repeated point names: ${duplicatePoints.map(d => `"${d.name}" x${d.points}`).join(', ')}` : ''));
 console.log(`provenance: run ${runId} attempt ${runAttempt}, measure job ${measureJob.id} ${measureJob.conclusion}, `

@@ -414,6 +414,14 @@ jobs:
 
       - name: Refuse to emit a receipt that establishes nothing
         id: gate
+        # THE FACTS THIS STEP RE-DERIVES ADMISSIBILITY AGAINST, taken from GitHub and from the trust job rather
+        # than from the receipt. A review found `admissible_as_pin` computed in one place and merely re-read in
+        # the other two; these are what make this reading a second one.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          THIS_RUN_ID: ${{ github.run_id }}
+          TRUSTED_ORIGIN: ${{ needs.trust.outputs.trusted_origin }}
         run: |
           set -euo pipefail
           node -e "
@@ -517,22 +525,91 @@ jobs:
               if (inside.length > 0) { console.error('::error::these failing tests of the measured run ARE named by this claim, so this run establishes nothing about the terms that name them: ' + inside.join(', ')); process.exit(1); }
               console.log('qualified success: the suite is red and all ' + failing.length + ' failing test(s) are outside the ' + measured.size + ' name(s) this claim rests on');
             }
-            // AND THE ADMISSIBLE OUTPUT IS THE RECEIPT'S OWN FIELD, NOTHING ELSE. A review bypassed this by
-            // writing admissible=true beside a receipt whose body said false. That is caught here and again in
-            // the guard step below, which compares this output to the same field; the attest job re-reads it a
-            // third time out of the subject it is about to sign.
-            const admissible = receipt.provenance?.admissible_as_pin === true;
-            if (admissible && verdict !== 'success') { console.error('::error::this receipt calls itself admissible as a pin while its verdict is ' + verdict); process.exit(1); }
-            require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + admissible + '\n');
+            // A NAMED TEST THE RUNNER REPORTED IN ANOTHER FILE IS NOT EVIDENCE FOR THIS TERM. Every manifest
+            // entry names the file its term's test lives in, and the runner writes the file it reported a point
+            // in; the emitter binds the two and records the result per test. This re-reads that binding from the
+            // rows: a row whose location does not match its entry's artifact must carry the status that says so,
+            // and any such row is refused by name. (Where the runner reported no location the binding is
+            // 'unreported' - at node v22.22.3 that is every passing point - and it is counted, not refused.)
+            const misbound = rows.filter(row => row.location_bound === 'mismatched' || row.status === 'misplaced');
+            if (misbound.length > 0) { console.error('::error::these named tests were reported by the runner in a file other than the one their claim names: ' + misbound.map(row => row.name + ' claimed in ' + JSON.stringify(row.artifact) + ', reported in ' + JSON.stringify(row.locations)).join('; ')); process.exit(1); }
+            const unmarked = rows.filter(row => row.location_bound === 'mismatched' && row.status !== 'misplaced');
+            if (unmarked.length > 0) { console.error('::error::these named tests are bound to the wrong file and are not recorded as misplaced: ' + unmarked.map(row => row.name).join(', ')); process.exit(1); }
+            const bound = rows.reduce((at, row) => ({ ...at, [String(row.location_bound)]: (at[String(row.location_bound)] ?? 0) + 1 }), {});
+            console.log('names bound to the file their claim names:', JSON.stringify(bound));
+
+            // THE CLAIM'S OWN VERDICT ON EACH TERM, RE-READ HERE, AND IT OUTRANKS THIS RECEIPT'S WORD FOR IT.
+            // A review measured this on the repository's own pinned candidate: all 53 entries of the manifest
+            // said disposition BLOCK, 12 said approvable false, and the receipt reported 53 of 53 established
+            // while carrying neither field. The emitter now refuses to call such a term established; this step
+            // refuses to publish an admissible output for a receipt that does, and refuses a receipt that omits
+            // the fields altogether, because a term row this step cannot check is a term it may not pass.
+            const silent = terms.filter(term => term.disposition === undefined || term.approvable === undefined || term.permits_establishment === undefined || term.measured === undefined);
+            if (silent.length > 0) { console.error('::error::these terms do not carry the disposition their own manifest entry states, so this step cannot tell an established term from a blocked one: ' + silent.map(term => String(term.id)).join(', ')); process.exit(1); }
+            const ESTABLISHING = ['PASS'];
+            const barred = terms.filter(term => term.establishes === true && (term.approvable === false || !ESTABLISHING.includes(term.disposition)));
+            if (barred.length > 0) { console.error('::error::these terms are reported established while their own manifest entry says they may not be: ' + barred.map(term => String(term.id) + ' (disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable) + ')').join('; ')); process.exit(1); }
+            // And the rule recomputed rather than believed: permits is the two manifest fields, measured is the
+            // rows, and establishes is both. A receipt whose term row disagrees with either is refused.
+            const wrong = [];
+            for (const term of terms) {
+              const permits = term.approvable !== false && ESTABLISHING.includes(term.disposition);
+              const attributed = rows.filter(row => row.entry === term.entry);
+              const measured = attributed.length > 0 && attributed.every(row => row.status === 'pass');
+              if (term.permits_establishment !== permits) wrong.push(String(term.id) + ' says permits_establishment=' + JSON.stringify(term.permits_establishment) + ' for disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable));
+              else if (term.measured !== measured) wrong.push(String(term.id) + ' says measured=' + JSON.stringify(term.measured) + ' where its ' + attributed.length + ' row(s) say ' + measured);
+              else if (term.establishes !== (measured && permits)) wrong.push(String(term.id) + ' says establishes=' + JSON.stringify(term.establishes) + ' where measured=' + measured + ' and permits=' + permits);
+            }
+            if (wrong.length > 0) { console.error('::error::these terms do not agree with what this receipt s own evidence says about them: ' + wrong.join('; ')); process.exit(1); }
+            console.log('dispositions', JSON.stringify(receipt.terms_summary?.dispositions ?? {}), 'measured', receipt.terms_summary?.measured, 'established', terms.filter(term => term.establishes).length);
+
+            // AND ADMISSIBILITY IS RE-DERIVED FROM THE FACTS, NOT READ OFF THE FLAG. A review flipped
+            // provenance.admissible_as_pin to true on a receipt whose body still recorded the authority as
+            // ABSENT on main, and the gate, the guard and the attest job's subject re-read all passed it -
+            // because all three compared the computed boolean to itself. The six grounds the emitter computes
+            // that field from are each recorded in this receipt's own body, so they are recomputed here, and the
+            // flag is refused when it disagrees with them. Two of the six are checked against GitHub's own
+            // report of this run as well, which no field of the receipt can move.
+            const authority = receipt.candidate?.authority_identity;
+            if (!Array.isArray(authority) || authority.length === 0) { console.error('::error::the receipt carries no authority_identity, so nothing in it says whether this candidate left the authority alone'); process.exit(1); }
+            const absent = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            const workflow = receipt.workflow ?? {};
+            const grounds = [
+              [verdict === 'success', 'this receipt s verdict is ' + JSON.stringify(verdict) + ', so there is nothing in it for a manifest to pin'],
+              [absent.length === 0, 'the receipt authority is absent on the protected branch (' + absent.join(', ') + '), so this run compared the candidate against nothing'],
+              [workflow.event === 'workflow_dispatch', 'this run s event is ' + JSON.stringify(workflow.event) + ', not a workflow_dispatch'],
+              [workflow.head_branch === 'main', 'this run was made on ' + JSON.stringify(workflow.head_branch) + ', not the protected default branch'],
+              [workflow.trusted_source_origin === 'protected-main', 'the authority files came from ' + JSON.stringify(workflow.trusted_source_origin) + ', not from protected main'],
+              [workflow.trusted_source_on_main === true, 'the authority commit this run used is not contained in main'],
+            ];
+            const failed = grounds.filter(ground => !ground[0]).map(ground => ground[1]);
+            const derived = failed.length === 0;
+            const claimed = receipt.provenance?.admissible_as_pin === true;
+            if (derived !== claimed) { console.error('::error::this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ', but its own body says ' + derived + ': ' + (failed.length === 0 ? 'every ground is satisfied' : failed.join('; ')) + '. Nothing this run produced may be signed.'); process.exit(1); }
+            // AND AGAINST WHAT GITHUB SAYS ABOUT THIS RUN, which is the one input to this step that the receipt
+            // does not supply. A receipt that records a dispatch of main while this job is running on something
+            // else is refused whatever its own fields agree with.
+            const live = [['event', process.env.EVENT, workflow.event], ['ref', process.env.REF, workflow.head_branch === 'main' && workflow.event === 'workflow_dispatch' ? 'refs/heads/main' : null], ['run id', process.env.THIS_RUN_ID, String(receipt.run?.id)], ['trusted origin', process.env.TRUSTED_ORIGIN, workflow.trusted_source_origin]];
+            for (const fact of live) { if (!fact[1]) { console.error('::error::this step was not told the ' + fact[0] + ' of the run it is judging, so it cannot check the receipt against it'); process.exit(1); } }
+            if (String(process.env.THIS_RUN_ID) !== String(receipt.run?.id)) { console.error('::error::this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.THIS_RUN_ID); process.exit(1); }
+            if (process.env.TRUSTED_ORIGIN !== workflow.trusted_source_origin) { console.error('::error::the trust job resolved the authority from ' + process.env.TRUSTED_ORIGIN + ', but this receipt records ' + JSON.stringify(workflow.trusted_source_origin)); process.exit(1); }
+            if (derived && (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main')) { console.error('::error::this receipt calls itself admissible as a pin while this job is running on ' + process.env.EVENT + ' at ' + process.env.REF); process.exit(1); }
+            if (!derived) console.log('not admissible as a pin:', failed.join('; '));
+            require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + derived + '\n');
           "
 
-      # THE BYPASS, CAUGHT BY A STEP THAT READS BOTH SIDES. A review wrote `admissible=true` into the gate's
-      # own output beside a receipt whose body said `admissible_as_pin: false`, and the attest step's `if:`
-      # selected on it - the mark the emitter computes was not merely unenforced, it was bypassable. This step
-      # compares the output the attest job's condition reads against the field in the receipt itself, and turns
-      # a disagreement into a red job BEFORE anything can be signed. It is not the whole answer (see the note
-      # on the attest job below); it is the answer to a step output that does not match its own evidence.
-      - name: Refuse a gate output that disagrees with the receipt it was computed from
+      # THE BYPASS, CAUGHT BY A STEP THAT DERIVES THE ANSWER ITSELF. A review wrote `admissible=true` into the
+      # gate's own output beside a receipt whose body said `admissible_as_pin: false`, and the attest step's
+      # `if:` selected on it. A later review defeated the first fix: this step used to compare the gate output
+      # to `receipt.provenance.admissible_as_pin`, which is the same computed boolean the gate had just read, so
+      # a receipt with ONLY that flag flipped - its body still recording the authority as absent on main - passed
+      # here, at the gate, and at the attest job's subject re-read. One computation and two echoes.
+      #
+      # So this step does not read the flag to decide. It derives admissibility from the SIX GROUNDS recorded in
+      # the receipt's body, in its own code, and then requires three things to agree: what it derived, what the
+      # receipt claims, and what the gate published. The ground that is live in this repository right now - the
+      # authority is absent on main - is one of the six, so the flipped-flag receipt is refused here by name.
+      - name: Refuse an admissibility that the receipt's own body does not support
         id: guard
         env:
           GATE_SAYS: ${{ steps.gate.outputs.admissible }}
@@ -540,23 +617,45 @@ jobs:
           set -euo pipefail
           node -e "
             const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
-            const says = String(receipt.provenance?.admissible_as_pin === true);
+            const refuse = message => { console.error('::error::' + message); process.exit(1); };
+            const workflow = receipt.workflow || {};
+            const authority = receipt.candidate?.authority_identity;
+            if (!Array.isArray(authority) || authority.length === 0) refuse('this receipt carries no authority_identity, so nothing in it supports an admissibility either way');
+            const missing = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            const why = [];
+            if (receipt.conclusion?.verdict !== 'success') why.push('its verdict is ' + JSON.stringify(receipt.conclusion?.verdict));
+            if (missing.length > 0) why.push('the authority is absent on the protected branch (' + missing.join(', ') + ')');
+            if (workflow.event !== 'workflow_dispatch') why.push('its event is ' + JSON.stringify(workflow.event));
+            if (workflow.head_branch !== 'main') why.push('it was made on ' + JSON.stringify(workflow.head_branch));
+            if (workflow.trusted_source_origin !== 'protected-main') why.push('its authority came from ' + JSON.stringify(workflow.trusted_source_origin));
+            if (workflow.trusted_source_on_main !== true) why.push('its authority commit is not contained in main');
+            const derived = why.length === 0;
+            const claimed = receipt.provenance?.admissible_as_pin === true;
             const gate = String(process.env.GATE_SAYS || '');
-            if (gate !== says) {
-              console.error('::error::the gate published admissible=' + JSON.stringify(gate) + ' for a receipt whose own body says admissible_as_pin=' + says + '; nothing this run produced may be signed');
-              process.exit(1);
-            }
-            console.log('the gate output and the receipt agree: admissible_as_pin=' + says);
+            if (claimed !== derived) refuse('this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ' while its own body says ' + derived + ': ' + (derived ? 'every ground is satisfied' : why.join('; ')) + '; nothing this run produced may be signed');
+            if (gate !== String(derived)) refuse('the gate published admissible=' + JSON.stringify(gate) + ' where this receipt s own body supports ' + derived + '; nothing this run produced may be signed');
+            console.log('re-derived from the receipt s own body: admissible_as_pin=' + derived + (derived ? '' : ' (' + why.join('; ') + ')') + ', and the gate agrees');
           "
 
+      # EVERY STEP BELOW RUNS EVEN WHEN THE GATE REFUSED, because a receipt that says NO is the product of this
+      # authority just as much as one that says yes. A review found that the gate exits 1 on any verdict other
+      # than success and that nothing after it carried `if:`, so a step with no condition is implicitly
+      # `if: success()` and was skipped: a run that correctly measured a candidate and correctly concluded
+      # failure left no receipt artifact at all, and from outside was indistinguishable from a run that broke.
+      # That became load-bearing the moment the receipt started honouring the manifest's own disposition - the
+      # honest result over this repository's own pinned candidate is now verdict `failure`, and it is exactly
+      # the receipt a reader most wants to see. The job still goes RED and nothing downstream can select on it:
+      # `steps.gate.outputs.admissible` is unwritten, and the attest job needs both that output and a green
+      # `emit`. `hashFiles` guards the case where the emitter refused before writing anything.
       - name: Record the receipt's digest for the job that may sign it
         id: receipt
+        if: always() && hashFiles('receipt.json') != ''
         run: |
           set -euo pipefail
           echo "sha256=$(sha256sum receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Say, in the log, why this receipt was not attested
-        if: steps.gate.outputs.admissible != 'true'
+        if: always() && steps.gate.outputs.admissible != 'true' && hashFiles('receipt.json') != ''
         run: |
           set -euo pipefail
           node -e "
@@ -567,6 +666,7 @@ jobs:
 
       - name: Upload the receipt as an artifact
         id: upload
+        if: always() && hashFiles('receipt.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: verifier-receipt
@@ -574,6 +674,7 @@ jobs:
           retention-days: 90
 
       - name: Print what a manifest must pin
+        if: always() && hashFiles('receipt.json') != ''
         run: |
           set -euo pipefail
           digest=$(sha256sum receipt.json | cut -d' ' -f1)
@@ -653,7 +754,13 @@ jobs:
           fi
           echo "subject receipt.json sha256:$actual, as the emit job recorded it"
 
-      - name: Read admissibility out of the subject itself, not out of a job output
+      # THE THIRD READING, AND IT RE-DERIVES RATHER THAN RE-READS. A review flipped only
+      # `provenance.admissible_as_pin` on a receipt whose body still recorded the authority as absent on main and
+      # this check passed it, because it read the flag. It now recomputes the field from the six grounds in the
+      # subject's own body - and refuses a subject any of whose terms is reported established while the term's
+      # own manifest entry says BLOCK or `approvable: false`, which is what a receipt over this repository's real
+      # manifest would be. Nothing signed here rests on a boolean another step computed.
+      - name: Re-derive admissibility from the subject itself, not from a job output
         env:
           RUN_ID: ${{ github.run_id }}
           EVENT: ${{ github.event_name }}
@@ -663,12 +770,30 @@ jobs:
           node -e "
             const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
             const refuse = message => { console.error('::error::' + message); process.exit(1); };
+            const workflow = receipt.workflow || {};
+            const authority = receipt.candidate?.authority_identity;
+            if (!Array.isArray(authority) || authority.length === 0) refuse('this subject carries no authority_identity, so nothing in it says whether the candidate left the authority alone');
+            const missing = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            const why = [];
+            if (receipt.conclusion?.verdict !== 'success') why.push('its verdict is ' + JSON.stringify(receipt.conclusion?.verdict));
+            if (missing.length > 0) why.push('the authority is absent on the protected branch (' + missing.join(', ') + ')');
+            if (workflow.event !== 'workflow_dispatch') why.push('its event is ' + JSON.stringify(workflow.event));
+            if (workflow.head_branch !== 'main') why.push('it was made on ' + JSON.stringify(workflow.head_branch));
+            if (workflow.trusted_source_origin !== 'protected-main') why.push('its authority came from ' + JSON.stringify(workflow.trusted_source_origin));
+            if (workflow.trusted_source_on_main !== true) why.push('its authority commit is not contained in main');
+            if (why.length > 0) refuse('this authority will not sign this receipt: ' + why.join('; ') + '. The receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ' and lists ' + JSON.stringify(receipt.provenance?.inadmissibility_reasons ?? []));
             if (receipt.provenance?.admissible_as_pin !== true) refuse('this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ', so this authority will not sign it: ' + JSON.stringify(receipt.provenance?.inadmissibility_reasons ?? []));
             if (receipt.conclusion?.verdict !== 'success') refuse('this receipt records verdict ' + JSON.stringify(receipt.conclusion?.verdict) + ', so there is nothing in it to vouch for');
+            // THE CLAIM'S OWN VERDICT, RE-READ AT THE POINT OF SIGNATURE. A term reported established while its
+            // manifest entry says BLOCK or approvable false is the receipt contradicting the claim it validates.
+            const terms = receipt.terms;
+            if (!Array.isArray(terms) || terms.length === 0) refuse('this subject enumerates no terms');
+            const ESTABLISHING = ['PASS'];
+            const barred = terms.filter(term => term.establishes === true && (term.approvable === false || !ESTABLISHING.includes(term.disposition)));
+            if (barred.length > 0) refuse('these terms are reported established while their own manifest entry says they may not be: ' + barred.map(term => String(term.id) + ' (disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable) + ')').join('; '));
             if (String(receipt.run?.id) !== String(process.env.RUN_ID)) refuse('this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.RUN_ID);
-            if (receipt.workflow?.event !== 'workflow_dispatch' || receipt.workflow?.head_branch !== 'main') refuse('this receipt records event ' + JSON.stringify(receipt.workflow?.event) + ' on ' + JSON.stringify(receipt.workflow?.head_branch) + ', which is not a dispatch of the protected default branch');
             if (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main') refuse('this job is running on ' + process.env.EVENT + ' at ' + process.env.REF + ', which may not sign a receipt');
-            console.log('the receipt names itself admissible, verdict success, run ' + receipt.run?.id + ' dispatched on main');
+            console.log('re-derived from the subject: every admissibility ground is satisfied, verdict success, ' + terms.length + ' term(s) all permitted by their own manifest entries, run ' + receipt.run?.id + ' dispatched on main');
           "
 
       - name: Attest the receipt
