@@ -2381,7 +2381,7 @@
     "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
     "SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run",
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
-    "SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled",
+    "SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled",
     "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
     "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card",
     "SHU-226 A1: a synchronous breaker is reported in the tick that persists it",
@@ -19601,7 +19601,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled",
+      "name": "SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled",
       "capabilities": []
     },
     {
