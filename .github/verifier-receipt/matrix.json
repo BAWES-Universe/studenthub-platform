@@ -1,0 +1,1679 @@
+{
+  "schema": "verifier-matrix/v1",
+  "_comment": [
+    "THE PROTECTED MATRIX: what this authority REQUIRES of a claim, and what the controller measures itself.",
+    "",
+    "This file is authority. It lives beside the workflow, on protected main, it is checked out BY SHA, and a",
+    "candidate that alters any object under .github/verifier-receipt is refused before its suite is run. A",
+    "claim may name no term, no test and no mutant this file does not require, and may omit none that it",
+    "does: both directions are refused by name in controller.mjs. That is what stops a candidate widening",
+    "its own requirement - the requirement is not in the candidate.",
+    "",
+    "WHAT A TERM IS ESTABLISHED BY, and it is never a line the candidate printed:",
+    "  * control  - the file and the exact test names the controller runs, UNMUTATED, scoped by",
+    "               --test-name-pattern, whose container exit status the controller takes from waitpid;",
+    "  * mutants  - for each, a literal source substitution the controller applies to a PRIVATE OVERLAY of",
+    "               its own candidate checkout, and the controller-defined subset of tests that must be",
+    "               observed to FAIL with it applied.",
+    "Both must hold. The mutant is not an extra: an exit status alone does not say a test ran, asserted",
+    "anything, or matched the name the claim uses - an empty body, an unmatched pattern and an assertion of",
+    "`true` all exit 0 - and every one of those ALSO exits 0 mutated, so the mutant refuses the term.",
+    "",
+    "HOW IT WAS AUTHORED. .github/verifier-receipt/authoring/build-matrix.mjs read the committed control and",
+    "mutation registries of the candidate this matrix was frozen against and emitted this file, which was",
+    "then reviewed and committed. The controller NEVER runs that tool and never re-derives this file from any",
+    "candidate tree: a matrix a candidate can recompute is a requirement the candidate writes.",
+    "",
+    "A TERM WITH NO MUTANT IS NOT ESTABLISHABLE, and says so in its own row. Nothing distinguishes a control",
+    "with no killing mutant from a control that asserts nothing, so this authority will not claim it does.",
+    "",
+    "AN ANCHOR THAT NO LONGER APPLIES IS A REFUSAL, NOT A PASS. If a candidate has changed the code a",
+    "protected mutation was written against, the substitution cannot be applied, the mutant cannot be",
+    "observed to die, and the term is refused by name. That is the safe direction: a mutation that cannot be",
+    "applied has measured nothing."
+  ],
+  "frozen_against": "7e7ac70e37f2a99b4d3dc65c2a3ae3325d7681ab",
+  "scopes": {
+    "coordinator": {
+      "claim_path": ".github/coordinator/service/claim-manifest.json",
+      "normal_run_runner_key": "coordinator",
+      "patch_targets": {
+        "production": ".github/coordinator/service/shu71-production.mjs",
+        "journal": ".github/coordinator/service/shu71-journal.mjs",
+        "units": ".github/coordinator/service/units.mjs"
+      },
+      "unattributable_mutations": [
+        "B6 arming robustness / mutations / the gate step stops repeating on a resume (pairs with 0)"
+      ],
+      "terms": [
+        {
+          "id": "b6-arming-robustness/a-failed-measurement-is-not-a-state-claim-about-the-host",
+          "sealed_term": "a failed measurement is not a state claim about the host",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a failed measurement is not a state claim about the host"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "a failed measurement is reported as the state the caller named",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "export const measuredPredicate = predicate => { try { return predicate() === true; } catch (error) { throw measurementFailure(error); } };",
+                "replace": "export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a failed measurement is not a state claim about the host"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-transient-unit-read-is-retried-and-the-teardown-completes",
+          "sealed_term": "a transient unit read is retried and the teardown completes",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a transient unit read is retried and the teardown completes"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the host-command read retry is removed",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    if (!readOnlyCommand(exe, args)) return runCommand(exe, args, options);",
+                "replace": "    if (true) return runCommand(exe, args, options);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a transient unit read is retried and the teardown completes"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-genuinely-live-expiry-companion-still-refuses-by-its-own-name",
+          "sealed_term": "a genuinely live expiry companion still refuses by its own name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a genuinely live expiry companion still refuses by its own name"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/a-transient-linear-fixture-card-read-is-retried-and-the-window-arms",
+          "sealed_term": "a transient Linear fixture-card read is retried and the window arms",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the Linear fixture-card read goes back to the unretried door",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    const { issue: v } = await linearRead('query Shu71Fixture($id: String!) { issue(id: $id) { id identifier state { id } assignee { id } } }', { id: t.linear_id });",
+                "replace": "    const { issue: v } = await linear('query Shu71Fixture($id: String!) { issue(id: $id) { id identifier state { id } assignee { id } } }', { id: t.linear_id });"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-persistently-failing-linear-read-still-refuses-under-the-same-name",
+          "sealed_term": "a persistently failing Linear read still refuses under the same name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a persistently failing Linear read still refuses under the same name"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/a-genuinely-drifted-fixture-card-refuses-instead-of-being-retried",
+          "sealed_term": "a genuinely drifted fixture card refuses instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/a-genuinely-wrong-fixture-refuses-instead-of-being-retried",
+          "sealed_term": "a genuinely wrong fixture refuses instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/a-stale-read-back-of-a-landed-card-transition-is-re-read-not-refused",
+          "sealed_term": "a stale read-back of a landed card transition is re-read, not refused",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the card read-back is never re-read",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    let observed = await issue(t), attempts = 1;\n    while (!sameFixtureCard(observed, target) && attempts < READ_RETRY.attempts) {",
+                "replace": "    let observed = await issue(t), attempts = 1;\n    while (false) {"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-transient-ls-remote-failure-is-retried-and-the-window-arms",
+          "sealed_term": "a transient ls-remote failure is retried and the window arms",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a transient ls-remote failure is retried and the window arms"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the host-command read policy allows a single attempt",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "COMMAND_RETRY = Object.freeze({ attempts: 3,",
+                "replace": "COMMAND_RETRY = Object.freeze({ attempts: 1,"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a transient ls-remote failure is retried and the window arms"
+                ]
+              }
+            },
+            {
+              "name": "the host-command backoff schedule is emptied",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "delaysMs: Object.freeze([100, 200]), budgetMs: 2000",
+                "replace": "delaysMs: Object.freeze([]), budgetMs: 2000"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a transient ls-remote failure is retried and the window arms"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-host-read-sleep-budget-is-bounded-across-the-whole-invocation",
+          "sealed_term": "the host-read sleep budget is bounded across the whole invocation",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the host-command sleep budget is not enforced",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "|| delay > commandRetryBudgetMs",
+                "replace": "|| false"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-boundary-that-throws-is-never-retried-and-echoes-no-text",
+          "sealed_term": "a boundary that throws is never retried and echoes no text",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a boundary that throws is never retried and echoes no text"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the host-command retry repeats a boundary fault as well as a command failure",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        if (error?.code !== 'ACT_COMMAND_FAILED') throw error;",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a boundary that throws is never retried and echoes no text"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-persistently-failing-ls-remote-names-the-command-it-ran",
+          "sealed_term": "a persistently failing ls-remote names the command it ran",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a persistently failing ls-remote names the command it ran"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the failing command is no longer described",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      throw describeCommandFailure(error, { exe, argv: args, status: r.status,\n        signal: r.signal, fault: r.error?.code ?? r.error?.name });",
+                "replace": "      throw error;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a persistently failing ls-remote names the command it ran"
+                ]
+              }
+            },
+            {
+              "name": "the halt record drops the measured command detail",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "...commandFailureRecord(error), ...bindingLegRecord(error),",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a persistently failing ls-remote names the command it ran"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-genuinely-wrong-remote-sha-refuses-and-names-the-leg",
+          "sealed_term": "a genuinely wrong remote sha refuses and names the leg",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/a-landed-push-that-reported-failure-is-re-read-not-re-pushed",
+          "sealed_term": "a landed push that reported failure is re-read, not re-pushed",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/the-credential-store-is-opened-at-most-once-per-invocation",
+          "sealed_term": "the credential store is opened at most once per invocation",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the credential store is opened at most once per invocation"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the credential is resolved on every call again",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "  const credentials = () => (resolvedCredentials ??= readCredentials());",
+                "replace": "  const credentials = () => readCredentials();"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the credential store is opened at most once per invocation"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/an-absent-coordinator-credential-refuses-under-its-own-name",
+          "sealed_term": "an absent coordinator credential refuses under its own name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: an absent coordinator credential refuses under its own name"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the halt code goes back to an allow-list",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "  const code = haltCode(error?.code);",
+                "replace": "  const code = ['ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_COMMAND_INVALID'].includes(error?.code) ? error.code : 'ACT_PRODUCTION_FAILED';"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: an absent coordinator credential refuses under its own name"
+                ]
+              }
+            },
+            {
+              "name": "the coordinator credential refusal goes back to a bare string",
+              "patch": {
+                "file": ".github/coordinator/service/units.mjs",
+                "find": "    Object.assign(new Error('SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required'), { code: 'SHU251_ENV_COORDINATOR' }));",
+                "replace": "    'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: an absent coordinator credential refuses under its own name"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-short-supervisor-transport-secret-refuses-under-its-own-name",
+          "sealed_term": "a short supervisor transport secret refuses under its own name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a short supervisor transport secret refuses under its own name"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the supervisor secret refusal goes back to a bare string",
+              "patch": {
+                "file": ".github/coordinator/service/units.mjs",
+                "find": "    Object.assign(new Error('SHU251_ENV_SUPERVISOR: transport secret required'), { code: 'SHU251_ENV_SUPERVISOR' }));",
+                "replace": "    'SHU251_ENV_SUPERVISOR: transport secret required');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a short supervisor transport secret refuses under its own name"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-failing-binding-leg-is-short-circuited-and-named",
+          "sealed_term": "the failing binding leg is short-circuited and named",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the failing binding leg is short-circuited and named"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the binding legs are evaluated eagerly instead of in order",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "  for (const [leg, term] of legs) {\n    if ((typeof term === 'function' ? term() : term) === true) continue;",
+                "replace": "  for (const [leg, term] of legs.map(([name, value]) => [name, typeof value === 'function' ? value() : value])) {\n    if (term === true) continue;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the failing binding leg is short-circuited and named"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-package-validator-own-refusal-is-carried-into-the-halt",
+          "sealed_term": "the package validator own refusal is carried into the halt",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the package validator own refusal is carried into the halt"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the package validator code is dropped again",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      catch (error) { throw Object.assign(error, reviewedCode(checked.code) ? { package_code: checked.code } : {}); }",
+                "replace": "      catch (error) { throw error; }"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the package validator own refusal is carried into the halt"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-failed-teardown-step-names-its-cause-as-well-as-its-step",
+          "sealed_term": "a failed teardown step names its cause as well as its step",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a failed teardown step names its cause as well as its step"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the teardown records step codes without causes",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-journal.mjs",
+                "find": "      if (error?.code !== stepCode && reviewedCode(error?.code)) failures.push(error.code);",
+                "replace": "      if (error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE') failures.push(error.code);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a failed teardown step names its cause as well as its step"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-pre-push-acceptance-refuses-before-any-push-is-issued",
+          "sealed_term": "the pre-push acceptance refuses before any push is issued",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the pre-push acceptance refuses before any push is issued"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the pre-push acceptance refusal is swallowed",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        verifyReseedCommit({ git: (args, options) => git(spec, args, options), binding: spec.binding, oid: next });",
+                "replace": "        try { verifyReseedCommit({ git: (args, options) => git(spec, args, options), binding: spec.binding, oid: next }); } catch { /* mutation: the refusal is ignored */ }"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the pre-push acceptance refuses before any push is issued"
+                ]
+              }
+            },
+            {
+              "name": "the pre-push acceptance read is not made",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        verifyReseedCommit({ git: (args, options) => git(spec, args, options), binding: spec.binding, oid: next });",
+                "replace": "        /* mutation: the acceptance read is not made */"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the pre-push acceptance refuses before any push is issued"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-supervisor-that-did-not-come-up-refuses-instead-of-arming",
+          "sealed_term": "a supervisor that did not come up refuses instead of arming",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+              "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+              "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the supervisor liveness read-back is removed",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        need(measuredPredicate(() => unitProperty('shu-supervisor.service', 'ActiveState') === 'active'\n          && unitProperty('shu-supervisor.service', 'SubState') === 'running'), 'ACT_GATE_NOT_LIVE');",
+                "replace": "        /* mutation: claim ARMED on the exit status */"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)"
+                ]
+              }
+            },
+            {
+              "name": "the supervisor SubState term is dropped",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        need(measuredPredicate(() => unitProperty('shu-supervisor.service', 'ActiveState') === 'active'\n          && unitProperty('shu-supervisor.service', 'SubState') === 'running'), 'ACT_GATE_NOT_LIVE');",
+                "replace": "        need(measuredPredicate(() => unitProperty('shu-supervisor.service', 'ActiveState') === 'active'), 'ACT_GATE_NOT_LIVE');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)"
+                ]
+              }
+            },
+            {
+              "name": "the dispatch timer liveness read-back is removed",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        need(measuredPredicate(() => unitProperty('shu-coordinator.timer', 'ActiveState') === 'active'), 'ACT_GATE_NOT_LIVE');",
+                "replace": "        /* mutation: the timer is assumed live */"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-expiry-installation-is-measured-not-assumed",
+          "sealed_term": "the expiry installation is measured, not assumed",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+              "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+              "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the expiry installation read-back is removed",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    need(measuredPredicate(() => EXPIRY_UNITS.every(file => !unitFileAbsent(file) && expiryUnitCustody(file))\n      && ['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitProperty(expiryTimerUnit, 'ActiveState') === 'active'), 'ACT_EXPIRY_NOT_INSTALLED');",
+                "replace": "    /* mutation: the exit status is proof */"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the expiry installation is measured, not assumed (inactive)"
+                ]
+              }
+            },
+            {
+              "name": "the expiry enablement term is dropped",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    need(measuredPredicate(() => EXPIRY_UNITS.every(file => !unitFileAbsent(file) && expiryUnitCustody(file))\n      && ['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitProperty(expiryTimerUnit, 'ActiveState') === 'active'), 'ACT_EXPIRY_NOT_INSTALLED');",
+                "replace": "    need(measuredPredicate(() => EXPIRY_UNITS.every(file => !unitFileAbsent(file) && expiryUnitCustody(file))\n      && unitProperty(expiryTimerUnit, 'ActiveState') === 'active'), 'ACT_EXPIRY_NOT_INSTALLED');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the expiry installation is measured, not assumed (disabled)"
+                ]
+              }
+            },
+            {
+              "name": "the expiry durable-file term is dropped",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    need(measuredPredicate(() => EXPIRY_UNITS.every(file => !unitFileAbsent(file) && expiryUnitCustody(file))\n      && ['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitProperty(expiryTimerUnit, 'ActiveState') === 'active'), 'ACT_EXPIRY_NOT_INSTALLED');",
+                "replace": "    need(measuredPredicate(() => true\n      && ['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitProperty(expiryTimerUnit, 'ActiveState') === 'active'), 'ACT_EXPIRY_NOT_INSTALLED');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-card-read-back-that-never-reaches-the-target-still-refuses",
+          "sealed_term": "a card read-back that never reaches the target still refuses",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a card read-back that never reaches the target still refuses (never)",
+              "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the card read-back re-issues the write it is reading back",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      await readWait(delay);\n      observed = await issue(t);\n      attempts++;",
+                "replace": "      await readWait(delay);\n      await linear('mutation Shu71Fixture($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }',\n        { id: t.linear_id, input: { stateId: target.state_id, assigneeId: target.assignee_id } });\n      observed = await issue(t);\n      attempts++;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a card read-back that never reaches the target still refuses (never)"
+                ]
+              }
+            },
+            {
+              "name": "the card read-back accepts a card that is not the target",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    need(sameFixtureCard(observed, target), 'ACT_PARTIAL_ARMING');",
+                "replace": "    need(observed !== null, 'ACT_PARTIAL_ARMING');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-push-that-did-not-land-still-refuses",
+          "sealed_term": "a push that did not land still refuses",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a push that did not land still refuses (old)",
+              "B6 arming robustness: a push that did not land still refuses (third)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the push recovery accepts any remote answer",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "            if (after !== `${next}\\t${ref}`) throw error;",
+                "replace": "            if (after === undefined) throw error;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a push that did not land still refuses (old)"
+                ]
+              }
+            },
+            {
+              "name": "the push recovery accepts a third sha",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "            if (after !== `${next}\\t${ref}`) throw error;",
+                "replace": "            if (!/^[a-f0-9]{40}\\t/.test(after)) throw error;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a push that did not land still refuses (third)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/a-systemctl-mutation-is-attempted-exactly-once",
+          "sealed_term": "a systemctl mutation is attempted exactly once",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+              "B6 arming robustness: a systemctl mutation is attempted exactly once (start)",
+              "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/a-pre-arm-refusal-names-itself-and-orders-no-effect",
+          "sealed_term": "a pre-arm refusal names itself and orders no effect",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+              "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)",
+              "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the pre-arm region loses its handler again",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      return { ok: false, state: 'HALT', code: haltCode(error?.code),",
+                "replace": "      throw error;\n      return { ok: false, state: 'HALT', code: haltCode(error?.code),"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-disagreeing-binding-leg-is-named",
+          "sealed_term": "the disagreeing binding leg is named",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the disagreeing binding leg is named (readback)",
+              "B6 arming robustness: the disagreeing binding leg is named (local)",
+              "B6 arming robustness: the disagreeing binding leg is named (clean)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the binding leg is no longer named",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    throw Object.assign(activationError(code), typeof leg === 'string' && BINDING_LEG_PATTERN.test(leg) ? { leg } : {});",
+                "replace": "    throw activationError(code);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the disagreeing binding leg is named (readback)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-second-fixture-is-bound-too-leg-by-leg",
+          "sealed_term": "the second fixture is bound too, leg by leg",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+              "B6 arming robustness: the second fixture is bound too, leg by leg (remote)",
+              "B6 arming robustness: the second fixture is bound too, leg by leg (local)"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the fixture loop covers only the first fixture",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    for (const fixture of spec.pkg.fixtures) {",
+                "replace": "    for (const fixture of spec.pkg.fixtures.slice(0, 1)) {"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the second fixture is bound too, leg by leg (readback)"
+                ]
+              }
+            },
+            {
+              "name": "fixture_2 keeps every read but loses its LOCAL leg check",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "['local', local === expected], ['remote', remote === `${expected}\\t${ref}`],",
+                "replace": "['local', fixture.issue_id === 'SHU-140' ? local === expected : true], ['remote', remote === `${expected}\\t${ref}`],"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the second fixture is bound too, leg by leg (local)"
+                ]
+              }
+            },
+            {
+              "name": "fixture_2 keeps every read but loses its REMOTE leg check",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "['remote', remote === `${expected}\\t${ref}`],",
+                "replace": "['remote', fixture.issue_id === 'SHU-140' ? remote === `${expected}\\t${ref}` : true],"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the second fixture is bound too, leg by leg (remote)"
+                ]
+              }
+            },
+            {
+              "name": "fixture_2 keeps every read but loses its READBACK leg check",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "['readback', readback.object?.sha === expected]], 'ACT_REF_BINDING');",
+                "replace": "['readback', fixture.issue_id === 'SHU-140' ? readback.object?.sha === expected : true]], 'ACT_REF_BINDING');"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the second fixture is bound too, leg by leg (readback)"
+                ]
+              }
+            },
+            {
+              "name": "the second fixture skips its own binding legs",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      const expected = fixture.issue_id === 'SHU-140' && !seeded ? spec.pkg.reseed.expected_parent : fixture.seed_head;",
+                "replace": "      const expected = fixture.issue_id === 'SHU-140' && !seeded ? spec.pkg.reseed.expected_parent : fixture.seed_head;\n      if (fixture.issue_id !== 'SHU-140') { result[fixture.branch] = expected; continue; }"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the second fixture is bound too, leg by leg (local)"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-linear-issueupdate-mutation-is-still-final-on-its-first-error",
+          "sealed_term": "the Linear issueUpdate mutation is still final on its first error",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the Linear issueUpdate is routed through the retried read door",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    const result = await linear('mutation Shu71Fixture($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }',",
+                "replace": "    const result = await linearRead('mutation Shu71Fixture($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }',"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/the-cli-names-the-refusal-it-caught",
+          "sealed_term": "the CLI names the refusal it caught",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the CLI names the refusal it caught"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/the-reported-command-detail-is-closed-to-the-reviewed-fields",
+          "sealed_term": "the reported command detail is closed to the reviewed fields",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: the reported command detail is closed to the reviewed fields"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b6-arming-robustness/only-a-reviewed-refusal-name-reaches-a-halt-record",
+          "sealed_term": "only a reviewed refusal name reaches a halt record",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: only a reviewed refusal name reaches a halt record"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the reviewed refusal shape admits arbitrary text",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-journal.mjs",
+                "find": "export const REFUSAL_CODE_PATTERN = /^(?:ACT|SHU251|SHU71)_[A-Z0-9_]{2,44}$/;",
+                "replace": "export const REFUSAL_CODE_PATTERN = /.*/;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+                "test_names": [
+                  "B6 arming robustness: only a reviewed refusal name reaches a halt record"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b6-arming-robustness/only-an-enumerated-host-read-may-be-repeated",
+          "sealed_term": "only an enumerated host read may be repeated",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+            "test_names": [
+              "B6 arming robustness: only an enumerated host read may be repeated"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b5-post-push-read-back/a-transient-ref-read-back-is-retried-and-the-window-arms",
+          "sealed_term": "a transient ref read-back is retried and the window arms",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a transient ref read-back is retried and the window arms"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the retry policy allows a single attempt",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "attempts: 5, delaysMs",
+                "replace": "attempts: 1, delaysMs"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a transient ref read-back is retried and the window arms"
+                ]
+              }
+            },
+            {
+              "name": "the ref read-back goes back to the unretried door",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      const readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);",
+                "replace": "      const readback = await github(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a transient ref read-back is retried and the window arms"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-landed-push-whose-reseed-commit-read-is-not-answerable-yet-still-arms",
+          "sealed_term": "a landed push whose reseed commit read is not answerable yet still arms",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a landed push whose reseed commit read is not answerable yet still arms"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the backoff schedule is emptied",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "Object.freeze([1000, 2000, 4000, 8000])",
+                "replace": "Object.freeze([])"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a landed push whose reseed commit read is not answerable yet still arms"
+                ]
+              }
+            },
+            {
+              "name": "the post-push ancestry read goes back to the unretried door",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        const reseedCommit = await githubRead(`git/commits/${next}`);",
+                "replace": "        const reseedCommit = await github(`git/commits/${next}`);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a landed push whose reseed commit read is not answerable yet still arms"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/arming-never-asks-for-the-patch-bearing-comparison",
+          "sealed_term": "arming never asks for the patch-bearing comparison",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: arming never asks for the patch-bearing comparison"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the patch-bearing comparison comes back",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        const reseedCommit = await githubRead(`git/commits/${next}`);",
+                "replace": "        const reseedCommit = await githubRead(`compare/${old}...${next}`);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: arming never asks for the patch-bearing comparison"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-persistently-failing-read-still-refuses-under-the-same-name",
+          "sealed_term": "a persistently failing read still refuses under the same name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a persistently failing read still refuses under the same name"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "an exhausted retry returns an empty answer instead of refusing",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "          throw describeApiFailure(error, { attempts: attempt });",
+                "replace": "          return {};"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a persistently failing read still refuses under the same name"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-genuinely-wrong-ref-sha-refuses-instead-of-being-retried",
+          "sealed_term": "a genuinely wrong ref sha refuses instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the ref comparison itself is retried until it agrees",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      const readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);",
+                "replace": "      let readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);\n      for (let retry = 1; retry < READ_RETRY.attempts && readback.object?.sha !== expected; retry++)\n        readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-genuinely-wrong-ancestry-refuses-instead-of-being-retried",
+          "sealed_term": "a genuinely wrong ancestry refuses instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the ancestry read itself is retried until it agrees",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        const reseedCommit = await githubRead(`git/commits/${next}`);",
+                "replace": "        let reseedCommit = await githubRead(`git/commits/${next}`);\n        for (let retry = 1; retry < READ_RETRY.attempts && reseedCommit.sha !== next; retry++)\n          reseedCommit = await githubRead(`git/commits/${next}`);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried"
+                ]
+              }
+            },
+            {
+              "name": "the signed reseed sha is not compared",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "reseedCommit.sha === next && ",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/parents-in-the-other-order-refuse-instead-of-being-retried",
+          "sealed_term": "parents in the other order refuse instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: parents in the other order refuse instead of being retried"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the parent order is not required",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "reseedParents[0] === spec.binding.expected_parent && reseedParents[1] === spec.binding.approvedExecutionRevision",
+                "replace": "reseedParents.includes(spec.binding.expected_parent) && reseedParents.includes(spec.binding.approvedExecutionRevision)"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: parents in the other order refuse instead of being retried"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-third-parent-refuses-instead-of-being-retried",
+          "sealed_term": "a third parent refuses instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a third parent refuses instead of being retried"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the exact parent count is not required",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "reseedParents.length === 2\n          && ",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a third parent refuses instead of being retried"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/the-first-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
+          "sealed_term": "the first parent position alone is wrong and refuses under its own name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: the first parent position alone is wrong and refuses under its own name"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the first parent position is not required",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "reseedParents[0] === spec.binding.expected_parent && ",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the first parent position alone is wrong and refuses under its own name"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/the-second-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
+          "sealed_term": "the second parent position alone is wrong and refuses under its own name",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: the second parent position alone is wrong and refuses under its own name"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the second parent position is not required",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": " && reseedParents[1] === spec.binding.approvedExecutionRevision",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the second parent position alone is wrong and refuses under its own name"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-ref-that-moved-after-the-push-refuses-instead-of-being-retried",
+          "sealed_term": "a ref that moved after the push refuses instead of being retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a ref that moved after the push refuses instead of being retried"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the ref is not required to still carry the reseed commit",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "\n          && reseedRef.object?.sha === next",
+                "replace": ""
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a ref that moved after the push refuses instead of being retried"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-failing-push-is-never-retried",
+          "sealed_term": "a failing push is never retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a failing push is never retried"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the push is retried like a read",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "          try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true }); }",
+                "replace": "          try { for (let attempt = 1; ; attempt++) {\n            try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true }); break; }\n            catch (error) { if (attempt >= READ_RETRY.attempts) throw error; await readWait(READ_RETRY.delaysMs[attempt - 1]); }\n          } }"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a failing push is never retried"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-failing-linear-issueupdate-is-never-retried",
+          "sealed_term": "a failing Linear issueUpdate is never retried",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a failing Linear issueUpdate is never retried"
+            ]
+          },
+          "mutants": [],
+          "establishable": false,
+          "not_establishable_because": "the protected matrix requires no killing mutant for this control, so no controller-observed run can distinguish it from a control that asserts nothing"
+        },
+        {
+          "id": "b5-post-push-read-back/the-retry-sleep-budget-is-bounded-across-the-whole-invocation",
+          "sealed_term": "the retry sleep budget is bounded across the whole invocation",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the overall sleep budget is not enforced",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)\n          || delay > readRetryBudgetMs || !(b.now() < authorizationEnds)) {",
+                "replace": "        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)\n          || false || !(b.now() < authorizationEnds)) {"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/retrying-stops-at-the-authorization-expiry",
+          "sealed_term": "retrying stops at the authorization expiry",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: retrying stops at the authorization expiry"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the authorization expiry does not stop the retry",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)\n          || delay > readRetryBudgetMs || !(b.now() < authorizationEnds)) {",
+                "replace": "        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)\n          || delay > readRetryBudgetMs || false) {"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: retrying stops at the authorization expiry"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/the-halt-names-the-failing-route-and-status-and-carries-no-secret",
+          "sealed_term": "the halt names the failing route and status and carries no secret",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: the halt names the failing route and status and carries no secret"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "a definitive status is treated as transient",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "RETRYABLE_READ_STATUS = Object.freeze([404,",
+                "replace": "RETRYABLE_READ_STATUS = Object.freeze([403, 404,"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the halt names the failing route and status and carries no secret"
+                ]
+              }
+            },
+            {
+              "name": "the halt record drops the measured API detail",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "      const detail = { ...apiFailureRecord(error), ...commandFailureRecord(error), ...bindingLegRecord(error),\n        ...(reviewedCode(error?.package_code) ? { package_code: error.package_code } : {}),\n        ...readRetryRecord(), ...commandRetryRecord() };",
+                "replace": "      const detail = {};"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the halt names the failing route and status and carries no secret"
+                ]
+              }
+            },
+            {
+              "name": "a failed call is no longer described at all",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "    try { error.api = apiFailureDetail({ ...error.api, ...detail }); }",
+                "replace": "    try { error.api = undefined; }"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the halt names the failing route and status and carries no secret"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/a-graphql-refusal-is-named-by-its-codes",
+          "sealed_term": "a GraphQL refusal is named by its codes",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: a GraphQL refusal is named by its codes"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the GraphQL error codes are not collected",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": ".flatMap(error => [error?.extensions?.code, error?.extensions?.type, error?.code])",
+                "replace": ".flatMap(() => [])"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: a GraphQL refusal is named by its codes"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/the-reported-detail-is-closed-to-the-reviewed-fields",
+          "sealed_term": "the reported detail is closed to the reviewed fields",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "the operation label is echoed unsanitized",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "API_OPERATION_PATTERN.test(detail.operation) ? detail.operation : 'unknown'",
+                "replace": "true ? detail.operation : 'unknown'"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+                ]
+              }
+            },
+            {
+              "name": "the status is echoed unchecked",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "if (Number.isSafeInteger(detail.status) && detail.status >= 100 && detail.status <= 599) record.status = detail.status;",
+                "replace": "record.status = detail.status;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+                ]
+              }
+            },
+            {
+              "name": "the GraphQL codes are echoed unfiltered",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": ".filter(code => typeof code === 'string' && API_CODE_PATTERN.test(code));",
+                "replace": ".slice();"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+                ]
+              }
+            },
+            {
+              "name": "the transport fault is echoed unfiltered",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "if (typeof detail.fault === 'string' && API_CODE_PATTERN.test(detail.fault)) record.fault = detail.fault;\n  const codes =",
+                "replace": "if (typeof detail.fault === 'string') record.fault = detail.fault;\n  const codes ="
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+                ]
+              }
+            },
+            {
+              "name": "the reason vocabulary is opened",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "if (API_REASONS.includes(detail.reason)) record.reason = detail.reason;",
+                "replace": "record.reason = detail.reason;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        },
+        {
+          "id": "b5-post-push-read-back/only-a-measured-transient-outcome-is-retryable",
+          "sealed_term": "only a measured transient outcome is retryable",
+          "control": {
+            "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+            "test_names": [
+              "B5 post-push read-back: only a measured transient outcome is retryable"
+            ]
+          },
+          "mutants": [
+            {
+              "name": "a refusal with no measured detail is retryable",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "  if (detail === null || typeof detail !== 'object') return false;\n  if (detail.reason === 'transport') return true;",
+                "replace": "  if (detail === null || typeof detail !== 'object') return true;\n  if (detail.reason === 'transport') return true;"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: only a measured transient outcome is retryable"
+                ]
+              }
+            },
+            {
+              "name": "every reason is retryable once a status matches",
+              "patch": {
+                "file": ".github/coordinator/service/shu71-production.mjs",
+                "find": "  return detail.reason === 'response_not_ok' && RETRYABLE_READ_STATUS.includes(detail.status);",
+                "replace": "  return RETRYABLE_READ_STATUS.includes(detail.status);"
+              },
+              "killed_by": {
+                "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+                "test_names": [
+                  "B5 post-push read-back: only a measured transient outcome is retryable"
+                ]
+              }
+            }
+          ],
+          "establishable": true
+        }
+      ]
+    }
+  }
+}
