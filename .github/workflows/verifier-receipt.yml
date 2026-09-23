@@ -135,7 +135,11 @@ jobs:
             else
               trusted_sha="$PR_HEAD_SHA"
               trusted_origin="pull-request-head"
-              echo "::warning::the receipt authority is not present on $PR_BASE_REF at $PR_BASE_SHA, so this rehearsal runs the authority from the pull request head; its receipt is not admissible as a pin"
+              # TWO TRIGGERS, AND THE WARNING NAMES BOTH. The condition above is a conjunction: this run trusts
+              # the base only when the authority is readable there AND the base is the default branch. A pull
+              # request based on any non-default branch therefore lands here with runners.json fully present, so
+              # "the authority is not present" was true of only one of the two ways in.
+              echo "::warning::this run will not trust the authority from this pull request's base ($PR_BASE_REF at $PR_BASE_SHA): either it carries no .github/verifier-receipt/runners.json or it is not the default branch (${DEFAULT_BRANCH:-main}). This rehearsal runs the authority from the pull request head instead; its receipt is not admissible as a pin"
             fi
             rehearsal=$(gh api "/repos/$REPO/contents/.github/verifier-receipt/pull-request-rehearsal.json?ref=$trusted_sha" --jq '.content' | base64 -d)
             candidate_sha=$(printf '%s' "$rehearsal" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).candidate_sha))")
@@ -192,10 +196,14 @@ jobs:
           scope="$RUNNER_TEMP/authority-scope.mjs"
           # FROM THE TRUSTED COMMIT, WITH NO FALLBACK TO ANOTHER REF - and precisely what that does and does not
           # guarantee, because an earlier version of this comment stated it as an absolute and it is not one. The
-          # resolve step sets trusted_sha to the PULL REQUEST HEAD when runners.json is absent on the pull
-          # request's base; in that state the candidate's own copy of this module is what judges it, resolve emits
-          # a warning saying so, and the receipt is marked inadmissible as a pin. That path is not taken on main
-          # today (runners.json is there), and it is named here instead of being implied away.
+          # resolve step sets trusted_sha to the PULL REQUEST HEAD on EITHER of two conditions, and this comment
+          # named only the first until a review pointed out that it therefore still was not true in every clause:
+          # when the contents API will not serve runners.json at the pull request's base sha, OR when the pull
+          # request's base ref is not the default branch - a pull request based on any other branch takes the
+          # head-trusted path with runners.json fully present. In that state the candidate's own copy of this
+          # module is what judges it, resolve emits a warning saying so, and the receipt is marked inadmissible
+          # as a pin. Neither condition is met by a pull request against main today, and both are named here
+          # instead of being implied away.
           #
           # A TRUSTED COMMIT THAT PREDATES THE MODULE REFUSES HERE. That is the closed direction, and it is the
           # bootstrap itself: this authority cannot rehearse an amendment to itself until the amendment lands.
@@ -228,14 +236,22 @@ jobs:
             echo "::error::the module fetched from $TRUSTED_SHA is $got bytes and the API declared $declared bytes"
             exit 1
           fi
-          # AND THE STEP ASSERTS A VERDICT WAS RENDERED: a module that exits 0 without printing one is the same
-          # hole in a different shape.
+          # AND THE STEP ASSERTS THE MODULE REPORTED ON BOTH AUTHORITY PATHS. It used to assert that the output
+          # contained "merge base of", which renderAuthorityScope emits unconditionally as its first line: a
+          # review built a module identical to the real one except `AUTHORITY_PATHS = []`, ran it through this
+          # step body, and the step exited 0 having compared nothing. So what is counted here is the per-path
+          # line - `<path>: base=... candidate=... main=... -> <change>` - and the count is the length of
+          # AUTHORITY_PATHS in the module, which is 2. A module that reports on fewer paths than the authority
+          # has fails here; a third authority path means this number changes with it. Nothing about the VERDICT
+          # is asserted here - an admissible candidate and a refused one both print two of these lines, and the
+          # refusal itself is the module's own non-zero exit, caught above.
           verdict=$(node "$scope" "$REPO" main "$CANDIDATE_SHA") || { printf '%s\n' "$verdict"; exit 1; }
           printf '%s\n' "$verdict"
-          case "$verdict" in
-            *"merge base of"*) ;;
-            *) echo "::error::the module printed no verdict line, so this run cannot say whether it decided anything"; exit 1 ;;
-          esac
+          reported=$(printf '%s\n' "$verdict" | grep -c ' -> ' || true)
+          if [ "$reported" -ne 2 ]; then
+            echo "::error::the module reported on $reported authority paths and this authority has 2, so this run cannot say it compared the authority"
+            exit 1
+          fi
 
   measure:
     name: measure

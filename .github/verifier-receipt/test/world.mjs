@@ -8,6 +8,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+// One definition of what a git trees response looks like, shared with the authority-scope suite, because the
+// two suites ask the same module the same question and must not disagree about `mode` or `truncated`.
+import { DIRECTORY_SHA, FILE_MODE, TREE_MODE, treesFor } from './authority-trees.mjs';
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const EMITTER = path.join(HERE, '..', 'emit-receipt.mjs');
@@ -31,10 +34,11 @@ export const ARTIFACT_NAME = 'measure-capture';
 export const RUNNER_KEY = 'coordinator';
 export const RUNNER_COMMAND = JSON.parse(fs.readFileSync(RUNNERS, 'utf8')).runners[RUNNER_KEY].command;
 export const CLAIM_PATH = '.github/coordinator/service/claim-manifest.json';
-// The object ids the contents API reports for the authority paths. The emitter compares these between main and
-// the candidate, so a world in which they agree is a world whose candidate leaves the authority alone.
-export const AUTHORITY_WORKFLOW_SHA = '1a'.repeat(20);
-export const AUTHORITY_DIR_SHA = '2b'.repeat(20);
+// The object ids the git trees endpoint reports for the authority paths, and the modes beside them. The emitter
+// compares BOTH between the merge base and the candidate, so a world in which they agree is a world whose
+// candidate leaves the authority alone. Taken from ./authority-trees.mjs, which builds the trees themselves.
+export { WORKFLOW_SHA as AUTHORITY_WORKFLOW_SHA, DIRECTORY_SHA as AUTHORITY_DIR_SHA,
+  FILE_MODE as AUTHORITY_WORKFLOW_MODE, TREE_MODE as AUTHORITY_DIR_MODE } from './authority-trees.mjs';
 // The fork point of main and the candidate, which is the revision the authority comparison is made AT. In the
 // default world the candidate was cut from main as it stands, so the listings here are main's listings - see
 // the mirroring in `build` below, and the tests that override it to describe a main that has moved on.
@@ -399,6 +403,26 @@ export const build = (patch = {}) => {
     workflow_run: { id: Number(RUN_ID) }, ...(patch.artifact ?? {}),
   };
 
+  // THE AUTHORITY, AS THREE TREES PER REF. `patch.authority` is `{ main, candidate, mergeBase }`, each the
+  // options ./authority-trees.mjs takes, and the default at every ref is the authority unchanged at mode
+  // 100644 - a world whose candidate leaves it alone.
+  //
+  // THE MERGE BASE MIRRORS MAIN UNLESS A TEST SAYS OTHERWISE. The default world's candidate was cut from main
+  // as it stands, so the authority at the fork point is main's - including when a test has replaced main's,
+  // which is what makes "the authority was never on main" describable without also saying "and the candidate
+  // deleted it". A test that wants a main that moved after the fork passes `mergeBase` itself.
+  //
+  // The subtree ids are derived from the contents, as git derives them, so a ref that describes the same
+  // `.github` as another names the same tree and the emitter reads it once.
+  const authority = patch.authority ?? {};
+  const authorityTrees = {};
+  for (const [ref, options] of [['main', authority.main ?? {}], [CANDIDATE_SHA, authority.candidate ?? {}],
+    [MERGE_BASE_SHA, authority.mergeBase ?? authority.main ?? {}]]) {
+    for (const [treeish, body] of Object.entries(treesFor(ref, options))) {
+      authorityTrees[`/repos/${REPO}/git/trees/${treeish}`] = { json: body };
+    }
+  }
+
   const routes = {
     [`/repos/${REPO}/actions/runs/${RUN_ID}`]: { json: run },
     [`/repos/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs`]: { json: { jobs: [{ id: 99000000, name: 'trust', status: 'completed', conclusion: 'success' }, job] } },
@@ -407,15 +431,8 @@ export const build = (patch = {}) => {
     [`/repos/${REPO}/commits/${CANDIDATE_SHA}`]: { json: { sha: CANDIDATE_SHA, commit: { tree: { sha: CANDIDATE_TREE } },
       parents: patch.candidateParents ?? [{ sha: CLAIM_HEAD }] } },
     [`/repos/${REPO}/commits/${CLAIM_HEAD}`]: { json: { sha: CLAIM_HEAD, commit: { tree: { sha: CLAIM_TREE } } } },
-    // The authority as the contents API reports it: the same object ids on main and at the candidate.
-    [`/repos/${REPO}/contents/.github/workflows?ref=main`]: { json: [{ name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) },
-      { name: 'verifier-receipt.yml', type: 'file', sha: AUTHORITY_WORKFLOW_SHA }] },
-    [`/repos/${REPO}/contents/.github/workflows?ref=${CANDIDATE_SHA}`]: { json: [{ name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) },
-      { name: 'verifier-receipt.yml', type: 'file', sha: AUTHORITY_WORKFLOW_SHA }] },
-    [`/repos/${REPO}/contents/.github?ref=main`]: { json: [{ name: 'coordinator', type: 'dir', sha: '4d'.repeat(20) },
-      { name: 'verifier-receipt', type: 'dir', sha: AUTHORITY_DIR_SHA }, { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
-    [`/repos/${REPO}/contents/.github?ref=${CANDIDATE_SHA}`]: { json: [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
-      { name: 'verifier-receipt', type: 'dir', sha: AUTHORITY_DIR_SHA }, { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+    // The authority as the git trees endpoint reports it - see the tree routes assembled below.
+    ...authorityTrees,
     [`/repos/${REPO}/compare/${CLAIM_HEAD}...${CANDIDATE_SHA}`]: { json: { status: 'ahead', ahead_by: 1, behind_by: 0,
       total_commits: 1, files: [{ filename: CLAIM_PATH, status: 'modified' }] } },
     [`/repos/${REPO}/contents/${CLAIM_PATH}?ref=${CANDIDATE_SHA}`]: { json: { sha: 'f'.repeat(40), content: claimBytes.toString('base64') } },
@@ -428,15 +445,6 @@ export const build = (patch = {}) => {
     ...(patch.routes ?? {}),
   };
   for (const key of patch.dropRoutes ?? []) delete routes[key];
-  // THE MERGE BASE MIRRORS MAIN UNLESS A TEST SAYS OTHERWISE. The default world's candidate was cut from main
-  // as it stands, so the authority listings at the fork point are main's listings - including when a test has
-  // replaced main's, which is what makes "the authority was never on main" describable without also saying
-  // "and the candidate deleted it". A test that wants a main that moved after the fork sets these itself.
-  for (const dir of ['.github/workflows', '.github']) {
-    const base = `/repos/${REPO}/contents/${dir}?ref=${MERGE_BASE_SHA}`;
-    const onMain = `/repos/${REPO}/contents/${dir}?ref=main`;
-    if (!(base in routes) && routes[onMain]) routes[base] = routes[onMain];
-  }
   const routesPath = path.join(root, 'routes.json');
   fs.writeFileSync(routesPath, JSON.stringify(routes, null, 2));
 

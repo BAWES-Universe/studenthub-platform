@@ -188,15 +188,34 @@ test('a fabrication handed over as an artifact of another run is refused before 
 // ---- the claim, and the authority --------------------------------------------------------------------------
 
 test('a candidate that modifies the receipt authority is refused, naming the authority', () => {
-  const built = world.build({ routes: {
-    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
-      { name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
-      { name: 'verifier-receipt', type: 'dir', sha: '9999'.repeat(10) },
-      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
-  } });
+  const built = world.build({ authority: { candidate: { directory: '9999'.repeat(10) } } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
   assert.match(result.stderr, /\.github\/verifier-receipt is modified relative to the merge base/);
+});
+
+// THE MODE IS PART OF THE COMPARISON, through the emitter and not only through the module. A review measured
+// `chmod +x .github/workflows/verifier-receipt.yml` passing the contents form, which reports an id that does
+// not move when only the mode does.
+test('a candidate that only chmods the authority workflow file is refused, naming the mode move', () => {
+  const built = world.build({ authority: { candidate: { workflowMode: '100755' } } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /verifier-receipt\.yml is modified relative to the merge base/);
+  assert.match(result.stderr, /its mode moved from 100644 at the merge base to 100755 at the candidate/);
+});
+
+// AND A TREE THAT SAYS IT WAS CUT OFF IS NOT READ AS "THE AUTHORITY IS NOT THERE". The other measured bypass:
+// truncation used to be inferred from a listing's length, so a page cut off short of the cap read as absent -
+// which is the one answer that admits an alteration.
+test('a truncated authority tree is refused rather than read as an absent authority', () => {
+  const built = world.build({ authority: {
+    candidate: { directory: null, truncated: ['.github'] },
+    mergeBase: { directory: null, truncated: ['.github'] },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /answered `"truncated": true`/);
 });
 
 // The hole this replaced: the check read `files[].filename` from a comparison GitHub caps at 300 entries and
@@ -207,16 +226,15 @@ test('a candidate that modifies the receipt authority is refused, naming the aut
 test('a candidate hiding its authority edit behind a full 300-file comparison page is still refused', () => {
   const filler = Array.from({ length: 300 }, (unused, index) => ({
     filename: `.github/aaa/${String(index).padStart(4, '0')}.json`, status: 'added' }));
-  const built = world.build({ routes: {
-    // A full page of `files`, and the merge base beside it. The comparison has to carry the fork point or the
-    // refusal below would be the fail-closed one for an unestablishable merge base, which would prove nothing
-    // about the listing.
-    [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead', ahead_by: 137,
-      total_commits: 137, merge_base_commit: { sha: world.MERGE_BASE_SHA }, files: filler } },
-    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
-      { name: 'verifier-receipt', type: 'dir', sha: '9999'.repeat(10) },
-      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
-  } });
+  const built = world.build({
+    authority: { candidate: { directory: '9999'.repeat(10) } },
+    routes: {
+      // A full page of `files`, and the merge base beside it. The comparison has to carry the fork point or the
+      // refusal below would be the fail-closed one for an unestablishable merge base, which would prove nothing
+      // about the listing.
+      [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead', ahead_by: 137,
+        total_commits: 137, merge_base_commit: { sha: world.MERGE_BASE_SHA }, files: filler } },
+    } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
   assert.match(result.stderr, /\.github\/verifier-receipt is modified relative to the merge base/);
@@ -225,11 +243,8 @@ test('a candidate hiding its authority edit behind a full 300-file comparison pa
 // A rename is reported under its NEW name, with the old path only in `previous_filename`. Moving the emitter to
 // `.github/parked/` DELETES the authority, and the pattern-over-`filename` check called that untouched.
 test('a candidate that renames the authority away is refused, naming the absent path', () => {
-  const built = world.build({ routes: {
-    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
-      { name: 'parked', type: 'dir', sha: '2b'.repeat(20) },
-      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
-  } });
+  const built = world.build({ authority: { candidate: { directory: null,
+    fill: [{ path: 'parked', mode: '040000', type: 'tree', sha: world.AUTHORITY_DIR_SHA }] } } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
   assert.match(result.stderr, /\.github\/verifier-receipt is deleted relative to the merge base/);
@@ -237,11 +252,8 @@ test('a candidate that renames the authority away is refused, naming the absent 
 });
 
 test('a candidate that renames the workflow to another extension is refused', () => {
-  const built = world.build({ routes: {
-    [`/repos/${world.REPO}/contents/.github/workflows?ref=${world.CANDIDATE_SHA}`]: { json: [
-      { name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) },
-      { name: 'verifier-receipt.yaml', type: 'file', sha: world.AUTHORITY_WORKFLOW_SHA }] },
-  } });
+  const built = world.build({ authority: { candidate: { workflow: null, workflowsFill: [
+    { path: 'verifier-receipt.yaml', mode: '100644', type: 'blob', sha: world.AUTHORITY_WORKFLOW_SHA }] } } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
   // This assertion changed with the baseline. It used to read `verifier-receipt.yml is absent at the
@@ -251,9 +263,16 @@ test('a candidate that renames the workflow to another extension is refused', ()
   assert.match(result.stderr, /verifier-receipt\.yml is deleted relative to the merge base: 1a1a1a1a1a1a at 999999999999, absent at the candidate/);
 });
 
-test('an authority listing the API will not serve is refused, not skipped', () => {
-  const built = world.build({ dropRoutes: [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`] });
-  refusedOn(world.emit(built), 'candidate.authority');
+test('an authority tree the API will not serve is refused, not skipped', () => {
+  const built = world.build({ authority: { candidate: { unreadable: ['.github'] } } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /the API will not serve the tree of \.github at bbbbbbbbbbbb/);
+  // AND IT DOES NOT SAY THE CANDIDATE CHANGED ANYTHING, because this run did not establish that it did. A
+  // refusal that opens by asserting what its own parenthesis calls unknown accuses an innocent candidate.
+  assert.match(result.stderr, /this run cannot establish whether this candidate changes the receipt authority/);
+  assert.equal(/this candidate changes the receipt authority relative to its merge base/.test(result.stderr),
+    false, result.stderr);
 });
 
 test('the receipt carries the object ids the authority decision was made from', () => {
@@ -281,16 +300,9 @@ test('the receipt carries the object ids the authority decision was made from', 
 // compared object ids for EQUALITY WITH MAIN and therefore read absent as altered. Measured against the fork
 // point, where the candidate's copy and what it started from are the same object, there is no change.
 test('a candidate that predates the authority is admitted, and the receipt says that is what it is', () => {
-  const absentAuthority = dir => ({ json: dir === '.github'
-    ? [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) }, { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }]
-    : [{ name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) }] });
-  const built = world.build({ routes: {
-    // Absent at the candidate AND at the revision it was cut from; present on main, which moved on after it.
-    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: absentAuthority('.github'),
-    [`/repos/${world.REPO}/contents/.github?ref=${world.MERGE_BASE_SHA}`]: absentAuthority('.github'),
-    [`/repos/${world.REPO}/contents/.github/workflows?ref=${world.CANDIDATE_SHA}`]: absentAuthority('.github/workflows'),
-    [`/repos/${world.REPO}/contents/.github/workflows?ref=${world.MERGE_BASE_SHA}`]: absentAuthority('.github/workflows'),
-  } });
+  // Absent at the candidate AND at the revision it was cut from; present on main, which moved on after it.
+  const absentAuthority = { workflow: null, directory: null };
+  const built = world.build({ authority: { candidate: absentAuthority, mergeBase: absentAuthority } });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.candidate.touches_authority, false);
@@ -2386,11 +2398,8 @@ test('a receipt whose verdict is failure is not admissible as a pin, and says so
 // against nothing at all. That is the state this repository is in today, and it is the state the FIRST receipts
 // would be produced in.
 test('an authority that is absent on the protected branch is not a pin, and the receipt names it', () => {
-  const built = world.build({ routes: {
-    [`/repos/${world.REPO}/contents/.github?ref=main`]: { json: [{ name: 'coordinator', type: 'dir', sha: '4d'.repeat(20) },
-      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
-    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
-      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+  const built = world.build({ authority: {
+    main: { directory: null }, candidate: { directory: null },
   } });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
@@ -2945,11 +2954,8 @@ const runAttest = (built, env = {}) => world.runNode(['-e', ATTEST_SOURCE], {
 
 // The world this repository is really in: `.github/verifier-receipt` does not exist on the protected branch, so
 // the receipt records `protected_sha: null` for it and is inadmissible on that ground alone.
-const authorityAbsentWorld = () => world.build({ routes: {
-  [`/repos/${world.REPO}/contents/.github?ref=main`]: { json: [{ name: 'coordinator', type: 'dir', sha: '4d'.repeat(20) },
-    { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
-  [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
-    { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+const authorityAbsentWorld = () => world.build({ authority: {
+  main: { directory: null }, candidate: { directory: null },
 } });
 
 test('THE FLIPPED FLAG: a receipt whose body records the authority as absent is refused by all three readers', () => {

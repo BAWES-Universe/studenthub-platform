@@ -10,8 +10,8 @@
 // therefore carries no authority at all. Comparing against main reads ABSENT as ALTERED, so it refuses every
 // candidate that does not already contain the authority - that is, every candidate cut before the authority
 // landed. 6feac016's merge base with the commit that landed the authority is a51c8490, and the authority is
-// absent there too; the two tests at the foot of test/authority-scope.test.mjs read exactly that out of this
-// repository's own git objects.
+// absent there too; the two tests at the foot of test/authority-scope.test.mjs read exactly that out of
+// api.github.com's written-down answers for those three refs.
 //
 // THE BASELINE THAT ANSWERS THE QUESTION ASKED. "Did the candidate touch this" is a question about what the
 // candidate started from, and main is not that: main moves after a branch is cut. The merge base of the
@@ -26,14 +26,28 @@
 // by filename and truncates with nothing in the response saying so (300 returned for a comparison that changed
 // 429 files, measured on this repository), and a rename is reported under its NEW name only, so moving the
 // authority elsewhere - which deletes it - matches no pattern at all. This module reads the compare response
-// for its `merge_base_commit.sha` and for nothing else; every other fact it uses is the object id the contents
-// API reports for a path at a ref. A directory's sha covers every byte under it, so one read answers for the
-// whole subtree however many other files the candidate touched.
+// for its `merge_base_commit.sha` and for nothing else; every other fact it uses is an entry of a git TREE.
+// A directory's sha covers every byte under it, so one read answers for the whole subtree however many other
+// files the candidate touched.
 //
-// AND ONE HOLE THIS FORM DOES *NOT* CLOSE BY ITSELF, named rather than claimed away: the listing an id is read
-// OUT of is itself capped, at LISTING_CAP entries, and a truncated listing is indistinguishable from a
-// directory that does not hold the entry. A listing at the cap is refused (see LISTING_CAP) because the two
-// readings must never be conflated: an alteration could otherwise present the one shape that is admissible.
+// AND WHY THE TREES ENDPOINT RATHER THAN A CONTENTS LISTING, WHICH IS THE CORRECTION THIS ROUND CARRIES. The
+// ids were previously read out of `GET /contents/{dir}?ref=`, and an independent review MEASURED two ways past
+// that form:
+//
+//   * A contents listing reports a blob's object id, and an id DOES NOT MOVE WHEN ONLY THE FILE MODE DOES. So
+//     `chmod +x .github/workflows/verifier-receipt.yml` - a change to an authority file, and one that changes
+//     how it is executed - compared equal and was admitted. A tree entry carries `mode`, and `mode` is part of
+//     the comparison below: same id, different mode is `modified`.
+//   * A contents listing says nothing about whether it is the whole directory, so the old code inferred
+//     truncation from the listing's LENGTH against a cap constant. A Link-paginated or `per_page`-limited page is SHORTER
+//     than any cap, so it is indistinguishable from a directory that does not hold the entry - and "absent" is
+//     the one reading that admits an alteration. The review built a 999-entry page that omitted the authority
+//     and the decision came back admissible with `predates_authority: true`. A tree response carries an
+//     explicit `truncated` boolean; it is refused BY NAME here, never inferred from a length, and there is no
+//     cap constant left to compare against.
+//
+// So an entry that is absent from a COMPLETE tree is absent - that is an answer, and the predating candidate
+// depends on it. An entry that cannot be seen because the response was cut off is not evidence of anything.
 
 // The authority, named as OBJECTS rather than as a pattern to test a listing against.
 export const AUTHORITY_PATHS = [
@@ -41,29 +55,25 @@ export const AUTHORITY_PATHS = [
   { dir: '.github', name: 'verifier-receipt', kind: 'directory' },
 ];
 
-// THE CAP THE CONTENTS API PUTS ON A DIRECTORY LISTING, AND WHY IT IS HERE RATHER THAN ASSUMED AWAY.
-//
-// An earlier version of this file claimed that an object id "is not a page of a list". That is true of the id
-// and false of the way an id is obtained: `GET /contents/{dir}` returns up to this many entries, and a listing
-// cut off at the cap looks exactly like a directory that does not contain the entry - which this module reads
-// as ABSENT, the one answer that can make an alteration admissible. The compare endpoint's `files` hole is the
-// same shape at 300 entries; this one is one order of magnitude further out and no less real. So a listing at or
-// above the cap is refused by name rather than read: "not there" and "may be off the end of the page" are
-// different answers and only the first may be used.
-export const LISTING_CAP = 1000;
-
 const short = sha => (typeof sha === 'string' && sha.length > 12 ? sha.slice(0, 12) : sha);
 const absentOr = sha => (sha === null || sha === undefined ? '<absent>' : short(sha));
+// A side of the comparison that was never read at all: no ref to read it at, and so no answer of any kind.
+const UNREAD = { read: false, truncated: false, truncated_at: null, unread_at: null, sha: null, mode: null };
+// A side whose id may be compared: the tree that would hold the entry was served, whole.
+const usable = side => side.read === true && side.truncated !== true;
 
 // THE DECISION, AND IT DOES NO I/O. Everything it needs is in `observed`, which is what observeAuthorityScope
 // returns - so the same decision a run makes from GitHub's answers can be made in a test from written-down
 // answers, and the two are the same code.
 //
 // `observed` is { protected_ref, candidate_sha, merge_base, merge_base_error, entries: [{ path, dir, name,
-// kind, base, candidate, protected }] }, where each of base/candidate/protected is { listed, sha }: `listed`
-// says the API served the directory listing at that ref, and `sha` is the entry's object id in it or null when
-// the listing does not contain the entry. The two are different facts and the difference is the whole point -
-// "not there" is an answer, "cannot say" is not.
+// kind, base, candidate, protected }] }, where each of base/candidate/protected is { read, truncated,
+// truncated_at, unread_at, sha, mode }: `read` says the API served every tree on the way down to the entry's
+// own directory (and `unread_at` names the one it would not serve), `truncated` says one of those responses
+// declared itself cut off (and `truncated_at` names it), and `sha`/`mode` are the entry's object id and file
+// mode in the tree that would hold it - both null when the tree holds no such entry. Those
+// are three different facts and the difference is the whole point: "not there" is an answer, "cannot say" is
+// not, and "there, with a different mode" is a change.
 export function decideAuthorityScope(observed) {
   const protectedRef = observed.protected_ref;
   const candidateSha = observed.candidate_sha;
@@ -80,45 +90,52 @@ export function decideAuthorityScope(observed) {
   }
 
   const entries = [];
-  let anyListingTruncated = false;
+  let anythingUnread = false;
   for (const seen of observed.entries ?? []) {
-    const base = seen.base ?? { listed: false, truncated: false, sha: null };
-    const candidate = seen.candidate ?? { listed: false, truncated: false, sha: null };
-    const onProtected = seen.protected ?? { listed: false, truncated: false, sha: null };
-    // A listing the API will not serve is refused, not skipped: a run that cannot read one side of the
-    // comparison has not made it.
-    if (!onProtected.listed) {
-      refuse(`the API cannot list ${seen.dir} on ${protectedRef}, so this run cannot establish what ${seen.path} `
-        + 'is on the protected branch');
+    const base = seen.base ?? UNREAD;
+    const candidate = seen.candidate ?? UNREAD;
+    const onProtected = seen.protected ?? UNREAD;
+    // A tree the API will not serve is refused, not skipped: a run that cannot read one side of the comparison
+    // has not made it. THE THREE REFS GET THREE REFUSALS, because which side could not be read is the fact a
+    // reader needs and one merged sentence would not carry it.
+    if (!onProtected.read) {
+      refuse(`the API will not serve the tree of ${onProtected.unread_at ?? seen.dir} on ${protectedRef}, so `
+        + `this run cannot establish what ${seen.path} is on the protected branch`);
     }
-    if (!candidate.listed) {
-      refuse(`the API cannot list ${seen.dir} at ${short(candidateSha)}, so this run cannot establish what `
-        + `${seen.path} is at the candidate`);
+    if (!candidate.read) {
+      refuse(`the API will not serve the tree of ${candidate.unread_at ?? seen.dir} at ${short(candidateSha)}, `
+        + `so this run cannot establish what ${seen.path} is at the candidate`);
     }
-    if (mergeBase && !base.listed) {
-      refuse(`the API cannot list ${seen.dir} at the merge base ${short(mergeBase)}, so this run cannot `
-        + `establish what ${seen.path} was at the revision the candidate was cut from`);
+    if (mergeBase && !base.read) {
+      refuse(`the API will not serve the tree of ${base.unread_at ?? seen.dir} at the merge base `
+        + `${short(mergeBase)}, so this run cannot establish what ${seen.path} was at the revision the candidate `
+        + 'was cut from');
     }
 
-    // A PAGE AT THE CAP IS REFUSED, ON EVERY SIDE, AND THIS IS THE ONE PLACE IT MATTERS MOST. An entry missing
-    // from a truncated page may be off the end of it rather than absent, and "absent" is the single answer that
-    // can make an alteration admissible - so being unable to say must never be read as "not there" here.
+    // A RESPONSE THAT SAYS IT WAS TRUNCATED IS REFUSED, ON EVERY SIDE, AND THIS IS THE ONE PLACE IT MATTERS
+    // MOST. An entry missing from a cut-off response may be past the cut rather than absent, and "absent" is
+    // the single answer that can make an alteration admissible - so being unable to say must never be read as
+    // "not there" here. The response states this itself; nothing below infers it from a count of entries.
     const sides = [['the protected ref', onProtected], ['the candidate', candidate],
       ...(mergeBase ? [[`the merge base ${short(mergeBase)}`, base]] : [])];
     for (const [where, oneSide] of sides) {
-      if (oneSide.listed && oneSide.truncated) {
-        anyListingTruncated = true;
-        refuse(`the listing of ${seen.dir} at ${where} is at the API's ${LISTING_CAP}-entry cap, so an entry `
-          + 'missing from it may be off the end of the page rather than absent; this run will not read that as '
-          + '"not there"');
+      if (oneSide.truncated) {
+        refuse(`the tree of ${oneSide.truncated_at} at ${where} answered \`"truncated": true\`, so an entry `
+          + 'missing from it may be past the cut rather than absent; this run will not read that as "not there"');
       }
+      if (!usable(oneSide)) anythingUnread = true;
     }
 
     // `change` is named relative to the MERGE BASE, and it is left unknown rather than guessed when a side of
     // the comparison is missing - each of those cases has already produced its own refusal above.
+    //
+    // MODE IS PART OF THE COMPARISON. Same id and a different mode is a change to the authority: `chmod +x` on
+    // the workflow file moves no blob and was admitted by the id alone. A blob id can never equal the tree id
+    // it displaced, so replacing the authority directory with a file of the same name was already caught by the
+    // id; the mode is the case the id cannot see.
     let change = 'unknown';
-    if (mergeBase && base.listed && candidate.listed) {
-      if (base.sha === candidate.sha) change = 'none';
+    if (mergeBase && usable(base) && usable(candidate)) {
+      if (base.sha === candidate.sha && base.mode === candidate.mode) change = 'none';
       else if (base.sha === null) change = 'added';
       else if (candidate.sha === null) change = 'deleted';
       else change = 'modified';
@@ -129,7 +146,9 @@ export function decideAuthorityScope(observed) {
     }
     if (change === 'modified') {
       refuse(`${seen.path} is modified relative to the merge base: ${short(base.sha)} at ${short(mergeBase)}, `
-        + `${short(candidate.sha)} at the candidate`);
+        + `${short(candidate.sha)} at the candidate`
+        + (base.mode === candidate.mode ? ''
+          : `, and its mode moved from ${base.mode} at the merge base to ${candidate.mode} at the candidate`));
     }
     if (change === 'deleted') {
       refuse(`${seen.path} is deleted relative to the merge base: ${short(base.sha)} at ${short(mergeBase)}, `
@@ -141,6 +160,9 @@ export function decideAuthorityScope(observed) {
       base_sha: base.sha ?? null,
       candidate_sha: candidate.sha ?? null,
       protected_sha: onProtected.sha ?? null,
+      base_mode: base.mode ?? null,
+      candidate_mode: candidate.mode ?? null,
+      protected_mode: onProtected.mode ?? null,
       change,
     });
   }
@@ -148,13 +170,14 @@ export function decideAuthorityScope(observed) {
   // The two states worth naming on an ADMISSIBLE result, so a reader can tell them apart without reading this
   // file. They are not exclusive: a candidate that predates the authority is also behind the protected ref.
   //
-  // NEITHER IS ASSERTED FROM A PAGE THAT MAY HAVE BEEN CUT OFF. Both read `null` as "not there", and a listing
-  // at the API's cap is not evidence of that - so on a truncated read these two flags are false and the refusals
-  // above are what carries the meaning. A flag is only worth having if it is true when it is set.
-  const predatesAuthority = !anyListingTruncated && entries.some(entry => entry.change === 'none'
+  // NEITHER IS ASSERTED FROM A SIDE THAT WAS NOT READ WHOLE. Both read `null` as "not there", and a tree that
+  // was not served - or that said it was cut off - is not evidence of that, so on such a read these two flags
+  // are false and the refusals above are what carries the meaning. A flag is only worth having if it is true
+  // when it is set.
+  const predatesAuthority = !anythingUnread && entries.some(entry => entry.change === 'none'
     && entry.candidate_sha === null && entry.base_sha === null && entry.protected_sha !== null);
-  const staleRelativeToProtected = !anyListingTruncated && entries.some(entry => entry.change === 'none'
-    && entry.candidate_sha !== entry.protected_sha);
+  const staleRelativeToProtected = !anythingUnread && entries.some(entry => entry.change === 'none'
+    && (entry.candidate_sha !== entry.protected_sha || entry.candidate_mode !== entry.protected_mode));
 
   return {
     ok: refuses.length === 0,
@@ -184,23 +207,43 @@ export async function observeAuthorityScope({ repo, protectedRef, candidateSha, 
     mergeBaseError = `the comparison of ${protectedRef} with ${short(candidateSha)} names no merge_base_commit.sha`;
   }
 
-  // One listing per (directory, ref): the two authority entries share `.github` on some refs and would
-  // otherwise be fetched twice, and a second fetch is a second chance for the two to disagree.
-  const listings = new Map();
-  const listingAt = async (dir, ref) => {
-    const key = `${dir}\n${ref}`;
-    if (!listings.has(key)) listings.set(key, await api(`/repos/${repo}/contents/${encodeURI(dir)}?ref=${ref}`));
-    return listings.get(key);
+  // One read per tree object, whatever asks for it. `GET /git/trees/{sha}` takes a commit sha or a branch name
+  // for the root tree and a tree sha below it, and the two authority entries share `.github` on every ref -
+  // and, where the merge base IS the protected ref, share the whole walk. A second fetch is a second chance for
+  // the two to disagree, so there is not one. Content addressing does the rest: two refs whose `.github` is the
+  // same directory name the same tree id and it is fetched once.
+  const trees = new Map();
+  const treeAt = async treeish => {
+    if (!trees.has(treeish)) trees.set(treeish, await api(`/repos/${repo}/git/trees/${treeish}`));
+    return trees.get(treeish);
   };
+
+  // Walk from the ref's root tree down to the tree that would hold `name`, and report that entry's id and mode.
+  //
+  // A DIRECTORY MISSING FROM A COMPLETE TREE IS AN ANSWER, not a failure to read: if `.github` is not in the
+  // root tree then nothing under it exists, and that is precisely the predating candidate's shape. A path
+  // segment that is a blob rather than a tree is the same answer for the same reason. What is NOT an answer is
+  // a tree the API would not serve, or one that declared itself truncated; both come back as such.
   const entryAt = async (entry, ref) => {
-    if (!ref) return { listed: false, truncated: false, sha: null };
-    const listing = await listingAt(entry.dir, ref);
-    if (!Array.isArray(listing)) return { listed: false, truncated: false, sha: null };
-    // AT THE CAP IS NOT READ AS "NOT THERE". See LISTING_CAP: an entry missing from a full page and an entry
-    // missing from a directory are different facts, and only the second may be used to admit a candidate.
-    const truncated = listing.length >= LISTING_CAP;
-    const found = listing.find(item => item.name === entry.name);
-    return { listed: true, truncated, sha: found?.sha ?? null };
+    if (!ref) return UNREAD;
+    const segments = entry.dir === '' ? [] : entry.dir.split('/');
+    let treeish = ref;
+    let walked = 'the repository root';
+    for (let depth = 0; ; depth += 1) {
+      const tree = await treeAt(treeish);
+      if (!tree || !Array.isArray(tree.tree)) return { ...UNREAD, unread_at: walked };
+      if (tree.truncated === true) {
+        return { ...UNREAD, read: true, truncated: true, truncated_at: walked };
+      }
+      if (depth === segments.length) {
+        const found = tree.tree.find(item => item.path === entry.name);
+        return { ...UNREAD, read: true, sha: found?.sha ?? null, mode: found?.mode ?? null };
+      }
+      const next = tree.tree.find(item => item.path === segments[depth]);
+      if (!next || next.type !== 'tree') return { ...UNREAD, read: true };
+      treeish = next.sha;
+      walked = depth === 0 ? segments[0] : `${walked}/${segments[depth]}`;
+    }
   };
 
   const entries = [];
@@ -227,14 +270,35 @@ export async function observeAuthorityScope({ repo, protectedRef, candidateSha, 
   };
 }
 
-// What a reader of a log needs to see: the ids the decision was made from, one line per authority path, then
-// the verdict. Returned rather than printed so the caller owns the stream.
+// THE ONE SENTENCE BOTH CALLERS REFUSE WITH, AND WHY IT IS NOT ONE SENTENCE.
+//
+// It used to be: "this candidate changes the receipt authority relative to its merge base (<reasons>)". A
+// review measured what that says when the comparison could not be made at all - a compare response with no
+// `merge_base_commit`, which is what a rate limit or an outage produces - and the log line read "this candidate
+// changes the receipt authority relative to its merge base (this run cannot establish the merge base of main
+// and ...)". The leading clause asserts as fact the very thing the parenthesis says is unknown, so an outage
+// accused an innocent candidate of editing the authority. The refusal is the same either way; the claim is not.
+export function authorityRefusalMessage(decision) {
+  const determined = decision.entries.some(entry => entry.change === 'added' || entry.change === 'modified'
+    || entry.change === 'deleted');
+  const lead = determined
+    ? 'this candidate changes the receipt authority relative to its merge base'
+    : 'this run cannot establish whether this candidate changes the receipt authority';
+  return `${lead} (${decision.refuses.map(entry => entry.message).join('; ')}), so no receipt this authority `
+    + 'produces may approve it';
+}
+
+// What a reader of a log needs to see: the ids the decision was made from, ONE LINE PER AUTHORITY PATH, then
+// the verdict. The trust job asserts that count rather than the presence of the header line - see the step in
+// .github/workflows/verifier-receipt.yml. Returned rather than printed so the caller owns the stream.
 export function renderAuthorityScope(decision) {
   const lines = [`merge base of ${decision.protected_ref} and ${short(decision.candidate_sha)}: `
     + `${decision.merge_base ? short(decision.merge_base) : '<not established>'}`];
   for (const entry of decision.entries) {
-    lines.push(`${entry.path}: base=${absentOr(entry.base_sha)} candidate=${absentOr(entry.candidate_sha)} `
-      + `${decision.protected_ref}=${absentOr(entry.protected_sha)} -> ${entry.change}`);
+    lines.push(`${entry.path}: base=${absentOr(entry.base_sha)}/${entry.base_mode ?? '<absent>'} `
+      + `candidate=${absentOr(entry.candidate_sha)}/${entry.candidate_mode ?? '<absent>'} `
+      + `${decision.protected_ref}=${absentOr(entry.protected_sha)}/${entry.protected_mode ?? '<absent>'} `
+      + `-> ${entry.change}`);
   }
   if (decision.ok) {
     lines.push('the candidate changes no authority object relative to its merge base'
@@ -274,9 +338,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const decision = decideAuthorityScope(await observeAuthorityScope({ repo, protectedRef, candidateSha, api }));
   for (const line of renderAuthorityScope(decision)) console.log(line);
   if (!decision.ok) {
-    console.error('::error::this candidate changes the receipt authority relative to its merge base '
-      + `(${decision.refuses.map(entry => entry.message).join('; ')}), so no receipt this authority produces `
-      + 'may approve it');
+    console.error(`::error::${authorityRefusalMessage(decision)}`);
     process.exit(1);
   }
 }

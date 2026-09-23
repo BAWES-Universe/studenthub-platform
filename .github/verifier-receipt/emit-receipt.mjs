@@ -95,7 +95,7 @@ import { execFileSync } from 'node:child_process';
 // The authority-scope decision lives in its own module because the trust job's early refusal has to make the
 // same one. It was written out twice, and when the question both copies asked turned out to be the wrong one
 // the same defect had to be corrected in both or the refusal would only have moved. See section 8.
-import { decideAuthorityScope, observeAuthorityScope } from './authority-scope.mjs';
+import { authorityRefusalMessage, decideAuthorityScope, observeAuthorityScope } from './authority-scope.mjs';
 
 const env = process.env;
 const GH = env.GH_BIN ?? 'gh';
@@ -798,6 +798,13 @@ if (trailer.fields.tree !== candidateTree) {
 //    under it however many other files the candidate touched, an absent path answers with no sha at all, and
 //    neither answer is a page of a list. Unreadable is refused, not skipped.
 //
+//    AND THE IDS ARE READ OUT OF GIT TREES, NOT OUT OF A CONTENTS LISTING, because a later review measured two
+//    ways past that form: a listing's blob id does not move when only the file MODE does (`chmod +x` on the
+//    workflow file was admitted), and a listing never says whether it is the whole directory, so a short page
+//    read as "absent" - the one answer that admits an alteration. A tree entry carries `mode`, which is part of
+//    the comparison, and a tree response carries an explicit `truncated`, which is refused by name rather than
+//    inferred from a count. ./authority-scope.mjs holds both, and its header records the measurements.
+//
 //    THE BASELINE IS THE MERGE BASE, NOT MAIN, AND THAT CORRECTION WAS MEASURED. Comparing the candidate's
 //    object ids with MAIN's answers a different question from the one asked. The first workflow_dispatch of
 //    this authority on main (run 35852850002, candidate 6feac016) refused a candidate that had altered
@@ -813,9 +820,10 @@ const authorityScope = decideAuthorityScope(await observeAuthorityScope({
 }));
 const authorityIdentity = authorityScope.entries;
 if (!authorityScope.ok) {
-  refuse('candidate.authority', 'this candidate changes the receipt authority relative to its merge base '
-    + `(${authorityScope.refuses.map(entry => entry.message).join('; ')}), so no receipt this authority `
-    + 'produces may approve it');
+  // The sentence comes from the module too, and not because it is shorter that way: a refusal that could not
+  // make the comparison must not open by asserting the candidate changed something. See
+  // `authorityRefusalMessage` for what was measured saying otherwise.
+  refuse('candidate.authority', authorityRefusalMessage(authorityScope));
 }
 
 // 9. The claim, fetched from the candidate commit through the contents API. Not from the artifact, not from a
