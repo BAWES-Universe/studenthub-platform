@@ -127,7 +127,11 @@ if (artifact.workflow_run?.head_sha && artifact.workflow_run.head_sha !== run.he
 // download endpoint must hash to it, or these are not the bytes GitHub served and nothing inside them is
 // evidence of anything. Measured against the real world once, and recorded so the number is not folklore: for
 // run 35869844952 GitHub reported `sha256:b6c84e83...` for a 61,770-byte `verifier-receipt` artifact, and the
-// downloaded `artifact.zip` is 61,770 bytes hashing to `b6c84e83...` - see the fixture's README.md.
+// downloaded `artifact.zip` is 61,770 bytes hashing to `b6c84e83...`. Read back from the API on 2026-09-23:
+//   $ gh api /repos/.../actions/artifacts/10754354187/zip > artifact.zip && sha256sum artifact.zip
+//   b6c84e8325aec145cad7b912bbef0a29a560a85b4ed2d96d92668b39127736ff  artifact.zip   (61,770 bytes)
+// and the `receipt.json` inside that archive hashes to `74947a1b...`, which is a DIFFERENT number - which is
+// what made the sentence this comment replaces impossible to hold. See the fixture's README.md.
 //
 // AND THEN THE RECEIPT IS TAKEN OUT OF THAT VERIFIED ARCHIVE, never from anywhere else, so "the receipt used
 // is the one inside the artifact GitHub digested" is a property of the order of these lines. The receipt's own
@@ -243,6 +247,21 @@ if (identity.head_sha !== run.head_sha) {
 // AND THE CHECKOUT IS STILL COMPARED, because a tree that disagrees with the rule it is about to be judged by
 // is a fact worth refusing on rather than passing over quietly. The comparison decides nothing; it only
 // refuses, and it refuses naming both blob ids even when the fetch succeeded.
+//
+// WHAT THE API ACTUALLY ANSWERS, MEASURED RATHER THAN ASSUMED (2026-09-23, this repository):
+//   $ gh api '/repos/.../contents/.github/workflows/ci.yml?ref=refs/heads/main' --jq '{type,sha,encoding,size}'
+//   {"encoding":"base64","sha":"995a8375198bb92bad0c7a37135ccc452b04e64e","size":6483,"type":"file"}
+// and the base64 decodes to 6483 bytes whose git blob id is 995a8375..., so `sha` really is the blob id of
+// the content the same response carries. That is the relation this code rests on, and it is checked here
+// rather than trusted, because a response that carried one without the other would establish nothing.
+//
+// AND THE BOOTSTRAP, WHICH IS THE CLOSED DIRECTION AND IS NOT A BUG. On the same day:
+//   $ gh api '/repos/.../contents/.github/verifier-receipt/admissibility.mjs?ref=refs/heads/main'
+//   gh: Not Found (HTTP 404)
+// refs/heads/main does not carry this authority yet. Until it does, this tool refuses every pin with "would
+// not serve", because there is no protected rule for it to decide with - which is exactly right and is the
+// same bootstrap the producer's trust job has: an authority cannot judge an amendment to itself until the
+// amendment lands. A fallback to the checkout's copy here would be the whole defect this round is fixing.
 const gitBlobId = bytes => crypto.createHash('sha1')
   .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`, 'utf8'), bytes])).digest('hex');
 const fetchedFromMain = repoPath => {
