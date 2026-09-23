@@ -27,8 +27,13 @@
 // 429 files, measured on this repository), and a rename is reported under its NEW name only, so moving the
 // authority elsewhere - which deletes it - matches no pattern at all. This module reads the compare response
 // for its `merge_base_commit.sha` and for nothing else; every other fact it uses is the object id the contents
-// API reports for a path at a ref. A directory's sha covers every byte under it, an absent path answers with
-// no sha, and neither answer is a page of a list.
+// API reports for a path at a ref. A directory's sha covers every byte under it, so one read answers for the
+// whole subtree however many other files the candidate touched.
+//
+// AND ONE HOLE THIS FORM DOES *NOT* CLOSE BY ITSELF, named rather than claimed away: the listing an id is read
+// OUT of is itself capped, at LISTING_CAP entries, and a truncated listing is indistinguishable from a
+// directory that does not hold the entry. A listing at the cap is refused (see LISTING_CAP) because the two
+// readings must never be conflated: an alteration could otherwise present the one shape that is admissible.
 
 // The authority, named as OBJECTS rather than as a pattern to test a listing against.
 export const AUTHORITY_PATHS = [
@@ -36,17 +41,16 @@ export const AUTHORITY_PATHS = [
   { dir: '.github', name: 'verifier-receipt', kind: 'directory' },
 ];
 
-// A repository path is the authority when it IS one of the entries above, or when it lies under one that is a
-// directory. A file entry matches only itself: `.github/workflows/verifier-receipt.yml.bak` is not it.
-export function isAuthorityPath(candidatePath) {
-  if (typeof candidatePath !== 'string' || candidatePath === '') return false;
-  const normalised = candidatePath.replace(/^\.\//, '');
-  return AUTHORITY_PATHS.some(entry => {
-    const full = `${entry.dir}/${entry.name}`;
-    if (normalised === full) return true;
-    return entry.kind === 'directory' && normalised.startsWith(`${full}/`);
-  });
-}
+// THE CAP THE CONTENTS API PUTS ON A DIRECTORY LISTING, AND WHY IT IS HERE RATHER THAN ASSUMED AWAY.
+//
+// An earlier version of this file claimed that an object id "is not a page of a list". That is true of the id
+// and false of the way an id is obtained: `GET /contents/{dir}` returns up to this many entries, and a listing
+// cut off at the cap looks exactly like a directory that does not contain the entry - which this module reads
+// as ABSENT, the one answer that can make an alteration admissible. The compare endpoint's `files` hole is the
+// same shape at 300 entries; this one is one order of magnitude further out and no less real. So a listing at or
+// above the cap is refused by name rather than read: "not there" and "may be off the end of the page" are
+// different answers and only the first may be used.
+export const LISTING_CAP = 1000;
 
 const short = sha => (typeof sha === 'string' && sha.length > 12 ? sha.slice(0, 12) : sha);
 const absentOr = sha => (sha === null || sha === undefined ? '<absent>' : short(sha));
@@ -76,10 +80,11 @@ export function decideAuthorityScope(observed) {
   }
 
   const entries = [];
+  let anyListingTruncated = false;
   for (const seen of observed.entries ?? []) {
-    const base = seen.base ?? { listed: false, sha: null };
-    const candidate = seen.candidate ?? { listed: false, sha: null };
-    const onProtected = seen.protected ?? { listed: false, sha: null };
+    const base = seen.base ?? { listed: false, truncated: false, sha: null };
+    const candidate = seen.candidate ?? { listed: false, truncated: false, sha: null };
+    const onProtected = seen.protected ?? { listed: false, truncated: false, sha: null };
     // A listing the API will not serve is refused, not skipped: a run that cannot read one side of the
     // comparison has not made it.
     if (!onProtected.listed) {
@@ -93,6 +98,20 @@ export function decideAuthorityScope(observed) {
     if (mergeBase && !base.listed) {
       refuse(`the API cannot list ${seen.dir} at the merge base ${short(mergeBase)}, so this run cannot `
         + `establish what ${seen.path} was at the revision the candidate was cut from`);
+    }
+
+    // A PAGE AT THE CAP IS REFUSED, ON EVERY SIDE, AND THIS IS THE ONE PLACE IT MATTERS MOST. An entry missing
+    // from a truncated page may be off the end of it rather than absent, and "absent" is the single answer that
+    // can make an alteration admissible - so being unable to say must never be read as "not there" here.
+    const sides = [['the protected ref', onProtected], ['the candidate', candidate],
+      ...(mergeBase ? [[`the merge base ${short(mergeBase)}`, base]] : [])];
+    for (const [where, oneSide] of sides) {
+      if (oneSide.listed && oneSide.truncated) {
+        anyListingTruncated = true;
+        refuse(`the listing of ${seen.dir} at ${where} is at the API's ${LISTING_CAP}-entry cap, so an entry `
+          + 'missing from it may be off the end of the page rather than absent; this run will not read that as '
+          + '"not there"');
+      }
     }
 
     // `change` is named relative to the MERGE BASE, and it is left unknown rather than guessed when a side of
@@ -128,9 +147,13 @@ export function decideAuthorityScope(observed) {
 
   // The two states worth naming on an ADMISSIBLE result, so a reader can tell them apart without reading this
   // file. They are not exclusive: a candidate that predates the authority is also behind the protected ref.
-  const predatesAuthority = entries.some(entry => entry.change === 'none'
+  //
+  // NEITHER IS ASSERTED FROM A PAGE THAT MAY HAVE BEEN CUT OFF. Both read `null` as "not there", and a listing
+  // at the API's cap is not evidence of that - so on a truncated read these two flags are false and the refusals
+  // above are what carries the meaning. A flag is only worth having if it is true when it is set.
+  const predatesAuthority = !anyListingTruncated && entries.some(entry => entry.change === 'none'
     && entry.candidate_sha === null && entry.base_sha === null && entry.protected_sha !== null);
-  const staleRelativeToProtected = entries.some(entry => entry.change === 'none'
+  const staleRelativeToProtected = !anyListingTruncated && entries.some(entry => entry.change === 'none'
     && entry.candidate_sha !== entry.protected_sha);
 
   return {
@@ -170,11 +193,14 @@ export async function observeAuthorityScope({ repo, protectedRef, candidateSha, 
     return listings.get(key);
   };
   const entryAt = async (entry, ref) => {
-    if (!ref) return { listed: false, sha: null, type: null };
+    if (!ref) return { listed: false, truncated: false, sha: null };
     const listing = await listingAt(entry.dir, ref);
-    if (!Array.isArray(listing)) return { listed: false, sha: null, type: null };
+    if (!Array.isArray(listing)) return { listed: false, truncated: false, sha: null };
+    // AT THE CAP IS NOT READ AS "NOT THERE". See LISTING_CAP: an entry missing from a full page and an entry
+    // missing from a directory are different facts, and only the second may be used to admit a candidate.
+    const truncated = listing.length >= LISTING_CAP;
     const found = listing.find(item => item.name === entry.name);
-    return { listed: true, sha: found?.sha ?? null, type: found?.type ?? null };
+    return { listed: true, truncated, sha: found?.sha ?? null };
   };
 
   const entries = [];

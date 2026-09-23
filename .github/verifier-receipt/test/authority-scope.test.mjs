@@ -7,18 +7,23 @@
 // carries no authority at all - because ABSENT and ALTERED are the same answer to an equality test.
 //
 // Every case below is written down rather than fetched: `observeAuthorityScope` takes its `api` as an
-// argument, so nothing here touches the network. The last two are the exception worth having - they are real
-// commits of this repository, answered out of its own git objects, so the module is exercised on ids nobody
-// here chose.
+// argument, so nothing here touches the network. Two of them are this repository's own commits - the candidate
+// the first dispatch refused, and the commit the authority landed in - answered from
+// test/fixtures/authority-scope/recorded-api.json, which holds the answers api.github.com gave for those refs.
+// AN EARLIER VERSION ANSWERED THEM OUT OF THE LOCAL GIT OBJECT STORE, and that was fatal in CI: both jobs that
+// run this suite check out with actions/checkout at its default fetch-depth: 1, so those commits were not
+// objects in the clone, four tests died with `fatal: Not a valid commit name`, and the emit job failed before
+// the emitter ever ran. A written-down answer travels where history cannot - and that is the form the module's
+// own header describes: the same decision, from the same answers, made by the same code.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { AUTHORITY_PATHS, isAuthorityPath, decideAuthorityScope, observeAuthorityScope }
+import { AUTHORITY_PATHS, LISTING_CAP, decideAuthorityScope, observeAuthorityScope }
   from '../authority-scope.mjs';
 
 const REPO = 'BAWES-Universe/studenthub-platform';
@@ -79,18 +84,30 @@ const changeOf = (decision, pathName) => decision.entries.find(entry => entry.pa
 
 // ---- what counts as the authority ----------------------------------------------------------------------------
 
-test('the authority is two objects, and anything under the directory one is part of it', () => {
+test('the authority is two objects, named as objects rather than as a pattern', () => {
   assert.deepEqual(AUTHORITY_PATHS.map(entry => `${entry.dir}/${entry.name}`),
     ['.github/workflows/verifier-receipt.yml', '.github/verifier-receipt']);
-  assert.equal(isAuthorityPath('.github/workflows/verifier-receipt.yml'), true);
-  assert.equal(isAuthorityPath('.github/verifier-receipt'), true);
-  assert.equal(isAuthorityPath('.github/verifier-receipt/emit-receipt.mjs'), true);
-  assert.equal(isAuthorityPath('.github/verifier-receipt/test/emit-receipt.test.mjs'), true);
-  // A file entry matches itself and nothing that merely starts with its name, and nothing outside either.
-  assert.equal(isAuthorityPath('.github/workflows/verifier-receipt.yml.bak'), false);
-  assert.equal(isAuthorityPath('.github/workflows/ci.yml'), false);
-  assert.equal(isAuthorityPath('.github/verifier-receipt-notes.md'), false);
-  assert.equal(isAuthorityPath('src/foo.ts'), false);
+  assert.deepEqual(AUTHORITY_PATHS.map(entry => entry.kind), ['file', 'directory']);
+  // There is no path-pattern helper here and there must not be one: the decision is made by comparing object
+  // ids, so a function that decided "is this string the authority" would be a check nobody consults. An earlier
+  // version exported `isAuthorityPath`; the only thing that kept it alive was an assertion of its own.
+});
+
+test('a listing at the API cap is refused rather than read as "not there"', async () => {
+  // The shape a truncated page presents: a full listing with no authority entry in it. Read literally that is
+  // "absent at the candidate", which is the single answer that can admit an alteration - so it is refused.
+  const atCap = () => ({
+    [WORKFLOW_DIR]: Array.from({ length: LISTING_CAP },
+      (unused, index) => ({ name: `f${index}.yml`, type: 'file', sha: '6f'.repeat(20) })),
+    [AUTHORITY_DIR]: Array.from({ length: LISTING_CAP },
+      (unused, index) => ({ name: `f${index}.json`, type: 'file', sha: '7a'.repeat(20) })),
+  });
+  const decision = await decide({ base: atCap(), candidate: atCap(), onProtected: refHolding() });
+  assert.equal(LISTING_CAP, 1000);
+  assert.equal(decision.ok, false, 'a page at the cap must never admit a candidate');
+  assert.match(reasons(decision), /at the API's 1000-entry cap/);
+  assert.equal(decision.predates_authority, false, 'a truncated page must not be named as a predating candidate');
+  assert.equal(decision.stale_relative_to_protected, false, 'nor may it be named as stale');
 });
 
 // ---- the ten cases the baseline has to get right ---------------------------------------------------------------
@@ -232,9 +249,9 @@ test('an unreadable listing on the protected ref is refused, not skipped', async
 
 // 9.
 test('a candidate that touches only paths outside the authority is admissible', async () => {
-  // The listings the module reads are the two authority directories, and `src/foo.ts` is in neither. A
-  // candidate that changed it and nothing else reports the same ids on both sides.
-  assert.equal(isAuthorityPath('src/foo.ts'), false);
+  // The listings the module reads are the two authority directories, and `src/foo.ts` is in neither: a candidate
+  // that changed it and nothing else reports the same ids on both sides. Nothing here classifies a path by
+  // name - the decision is made from object ids - so there is no path matcher to consult or to drift.
   const decision = await decide({
     base: refHolding(), candidate: refHolding(), onProtected: refHolding(),
   });
@@ -270,48 +287,37 @@ test('a full 300-entry files page hides nothing, and a files array claiming no a
 
 // ---- the same module, on this repository's own commits -----------------------------------------------------------
 //
-// No network and no fabrication: the api below answers out of the local git object store. A directory listing
-// comes from `git ls-tree`, whose object id for an entry is the id GitHub's contents API reports for that
-// path at that ref - corroborated by the refused run itself, which printed `main=3615f658` for the workflow
-// file and `main=03fe40ba` for the directory, and those are the two ids `git ls-tree 9f0131a` gives here. The
-// merge base comes from `git merge-base`, which is what the compare endpoint's `merge_base_commit` names.
+// NO NETWORK, AND NO GIT. The answers below are written down in test/fixtures/authority-scope/recorded-api.json,
+// taken from api.github.com for the three real refs this defect is about, with their provenance recorded in
+// that file. An earlier version of this block answered the module out of the LOCAL git object store instead
+// (`git ls-tree`, `git merge-base`), which was fatal in CI: both jobs that run this suite check out with
+// actions/checkout at its default fetch-depth: 1, so those three commits are not objects in the clone, four
+// tests died with `fatal: Not a valid commit name`, and the emit job failed before the emitter ever ran. A
+// written-down answer travels where history cannot - and it is the form the module's own header describes: the
+// same decision, from the same answers, made by the same code.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const git = (...args) => execFileSync('git', ['-C', HERE, ...args], { encoding: 'utf8' }).trim();
-// The two commits below are reachable from this worktree's history; if a future rewrite drops them these tests
-// say so by name rather than quietly passing on nothing.
-const gitApi = endpoint => {
-  const comparison = /^\/repos\/[^/]+\/[^/]+\/compare\/(.+)\.\.\.(.+)$/.exec(endpoint);
-  if (comparison) {
-    const [, base, head] = comparison;
-    return { status: 'diverged', merge_base_commit: { sha: git('merge-base', base, head) } };
+const FIXTURE = JSON.parse(
+  fs.readFileSync(path.join(HERE, 'fixtures', 'authority-scope', 'recorded-api.json'), 'utf8'));
+const recordedApi = endpoint => {
+  if (!(endpoint in FIXTURE.routes)) {
+    throw new Error(`the module asked for ${endpoint}, which this test's recorded answers do not hold`);
   }
-  const contents = /^\/repos\/[^/]+\/[^/]+\/contents\/(.+)\?ref=(.+)$/.exec(endpoint);
-  if (!contents) throw new Error(`this test's api was asked for ${endpoint}, which the module should not read`);
-  const [, dir, ref] = contents;
-  // `--full-tree`, because a pathspec is otherwise read relative to the process's directory and this one runs
-  // from the test directory, which would make every authority path answer "not there".
-  const lines = git('ls-tree', '--full-tree', ref, `${dir}/`).split('\n').filter(line => line !== '');
-  if (lines.length === 0) return null;  // no such directory at that ref: the API would not list it either
-  return lines.map(line => {
-    const [meta, full] = line.split('\t');
-    const [, type, sha] = meta.split(/\s+/);
-    return { name: full.slice(full.lastIndexOf('/') + 1), sha, type: type === 'tree' ? 'dir' : 'file' };
-  });
+  return FIXTURE.routes[endpoint];
 };
 
-// The commit the authority landed in (PR #163) and its parent, and the candidate the first dispatch refused.
+// The commit the authority landed in (PR #163), its parent, and the candidate the first dispatch refused.
 const AUTHORITY_LANDED = '9f0131a5df8687deccd1ac0c0b0dc08f9a3a689b';
 const BEFORE_AUTHORITY = 'a51c8490dfb8572917049b3ab73dcf94409365c4';
 const REFUSED_CANDIDATE = '6feac016e3a0796d0c7b21d86426af0f1491a9c1';
 
 test('REAL: the candidate run 35852850002 refused predates the authority, and is admissible', async () => {
-  assert.equal(git('merge-base', AUTHORITY_LANDED, REFUSED_CANDIDATE), BEFORE_AUTHORITY);
   const decision = decideAuthorityScope(await observeAuthorityScope({
-    repo: REPO, protectedRef: AUTHORITY_LANDED, candidateSha: REFUSED_CANDIDATE, api: gitApi }));
+    repo: REPO, protectedRef: AUTHORITY_LANDED, candidateSha: REFUSED_CANDIDATE, api: recordedApi }));
+  assert.equal(decision.merge_base, BEFORE_AUTHORITY);
   assert.equal(decision.ok, true, reasons(decision));
   assert.equal(decision.predates_authority, true);
   assert.deepEqual(decision.entries.map(entry => entry.change), ['none', 'none']);
-  // The ids the refused run printed for the protected side, read here out of the repository's own objects.
+  // The ids the refused run itself printed for the protected side, unchanged in the recording.
   assert.deepEqual(decision.entries.map(entry => [entry.protected_sha, entry.candidate_sha]), [
     ['3615f6582e692f2c6042b2f807c393c32dee413e', null],
     ['03fe40baf7cb5ca86c3e28299a5eeae2f46bb270', null]]);
@@ -319,7 +325,7 @@ test('REAL: the candidate run 35852850002 refused predates the authority, and is
 
 test('REAL: the commit that landed the authority adds it relative to its own merge base, and is refused', async () => {
   const decision = decideAuthorityScope(await observeAuthorityScope({
-    repo: REPO, protectedRef: BEFORE_AUTHORITY, candidateSha: AUTHORITY_LANDED, api: gitApi }));
+    repo: REPO, protectedRef: BEFORE_AUTHORITY, candidateSha: AUTHORITY_LANDED, api: recordedApi }));
   assert.equal(decision.merge_base, BEFORE_AUTHORITY);
   assert.equal(decision.ok, false);
   assert.deepEqual(decision.entries.map(entry => entry.change), ['added', 'added']);
@@ -337,20 +343,11 @@ const MODULE = path.join(HERE, '..', 'authority-scope.mjs');
 const FETCH_STUB = path.join(HERE, 'fetch-stub.mjs');
 
 const runCli = (protectedRef, candidateSha) => {
-  // The endpoints the module reads, answered from the git object store and written down for the stub.
-  const routes = {};
-  const recording = endpoint => {
-    const body = gitApi(endpoint);
-    if (body !== null) routes[endpoint] = body;
-    return body;
-  };
-  const mergeBase = git('merge-base', protectedRef, candidateSha);
-  recording(`/repos/${REPO}/compare/${protectedRef}...${candidateSha}`);
-  for (const ref of [mergeBase, candidateSha, protectedRef]) {
-    for (const dir of ['.github/workflows', '.github']) recording(`/repos/${REPO}/contents/${dir}?ref=${ref}`);
-  }
+  // The same written-down answers, handed to the stub `fetch`. Nothing is derived from git here either: the
+  // stub answers the endpoints this run asks for and records the ones it was asked for, so a module that read
+  // something it should not would be visible in the output rather than silent.
   const routesPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'authority-scope-')), 'routes.json');
-  fs.writeFileSync(routesPath, JSON.stringify(routes, null, 2));
+  fs.writeFileSync(routesPath, JSON.stringify(FIXTURE.routes, null, 2));
   return spawnSync(process.execPath, ['--import', FETCH_STUB, MODULE, REPO, protectedRef, candidateSha], {
     encoding: 'utf8',
     env: { PATH: process.env.PATH, FETCH_STUB_ROUTES: routesPath, GH_TOKEN: 'the-fetch-stub-ignores-this' },

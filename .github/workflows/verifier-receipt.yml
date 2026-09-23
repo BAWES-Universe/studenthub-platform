@@ -190,15 +190,52 @@ jobs:
         run: |
           set -euo pipefail
           scope="$RUNNER_TEMP/authority-scope.mjs"
-          # FROM THE TRUSTED COMMIT AND NOWHERE ELSE. There is no fallback to another ref: a candidate that
-          # supplied this file would be deciding whether it is allowed to edit the authority. A trusted commit
-          # that predates the module therefore refuses here, which is the closed direction.
+          # FROM THE TRUSTED COMMIT, WITH NO FALLBACK TO ANOTHER REF - and precisely what that does and does not
+          # guarantee, because an earlier version of this comment stated it as an absolute and it is not one. The
+          # resolve step sets trusted_sha to the PULL REQUEST HEAD when runners.json is absent on the pull
+          # request's base; in that state the candidate's own copy of this module is what judges it, resolve emits
+          # a warning saying so, and the receipt is marked inadmissible as a pin. That path is not taken on main
+          # today (runners.json is there), and it is named here instead of being implied away.
+          #
+          # A TRUSTED COMMIT THAT PREDATES THE MODULE REFUSES HERE. That is the closed direction, and it is the
+          # bootstrap itself: this authority cannot rehearse an amendment to itself until the amendment lands.
+          #
+          # AN EMPTY FETCH IS A REFUSAL, NOT A PASS. GitHub's contents API answers `"content": ""` with
+          # `"encoding": "none"` for a file it will not inline (over 1 MB). Piping that through `base64 -d` writes
+          # a zero-byte file, node runs it happily, the step exits 0 - and nothing was compared. Latent rather
+          # than live (this module is ~15 KB), but a check that can pass by fetching nothing is not a check, so
+          # the shape is refused rather than trusted: the encoding must be base64, the decoded module must be
+          # non-empty, and it must be exactly the size the API declared.
+          meta="$RUNNER_TEMP/authority-scope.meta"
           if ! gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
-               --jq '.content' | base64 -d > "$scope"; then
+               --jq '"\(.encoding) \(.size)"' > "$meta"; then
             echo "::error::the trusted commit $TRUSTED_SHA carries no .github/verifier-receipt/authority-scope.mjs, so this run cannot decide whether the candidate changes the receipt authority"
             exit 1
           fi
-          node "$scope" "$REPO" main "$CANDIDATE_SHA"
+          read -r encoding declared < "$meta"
+          if [ "$encoding" != "base64" ]; then
+            echo "::error::the contents API would not inline .github/verifier-receipt/authority-scope.mjs at $TRUSTED_SHA (encoding=$encoding), so this run cannot decide anything from it"
+            exit 1
+          fi
+          gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
+            --jq '.content' | base64 -d > "$scope"
+          got=$(wc -c < "$scope")
+          if [ "$got" -eq 0 ]; then
+            echo "::error::the module fetched from $TRUSTED_SHA decoded to nothing, so this run would have compared nothing"
+            exit 1
+          fi
+          if [ "$got" != "$declared" ]; then
+            echo "::error::the module fetched from $TRUSTED_SHA is $got bytes and the API declared $declared bytes"
+            exit 1
+          fi
+          # AND THE STEP ASSERTS A VERDICT WAS RENDERED: a module that exits 0 without printing one is the same
+          # hole in a different shape.
+          verdict=$(node "$scope" "$REPO" main "$CANDIDATE_SHA") || { printf '%s\n' "$verdict"; exit 1; }
+          printf '%s\n' "$verdict"
+          case "$verdict" in
+            *"merge base of"*) ;;
+            *) echo "::error::the module printed no verdict line, so this run cannot say whether it decided anything"; exit 1 ;;
+          esac
 
   measure:
     name: measure
