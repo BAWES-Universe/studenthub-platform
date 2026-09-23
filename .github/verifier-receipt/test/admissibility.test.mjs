@@ -19,8 +19,28 @@ import { deriveAdmissibility, loadToleratedSkips, TOLERATED_SKIPS_PATH } from '.
 
 const HEAD = 'a'.repeat(40);
 
+// NEXT-3 made the summary a checked field, so these bodies have to carry an HONEST one. The emitter builds
+// `named_tests_summary` by counting `named_tests` - one array, counted once - so a written body that sets the
+// rows and leaves a stale summary beside them is a body no run could produce, and the rule now says so. This
+// counts the rows the same way the emitter does, so a case that replaces the rows gets a summary that matches
+// them and every case below keeps testing the one ground it is about. A case that wants the two to DISAGREE
+// passes `named_tests_summary` explicitly, which is exactly what the NEXT-3 case does.
+const summaryOf = rows => ({
+  named: rows.length,
+  distinct_names: new Set(rows.map(row => String(row?.name))).size,
+  pass: rows.filter(row => row?.status === 'pass').length,
+  fail: rows.filter(row => row?.status === 'fail').length,
+  absent: rows.filter(row => row?.status === 'absent').length,
+  skipped: rows.filter(row => row?.status === 'skip').length,
+  todo: rows.filter(row => row?.status === 'todo').length,
+  suite_points: rows.filter(row => row?.status === 'suite').length,
+  misplaced: rows.filter(row => row?.status === 'misplaced').length,
+  unbound: rows.filter(row => row?.status === 'unbound').length,
+  unclaimed: rows.filter(row => row?.status === 'unclaimed').length,
+});
+
 // WRITTEN DOWN, NOT MEASURED. Every ground satisfied, and nothing in it happened.
-const admissibleBody = (patch = {}) => ({
+const baseBody = () => ({
   schema: 2,
   workflow: {
     path: '.github/workflows/verifier-receipt.yml',
@@ -41,10 +61,15 @@ const admissibleBody = (patch = {}) => ({
   suite: { tests: 4, ok: 4, not_ok: 0, cancelled: 0, skipped: 0, todo: 0, exit: '0', state: 'green',
     failing_tests: [] },
   named_tests: [{ term: 'a/term', kind: 'control', name: 'a control', status: 'pass' }],
-  named_tests_summary: { named: 1, pass: 1 },
   conclusion: { verdict: 'success', suite_state: 'green', qualifications: [], reasons: [] },
-  ...patch,
 });
+const admissibleBody = (patch = {}) => {
+  const body = { ...baseBody(), ...patch };
+  if (!('named_tests_summary' in patch)) {
+    body.named_tests_summary = summaryOf(Array.isArray(body.named_tests) ? body.named_tests : []);
+  }
+  return body;
+};
 
 // A body with one field replaced at a path, so a case says what it changed and nothing else.
 const withSuite = fields => admissibleBody({ suite: { ...admissibleBody().suite, ...fields } });
@@ -260,6 +285,149 @@ test('every other exclusion the receipt records is a reason, under the name the 
   assert.match(why, /1 named test\(s\) are recorded `unbound` rather than passing/);
   assert.match(why, /1 named test\(s\) are recorded `unclaimed` rather than passing/);
   assert.equal(reasonsOf(excluded).length, 4, 'one reason per status, each naming its own tests');
+});
+
+// NEXT-2. `suite.state` is DERIVED from `suite.exit` by the emitter - `const suiteRed = exitCode !== 0 ||
+// unfinished > 0` - and nothing read the field it was derived from. A body carrying `exit: "1"` beside
+// `state: "green"` is D7's shape one field over: the derived value flipped, the source left where it was.
+test('NEXT-2: the runner\'s own exit code is read, so a green state over a failing exit is refused', () => {
+  const forged = withSuite({ exit: '1' });
+  const why = joined(forged);
+  assert.match(why, /the runner that measured this suite exited "1", not "0"/);
+  assert.match(why, /whatever suite\.state records beside it/);
+  assert.equal(deriveAdmissibility(forged).admissible, false);
+  // Only this ground fires: the body is otherwise the admissible one, which is what makes it the seam.
+  assert.equal(reasonsOf(forged).length, 1, `expected exactly one reason, got: ${why}`);
+
+  // A numeric exit is read the same way a string one is: the field is compared as what it says, not coerced
+  // into a boolean by its presence.
+  assert.match(joined(withSuite({ exit: 2 })), /exited "2", not "0"/);
+  // And an absent exit is a reason, on the standing rule that an absent field is not a satisfied condition.
+  for (const absent of [undefined, null, '']) {
+    assert.match(joined(withSuite({ exit: absent })),
+      /records no suite\.exit[^|]*suite\.state is derived from exactly that/,
+      `exit=${JSON.stringify(absent)} must be a reason`);
+  }
+  // The positive control: exit "0" is what the shipped admissible body carries, and it satisfies the ground.
+  assert.deepEqual(reasonsOf(admissibleBody()), []);
+});
+
+// NEXT-1. `suite.tests` is the runner's total and the five category counts partition it, so a body claiming
+// ten tests while accounting for three has not said what happened to the other seven - and every exclusion
+// counter reading zero is precisely how such a body passed every other check.
+test('NEXT-1: the suite counts must reconcile with suite.tests when the body carries them', () => {
+  // The review's case: tests 10, ok 3, every exclusion counter zero.
+  const short = withSuite({ tests: 10, ok: 3 });
+  const why = joined(short);
+  assert.match(why, /records 10 test\(s\) in suite\.tests and accounts for 3 of them \(ok 3 \+ not_ok 0 \+ cancelled 0 \+ skipped 0 \+ todo 0\)/);
+  assert.match(why, /7 point\(s\) are in neither the total nor the categories that partition it/);
+  assert.equal(deriveAdmissibility(short).admissible, false);
+  assert.equal(reasonsOf(short).length, 1, `expected exactly one reason, got: ${why}`);
+
+  // And the other direction: more accounted for than the total claims.
+  assert.match(joined(withSuite({ tests: 2, ok: 4 })), /records 2 test\(s\).*accounts for 4 of them/);
+
+  // MEASURED: on node v22.22.3 a file with one passing, one failing, one timing-out, one skipped and one
+  // `todo` test reports `# tests 5 / # pass 1 / # fail 1 / # cancelled 1 / # skipped 1 / # todo 1`, so
+  // `cancelled` is a category that sums into the total alongside the other four. A body shaped like that
+  // reconciles here, and is refused for the cancellation itself rather than for arithmetic it did not get
+  // wrong - which is the point of putting `cancelled` in the sum.
+  const cancelled = withSuite({ tests: 5, ok: 1, not_ok: 1, cancelled: 1, skipped: 1, todo: 1,
+    state: 'red', exit: '1', failing_tests: ['one that failed'], skipped_tests: ['one that was skipped'] });
+  cancelled.conclusion.suite_state = 'red';
+  assert.doesNotMatch(joined(cancelled), /do not add up|accounts for/,
+    'a body whose counts DO reconcile must not be accused of arithmetic');
+  assert.match(joined(cancelled), /the measured run did not finish/);
+
+  // Checked only when every count is readable: a missing one is already its own reason and a second sentence
+  // about it would say nothing new.
+  assert.doesNotMatch(joined(withSuite({ ok: undefined })), /accounts for/);
+
+  // The real receipt's own numbers satisfy the identity, which is why requiring it costs nothing.
+  assert.equal(3581 + 60 + 0 + 8 + 0, 3649);
+});
+
+// NEXT-3. The emitter builds `named_tests_summary` by counting `named_tests`, so the two can only disagree in
+// a body somebody wrote. Every block above reads the ROWS, so a summary claiming failures the rows do not
+// carry went unread entirely.
+test('NEXT-3: a summary that disagrees with the rows it summarises is refused, without choosing a side', () => {
+  // The review's case: the summary says four failed and the rows carry the pass row.
+  const lying = admissibleBody({ named_tests_summary: { named: 1, pass: 1, fail: 4 } });
+  const why = joined(lying);
+  assert.match(why, /named_tests_summary\.fail is 4 and named_tests carries 0 `fail` row\(s\)/);
+  assert.match(why, /nothing in it says which of the two is the forgery/);
+  assert.equal(deriveAdmissibility(lying).admissible, false);
+
+  // NEITHER SIDE IS CHOSEN. The rows say every named test passed and the summary says four failed; the rule
+  // refuses the receipt rather than believing one of them, so no reason here says the rows are right.
+  assert.equal(reasonsOf(lying).length, 1, `expected only the disagreement, got: ${why}`);
+  assert.doesNotMatch(why, /recorded `fail` rather than passing/);
+
+  // Every count the summary states is compared, under its own name.
+  for (const [field, value, expected] of [
+    ['named', 7, /named_tests_summary\.named is 7 and named_tests carries 1 row\(s\)/],
+    ['distinct_names', 3, /distinct_names is 3 and named_tests carries 1 distinct name\(s\)/],
+    ['pass', 0, /named_tests_summary\.pass is 0 and named_tests carries 1 `pass` row\(s\)/],
+    ['absent', 2, /named_tests_summary\.absent is 2 and named_tests carries 0 `absent` row\(s\)/],
+    ['skipped', 1, /named_tests_summary\.skipped is 1 and named_tests carries 0 `skip` row\(s\)/],
+    ['todo', 1, /named_tests_summary\.todo is 1 and named_tests carries 0 `todo` row\(s\)/],
+    ['suite_points', 1, /named_tests_summary\.suite_points is 1 and named_tests carries 0 `suite` row\(s\)/],
+    ['misplaced', 1, /named_tests_summary\.misplaced is 1 and named_tests carries 0 `misplaced` row\(s\)/],
+    ['unbound', 1, /named_tests_summary\.unbound is 1 and named_tests carries 0 `unbound` row\(s\)/],
+    ['unclaimed', 1, /named_tests_summary\.unclaimed is 1 and named_tests carries 0 `unclaimed` row\(s\)/],
+    ['pass', '1', /named_tests_summary\.pass is "1" and named_tests carries 1 `pass` row/],
+  ]) {
+    const body = admissibleBody({ named_tests_summary: { ...summaryOf(baseBody().named_tests), [field]: value } });
+    assert.match(joined(body), expected, `summary.${field}=${JSON.stringify(value)} must be refused`);
+  }
+
+  // ONLY WHAT THE SUMMARY STATES IS COMPARED. A summary that omits a key has made no claim about it, and
+  // inventing a claim of zero on its behalf would be reading absence as a statement. It hides nothing: the
+  // rows are read directly by every block above, so a `fail` row is still a reason with no summary at all.
+  assert.deepEqual(reasonsOf(admissibleBody({ named_tests_summary: { named: 1 } })), []);
+  assert.deepEqual(reasonsOf(admissibleBody({ named_tests_summary: undefined })), []);
+  const badRow = admissibleBody({ named_tests: [{ name: 'a control', status: 'absent' }],
+    named_tests_summary: { named: 1 } });
+  assert.match(joined(badRow), /1 named test\(s\) are recorded `absent` rather than passing/);
+
+  // The real receipt's own summary and rows agree - 132 `unbound` rows and `unbound: 132` - so this ground
+  // adds no reason to a body a run really produced.
+  const real = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'fixtures',
+    'receipt-35869844952', 'receipt.trimmed.json'), 'utf8'));
+  assert.equal(real.named_tests_summary.unbound, 132);
+  assert.equal(real.named_tests.filter(row => row.status === 'unbound').length, 132);
+  assert.equal(deriveAdmissibility(real).reasons.filter(reason => reason.includes('named_tests_summary')).length,
+    0, 'the real receipt\'s summary and rows agree, so NEXT-3 must add nothing to its refusal');
+});
+
+// THE PERMISSION LIST CAN DECIDE AS BYTES, which is what closes the consumer's TOCTOU: a caller that has
+// verified bytes hands those over rather than a path, so there is nothing left to re-read between the check
+// and the decision. See THE BYTES THAT DECIDE in fetch-receipt.mjs.
+test('the authorized list decides from verified BYTES when it is given them, and not from a path', () => {
+  const skipped = withSuite({ skipped: 1, ok: 3, skipped_tests: ['a check that needs a docker daemon'] });
+  const bytes = Buffer.from(JSON.stringify({ authorized: [{ test: 'a check that needs a docker daemon',
+    reason: 'the runner image has no docker daemon', authorized_by: 'the owner, in this test and nowhere else' }] }));
+  assert.deepEqual(deriveAdmissibility(skipped, { toleratedSkipsBytes: bytes }).reasons, []);
+
+  // Bytes WIN over a path, so a caller that supplies both cannot have the path quietly decide.
+  const permissivePath = listing([{ test: 'a check that needs a docker daemon', reason: 'x', authorized_by: 'y' }]);
+  const refusing = deriveAdmissibility(skipped,
+    { toleratedSkipsBytes: Buffer.from(JSON.stringify({ authorized: [] })), toleratedSkipsPath: permissivePath });
+  assert.match(refusing.reasons.join(' | '), /are not in the authorized list/,
+    'the bytes must decide, not the path beside them');
+
+  // A Uint8Array is read the same way a Buffer is, because that is what a fetch hands back.
+  assert.deepEqual(deriveAdmissibility(skipped, { toleratedSkipsBytes: new Uint8Array(bytes) }).reasons, []);
+
+  // Bytes that are not a readable list are a problem of the list, reported rather than read as "nothing is
+  // authorized" - the same answer the path form gives.
+  assert.match(deriveAdmissibility(skipped, { toleratedSkipsBytes: Buffer.from('{ not json') })
+    .reasons.join(' | '), /authorized-skip list[^|]*could not be read/);
+
+  // And a rule loaded from BYTES rather than from a file has no directory to resolve a default list against,
+  // so the default is null and a caller that passes nothing is told so rather than reading a path it guessed.
+  assert.match(loadToleratedSkips(null).problem ?? '',
+    /could not be read[^|]*no default path to resolve one against/);
 });
 
 test('a suite block, a count or a named_tests list the rule reads and cannot find is a reason of its own', () => {

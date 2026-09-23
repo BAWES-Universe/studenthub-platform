@@ -1,8 +1,10 @@
 // Fetch and verify a verifier receipt through GitHub's API, and emit the pin a manifest binds to.
 //
-// This is the evidence path, so it trusts nothing it can be handed:
-//   * ONLY A RUN OF THE PROTECTED BRANCH MAY EMIT A PIN AT ALL. That is the first thing this file decides and
-//     the last thing it enforces - see THE STRUCTURAL GROUND below;
+// This is the evidence path, so it trusts nothing it can be handed - EXCEPT the one thing it cannot check,
+// which is named rather than assumed: see WHAT THIS TOOL'S TRUST ROOT ACTUALLY IS below.
+//   * this file emits a pin only on a run of the protected branch. That is the first thing it decides and the
+//     last thing it enforces, and it is a GUARD RAIL rather than a ground - see THE PROTECTED-REF GROUND
+//     below for what it stops, what it does not, and what actually binds;
 //   * the run is read back from the API by id and must be a workflow_dispatch of the receipt workflow on the
 //     protected ref, concluded successfully, and have run the commit it claims;
 //   * the artifact is located by NAME inside that run and its digest must be the digest GitHub reports for it
@@ -31,13 +33,42 @@
 //     THAT DECIDES below;
 //   * the receipt must be schema 2, which is the schema of the fields above.
 //
-// THE STRUCTURAL GROUND: A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN.
+// WHAT THIS TOOL'S TRUST ROOT ACTUALLY IS, STATED RATHER THAN ASSUMED.
 //
-// Every round before this one wrote that down in prose and left the code able to do it anyway. It is now a
-// refusal. Unless the run this tool is part of is ITSELF on the protected branch - `GITHUB_REF` exactly
+// Every fact above arrives through one channel: `gh api`, run as a subprocess. So the root of every claim this
+// file makes is THE `gh` BINARY THIS RUN FOUND ON ITS PATH, AND THE CREDENTIAL THAT BINARY CARRIES - not
+// GitHub. A `gh` on PATH that answers from a file, an attacker who can prepend a directory to PATH, a wrapper
+// that forges the contents API's reply, a token minted for another repository: any of those and this tool
+// reports whatever it is handed, carefully checked against itself. Nothing here can tell a spoofed API from a
+// real one, and no arrangement of checks over a channel that cannot be trusted makes it trustworthy.
+//
+// What this file does about that is name it and MEASURE it rather than assert it. The `gh` on PATH is resolved
+// to an absolute path before the first call, every call goes to THAT path rather than through a fresh PATH
+// lookup, its `--version` is read back, and both travel in the pin as `fetched_with` - so a reader of a pin
+// can see which binary the evidence rested on instead of being asked to assume. A run that knows which binary
+// it expects may say so in `VERIFIER_EXPECTED_GH` / `VERIFIER_EXPECTED_GH_VERSION` and this tool refuses an
+// observation that contradicts it. A `gh` that cannot be resolved, or that will not say what it is, is a
+// refusal outright: a trust root that cannot be named is not one a pin may rest on.
+//
+// THE PROTECTED-REF GROUND: A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN. IT IS A GUARD RAIL.
+//
+// Unless the run this tool is part of is ITSELF on the protected branch - `GITHUB_REF` exactly
 // `refs/heads/main` and `GITHUB_EVENT_NAME` one of `push` or `workflow_dispatch` - this file emits no pin, no
 // `--out` file, and nothing shaped like one; it exits non-zero naming the reason. It will still REPORT what it
 // found, on stderr and labelled ADVISORY, because a report is useful and a pin is authority.
+//
+// AND THE HONEST ACCOUNT OF WHAT THAT COSTS AN ATTACKER, because an earlier round of this comment called it
+// "THE STRUCTURAL GROUND", which overstates a `process.env` read. Measured: an honest `pull_request` run exits
+// 4 with no pin and no `--out` file; the same run with `GITHUB_REF` and `GITHUB_EVENT_NAME` set to main's
+// values by the workflow that invokes this tool exits 0 and writes one. A candidate edits the workflow that
+// sets those variables, so this check stops an ACCIDENT - a copy of the consumer wired up on a branch, a local
+// invocation, a reused step - and does not stop a candidate that is trying. It is a guard rail, and the
+// refusal is kept because guard rails are worth having.
+//
+// WHAT ACTUALLY BINDS is downstream of this file: to become a record, a pin must be COMMITTED and then survive
+// `verify-claim.yml`, which is `workflow_dispatch`-only from protected main with a real token and a verifier
+// checked out from the dispatching ref. A green-looking check inside a candidate's own run is worth exactly
+// nothing there, because that run's opinion is never consulted.
 //
 // WHY, said plainly: on a pull_request event GitHub runs the workflow DEFINITION and the checked-out CODE from
 // the pull request head, so this tool, the files it reads and the checks it performs are all the candidate's.
@@ -45,23 +76,23 @@
 // exactly this point concrete: eight lines in the candidate's own `admissibility.mjs`, evaluated at import
 // time before any check ran, could patch `fs.readFileSync` to hand back main's bytes for its own path - and
 // out came a pin over a red, authority-absent body, recording main's real blob id as the rule that admitted
-// it. The fetch below removes the file it patched; this ground removes the pin it produced.
+// it. The fetch below removes the file it patched; this guard rail removes the pin it produced by accident.
 //
 // Usage:  node fetch-receipt.mjs --run <run_id> [--repo owner/name] [--out pin.json]
 // Stdout: the pin JSON, which the caller commits as the claim's evidence reference. Nothing on a run that may
 //         not pin: the advisory report goes to stderr so that no reader can mistake it for the pin channel.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
-// NOTHING OF THE CHECKOUT'S IS IMPORTED HERE, AND THAT IS THE POINT OF THIS ROUND. This file used to carry
+// NOTHING OF THE CHECKOUT'S IS IMPORTED HERE, AND THAT IS THE POINT. This file used to carry
 // `import { deriveAdmissibility } from './admissibility.mjs'` and check that module's blob id 160 lines later.
 // ESM evaluates a dependency's top level at LOAD, so the candidate's module ran first, in this process, and
 // could neutralise the check meant to catch it. Checking bytes on disk and then importing the path is a
-// time-of-check-to-time-of-use gap in any case. The decider is fetched from the protected branch over the API
-// and imported from OUTSIDE the tree; see THE RULE THAT DECIDES.
+// time-of-check-to-time-of-use gap in any case - and so is writing verified bytes to a temp file and importing
+// THAT, which is what the round before this one did. The decider is fetched from the protected branch over the
+// API and imported from a `data:` URL built out of the verified bytes, so no filesystem path is in the chain
+// at all; see THE RULE THAT DECIDES and THE BYTES THAT DECIDE.
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
@@ -79,18 +110,75 @@ if (!runId || !repo) {
   process.exit(2);
 }
 
-const api = (endpoint, options = {}) => execFileSync('gh', ['api', ...(options.headers ?? []), endpoint],
-  { encoding: options.binary ? 'buffer' : 'utf8', maxBuffer: 64 * 1024 * 1024 });
-const apiJson = endpoint => JSON.parse(api(endpoint));
 const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
 const fail = message => {
   console.error(`REFUSING: ${message}`);
   process.exit(3);
 };
 
-// THE STRUCTURAL GROUND, SETTLED BEFORE ANY OTHER LINE RUNS. It is read here, at the top, from the environment
-// the runner sets before node starts, so that no file this process later loads can be the thing that decided
-// it. `mayPin` is consulted once, at the emit site; there is no other way out of this file with a pin.
+// THE TRUST ROOT, RESOLVED AND MEASURED BEFORE IT IS USED. See the header: every fact this file states came
+// out of this binary, so which binary it was is a fact the pin has to carry rather than one a reader assumes.
+//
+// PATH is walked here instead of being left to execFileSync, for two reasons that are the same reason: the
+// resolution happens ONCE, so all fifty-odd calls below go to one binary rather than to whatever answers to
+// the name `gh` at the moment each of them runs; and the absolute path that won is a value this file can print
+// into the pin. `execFileSync` with a bare name re-resolves per call and tells the caller nothing.
+const resolveOnPath = name => {
+  for (const entry of String(process.env.PATH ?? '').split(path.delimiter)) {
+    if (entry === '') continue;
+    const candidate = path.join(entry, name);
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch (error) {
+      // Not this directory's; keep walking. An unreadable entry is not an answer either way.
+    }
+  }
+  return null;
+};
+const GH = resolveOnPath('gh');
+if (!GH) {
+  fail('no executable named `gh` is on this run\'s PATH, so this tool has no channel to read the API through '
+    + '- and every fact a pin states comes out of that binary, so a run that cannot even name it has no trust '
+    + 'root to rest a pin on');
+}
+let ghVersion = null;
+try {
+  ghVersion = String(execFileSync(GH, ['--version'], { encoding: 'utf8' })).split('\n')[0].trim();
+} catch (error) {
+  ghVersion = null;
+}
+if (!ghVersion) {
+  fail(`the \`gh\` this run resolved (${GH}) would not state its version, so the binary every fact below is `
+    + 'read through cannot be identified in the pin that rests on it');
+}
+// AN EXPECTATION IS THE RUN'S TO STATE, AND THIS FILE DOES NOT INVENT ONE. Hard-coding a path or a version
+// here would be folklore: the runner image changes, and a constant nobody measured is the defect this
+// repository keeps paying for. So the observation is always RECORDED, and it is a REFUSAL only where the run
+// itself said what it expected and got something else.
+const expectedGh = process.env.VERIFIER_EXPECTED_GH ?? null;
+const expectedGhVersion = process.env.VERIFIER_EXPECTED_GH_VERSION ?? null;
+if (expectedGh && expectedGh !== GH) {
+  fail(`this run expects its \`gh\` at ${JSON.stringify(expectedGh)} (VERIFIER_EXPECTED_GH) and PATH resolved `
+    + `${JSON.stringify(GH)}: the binary that would answer every API question here is not the one this run `
+    + 'says it trusts');
+}
+if (expectedGhVersion && expectedGhVersion !== ghVersion) {
+  fail(`this run expects gh ${JSON.stringify(expectedGhVersion)} (VERIFIER_EXPECTED_GH_VERSION) and ${GH} `
+    + `reports ${JSON.stringify(ghVersion)}`);
+}
+
+const api = (endpoint, options = {}) => execFileSync(GH, ['api', ...(options.headers ?? []), endpoint],
+  { encoding: options.binary ? 'buffer' : 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const apiJson = endpoint => JSON.parse(api(endpoint));
+
+// THE PROTECTED-REF GUARD RAIL, SETTLED BEFORE ANY OTHER LINE RUNS. It is read here, at the top, from the
+// environment the runner sets before node starts, so that no FILE this process later loads can be the thing
+// that decided it. `mayPin` is consulted once, at the emit site; there is no other way out of this file with a
+// pin. What it stops and what it does not is set out in the header: a workflow that sets these two variables
+// itself gets past it, so this is a rail against accident and not a defence against a candidate. The binding
+// consumer is `verify-claim.yml`, dispatched from protected main.
 const PIN_EVENTS = ['push', 'workflow_dispatch'];
 const runRef = process.env.GITHUB_REF ?? null;
 const runEvent = process.env.GITHUB_EVENT_NAME ?? null;
@@ -144,19 +232,27 @@ if (zipDigest !== artifact.digest) {
     + `but GitHub reports ${artifact.digest} for artifact ${artifact.id}: these are not the bytes GitHub `
     + 'served, so nothing taken out of them can stand for what that run produced');
 }
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-'));
-const zipPath = path.join(dir, 'artifact.zip');
-fs.writeFileSync(zipPath, zip);
-const receiptPath = path.join(dir, 'receipt.json');
-execFileSync('python3', ['-c', [
-  'import sys, zipfile',
-  'with zipfile.ZipFile(sys.argv[1]) as archive:',
-  '    names = [n for n in archive.namelist() if n.endswith("receipt.json")]',
-  '    if len(names) != 1:',
-  '        print(f"expected one receipt.json, found {names}", file=sys.stderr); sys.exit(1)',
-  '    open(sys.argv[2], "wb").write(archive.read(names[0]))',
-].join('\n'), zipPath, receiptPath]);
-const receiptBytes = fs.readFileSync(receiptPath);
+
+// AND IT IS OPENED IN MEMORY, WITH NO FILE ANYWHERE IN BETWEEN. This used to write the verified zip to a temp
+// directory, hand python3 the PATH, and read the extracted `receipt.json` back off another path - three
+// filesystem round trips between the bytes that were hashed and the bytes that were read, every one of them a
+// time-of-check-to-time-of-use gap, and `os.tmpdir()` is `TMPDIR`, an environment variable. The verified bytes
+// now go to python3 on stdin and the receipt comes back on stdout, so the bytes parsed below are the bytes
+// that hashed to `artifact.digest` by construction rather than by the absence of an interloper.
+let receiptBytes;
+try {
+  receiptBytes = execFileSync('python3', ['-c', [
+    'import sys, zipfile, io',
+    'with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as archive:',
+    '    names = [n for n in archive.namelist() if n.endswith("receipt.json")]',
+    '    if len(names) != 1:',
+    '        print(f"expected one receipt.json, found {names}", file=sys.stderr); sys.exit(1)',
+    '    sys.stdout.buffer.write(archive.read(names[0]))',
+  ].join('\n')], { input: zip, maxBuffer: 256 * 1024 * 1024 });
+} catch (error) {
+  fail(`the ${ARTIFACT_NAME} archive of run ${runId} holds no single receipt.json this tool could read `
+    + `(${String(error.stderr ?? error.message).trim()})`);
+}
 const receipt = JSON.parse(receiptBytes.toString('utf8'));
 
 // THE SCHEMA IS READ BEFORE ANY FIELD IS. Every check below names a field of schema 2; in another schema the
@@ -229,20 +325,32 @@ if (identity.head_sha !== run.head_sha) {
 // reversed, reading bytes off a path and then importing that path is a time-of-check-to-time-of-use gap. On a
 // pull_request event the WHOLE TREE is the candidate's, so there is no file here to read that fixes this.
 //
+// THE BYTES THAT DECIDE, AND NOT A PATH TO THEM. The round before this one fetched the rule, hashed it in
+// memory, WROTE IT TO A TEMP DIRECTORY and imported that path - which is the same time-of-check-to-time-of-use
+// shape the paragraph above names, one stage later. `os.tmpdir()` is `TMPDIR`, an environment variable, and a
+// mkdtemp name being unpredictable defends the wrong property: an attacker with the variable does not have to
+// PREDICT the name, it watches the directory it chose and replaces the file between the write and the import.
+// A review did exactly that and got a pin over a red body with `derived_reasons: []`, recording main's real
+// blob id as the rule that admitted it while a permissive module decided.
+//
+// So there is no path. The module is imported from a `data:` URL built out of the verified bytes themselves,
+// and the permission list is handed to it AS BYTES through `toleratedSkipsBytes`. Between the hash check and
+// the decision there is now no filesystem object for anything to substitute - not a directory, not a file,
+// not a name - so the gap is closed by construction rather than made unlikely.
+//
 // SO THE BYTES THAT DECIDE DO NOT COME FROM THE CHECKOUT AT ALL. They are fetched over the contents API at
 // refs/heads/main, and three things are required of the answer before a byte of it is used: the API must
 // serve it, its `encoding` must be base64 (GitHub answers `"encoding": "none"` with an empty `content` for a
 // file it will not inline, and a check that can pass by decoding nothing is not a check), and the decoded
 // bytes must hash to the `sha` the API reports for that path. That sha is the git blob id, so it is recomputed
 // the way git computes one - sha1("blob <len>\0" + bytes), with node crypto and never with a git binary,
-// because this path must not depend on a working tree or on history. Verified bytes are written to a temp
-// directory OUTSIDE the repository and imported from there; `.github/verifier-receipt/admissibility.mjs` in
-// the checkout is never imported, never read for the decision, and never trusted.
+// because this path must not depend on a working tree or on history. The verified bytes are imported directly
+// as a `data:` module; `.github/verifier-receipt/admissibility.mjs` in the checkout is never imported, never
+// read for the decision, and never trusted.
 //
 // The permission list travels the same way and for the same reason: `tolerated-skips.json` says which skipped
-// tests are tolerable, so it is permission, and permission must come from the branch that grants it. It is
-// written into the same temp directory, which is also where the fetched module resolves its own default path
-// to - and it is passed explicitly besides, so the deciding list is named rather than inferred.
+// tests are tolerable, so it is permission, and permission must come from the branch that grants it. Its
+// verified bytes are handed to the rule directly, so the list that decides is the list that was checked.
 //
 // AND THE CHECKOUT IS STILL COMPARED, because a tree that disagrees with the rule it is about to be judged by
 // is a fact worth refusing on rather than passing over quietly. The comparison decides nothing; it only
@@ -297,14 +405,6 @@ const fetchedSkips = fetchedFromMain(TOLERATED_SKIPS);
 const moduleBlob = fetchedModule.blob;
 const toleratedSkipsBlob = fetchedSkips.blob;
 
-// OUTSIDE THE REPOSITORY TREE. `os.tmpdir()` is not a path the checkout can place a file into ahead of this
-// process, and the directory is created by mkdtemp, so the name is not one anything could have predicted.
-const ruleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'admission-rule-'));
-const modulePath = path.join(ruleDir, 'admissibility.mjs');
-const skipsPath = path.join(ruleDir, 'tolerated-skips.json');
-fs.writeFileSync(modulePath, fetchedModule.bytes);
-fs.writeFileSync(skipsPath, fetchedSkips.bytes);
-
 // THE CHECKOUT'S COPIES, COMPARED AND NOT USED. Read after the fetch, so this reads a tree that has had no
 // opportunity to learn what it would be compared against; a path that is not there is reported as absent
 // rather than skipped, because a missing rule is a disagreement too.
@@ -327,9 +427,12 @@ for (const [repoPath, name, fetchedBlob] of [[MODULE_PATH, 'admissibility.mjs', 
 }
 
 // AND ONLY NOW IS ANYTHING EXECUTED. The first line of candidate-influenced code that could have run in this
-// process is not here: this import is of bytes the API served for refs/heads/main, whose blob id the API
-// itself reported, written to a path nothing in the tree can reach.
-const { deriveAdmissibility } = await import(pathToFileURL(modulePath).href);
+// process is not here: what is imported is a `data:` URL whose payload IS the verified bytes. There is no file
+// to swap, no directory to watch and no name to race - the module's identity and its contents are the same
+// object. The rule is loaded from bytes, so it has no directory to resolve its own permission list against;
+// that is why the list is passed in below rather than left to a default.
+const RULE_URL = `data:text/javascript;base64,${fetchedModule.bytes.toString('base64')}`;
+const { deriveAdmissibility } = await import(RULE_URL);
 if (typeof deriveAdmissibility !== 'function') {
   fail(`the ${MODULE_PATH} fetched from ${PROTECTED_REF} exports no deriveAdmissibility function, so there is `
     + 'no rule in it to decide with');
@@ -346,9 +449,9 @@ if (typeof deriveAdmissibility !== 'function') {
 const admissible = receipt.provenance?.admissible_as_pin;
 const reasons = receipt.provenance?.inadmissibility_reasons;
 const quoted = list => list.map(reason => `"${reason}"`).join('; ');
-// The permission list is named rather than left to the module's own default - both resolve to the fetched
-// bytes in `ruleDir`, and saying which one decided is cheaper than leaving a reader to work it out.
-const derived = deriveAdmissibility(receipt, { toleratedSkipsPath: skipsPath });
+// The permission list decides AS BYTES. Not a path to bytes that were once these: the fetched, hash-checked
+// bytes themselves, so there is nothing between the check and the decision for anything to substitute.
+const derived = deriveAdmissibility(receipt, { toleratedSkipsBytes: fetchedSkips.bytes });
 if (derived.reasons.length > 0) {
   // The body itself says no. Whether the flag agrees changes only how this is reported - never the outcome.
   fail(admissible === true
@@ -436,6 +539,17 @@ const pin = {
     protected_ref: PROTECTED_REF,
     derived_reasons: derived.reasons,
   },
+  // WHAT THIS FETCH ACTUALLY RESTED ON, MEASURED AT RUN TIME. Every field above came out of this binary, so
+  // naming it is the difference between a pin that states its trust root and one that leaves a reader to
+  // assume GitHub. It describes THIS run's channel and not the receipt, which is why `compare-pin.mjs` names
+  // it as deliberately not compared: the candidate's committed pin was produced on another machine, so
+  // requiring the two to agree would refuse honest pins and establish nothing.
+  fetched_with: {
+    gh: GH,
+    gh_version: ghVersion,
+    expected_gh: expectedGh,
+    expected_gh_version: expectedGhVersion,
+  },
   receipt: {
     // The two fields this pin rests on, recorded so that the pin states the basis on which it was admitted
     // rather than leaving a reader to take it on trust.
@@ -449,10 +563,10 @@ const pin = {
     named_tests_summary: receipt.named_tests_summary ?? null,
   },
 };
-fs.rmSync(dir, { recursive: true, force: true });
-fs.rmSync(ruleDir, { recursive: true, force: true });
+// Nothing to clean up: this tool writes no temp file, so there is none to remove and none to race. The only
+// file it can write is the `--out` pin, and only on a run that may emit one.
 
-// THE STRUCTURAL GROUND, ENFORCED. Everything above has passed; on a run that is not the protected branch's,
+// THE PROTECTED-REF GUARD RAIL, ENFORCED. Everything above has passed; on a run that is not the protected branch's,
 // what that establishes is a REPORT and not a pin. The report goes to stderr in prose, so that nothing
 // downstream - a shell capturing stdout, a step that redirects it to a file, a reader skimming a log - can
 // take it for the pin channel, and no `--out` file is written. The exit status is non-zero because a caller
@@ -469,6 +583,7 @@ if (!mayPin) {
     + `${derived.reasons.length} derived reason(s)`);
   console.error(`ADVISORY   decided with ${MODULE_PATH} blob ${moduleBlob} and ${TOLERATED_SKIPS} blob `
     + `${toleratedSkipsBlob}, both fetched from ${PROTECTED_REF}`);
+  console.error(`ADVISORY   read through ${GH} (${ghVersion}), which is what all of the above rests on`);
   console.error('ADVISORY - no pin was emitted, and nothing above may be committed as one.');
   process.exit(4);
 }

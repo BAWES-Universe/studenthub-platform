@@ -23,13 +23,21 @@
 //   * a body every ground of which is satisfied, with the flag saying false or absent, is refused too, as the
 //     disagreement it is: a flag that understates is reported, not resolved in the pin's favour;
 //   * the predicate module is FETCHED from refs/heads/main over the contents API, verified against the blob
-//     id the API reports for it, and imported from outside the tree - so the module that decides is never a
-//     file of the checkout. On a pull_request event the checked-out code is the candidate's, so a consumer
-//     that imported its own copy would let a candidate supply the rule that judges it, and it would do so
-//     BEFORE the check meant to catch that ran, because ESM evaluates a dependency's top level at load;
-//   * and a run that is not the protected branch's emits no pin at all, whatever it found. That ground is
-//     structural rather than a check, which is what makes the import-time attack above unable to produce a
-//     pin even in principle.
+//     id the API reports for it, and imported from a `data:` URL built out of those verified bytes - so the
+//     module that decides is never a file of the checkout, and never a file at all. On a pull_request event
+//     the checked-out code is the candidate's, so a consumer that imported its own copy would let a candidate
+//     supply the rule that judges it, and it would do so BEFORE the check meant to catch that ran, because
+//     ESM evaluates a dependency's top level at load;
+//   * there is no filesystem path anywhere between the bytes that were hashed and the bytes that decide, so
+//     the time-of-check-to-time-of-use gap is closed by construction rather than made unlikely. The two ITEM 1
+//     cases below are the evidence: nothing is written into TMPDIR at all, and an adversary that owns TMPDIR
+//     and overwrites every file appearing in it - the review's own attack, with the guesswork removed - gets
+//     no pin;
+//   * the pin records the `gh` binary and version this fetch actually read the API through, because that
+//     binary, and not GitHub, is where every fact in a pin comes from;
+//   * and a run that is not the protected branch's emits no pin at all, whatever it found. That is a GUARD
+//     RAIL and is labelled one: it stops an accident, and a run that sets GITHUB_REF and GITHUB_EVENT_NAME
+//     itself gets past it. What binds is `verify-claim.yml`, dispatched from protected main.
 //
 // The suite reaches for no network and no git history: it runs under actions/checkout at fetch-depth 1. The
 // blob ids and contents it serves are computed from this repository's own files rather than pinned as
@@ -40,7 +48,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import test from 'node:test';
 
 const TOOL = path.join(import.meta.dirname, '..', 'fetch-receipt.mjs');
@@ -85,8 +93,8 @@ const ARTIFACT = { id: 77, name: 'verifier-receipt', expired: false,
 
 // THE PROTECTED BRANCH'S ANSWER FOR THE RULE ITSELF. The consumer no longer hashes a module it loaded off
 // disk: it FETCHES the rule and its permission list from refs/heads/main over the contents API, requires the
-// answer to be base64 with the decoded bytes hashing to the `sha` the API reports, and imports the result from
-// a temp directory outside the tree. So the healthy answer staged here carries CONTENT as well as a sha, both
+// answer to be base64 with the decoded bytes hashing to the `sha` the API reports, and imports those bytes
+// from a `data:` URL. So the healthy answer staged here carries CONTENT as well as a sha, both
 // computed from the very files this repository holds - an edit to the rule changes them here too rather than
 // leaving a stale constant behind, and a case that wants the fetch to disagree edits one of the two.
 const gitBlobId = bytes => crypto.createHash('sha1')
@@ -434,10 +442,12 @@ test('the fetch tool refuses a checkout whose rule disagrees with the rule that 
   assert.equal(result.stdout, '', 'a disagreeing checkout emits no pin');
 });
 
-// A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN. Every round before this one wrote that down in prose. It is
-// now the structural ground: on a pull_request event this tool, the rule it applies and every file it reads
-// are the candidate's, so no arrangement of them is evidence - which is what makes the import-time patch
-// above unable to produce a pin even in principle, rather than merely unable to fool one check.
+// A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN, AS A GUARD RAIL. On a pull_request event this tool, the rule
+// it applies and every file it reads are the candidate's, so no arrangement of them is evidence. These cases
+// assert the rail: each of these runs gets a labelled report and no pin. What the rail does NOT stop - a run
+// that sets the two variables itself - is measured in the ITEM 3 case further down, and what actually binds
+// is `verify-claim.yml` running from protected main. The import-time patch is not stopped by this at all; it
+// is stopped by the rule being fetched rather than imported from the tree.
 test('the fetch tool emits no pin on a run that is not the protected branch\'s, and says why', () => {
   for (const [what, env] of [
     ['a pull request', { GITHUB_REF: 'refs/pull/167/merge', GITHUB_EVENT_NAME: 'pull_request' }],
@@ -556,6 +566,233 @@ test('the fetch tool refuses an attestation that names another workflow, or a re
   const silent = runTool(stage({ zip: receipt, attestations: [envelope({ ref: null })] }));
   assert.match(silent.stderr, /names workflow ref null, not refs\/heads\/main/);
 });
+
+// ITEM 1. THE TIME-OF-CHECK-TO-TIME-OF-USE GAP, CLOSED BY CONSTRUCTION AND ATTACKED TO SHOW IT.
+//
+// The round before this one hashed the fetched rule IN MEMORY, wrote it to `mkdtemp(os.tmpdir() + ...)`, and
+// imported THAT PATH - and did the same with `tolerated-skips.json`, the verified zip and the extracted
+// receipt. `os.tmpdir()` is `TMPDIR`, an environment variable. A review set it, watched the directory for the
+// file to appear, replaced it between the write and the import, and got a pin over a red body with
+// `derived_reasons: []` naming main's real blob id as the rule that admitted it. The defence written beside
+// that code argued the mkdtemp NAME could not be predicted, which is the wrong property: the attack does not
+// predict the name, it watches for it.
+//
+// There is now no name to watch. The rule is imported from a `data:` URL built out of the verified bytes, the
+// permission list is handed to it as bytes, and the archive goes to python3 on stdin with the receipt coming
+// back on stdout. The two cases below are the two halves of that claim: nothing is written, and an adversary
+// that would have won against the old shape does not win against this one.
+const attackerTmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'attacker-tmpdir-'));
+
+test('ITEM 1: the tool writes NOTHING into TMPDIR, so there is no file for an attacker to swap', () => {
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  const tmp = attackerTmp();
+  const result = runTool(dir, { env: { ...PROTECTED_RUN, TMPDIR: tmp } });
+  assert.equal(result.code, 0, `expected success, got: ${result.stderr}`);
+
+  // THE EVIDENCE, AND IT IS AN OBSERVATION RATHER THAN AN ARGUMENT: the directory the tool would have used is
+  // empty afterwards. Not "held briefly", not "named unpredictably" - never written to at all. A gap needs
+  // two moments and a shared object between them, and there is no object.
+  assert.deepEqual(fs.readdirSync(tmp), [],
+    `the tool left files in TMPDIR: ${fs.readdirSync(tmp).join(', ')}`);
+
+  // And the pin it emitted is the honest one, decided with main's own bytes.
+  const pin = JSON.parse(result.stdout);
+  assert.equal(pin.admissibility.module_blob, blobOf(MODULE));
+  assert.deepEqual(pin.admissibility.derived_reasons, []);
+});
+
+test('ITEM 1: an adversary holding TMPDIR and replacing every file that appears still gets no pin of its own',
+  () => {
+    // THE ATTACK, RUN. A process the test controls owns `TMPDIR` and, for as long as the tool runs, walks it
+    // in a tight loop replacing EVERY file it finds - whatever its name, however it was created - with a
+    // module that admits anything and a permission list that authorizes anything. This is the review's attack
+    // with the guesswork removed: it does not have to predict the mkdtemp name, and it does not have to win a
+    // race against one write, because it overwrites continuously for the whole life of the process.
+    //
+    // THE ARENA IS LAID OUT SO THAT NOTHING HAS TO BE CLEANED UP WHILE THE ATTACKER IS RUNNING. `arena/tool`
+    // is what the tool gets as TMPDIR and `arena/bait` holds this test's liveness probe; the attacker walks
+    // the arena, so it owns both. Removing the bait mid-attack would be this test racing its own adversary.
+    const dir = stage({ zip: receipt, attestations: [envelope()] });
+    const arena = attackerTmp();
+    const tmp = path.join(arena, 'tool');
+    fs.mkdirSync(tmp);
+    const watcher = path.join(dir, 'attacker.cjs');
+    fs.writeFileSync(watcher, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const PERMISSIVE_RULE = 'export const deriveAdmissibility = () => ({ admissible: true, reasons: [] });\\n';
+    const PERMISSIVE_LIST = JSON.stringify({ authorized: [{ test: 'anything at all',
+      reason: 'the attacker says so', authorized_by: 'the attacker' }] });
+    const until = Date.now() + 20000;
+    const walk = where => {
+      for (const entry of fs.readdirSync(where, { withFileTypes: true })) {
+        const full = path.join(where, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        try {
+          fs.writeFileSync(full, entry.name.endsWith('.json') ? PERMISSIVE_LIST : PERMISSIVE_RULE);
+        } catch (error) { /* it vanished under us; keep going */ }
+      }
+    };
+    while (Date.now() < until) {
+      try { walk(process.argv[2]); } catch (error) { /* the directory may not exist yet */ }
+    }
+  `);
+    const attacker = spawn(process.execPath, [watcher, arena], { stdio: 'ignore', detached: true });
+    try {
+      // THE ATTACKER IS LIVE, ASSERTED RATHER THAN HOPED FOR. Without this, a test that spawned a watcher
+      // which crashed on its first line would pass for the wrong reason and report an attack that never ran.
+      // A file of this test's own, named exactly what the tool's used to be, is overwritten within seconds.
+      const bait = path.join(arena, 'bait', 'admissibility.mjs');
+      fs.mkdirSync(path.dirname(bait), { recursive: true });
+      fs.writeFileSync(bait, '// the honest rule, as the tool would have written it\n');
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline
+        && !fs.readFileSync(bait, 'utf8').includes('admissible: true')) { /* let it work */ }
+      assert.match(fs.readFileSync(bait, 'utf8'), /admissible: true/,
+        'the attacker did not overwrite a file placed where the tool\'s would have gone, so the case below '
+        + 'would prove nothing: fix the watcher rather than the assertion');
+
+      // The body the attacker wants admitted: RED, with the authority absent on main. Its own recorded flag
+      // says true, so the only thing standing between it and a pin is the rule that decides.
+      const red = JSON.parse(JSON.stringify(receipt));
+      red.conclusion = { ...red.conclusion, verdict: 'success', suite_state: 'red' };
+      red.suite = { ...red.suite, state: 'red', not_ok: 2, ok: 8, exit: '1',
+        failing_tests: ['a test the attacker needed to pass', 'another'] };
+      red.candidate = { ...red.candidate,
+        authority_identity: [{ path: '.github/verifier-receipt', protected_sha: null, change: 'none' }] };
+      red.provenance = { admissible_as_pin: true, inadmissibility_reasons: [] };
+
+      const attacked = stage({ zip: red, attestations: [envelope()] });
+      const result = runTool(attacked, { env: { ...PROTECTED_RUN, TMPDIR: tmp } });
+
+      assert.notEqual(result.code, 0, 'the attacked run must emit no pin');
+      assert.equal(result.stdout, '', `a pin came out of the attacked run: ${result.stdout}`);
+      // Refused on the grounds the BODY says no on - which is only possible if main's rule decided, not the
+      // attacker's. The attacker's rule returns `{ admissible: true, reasons: [] }` and would have said
+      // nothing at all.
+      assert.match(result.stderr, /says provenance\.admissible_as_pin=true, but its own body says otherwise/);
+      assert.match(result.stderr, /the measured suite reports 2 failing test\(s\) out of 10/);
+      assert.match(result.stderr, /the receipt authority is absent on main/);
+      assert.match(result.stderr, /the runner that measured this suite exited "1", not "0"/);
+
+      // And the honest world, run under the same adversary, still produces the honest pin - so the attack is
+      // not merely failing to help, it is failing to reach anything.
+      const honest = runTool(dir, { env: { ...PROTECTED_RUN, TMPDIR: tmp } });
+      assert.equal(honest.code, 0, `expected success under attack, got: ${honest.stderr}`);
+      const pin = JSON.parse(honest.stdout);
+      assert.equal(pin.admissibility.module_blob, blobOf(MODULE));
+      assert.equal(pin.admissibility.tolerated_skips_blob, blobOf(SKIPS));
+      assert.deepEqual(pin.admissibility.derived_reasons, []);
+      // The TMPDIR the tool was handed, under an adversary that owned it throughout, is still empty: there
+      // was never a file there for the attack to reach.
+      assert.deepEqual(fs.readdirSync(tmp), [],
+        'the tool still wrote nothing the attacker could have held');
+    } finally {
+      try { process.kill(-attacker.pid); } catch (error) { attacker.kill('SIGKILL'); }
+    }
+  });
+
+// ITEM 2. THE TRUST ROOT, MEASURED AND NAMED. `api()` is `gh api` in a subprocess, so every fact in a pin came
+// out of whatever binary answered to `gh` - not out of GitHub. The tool cannot make that channel trustworthy;
+// what it can do is stop assuming it. The binary is resolved on PATH once, its version is read back, both
+// travel in the pin, and a run that says which binary it expects gets a refusal when it sees another.
+test('ITEM 2: the pin records the gh binary and version the fetch actually rested on', () => {
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  const result = runTool(dir);
+  assert.equal(result.code, 0, `expected success, got: ${result.stderr}`);
+  const pin = JSON.parse(result.stdout);
+  // The ABSOLUTE path PATH resolved, which is the staged stub and not the name `gh`.
+  assert.equal(pin.fetched_with.gh, path.join(dir, 'gh'));
+  assert.equal(pin.fetched_with.gh_version, 'gh version 2.63.2 (2025-01-01)');
+  assert.equal(pin.fetched_with.expected_gh, null);
+  assert.equal(pin.fetched_with.expected_gh_version, null);
+
+  // A different binary on PATH is a different recorded fact, which is the whole point of measuring it.
+  const other = stage({ zip: receipt, attestations: [envelope()] });
+  fs.writeFileSync(path.join(other, 'gh-version.txt'), 'gh version 1.0.0 (2020-01-01)\n');
+  const elsewhere = JSON.parse(runTool(other).stdout);
+  assert.equal(elsewhere.fetched_with.gh, path.join(other, 'gh'));
+  assert.equal(elsewhere.fetched_with.gh_version, 'gh version 1.0.0 (2020-01-01)');
+});
+
+test('ITEM 2: a run that says which gh it expects is refused when PATH resolves another', () => {
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+
+  // The expectation is the RUN's to state, so stating the right one changes nothing.
+  const agreed = runTool(dir, { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_GH: path.join(dir, 'gh') } });
+  assert.equal(agreed.code, 0, `expected success, got: ${agreed.stderr}`);
+  assert.equal(JSON.parse(agreed.stdout).fetched_with.expected_gh, path.join(dir, 'gh'));
+
+  const wrongPath = runTool(dir, { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_GH: '/usr/bin/gh' } });
+  assert.notEqual(wrongPath.code, 0, 'a gh that is not the expected one must be refused');
+  assert.match(wrongPath.stderr, /this run expects its `gh` at "\/usr\/bin\/gh" \(VERIFIER_EXPECTED_GH\)/);
+  assert.match(wrongPath.stderr, /is not the one this run says it trusts/);
+  assert.equal(wrongPath.stdout, '', 'an unexpected gh emits no pin');
+
+  const wrongVersion = runTool(dir,
+    { env: { ...PROTECTED_RUN, VERIFIER_EXPECTED_GH_VERSION: 'gh version 9.9.9' } });
+  assert.notEqual(wrongVersion.code, 0, 'a gh of the wrong version must be refused');
+  assert.match(wrongVersion.stderr, /expects gh "gh version 9\.9\.9" \(VERIFIER_EXPECTED_GH_VERSION\)/);
+  assert.match(wrongVersion.stderr, /reports "gh version 2\.63\.2 \(2025-01-01\)"/);
+  assert.equal(wrongVersion.stdout, '', 'an unexpected gh version emits no pin');
+});
+
+test('ITEM 2: a gh this run cannot resolve, or that will not say what it is, is a refusal', () => {
+  // NO `gh` ON PATH AT ALL. The tool is spawned through an absolute node path so that emptying PATH of `gh`
+  // does not also empty it of the interpreter.
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'no-gh-'));
+  const spawned = (options) => {
+    try {
+      return { code: 0, stdout: execFileSync(process.execPath, [TOOL, '--run', '4242', '--repo', REPO],
+        { encoding: 'utf8', ...options }), stderr: '' };
+    } catch (error) {
+      return { code: error.status ?? 1, stdout: error.stdout?.toString() ?? '',
+        stderr: error.stderr?.toString() ?? '' };
+    }
+  };
+  const unresolvable = spawned({ env: { ...process.env, ...PROTECTED_RUN, PATH: bare } });
+  assert.notEqual(unresolvable.code, 0, 'a run with no gh on PATH must be refused');
+  assert.match(unresolvable.stderr, /no executable named `gh` is on this run's PATH/);
+  assert.match(unresolvable.stderr, /has no trust root to rest a pin on/);
+  assert.equal(unresolvable.stdout, '', 'a run with no gh emits no pin');
+
+  // A `gh` that is there but not executable is not on PATH for this purpose either, and says the same thing.
+  const notExecutable = fs.mkdtempSync(path.join(os.tmpdir(), 'unexecutable-gh-'));
+  fs.writeFileSync(path.join(notExecutable, 'gh'), '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(path.join(notExecutable, 'gh'), 0o644);
+  assert.match(spawned({ env: { ...process.env, ...PROTECTED_RUN, PATH: notExecutable } }).stderr,
+    /no executable named `gh` is on this run's PATH/);
+
+  // A `gh` that will not state its version cannot be identified in the pin that would rest on it.
+  const silent = stage({ zip: receipt, attestations: [envelope()] });
+  fs.writeFileSync(path.join(silent, 'gh-version.txt'), '');
+  const mute = runTool(silent);
+  assert.notEqual(mute.code, 0, 'a gh that will not identify itself must be refused');
+  assert.match(mute.stderr, /would not state its version/);
+  assert.match(mute.stderr, /cannot be identified in the pin that rests on it/);
+  assert.equal(mute.stdout, '', 'an unidentifiable gh emits no pin');
+});
+
+// ITEM 3. THE PROTECTED-REF CHECK IS A GUARD RAIL, AND THIS IS THE MEASUREMENT THAT SAYS SO. The header used
+// to call it "THE STRUCTURAL GROUND ... It is now a refusal", which overstates a `process.env` read: a
+// candidate edits the workflow that sets those variables. The refusal is kept because a rail against accident
+// is worth having; what is corrected is the claim made about it.
+test('ITEM 3: the protected-ref check stops an accident, and a run that sets the variables itself gets past it',
+  () => {
+    const dir = stage({ zip: receipt, attestations: [envelope()] });
+    const honestPullRequest = runTool(dir,
+      { env: { GITHUB_REF: 'refs/pull/167/merge', GITHUB_EVENT_NAME: 'pull_request' } });
+    assert.equal(honestPullRequest.code, 4, 'an honest pull_request run exits 4');
+    assert.equal(honestPullRequest.stdout, '', 'and emits no pin');
+
+    // The same run, with the two variables set to main's values by the workflow that invokes the tool. This
+    // is not a defect being reported as one: it is the measurement behind calling this a guard rail, and the
+    // reason the header now says what actually binds is `verify-claim.yml` running from protected main.
+    const sameRunLying = runTool(dir, { env: PROTECTED_RUN });
+    assert.equal(sameRunLying.code, 0, 'a run that sets the variables itself gets a pin');
+    assert.notEqual(sameRunLying.stdout, '', 'which is exactly what a guard rail does not stop');
+  });
 
 // THE REAL RECEIPT. Every case above is written here; this one is not. See the fixture's README.md for what
 // it is, what three keys were removed from it, and the digests GitHub reported for the artifact it came in.

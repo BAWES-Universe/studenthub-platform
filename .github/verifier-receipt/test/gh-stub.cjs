@@ -9,6 +9,22 @@ const path = require('node:path');
 const here = __dirname;
 const answers = JSON.parse(fs.readFileSync(path.join(here, 'answers.json'), 'utf8'));
 const args = process.argv.slice(2);
+
+// THE TOOL NOW ASKS THIS BINARY WHAT IT IS, because the pin records the trust root it read the API through
+// rather than assuming GitHub. A stub that would not answer would be a stub the tool refuses - which is
+// itself a case, so the version can be steered from a fixture file when one is written.
+if (args[0] === '--version') {
+  const file = path.join(here, 'gh-version.txt');
+  if (fs.existsSync(file)) {
+    const stated = fs.readFileSync(file, 'utf8');
+    if (stated === '') process.exit(1);
+    process.stdout.write(stated);
+    process.exit(0);
+  }
+  process.stdout.write('gh version 2.63.2 (2025-01-01)\nhttps://github.com/cli/cli/releases/tag/v2.63.2\n');
+  process.exit(0);
+}
+
 const endpoint = args.find(argument => argument.startsWith('/'));
 
 if (endpoint && Object.prototype.hasOwnProperty.call(answers, endpoint)) {

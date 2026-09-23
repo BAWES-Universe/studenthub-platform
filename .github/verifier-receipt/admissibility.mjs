@@ -11,7 +11,15 @@
 //
 // WHAT IT READS. The receipt BODY, and nothing else. No API, no environment, no file of the workflow, no
 // import from the emitter. The one thing it reads off disk is `tolerated-skips.json`, which is this rule's
-// own permission list and ships beside it.
+// own permission list and ships beside it - and a caller that has already verified those bytes may hand them
+// over DIRECTLY, so that the decision rests on the bytes that were checked rather than on a second read of a
+// path. See `loadToleratedSkips` below and THE BYTES THAT DECIDE in fetch-receipt.mjs.
+//
+// THIS MODULE IS LOADED TWO WAYS, AND BOTH HAVE TO WORK. The emitter imports it as a file beside itself; the
+// consumer imports the bytes the protected branch served, from a `data:` URL, with no path anywhere in the
+// chain. A `data:` module has no `import.meta.dirname`, so the default permission-list path below is null
+// there - which is correct rather than unfortunate: a module loaded from bytes has no directory to resolve a
+// sibling against, and the consumer passes the verified bytes in instead.
 //
 // A FIELD THE RULE READS THAT IS ABSENT IS A REASON, NEVER A SKIP. An absent field is not a satisfied
 // condition: a receipt that does not say whether its suite was green has not said its suite was green.
@@ -22,8 +30,11 @@ import path from 'node:path';
 export const PROTECTED_REF = 'main';
 // Named only in ground (d)'s wording, and only when the receipt itself does not say which workflow it is.
 export const WORKFLOW_PATH = '.github/workflows/verifier-receipt.yml';
-// The authorized-skip list: an explicit, NAMED allow-list. Permission, not a hint.
-export const TOLERATED_SKIPS_PATH = path.join(import.meta.dirname, 'tolerated-skips.json');
+// The authorized-skip list: an explicit, NAMED allow-list. Permission, not a hint. Null when this module was
+// loaded from bytes rather than from a file, because then there is no directory to resolve it against.
+export const TOLERATED_SKIPS_PATH = import.meta.dirname === undefined
+  ? null
+  : path.join(import.meta.dirname, 'tolerated-skips.json');
 export const TOLERATED_SKIPS_NAME = '.github/verifier-receipt/tolerated-skips.json';
 
 // The emitter's own listing, so a reason this file writes reads like the reasons it replaced.
@@ -37,10 +48,21 @@ const quote = value => JSON.stringify(value ?? null);
 // a list that cannot be read authorizes nothing either. Both are reported as a defect of the list rather than
 // silently treated as "no skips are authorized", because a rule whose permission file has gone missing is a
 // rule that is not being applied as written.
-export const loadToleratedSkips = (file = TOLERATED_SKIPS_PATH) => {
+//
+// THE SOURCE IS EITHER A PATH OR THE BYTES THEMSELVES, and a caller that has already verified bytes hands
+// them over rather than a path to them. Reading a path a second time is a time-of-check-to-time-of-use gap
+// wherever the first read was the one that was checked; a Buffer has no such gap, because there is nothing
+// left to re-read. A string is still a path, so every existing caller keeps its meaning.
+export const loadToleratedSkips = (source = TOLERATED_SKIPS_PATH) => {
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (source === null || source === undefined) {
+      throw new Error('this rule was given no authorized-skip list and was loaded from bytes, so it has no '
+        + 'default path to resolve one against');
+    }
+    parsed = JSON.parse(ArrayBuffer.isView(source)
+      ? Buffer.from(source).toString('utf8')
+      : fs.readFileSync(source, 'utf8'));
   } catch (error) {
     return { names: new Set(), entries: [], problem: `the authorized-skip list ${TOLERATED_SKIPS_NAME} could `
       + `not be read (${error.message}), so no skip in this receipt can be judged authorized` };
@@ -77,7 +99,7 @@ const readCount = (holder, field, reasons, where) => {
 // else - a failing test, a cancelled test, a `todo`, a skip nobody authorized by name, or any other exclusion
 // the receipt records and this rule does not model - makes the receipt inadmissible. A red suite cannot
 // establish an admissible pin, however far outside a claim's named set its failures fall.
-const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
+const suiteIsClean = (receipt, reasons, toleratedSkips) => {
   const suite = receipt?.suite;
   if (!suite || typeof suite !== 'object' || Array.isArray(suite)) {
     reasons.push(`this receipt records no \`suite\` block (${quote(suite === undefined ? null : typeof suite)}), `
@@ -94,6 +116,59 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
       ? `this receipt records no ${where}, so nothing in it says the measured suite was green`
       : `${where} is ${quote(state)}, not "green": a suite that is not green cannot establish an admissible pin, `
         + 'however far outside the claim\'s named set its failures fall');
+  }
+
+  // NEXT-2. THE RUNNER'S OWN EXIT CODE, WHICH `suite.state` IS DERIVED FROM AND WHICH NOTHING USED TO READ.
+  //
+  // The emitter computes the state it records as `const suiteRed = exitCode !== 0 || unfinished > 0`
+  // (emit-receipt.mjs), and writes BOTH `suite.exit` and `suite.state` out of that one quantity. So a body
+  // carrying `exit: "1"` beside `state: "green"` is not a body any run of the emitter can produce: it is D7's
+  // shape exactly, one field over - a derived field flipped while the field it was derived from was left
+  // where it was. Reading the source of the derivation costs one comparison and closes it. The emitter always
+  // writes this field and refuses a capture whose exit code is not numeric, so requiring it here asks for
+  // nothing a real receipt does not already carry, and an absent exit is a reason on the standing rule that an
+  // absent field is not a satisfied condition.
+  const exit = suite.exit;
+  if (exit === undefined || exit === null || exit === '') {
+    reasons.push(`this receipt records no suite.exit (${quote(exit === undefined ? null : exit)}), so nothing `
+      + 'in it says what the runner that measured it exited, and suite.state is derived from exactly that');
+  } else if (String(exit) !== '0') {
+    reasons.push(`the runner that measured this suite exited ${quote(String(exit))}, not "0": a run the runner `
+      + 'reported as failing cannot establish an admissible pin, whatever suite.state records beside it');
+  }
+
+  // NEXT-1. THE COUNTS MUST RECONCILE WHEN THE BODY CARRIES THEM.
+  //
+  // `suite.tests` is the runner's total and the five category counts partition it, so a body claiming ten
+  // tests while accounting for three has not said what happened to the other seven - and every exclusion
+  // counter reading zero is precisely how such a body passes every check above.
+  //
+  // AND IT IS CHECKED ONLY WHEN ALL SIX NUMBERS ARE READABLE, which is the brief's "when the body carries
+  // them" and is stated here because it is a LIMIT and not a subtlety. `not_ok`, `cancelled`, `skipped` and
+  // `todo` are each required in their own right further down, so a body omitting one of those is refused
+  // anyway and a second sentence about it would say nothing new. `tests` and `ok` are NOT required anywhere -
+  // a body that omits either escapes this ground rather than failing it. Requiring them is a new refusal on
+  // fields nothing reads today, which is a wider change than this round was asked for; it is named here so
+  // that the next reader finds the gap written down instead of assuming it closed.
+  //
+  // MEASURED RATHER THAN ASSUMED, because the arithmetic is the runner's and not this file's. On node
+  // v22.22.3, a file with one passing, one failing, one timing-out, one skipped and one `todo` test reports:
+  //   # tests 5 / # pass 1 / # fail 1 / # cancelled 1 / # skipped 1 / # todo 1
+  // so `cancelled` is a category of its own that sums into `tests` alongside the other four, and it is in the
+  // sum below. This repository's real 3649-test receipt satisfies the same identity (3581 + 60 + 0 + 8 + 0),
+  // which is why requiring it costs nothing.
+  const counts = ['tests', 'ok', 'not_ok', 'cancelled', 'skipped', 'todo']
+    .map(field => (typeof suite[field] === 'number' && Number.isInteger(suite[field]) && suite[field] >= 0
+      ? suite[field] : null));
+  if (counts.every(value => value !== null)) {
+    const [tests, ok, notOk, cancelledCount, skippedCount, todoCount] = counts;
+    const accounted = ok + notOk + cancelledCount + skippedCount + todoCount;
+    if (accounted !== tests) {
+      reasons.push(`this receipt records ${tests} test(s) in suite.tests and accounts for ${accounted} of them `
+        + `(ok ${ok} + not_ok ${notOk} + cancelled ${cancelledCount} + skipped ${skippedCount} + todo `
+        + `${todoCount}), so ${Math.abs(tests - accounted)} point(s) are in neither the total nor the `
+        + 'categories that partition it: a suite whose own counts do not add up has not said what it measured');
+    }
   }
 
   const failing = readCount(suite, 'not_ok', reasons, 'suite');
@@ -157,7 +232,7 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
   //
   // The union is by name, so two records of the same skip count once. That can only LOWER the number of skips
   // this rule can name against `suite.skipped`, which is the closed direction: an unnameable skip is a reason.
-  const authorized = loadToleratedSkips(toleratedSkipsPath);
+  const authorized = loadToleratedSkips(toleratedSkips);
   const skipped = readCount(suite, 'skipped', reasons, 'suite');
   const namedSkips = [...new Set([
     ...(Array.isArray(suite.skipped_tests) ? suite.skipped_tests.map(String) : []),
@@ -203,6 +278,47 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
     reasons.push(`${named.length} named test(s) are recorded \`${status}\` rather than passing, which is an `
       + `exclusion this rule does not tolerate: ${listing(named.map(quote))}`);
   }
+
+  // NEXT-3. THE SUMMARY AND THE ROWS IT SUMMARISES, WHICH COULD SAY DIFFERENT THINGS AND WERE NEVER COMPARED.
+  //
+  // The emitter builds `named_tests_summary` by counting `named_tests` - one array, counted once - so the two
+  // can only disagree in a body somebody wrote. The blocks above read the ROWS, so a summary claiming
+  // failures the rows do not carry slipped past everything: a body saying `fail: 4` over a single passing row
+  // was admissible.
+  //
+  // THE DISAGREEMENT IS REFUSED BY NAME, AND NO SIDE IS CHOSEN. This rule does not decide that the rows are
+  // right and the summary is forged, or the reverse; it refuses a receipt that says two things about the same
+  // measurement, which is the only honest answer when nothing in the body settles which is which.
+  //
+  // ONLY WHAT THE SUMMARY ACTUALLY STATES IS COMPARED. A summary that omits a key has not made a claim about
+  // it, and inventing a claim of zero on its behalf would be reading absence as a statement - the thing this
+  // file refuses to do everywhere else. Omitting a key hides nothing: the rows themselves are read directly by
+  // every block above, so a summary cannot conceal a bad row by staying silent about it.
+  const summary = receipt?.named_tests_summary;
+  if (summary && typeof summary === 'object' && !Array.isArray(summary)) {
+    const count = status => rows.filter(row => String(row?.status) === status).length;
+    const observed = [
+      ['named', rows.length, 'row(s) in named_tests'],
+      ['distinct_names', new Set(rows.map(row => String(row?.name))).size, 'distinct name(s) among those rows'],
+      ['pass', count('pass'), '`pass` row(s)'],
+      ['fail', count('fail'), '`fail` row(s)'],
+      ['absent', count('absent'), '`absent` row(s)'],
+      ['skipped', count('skip'), '`skip` row(s)'],
+      ['todo', count('todo'), '`todo` row(s)'],
+      ['suite_points', count('suite'), '`suite` row(s)'],
+      ['misplaced', count('misplaced'), '`misplaced` row(s)'],
+      ['unbound', count('unbound'), '`unbound` row(s)'],
+      ['unclaimed', count('unclaimed'), '`unclaimed` row(s)'],
+    ];
+    for (const [field, actual, what] of observed) {
+      const stated = summary[field];
+      if (stated === undefined || stated === null) continue;
+      if (typeof stated === 'number' && Number.isInteger(stated) && stated === actual) continue;
+      reasons.push(`named_tests_summary.${field} is ${quote(stated)} and named_tests carries ${actual} `
+        + `${what}: a receipt whose summary and whose rows describe different measurements is refused on the `
+        + 'disagreement, because nothing in it says which of the two is the forgery');
+    }
+  }
 };
 
 // THE PREDICATE. `reasons` empty is the only admissible state; `admissible` is exactly `reasons.length === 0`.
@@ -210,7 +326,12 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
 // The grounds are checked in a fixed order - the verdict, the suite, the authority, the event, the branch, the
 // origin of the authority files, and whether that authority commit is on main - so that two readers of the same
 // receipt produce the same list in the same order and can be compared literally.
-export const deriveAdmissibility = (receipt, { toleratedSkipsPath = TOLERATED_SKIPS_PATH } = {}) => {
+//
+// `toleratedSkipsBytes` wins over `toleratedSkipsPath` when both are given, and a caller that has verified
+// bytes passes those: see THE BYTES THAT DECIDE in fetch-receipt.mjs for why a second read of a path is not
+// the same thing as the bytes that were checked.
+export const deriveAdmissibility = (receipt,
+  { toleratedSkipsPath = TOLERATED_SKIPS_PATH, toleratedSkipsBytes = null } = {}) => {
   const reasons = [];
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
     return { admissible: false, reasons: ['this is not a receipt object, so nothing in it permits a pin'] };
@@ -231,7 +352,7 @@ export const deriveAdmissibility = (receipt, { toleratedSkipsPath = TOLERATED_SK
   }
 
   // (b) THE SUITE STATE, by the rule in section 2 above.
-  suiteIsClean(receipt, reasons, toleratedSkipsPath);
+  suiteIsClean(receipt, reasons, toleratedSkipsBytes ?? toleratedSkipsPath);
 
   // (c) THE AUTHORITY THE CANDIDATE WAS COMPARED AGAINST. A listing cannot distinguish "the authority is
   // intact" from "the authority is nowhere": it answers null on the protected branch, answers null at a
