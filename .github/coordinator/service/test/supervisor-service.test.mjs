@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url';
@@ -184,4 +185,17 @@ test('SHU251 service entry point fails closed when secret environment is missing
   assert.match(result.stderr, /AssertionError \[ERR_ASSERTION\]: SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes/);
   assert.equal(fs.existsSync(params.stateDir), false);
   assert.equal(fs.existsSync(params.socketPath), false);
+});
+
+// The tick's failure path must name its cause: a bare token leaves a stalled run
+// unexplainable from its own journal (v1 demonstration, attempt 1).
+test('SHU251 tick failure names its cause on stderr', () => {
+  // The activation path is pinned to ACTIVATION_FILE, so any other value throws
+  // inside the tick's own try block.
+  const tick = fileURLToPath(new URL('../coordinator-tick.mjs', import.meta.url));
+  const run = spawnSync(process.execPath, [tick, '--activation', '/dev/null/not-the-activation.json'], { encoding: 'utf8' });
+  assert.equal(run.status, 1);
+  const at = run.stderr.indexOf('ACT_COORDINATOR_TICK_FAILED');
+  assert.notEqual(at, -1, 'the token must still be printed');
+  assert.match(run.stderr.slice(at), /ACT_ACTIVATION_PATH/, 'the cause must follow the token');
 });
