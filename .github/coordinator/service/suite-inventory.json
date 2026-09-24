@@ -52,6 +52,7 @@
     ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
     ".github/coordinator/service/test/suite-runner-spec.test.mjs",
     ".github/coordinator/service/test/supervisor-service.test.mjs",
+    ".github/coordinator/service/test/tick-failure-reporting.test.mjs",
     ".github/coordinator/test/activation.test.mjs",
     ".github/coordinator/test/adapter.test.mjs",
     ".github/coordinator/test/attempt-workspace.test.mjs",
@@ -1842,6 +1843,7 @@
     "SHU251 occupied socket refuses startup before recovery",
     "SHU251 mutation: missing or short secret refuses startup before state and readiness",
     "SHU251 service entry point fails closed when secret environment is missing",
+    "TICK_FAILURE: a thrown error names its cause on stderr",
     "a fully wired activation passes and names no unmet requirement",
     "activation fails closed when codex_sandbox_network is missing",
     "activation fails closed when codex_sandbox_network is missing",
@@ -16154,6 +16156,10 @@
           "name": "linux_proc"
         }
       ]
+    },
+    {
+      "name": "TICK_FAILURE: a thrown error names its cause on stderr",
+      "capabilities": []
     },
     {
       "name": "a fully wired activation passes and names no unmet requirement",
