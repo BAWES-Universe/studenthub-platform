@@ -13,6 +13,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseReceiptsFromComments } from "../../reconcile.mjs";
+import { withBatchedComments } from "./linear-board.mjs";
 
 // The head the WRITE binds to, and the head a revision moves the branch to.
 export const SHA_INPUT = "a".repeat(40);
@@ -69,7 +70,7 @@ export function createEpisodeHarness({
   const linearFetch = async (url, opts) => {
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
     const { query, variables } = JSON.parse(opts.body);
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(nodes, () => comments) } });
     if (query.includes("CoordinatorIncidentComments")) {
       return respond({ issue: { comments: { nodes: [...comments] } } });
     }

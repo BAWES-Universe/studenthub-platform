@@ -1298,6 +1298,41 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
 // I/O behind injectable seams (never called in dry-run mode)
 // ---------------------------------------------------------------------------
 
+// A rate-limited answer that states no reset is held for the whole budget
+// window Linear enforces (requests per 1 hour), because that is the longest a
+// refusal can last. The number is REPORTED, never slept on: the tick exits and
+// the next scheduled tick re-reads durable state.
+export const LINEAR_RATE_LIMIT_FALLBACK_SECONDS = 3600;
+
+function headerNumber(res, name) {
+  const raw = res?.headers?.get?.(name);
+  if (raw === null || raw === undefined || String(raw).trim() === "") return null;
+  const value = Number(String(raw).trim());
+  return Number.isFinite(value) ? value : null;
+}
+
+// isLinearRateLimited — Linear reports an exhausted budget either as HTTP 429 or
+// as a 200/400 GraphQL error carrying RATELIMITED. Both are the same condition.
+export function isLinearRateLimited(res, body) {
+  if (res?.status === 429) return true;
+  return (body?.errors ?? []).some((error) =>
+    String(error?.extensions?.code ?? "").toUpperCase() === "RATELIMITED" ||
+    /rate limit/i.test(String(error?.message ?? "")));
+}
+
+// linearRateLimitSeconds — the wait Linear ITSELF stated, in seconds: the
+// Retry-After header, else the reset timestamp (epoch ms) it publishes, else the
+// retryAfter carried on the GraphQL error, else the documented window above.
+export function linearRateLimitSeconds(res, body, now = Date.now()) {
+  const retryAfter = headerNumber(res, "retry-after");
+  if (retryAfter !== null && retryAfter >= 0) return Math.ceil(retryAfter);
+  const reset = headerNumber(res, "x-ratelimit-requests-reset");
+  if (reset !== null && reset > 0) return Math.max(0, Math.ceil((reset - now) / 1000));
+  const extension = Number(body?.errors?.[0]?.extensions?.retryAfter);
+  if (Number.isFinite(extension) && extension >= 0) return Math.ceil(extension);
+  return LINEAR_RATE_LIMIT_FALLBACK_SECONDS;
+}
+
 // sendLinear — single injectable GraphQL seam for ALL Linear reads/writes. Tests
 // substitute fetchImpl; production uses global fetch. Token name only, no value.
 export async function sendLinear(query, variables, token, fetchImpl = fetch) {
@@ -1315,6 +1350,15 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
     body: JSON.stringify({ query, variables }),
   });
   const body = await res.json().catch(() => null);
+  // A rate limit is NOT a read failure to be retried card by card: the whole
+  // workspace budget is spent, so it is raised as its own condition and the tick
+  // HOLDs on it (see main) instead of throwing the run away.
+  if (isLinearRateLimited(res, body)) {
+    const err = new Error(body?.errors?.[0]?.message ?? `Linear rate limit (HTTP ${res.status})`);
+    err.code = "LINEAR_RATE_LIMITED";
+    err.retryAfterSeconds = linearRateLimitSeconds(res, body);
+    throw err;
+  }
   if (!res.ok || body?.errors?.length) {
     const err = new Error(body?.errors?.[0]?.message ?? `Linear HTTP ${res.status}`);
     err.code = `LINEAR_HTTP_${res.status}`;
@@ -1323,9 +1367,24 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
   return body.data;
 }
 
+// Comments travel WITH the board read. One request per issues page carries every
+// card's receipts, instead of one request per card per tick (that shape spent the
+// workspace's whole hourly budget and left the board unreadable). The page size is
+// the follow-up threshold too: a page that comes back full is the only card that
+// costs an extra request (see readBatchedComments).
+//
+// COMPLEXITY: Linear scores a single query at most 10,000 points, and "any
+// connection multiplies its children's points based on the given pagination
+// argument". Nesting a 50-comment connection inside the board read therefore has
+// to be paid for out of the issues page, so that page halves from 100 to 50 and
+// the batched query stays CHEAPER than the unbatched one that runs today — one
+// extra issues page per tick is nothing against one request per card per tick.
+export const LINEAR_ISSUE_PAGE = 50;
+export const LINEAR_ISSUE_COMMENT_PAGE = 50;
+
 export const LINEAR_ISSUES_QUERY = `
   query CoordinatorIssues($team: String!, $after: String) {
-    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: 100, after: $after) {
+    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: ${LINEAR_ISSUE_PAGE}, after: $after) {
       nodes {
         id
         identifier
@@ -1341,6 +1400,10 @@ export const LINEAR_ISSUES_QUERY = `
             type
             relatedIssue { identifier state { name } }
           }
+        }
+        comments(first: ${LINEAR_ISSUE_COMMENT_PAGE}, orderBy: createdAt) {
+          nodes { body createdAt user { id displayName } }
+          pageInfo { hasNextPage endCursor }
         }
       }
       pageInfo { hasNextPage endCursor }
@@ -1360,6 +1423,18 @@ export const LINEAR_ISSUE_COMMENTS_QUERY = `
     issue(id: $issueId) {
       comments(first: 100, orderBy: createdAt) {
         nodes { body createdAt user { id displayName } }
+      }
+    }
+  }`;
+
+// The continuation of a batched comment page. Only a card whose page came back
+// FULL is ever read with this, and only until Linear says the thread has ended.
+export const LINEAR_ISSUE_COMMENTS_PAGE_QUERY = `
+  query CoordinatorCommentPage($issueId: String!, $after: String) {
+    issue(id: $issueId) {
+      comments(first: ${LINEAR_ISSUE_COMMENT_PAGE}, orderBy: createdAt, after: $after) {
+        nodes { body createdAt user { id displayName } }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }`;
@@ -1395,7 +1470,52 @@ export function normalizeLinearIssue(node, _queriedRepo, repoLabelMap = DEFAULT_
   };
 }
 
-export async function fetchLinearIssues({ token, repo, team = "SHU", repoLabelMap = DEFAULT_REPO_LABEL_MAP, fetchImpl = fetch }) {
+// readBatchedComments — the card's COMPLETE comment thread, starting from the page
+// the board read already paid for. Completeness is the invariant (GPT review #2):
+// a thread longer than one page is followed to its end, and anything that leaves
+// it unproven is reported as an error for this card so the caller fails closed.
+// Cost: zero extra requests for a card whose page was not full.
+export async function readBatchedComments(node, { issueId, token, fetchImpl = fetch }) {
+  const page = node?.comments;
+  if (!page || !Array.isArray(page.nodes)) {
+    return { error: "the board read carried no comment thread for this card" };
+  }
+  const comments = [...page.nodes];
+  let info = page.pageInfo ?? {};
+  // A short page IS the end of the thread — that is what makes the batched read
+  // cheap. Only a full page (or a server that explicitly claims more) is followed.
+  const unfinished = (nodes, pageInfo) =>
+    pageInfo?.hasNextPage === true || (nodes.length >= LINEAR_ISSUE_COMMENT_PAGE && pageInfo?.hasNextPage !== false);
+  const seenCursors = new Set();
+  let nodes = page.nodes;
+  while (unfinished(nodes, info)) {
+    const after = info?.endCursor;
+    if (typeof after !== "string" || after.length === 0 || seenCursors.has(after)) {
+      return { error: "Linear comment pagination returned an invalid or repeated cursor" };
+    }
+    seenCursors.add(after);
+    let next;
+    try {
+      const data = await sendLinear(LINEAR_ISSUE_COMMENTS_PAGE_QUERY, { issueId, after }, token, fetchImpl);
+      next = data?.issue?.comments;
+    } catch (err) {
+      if (err?.code === "LINEAR_RATE_LIMITED") throw err; // the whole tick HOLDs, not this card
+      return { error: err.message };
+    }
+    if (!next || !Array.isArray(next.nodes)) return { error: "a comment continuation page carried no thread" };
+    comments.push(...next.nodes);
+    nodes = next.nodes;
+    info = next.pageInfo ?? {};
+  }
+  return { comments };
+}
+
+// fetchLinearBoard — the board AND every non-canceled card's durable receipts, in
+// one paginated read. `readComments` is false for callers that only need the work
+// state, so they never pay for a thread they will not look at.
+export async function fetchLinearBoard({
+  token, repo, team = "SHU", repoLabelMap = DEFAULT_REPO_LABEL_MAP, fetchImpl = fetch, readComments = true,
+}) {
   const nodes = [];
   let after = null;
   const seenCursors = new Set();
@@ -1414,7 +1534,20 @@ export async function fetchLinearIssues({ token, repo, team = "SHU", repoLabelMa
     seenCursors.add(cursor);
     after = cursor;
   }
-  return nodes.map((n) => normalizeLinearIssue(n, repo, repoLabelMap));
+  const issues = nodes.map((n) => normalizeLinearIssue(n, repo, repoLabelMap));
+  const commentsByIssue = new Map();
+  if (readComments) {
+    for (const [index, issue] of issues.entries()) {
+      const read = await readBatchedComments(nodes[index], { issueId: issue.linearId ?? issue.id, token, fetchImpl });
+      commentsByIssue.set(issue.id, read);
+      if (issue.linearId) commentsByIssue.set(issue.linearId, read);
+    }
+  }
+  return { issues, commentsByIssue };
+}
+
+export async function fetchLinearIssues(request) {
+  return (await fetchLinearBoard({ ...request, readComments: false })).issues;
 }
 
 // fetchIssueComments — read an issue's comment thread (durable receipts + pause
@@ -1839,15 +1972,16 @@ export function bindClaimingPullRequests(issues, openPRs) {
   return issues;
 }
 
-async function liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl = fetch }) {
+async function liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl = fetch, readComments = false }) {
   // Linear supplies work state and repo:<name> ownership. GitHub supplies active
   // PR claims. The query repository must never overwrite the card's ownership.
-  const issues = await fetchLinearIssues({
+  const { issues, commentsByIssue } = await fetchLinearBoard({
     token: linearToken,
     repo: config.pilot_repo,
     team: config.team ?? "SHU",
     repoLabelMap: config.repo_label_map,
     fetchImpl,
+    readComments,
   });
   let openPRs = [];
   let claimEvidenceError = null;
@@ -1874,10 +2008,26 @@ async function liveIssues({ config, linearToken, githubToken, openPRsOverride, f
   } else {
     bindClaimingPullRequests(issues, openPRs);
   }
-  return { issues, openPRs };
+  return { issues, openPRs, commentsByIssue };
 }
 
+// main — one tick. A rate-limited Linear is the one refusal that is not this
+// tick's to solve: the workspace budget is spent, so the tick REPORTS the hold,
+// dispatches nothing, and exits cleanly (0) for the scheduler to try again. It
+// must never throw the service into ACT_COORDINATOR_TICK_FAILED, because a tick
+// that fails is a tick that never reconciles.
 export async function main(argv = process.argv.slice(2), env = process.env, io = {}) {
+  try {
+    return await reconcileTick(argv, env, io);
+  } catch (err) {
+    if (err?.code !== "LINEAR_RATE_LIMITED") throw err;
+    const out = io.stdout ?? ((s) => console.log(s));
+    out(`HOLD=LINEAR_RATE_LIMITED retry_after=${err.retryAfterSeconds}`);
+    return 0;
+  }
+}
+
+async function reconcileTick(argv = process.argv.slice(2), env = process.env, io = {}) {
   const config0 = loadConfig(io.configPath);
   const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
   const dispatchScope = resolveDispatchScope(config);
@@ -1906,8 +2056,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   let issues;
   let openPRs = [];
   let source;
+  let boardComments = new Map();
   if (linearToken) {
-    ({ issues, openPRs } = await liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl }));
+    ({ issues, openPRs, commentsByIssue: boardComments } = await liveIssues({
+      config, linearToken, githubToken, openPRsOverride, fetchImpl,
+      readComments: io.fetchDurable !== false,
+    }));
     source = "live Linear";
   } else {
     const snap = loadSnapshot(io.snapshotPath);
@@ -1932,16 +2086,20 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   if (linearToken && io.fetchDurable !== false) {
     const pausedAdapters = new Set(Object.keys(config.adapter_pause_map).filter((k) => config.adapter_pause_map[k]));
     for (const issue of issues) {
-      try {
-        const comments = await fetchIssueComments({ issueId: issue.linearId ?? issue.id, token: linearToken, fetchImpl });
-        commentsByIssue.set(issue.id, comments);
-        if (issue.linearId) commentsByIssue.set(issue.linearId, comments);
-        receipts = receipts.concat(parseReceiptsFromComments(comments));
-        for (const adapter of parsePausedAdapters(comments)) pausedAdapters.add(adapter);
-      } catch (err) {
+      // The thread already arrived with the board read. A card whose thread is
+      // absent or could not be completed is an unread card, and an unread card
+      // still prevents dispatch for the whole run exactly as it did before.
+      const read = boardComments.get(issue.linearId ?? issue.id) ?? boardComments.get(issue.id);
+      if (!read || read.error) {
         durableReadFailed = true;
-        if (io.stdout) io.stdout(`durable read failed for ${issue.id}: ${err.message} — DISPATCH PREVENTED (fail closed)`);
+        if (io.stdout) io.stdout(`durable read failed for ${issue.id}: ${read?.error ?? "the board read carried no comment thread for this card"} — DISPATCH PREVENTED (fail closed)`);
+        continue;
       }
+      const comments = read.comments;
+      commentsByIssue.set(issue.id, comments);
+      if (issue.linearId) commentsByIssue.set(issue.linearId, comments);
+      receipts = receipts.concat(parseReceiptsFromComments(comments));
+      for (const adapter of parsePausedAdapters(comments)) pausedAdapters.add(adapter);
     }
     for (const adapter of pausedAdapters) config.adapter_pause_map[adapter] = true;
   }
@@ -2587,6 +2745,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     try {
       refreshed = await liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl });
     } catch (error) {
+      if (error?.code === "LINEAR_RATE_LIMITED") throw error; // the tick HOLDs; nothing was claimed
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — authoritative eligibility recheck failed: ${error.message}`);
       return 2;
     }

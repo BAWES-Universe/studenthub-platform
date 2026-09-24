@@ -2026,6 +2026,7 @@
     "impostor receipt injected after reservation ABORTS before launch (fail closed)",
     "SHU-222: authoritative recheck catches a claim race before reservation",
     "SHU-222: authoritative recheck catches a new active receipt before reservation",
+    "a rate-limited tick dispatches NOTHING and exits cleanly instead of failing the service",
     "landing-verdict-consumed-exactly-once",
     "BLOCK-routes-to-writer",
     "duplicate-consumption",
@@ -2192,6 +2193,10 @@
     "SHU-222 mutation guard: inaccessible and canceled blockers survive normalization and HOLD",
     "SHU-222/reference-is-not-claim: bare references stay ready; explicit claims do not",
     "SHU-222: a 200 OK non-array GitHub PR response produces claim evidence HOLD",
+    "LINEAR BUDGET: every card's receipts arrive WITH the board read \u2014 no per-card comment request",
+    "LINEAR BUDGET: a full comment page is followed to the end of the thread; a short page is not",
+    "LINEAR BUDGET: a rate-limited answer HOLDs the tick with the retry Linear stated and exits cleanly",
+    "LINEAR BUDGET: the reported retry is the one Linear stated, in seconds",
     "stale-head",
     "self-same-family-verdict",
     "red-required-check",
@@ -17595,6 +17600,10 @@
       "capabilities": []
     },
     {
+      "name": "a rate-limited tick dispatches NOTHING and exits cleanly instead of failing the service",
+      "capabilities": []
+    },
+    {
       "name": "landing-verdict-consumed-exactly-once",
       "capabilities": []
     },
@@ -18524,6 +18533,22 @@
     },
     {
       "name": "SHU-222: a 200 OK non-array GitHub PR response produces claim evidence HOLD",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR BUDGET: every card's receipts arrive WITH the board read \u2014 no per-card comment request",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR BUDGET: a full comment page is followed to the end of the thread; a short page is not",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR BUDGET: a rate-limited answer HOLDs the tick with the retry Linear stated and exits cleanly",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR BUDGET: the reported retry is the one Linear stated, in seconds",
       "capabilities": []
     },
     {

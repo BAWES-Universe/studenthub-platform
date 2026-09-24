@@ -15,6 +15,7 @@
 // refuses to start a worker instead of discovering the gap mid-run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -356,7 +357,7 @@ test("main(): an unwired activation aborts dispatch, pauses the lane, and spawns
     fetchImpl: async (url, opts) => {
       const { query } = JSON.parse(opts.body);
       const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [node] } });
+      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([node], () => comments) } });
       if (query.includes("CoordinatorIssueComments")) return respond({ issue: { comments: { nodes: [...comments] } } });
       if (query.includes("commentCreate")) {
         comments.push({ body: JSON.parse(opts.body).variables.body, createdAt: new Date().toISOString() });
@@ -404,7 +405,7 @@ test("main(): an unreadable GitHub target aborts before reservation and adapter 
       if (url.startsWith("https://api.github.com/")) return { ok: false, status: 401, json: async () => ({}) };
       const { query, variables } = JSON.parse(opts.body);
       const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [node] } });
+      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([node], () => comments) } });
       if (query.includes("CoordinatorIssueComments")) return respond({ issue: { comments: { nodes: [...comments] } } });
       if (query.includes("commentCreate")) {
         comments.push({ body: variables.body, createdAt: new Date().toISOString() });
@@ -458,7 +459,7 @@ test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the ada
     fetchImpl: async (_url, opts) => {
       const { query, variables } = JSON.parse(opts.body);
       const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [node] } });
+      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([node], () => comments) } });
       if (query.includes("CoordinatorIssueComments")) return respond({ issue: { comments: { nodes: [...comments] } } });
       if (query.includes("commentCreate")) {
         comments.push({ body: variables.body, createdAt: new Date().toISOString() });
