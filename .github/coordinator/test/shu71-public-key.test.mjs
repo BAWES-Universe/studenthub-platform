@@ -7,10 +7,13 @@ import { spawnSync } from 'node:child_process';
 import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from '../shu71-public-key.mjs';
 import { publicKeyFingerprint, validateAnchor as validateBoundAnchor, validateShu71Package } from '../shu71-activation-package.mjs';
 import { validateTwoFixtureActivation } from '../two-fixture-activation.mjs';
+import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
 
 const revision = 'a'.repeat(40);
 const manifest = JSON.parse(fs.readFileSync(new URL('../shu71-trust-anchor.json', import.meta.url), 'utf8'));
-const config = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
+// Two-fixture world stated explicitly: the SHU-71 package binds a slots-2
+// activation, which the committed one-fixture scope no longer describes.
+const config = twoFixtureConfig();
 const anchor = { ...manifest };
 // Direct anchor checks require the same separate execution binding as the package.
 function validateAnchor(value, key, checkout) {

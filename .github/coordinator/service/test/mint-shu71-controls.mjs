@@ -12,6 +12,7 @@ import { REQUIRED_CAPABILITIES } from '../host-lifecycle.mjs';
 import { createGitAdapter, SEALED_SEED_BLOBS } from '../../reseed-append-contract.mjs';
 import { composeApproval } from '../compose-shu71-approval.mjs';
 import { render, serviceParameters } from '../units.mjs';
+import { twoFixtureConfig } from '../../test/fixture/two-fixture-config.mjs';
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const bytes = v => canonicalBytes(v, false);
 export const mintControlName = 'SHU71 mint positive controls and named refusals';
@@ -124,11 +125,21 @@ export function repositoryControls() {
   const revision = real(['rev-parse', 'HEAD']).toString().trim();
   const tree = real(['rev-parse', 'HEAD^{tree}']).toString().trim();
   const remote = `${revision}\trefs/heads/main\n${RETAINED_PARENT}\trefs/heads/coordinator/SHU-140\n6c9c14907189fe3af733969c3d8f3a2c4e21f9b0\trefs/heads/coordinator/SHU-254\n`;
+  // repositoryFacts derives a two-fixture mint: it refuses any revision whose
+  // config is not the reviewed pair (MINT_FIXTURES). The committed config is now
+  // the one-fixture v1 demonstration scope — dispatch_scope ["SHU-140"],
+  // max_dispatch 1 — so reading it here would derive in the wrong world. The
+  // two-fixture world is therefore stated explicitly, exactly as the remote refs
+  // and historical objects already are; see test/fixture/two-fixture-config.mjs.
+  // Only this one `git show` is doubled: the actual tracked bytes of the checkout,
+  // including config.json's, are still hashed against the real tree below.
+  const configKey = `show ${revision}:.github/coordinator/config.json`;
   // Clean disposable checkout: actual bytes and status are checked, not bypassed.
   const boundary = change => () => (args, opts) => {
     const key = args.join(' ');
     const changed = change?.(key);
     if (changed !== undefined) return Buffer.from(changed);
+    if (key === configKey) return Buffer.from(JSON.stringify(twoFixtureConfig()));
     if (key === 'remote get-url origin') return Buffer.from('https://github.com/BAWES-Universe/studenthub-platform.git');
     if (key.startsWith('rev-parse ') && key.endsWith('coordinator/SHU-140')) return Buffer.from(RETAINED_PARENT);
     if (key.startsWith('rev-parse ') && key.endsWith('coordinator/SHU-254')) return Buffer.from('6c9c14907189fe3af733969c3d8f3a2c4e21f9b0');
@@ -148,6 +159,11 @@ export function repositoryControls() {
     ['dirty checkout', key => key.startsWith('status ') ? ' M package.json' : undefined, 'MINT_TREE'],
     ['wrong actual tree', key => key === 'rev-parse HEAD^{tree}' ? 'f'.repeat(40) : undefined, 'MINT_TREE'],
     ['wrong remote', key => key === 'remote get-url origin' ? 'https://example.invalid/repo' : undefined, 'MINT_REMOTE'],
+    // The scope the double above supplies is not incidental: a revision carrying
+    // the committed one-fixture v1 scope must still be refused by name, so the
+    // guard the double satisfies stays observable rather than merely assumed.
+    ['narrowed committed scope', key => key === configKey
+      ? JSON.stringify({ ...twoFixtureConfig(), max_dispatch: 1, dispatch_scope: { issue_ids: ['SHU-140'] } }) : undefined, 'MINT_FIXTURES'],
   ]) assert.throws(() => repositoryFacts(repo, boundary(changed)), e => e.code === code, `${name}: ${code}`);
   const tracked = '.github/coordinator/config.json', file = path.join(repo, tracked);
   real(['update-index', '--skip-worktree', tracked]);

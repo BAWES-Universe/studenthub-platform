@@ -10,8 +10,14 @@ import { routeSuccessorFromReceipts } from "../review-routing.mjs";
 import { prepareAttemptWorkspace } from "../attempt-workspace.mjs";
 import { singleRunActivationStatus } from "../single-run-activation.mjs";
 
-const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
-const ids = ["SHU-140", "SHU-254"];
+// Two-fixture world stated explicitly: this whole file is about two-lane
+// behaviour, and the committed config is now the one-fixture demonstration
+// scope. The committed lane definitions and gate still come through the helper;
+// only scope and capacity are stated here. The pin on the committed values
+// themselves lives in shu224-dispatch-scope.test.mjs.
+import { twoFixtureConfig, TWO_FIXTURE_IDS } from "./fixture/two-fixture-config.mjs";
+const config = twoFixtureConfig();
+const ids = TWO_FIXTURE_IDS;
 const ready = ids.map((id) => ({ id, requested_worker: "codex-builder" }));
 const secondPaths = ["tools/fixture-2/scan-unawaited.mjs", "tools/fixture-2/test/scan-unawaited.test.mjs"];
 const secondTrap = "tools/fixture-2-conformance/scan-unawaited.expectations.mjs";
@@ -77,8 +83,8 @@ test("TWO_SUCCESSORS: exact-head BLOCK routes each writer to its own revision la
   }
 });
 
-test("TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254", () => {
-  assert.deepEqual([...resolveDispatchScope(config).issueIds], ids, "TWO_SCOPE: exact committed issues");
+test("TWO_SCOPE: two-fixture selection admits exactly SHU-140 and SHU-254", () => {
+  assert.deepEqual([...resolveDispatchScope(config).issueIds], ids, "TWO_SCOPE: exact two-fixture issues");
   for (const id of ids) assert.equal(selectNextReservation({ ready: [{ id, requested_worker: "codex-builder" }], config }).candidate?.id, id);
   for (const id of ["SHU-90", "SHU-255", "SHU-0140", "SHU-254-extra"]) {
     assert.equal(selectNextReservation({ ready: [{ id, requested_worker: "codex-builder" }], config }).candidate, null);
@@ -89,7 +95,7 @@ test("TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254", () => 
 });
 
 test("TWO_CAPACITY: two active receipts fit and a third is refused by capacity", () => {
-  assert.equal(config.max_dispatch, 2, "TWO_CAPACITY: committed capacity is two");
+  assert.equal(config.max_dispatch, 2, "TWO_CAPACITY: two-fixture capacity is two");
   const receipts = [];
   for (const id of ids) {
     const selected = selectNextReservation({ ready, config, receipts });
@@ -131,7 +137,10 @@ test("DISPATCH_DISABLED: two-lane tick has zero launches and zero writes with ru
 for (const [name, file, from, to, pattern, message] of [
   ["swapped lane receipt accepted", "workspace-scope.mjs", "if (JSON.stringify(receipt.allowed_paths) !== JSON.stringify(expected)) {", "if (false) {", "^LANE_MISMATCH:", "LANE_MISMATCH: swapped attempt paths must be refused"],
   ["second lane resolves to first", "workspace-scope.mjs", "return lanes.find((lane) => lane.id === issueId) ?? null;", "return lanes[0] ?? null;", "^TWO_LANES:", "SHU254_LANE: exact initial paths"],
-  ["scope admits third issue", "config.json", '"SHU-254"\n', '"SHU-254", "SHU-90"\n', "^TWO_SCOPE:", "TWO_SCOPE: exact committed issues"],
+  // Retargeted from config.json to the two-fixture helper: TWO_SCOPE no longer
+  // reads the committed file, so widening the committed scope would no longer
+  // reach it. Widening the scope the case is actually given still must kill it.
+  ["scope admits third issue", "test/fixture/two-fixture-config.mjs", "[...TWO_FIXTURE_IDS] }", "[...TWO_FIXTURE_IDS, 'SHU-90'] }", "^TWO_SCOPE:", "TWO_SCOPE: exact two-fixture issues"],
   ["capacity ignores active receipts", "reconcile.mjs", "if (active.length >= maxDispatch) {", "if (false) {", "^TWO_CAPACITY:", "TWO_CAPACITY: third reservation refused"],
   ["committed dispatch enabled", "config.json", '"enable_dispatch": false', '"enable_dispatch": true', "^DISPATCH_DISABLED:", "DISPATCH_DISABLED: committed gate stays false"],
 ]) test(`TWO_LANES MUTATION: ${name}`, () => {

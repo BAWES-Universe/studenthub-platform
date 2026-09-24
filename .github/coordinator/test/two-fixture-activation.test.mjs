@@ -11,10 +11,14 @@ import { singleRunActivationStatus } from '../single-run-activation.mjs';
 import { dispatchEnabledFor, main } from '../reconcile.mjs';
 const committed = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
 import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
+import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
 const { privateKey, publicKey } = ephemeralPublicSource();
 const revision = 'a'.repeat(40);
 function fixture() {
-  const config = structuredClone(committed);
+  // Two-fixture world stated explicitly: the committed config is now the
+  // one-fixture demonstration scope. `committed` is still read below, where a
+  // case is genuinely about the committed file (enable_dispatch, credentials).
+  const config = twoFixtureConfig();
   config.two_fixture_activation_public_key = publicKey.export({ type: 'spki', format: 'pem' });
   const record = { kind: 'two-fixture-v1', activation_id: 'two-fixture-test', coordinator_revision: revision,
     slots: 2, expires_at: '2026-09-14T12:00:00.000Z', stop_before_merge: true,
@@ -118,7 +122,14 @@ test('ACT_GATES_OFF: actual tick has zero launches and writes; manual pair gates
   assert.equal(result, 0); assert.equal(writes, 0, 'ACT_GATES_OFF: zero writes'); assert.equal(launches, 0, 'ACT_GATES_OFF: zero launches');
   assert.deepEqual(x, snapshot, 'ACT_GATES_OFF: verifier cannot set a gate');
   assert.equal(committed.enable_dispatch, false);
-  assert.equal(dispatchEnabledFor({ ENABLE_DISPATCH: 'true' }, { ...committed, enable_dispatch: true }), false);
+  // Premise corrected: "the two manual gates cannot bypass review" is a property
+  // of the TWO-FIXTURE scope, not of whatever is committed — dispatchEnabledFor
+  // only demands an armed two-fixture activation when dispatch_scope holds the
+  // pair. The committed file is now the one-fixture scope, where flipping the
+  // committed flag is the ordinary committed path, so the guarantee is asserted
+  // against the two-fixture config that actually carries it.
+  assert.equal(dispatchEnabledFor({ ENABLE_DISPATCH: 'true' }, { ...x.config, enable_dispatch: true }), false,
+    'ACT_GATES_OFF: two-fixture scope still demands a reviewed activation');
 });
 
 for (const [code, , condition] of cases) test(`ACT_MUTATION ${code}: removed guard dies by named AssertionError`, () => {

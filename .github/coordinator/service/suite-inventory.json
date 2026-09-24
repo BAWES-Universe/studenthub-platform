@@ -2381,7 +2381,7 @@
     "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
     "SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run",
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
-    "SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled",
+    "SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled",
     "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
     "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card",
     "SHU-226 A1: a synchronous breaker is reported in the tick that persists it",
@@ -2928,7 +2928,7 @@
     "TWO_LANES: issue resolution preserves legacy shape and isolates initial and revision paths",
     "LANE_MISMATCH: swapped attempt paths are refused before workspace I/O in both phases",
     "TWO_SUCCESSORS: exact-head BLOCK routes each writer to its own revision lane",
-    "TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254",
+    "TWO_SCOPE: two-fixture selection admits exactly SHU-140 and SHU-254",
     "TWO_CAPACITY: two active receipts fit and a third is refused by capacity",
     "DISPATCH_DISABLED: two-lane tick has zero launches and zero writes with runtime gate true",
     "TWO_LANES MUTATION: swapped lane receipt accepted",
@@ -19601,7 +19601,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled",
+      "name": "SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled",
       "capabilities": []
     },
     {
@@ -23834,7 +23834,7 @@
       "capabilities": []
     },
     {
-      "name": "TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254",
+      "name": "TWO_SCOPE: two-fixture selection admits exactly SHU-140 and SHU-254",
       "capabilities": []
     },
     {

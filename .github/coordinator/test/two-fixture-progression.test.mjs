@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID, sign } from 'node:crypto';
 import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
+import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
 import { reviewedActivationBytes } from '../two-fixture-activation.mjs';
 import { singleRunActivationStatus } from '../single-run-activation.mjs';
 import { createReceipt, receiptCommentBody, parseReceiptsFromComments, validateReceipt } from '../reconcile.mjs';
@@ -26,7 +27,9 @@ function harness() {
   const seed = git(wt, 'rev-parse', 'HEAD');
   const remote = path.join(root, 'BAWES-Universe', 'studenthub-platform.git');
   fs.mkdirSync(path.dirname(remote)); git(root, 'init', '--bare', remote);
-  const config = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url)));
+  // Two-fixture world stated explicitly: the committed config is now the
+  // one-fixture demonstration scope and no longer describes this harness.
+  const config = twoFixtureConfig();
   config.two_fixture_activation_public_key = publicKey.export({ type: 'spki', format: 'pem' });
   const record = { kind: 'two-fixture-v1', activation_id: 'b3-progression-test', coordinator_revision: 'a'.repeat(40),
     slots: 2, expires_at: '2026-09-14T12:00:00.000Z', stop_before_merge: true,

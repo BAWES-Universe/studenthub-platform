@@ -8,6 +8,7 @@ import { createEpisodeHarness } from '../../test/fixture/episode-harness.mjs';
 import { canonicalBytes } from '../../shu71-activation-package.mjs';
 
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
+import { twoFixtureConfig } from '../../test/fixture/two-fixture-config.mjs';
 const keys = ephemeralPublicSource();
 const credential = '/srv/shu/state/shu71-activation.json';
 const lease = '/srv/shu/state/shu71-evidence/active.json';
@@ -17,7 +18,9 @@ const shared = p => [...gates, credential, lease].map(f => p.exists(f) ? p.read(
 
 async function composition(t) {
   const p = productionFixture(t, keys), pkg = p.spec.pkg;
-  const config = JSON.parse(fs.readFileSync(new URL('../../config.json', import.meta.url)));
+  // Two-fixture world stated explicitly: this composition drives both lanes off
+  // a slots-2 package, and the committed config is now the one-fixture scope.
+  const config = twoFixtureConfig();
   const lanes = [config.fixture_lane, ...config.fixture_lanes];
   for (const f of [...pkg.fixtures, ...pkg.activation.fixtures]) f.lane = structuredClone(lanes.find(l => l.id === f.issue_id));
   p.write(`/etc/shu/approvals/${p.id}.shu71.json`, JSON.stringify({ payload: p.spec,

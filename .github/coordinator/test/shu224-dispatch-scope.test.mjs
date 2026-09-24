@@ -211,10 +211,15 @@ test("SHU-224: invalid trusted scope prevents dispatch before any mutation", asy
   }
 });
 
-test("SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled", () => {
+// The committed scope is now the ONE-fixture scope, deliberately: Orchestrator
+// v1 narrows the demonstration to a single lane and a single slot, so this pin
+// tracks the owner-approved values ["SHU-140"] / max_dispatch 1. Dispatch stays
+// disabled, as it always has.
+test("SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
-  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-140", "SHU-254"] });
+  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-140"] });
+  assert.equal(config.max_dispatch, 1, "SHU-224: one lane, one slot");
 });
 
 test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed", () => {
