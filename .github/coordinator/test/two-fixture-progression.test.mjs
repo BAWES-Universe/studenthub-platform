@@ -266,14 +266,22 @@ test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-
           // The API transport authenticates coordinator-created receipt comments.
           for (const c of h.comments) if (c.body.startsWith('<!-- coordinator-receipt') && !c.user) c.user = { id: actor };
           const request = JSON.parse(args[1]?.body ?? "{}");
+          // The harness serves one shared thread; each card may only see its own
+          // receipts — applied to the BATCHED board read and to the single-card read.
+          const ownedBy = issue => c => {
+            const body = /```json\n([\s\S]*?)\n```/.exec(c.body);
+            const value = body ? JSON.parse(body[1]) : null;
+            return value?.issue_id ? value.issue_id === issue : issue === 'SHU-140';
+          };
+          if (request.query?.includes('CoordinatorIssues')) {
+            const payload = await response.json();
+            for (const node of payload.data.issues.nodes) node.comments.nodes = node.comments.nodes.filter(ownedBy(node.identifier));
+            return { ...response, json: async () => payload };
+          }
           if (request.query?.includes('CoordinatorIssueComments')) {
             const payload = await response.json();
             const issue = h.nodes.find(n => n.id === request.variables.issueId || n.identifier === request.variables.issueId)?.identifier;
-            payload.data.issue.comments.nodes = payload.data.issue.comments.nodes.filter(c => {
-              const body = /```json\n([\s\S]*?)\n```/.exec(c.body);
-              const value = body ? JSON.parse(body[1]) : null;
-              return value?.issue_id ? value.issue_id === issue : issue === 'SHU-140';
-            });
+            payload.data.issue.comments.nodes = payload.data.issue.comments.nodes.filter(ownedBy(issue));
             return { ...response, json: async () => payload };
           }
           return response;

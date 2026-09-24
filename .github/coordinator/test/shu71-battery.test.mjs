@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { batchedCommentPage } from './fixture/linear-board.mjs';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -177,6 +178,16 @@ function setup(t, multiple = false, working = false) {
       if (!String(url).includes('api.github.com')) {
         const { query, variables } = JSON.parse(options.body);
         const respond = data => ({ status: 200, ok: true, json: async () => ({ data }) });
+        // The board read carries every card's thread, so the second card's own
+        // store must be substituted there too — not only in its single-card read.
+        if (query.includes('CoordinatorIssues')) {
+          const board = await h.fetchImpl(url, options);
+          const payload = await board.json();
+          for (const node of payload.data.issues.nodes) {
+            if (node.id === second.id) node.comments = batchedCommentPage(secondComments);
+          }
+          return { ...board, json: async () => payload };
+        }
         if (variables?.issueId === second.id || variables?.issueId === second.identifier) {
           if (query.includes('CoordinatorIssueComments')) return respond({ issue: { comments: { nodes: secondComments } } });
           if (query.includes('commentCreate')) {

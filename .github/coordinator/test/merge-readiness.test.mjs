@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { withBatchedComments } from './fixture/linear-board.mjs';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,9 +65,9 @@ function harness(options = {}) {
     if (url === 'https://api.linear.app/graphql') {
       const { query, variables } = JSON.parse(request.body);
       let data;
-      if (query.includes('CoordinatorIssues')) data = { issues: { nodes: [{ id: 'linear-900', identifier: 'SHU-900', title: 'Routine change',
+      if (query.includes('CoordinatorIssues')) data = { issues: { nodes: withBatchedComments([{ id: 'linear-900', identifier: 'SHU-900', title: 'Routine change',
         state: { name: 'In Progress' }, priorityLabel: 'No priority', labels: { nodes: [{ name: 'repo:example/repo' }] }, assignee: null, delegate: null,
-        parent: null, relations: { nodes: [] } }], pageInfo: { hasNextPage: false, endCursor: null } } };
+        parent: null, relations: { nodes: [] } }], () => structuredClone(comments)), pageInfo: { hasNextPage: false, endCursor: null } } };
       else if (query.includes('CoordinatorIssueComments')) data = { issue: { comments: { nodes: structuredClone(comments) } } };
       else if (query.includes('CoordinatorMergeIssue')) data = { issue: { id: 'linear-900', identifier: 'SHU-900', title: 'Routine change',
         state: { name: 'In Progress', type: 'started' }, labels: { nodes: issueLabels.map(name => ({ name })) },

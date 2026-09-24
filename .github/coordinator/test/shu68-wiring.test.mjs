@@ -15,6 +15,7 @@
 //     assert a terminal verdict under disabled dispatch still posts nothing).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { writeFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,7 +89,7 @@ function persistentStore(issueNodes, commentBodies) {
     assert.equal(url, "https://api.linear.app/graphql");
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: issueNodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(issueNodes, () => commentBodies) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const nodes = issueNodes.some((n) => n.id === issueId || n.identifier === issueId) ? [...commentBodies] : [];

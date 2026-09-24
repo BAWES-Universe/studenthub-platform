@@ -4,6 +4,7 @@
 // mocked: temp lease dir + injected spawn; no live process is ever spawned.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { writeFileSync, mkdtempSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -244,7 +245,7 @@ function fakeLinearStore(comments) {
     assert.equal(url, "https://api.linear.app/graphql");
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [FIXTURE_NODE] } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([FIXTURE_NODE], () => comments) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const nodes = FIXTURE_NODE.id === issueId || FIXTURE_NODE.identifier === issueId ? [...comments] : [];

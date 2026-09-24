@@ -13,6 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -679,7 +680,7 @@ function episodeStore(issueNodes, commentBodies, now) {
   return async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: issueNodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(issueNodes, () => commentBodies) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const known = issueNodes.some((n) => n.id === issueId || n.identifier === issueId);

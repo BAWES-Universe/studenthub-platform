@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -156,7 +157,7 @@ test("SHU-224: an unscoped active receipt remains lifecycle-reconcilable during 
       const { query } = JSON.parse(options.body);
       if (query.includes("CoordinatorIssues")) {
         return { ok: true, status: 200, json: async () => ({ data: { issues: {
-          nodes: [issueNode("SHU-90"), issueNode("SHU-140")],
+          nodes: withBatchedComments([issueNode("SHU-90"), issueNode("SHU-140")], []),
           pageInfo: { hasNextPage: false, endCursor: null },
         } } }) };
       }

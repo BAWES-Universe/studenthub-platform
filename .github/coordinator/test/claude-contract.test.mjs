@@ -1,5 +1,6 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -349,7 +350,7 @@ async function runVerifierDispatch({ liveHead, headStatus = 200 }) {
   const linear = async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [VERIFIER_NODE] } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([VERIFIER_NODE], () => comments) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const nodes = issueId === VERIFIER_NODE.id || issueId === VERIFIER_NODE.identifier ? [...comments] : [];
