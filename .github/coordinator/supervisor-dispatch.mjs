@@ -53,11 +53,15 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
 }
 
 export function supervisorAdapter(receipt, env, io = {}) {
+  // The catch below never discards the cause. The reason string is the only place
+  // a tick's transport fault becomes visible, and the bare label made a vanished
+  // socket, a refused connection and a malformed frame read identically. Carrying
+  // the cause changes no verdict: the outcome stays not-ok and stays HOLD.
   const contact = async (operation, options = {}) => {
     try {
       const request = signedSupervisorRequest(supervisorOrder(receipt, options), supervisorTransportSecret(env), operation);
       return await (io.supervisorTransport ?? submitToSupervisor)({ socketPath: env.SHU_SUPERVISOR_SOCKET, request });
-    } catch { return { ok: false, stage: "HOLD", reason: "supervisor configuration unavailable" }; }
+    } catch (error) { return { ok: false, stage: "HOLD", reason: `supervisor configuration unavailable: ${error?.code || error?.message}` }; }
   };
   return {
     supervised: true,

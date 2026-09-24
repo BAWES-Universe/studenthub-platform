@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { DurableSupervisor, signedSupervisorRequest, SUPERVISOR_PROTOCOL_VERSION } from "../supervisor.mjs";
-import { carriedSupervisorOutcome, supervisorOrder } from "../supervisor-dispatch.mjs";
+import { carriedSupervisorOutcome, supervisorAdapter, supervisorOrder } from "../supervisor-dispatch.mjs";
 import { runFixtureDriver, restoreFixture } from "../fixture-driver.mjs";
 import { createEpisodeHarness, SHA_INPUT, SHA_WRITE } from "./fixture/episode-harness.mjs";
 
@@ -271,4 +271,52 @@ test("SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervise
   assert.equal(contacts, 0, "legacy ambiguous launch must not contact supervisor");
   assert.equal(f.h.receipts()[0].stage, "LAUNCH_UNKNOWN");
   assert.equal(f.supervisor.store.attempts().length, 0);
+});
+
+// SHU-172: the supervisor transport's catch shields every fault on the way to the
+// socket — an absent socket, a refused connection, a malformed frame, a rejected
+// order. It used to discard the caught error, so all of them landed on the receipt
+// as one indistinguishable label and a tick could not be diagnosed from its
+// receipt. The two proofs below pin both halves of the repair: the cause reaches
+// the reason, and carrying it never upgrades the failure into a submission.
+const TRANSPORT_RECEIPT = Object.freeze({
+  requested_worker: "codex-builder", issue_id: "SHU-140", authorization_ref: "shu172-contract-ref",
+  attempt_id: "11111111-2222-4333-8444-555555555555", target_sha: SHA_INPUT,
+  repo: "BAWES-Universe/studenthub-platform", branch: "fix/shu172-transport-fixture",
+});
+const refusedTransport = error => supervisorAdapter(TRANSPORT_RECEIPT,
+  { SHU_SUPERVISOR_SECRET: SECRET, SHU_SUPERVISOR_SOCKET: join(tmpdir(), "shu172-absent.sock") },
+  { supervisorTransport: () => { throw error; } });
+
+test("SHU-172: the caught transport error's code or message reaches the receipt reason", async () => {
+  const coded = await refusedTransport(Object.assign(new Error("supervisor socket is gone"), { code: "ENOENT" })).launchBuilder({});
+  assert.match(coded.reason ?? "", /ENOENT/,
+    "SHU172_CAUSE: the caught error's code must reach the receipt reason");
+  assert.match(coded.reason, /^supervisor configuration unavailable: /,
+    "SHU172_CAUSE: the existing label must be preserved as the reason's prefix");
+  // A codeless error is the common shape for a protocol/order refusal, so the
+  // message is the fallback. Neither may collapse back to the bare label.
+  const codeless = await refusedTransport(new Error("transport closed mid-frame")).launchBuilder({});
+  assert.match(codeless.reason ?? "", /transport closed mid-frame/,
+    "SHU172_CAUSE: a codeless error's message must reach the receipt reason");
+  assert.notEqual(codeless.reason, coded.reason,
+    "SHU172_CAUSE: two distinct transport faults must not render as one reason");
+});
+
+test("SHU-172: a carried transport cause is never reported as a successful submission", async () => {
+  const adapter = refusedTransport(Object.assign(new Error("supervisor socket is gone"), { code: "ECONNREFUSED" }));
+  const launch = await adapter.launchBuilder({});
+  assert.equal(launch.stage, "LAUNCH_UNKNOWN",
+    "SHU172_NO_FALSE_SUCCESS: a failed contact must never launch; the identical order retries next tick");
+  for (const field of ["external_run_id", "adapter_status"]) {
+    assert.equal(launch[field], undefined,
+      `SHU172_NO_FALSE_SUCCESS: a failed contact must mint no ${field}`);
+  }
+  // Even a verified head cannot turn the failed status contact into an outcome:
+  // `ok` is read before any stage, binding or head comparison.
+  const monitored = await adapter.monitorRun({ current_head: SHA_INPUT, headVerified: true });
+  assert.equal(monitored.stage, "HOLD",
+    "SHU172_NO_FALSE_SUCCESS: a failed status contact must HOLD, never carry an outcome");
+  assert.equal(monitored.external_run_id, undefined,
+    "SHU172_NO_FALSE_SUCCESS: a failed status contact must mint no external_run_id");
 });
