@@ -7,6 +7,7 @@ import {
   fetchLinearIssues,
   isLinearRateLimited,
   LINEAR_ISSUE_COMMENT_PAGE,
+  LINEAR_ISSUE_PAGE,
   LINEAR_ISSUES_QUERY,
   LINEAR_RATE_LIMIT_FALLBACK_SECONDS,
   linearRateLimitSeconds,
@@ -37,7 +38,13 @@ function response(data) {
 
 test("SHU-63: the live Linear query uses the supported team filter and requests pagination", () => {
   assert.match(LINEAR_ISSUES_QUERY, /issues\(filter: \{ team: \{ key: \{ eq: \$team \} \}/);
-  assert.match(LINEAR_ISSUES_QUERY, /first: 100, after: \$after/);
+  assert.match(LINEAR_ISSUES_QUERY, new RegExp(`first: ${LINEAR_ISSUE_PAGE}, after: \\$after`));
+  // The board read nests a comment connection, and Linear multiplies a connection's
+  // children by its page size against a 10,000-point ceiling for a single query.
+  // Pinned: the batched query stays cheaper than the unbatched issues(first: 100).
+  assert.equal(LINEAR_ISSUE_PAGE, 50);
+  assert.equal(LINEAR_ISSUE_COMMENT_PAGE, 50);
+  assert.ok(LINEAR_ISSUE_PAGE * LINEAR_ISSUE_COMMENT_PAGE <= 100 * 50, "a board read that Linear refuses reads nothing at all");
   assert.match(LINEAR_ISSUES_QUERY, /pageInfo \{ hasNextPage endCursor \}/);
 });
 

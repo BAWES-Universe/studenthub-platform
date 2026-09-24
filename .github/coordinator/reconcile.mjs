@@ -1372,11 +1372,19 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
 // workspace's whole hourly budget and left the board unreadable). The page size is
 // the follow-up threshold too: a page that comes back full is the only card that
 // costs an extra request (see readBatchedComments).
+//
+// COMPLEXITY: Linear scores a single query at most 10,000 points, and "any
+// connection multiplies its children's points based on the given pagination
+// argument". Nesting a 50-comment connection inside the board read therefore has
+// to be paid for out of the issues page, so that page halves from 100 to 50 and
+// the batched query stays CHEAPER than the unbatched one that runs today — one
+// extra issues page per tick is nothing against one request per card per tick.
+export const LINEAR_ISSUE_PAGE = 50;
 export const LINEAR_ISSUE_COMMENT_PAGE = 50;
 
 export const LINEAR_ISSUES_QUERY = `
   query CoordinatorIssues($team: String!, $after: String) {
-    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: 100, after: $after) {
+    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: ${LINEAR_ISSUE_PAGE}, after: $after) {
       nodes {
         id
         identifier
