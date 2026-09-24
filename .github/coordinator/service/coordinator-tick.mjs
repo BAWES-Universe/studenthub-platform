@@ -9,5 +9,9 @@ export function coordinatorTickArgs(argv, env) {
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await main(coordinatorTickArgs(process.argv.slice(2), process.env), process.env); }
-  catch { process.stderr.write('ACT_COORDINATOR_TICK_FAILED\n'); process.exitCode = 1; }
+  catch (err) {
+    process.stderr.write('ACT_COORDINATOR_TICK_FAILED\n');
+    process.stderr.write(`${err?.stack ?? err?.message ?? String(err)}\n`);
+    process.exitCode = 1;
+  }
 }
