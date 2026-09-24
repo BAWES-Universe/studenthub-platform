@@ -16158,7 +16158,17 @@
     },
     {
       "name": "SHU251 tick failure names its cause on stderr",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "unix_socket"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "a fully wired activation passes and names no unmet requirement",
