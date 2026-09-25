@@ -1,5 +1,15 @@
 # SHU-71 / SHU-251 prerequisite provisioning
 
+> **HISTORY, NOT AUTHORITY.** This document is the historical record of how the change was arrived at. It
+> is **not** the approval path and no approval claim is carried by anything written here. The approval path
+> is `claim-manifest.json`, whose entries are generated from the committed test registries — the sealed
+> term, the control that pins it, the mutants that kill that control, and the receipts — and validated by
+> `test/shu71-claim-manifest.test.mjs`, which rejects an entry naming a control or mutant that is not in the
+> committed inventory, a receipt whose bytes or head do not match, a `PASS` without a mutant or a verifying
+> receipt, and a code revision that is not an ancestor of the checkout or that differs from it in anything
+> executable. The suite's flakiness investigation lives in `SHU71-FLAKINESS-INVESTIGATION.md` and is equally
+> non-authoritative. Read those two and the package; read this only for how the work got here.
+
 Repository-only implementation. No target host was contacted. Do not interpret
 fixture reports as host measurements, independent review, permission to mint,
 or an M3/M4 result.
@@ -5553,8 +5563,10 @@ record only - no production behaviour.
 
 That intermittent is the one already recorded as a known flake in an earlier round; it is a
 property of the suite, not of this change, and the first observation ran while the cold-review
-gate and the pre-arm probe were executing on the same box, which is the likely trigger for a
-timing-sensitive test. It is stated here at the same weight as the green runs rather than
+gate and the pre-arm probe were executing on the same box. That co-run is recorded as context and
+not as an established trigger: the later re-run of that same full plain mode alone on an idle box
+was red again, so idleness alone did not clear it, and what changes the outcome is running the
+offending file in isolation. It is stated here at the same weight as the green runs rather than
 summarised away: a mode that came back red once, for a reason, and green on an identical repeat
 is not the same claim as an unbroken green, and the difference belongs in the record.
 
@@ -5578,3 +5590,352 @@ verifier as F2); the duplicate is removed. The older orphan stub in the fifteent
 (`**Focused selection after the documentation commit.**` followed immediately by the real
 paragraph) is left as merged and is recorded here as a known cosmetic leftover, not fixed in
 this correction.
+
+### Seventeenth correction round: the second fixture's ref is a sealed term, and it now has its own control
+
+A reviewer with no lane history and no stake read the `shu71-mint-00000025` block, both verifier
+verdicts, the package record, the pre-arm probe and the digest witnesses, and returned **DO NOT
+APPROVE** with five objections. Four were record or coverage gaps, closed here and in the package;
+one was a hole in the enforcement of a term the block seals, and it is closed with a control.
+
+**The hole, as measured - this paragraph replaces a wider claim a first draft made and the round's
+independent verifier falsified.** `heads()` binds **every** fixture the package pins, not only the one
+being reseeded: per fixture it measures the local `rev-parse --verify`, the remote `ls-remote --refs`
+and the GitHub `git/ref` read-back, and it refuses under `ACT_REF_BINDING`, naming the leg that
+disagreed. What the committed baseline at `a51c8490` actually pinned for the second fixture, taken file
+by file rather than asserted:
+
+- its **readback** leg had one committed assertion, and a weak one - `shu71-production-mutations.test.mjs`
+  ("post-push readback omitted") serves a foreign sha on the SHU-254 ref **after** the push and asserts
+  `state === 'HALT'` (`B1_REMOTE_READBACK_REFUSED`): post-push only, no refusal code, and no leg named;
+- its **local** and **remote** legs had none: a mutant that neuters either one for fixture_2 alone
+  fires no ref-binding assertion anywhere in the parent's committed suite (measured below, by name diff -
+  the row's exit code is not the discriminator, and this round's verifier saw both the LOCAL and the
+  REMOTE rows come back exit 1 on unrelated rows).
+
+So the gap was narrower than the first draft's "no committed assertion would have noticed", which was
+false. What remains true, and is what makes this blocking: the **local** and **remote** legs of a
+fixture whose head the block seals had no committed assertion at all, which is the same class of
+unpinned sealed term the owner refused `shu71-mint-00000024` for.
+
+`secondFixtureRefBindingCheck` mutates exactly one leg of the second fixture at a time - readback,
+remote, local - and each refusal is asserted by its own name with the other two legs agreeing, in the
+result, in the leg field and in the journal:
+`B6_SECOND_FIXTURE_REF_BINDING readback|remote|local`. Five mutants are killed by it, and what each of
+them does and does not prove - two pin the loop's shape, three neuter one leg each while keeping every
+read it already made - is stated with its measurement below, because the first version of this
+paragraph claimed more for the pair than the parent's committed suite bears out.
+
+**RED at the parent, with the scope measured instead of assumed.** Two mutants were added first - the
+fixture loop truncated to the first fixture, and the second fixture skipping its legs. At the parent
+they survive all 39 controls committed in B6 (`red-at-parent-280h.tap`), but they do **not** pin a
+hole: five committed tests **outside** B6 kill them at the parent (the B1/B4 post-push read-back,
+`B1_SINGLE_LANE`, `B1_TWO_LANES`, and two B5 sleep-budget checks). The first draft's claim that they
+"pin a hole rather than restating a kill" was false - the scope measured was B6, the sentence claimed
+the committed suite - and the round's verifier caught it. They are kept, and described for what they
+are: they pin the loop's shape, not the per-leg semantics.
+
+What pins the term is the per-leg enforcement set added in response: each neuters exactly one of
+fixture_2's legs while keeping every read it already made. At this head each is killed by exactly one
+variant of the control - `local` by `local`, `remote` by `remote`, `readback` by `readback` - where the
+two earlier mutants are killed by all three variants, which is the discrimination the reviewer measured
+as missing. Against the parent's whole committed suite, name-diffed against an unmutated baseline run
+of the same export:
+
+    parent a51c8490, whole committed suite, judged by NAME DIFF against an unmutated baseline of the same
+    export. The exit codes are not the discriminator and are not shown as if they were: a third party ran
+    this same commit under a different host posture (root) and got exit 1 with six unrelated failures
+    where these runs got exit 0, and this round's verifier got exit 1 on two rows whose cell here reads
+    nothing new. The measurement is the name diff.
+      baseline                        no ref-binding assertion fails
+      fixture_2 LOCAL leg neutered    no new failing name vs baseline  <- the parent never noticed this leg
+      fixture_2 REMOTE leg neutered   no new failing name vs baseline  <- nor this one
+      fixture_2 READBACK leg neutered `B1/B4 mutation: post-push readback omitted` <- a real kill: that
+                                      leg had committed cover. The second red is the A12 guard, which
+                                      red-fails whenever any row fails inside its own run. Measured by one
+                                      party: the third-party reproduction covered baseline, LOCAL and
+                                      REMOTE only, so this row rests on a single measurement.
+    (`parent-suite-survival.txt`, `parent-suite-survival-run.log`. What the log carries per run is the
+    mutated `prod_sha` while the mutation was applied, and one `restored: 0 dirty file(s)` at the end; it
+    has no per-run restore line, so the restore between runs is evidenced indirectly - the READBACK row's
+    failure is deterministic and does not appear in the later REMOTE row, which it would if the mutations
+    had accumulated.)
+
+    The discriminator these rows turn on is the **name diff against the unmutated baseline**, not the exit
+    code, and not the failure count in the cells above. In this configuration an unrelated row can redden a
+    whole run: verification #3 re-ran the REMOTE row twice and got exit 1 with one failure each time (the
+    SHU251 `loseReceipt` sibling once, the live-restart positive control once), and verification #4 re-ran
+    the LOCAL row twice with exit 1 both times, while **zero ref-binding assertions fired in each of those
+    four runs** - which is the conclusion the rows carry. What reproduced exactly is the ref-binding count
+    per row (0 / 0 / 1) and the READBACK row's exit code. The exit code of the LOCAL row's cell did not
+    reproduce in any of the three observations; REMOTE's did not in two of three, and verification #5
+    reproduced it at exit 0 - so the cell is right about REMOTE and the exit code carries no information
+    either way. (Evidence files cited by bare filename across this record live outside the repository,
+    under `round/`; that is this lane's established convention, and a reader holding only the checkout
+    cannot open them.) Host posture for these runs, as in the Validation sections above:
+    uid 1000, umask 0022, the four target accounts absent, `chmod -R go-w .github/coordinator` applied
+    first, pinned to CPUs 0-9 with `--test-concurrency=4`, one run at a time.
+
+**The reseed terms are enforced in the local-reseed step, and re-verified before the push.** This
+paragraph said the acceptance ran inside the `remote-push` step and had no control of its own; the
+eighteenth round measured otherwise and corrected it here as well as there. The acceptance is the
+contract adapter's: `appendReseed` verifies the commit after `hash-object` and again after the CAS
+`update-ref`, and `observeReseed` verifies the ref it reads - all inside the local-reseed step, which
+precedes `remote-push`. The call at `shu71-production.mjs:821` is a **re-verification of the same object
+immediately before the push**. The post-push read-back then re-measures the same terms against the remote
+under `ACT_REMOTE_ANCESTRY` - the commit's parents in the bound order and the lane ref still at the bound
+reseed sha - and the activation file is written only after that read-back succeeds. So a wrong local
+reseed is refused before the push and again after it, and nothing arms in either case. The read-back is
+pinned by the two per-position controls and their mutants (this round and the previous one); the seven
+terms reachable from `verifyReseedCommit` are pinned at the contract level by named controls, two of them
+also by a mutant that deletes the term's own guard, as the eighteenth round's section states. The
+re-verification at `:821` had no B6-level control of its own until round eighteen.
+
+**What the next package record must carry - stated as requirements, not as accomplished facts.** Two
+things the cold-approval gate checks before any block reaches the owner, and which are therefore
+requirements on the package that follows this correction rather than claims about a document that does
+not exist yet: the item the owner refused must be named as such - the per-position ancestry
+clause, with the two per-position controls and the mutants that close it cited by name - and the
+verifier's own baseline findings must be labelled separately from it, so that the two cannot be
+confused again as they were in the `shu71-mint-00000025` package. Second, each of the block's three
+sealed digests must be shown with the inputs it was derived from, their paths and hashes, the revision
+and instant of derivation, a raw file-byte witness where one exists, and an explicit statement of what
+the seal covers - the machine package and the signed artifacts, not the narrative prose, which is not
+signed and is not what the owner's approval binds. The witnesses for the superseded block are in
+`digest-witnesses.txt`; the same script produces the next block's at mint time, and the gate reads
+them before the owner does.
+
+**Focused selection after this correction.** The selection used here is the committed enumeration plus
+one file that no committed document describing the focused selection had named,
+`shu71-prearm-measurement.test.mjs` - thirty-two entries in `round/scratch/focused-files.txt`, three of
+them globs, expanding to thirty-nine test files. The runs listed below were made at `94aa6622` and
+`52a022f3`, the heads named with each; this round's verifier re-ran the selection at `980fa313` and got
+exit 0, `2247 ok / 0 not ok`. The four modes follow in the same lane:
+
+Four modes at the code head `94aa6622` (tree `d2d3ece6`; every commit from `94aa6622` through
+`c62520e9` is documentation or comment only, and the sole change to any executable file across that range
+is the comment block above `secondFixtureRefBindingCheck`, so these counts describe the code at
+`c62520e9`; the eighteenth round adds three more tests on top, and that round's counts are in its own
+section below), one mode at a time:
+
+    focused plain   exit 0   2247 ok / 0 not ok   (244s)
+    focused clock   exit 0   2247 ok / 0 not ok   (253s)
+    full plain      exit 0   3633 ok / 0 not ok   (541s)
+    full clock      exit 1   3632 ok / 1 not ok   (513s)   - the recorded family again, below
+
+The A12 committed-inventory guard runs inside the full scope and is green in full plain, so the eight
+rows this lane added across its two commits - three control legs and five mutants - move with the tests
+they describe.
+**At the code head `52a022f3` - the head that carries this round's two corrections - the same four modes
+were re-run** (the commit that adds this paragraph is documentation after them):
+
+    focused plain   exit 1   2246 ok / 1 not ok   (248s)   - `SHU-250: real tick returns while a
+                                                             long-running supervised child executes`
+    focused clock   exit 0   2247 ok / 0 not ok   (266s)
+    full plain      exit 1   3632 ok / 1 not ok   (527s)   - the A12 guard, whose inner run reports
+                                                             `SHU251 mutation: terminal receipt lost
+                                                             after restart` failing
+    full clock      exit 0   3633 ok / 0 not ok   (539s)
+
+Both plain reds were then re-run alone, on an idle box with nothing else running. Focused plain came back
+green - **exit 0, `2247 ok / 0 not ok`** (`focused-plain-rerun-r19.tap`) - and full plain came back **red
+again**, exit 1, `3632 ok / 1 not ok`, the same member inside the A12 inner run
+(`full-plain-rerun-r19.tap`).
+
+That second observation matters more than the first, because it removes the reading the earlier entries
+in this record allowed: the reds are not explained by another suite sharing the box. Across this lane's
+eleven runs at `94aa6622` and `52a022f3` - six full-scope and five focused - three full-scope runs were
+red, all three on the same member, the `loseReceipt` sibling of the live-restart family inside the A12
+guard's inner concurrent run; and one focused run was red on `SHU-250`'s 1000 ms tick assertion. What is
+established about each red - and what is not - is set out in the paragraph that follows rather than
+characterised here, because for four of the six the failing assertion is captured in no artifact at any
+head. Running the offending file alone is green `6/6` clock and `3/3` plain, which is where the "does not reproduce in isolation" bullet below
+comes from - isolation, not idleness, is what changes the outcome. A full-scope run on an idle box is
+still a concurrent run and can still go red.
+
+
+**The reds, characterised further rather than summarised away.** Six reds across four heads. What is
+measured about them is not the same for all six, and the difference is stated here rather than averaged
+away: for two of them the failing assertion is captured, and for the other four - every `loseReceipt` red
+- the failure was seen only through the A12 guard, whose record carries the test's name and status but
+**not** the failing assertion, so what exactly failed is captured in no artifact at any head. None of the
+six is known to be a wrong assertion, and nothing here justifies tuning timeouts:
+
+- at `6152c34`, the `loseReceipt` mutation sibling failed in the full scope;
+- at `d09b1dd7`, the positive control `SHU251 live worker restart adopts once and recovers durable
+  completion` failed at the assertion inside the signed launch path - `residual.test.mjs:65`,
+  `assert.equal(response.ok, true)`: the supervisor did not accept the launch request - after 5.4s,
+  which is not a timeout. Its two mutation siblings passed in the same run;
+- at `94aa6622`, the `loseReceipt` mutation sibling failed, observed through the A12 guard, whose inner
+  run reported `tests=3637 / pass=3628 / fail=1 / skipped=8`;
+- at `52a022f3`, the `loseReceipt` sibling failed twice in full-scope runs (the four-mode run and the
+  re-run alone described above, both through the A12 guard), and `SHU-250`'s 1000 ms tick assertion
+  failed once in the focused plain mode.
+
+Three things are now known that were not known when this family was last reported:
+
+- The live-restart family lives in `residual.test.mjs` and in `supervisor-service.test.mjs`; neither file
+  is in the focused selection, so only the full scope ever exercises the family - which is why every
+  sighting of it has been in a full run. (This round's verifier saw a `supervisor-service.test.mjs`
+  member, "SHU251 recovery precedes readiness and authenticated status is available", fail in a parent
+  run; none of the six reds listed above is misattributed.)
+- It does not reproduce in isolation or under plain load: 6/6 green with the shifted clock and 3/3
+  green plain, each run alone; 10/10 green plain earlier, four idle and six under 8-way CPU load; and a
+  per-leg mutant sweep of the parent's whole committed suite ran four times without one failure in this
+  family (one of those four runs did fail two committed assertions, on the readback mutant, as the table
+  above records - no live-restart test failed in any of the four). The trigger is therefore the full
+  concurrent run - a configuration in which the live-restart family
+  shares the box with every other test - not the clock shift, and not CPU load on its own.
+- The sightings at `6152c34`, `d09b1dd7` and `94aa6622` are all this family and differ in member - the
+  `loseReceipt` mutation, the positive control, and the `loseReceipt` mutation again (inside the A12
+  guard's concurrent inner run, whose own report was `tests=3637 / pass=3628 / fail=1 / skipped=8`) -
+  and at `52a022f3` the `loseReceipt` member failed twice in full-scope runs, once in the four-mode run
+  and once when re-run alone on an idle box. Different members failing at different heads, and the same
+  member failing in one concurrent run and passing in the next, is consistent with a timing interaction;
+  the record does not establish the mechanism, and the one member of this family whose failing assertion
+  has been captured is a state comparison (`false !== true` at `residual.test.mjs:65`), not a wrong
+  assertion.
+
+The clean re-run the lane's precedent asks for was done for both heads, on an idle box with nothing else
+running: at `d09b1dd7` **exit 0, `3630 ok / 0 not ok`** (`full-clock-rerun-280h.tap`) and at `94aa6622`
+**exit 0, `3633 ok / 0 not ok`** (`full-clock-rerun-280h-r18.tap`) - so every red is recorded with the
+green that follows it, never the green alone.
+
+The concrete next step, for a lane of its own, is to record what the refusal carried: `ok:false` from
+`submitToSupervisor` is currently discarded by the assertion, so the reason the supervisor declined is
+not captured anywhere. Until then this stays an explicit owner-facing acceptance item: the guard
+red-fails on any non-pass, so it can refuse or delay a run and can never let an escape through
+silently, and the affected family is unrelated to the ancestry claim this window arms - it is a
+pre-existing test in a file neither this round nor the previous one touches.
+
+**The first verification of this branch returned FAIL, and this is what changed.** An independent
+verifier (a different model family, no lane history) confirmed the control itself as sound,
+non-vacuous and leg-discriminating, and failed the round on its own record: two load-bearing RED
+statements were false against the machine - both corrected above, with the sentences that were wrong
+left visible rather than quietly rewritten - and both of the first two mutants restated kills the
+committed suite already made, which is the reason the three per-leg enforcement mutants exist. Its
+third finding, that neither mutant separated one leg from another, is addressed by those three and
+measured here as one variant each. Its remaining two findings were not blocking: it could not
+reproduce the single full-clock red (and confirmed every citation around it, including that
+`residual.test.mjs:65` is the discarded `response.ok` assertion and that the file is absent from the
+focused selection). The instability it disclosed in one of its own four parent-export runs is not an
+instability, and this round's verifier measured the cause: `V8_DOCUMENTATION_LINK_TARGETS` pins
+documentation links to exact line numbers in `shu71-production.mjs`, and exactly one of the five mutants
+- the one that skips the second fixture's legs - inserts a line, shifting them. That test failed in the
+skip-legs run and in none of the other four, deterministically.
+
+**What this round does not do.** It does not touch a production line: `shu71-production.mjs` is
+byte-identical to `a51c8490`, and the whole change is one control with three legs, five mutants, the
+eight committed inventory rows that move with them, and this record. It does not close that
+intermittent.
+### Eighteenth correction round: the re-verification before the push, and this record's own worst sentence
+
+Two independent readers converged on this round. They agreed about one line of this record, and they
+disagreed about `verifyReseedCommit`.
+
+**What the round was asked for.** GPT, reading the consensus brief, returned: do not merge or mint from
+`c62520e9`; add a dedicated control and mutant for `verifyReseedCommit` — "corrupt only the local reseed
+acceptance/parent structure; require ACT_REMOTE_ANCESTRY before any git push; assert zero remote pushes,
+unchanged remote ref, no activation; deleting/bypassing verifyReseedCommit alone must kill that named
+control" — then fresh exact-head CI and an independent verdict; keep the intermittent investigation
+separate, and do not tune timeouts or describe its cause without captured evidence.
+
+**What measuring it changed.** The control was built as asked, and building it showed the premise was
+narrower than the ask. The reseed terms are not first enforced at the push step: the contract adapter
+enforces them in the **local-reseed** step, which precedes `remote-push` — `appendReseed` calls
+`verify(oid)` after `hash-object` and `verify(observed)` again after the CAS `update-ref`, and
+`observeReseed` calls `verify` on the ref it reads. All seven refusal terms reachable from `verifyReseedCommit` have a **named control** at that level —
+`RESEED unexpected parents refused` (`:151`, `UNEXPECTED_PARENT`), `RESEED extra path refused` (`:155`,
+`UNEXPECTED_PATH`), and the named refusal matrix (`:159`-`:170`: `UNEXPECTED_TREE`, `DIGEST_MISMATCH`,
+`RESULT_SHA_MISMATCH`, `SEED_BLOB_CHANGED`, `METADATA_DRIFT`) — and **two of the seven** also have a
+mutant that deletes that term's own guard: M4 removes the `UNEXPECTED_PARENT` refusal, M8 the
+`UNEXPECTED_PATH` refusal. The other five have controls but **no per-term deletion mutant**: M1, M2, M3,
+M5, M6 and M7 change the manifest serialisation or the commit literals and are killed by the literal and
+digest tests rather than by deleting a `refuse()` guard. The call at `shu71-production.mjs:821`
+is therefore a **re-verification immediately before the push**, not the acceptance, and deleting it
+unpins no reseed term. The control is kept and classified **LOW** rather than as a blocking hole: the
+last gate before an external mutation had no B6-level control, while the genuinely uncovered items are
+narrower and are stated as such — no B6-level control drives a reseed-contract refusal through the arming
+path to a named halt *by itself* (`haltCodeClosureCheck` pins `SHU71_RESEED_DIGEST_MISMATCH` by name, so
+this is partial cover), and no per-term mutant isolates any of those five — `UNEXPECTED_TREE`,
+`METADATA_DRIFT`, `SEED_BLOB_CHANGED`, `DIGEST_MISMATCH`, `RESULT_SHA_MISMATCH` — at that level. Naming
+two of the five there would have implied the other three were covered.
+
+**The control, and the term it pins.** `reseedAcceptanceBeforePushCheck` corrupts only the local
+acceptance input — the reseed commit with its two `parent` lines swapped — at the read the push step
+makes. That read was located by probing a clean run rather than assumed: the reseed commit is read three
+times, and the third (`cat-file commit <seed>`, SEQ 38) is followed immediately by `ls-remote`,
+`merge-base --is-ancestor` and the push, so the corrupted object is served to the gate that guards the
+push while every earlier gate has already passed. Asserted: the refusal is named, **zero remote pushes**,
+the push path is never entered, the remote ref is unchanged, no activation file is written, run state
+`HALT`. The refusal carries the contract's own name, `SHU71_RESEED_UNEXPECTED_PARENT`, not
+`ACT_REMOTE_ANCESTRY` as the ask phrased it — this gate is local, and no push has happened for an
+ancestry read to judge. The divergence is flagged rather than silently resolved: changing the code to
+suit the phrasing would be a production change, not a test one.
+
+**Its two mutants are not equal, and the record says which is which.** Against the parent's whole
+committed suite at `a51c8490`, judged by name diff against an unmutated baseline run of the same export
+(`parent-prepush-survival.txt`; each run logs its own `restored:` line):
+
+    baseline                             1 red    SHU251 routine shutdown preserves workers… (family)
+    refusal swallowed                    2 reds   both SHU251 live-restart family — no new kind
+    read never made                      3 reds   B1_SINGLE_LANE, B1_TWO_LANES, A12 guard
+
+So the **swallow** mutant survives the parent's whole committed suite: a corrupted object accepted at the
+re-verification lets the push proceed, and nothing committed notices. The **removed** mutant is killed by
+two committed tests, so the read's presence was already covered at the parent and is not claimed here as
+this round's find.
+
+**The blocking finding, and that two readers found it independently.** A text-only reviewer and
+verification #5, neither seeing the other's work, returned the same single blocker in the same lines:
+this record's sentence at `:5720` — "Every red is a wall-clock or timing assertion, none is a wrong
+assertion" — which characterises the nature of reds whose failing assertion this record itself says,
+fifteen lines later, is *captured in no artifact at any head*; three of the four reds inside that
+sentence's own scope are `loseReceipt` reds. Verification #5 failed the round on it (F1, blocking). It is
+deleted. One further measurement lands on the same sentence: at this round's head the full plain mode
+reddened once on that same member and its failing assertion **is** captured — `false !== true` at
+`residual.test.mjs:65`, a state assertion on the launch. That is exactly the class of red the deleted
+sentence called a wall-clock assertion, so the sentence was not merely unmeasured: for this member it was
+wrong. The same reviewer also showed that this lane's claim to have swept this claim class to zero was
+incomplete: the sweep searched the two forms it had been handed rather than the class, and this was a
+third instance. Both are recorded rather than quietly repaired.
+
+**Also corrected in this round, from the same two readings:**
+
+- the survival table no longer reports exit codes. They carry no information in this configuration: the
+  same commit returns exit 0 with no failures on this host and exit 1 with six unrelated failures on a
+  third party's host under root posture, and verification #5 measured exit 1 on rows whose cell read
+  nothing new. The measurement is the name diff, and the table now says so in its cells;
+- the READBACK row is marked measured by one party: the third-party reproduction covered baseline, LOCAL
+  and REMOTE only, so that row rests on a single measurement;
+- the mutant × leg matrix in the brief's §4.1 is marked as an ad-hoc measurement of that round — the
+  committed runner pairs each mutant with one variant and does not reproduce the 1/3 pattern;
+- the parenthetical about the commits after the code head now states what was measured, bounded to the
+  range it was measured over: every commit from `94aa6622` through `c62520e9` is documentation or comment
+  only, the sole change to any executable file across that range being the comment block above
+  `secondFixtureRefBindingCheck`. Round eighteen's own executable change is outside that range and is
+  counted in its own section, not carried by this sentence.
+
+**What this round changes in the code.** Nothing: `shu71-production.mjs` is byte-identical to
+`a51c8490`. The change is one control, two mutants, three inventory rows (3,641 names/requirements), the
+corrections above, and this section.
+
+**Measurements at this round's code head.** The B6 count and the four mode counts below were measured at
+tree `478ca4dc` (commit `7163c111`), and they are stated at the tree they were measured at rather than
+re-attributed to the revision carrying this record. Between that tree and this revision the only change to
+any executable file is comment lines in `shu71-arming-robustness-checks.mjs` — checkable with
+`git diff 7163c111..HEAD -- .github/coordinator/service/test/shu71-arming-robustness-checks.mjs`, which is
+a comment block and nothing else. Every other difference is prose in this file.
+
+    B6 arming robustness     exit 0    87 ok / 0 not ok   (control ok 21; mutants ok 79, 80)
+    focused plain            exit 0    2250 ok / 0 not ok   (322s)
+    focused clock            exit 0    2250 ok / 0 not ok   (251s)
+    full plain               exit 1    3635 ok / 1 not ok   (537s)
+      the red is `SHU251 live worker restart adopts once and recovers durable completion`
+      (`residual.test.mjs:116`), and this time its failing assertion IS captured: `false !== true`
+      at `residual.test.mjs:65`, a state assertion on the launch, not a wall-clock one
+    full clock               exit 0    3636 ok / 0 not ok   (507s)
+
+**What this round does not do.** It does not close the intermittent, diagnose it beyond captured
+evidence, or tune a timeout — the survival reproduction of one party and the name-diff table of another
+agree on the central RED claim, and the exit-code column that invited the misreading is gone.

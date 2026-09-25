@@ -27,6 +27,7 @@
     ".github/coordinator/service/test/shu71-arming-order.test.mjs",
     ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
     ".github/coordinator/service/test/shu71-branch-restore.test.mjs",
+    ".github/coordinator/service/test/shu71-claim-manifest.test.mjs",
     ".github/coordinator/service/test/shu71-composition.test.mjs",
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
@@ -3626,6 +3627,14 @@
     "B6 arming robustness: the disagreeing binding leg is named (readback)",
     "B6 arming robustness: the disagreeing binding leg is named (local)",
     "B6 arming robustness: the disagreeing binding leg is named (clean)",
+    "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+    "B6 arming robustness: the second fixture is bound too, leg by leg (remote)",
+    "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
+    "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+    "B6 arming robustness mutation: fixture_2 keeps every read but loses its LOCAL leg check",
+    "B6 arming robustness mutation: fixture_2 keeps every read but loses its REMOTE leg check",
+    "B6 arming robustness mutation: fixture_2 keeps every read but loses its READBACK leg check",
+    "B6 arming robustness mutation: the second fixture skips its own binding legs",
     "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
     "B6 arming robustness: the CLI names the refusal it caught",
     "B6 arming robustness: the reported command detail is closed to the reviewed fields",
@@ -3663,6 +3672,9 @@
     "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
     "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
     "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+    "B6 arming robustness: the pre-push acceptance refuses before any push is issued",
+    "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed",
+    "B6 arming robustness mutation: the pre-push acceptance read is not made",
     "B7 published-branch restore: a halt after the remote push restores the branch it published",
     "B7 published-branch restore: a completed run restores the branch on the ordinary revoke path",
     "B7 published-branch restore: a fetched remote-tracking ref is restored too",
@@ -3761,7 +3773,35 @@
     "SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement",
     "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
     "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
-    "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement"
+    "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement",
+    "B7 claim manifest: the guard runs only where git can read this checkout",
+    "B7 claim manifest: the committed manifest is what the registries and receipts build",
+    "B7 claim manifest: an entry that names an uncommitted control is rejected",
+    "B7 claim manifest: an entry that names an uncommitted mutant is rejected",
+    "B7 claim manifest: a PASS without a mutant that kills it is rejected",
+    "B7 claim manifest: a disposition that is neither PASS nor BLOCK is rejected",
+    "B7 claim manifest: a code revision this checkout does not contain is rejected",
+    "B7 claim manifest: a wrong head is rejected, whether it differs executably or is not here at all",
+    "B7 claim manifest: only documentation, the manifest and receipts may follow the code revision",
+    "B7 claim manifest: the coverage block counts what the entries enumerate and what they do not",
+    "B7 claim manifest: a mutant attributed on an unestablished basis is rejected",
+    "B7 claim manifest: a mutation row whose shape disagrees with the index read is refused",
+    "B7 claim manifest: every suite file list in the tree agrees with the committed tree",
+    "B7 claim manifest: a manifest committed after the code revision it names is accepted",
+    "B7 claim manifest: a manifest whose entries were edited by hand is rejected",
+    "B7 claim manifest: the closure mutants are attributed to the controls that kill them",
+    "B7 claim manifest: every mutation row is counted, paired or with a stated reason",
+    "B7 claim manifest: a term with no mutant is marked as one no receipt can approve",
+    "B7 claim manifest: every receipt in the directory is listed, with failing runs called out",
+    "B7 claim manifest: the tolerance admits this service receipts and nothing else under that name",
+    "B7 claim manifest: the inventory denominator counts distinct names",
+    "B7 claim manifest: executable script is not admitted under a receipts directory",
+    "B7 claim manifest: no pin means no PASS, however many receipt files exist",
+    "B7 claim manifest: a pin proves exactly the tests its receipt recorded as passing",
+    "B7 claim manifest: the receipt authority cannot approve its own change",
+    "B7 claim manifest: a pin whose receipt cannot account for its run is refused",
+    "B7 claim manifest: a pin records how many terms it proves",
+    "B7 claim manifest: the checker accepts what the generator produces from a pin, and refuses by name what it should"
   ],
   "requirements": [
     {
@@ -28009,6 +28049,38 @@
       "capabilities": []
     },
     {
+      "name": "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the second fixture is bound too, leg by leg (remote)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its LOCAL leg check",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its REMOTE leg check",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its READBACK leg check",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the second fixture skips its own binding legs",
+      "capabilities": []
+    },
+    {
       "name": "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
       "capabilities": []
     },
@@ -28154,6 +28226,18 @@
     },
     {
       "name": "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the pre-push acceptance refuses before any push is issued",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the pre-push acceptance read is not made",
       "capabilities": []
     },
     {
@@ -28589,6 +28673,230 @@
       "capabilities": [
         {
           "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the guard runs only where git can read this checkout",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the committed manifest is what the registries and receipts build",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: an entry that names an uncommitted control is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: an entry that names an uncommitted mutant is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a PASS without a mutant that kills it is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a disposition that is neither PASS nor BLOCK is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a code revision this checkout does not contain is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a wrong head is rejected, whether it differs executably or is not here at all",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: only documentation, the manifest and receipts may follow the code revision",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the coverage block counts what the entries enumerate and what they do not",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a mutant attributed on an unestablished basis is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a mutation row whose shape disagrees with the index read is refused",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: every suite file list in the tree agrees with the committed tree",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a manifest committed after the code revision it names is accepted",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a manifest whose entries were edited by hand is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the closure mutants are attributed to the controls that kill them",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: every mutation row is counted, paired or with a stated reason",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a term with no mutant is marked as one no receipt can approve",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: every receipt in the directory is listed, with failing runs called out",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the tolerance admits this service receipts and nothing else under that name",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the inventory denominator counts distinct names",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: executable script is not admitted under a receipts directory",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: no pin means no PASS, however many receipt files exist",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a pin proves exactly the tests its receipt recorded as passing",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the receipt authority cannot approve its own change",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a pin whose receipt cannot account for its run is refused",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a pin records how many terms it proves",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: the checker accepts what the generator produces from a pin, and refuses by name what it should",
+      "capabilities": [
+        {
+          "name": "git"
         }
       ]
     }
