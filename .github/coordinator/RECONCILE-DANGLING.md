@@ -131,24 +131,41 @@ kernel's process-start token (field 22 of `/proc/<pid>/stat`, the same slice
 `supervisor-worker.mjs` records as `process_token`), a redacted command line, and
 the **file that supplied the pid** — and `defaultWorkerLiveness` then looks again,
 by pid, before any verdict is formed. Comparing the two observations gives one of
-six named dispositions:
+seven named dispositions:
 
 | disposition | what was established | refusal |
 | --- | --- | --- |
 | `CONFIRMED_LIVE` | the pid is still present **and** its start token is unchanged | `WORKER_LIVE` |
 | `UNVERIFIED` | the pid is still present, but its start token could not be read at the sighting or at the re-check | `WORKER_UNVERIFIED` |
 | `UNOBSERVED` | the re-check returned no observation for the pid | `WORKER_UNVERIFIED` |
+| `PRESENCE_UNREADABLE` | `/proc/<pid>` could not be read at the re-check (any stat fault but `ENOENT` — `EACCES`, `ENOTDIR`, an I/O error), so the pid was neither observed present nor proved gone | `WORKER_UNVERIFIED` |
 | `VANISHED` | `/proc/<pid>` is gone: the sighted process exited before the verdict | `WORKER_STALE_RECORD` |
 | `TOKEN_CHANGED` | the start token changed: the pid was reused by another process | `WORKER_STALE_RECORD` |
-| `RECORD_TOKEN_MISMATCH` | the run record's `process_token` disagrees with the live process's start token | `WORKER_STALE_RECORD` |
+| `RECORD_TOKEN_MISMATCH` | the run record's `process_token` disagrees with the live process's start token **and** no independent sighting binds the pid to this attempt | `WORKER_STALE_RECORD` |
 
 `WORKER_LIVE` now means **proved**, and nothing else can claim it. Precedence is
 confirmed → unverified → disproved, so a single confirmed worker outranks any
 number of stale sightings.
 
+`VANISHED` is the only disposition that asserts an absence, so it is reserved for
+an absence the kernel confirmed: `readProcessIdentity` reports `exists_known:
+false` for every stat fault but `ENOENT`, and that is `PRESENCE_UNREADABLE`, which
+fails closed as unverified. "I could not look" is never rendered as a fact — the
+audit line prints `token_at_recheck=unreadable`, never `absent`.
+
+`RECORD_TOKEN_MISMATCH` is a statement about a **record**, and the record is what
+this operation was invoked because it does not trust. It therefore decides only a
+pid that nothing but that record binds to the attempt. A process whose cwd is the
+attempt's own worktree, or that carries the attempt_id, was bound to the attempt
+*by observation* (`independently_bound=yes` in the audit line): a stale
+`process_token` cannot exonerate it, so it falls through to the token checks,
+which can reach only `CONFIRMED_LIVE`, `TOKEN_CHANGED` or `UNVERIFIED` — never a
+release. The record's disagreement stays in the evidence either way:
+`recorded_token` and `token_at_sighting` are both printed.
+
 ### Which combination is allowed to proceed, and why the slot stays protected
 
-**No** sighting ever permits terminalization. Every one of the six dispositions
+**No** sighting ever permits terminalization. Every one of the seven dispositions
 above is a refusal. The only thing that proceeds past the worker checks is a
 record naming a pid that was **never in the process table during this
 invocation** — nothing was seen, so there is nothing to confirm and nothing to
@@ -186,10 +203,18 @@ WORKER_SIGHTING pid=2770495 disposition=VANISHED check=/proc/<pid> presence at r
 ```
 
 pid, the check that decided, where the pid came from, the token then and now (or
-`unreadable`/`absent`), and the command line — so any refusal can be
-reconstructed from the log alone. The command line is flattened from its argv
-NULs, truncated to `WORKER_CMDLINE_MAX` characters, and any argument that looks
-like a credential assignment keeps its name and loses its value.
+`unreadable`/`absent`), whether an independent sighting bound the pid to the
+attempt, and the command line — so any refusal can be reconstructed from the log
+alone. The command line is redacted **per argv entry**: the NUL separators are
+honoured *first*, because they are the only evidence of where one argument ends,
+and each whole entry is then redacted — the complete next entry after a sensitive
+flag, a `NAME=` assignment matched without regard to case, an HTTP
+`Bearer`/`Basic` value, and the userinfo of a URL. Flattening argv to spaces
+before redacting would publish any credential containing a space, since a
+one-word rule hides exactly one of its words. A redacted argument keeps its name
+and loses its value, so a refusal stays readable enough to recognise the process;
+collapsing whitespace and truncating to `WORKER_CMDLINE_MAX` characters happen
+last, where they can only remove characters.
 `/proc/<pid>/environ` is read to *match* the attempt_id and then discarded: an
 environment block is a secret store and no truncation makes it safe to log.
 

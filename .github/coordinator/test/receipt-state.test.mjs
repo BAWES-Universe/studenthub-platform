@@ -401,9 +401,12 @@ import {
   defaultPushReceipt,
   defaultSupervisorStore,
   WORKER_CMDLINE_MAX,
+  WORKER_DISPOSITIONS,
+  classifyWorkerSighting,
   defaultWorkerLiveness,
   defaultWorkerProcesses,
   defaultWorktree,
+  describeWorkerSighting,
   main as reconcileMain,
   parseReconcileArgs,
   probeFreshness,
@@ -415,6 +418,7 @@ import {
   sendSupervisorStatus,
   supervisorDisownsAttempt,
   terminalizeReceipt,
+  workerVerdict,
 } from "../reconcile-dangling.mjs";
 
 const DANGLING = "7f3a1c20-9b44-4d17-8c02-6e5a1d4b9f83";
@@ -1175,6 +1179,190 @@ test("SHU-140 worker-identity: a stale supervisor record whose pid was never liv
   assert.equal(released.receipt.stage, "HOLD");
   assert.equal(free.io.posted.length, 1);
   assert.equal(activeSlots([resolveChain(free.io.receiptsOnDisk, DANGLING)]), 0, "the slot is released only once every safeguard held");
+});
+
+// ---------------------------------------------------------------------------
+// SHU-140 — the three defects a review of the sighting machinery found.
+//
+// Each case below is a value or a claim that the reviewed revision published,
+// reproduced through the SHIPPED probes. None of them released the slot — but
+// two of them put a false statement in the audit trail, and the first put a
+// live credential in it, and an auditable refusal is exactly the property this
+// module exists to hold.
+// ---------------------------------------------------------------------------
+
+// A command line is redacted PER ARGV ENTRY, because /proc separates argv with
+// NULs and those NULs are the only evidence of where one argument ends.
+// Flattening them to spaces first and then hiding one whitespace-delimited word
+// per match published every credential that contained a space, and every
+// credential that names itself rather than its flag.
+test("SHU-140 worker-identity: a credential is redacted as a WHOLE argv entry, so a value with spaces or a self-naming credential never reaches the audit trail", () => {
+  const SECRET = "ghp_deadbeefLIVEWORKERSECRET";
+  const NUL = "\u0000";
+  const argv = (...args) => `${args.join(NUL)}${NUL}`;
+
+  // 1. A flag whose value is ONE argument that contains spaces. Flattened, it
+  //    looks like four words and a one-word rule hides exactly one of them.
+  const spaced = redactCommandLine(argv("node", "--password", `my ${SECRET} phrase`));
+  assert.ok(!spaced.includes(SECRET), `the WHOLE value of a sensitive flag must be redacted, got ${spaced}`);
+  assert.equal(spaced, "node --password <redacted>");
+
+  // 2. An HTTP authorization value: `Bearer` is the only word a word-wise rule
+  //    hides, and the credential is the word after it.
+  const bearer = redactCommandLine(argv("node", "--auth-header", `Bearer ${SECRET}`));
+  assert.ok(!bearer.includes(SECRET), `got ${bearer}`);
+
+  // 3. ...and the same credential under a flag with NO sensitive name at all.
+  //    `--header` matches no keyword, so only the VALUE can give it away.
+  const header = redactCommandLine(argv("curl", "--header", `Authorization: Bearer ${SECRET}`));
+  assert.ok(!header.includes(SECRET), `a self-naming credential must be redacted whatever flag carries it, got ${header}`);
+
+  // 4. A lower-case assignment with no leading dash.
+  const lower = redactCommandLine(argv("node", `api_key=${SECRET}`));
+  assert.ok(!lower.includes(SECRET), `an assignment must match without regard to case, got ${lower}`);
+  assert.match(lower, /api_key=<redacted>/, "the NAME stays: a refusal has to stay readable enough to recognise the process");
+
+  // 5. A credential in a URL's userinfo, which no flag and no `=` announces.
+  const url = redactCommandLine(argv("git", `https://x-access-token:${SECRET}@github.com/o/r`));
+  assert.ok(!url.includes(SECRET), `got ${url}`);
+
+  // 6. Redaction is not a blanket. A command line with no credential in it is
+  //    carried through intact, or the refusal can no longer identify anything.
+  assert.equal(redactCommandLine(argv("/usr/bin/node", "/opt/coordinator/supervisor-worker.mjs", "--attempt", DANGLING)),
+    `/usr/bin/node /opt/coordinator/supervisor-worker.mjs --attempt ${DANGLING}`);
+  // ...and the answers that are not a command line keep their meanings: null is
+  // "unreadable", "" is "no arguments", and they must never be swapped.
+  assert.equal(redactCommandLine(undefined), null, "an unreadable cmdline is null, never an empty string that reads as 'no arguments'");
+  assert.equal(redactCommandLine(""), "");
+  assert.equal(redactCommandLine(NUL + NUL), "");
+
+  // 7. Truncation runs LAST, so it can only ever remove characters — it can
+  //    never cut a line in a way that exposes a value redaction replaced.
+  const long = redactCommandLine(argv("node", "--token", SECRET, "x".repeat(400)));
+  assert.ok(!long.includes(SECRET), `got ${long}`);
+  assert.ok(long.length <= WORKER_CMDLINE_MAX + 1, `cmdline must stay bounded, got ${long.length}`);
+
+  // 8. A caller that pre-flattened argv (no NUL anywhere) is still redacted: the
+  //    space-separated rules survive as the last resort, not as the mechanism.
+  const flat = redactCommandLine(`node --api-token ${SECRET} SUPERVISOR_TOKEN=${SECRET}`);
+  assert.ok(!flat.includes(SECRET), `got ${flat}`);
+});
+
+// A supervisor record that disagrees with the kernel disproves nothing about a
+// process we can SEE working in the attempt's own worktree. The record is the
+// very thing this operation was invoked because it does not trust.
+test("SHU-140 worker-identity: a process sighted working IN the attempt worktree is not exonerated by a stale supervisor record, and a record mismatch alone still refuses WORKER_STALE_RECORD", async (t) => {
+  const worktreeRoot = sandbox(t);
+  const worktreeDir = nodePath.join(worktreeRoot, DANGLING);
+  fs.mkdirSync(worktreeDir);
+  // The kernel says pid 2770495 started at token 900900 and its cwd is the
+  // attempt's OWN worktree. The supervisor's run record for the same attempt
+  // carries a STALE process_token: the record disagrees with the kernel.
+  const proc = fakeProc(t, { 2770495: { cmdline: "/usr/bin/node /opt/coordinator/supervisor-worker.mjs ", cwd: worktreeDir, start_token: "900900" } });
+  const stale = supervisorStateDir(t, { runs: { attempt_id: DANGLING, status: "running", pid: 2770495, process_token: "555" } });
+  const env = { SHU_SUPERVISOR_STATE_DIR: stale, SHU_WORKTREE_ROOT: worktreeRoot };
+
+  const probed = stamped(defaultWorkerProcesses({ receipt: { attempt_id: DANGLING }, env, procRoot: proc, now: clock }));
+  assert.equal(probed.sightings.length, 1, "one process, sighted two ways");
+  // The record's disagreement is still recorded as the fact it is...
+  assert.equal(probed.sightings[0].record_token_match, false, "the record really does disagree with the kernel, and the audit must keep saying so");
+  assert.deepEqual(probed.sightings[0].also_seen_by, ["worktree_cwd"]);
+  // ...but it does not delete a pid that an INDEPENDENT sighting saw working
+  // here. `pids` is the pids that would have been reported live, and a cwd
+  // sighting reported this one live before any record was ever consulted.
+  assert.equal(probed.sightings[0].independently_bound, true, "a cwd inside the attempt worktree binds the pid to the attempt BY OBSERVATION");
+  assert.deepEqual(probed.pids, [2770495], "a record mismatch must not suppress a pid an independent sighting saw");
+
+  // End to end: WORKER_LIVE, and the line says why the record did not decide it.
+  const { io, run: go } = workerWorld(t, { sightingProc: proc, env });
+  const result = await go();
+  assert.equal(result.code, "WORKER_LIVE", `a process working in the attempt worktree is live, got ${result.code} (${result.detail})`);
+  assert.notEqual(result.code, "WORKER_STALE_RECORD", "'provably not that process' must never be claimed about a process seen in the attempt's own worktree");
+  assert.match(result.detail, /disposition=CONFIRMED_LIVE/);
+  assert.match(result.detail, /source=supervisor_record\+worktree_cwd/);
+  assert.match(result.detail, /recorded_token=555/, "the disagreeing record stays in the evidence");
+  assert.match(result.detail, /independently_bound=yes/, "the line must explain its own disposition");
+  assert.equal(io.posted.length, 0, "a live worker must not be terminalized around");
+  assert.equal(activeSlots(io.receiptsOnDisk), 1, "the slot is preserved");
+
+  // ...and the guard is NOT weakened. With nothing behind the pid but the
+  // record that disagrees — no cwd, no attempt_id anywhere — it is still
+  // disproved, under its own distinct name.
+  const recordOnly = fakeProc(t, { 2770495: { cmdline: "/usr/bin/node /opt/coordinator/supervisor-worker.mjs ", start_token: "900900" } });
+  const alone = workerWorld(t, { sightingProc: recordOnly, env: { SHU_SUPERVISOR_STATE_DIR: stale } });
+  const second = await alone.run();
+  assert.equal(second.code, "WORKER_STALE_RECORD", `got ${second.code} (${second.detail})`);
+  assert.match(second.detail, /disposition=RECORD_TOKEN_MISMATCH/);
+  assert.match(second.detail, /independently_bound=no/);
+  assert.equal(alone.io.posted.length, 0, "nothing may be written on a refusal");
+
+  // The argv/environ sighting is independent evidence in the same way: it is a
+  // process naming this attempt with no record behind it at all.
+  const byArgv = fakeProc(t, { 2770495: { cmdline: `/usr/bin/node worker.mjs --attempt ${DANGLING} `, start_token: "900900" } });
+  const scanned = stamped(defaultWorkerProcesses({ receipt: { attempt_id: DANGLING }, env: { SHU_SUPERVISOR_STATE_DIR: stale }, procRoot: byArgv, now: clock }));
+  assert.deepEqual(scanned.pids, [2770495], "a process carrying the attempt_id is independent evidence too");
+  assert.equal(scanned.sightings[0].independently_bound, true);
+  assert.equal(classifyWorkerSighting(scanned.sightings[0], readProcessIdentity(byArgv, 2770495)).disposition, "CONFIRMED_LIVE");
+});
+
+// "I could not look" must never render as a fact. VANISHED states that /proc was
+// looked at and the process was gone, so it is reserved for an absence the
+// kernel actually confirmed — ENOENT, and nothing else.
+test("SHU-140 worker-identity: a /proc entry that could not be READ at the re-check is PRESENCE_UNREADABLE and refuses WORKER_UNVERIFIED, never VANISHED and never 'absent'", async (t) => {
+  const worktreeRoot = sandbox(t);
+  const worktreeDir = nodePath.join(worktreeRoot, DANGLING);
+  fs.mkdirSync(worktreeDir);
+  const sighted = fakeProc(t, { 2770495: { cmdline: "/usr/bin/node /opt/coordinator/supervisor-worker.mjs ", cwd: worktreeDir, start_token: "900900" } });
+
+  // 1. readProcessIdentity separates "the kernel says it is gone" from "I could
+  //    not look at all". Only ENOENT is a KNOWN absence.
+  const gone = readProcessIdentity(fakeProc(t, { 7: {} }), 2770495);
+  assert.deepEqual({ exists: gone.exists, known: gone.exists_known }, { exists: false, known: true }, "ENOENT is a known absence");
+  // A /proc that is no longer a directory: ENOTDIR, so nothing at all is known.
+  const notProc = nodePath.join(sandbox(t), "proc-replaced-by-a-file");
+  fs.writeFileSync(notProc, "");
+  const blind = readProcessIdentity(notProc, 2770495);
+  assert.deepEqual({ exists: blind.exists, known: blind.exists_known }, { exists: false, known: false }, "a non-ENOENT stat fault establishes NOTHING about existence");
+  // ...and the errno the review named, wherever this uid can actually be denied.
+  // Run as a uid that cannot be denied (root) this case is unreachable, and the
+  // ENOTDIR case above pins the same contract without needing a permission.
+  const denied = sandbox(t);
+  fs.mkdirSync(nodePath.join(denied, "2770495"));
+  fs.chmodSync(denied, 0o000);
+  try {
+    let code = null;
+    try { fs.statSync(nodePath.join(denied, "2770495")); } catch (error) { code = error.code; }
+    if (code === "EACCES") assert.equal(readProcessIdentity(denied, 2770495).exists_known, false, "EACCES must never read as an absence");
+  } finally { fs.chmodSync(denied, 0o755); }
+
+  // 2. The classifier gives it its own name, and that name is not a disproof.
+  const sight = sighting({ pid: 2770495, record_token_match: null });
+  assert.equal(classifyWorkerSighting(sight, blind).disposition, "PRESENCE_UNREADABLE");
+  assert.notEqual(classifyWorkerSighting(sight, blind).disposition, "VANISHED", "an unreadable /proc is not a proved exit");
+  assert.ok(WORKER_DISPOSITIONS.PRESENCE_UNREADABLE, "every disposition must be declared with what it means");
+  const grouped = workerVerdict([sight], [blind]);
+  assert.equal(grouped.unverified.length, 1, "neither proved nor disproved: it fails closed as unverified");
+  assert.equal(grouped.disproved.length, 0, "it must never be grouped as a disproof");
+  assert.equal(grouped.confirmed.length, 0, "and it is certainly not a confirmation");
+  // The audit line never states the absence it did not establish.
+  const line = describeWorkerSighting(grouped.verdicts[0]);
+  assert.match(line, /token_at_recheck=unreadable/);
+  assert.ok(!line.includes("token_at_recheck=absent"), `"absent" claims /proc was looked at, got ${line}`);
+  // ...while a KNOWN absence still says absent, and is still a disproof.
+  assert.match(describeWorkerSighting(workerVerdict([sight], [gone]).verdicts[0]), /token_at_recheck=absent/);
+  assert.equal(workerVerdict([sight], [gone]).disproved.length, 1, "a kernel-confirmed absence is still VANISHED");
+
+  // 3. End to end, through the shipped probes: the pid was sighted, the re-check
+  //    could not look, so the operation fails closed under its own name.
+  const { io, run: go } = workerWorld(t, { sightingProc: sighted, verdictProc: notProc, env: { SHU_WORKTREE_ROOT: worktreeRoot } });
+  const result = await go();
+  assert.equal(result.code, "WORKER_UNVERIFIED", `got ${result.code} (${result.detail})`);
+  assert.notEqual(result.code, "WORKER_STALE_RECORD", "a re-check that never happened must not be reported as a disproof");
+  assert.match(result.detail, /disposition=PRESENCE_UNREADABLE/);
+  assert.match(result.detail, /check=\/proc\/<pid> presence at re-check \(unreadable\)/);
+  assert.ok(!result.detail.includes("disposition=VANISHED"), "an unverified re-check must never be reported as a proved exit");
+  assert.equal(io.posted.length, 0, "nothing may be written");
+  assert.equal(activeSlots(io.receiptsOnDisk), 1, "the slot is preserved");
 });
 
 test("SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt", async (t) => {
