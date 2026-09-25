@@ -234,8 +234,17 @@ the outcome, the request file is gone and its `request_id` has been recorded in
 * exactly one invocation can ever act on a given request file;
 * a re-presented `request_id` loses the exclusive create and is refused
   `REQUEST_REPLAYED`, by name, having run nothing;
-* a refusal can never wedge the timer into refusing forever — the next wake finds
-  no request and is an ordinary tick again;
+* a refusal **removes** the request, so the next wake finds none and is an
+  ordinary tick again. The one case where removal can fail is an object at the
+  request path that will not unlink — a directory there (an operator typo, a
+  `mkdir`, a `cp -r`/rsync of a staging tree) or a `SHU_WORKSPACE_STATE_DIR` that
+  is not a directory. That case would otherwise refuse on **every** wake forever
+  while `SuccessExitStatus=2` kept systemd reporting the unit as *succeeding*, so
+  `systemctl status` and `is-failed` would look healthy while the coordinator had
+  silently stopped ticking. It is therefore refused by its own name,
+  `REQUEST_UNREMOVABLE`, and exits `4` — a code the unit does **not** list, so the
+  wedge fails the unit and is visible. The refusal names the path to remove by
+  hand, and nothing was consumed and no operation ran;
 * a **fresh** `request_id` for an attempt that has already been terminalized runs
   the operation, which refuses `ALREADY_TERMINAL` from the durable chain before
   any supervisor contact and writes nothing. Second use is idempotent.
@@ -271,19 +280,22 @@ records when, and no clock has any part in deciding whether a request is valid.
 
 ### Request refusal codes
 
-Everything is by name here too, and every refusal consumes the request and runs
-nothing.
+Everything is by name here too, and every refusal runs nothing. All but one
+consume the request as well; `REQUEST_UNREMOVABLE` is the exception, and it says
+so, because the request path is precisely what could not be removed.
 
 | code | meaning |
 | --- | --- |
 | `RECOVERY_REFUSED: REQUEST_UNREADABLE` | a request exists but could not be opened or read |
 | `RECOVERY_REFUSED: REQUEST_INSECURE` | not mode 0600, not owned by the service uid, not a regular file, or a symlink |
 | `RECOVERY_REFUSED: REQUEST_MALFORMED` | not JSON, or not exactly the five reviewed fields with a valid marker and `request_id` |
+| `RECOVERY_REFUSED: REQUEST_TOO_LARGE` | over `RECOVERY_REQUEST_MAX_BYTES` (4096) by the `fstat` already in hand — refused *before* the bytes are read into the unit |
 | `RECOVERY_REFUSED: REQUEST_OPERATION_UNKNOWN` | the named operation is not in `RECOVERY_OPERATIONS` |
 | `RECOVERY_REFUSED: REQUEST_ATTEMPT_INVALID` | `attempt_id` is not a UUID |
 | `RECOVERY_REFUSED: REQUEST_UNAUTHORIZED` | `authorization_ref` is not a card ref or a seeded fixture contract ref |
 | `RECOVERY_REFUSED: REQUEST_UNRECORDED` | the single-use ledger could not be written, so single use is not guaranteed |
 | `RECOVERY_REFUSED: REQUEST_REPLAYED` | this `request_id` was already consumed |
+| `RECOVERY_REFUSED: REQUEST_UNREMOVABLE` | the object at the request path outlived the refusal, so every later wake would refuse it again — **exits 4 and fails the unit**, see above |
 | `RECOVERY_REFUSED: REQUEST_DISPATCH_ENABLED` | `ENABLE_DISPATCH` is true; recovery runs only with dispatch off |
 | `RECOVERY_REFUSED: REQUEST_OPERATION_FAILED` | the reviewed operation did not complete |
 
@@ -291,9 +303,17 @@ A well-formed request for an attempt that the operation then refuses reports the
 **operation's** own `RECONCILE_REFUSED: …` code verbatim: the request channel
 narrows what may be *asked*, and the reviewed operation still decides.
 
-Exit codes: `0` terminalized, `2` refused. `2` is deliberate — the unit lists it
-in `SuccessExitStatus=`, so a correct refusal cannot trip `Restart=on-failure`
-into `StartLimitBurst=` and leave the unit failed.
+Exit codes: `0` terminalized, `2` refused, `4` wedged (`REQUEST_UNREMOVABLE`).
+`2` is deliberate — the unit lists it in `SuccessExitStatus=`, so a correct
+refusal cannot trip `Restart=on-failure` into `StartLimitBurst=` and leave the
+unit failed. `4` is equally deliberate and for the opposite reason: it is **not**
+listed, because a request that cannot be removed means the coordinator will never
+tick again, and that must fail the unit rather than be reported as success.
+
+`WRITE_UNCONFIRMED` is the one refusal whose line does **not** say "nothing
+written": it means the terminal HOLD comment may have landed without confirming,
+and the repair is to re-run the recovery. Every other refusal line ends
+`; nothing written, slot preserved`, which is the literal truth for it.
 
 ### The operator command
 

@@ -1032,6 +1032,7 @@ import { ACTIVATION_FILE } from "../service/credential-delivery.mjs";
 import { coordinatorEntry, coordinatorTickArgs } from "../service/coordinator-tick.mjs";
 import {
   RECOVERY_CONSUMED_DIR,
+  RECOVERY_NOTHING_WRITTEN_SUFFIX,
   RECOVERY_OPERATIONS,
   RECOVERY_OPERATION_NAMES,
   RECOVERY_REFUSAL_CODES,
@@ -1039,8 +1040,15 @@ import {
   RECOVERY_REQUEST_FIELDS,
   RECOVERY_REQUEST_FILE,
   RECOVERY_REQUEST_MARKER,
+  RECOVERY_REQUEST_MAX_BYTES,
+  RECOVERY_UNCONFIRMED_SUFFIX,
+  RECOVERY_WEDGED_CODES,
+  RECOVERY_WEDGED_EXIT,
   consumeRecoveryRequest,
   recoveryPaths,
+  recoveryRefusal,
+  recoveryRefusalExit,
+  recoveryRefusalLine,
   runRecoveryRequest,
 } from "../service/recovery-request.mjs";
 import { reconcileDanglingAttempt as reviewedOperation } from "../reconcile-dangling.mjs";
@@ -1790,4 +1798,326 @@ test("SHU-140 recovery-request: the documented request path is the code's WORKSP
   for (const code of ["STATE_DIR_UNKNOWN", "STATE_DIR_MISMATCH"]) {
     assert.ok(section.includes(`RECOVERY_REQUEST_REFUSED: ${code}`), `the doc must name ${code}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// SHU-140 — THE WEDGE. Reviewer BLOCK §B2 on PR #174.
+//
+// recovery-request.mjs claimed, in its own header and in RECONCILE-DANGLING.md,
+// that "a refusal can never wedge the timer into refusing forever — the next wake
+// finds no request and is an ordinary tick again". That held only while the object
+// at the request path could be unlinked. discard() was best-effort AND its result
+// was thrown away on the isFile() branch, so a DIRECTORY at
+// $SHU_WORKSPACE_STATE_DIR/recovery-request.json — an operator typo, a `mkdir`, a
+// `cp -r`/rsync of a staging tree — made every wake refuse REQUEST_INSECURE and
+// exit 2. The tick never ran again; and because the unit lists
+// SuccessExitStatus=2, systemd reported the unit as SUCCEEDING, so `systemctl
+// status` and `is-failed` both looked healthy while the coordinator had silently
+// stopped. With dispatch later armed it would silently never dispatch.
+//
+// The property these cases pin is not "the wedge cannot happen" — a directory at
+// that path is the operator's to create. It is: a request that outlives its own
+// refusal is refused BY ITS OWN NAME and exits OUTSIDE the codes the unit calls
+// success, so the state is visible instead of silent. The contrast cases below it
+// pin the other half, which the original comment got right and which must not
+// regress into "everything fails the unit": a refusal the next wake CAN recover
+// from still exits 2, and that next wake really does run an ordinary tick.
+//
+// No clock, no wall time, no systemd, no network: every case is a real directory
+// under TMPDIR plus the module's existing io.fsImpl seam.
+// ---------------------------------------------------------------------------
+
+// Real fs, with named calls replaced. The module reaches fs.constants through its
+// own import, so a seam only has to cover the calls it makes.
+function fsSeam(overrides = {}) {
+  const seam = {
+    openSync: fs.openSync, fstatSync: fs.fstatSync, readFileSync: fs.readFileSync,
+    closeSync: fs.closeSync, unlinkSync: fs.unlinkSync, mkdirSync: fs.mkdirSync,
+    writeFileSync: fs.writeFileSync,
+  };
+  return { ...seam, ...overrides };
+}
+
+// One wake through the real entry point, reporting whether the TICK ran. Wedge or
+// not is a property of the unit's actual ExecStart path, not of a helper.
+async function wake(dir, { fsImpl, operation = operationSpy(), env = {} } = {}) {
+  const lines = [];
+  let ticked = false;
+  const exitCode = await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false", ...env }, {
+    tick: () => { ticked = true; return 0; },
+    stdout: (line) => lines.push(line),
+    recoveryIo: { operation, ...(fsImpl ? { fsImpl } : {}) },
+  });
+  return { exitCode, ticked, line: lines.at(-1) ?? null, operation };
+}
+
+test("SHU-140 recovery-request: a request that outlives its refusal is refused REQUEST_UNREMOVABLE and exits OUTSIDE the unit's SuccessExitStatus=, so a permanently-refusing coordinator fails the unit instead of reporting success", async (t) => {
+  // (a) THE EXIT CODE IS THE FIX. A wedged refusal must not land on a code the
+  // unit calls success, or systemd reports a stopped coordinator as healthy.
+  assert.ok(RECOVERY_WEDGED_CODES.includes("REQUEST_UNREMOVABLE"));
+  assert.ok(RECOVERY_REFUSAL_CODES.includes("REQUEST_UNREMOVABLE"));
+  assert.notEqual(RECOVERY_WEDGED_EXIT, RECOVERY_REFUSED_EXIT,
+    "a wedge that exits like an ordinary refusal is exactly the silent failure §B2 found");
+  const unit = fs.readFileSync(new URL("../service/shu-coordinator.service.in", import.meta.url), "utf8");
+  const success = unit.match(/^SuccessExitStatus=(.*)$/m)?.[1].trim().split(/[\s,]+/) ?? [];
+  assert.deepEqual(success, ["2"], "the reviewed unit's success set is unchanged");
+  assert.equal(success.includes(String(RECOVERY_WEDGED_EXIT)), false,
+    "the wedged exit must NOT be listed as success, or `systemctl is-failed` stays green on a stopped coordinator");
+  assert.equal(success.includes(String(RECOVERY_REFUSED_EXIT)), true,
+    "an ordinary refusal must still be success: it is correct and must not trip StartLimitBurst=");
+  // It is also distinct from the deployed ExecStart's `flock --conflict-exit-code 2`
+  // and from a bad-usage 2, so the journal line cannot be mistaken for either.
+  assert.equal(RECOVERY_WEDGED_EXIT, 4);
+
+  // (b) A DIRECTORY at the request path. This is §B2's scenario verbatim, and the
+  // point is that it stays wedged across wakes AND says so on every one of them.
+  const dirAtPath = stateDir(t);
+  fs.mkdirSync(nodePath.join(dirAtPath, RECOVERY_REQUEST_FILE));
+  for (const nth of [1, 2, 3]) {
+    const result = await wake(dirAtPath);
+    assert.equal(result.exitCode, RECOVERY_WEDGED_EXIT, `wake ${nth} must fail the unit, not report success`);
+    assert.match(result.line, /^RECOVERY_REFUSED: REQUEST_UNREMOVABLE — /, `wake ${nth}: ${result.line}`);
+    // The ORIGINAL reason is kept: the operator is told both what was wrong with
+    // the object and that it is now refusing every wake.
+    assert.match(result.line, /REQUEST_INSECURE was refused/, `wake ${nth} must keep the underlying reason`);
+    assert.match(result.line, /could not be removed \(EISDIR\)/, `wake ${nth} must name the unlink failure`);
+    assert.match(result.line, /every later wake would refuse it again and the coordinator would never tick/);
+    // The path is named, because removing it by hand is the whole repair.
+    assert.ok(result.line.includes(nodePath.join(dirAtPath, RECOVERY_REQUEST_FILE)),
+      `wake ${nth} must name the path to remove: ${result.line}`);
+    assert.equal(result.ticked, false, "the tick must not run when a request is present");
+    assert.equal(result.operation.calls.length, 0, "nothing may reach the operation");
+    assert.equal(fs.existsSync(nodePath.join(dirAtPath, RECOVERY_CONSUMED_DIR)), false,
+      "an unconsumable request must not be recorded as consumed");
+  }
+  assert.equal(fs.existsSync(nodePath.join(dirAtPath, RECOVERY_REQUEST_FILE)), true,
+    "the object is the operator's to remove; the point is that the refusal SAYS so");
+
+  // (c) A SHU_WORKSPACE_STATE_DIR that is not a directory. Same permanent refusal
+  // (the open and the unlink both fail ENOTDIR), so it must fail the unit too.
+  const notADirParent = stateDir(t);
+  const notADir = nodePath.join(notADirParent, "state-dir-is-a-file");
+  fs.writeFileSync(notADir, "not a directory", { mode: 0o600 });
+  const broken = await wake(notADir);
+  assert.equal(broken.exitCode, RECOVERY_WEDGED_EXIT);
+  assert.match(broken.line, /^RECOVERY_REFUSED: REQUEST_UNREMOVABLE — REQUEST_UNREADABLE was refused/);
+  assert.match(broken.line, /could not be removed \(ENOTDIR\)/);
+  assert.equal(broken.ticked, false);
+
+  // (d) THE OTHER HALF OF THE WEDGE: removal failing AFTER the single-use ledger
+  // entry is written. The request_id is spent but the file is still there, so the
+  // next wake would refuse REQUEST_REPLAYED forever. The refusal must name that,
+  // and must tell the operator the id is spent so they issue a new one.
+  const spent = stateDir(t);
+  placeRequest(spent, validRequest());
+  const stubborn = await wake(spent, {
+    fsImpl: fsSeam({
+      unlinkSync: (target) => {
+        if (target === nodePath.join(spent, RECOVERY_REQUEST_FILE)) {
+          const error = new Error("EPERM: operation not permitted"); error.code = "EPERM"; throw error;
+        }
+        return fs.unlinkSync(target);
+      },
+    }),
+  });
+  assert.equal(stubborn.exitCode, RECOVERY_WEDGED_EXIT);
+  assert.match(stubborn.line, /^RECOVERY_REFUSED: REQUEST_UNREMOVABLE — the consumed request at /);
+  assert.match(stubborn.line, /could not be removed \(EPERM\)/);
+  assert.match(stubborn.line, new RegExp(`request_id ${REQUEST_ID} is already spent`));
+  assert.equal(stubborn.operation.calls.length, 0, "a request that cannot be released must not run the operation");
+  assert.equal(fs.existsSync(consumedRecord(spent, REQUEST_ID)), true,
+    "the ledger entry precedes removal, so the spent id is durable — that is the fail-closed direction");
+
+  // (e) recoveryRefusalExit() is the single place the mapping lives, and it maps
+  // ONLY the wedge away from the refusal exit.
+  for (const code of RECOVERY_REFUSAL_CODES) {
+    const expected = code === "REQUEST_UNREMOVABLE" ? RECOVERY_WEDGED_EXIT : RECOVERY_REFUSED_EXIT;
+    assert.equal(recoveryRefusalExit(recoveryRefusal(code, "detail")), expected, `${code} must exit ${expected}`);
+  }
+  // An operation's own RECONCILE_REFUSED code is not a wedge: the request was
+  // consumed and the next wake ticks.
+  assert.equal(recoveryRefusalExit({ code: "ALREADY_TERMINAL" }), RECOVERY_REFUSED_EXIT);
+  assert.equal(recoveryRefusalExit(undefined), RECOVERY_REFUSED_EXIT);
+
+  // (f) Nothing here armed anything: no unit edit, no timer, no dispatch.
+  assert.match(unit, /^Environment=ENABLE_DISPATCH=false$/m);
+  assert.match(unit, /^ExecStart=@COORDINATOR_EXEC@$/m);
+});
+
+test("SHU-140 recovery-request: a refusal the next wake can recover from still exits 2 AND really does leave that next wake an ordinary tick, and an oversize request is refused REQUEST_TOO_LARGE before a byte of it is read", async (t) => {
+  // (a) EVERY RECOVERABLE REFUSAL, proved recoverable by taking the next wake for
+  // real. This is the property the old comment asserted and never tested: it is
+  // why the fix above had to be a new refusal name rather than "fail the unit on
+  // anything that goes wrong".
+  const recoverable = [
+    ["an unreadable mode-000 request", (dir) => {
+      fs.writeFileSync(nodePath.join(dir, RECOVERY_REQUEST_FILE), JSON.stringify(validRequest()), { mode: 0o000 });
+    }, /^RECOVERY_REFUSED: REQUEST_UNREADABLE — the request could not be opened: EACCES/],
+    ["a world-readable request", (dir) => placeRequest(dir, validRequest(), { mode: 0o644 }),
+      /^RECOVERY_REFUSED: REQUEST_INSECURE — the request is mode 0644, not 0600/],
+    ["an unparseable request", (dir) => placeRequest(dir, "{ not json"),
+      /^RECOVERY_REFUSED: REQUEST_MALFORMED — the request is not parseable JSON/],
+    ["a symlinked request", (dir) => {
+      const target = nodePath.join(dir, "elsewhere.json");
+      fs.writeFileSync(target, JSON.stringify(validRequest()), { mode: 0o600 });
+      fs.symlinkSync(target, nodePath.join(dir, RECOVERY_REQUEST_FILE));
+    }, /^RECOVERY_REFUSED: REQUEST_INSECURE — the request path is a symbolic link/],
+    ["a smuggled extra field", (dir) => placeRequest(dir, { ...validRequest(), enable_dispatch: true }),
+      /^RECOVERY_REFUSED: REQUEST_MALFORMED — the request must carry exactly the fields/],
+  ];
+  for (const [label, place, expected] of recoverable) {
+    const dir = stateDir(t);
+    place(dir);
+    const first = await wake(dir);
+    assert.equal(first.exitCode, RECOVERY_REFUSED_EXIT, `${label} must exit 2, not fail the unit: ${first.line}`);
+    assert.notEqual(first.exitCode, RECOVERY_WEDGED_EXIT, `${label} is recoverable and must not be reported as a wedge`);
+    assert.match(first.line, expected, `${label}: ${first.line}`);
+    assert.equal(first.ticked, false, `${label}: the tick must not run on the wake that refuses`);
+    assert.equal(requestPresent(dir), false, `${label}: the request must be gone`);
+
+    // THE NEXT WAKE IS AN ORDINARY TICK. Not "should be" — taken.
+    const second = await wake(dir);
+    assert.equal(second.ticked, true, `${label}: the next wake must run the tick`);
+    assert.equal(second.exitCode, 0, `${label}: the next wake is an ordinary dispatch-off tick`);
+    assert.equal(second.line, null, `${label}: an ordinary wake says nothing about recovery`);
+  }
+
+  // (b) THE SIZE CAP (reviewer note N2). stat is already in hand from the fstat,
+  // so the bytes must never be read: an operator may paste anything into that
+  // file, and reading a multi-gigabyte paste into the unit before refusing it is
+  // a fault the cap costs one comparison to close.
+  assert.equal(RECOVERY_REQUEST_MAX_BYTES, 4096);
+  assert.ok(JSON.stringify(validRequest()).length < RECOVERY_REQUEST_MAX_BYTES / 4,
+    "a real request is an order of magnitude under the cap");
+  const oversize = stateDir(t);
+  // Deliberately VALID json for a valid request, padded past the cap: the refusal
+  // must be the size, not a shape violation reached after reading it all.
+  const padded = { ...validRequest(), authorization_ref: "SHU-140" };
+  fs.writeFileSync(nodePath.join(oversize, RECOVERY_REQUEST_FILE),
+    `${JSON.stringify(padded)}${" ".repeat(RECOVERY_REQUEST_MAX_BYTES + 1)}`, { mode: 0o600 });
+  const reads = [];
+  const big = await wake(oversize, {
+    fsImpl: fsSeam({ readFileSync: (...args) => { reads.push(args[0]); return fs.readFileSync(...args); } }),
+  });
+  assert.equal(reads.length, 0, "an oversize request's bytes must NEVER be read into the unit");
+  assert.equal(big.exitCode, RECOVERY_REFUSED_EXIT);
+  assert.match(big.line, new RegExp(`^RECOVERY_REFUSED: REQUEST_TOO_LARGE — the request is \\d+ bytes, over the ${RECOVERY_REQUEST_MAX_BYTES}-byte cap`));
+  assert.equal(big.operation.calls.length, 0);
+  assert.equal(requestPresent(oversize), false, "an oversize request is still consumed");
+  // Nothing of the file's content reaches the journal: only its size.
+  assert.equal(big.line.includes(padded.request_id), false, "the request's bytes must not be echoed");
+  // And it is recoverable, like every other refusal that is not the wedge.
+  assert.equal((await wake(oversize)).ticked, true);
+
+  // (c) A request exactly AT the cap is still read: the cap is a bound, not an
+  // off-by-one that refuses legitimate requests.
+  const atCap = stateDir(t);
+  const body = JSON.stringify(validRequest());
+  fs.writeFileSync(nodePath.join(atCap, RECOVERY_REQUEST_FILE),
+    `${body}${" ".repeat(RECOVERY_REQUEST_MAX_BYTES - body.length)}`, { mode: 0o600 });
+  assert.equal(fs.statSync(nodePath.join(atCap, RECOVERY_REQUEST_FILE)).size, RECOVERY_REQUEST_MAX_BYTES);
+  const exact = await wake(atCap);
+  assert.equal(exact.exitCode, 0, `a request at exactly the cap must be accepted: ${exact.line}`);
+  assert.equal(exact.operation.calls.length, 1);
+  assert.equal(exact.operation.calls[0].attempt_id, DANGLING);
+});
+
+test("SHU-140 recovery-request: the uid ownership guard refuses a request the service does not own, consumes it, and writes no ledger entry", async (t) => {
+  // Reviewer note N3: this guard was the one surviving mutant — live and correct,
+  // but unproved, because a foreign-owned file cannot be created without root.
+  // The module's existing io.fsImpl seam is enough: fstat is what the guard reads,
+  // and it is read from the OPEN DESCRIPTOR, so this is the real code path.
+  assert.equal(typeof process.getuid, "function", "this guard exists on POSIX; the suite runs there");
+  const own = process.getuid();
+  const foreign = own + 1;
+
+  const dir = stateDir(t);
+  placeRequest(dir, validRequest());
+  const result = await wake(dir, {
+    fsImpl: fsSeam({
+      fstatSync: (fd) => {
+        const real = fs.fstatSync(fd);
+        // Everything else is the truth: a regular file, 0600, its real size. Only
+        // the owner differs, so ONLY the ownership guard can be what refuses.
+        return { ...real, mode: real.mode, size: real.size, uid: foreign, isFile: () => true };
+      },
+    }),
+  });
+  assert.equal(result.exitCode, RECOVERY_REFUSED_EXIT);
+  assert.match(result.line, new RegExp(`^RECOVERY_REFUSED: REQUEST_INSECURE — the request is owned by uid ${foreign}, not the service's own uid ${own}`));
+  assert.equal(result.operation.calls.length, 0, "a request the service does not own must never reach the operation");
+  assert.equal(result.ticked, false);
+  // Consumed, but NOT recorded: the ledger records requests that were acted on or
+  // could have been, and a foreign-owned file was never a request of ours.
+  assert.equal(requestPresent(dir), false, "a foreign-owned request is still consumed");
+  assert.equal(fs.existsSync(consumedRecord(dir, REQUEST_ID)), false, "no ledger entry is written for it");
+  // It is recoverable: the next wake ticks.
+  assert.equal((await wake(dir)).ticked, true);
+
+  // The guard is an EQUALITY on the service's own uid, not a range: a request the
+  // service does own, with everything else identical, is accepted.
+  const mine = stateDir(t);
+  placeRequest(mine, validRequest());
+  const accepted = await wake(mine, {
+    fsImpl: fsSeam({ fstatSync: (fd) => { const real = fs.fstatSync(fd); return { ...real, mode: real.mode, size: real.size, uid: own, isFile: () => true }; } }),
+  });
+  assert.equal(accepted.exitCode, 0, `the service's own request must be accepted: ${accepted.line}`);
+  assert.equal(accepted.operation.calls.length, 1);
+});
+
+test("SHU-140 recovery-request: WRITE_UNCONFIRMED is the one refusal NOT reported as \"nothing written\", and every other refusal still is", async (t) => {
+  // Reviewer note N1. WRITE_UNCONFIRMED means the terminal HOLD comment MAY HAVE
+  // LANDED and the documented repair is to re-run; appending "nothing written" to
+  // it tells the operator the opposite of the truth, on the operator-facing host
+  // path where it costs the most.
+  assert.equal(RECOVERY_NOTHING_WRITTEN_SUFFIX, "; nothing written, slot preserved");
+  assert.match(RECOVERY_UNCONFIRMED_SUFFIX, /NOT confirmed and may have landed/);
+  assert.equal(RECOVERY_UNCONFIRMED_SUFFIX.includes("nothing written"), false,
+    "the unconfirmed suffix must not contain the claim it exists to avoid");
+
+  // (a) The line builder, per code.
+  const unconfirmed = recoveryRefusalLine({
+    refusal: "RECONCILE_REFUSED: WRITE_UNCONFIRMED", code: "WRITE_UNCONFIRMED",
+    detail: "the terminal HOLD comment did not confirm: socket hang up",
+  });
+  assert.equal(unconfirmed.includes("nothing written"), false, unconfirmed);
+  assert.ok(unconfirmed.endsWith(RECOVERY_UNCONFIRMED_SUFFIX), unconfirmed);
+  assert.match(unconfirmed, /^RECONCILE_REFUSED: WRITE_UNCONFIRMED — the terminal HOLD comment did not confirm: socket hang up/);
+
+  // Every OTHER refusal in either vocabulary keeps the literal-truth suffix.
+  for (const code of [...RECOVERY_REFUSAL_CODES, "ALREADY_TERMINAL", "EVIDENCE_MISSING", "WORKER_LIVE", "PUSH_RECEIPT_PRESENT"]) {
+    const line = recoveryRefusalLine({ refusal: `X: ${code}`, code, detail: "d" });
+    assert.ok(line.endsWith(RECOVERY_NOTHING_WRITTEN_SUFFIX), `${code}: ${line}`);
+  }
+  // A refusal with no code at all is treated as the safe, common case.
+  assert.ok(recoveryRefusalLine({ refusal: "X: Y", detail: null }).endsWith(RECOVERY_NOTHING_WRITTEN_SUFFIX));
+
+  // (b) END TO END: the operation's code must TRAVEL, or the branch above is
+  // unreachable from the host path this PR adds.
+  const dir = stateDir(t);
+  placeRequest(dir, validRequest());
+  const lines = [];
+  const outcome = await runRecoveryRequest({
+    env: { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false" },
+    out: (line) => lines.push(line),
+    io: {
+      operation: async () => ({
+        ok: false, code: "WRITE_UNCONFIRMED", refusal: "RECONCILE_REFUSED: WRITE_UNCONFIRMED",
+        detail: "the terminal HOLD comment did not confirm: socket hang up",
+      }),
+    },
+  });
+  assert.equal(outcome.exitCode, RECOVERY_REFUSED_EXIT, "an unconfirmed write is a refusal, not a wedge");
+  assert.equal(lines.at(-1).includes("nothing written"), false, lines.at(-1));
+  assert.match(lines.at(-1), /re-run the recovery to repair$/);
+
+  // (c) The reviewed operation really does use that code for that case, so this
+  // is not a test against a string this file invented.
+  const reconcileSource = fs.readFileSync(new URL("../reconcile-dangling.mjs", import.meta.url), "utf8");
+  assert.match(reconcileSource, /refusal\("WRITE_UNCONFIRMED", `the terminal HOLD comment did not confirm/);
+
+  // (d) And the doc says which refusal is the exception, so the journal line and
+  // the runbook agree.
+  const doc = fs.readFileSync(new URL("../RECONCILE-DANGLING.md", import.meta.url), "utf8");
+  assert.match(doc, /`WRITE_UNCONFIRMED` is the one refusal whose line does \*\*not\*\* say "nothing\nwritten"/);
 });

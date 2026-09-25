@@ -32,8 +32,16 @@
 //     - exactly one invocation can ever act on a given request file;
 //     - a re-presented request_id is refused REQUEST_REPLAYED, by name, having
 //       run nothing;
-//     - a refusal can never wedge the timer into refusing forever — the next
-//       wake finds no request and is an ordinary tick again.
+//     - a refusal REMOVES the request, so the next wake finds none and is an
+//       ordinary tick again. The one case where that cannot hold is an object at
+//       the request path that will not unlink — a directory there, an operator's
+//       `cp -r`/rsync of a staging tree, a state dir that is not a directory. Left
+//       as an ordinary refusal it would refuse on EVERY wake forever, and because
+//       the unit lists SuccessExitStatus=2 systemd would keep reporting success
+//       while the coordinator silently never ticked again. So it is its own
+//       refusal name, REQUEST_UNREMOVABLE, with its own exit code
+//       (RECOVERY_WEDGED_EXIT) that the unit does NOT list: the wedge fails the
+//       unit and is visible to `systemctl is-failed` instead of being silent.
 //
 // WHAT THIS PATH CANNOT DO
 //   - It cannot dispatch or launch. RECOVERY_OPERATIONS is a frozen table with
@@ -96,11 +104,13 @@ export const RECOVERY_REFUSAL_CODES = Object.freeze([
   "REQUEST_UNREADABLE",        // a request exists but could not be opened or read
   "REQUEST_INSECURE",          // wrong mode, wrong owner, not a regular file, or a symlink
   "REQUEST_MALFORMED",         // not JSON, or not exactly the reviewed field set
+  "REQUEST_TOO_LARGE",         // larger than a reviewed request can be, refused before its bytes are read
   "REQUEST_OPERATION_UNKNOWN", // the named operation is not in RECOVERY_OPERATIONS
   "REQUEST_ATTEMPT_INVALID",   // attempt_id is not a UUID
   "REQUEST_UNAUTHORIZED",      // authorization_ref is not a real card or fixture contract ref
   "REQUEST_UNRECORDED",        // the single-use ledger could not be written, so single use is not guaranteed
   "REQUEST_REPLAYED",          // this request_id was already consumed
+  "REQUEST_UNREMOVABLE",       // the object at the request path outlived the refusal: every later wake would refuse it again
   "REQUEST_DISPATCH_ENABLED",  // ENABLE_DISPATCH is true; recovery is a dispatch-off operation
   "REQUEST_OPERATION_FAILED",  // the reviewed operation did not complete
 ]);
@@ -111,9 +121,32 @@ export const RECOVERY_REFUSAL_CODES = Object.freeze([
 // StartLimitBurst= and leave the unit failed for a refusal that was correct.
 export const RECOVERY_REFUSED_EXIT = 2;
 
+// THE ONE REFUSAL THAT MUST *NOT* LOOK LIKE SUCCESS. Every refusal above ends
+// with the request gone, so the next wake is an ordinary tick and reporting
+// success is the truth. REQUEST_UNREMOVABLE is the opposite: the object at the
+// request path is still there, so every later wake refuses the same thing and the
+// coordinator never ticks again. Exiting 2 there would hide a stopped coordinator
+// behind a green `systemctl status` — the unit lists 2 as success. This code is
+// deliberately NOT in SuccessExitStatus=, so the wedge fails the unit, is visible
+// to `systemctl is-failed`, and is distinct from a refusal (2), a bad-usage exit
+// (2) and the ExecStart flock's --conflict-exit-code 2.
+export const RECOVERY_WEDGED_EXIT = 4;
+export const RECOVERY_WEDGED_CODES = Object.freeze(["REQUEST_UNREMOVABLE"]);
+
+// A request can only be as big as the five reviewed short fields. The cap is
+// judged from the fstat already in hand, so an operator who pastes a gigabyte
+// into that file is refused BY NAME without those bytes entering the unit.
+export const RECOVERY_REQUEST_MAX_BYTES = 4096;
+
 export function recoveryRefusal(code, detail) {
   if (!RECOVERY_REFUSAL_CODES.includes(code)) throw new Error(`unknown recovery refusal code: ${code}`);
   return { ok: false, code, refusal: `RECOVERY_REFUSED: ${code}`, detail: detail ?? null };
+}
+
+// The exit code a refusal deserves: 2 for a refusal the next wake recovers from
+// on its own, RECOVERY_WEDGED_EXIT for one it does not.
+export function recoveryRefusalExit(refusal) {
+  return RECOVERY_WEDGED_CODES.includes(refusal?.code) ? RECOVERY_WEDGED_EXIT : RECOVERY_REFUSED_EXIT;
 }
 
 // The channel exists only where the unit put the service's private state
@@ -129,12 +162,33 @@ export function recoveryPaths(env = process.env) {
   };
 }
 
-// Best effort by design: the request lives in the service's own 0700 state
-// directory, and a request that cannot be removed is reported in the refusal
-// detail rather than silently retried on the next wake.
-function discard(file, fsImpl) {
-  try { fsImpl.unlinkSync(file); return true; }
-  catch (error) { return error?.code === "ENOENT"; }
+// Remove the request, and say why if it did not go. ENOENT is removal: something
+// else already took it, and the channel is empty either way.
+function release(file, fsImpl) {
+  try { fsImpl.unlinkSync(file); return { removed: true, code: null }; }
+  catch (error) {
+    if (error?.code === "ENOENT") return { removed: true, code: null };
+    return { removed: false, code: error?.code ?? "unknown" };
+  }
+}
+
+// EVERY REFUSAL GOES THROUGH HERE, because a refusal is only survivable if the
+// request is GONE afterwards. If the object at the request path outlives the
+// refusal, the refusal that actually happened is not the one we were about to
+// report — it is "this path will refuse every wake from now on", which is a
+// different fact with a different repair and a different exit code. Naming it
+// REQUEST_UNREMOVABLE keeps the original reason in the detail while making the
+// wedge, not the symptom, the thing the operator is told about.
+function refuseReleasing(where, fsImpl, refusal) {
+  const released = release(where.request, fsImpl);
+  if (released.removed) return { present: true, refusal };
+  return {
+    present: true,
+    refusal: recoveryRefusal("REQUEST_UNREMOVABLE",
+      `${refusal.code} was refused, but the object at ${where.request} could not be removed (${released.code}),`
+      + " so every later wake would refuse it again and the coordinator would never tick:"
+      + " remove that path by hand — nothing was consumed and no operation ran"),
+  };
 }
 
 function shapeRefusal(parsed) {
@@ -183,17 +237,12 @@ export function consumeRecoveryRequest({ env = process.env, paths = undefined, f
   } catch (error) {
     // THE ORDINARY WAKE ENDS HERE, having done exactly one failed open.
     if (error?.code === "ENOENT") return { present: false };
-    const insecure = error?.code === "ELOOP";
-    const removed = discard(where.request, fsImpl);
-    return {
-      present: true,
-      refusal: insecure
-        ? recoveryRefusal("REQUEST_INSECURE", `the request path is a symbolic link${removed ? "" : " and could not be removed"}`)
-        : recoveryRefusal("REQUEST_UNREADABLE", `the request could not be opened: ${error?.code ?? "unknown"}${removed ? "" : "; it could not be removed either"}`),
-    };
+    return refuseReleasing(where, fsImpl, error?.code === "ELOOP"
+      ? recoveryRefusal("REQUEST_INSECURE", "the request path is a symbolic link")
+      : recoveryRefusal("REQUEST_UNREADABLE", `the request could not be opened: ${error?.code ?? "unknown"}`));
   }
 
-  const refuse = (refusal) => { discard(where.request, fsImpl); return { present: true, refusal }; };
+  const refuse = (refusal) => refuseReleasing(where, fsImpl, refusal);
 
   let stat;
   let raw;
@@ -204,10 +253,19 @@ export function consumeRecoveryRequest({ env = process.env, paths = undefined, f
     // path is named for what it is instead of surfacing as an EISDIR read fault.
     stat = fsImpl.fstatSync(fd);
     if (!stat.isFile()) return refuse(recoveryRefusal("REQUEST_INSECURE", "the request is not a regular file"));
+    // THE SIZE IS JUDGED BEFORE THE BYTES ARE READ. stat is already in hand from
+    // the fstat above, and an operator may paste anything into this file, so the
+    // refusal costs one comparison instead of reading the whole file into the
+    // unit's memory first and only then finding it unparseable.
+    if (stat.size > RECOVERY_REQUEST_MAX_BYTES) {
+      return refuse(recoveryRefusal("REQUEST_TOO_LARGE",
+        `the request is ${stat.size} bytes, over the ${RECOVERY_REQUEST_MAX_BYTES}-byte cap;`
+        + ` a reviewed request carries exactly ${RECOVERY_REQUEST_FIELDS.length} short fields`));
+    }
     raw = fsImpl.readFileSync(fd, "utf8");
   } catch (error) {
-    discard(where.request, fsImpl);
-    return { present: true, refusal: recoveryRefusal("REQUEST_UNREADABLE", `the request could not be read: ${error?.code ?? "unknown"}`) };
+    return refuseReleasing(where, fsImpl,
+      recoveryRefusal("REQUEST_UNREADABLE", `the request could not be read: ${error?.code ?? "unknown"}`));
   } finally {
     try { fsImpl.closeSync(fd); } catch { /* the descriptor is this process's own */ }
   }
@@ -257,14 +315,32 @@ export function consumeRecoveryRequest({ env = process.env, paths = undefined, f
   // Recorded, so the request may now be released. Removing it last means a crash
   // between the two leaves a request whose id is already spent — which the next
   // wake refuses REQUEST_REPLAYED. That is the fail-closed direction.
-  if (!discard(where.request, fsImpl)) {
-    return { present: true, refusal: recoveryRefusal("REQUEST_UNREADABLE", "the consumed request could not be removed, so single use cannot be guaranteed") };
+  const released = release(where.request, fsImpl);
+  if (!released.removed) {
+    return {
+      present: true,
+      refusal: recoveryRefusal("REQUEST_UNREMOVABLE",
+        `the consumed request at ${where.request} could not be removed (${released.code}), so single use cannot be`
+        + " guaranteed and every later wake would refuse it again: remove that path by hand —"
+        + ` request_id ${request.request_id} is already spent, so issue a new one if the recovery must run`),
+    };
   }
   return { present: true, request };
 }
 
+// THE SUFFIX IS A CLAIM ABOUT WHAT HAPPENED, so it is chosen per refusal rather
+// than appended to all of them. WRITE_UNCONFIRMED is the single refusal that
+// means the terminal HOLD comment MAY HAVE LANDED; telling an operator "nothing
+// written" there tells them the opposite of the truth, and the documented repair
+// (re-run the recovery) only makes sense if they know the write is unconfirmed
+// rather than absent.
+export const RECOVERY_NOTHING_WRITTEN_SUFFIX = "; nothing written, slot preserved";
+export const RECOVERY_UNCONFIRMED_SUFFIX =
+  "; slot preserved, but the write was NOT confirmed and may have landed — re-run the recovery to repair";
+
 export function recoveryRefusalLine(refusal) {
-  return `${refusal.refusal}${refusal.detail ? ` — ${refusal.detail}` : ""}; nothing written, slot preserved`;
+  const suffix = refusal?.code === "WRITE_UNCONFIRMED" ? RECOVERY_UNCONFIRMED_SUFFIX : RECOVERY_NOTHING_WRITTEN_SUFFIX;
+  return `${refusal.refusal}${refusal.detail ? ` — ${refusal.detail}` : ""}${suffix}`;
 }
 
 export function recoveryTerminalizedLine(request, result) {
@@ -279,7 +355,7 @@ export async function runRecoveryRequest({ env = process.env, io = {}, out = (li
   if (!taken.present) return { present: false, exitCode: null };
   if (taken.refusal) {
     out(recoveryRefusalLine(taken.refusal));
-    return { present: true, exitCode: RECOVERY_REFUSED_EXIT };
+    return { present: true, exitCode: recoveryRefusalExit(taken.refusal) };
   }
   const request = taken.request;
 
@@ -309,6 +385,13 @@ export async function runRecoveryRequest({ env = process.env, io = {}, out = (li
   }
   // The operation's own named refusal is reported verbatim: it, not this module,
   // decided, and its vocabulary is the one RECONCILE-DANGLING.md documents.
-  out(recoveryRefusalLine({ refusal: result?.refusal ?? "RECOVERY_REFUSED: REQUEST_OPERATION_FAILED", detail: result?.detail ?? null }));
+  // The operation's own code travels with its line, so WRITE_UNCONFIRMED keeps
+  // meaning "the write may have landed" here too — this is the operator-facing
+  // host path, which is exactly where getting that backwards costs the most.
+  out(recoveryRefusalLine({
+    refusal: result?.refusal ?? "RECOVERY_REFUSED: REQUEST_OPERATION_FAILED",
+    detail: result?.detail ?? null,
+    code: result?.code ?? null,
+  }));
   return { present: true, exitCode: RECOVERY_REFUSED_EXIT };
 }
