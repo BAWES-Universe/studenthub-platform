@@ -2870,6 +2870,8 @@
     "SHU-250: adapter refusal cannot be overridden by its successful callback",
     "SHU-250: child wrapper transports adapter artifact verbatim and rechecks authority",
     "SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervised child",
+    "SHU-172: the caught transport error's code or message reaches the receipt reason",
+    "SHU-172: a carried transport cause is never reported as a successful submission",
     "signed work order binds attempt, repository, branch, and exact head",
     "durable acknowledgement returns before worker completion and does not serialize submissions",
     "exact duplicate is idempotent; attempt rebinding is HOLD and never spawns",
@@ -23371,6 +23373,14 @@
     },
     {
       "name": "SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervised child",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-172: the caught transport error's code or message reaches the receipt reason",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-172: a carried transport cause is never reported as a successful submission",
       "capabilities": []
     },
     {
