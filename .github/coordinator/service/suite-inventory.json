@@ -2290,6 +2290,12 @@
     "explicit hold event (missing evidence) -> HOLD from RUNNING",
     "idempotent duplicate worker_ack keeps a single run identity",
     "authorizationRefValid accepts contract refs only (free text rejected)",
+    "SHU-140 reconcile-dangling: a dangling LAUNCH_UNKNOWN with a signed MISSING_CLAIM and clean evidence is terminalized to HOLD and frees the slot",
+    "SHU-140 reconcile-dangling: a supervisor claim refuses SUPERVISOR_CLAIM_PRESENT and preserves the slot",
+    "SHU-140 reconcile-dangling: a live worker process refuses WORKER_LIVE",
+    "SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push receipt each refuse by name",
+    "SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE",
+    "SHU-140 reconcile-dangling: a repeated invocation refuses ALREADY_TERMINAL, writes nothing and launches nothing",
     "RESEED sealed seed blob literals",
     "RESEED independent manifest literal and complete transition",
     "RESEED blob OIDs are load bearing",
@@ -19056,6 +19062,30 @@
     },
     {
       "name": "authorizationRefValid accepts contract refs only (free text rejected)",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: a dangling LAUNCH_UNKNOWN with a signed MISSING_CLAIM and clean evidence is terminalized to HOLD and frees the slot",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: a supervisor claim refuses SUPERVISOR_CLAIM_PRESENT and preserves the slot",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: a live worker process refuses WORKER_LIVE",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push receipt each refuse by name",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: a repeated invocation refuses ALREADY_TERMINAL, writes nothing and launches nothing",
       "capabilities": []
     },
     {
