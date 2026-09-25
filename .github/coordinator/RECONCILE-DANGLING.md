@@ -199,7 +199,10 @@ coordinator service's normal entry point consumes:
   directory is **silently ignored**: the entry point's one `open()` still fails
   `ENOENT`, the wake is an ordinary dry-run tick, and *nothing reports that a
   request existed*. Deriving the directory from anything but the deployed
-  `SHU_WORKSPACE_STATE_DIR` is therefore a silent no-op, not an error;
+  `SHU_WORKSPACE_STATE_DIR` is therefore a silent no-op, not an error. The
+  request is created by `service/request-recovery.mjs`, which obtains that
+  directory from the deployed unit rather than accepting one, so the writer
+  cannot be pointed anywhere the reader does not look;
 * `coordinator-tick.mjs` — the unit's unchanged `ExecStart`, unchanged argv —
   consumes it *before* it would otherwise tick, and then invokes **only** the
   operation it names;
@@ -260,7 +263,9 @@ records when, and no clock has any part in deciding whether a request is valid.
   unit or timer, and refuses `REQUEST_DISPATCH_ENABLED` outright if it is ever
   reached with `ENABLE_DISPATCH=true`.
 * **It handles no secret.** The request carries three non-secret identifiers and
-  a marker. Nothing is placed in argv. A malformed request's bytes are never
+  a marker. Nothing is placed in the unit's argv, which stays byte-identical; the
+  requester's own command line carries those same three non-secret identifiers
+  and never a credential. A malformed request's bytes are never
   echoed — only the shape violation is named — because an operator may paste
   anything into that file.
 
@@ -292,36 +297,71 @@ into `StartLimitBurst=` and leave the unit failed.
 
 ### The operator command
 
-Run as the service user, into the service's own state directory. Create private,
-then rename into place, so the entry point can never read a half-written request.
+The destination is not a choice, and it is **not the operator's to supply**. The
+request file must be exactly `$SHU_WORKSPACE_STATE_DIR/recovery-request.json` on
+the deployed host. **A request written anywhere else is silently ignored**: the
+entry point's one `open()` still fails `ENOENT`, the wake is an ordinary dry-run
+tick, and the journal shows no `RECOVERY_*` line at all — so a misrouted request
+is indistinguishable from a recovery that ran, and an operator who typed the
+wrong directory would reasonably believe it had.
 
-The destination is not a choice: the request file must be exactly
-`$SHU_WORKSPACE_STATE_DIR/recovery-request.json` on the deployed host — today
-`/srv/shu/state/workspaces/recovery-request.json`. **A request written anywhere
-else is silently ignored**, the wake is an ordinary dry-run tick, and the journal
-shows no `RECOVERY_*` line at all. If you see neither `RECOVERY_TERMINALIZED` nor
-a `RECOVERY_REFUSED:` line, the request was never seen — check the path first with
-`systemctl show -p Environment --value shu-coordinator.service`, and do not
-conclude the recovery ran:
+That is why there is no directory to type. `service/request-recovery.mjs`
+**obtains** `SHU_WORKSPACE_STATE_DIR` from the deployed unit itself —
+`systemctl show -p Environment --value shu-coordinator.service`, parsed strictly
+— writes into that directory and no other, and refuses **by name, before any
+file is created**, if the unit's value cannot be obtained or if anything the
+operator did supply disagrees with it. A request that would have been misrouted
+therefore cannot be created at all, rather than being created somewhere the tick
+never looks.
 
 ```sh
-ATTEMPT=9c461519-4bc8-4e75-8d65-d61b8954e1f0
-AUTHORIZATION_REF=SHU-140
-STATE_DIR=/srv/shu/state/workspaces  # NOT /srv/shu/state. This is the real value of the
-                                     # unit's Environment=SHU_WORKSPACE_STATE_DIR, which
-                                     # expands WORKSPACE_STATE_DIR from service/units.mjs.
-
 sudo -u shu-coordinator \
-  env ATTEMPT="$ATTEMPT" AUTHORIZATION_REF="$AUTHORIZATION_REF" \
-      STATE_DIR="$STATE_DIR" REQUEST_ID="$(uuidgen)" \
-  sh -c 'umask 077; f="$STATE_DIR/recovery-request.json";
-         printf "{\"request\":\"coordinator-recovery v1\",\"operation\":\"reconcile-dangling\",\"request_id\":\"%s\",\"attempt_id\":\"%s\",\"authorization_ref\":\"%s\"}\n" \
-           "$REQUEST_ID" "$ATTEMPT" "$AUTHORIZATION_REF" > "$f.staging";
-         chmod 0600 "$f.staging"; mv -f "$f.staging" "$f"'
+  node .github/coordinator/service/request-recovery.mjs \
+    --attempt 9c461519-4bc8-4e75-8d65-d61b8954e1f0 \
+    --authorization-ref SHU-140
 
 sudo systemctl start shu-coordinator.service
 sudo journalctl -u shu-coordinator.service -n 20 --no-pager
 ```
+
+Run it as the service user, from the coordinator checkout (the unit's
+`WorkingDirectory=`). The command takes `--attempt` and `--authorization-ref`
+and nothing else is required. `--state-dir` is accepted **only to be checked** against the unit's
+deployed value — it is never written to and never trusted — so passing it can
+only ever turn a wrong assumption into a named refusal. `--request-id` defaults
+to a fresh UUID.
+
+On success it prints exactly the path it created, and nothing else:
+
+```
+REQUEST_WRITTEN path=/srv/shu/state/workspaces/recovery-request.json
+```
+
+That is the unit's `Environment=SHU_WORKSPACE_STATE_DIR`, which expands
+`WORKSPACE_STATE_DIR` from `service/units.mjs`, joined with the reader's own
+`recoveryPaths()`. The file is created under a staging name with `umask 077`,
+`chmod 0600`, then renamed into place, so the entry point can never read a
+half-written request. Exit codes: `0` written, `2` bad usage, `3` refused by
+name (nothing created).
+
+#### Requester refusal codes
+
+| code | meaning |
+| --- | --- |
+| `RECOVERY_REQUEST_REFUSED: STATE_DIR_UNKNOWN` | the unit's `SHU_WORKSPACE_STATE_DIR` could not be obtained or parsed — the directory is not guessed, and no request is written |
+| `RECOVERY_REQUEST_REFUSED: STATE_DIR_MISMATCH` | a supplied directory (`--state-dir`, or `SHU_WORKSPACE_STATE_DIR` in the invoking environment) is not the unit's deployed one |
+| `RECOVERY_REQUEST_REFUSED: ATTEMPT_INVALID` | `--attempt` is not a UUID |
+| `RECOVERY_REQUEST_REFUSED: AUTHORIZATION_REF_INVALID` | `--authorization-ref` is not a card ref or a seeded fixture contract ref |
+| `RECOVERY_REQUEST_REFUSED: REQUEST_ID_INVALID` | `--request-id` is not a UUID |
+| `RECOVERY_REQUEST_REFUSED: REQUEST_NOT_WRITTEN` | every check held, but the file could not be created or renamed into place |
+
+The first two are the ones that close the silent misrouting: between them, the
+directory the request lands in is always the one the tick reads, or there is no
+request and a named reason on stderr.
+
+If you nonetheless see neither `RECOVERY_TERMINALIZED` nor a `RECOVERY_REFUSED:`
+line in the journal after the start, the request was never seen — do not conclude
+the recovery ran.
 
 `systemctl start` runs the existing, unmodified unit once. It does not enable the
 timer, does not enable dispatch and arms nothing; `ENABLE_DISPATCH=false` stays
@@ -352,7 +392,18 @@ sandbox cannot supply are injected at the probe (`gitImpl`, `procRoot`), so the
 proofs still need no real git, no real `/proc`, no socket and no network, and the
 file's audited capability set stays `[]`.
 
-The **service-request** cases (`SHU-140 recovery-request: …`, six of them) cover
+The **requester** cases (`SHU-140 request-recovery: …`, three of them) cover the
+operator command above: the positive, in which the request lands at exactly the
+unit-configured `$SHU_WORKSPACE_STATE_DIR/recovery-request.json`, mode 0600, with
+the neighbouring wrong directory untouched and the service side really consuming
+what was written; and the two refusals that close the silent misrouting — a
+mismatched directory and an unobtainable or unparseable unit value, each proved
+to leave no request and no staging residue at either path, and to leave the entry
+point taking its ordinary tick branch. The unit read is injected, so the proofs
+need no systemd; the files are real on disk, because "nothing was created" is a
+property of the filesystem and not of a decision function.
+
+The **service-request** cases (`SHU-140 recovery-request: …`, seven of them) cover
 the mechanism above: the unchanged ordinary wake, the exact-attempt binding,
 single use and replay, every named request refusal, the static and
 by-construction proof that dispatch and launch are unreachable from this path,

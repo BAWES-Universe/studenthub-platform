@@ -1472,23 +1472,237 @@ test("SHU-140 recovery-request: ENABLE_DISPATCH=false and the timer-disabled sta
   assert.match(unit, /^Environment=ENABLE_DISPATCH=false$/m);
   assert.match(unit, /^ExecStart=@COORDINATOR_EXEC@$/m, "the reviewed ExecStart is unchanged: no one-off run is installed");
 });
-
-// SHU-140 — the OPERATOR DOCUMENTATION is pinned to the code's own constant.
+// ---------------------------------------------------------------------------
+// SHU-140 — the OPERATOR REQUESTER, and the documentation pinned to the code.
 //
 // CodeRabbit #174 (inline 4105414868) caught RECONCILE-DANGLING.md documenting
 // `STATE_DIR=/srv/shu/state` while the unit exports
 // SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces. An operator following that
-// command literally wrote /srv/shu/state/recovery-request.json, the entry point's
-// single open() on $SHU_WORKSPACE_STATE_DIR/recovery-request.json still failed
-// ENOENT, the wake was an ordinary dry-run tick, and NOTHING said a request had
-// been missed — a confident silent failure. Writer and reader cannot disagree
-// (they are the same module), so the documented path is the only thing that can
-// drift, and this case is what stops it drifting again: it reads the value out
-// of the shipped doc and compares it to WORKSPACE_STATE_DIR, so changing either
-// side alone fails. No clock, no wall time, no host state.
+// command literally wrote /srv/shu/state/recovery-request.json, the entry
+// point's single open() on $SHU_WORKSPACE_STATE_DIR/recovery-request.json still
+// failed ENOENT, the wake was an ordinary dry-run tick, and NOTHING said a
+// request had been missed — a confident silent failure.
+//
+// Correcting the documented literal fixed that day's value. It did NOT close
+// the failure mode: the next hand-typed directory is just as free to be wrong,
+// and the wrongness is still invisible. request-recovery.mjs closes it at the
+// source — the operator supplies no directory at all, the command OBTAINS the
+// unit's own, and a disagreement is refused BY NAME before any file exists.
+//
+// No clock, no wall time, no host systemd: the unit read is injected.
 import { WORKSPACE_STATE_DIR } from "../service/units.mjs";
+import {
+  REQUEST_REFUSED_EXIT,
+  REQUEST_USAGE_EXIT,
+  REQUEST_WRITTEN_PREFIX,
+  UNIT_ENVIRONMENT_COMMAND,
+  main as requestRecoveryMain,
+  parseUnitEnvironment,
+  unitStateDir,
+} from "../service/request-recovery.mjs";
 
-test("SHU-140 recovery-request: the documented operator STATE_DIR is the code's WORKSPACE_STATE_DIR, and the doc names the request path and its silent-ignore trap", () => {
+const DOCUMENTED_ATTEMPT = "9c461519-4bc8-4e75-8d65-d61b8954e1f0";
+
+// A world with BOTH directories real on disk: the unit's own, and the wrong one
+// from #174 that sits right next to it. Every case below proves something about
+// which of the two ends up holding a file.
+function requesterWorld(label) {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), `shu140-requester-${label}-`));
+  const unit = nodePath.join(root, "state", "workspaces");
+  const wrong = nodePath.join(root, "state");
+  fs.mkdirSync(unit, { recursive: true });
+  const calls = [];
+  const execFor = (stdout, overrides = {}) => (command, args) => {
+    calls.push([command, args]);
+    if (overrides.throws) throw Object.assign(new Error("no systemctl"), { code: "ENOENT" });
+    return { status: 0, stdout, stderr: "", ...overrides };
+  };
+  return {
+    root, unit, wrong, calls, execFor,
+    request: (dir) => recoveryPaths({ SHU_WORKSPACE_STATE_DIR: dir }).request,
+    entries: (dir) => fs.readdirSync(dir).sort(),
+    // The deployed unit's real answer shape: several assignments on one line.
+    deployed: (dir = unit) =>
+      `ENABLE_DISPATCH=false SHU_SUPERVISOR_SOCKET=/run/shu/supervisor.sock SHU_WORKSPACE_STATE_DIR=${dir}\n`,
+  };
+}
+
+function runRequester(argv, env, io) {
+  const out = [];
+  const err = [];
+  const exitCode = requestRecoveryMain(argv, env, { ...io, out: (l) => out.push(l), err: (l) => err.push(l) });
+  return { exitCode, out, err };
+}
+
+// (1) POSITIVE. The request lands at exactly the unit-configured path, 0600, and
+// nowhere else — and the SERVICE SIDE really consumes it, so "written" means
+// "the tick will see it", not "a file exists somewhere".
+test("SHU-140 request-recovery: the request is written 0600 at exactly the unit's own $SHU_WORKSPACE_STATE_DIR/recovery-request.json and nowhere else", () => {
+  const world = requesterWorld("positive");
+  const before = world.entries(world.wrong);
+
+  const run = runRequester(
+    ["--attempt", DOCUMENTED_ATTEMPT, "--authorization-ref", "SHU-140", "--request-id", REQUEST_ID],
+    {},
+    { exec: world.execFor(world.deployed()) },
+  );
+
+  // (a) It asked the DEPLOYED UNIT, with exactly the reviewed read command, and
+  // asked it exactly once. This is where the directory came from.
+  assert.deepEqual(world.calls, [["systemctl", ["show", "-p", "Environment", "--value", "shu-coordinator.service"]]]);
+  assert.deepEqual([...UNIT_ENVIRONMENT_COMMAND], ["systemctl", "show", "-p", "Environment", "--value", "shu-coordinator.service"]);
+
+  // (b) Success, and the ONLY thing printed is the path it created.
+  assert.equal(run.exitCode, 0);
+  assert.deepEqual(run.err, []);
+  assert.deepEqual(run.out, [`${REQUEST_WRITTEN_PREFIX}${world.request(world.unit)}`]);
+
+  // (c) EXACTLY the unit's path, mode 0600, and no staging residue beside it.
+  assert.deepEqual(world.entries(world.unit), [RECOVERY_REQUEST_FILE]);
+  assert.equal(fs.statSync(world.request(world.unit)).mode & 0o777, 0o600);
+  assert.equal(fs.lstatSync(world.request(world.unit)).isFile(), true);
+
+  // (d) NOWHERE ELSE: the neighbouring wrong directory is untouched.
+  assert.deepEqual(world.entries(world.wrong), before);
+  assert.equal(before.includes(RECOVERY_REQUEST_FILE), false);
+
+  // (e) The bytes are exactly the five reviewed fields the service side accepts.
+  const written = JSON.parse(fs.readFileSync(world.request(world.unit), "utf8"));
+  assert.deepEqual(Object.keys(written).sort(), [...RECOVERY_REQUEST_FIELDS].sort());
+  assert.equal(written.request, RECOVERY_REQUEST_MARKER);
+  assert.equal(written.operation, RECOVERY_OPERATION_NAMES[0]);
+  assert.equal(written.attempt_id, DOCUMENTED_ATTEMPT);
+  assert.equal(written.authorization_ref, "SHU-140");
+  assert.equal(written.request_id, REQUEST_ID);
+
+  // (f) THE HANDSHAKE ITSELF: the reader consumes what this writer produced.
+  const taken = consumeRecoveryRequest({ env: { SHU_WORKSPACE_STATE_DIR: world.unit } });
+  assert.equal(taken.present, true);
+  assert.equal(taken.refusal, undefined, `the service side must accept the request this command writes: ${taken.refusal?.refusal ?? ""}`);
+  assert.equal(taken.request.attempt_id, DOCUMENTED_ATTEMPT);
+});
+
+// (2) THE NEGATIVE THAT MATTERS. A mismatched directory cannot produce anything
+// an operator could read as a successful request: the refusal is BY NAME, it
+// happens before any file exists, neither path holds a request or a staging
+// file afterwards, and no tick — then or later — can see one.
+test("SHU-140 request-recovery: a mismatched state directory refuses STATE_DIR_MISMATCH before any file is created, leaving no request at either path and nothing a tick could see", async () => {
+  const world = requesterWorld("mismatch");
+  const argv = ["--attempt", DOCUMENTED_ATTEMPT, "--authorization-ref", "SHU-140", "--request-id", REQUEST_ID];
+
+  // The two ways a wrong directory reaches this command: typed as a flag, and
+  // inherited from the invoking environment. Both are SUPPLIED, so both are only
+  // ever checked against the unit's own value.
+  const supplied = [
+    ["--state-dir", [...argv, "--state-dir", world.wrong], {}],
+    ["the environment", argv, { SHU_WORKSPACE_STATE_DIR: world.wrong }],
+  ];
+
+  for (const [origin, commandLine, env] of supplied) {
+    const run = runRequester(commandLine, env, { exec: world.execFor(world.deployed()) });
+
+    // (a) REFUSED BY NAME, and NOTHING that reads as success. No REQUEST_WRITTEN
+    // line at all — this is the difference between a misrouted request and a
+    // refused one.
+    assert.equal(run.exitCode, REQUEST_REFUSED_EXIT, `${origin}: a mismatch must refuse`);
+    assert.deepEqual(run.out, [], `${origin}: a refusal must print nothing on stdout`);
+    assert.equal(run.err.length, 1, `${origin}: exactly one named refusal line`);
+    assert.match(run.err[0], /^RECOVERY_REQUEST_REFUSED: STATE_DIR_MISMATCH — /, `${origin}: refused by name`);
+    assert.match(run.err[0], /nothing written$/);
+    // The named repair is in the line: both directories, and the real one.
+    assert.ok(run.err[0].includes(world.wrong) && run.err[0].includes(world.unit), `${origin}: the refusal must name both directories`);
+
+    // (b) NO FILE ANYWHERE. Not at the supplied path, not at the unit's path, and
+    // no staging residue at either — the refusal happened before any create.
+    for (const [what, dir] of [["the supplied", world.wrong], ["the unit's", world.unit]]) {
+      const entries = world.entries(dir);
+      assert.equal(entries.includes(RECOVERY_REQUEST_FILE), false, `${origin}: no request at ${what} path`);
+      assert.deepEqual(entries.filter((e) => e.endsWith(".staging")), [], `${origin}: no staging residue at ${what} path`);
+    }
+    assert.deepEqual(world.entries(world.unit), [], `${origin}: the unit's state directory is byte-for-byte as it was`);
+
+    // (c) NOTHING A TICK COULD SEE. The reader, asked about either directory,
+    // finds no request — so the wake stays an ordinary tick in both worlds.
+    for (const dir of [world.unit, world.wrong]) {
+      assert.deepEqual(consumeRecoveryRequest({ env: { SHU_WORKSPACE_STATE_DIR: dir } }), { present: false });
+    }
+  }
+
+  // (d) And the unit's own entry point, run for real against the unit's state
+  // directory, takes the ORDINARY TICK branch: the recovery operation is never
+  // reached, because there is no request to reach it with.
+  const ticks = [];
+  const exit = await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: world.unit, ENABLE_DISPATCH: "false" }, {
+    tick: (args) => { ticks.push(args); return 0; },
+    operation: () => { throw new Error("the recovery operation must be unreachable after a refused request"); },
+    stdout: () => { throw new Error("an ordinary wake emits no RECOVERY_ line"); },
+  });
+  assert.equal(exit, 0);
+  assert.deepEqual(ticks, [[]], "dispatch-off ordinary wake, byte-identical argv");
+});
+
+// (3) NEGATIVE. If the unit's value cannot be OBTAINED or cannot be PARSED, the
+// directory is unknown — never guessed, never defaulted — and nothing is written.
+test("SHU-140 request-recovery: an unobtainable or unparseable unit SHU_WORKSPACE_STATE_DIR refuses STATE_DIR_UNKNOWN and writes nothing", () => {
+  const world = requesterWorld("unknown");
+  const argv = ["--attempt", DOCUMENTED_ATTEMPT, "--authorization-ref", "SHU-140", "--request-id", REQUEST_ID];
+
+  const unobtainable = [
+    ["systemctl is not installed", { throws: true }, ""],
+    ["systemctl exited non-zero", { status: 1 }, ""],
+    ["systemctl was killed", { status: null }, ""],
+    ["no stdout at all", { stdout: undefined }, undefined],
+    ["the unit declares no such variable", {}, "ENABLE_DISPATCH=false SHU_SUPERVISOR_SOCKET=/run/shu/supervisor.sock\n"],
+    ["an empty Environment block", {}, "\n"],
+    ["an unterminated quoted value", {}, `SHU_WORKSPACE_STATE_DIR="${world.unit}\n`],
+    ["a malformed assignment", {}, `SHU_WORKSPACE_STATE_DIR\n`],
+    ["a stray backslash", {}, `SHU_WORKSPACE_STATE_DIR=${world.unit}\\x\n`],
+    ["the variable declared twice", {}, `SHU_WORKSPACE_STATE_DIR=${world.unit} SHU_WORKSPACE_STATE_DIR=${world.wrong}\n`],
+    ["a relative value", {}, "SHU_WORKSPACE_STATE_DIR=srv/shu/state/workspaces\n"],
+    ["an unnormalised value", {}, "SHU_WORKSPACE_STATE_DIR=/srv/shu/state/../state/workspaces\n"],
+  ];
+
+  for (const [why, overrides, stdout] of unobtainable) {
+    const run = runRequester(argv, {}, { exec: world.execFor(stdout, overrides) });
+    assert.equal(run.exitCode, REQUEST_REFUSED_EXIT, `${why}: must refuse`);
+    assert.deepEqual(run.out, [], `${why}: nothing that reads as success`);
+    assert.equal(run.err.length, 1, `${why}: exactly one named refusal line`);
+    assert.match(run.err[0], /^RECOVERY_REQUEST_REFUSED: STATE_DIR_UNKNOWN — /, `${why}: refused by name`);
+    // NOTHING WRITTEN, in either directory, including no staging residue.
+    assert.deepEqual(world.entries(world.unit), [], `${why}: the unit's directory must stay empty`);
+    assert.deepEqual(world.entries(world.wrong).filter((e) => e !== "workspaces"), [], `${why}: the neighbouring directory must stay empty`);
+    for (const dir of [world.unit, world.wrong]) {
+      assert.deepEqual(consumeRecoveryRequest({ env: { SHU_WORKSPACE_STATE_DIR: dir } }), { present: false }, `${why}: no tick can see a request`);
+    }
+  }
+
+  // The parser itself: what it accepts, and that "I could not read it" is null —
+  // never an empty environment that would read as "the variable is simply absent
+  // for a good reason". Both land on STATE_DIR_UNKNOWN above; they are separated
+  // here so a regression names which half broke.
+  assert.deepEqual(parseUnitEnvironment('A=1 B="two words" C=x'), [["A", "1"], ["B", "two words"], ["C", "x"]]);
+  assert.deepEqual(parseUnitEnvironment(""), []);
+  assert.equal(parseUnitEnvironment('A="unterminated'), null);
+  assert.equal(parseUnitEnvironment("=novalue"), null);
+  assert.equal(parseUnitEnvironment(undefined), null);
+  assert.equal(unitStateDir(`SHU_WORKSPACE_STATE_DIR=${WORKSPACE_STATE_DIR}`).stateDir, WORKSPACE_STATE_DIR);
+  assert.equal(unitStateDir("ENABLE_DISPATCH=false").ok, false);
+
+  // Bad usage is a USAGE error, not a refusal, and still writes nothing: an
+  // unknown flag can never be quietly ignored into a request.
+  for (const bad of [[], ["--attempt", DOCUMENTED_ATTEMPT], ["--attempt", DOCUMENTED_ATTEMPT, "--authorization-ref", "SHU-140", "--enable-dispatch", "true"],
+    ["--attempt", DOCUMENTED_ATTEMPT, "--attempt", DOCUMENTED_ATTEMPT, "--authorization-ref", "SHU-140"]]) {
+    const run = runRequester(bad, {}, { exec: world.execFor(world.deployed()) });
+    assert.equal(run.exitCode, REQUEST_USAGE_EXIT, `${bad.join(" ")}: bad usage exits 2`);
+    assert.deepEqual(run.out, []);
+    assert.deepEqual(world.entries(world.unit), []);
+  }
+});
+
+// (4) The OPERATOR DOCUMENTATION is pinned to the code's own constant — and the
+// doc must no longer ask the operator to supply a directory at all, because that
+// question is what #174 got wrong and what nobody can get wrong twice.
+test("SHU-140 recovery-request: the documented request path is the code's WORKSPACE_STATE_DIR, the operator is never asked to supply a state directory, and the doc names the silent-ignore trap", () => {
   const doc = fs.readFileSync(new URL("../RECONCILE-DANGLING.md", import.meta.url), "utf8");
 
   // (a) The operator command block exists and is the one we are pinning.
@@ -1496,49 +1710,68 @@ test("SHU-140 recovery-request: the documented operator STATE_DIR is the code's 
   assert.ok(section, "RECONCILE-DANGLING.md must still document the operator command");
   const block = section.match(/```sh\n([\s\S]*?)\n```/)?.[1];
   assert.ok(block, "the operator command must still be a fenced sh block");
-  assert.match(block, /^ATTEMPT=9c461519-4bc8-4e75-8d65-d61b8954e1f0$/m, "the documented attempt must be unchanged");
 
-  // (b) THE PIN: the value the operator is told to export is the code's constant,
-  // verbatim. Change units.mjs or change the doc and this fails.
-  const assignments = [...block.matchAll(/^STATE_DIR=(\S+)/gm)].map((m) => m[1]);
-  assert.deepEqual(assignments, [WORKSPACE_STATE_DIR],
-    `the documented STATE_DIR must be WORKSPACE_STATE_DIR (${WORKSPACE_STATE_DIR}) exactly once`);
+  // (b) The command is the reviewed requester, still for the same attempt, still
+  // running the existing unit afterwards — no timer enable, nothing armed.
+  assert.match(block, /node \.github\/coordinator\/service\/request-recovery\.mjs/,
+    "the operator must use the reviewed requester, not a hand-rolled write");
+  assert.match(block, /--attempt 9c461519-4bc8-4e75-8d65-d61b8954e1f0/, "the documented attempt must be unchanged");
+  assert.equal(DOCUMENTED_ATTEMPT, "9c461519-4bc8-4e75-8d65-d61b8954e1f0");
+  assert.match(block, /--authorization-ref SHU-140/);
+  assert.match(block, /^sudo systemctl start shu-coordinator\.service$/m, "the existing unit is started, unmodified");
+  for (const armed of ["systemctl enable", "shu-coordinator.timer", "ENABLE_DISPATCH=true", "--activation", "ExecStart"]) {
+    assert.equal(block.includes(armed), false, `the operator command must not ${armed}`);
+  }
 
-  // (c) The trailing comment must state where that value comes from, so a reader
-  // can check it against the unit and the source instead of trusting the doc.
-  const assignmentLine = block.split("\n").find((line) => line.startsWith("STATE_DIR="));
-  const comment = block.slice(block.indexOf(assignmentLine)).split(/\n(?!\s*#)/)[0];
-  assert.match(comment, /SHU_WORKSPACE_STATE_DIR/, "the comment must name the unit's environment variable");
-  assert.match(comment, /WORKSPACE_STATE_DIR from service\/units\.mjs/,
-    "the comment must name units.mjs WORKSPACE_STATE_DIR as the origin of the value");
+  // (c) THE POINT OF THIS FIX: the operator is never asked for a directory. No
+  // STATE_DIR= to mistype, no --state-dir to pass, and no absolute path in the
+  // command at all — the command obtains it from the unit.
+  for (const supplied of ["STATE_DIR=", "--state-dir", "/srv/"]) {
+    assert.equal(block.includes(supplied), false,
+      `the documented command must not ask the operator to supply a state directory (${supplied})`);
+  }
+  assert.match(section, /systemctl show -p Environment --value shu-coordinator\.service/,
+    "the doc must say the command obtains the directory from the deployed unit");
+  assert.match(section.replace(/`/g, ""), /only to be checked/,
+    "the doc must say --state-dir is only ever checked, never trusted");
 
-  // (d) The command must still join the request file onto that directory, and the
-  // result must be the path the reader actually opens — asserted through
-  // recoveryPaths() itself, not a second copy of the join.
-  assert.match(block, /f="\$STATE_DIR\/recovery-request\.json"/,
-    "the command must write $STATE_DIR/recovery-request.json");
+  // (d) THE PIN: the absolute path the doc prints is the code's constant,
+  // resolved through recoveryPaths() itself rather than a second copy of the
+  // join. Change units.mjs or change the doc and this fails.
   const resolved = recoveryPaths({ SHU_WORKSPACE_STATE_DIR: WORKSPACE_STATE_DIR });
-  assert.equal(resolved.request, nodePath.join(assignments[0], RECOVERY_REQUEST_FILE));
+  assert.equal(resolved.request, nodePath.join(WORKSPACE_STATE_DIR, RECOVERY_REQUEST_FILE));
   assert.equal(resolved.request, "/srv/shu/state/workspaces/recovery-request.json");
-
-  // (e) The substitution chain the deployed unit uses is unchanged: the template
-  // takes SHU_WORKSPACE_STATE_DIR from @WORKSPACE_STATE_DIR@, which is (b)'s
-  // constant. Without this, (b) could agree with a constant the unit never sees.
-  const unit = fs.readFileSync(new URL("../service/shu-coordinator.service.in", import.meta.url), "utf8");
-  assert.match(unit, /^Environment=SHU_WORKSPACE_STATE_DIR=@WORKSPACE_STATE_DIR@$/m);
-
-  // (f) Every absolute request path the doc prints must be that same path. This is
-  // what catches a wrong literal reappearing anywhere in the document.
   const printed = [...doc.matchAll(/\/srv\/\S*?recovery-request\.json/g)].map((m) => m[0]);
   assert.ok(printed.length > 0, "the doc must state the absolute request path at least once");
-  for (const path of printed) assert.equal(path, resolved.request);
+  for (const each of printed) assert.equal(each, resolved.request);
+  assert.ok(section.includes(`${REQUEST_WRITTEN_PREFIX}${resolved.request}`),
+    "the doc must show the success line with the deployed path the command prints");
+
+  // (e) The prose must state where that value comes from, so a reader can check
+  // it against the unit and the source instead of trusting the doc.
+  const prose = section.replace(/`/g, "");
+  assert.match(prose, /SHU_WORKSPACE_STATE_DIR/, "the doc must name the unit's environment variable");
+  assert.match(prose, /WORKSPACE_STATE_DIR from service\/units\.mjs/,
+    "the doc must name units.mjs WORKSPACE_STATE_DIR as the origin of the value");
+
+  // (f) The substitution chain the deployed unit uses is unchanged: the template
+  // takes SHU_WORKSPACE_STATE_DIR from @WORKSPACE_STATE_DIR@, which is (d)'s
+  // constant. Without this, (d) could agree with a constant the unit never sees.
+  const unit = fs.readFileSync(new URL("../service/shu-coordinator.service.in", import.meta.url), "utf8");
+  assert.match(unit, /^Environment=SHU_WORKSPACE_STATE_DIR=@WORKSPACE_STATE_DIR@$/m);
+  assert.match(unit, /^Environment=ENABLE_DISPATCH=false$/m, "the dispatch-off posture is unchanged");
+  assert.match(unit, /^ExecStart=@COORDINATOR_EXEC@$/m, "the reviewed ExecStart is unchanged");
 
   // (g) The trap itself must be written down — in the mechanism AND where the
-  // operator types the command — so the failure mode cannot be silent twice.
+  // operator types the command — so the failure mode cannot be silent twice, and
+  // the refusal codes that close it must be documented by name.
   assert.match(doc, /\$SHU_WORKSPACE_STATE_DIR\/recovery-request\.json/,
     "the doc must state the request path in terms of the environment variable");
   const mechanism = doc.split("### The mechanism")[1].split("### ")[0];
   for (const [label, text] of [["the mechanism", mechanism], ["the operator command", section.split("```")[0]]]) {
     assert.match(text, /silently ignored/, `${label} must say a misplaced request is silently ignored`);
+  }
+  for (const code of ["STATE_DIR_UNKNOWN", "STATE_DIR_MISMATCH"]) {
+    assert.ok(section.includes(`RECOVERY_REQUEST_REFUSED: ${code}`), `the doc must name ${code}`);
   }
 });
