@@ -174,6 +174,150 @@ dispatch or activation switch can be smuggled onto the command line.
 Exit codes: `0` terminalized, `2` bad usage, `3` refused by name (slot
 preserved, nothing written).
 
+## Running it ON THE HOST: the coordinator service's own recovery request
+
+The command above cannot be used on the brick box. `supervisorTransportSecret()`
+pins the credential directory to `/run/credentials/shu-coordinator.service`, so a
+transient unit — even with the same uid and the same `LoadCredential=` — gets its
+credentials materialised under its **own** unit name and the operation refuses
+`EVIDENCE_MISSING: ACT_CREDENTIAL_UNAVAILABLE`. Measured twice on the live host.
+
+The pin is not the bug; it is the guard that makes the transport secret
+unreachable from anywhere but the reviewed unit. So the operation is not moved to
+the credential — the **request** is moved to the unit.
+
+### The mechanism
+
+`recovery-request.mjs` adds a single-use, attempt-bound request file that the
+coordinator service's normal entry point consumes:
+
+* the file is `$SHU_WORKSPACE_STATE_DIR/recovery-request.json`, mode **0600**,
+  owned by the service's own uid, inside the unit's private (`0700`) state
+  directory;
+* `coordinator-tick.mjs` — the unit's unchanged `ExecStart`, unchanged argv —
+  consumes it *before* it would otherwise tick, and then invokes **only** the
+  operation it names;
+* the unit, the timer, `ExecStart=` and `Environment=ENABLE_DISPATCH=false` are
+  untouched. **No unit edit swaps `ExecStart` for a one-off run**: that would
+  replace the reviewed command with an unreviewed one and leave the unit in that
+  state if the operator's session died.
+
+The operation therefore executes inside `shu-coordinator.service`, in the process
+systemd gave the credential to, and inherits the existing delivery exactly.
+
+```
+                       no request   ->  the tick, with exactly the argv it
+  timer/systemctl start                 always got (dispatch-off => [])
+      |                             ->  ORDINARY WAKE, byte-identical
+      v
+  coordinator-tick.mjs  --  one open() that fails ENOENT
+      |
+                       request      ->  ONLY reconcileDanglingAttempt({attempt_id})
+                                        the tick does not run at all
+```
+
+### Single use, and replay
+
+Consumption is **unconditional and happens before the operation runs**. Whatever
+the outcome, the request file is gone and its `request_id` has been recorded in
+`recovery-consumed/` with `O_EXCL`, so:
+
+* exactly one invocation can ever act on a given request file;
+* a re-presented `request_id` loses the exclusive create and is refused
+  `REQUEST_REPLAYED`, by name, having run nothing;
+* a refusal can never wedge the timer into refusing forever — the next wake finds
+  no request and is an ordinary tick again;
+* a **fresh** `request_id` for an attempt that has already been terminalized runs
+  the operation, which refuses `ALREADY_TERMINAL` from the durable chain before
+  any supervisor contact and writes nothing. Second use is idempotent.
+
+The ledger entry carries the canonical request and **no timestamp**: journald
+records when, and no clock has any part in deciding whether a request is valid.
+
+### What this path cannot do
+
+* **It cannot dispatch or launch.** `RECOVERY_OPERATIONS` is a frozen table with
+  exactly one entry, bound at module scope to `reconcileDanglingAttempt`; any
+  other operation name is refused `REQUEST_OPERATION_UNKNOWN` before any I/O. The
+  module performs no dynamic `import()`, names no adapter, no dispatch entry
+  point and no launcher, and takes only two validators (`UUID_RE`,
+  `authorizationRefValid`) from `reconcile.mjs`. Its transitive **static** import
+  closure adds nothing at all to the closure the reviewed operation already had,
+  and contains no `adapters/*`, no `supervisor-worker.mjs` and no
+  `capacity-scheduler.mjs` — the launchers are reachable only through
+  `reconcile.mjs`'s dynamic `import()`, which nothing here can perform or name.
+  The operation it does reach still signs only `status`.
+* **It cannot run the tick.** The entry takes one branch or the other, never
+  both.
+* **It cannot enable dispatch or arm anything.** It never writes
+  `ENABLE_DISPATCH`, never touches the activation file, never starts or enables a
+  unit or timer, and refuses `REQUEST_DISPATCH_ENABLED` outright if it is ever
+  reached with `ENABLE_DISPATCH=true`.
+* **It handles no secret.** The request carries three non-secret identifiers and
+  a marker. Nothing is placed in argv. A malformed request's bytes are never
+  echoed — only the shape violation is named — because an operator may paste
+  anything into that file.
+
+### Request refusal codes
+
+Everything is by name here too, and every refusal consumes the request and runs
+nothing.
+
+| code | meaning |
+| --- | --- |
+| `RECOVERY_REFUSED: REQUEST_UNREADABLE` | a request exists but could not be opened or read |
+| `RECOVERY_REFUSED: REQUEST_INSECURE` | not mode 0600, not owned by the service uid, not a regular file, or a symlink |
+| `RECOVERY_REFUSED: REQUEST_MALFORMED` | not JSON, or not exactly the five reviewed fields with a valid marker and `request_id` |
+| `RECOVERY_REFUSED: REQUEST_OPERATION_UNKNOWN` | the named operation is not in `RECOVERY_OPERATIONS` |
+| `RECOVERY_REFUSED: REQUEST_ATTEMPT_INVALID` | `attempt_id` is not a UUID |
+| `RECOVERY_REFUSED: REQUEST_UNAUTHORIZED` | `authorization_ref` is not a card ref or a seeded fixture contract ref |
+| `RECOVERY_REFUSED: REQUEST_UNRECORDED` | the single-use ledger could not be written, so single use is not guaranteed |
+| `RECOVERY_REFUSED: REQUEST_REPLAYED` | this `request_id` was already consumed |
+| `RECOVERY_REFUSED: REQUEST_DISPATCH_ENABLED` | `ENABLE_DISPATCH` is true; recovery runs only with dispatch off |
+| `RECOVERY_REFUSED: REQUEST_OPERATION_FAILED` | the reviewed operation did not complete |
+
+A well-formed request for an attempt that the operation then refuses reports the
+**operation's** own `RECONCILE_REFUSED: …` code verbatim: the request channel
+narrows what may be *asked*, and the reviewed operation still decides.
+
+Exit codes: `0` terminalized, `2` refused. `2` is deliberate — the unit lists it
+in `SuccessExitStatus=`, so a correct refusal cannot trip `Restart=on-failure`
+into `StartLimitBurst=` and leave the unit failed.
+
+### The operator command
+
+Run as the service user, into the service's own state directory. Create private,
+then rename into place, so the entry point can never read a half-written request:
+
+```sh
+ATTEMPT=9c461519-4bc8-4e75-8d65-d61b8954e1f0
+AUTHORIZATION_REF=SHU-140
+STATE_DIR=/srv/shu/state           # = the unit's Environment=SHU_WORKSPACE_STATE_DIR
+
+sudo -u shu-coordinator \
+  env ATTEMPT="$ATTEMPT" AUTHORIZATION_REF="$AUTHORIZATION_REF" \
+      STATE_DIR="$STATE_DIR" REQUEST_ID="$(uuidgen)" \
+  sh -c 'umask 077; f="$STATE_DIR/recovery-request.json";
+         printf "{\"request\":\"coordinator-recovery v1\",\"operation\":\"reconcile-dangling\",\"request_id\":\"%s\",\"attempt_id\":\"%s\",\"authorization_ref\":\"%s\"}\n" \
+           "$REQUEST_ID" "$ATTEMPT" "$AUTHORIZATION_REF" > "$f.staging";
+         chmod 0600 "$f.staging"; mv -f "$f.staging" "$f"'
+
+sudo systemctl start shu-coordinator.service
+sudo journalctl -u shu-coordinator.service -n 20 --no-pager
+```
+
+`systemctl start` runs the existing, unmodified unit once. It does not enable the
+timer, does not enable dispatch and arms nothing; `ENABLE_DISPATCH=false` stays
+exactly as the unit declares it. The journal reports either
+
+```
+RECOVERY_TERMINALIZED attempt=<id> stage=HOLD slot=released authorization_ref=<ref> request_id=<id>
+```
+
+or a single named refusal line. Re-running is safe: a landed write makes the next
+request refuse `ALREADY_TERMINAL`, and re-presenting the same `request_id`
+refuses `REQUEST_REPLAYED`.
+
 ## Proofs
 
 `.github/coordinator/test/receipt-state.test.mjs`, the eleven `SHU-140
@@ -190,3 +334,14 @@ which is how both of the fail-opens above reached review. The boundaries the
 sandbox cannot supply are injected at the probe (`gitImpl`, `procRoot`), so the
 proofs still need no real git, no real `/proc`, no socket and no network, and the
 file's audited capability set stays `[]`.
+
+The **service-request** cases (`SHU-140 recovery-request: …`, six of them) cover
+the mechanism above: the unchanged ordinary wake, the exact-attempt binding,
+single use and replay, every named request refusal, the static and
+by-construction proof that dispatch and launch are unreachable from this path,
+and the preserved dispatch-off/timer-disabled posture. The request file is real
+on disk in those proofs — a real 0600 file in a real directory, consumed for real
+— because single use, replay refusal and "the ordinary wake is untouched" are
+properties of the filesystem handshake, not of a decision function. Still no
+socket, no network, no real git and no spawned process, so the capability set
+stays `[]`.

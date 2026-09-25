@@ -1009,3 +1009,466 @@ test("SHU-140 reconcile-dangling: the remaining guards — binding, measurabilit
   assert.match(lines.at(-1), /^RECONCILE_TERMINALIZED attempt=.* stage=HOLD slot=released$/);
   assert.equal(world.posted.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// SHU-140 — exposing the reviewed recovery through the coordinator SERVICE
+// ---------------------------------------------------------------------------
+//
+// reconcile-dangling.mjs works but cannot be run from the host: the transport
+// credential is pinned to /run/credentials/shu-coordinator.service, so a
+// transient unit materialises its credentials under its own unit name and the
+// operation refuses ACT_CREDENTIAL_UNAVAILABLE. recovery-request.mjs lets the
+// ALREADY-REVIEWED unit, running its ALREADY-REVIEWED ExecStart, be ASKED to
+// perform the recovery instead of a tick, so the operation inherits the existing
+// systemd credential delivery without any of it moving.
+//
+// The request file is real on disk in these proofs — a 0600 file in a real
+// directory, consumed for real — because single use, replay refusal and "the
+// ordinary wake is untouched" are properties of the filesystem handshake, not of
+// a decision function. No socket, no network, no real git and no spawned
+// process: the file's audited capability set stays [].
+import { fileURLToPath } from "node:url";
+import { ACTIVATION_FILE } from "../service/credential-delivery.mjs";
+import { coordinatorEntry, coordinatorTickArgs } from "../service/coordinator-tick.mjs";
+import {
+  RECOVERY_CONSUMED_DIR,
+  RECOVERY_OPERATIONS,
+  RECOVERY_OPERATION_NAMES,
+  RECOVERY_REFUSAL_CODES,
+  RECOVERY_REFUSED_EXIT,
+  RECOVERY_REQUEST_FIELDS,
+  RECOVERY_REQUEST_FILE,
+  RECOVERY_REQUEST_MARKER,
+  consumeRecoveryRequest,
+  recoveryPaths,
+  runRecoveryRequest,
+} from "../service/recovery-request.mjs";
+import { reconcileDanglingAttempt as reviewedOperation } from "../reconcile-dangling.mjs";
+
+const REQUEST_ID = "3f2b19c4-6d51-4a8e-9b03-72c1ee40d95a";
+const SECOND_REQUEST_ID = "8ae2d70f-51c6-4b93-a1d4-0c7f6e2b3a55";
+const FOREIGN_ATTEMPT = "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d";
+const TICK_ARGV = ["--activation", ACTIVATION_FILE];
+
+function validRequest(overrides = {}) {
+  return {
+    request: RECOVERY_REQUEST_MARKER,
+    operation: "reconcile-dangling",
+    request_id: REQUEST_ID,
+    attempt_id: DANGLING,
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    ...overrides,
+  };
+}
+
+// A real private state directory, exactly as the unit's
+// Environment=SHU_WORKSPACE_STATE_DIR= supplies one.
+function stateDir(t) {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "shu140-recovery-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+// An operator's request, written the way the documented command writes it:
+// create private, then rename into place.
+function placeRequest(dir, body, { mode = 0o600, file = RECOVERY_REQUEST_FILE } = {}) {
+  const target = nodePath.join(dir, file);
+  const staged = `${target}.staging`;
+  fs.writeFileSync(staged, typeof body === "string" ? body : JSON.stringify(body, null, 2));
+  fs.chmodSync(staged, mode);
+  fs.renameSync(staged, target);
+  return target;
+}
+
+const consumedRecord = (dir, id) => nodePath.join(dir, RECOVERY_CONSUMED_DIR, `${id}.json`);
+const requestPresent = (dir) => fs.existsSync(nodePath.join(dir, RECOVERY_REQUEST_FILE));
+
+// A spy that answers like a successful recovery and records exactly how it was
+// called. Every refusal proof asserts this was never reached.
+function operationSpy(answer = (args) => ({ ok: true, action: "TERMINALIZED", attempt_id: args.attempt_id, stage: "HOLD" })) {
+  const calls = [];
+  const spy = async (args) => { calls.push(args); return answer(args); };
+  spy.calls = calls;
+  return spy;
+}
+
+test("SHU-140 recovery-request: with no request present the tick runs unchanged, dry-run semantics intact, and nothing is read, consumed or written", async (t) => {
+  const dir = stateDir(t);
+  const env = { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false" };
+
+  // The recovery branch's entire contribution to an ordinary wake.
+  const lines = [];
+  assert.deepEqual(await runRecoveryRequest({ env, io: {}, out: (l) => lines.push(l) }), { present: false, exitCode: null });
+  assert.deepEqual(lines, [], "an ordinary wake must say nothing about recovery");
+  assert.deepEqual(fs.readdirSync(dir), [], "an ordinary wake must create nothing, not even the consumed ledger");
+
+  // ...and the tick itself receives exactly the arguments it always did. With
+  // dispatch off that is the empty argv, which is what makes the tick read-only.
+  const ticks = [];
+  const entry = (e) => coordinatorEntry(TICK_ARGV, e, {
+    tick: (args, passed) => { ticks.push({ args, passed }); return 0; },
+    stdout: (l) => lines.push(l),
+  });
+  assert.equal(await entry(env), 0);
+  assert.deepEqual(ticks.at(-1).args, [], "dispatch-off ticks must still be invoked with no activation argv");
+  assert.equal(ticks.at(-1).passed, env, "the tick must receive the unmodified environment");
+  assert.deepEqual(ticks.at(-1).args, coordinatorTickArgs(TICK_ARGV, env), "the entry must pass through exactly coordinatorTickArgs");
+
+  // The pass-through is unconditional, so the dispatch-on argv is unchanged too.
+  const armed = { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "true" };
+  assert.equal(await entry(armed), 0);
+  assert.deepEqual(ticks.at(-1).args, TICK_ARGV);
+  assert.deepEqual(ticks.at(-1).args, coordinatorTickArgs(TICK_ARGV, armed));
+
+  // The tick's own exit code is returned verbatim, never reinterpreted.
+  for (const code of [0, 2, 1]) {
+    assert.equal(await coordinatorEntry(TICK_ARGV, env, { tick: () => code, stdout: (l) => lines.push(l) }), code);
+  }
+
+  // No state directory means no channel at all — never a guessed path.
+  for (const blind of [{}, { SHU_WORKSPACE_STATE_DIR: "" }, { SHU_WORKSPACE_STATE_DIR: "relative/state" }]) {
+    assert.equal(recoveryPaths(blind), null, `${JSON.stringify(blind)} must expose no request path`);
+    assert.deepEqual(consumeRecoveryRequest({ env: blind }), { present: false });
+  }
+
+  // The argv contract is still checked FIRST: a drifted ExecStart fails before
+  // anything is read or consumed.
+  await assert.rejects(async () => coordinatorEntry(["--activation", "/not/the/activation.json"], env, {
+    tick: () => { throw new Error("the tick must not run"); },
+    recovery: () => { throw new Error("recovery must not be consulted before the argv contract"); },
+  }), /ACT_ACTIVATION_PATH/);
+  assert.deepEqual(fs.readdirSync(dir), [], "a refused argv must leave the state directory untouched");
+  assert.deepEqual(lines, [], "nothing on this path may print a recovery line");
+});
+
+test("SHU-140 recovery-request: a valid single-use request runs ONLY the reviewed recovery, bound to exactly that attempt, and the tick does not run", async (t) => {
+  const dir = stateDir(t);
+  const env = { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false" };
+  placeRequest(dir, validRequest());
+
+  const spy = operationSpy();
+  const lines = [];
+  const exit = await coordinatorEntry(TICK_ARGV, env, {
+    tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+    stdout: (l) => lines.push(l),
+    recoveryIo: { operation: spy },
+  });
+
+  assert.equal(exit, 0);
+  // EXACT BINDING: one call, this attempt, and no other argument that could
+  // widen it — no argv, no scope, no adapter, no target.
+  assert.equal(spy.calls.length, 1, "exactly one operation invocation");
+  assert.deepEqual(Object.keys(spy.calls[0]).sort(), ["attempt_id", "env", "io", "now"]);
+  assert.equal(spy.calls[0].attempt_id, DANGLING);
+  assert.deepEqual(spy.calls[0].io, {}, "production runs inject nothing: every probe is the reviewed default");
+  assert.equal(spy.calls[0].env, env);
+  assert.equal(spy.calls[0].now, undefined, "the operation keeps its own single injected clock");
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^RECOVERY_TERMINALIZED attempt=7f3a1c20-9b44-4d17-8c02-6e5a1d4b9f83 stage=HOLD slot=released authorization_ref=FIXTURE-OPUS-CONTRACT-20260905 request_id=3f2b19c4-6d51-4a8e-9b03-72c1ee40d95a$/);
+
+  // Consumed: the request is gone and its id is recorded, canonically and with
+  // no timestamp — journald records when, and no clock decides validity.
+  assert.equal(requestPresent(dir), false, "the request must be consumed");
+  assert.deepEqual(JSON.parse(fs.readFileSync(consumedRecord(dir, REQUEST_ID), "utf8")), validRequest());
+  assert.equal(fs.statSync(consumedRecord(dir, REQUEST_ID)).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [RECOVERY_CONSUMED_DIR], "nothing else may be created");
+
+  // ...and end to end through the REAL reviewed operation: the dangling chain is
+  // terminalized, the slot is released, and only `status` ever reaches the
+  // supervisor.
+  const live = stateDir(t);
+  placeRequest(live, validRequest({ request_id: SECOND_REQUEST_ID }));
+  const world = cleanWorld();
+  assert.equal(activeSlots(world.receiptsOnDisk), 1);
+  const endToEnd = [];
+  const liveExit = await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: live, ENABLE_DISPATCH: "false" }, {
+    tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+    stdout: (l) => endToEnd.push(l),
+    recoveryIo: { operationIo: world, now: () => NOW },
+  });
+  assert.equal(liveExit, 0);
+  assert.equal(world.posted.length, 1, "exactly one Linear comment");
+  assert.equal(world.posted[0].receipt.attempt_id, DANGLING);
+  assert.equal(resolveChain(world.receiptsOnDisk, DANGLING).stage, "HOLD");
+  assert.equal(activeSlots([resolveChain(world.receiptsOnDisk, DANGLING)]), 0, "the slot must be released");
+  assert.deepEqual(world.supervisorRequests, [{ operation: "status", attempt_id: DANGLING }]);
+  assert.match(endToEnd.at(-1), /^RECOVERY_TERMINALIZED attempt=.* stage=HOLD slot=released /);
+});
+
+test("SHU-140 recovery-request: the request is single-use — a replayed request_id refuses REQUEST_REPLAYED, and a fresh request for a terminalized attempt refuses ALREADY_TERMINAL, neither writing", async (t) => {
+  const dir = stateDir(t);
+  const env = { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false" };
+  const world = cleanWorld();
+  const lines = [];
+  const run = (io = {}) => coordinatorEntry(TICK_ARGV, env, {
+    tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+    stdout: (l) => lines.push(l),
+    recoveryIo: { operationIo: world, now: () => NOW, ...io },
+  });
+
+  // First use: terminalized, one write.
+  placeRequest(dir, validRequest());
+  assert.equal(await run(), 0);
+  assert.equal(world.posted.length, 1);
+  assert.equal(requestPresent(dir), false);
+
+  // The consumed file alone does not re-run anything: the next wake is an
+  // ordinary tick again, so a refusal can never wedge the timer.
+  const ticks = [];
+  assert.equal(await coordinatorEntry(TICK_ARGV, env, { tick: (args) => { ticks.push(args); return 0; }, stdout: (l) => lines.push(l) }), 0);
+  assert.deepEqual(ticks, [[]]);
+
+  // REPLAY: the same request_id presented again loses the O_EXCL create and is
+  // refused by name, having run nothing at all.
+  const spy = operationSpy();
+  placeRequest(dir, validRequest());
+  assert.equal(await run({ operation: spy }), RECOVERY_REFUSED_EXIT);
+  assert.equal(spy.calls.length, 0, "a replayed request must not reach the operation");
+  assert.match(lines.at(-1), /^RECOVERY_REFUSED: REQUEST_REPLAYED — request 3f2b19c4-6d51-4a8e-9b03-72c1ee40d95a was already consumed/);
+  assert.match(lines.at(-1), /nothing written, slot preserved$/);
+  assert.equal(requestPresent(dir), false, "a replayed request is consumed too, so the timer returns to ordinary ticks");
+  assert.equal(world.posted.length, 1, "no second write");
+
+  // A FRESH request_id for the same, now terminal, attempt is idempotent: the
+  // reviewed operation reads terminality from the durable chain before any
+  // supervisor contact and refuses ALREADY_TERMINAL without writing.
+  const contactsBefore = world.supervisorRequests.length;
+  placeRequest(dir, validRequest({ request_id: SECOND_REQUEST_ID }));
+  assert.equal(await run(), RECOVERY_REFUSED_EXIT);
+  assert.match(lines.at(-1), /^RECONCILE_REFUSED: ALREADY_TERMINAL — attempt .* is already HOLD; nothing written, slot preserved$/);
+  assert.equal(world.posted.length, 1, "a second use must write nothing");
+  assert.equal(world.supervisorRequests.length, contactsBefore, "a second use must not contact the supervisor");
+  assert.equal(requestPresent(dir), false);
+  assert.ok(fs.existsSync(consumedRecord(dir, SECOND_REQUEST_ID)), "a refused request is still recorded as spent");
+
+  // Two records, two request ids, one write.
+  assert.deepEqual(fs.readdirSync(nodePath.join(dir, RECOVERY_CONSUMED_DIR)).sort(), [`${REQUEST_ID}.json`, `${SECOND_REQUEST_ID}.json`].sort());
+});
+
+test("SHU-140 recovery-request: a foreign, malformed, unauthorized or insecure request is refused BY NAME, consumed, and never reaches the operation", async (t) => {
+  const cases = [
+    ["not JSON at all", "{ this is not json", "REQUEST_MALFORMED", /not parseable JSON/],
+    ["a JSON array", "[]", "REQUEST_MALFORMED", /not a JSON object/],
+    ["a missing field", (() => { const r = validRequest(); delete r.authorization_ref; return r; })(), "REQUEST_MALFORMED", /exactly the fields/],
+    ["a smuggled extra field", { ...validRequest(), enable_dispatch: true }, "REQUEST_MALFORMED", /exactly the fields/],
+    ["a wrong marker", validRequest({ request: "coordinator-recovery v2" }), "REQUEST_MALFORMED", /request marker/],
+    ["a non-UUID request_id", validRequest({ request_id: "request-1" }), "REQUEST_MALFORMED", /request_id must be a UUID/],
+    ["a malformed attempt id", validRequest({ attempt_id: "SHU-140" }), "REQUEST_ATTEMPT_INVALID", /attempt_id must be a UUID/],
+    ["an upper-case attempt id", validRequest({ attempt_id: DANGLING.toUpperCase() }), "REQUEST_ATTEMPT_INVALID", /attempt_id must be a UUID/],
+    ["a submit operation", validRequest({ operation: "submit" }), "REQUEST_OPERATION_UNKNOWN", /only operation this channel can name is reconcile-dangling/],
+    ["a dispatch operation", validRequest({ operation: "dispatch" }), "REQUEST_OPERATION_UNKNOWN", /only operation this channel can name is reconcile-dangling/],
+    ["a launch operation", validRequest({ operation: "launch" }), "REQUEST_OPERATION_UNKNOWN", /only operation this channel can name is reconcile-dangling/],
+    ["free-text authorization", validRequest({ authorization_ref: "because I said so" }), "REQUEST_UNAUTHORIZED", /card ref/],
+    ["no authorization", validRequest({ authorization_ref: "" }), "REQUEST_UNAUTHORIZED", /card ref/],
+  ];
+  for (const [label, body, code, detail] of cases) {
+    const dir = stateDir(t);
+    placeRequest(dir, body);
+    const spy = operationSpy();
+    const lines = [];
+    const exit = await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false" }, {
+      tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+      stdout: (l) => lines.push(l),
+      recoveryIo: { operation: spy },
+    });
+    assert.equal(exit, RECOVERY_REFUSED_EXIT, `${label} must refuse`);
+    assert.equal(spy.calls.length, 0, `${label} must never reach the operation`);
+    assert.match(lines.at(-1), new RegExp(`^RECOVERY_REFUSED: ${code} `), `${label}: ${lines.at(-1)}`);
+    assert.match(lines.at(-1), detail, `${label}: ${lines.at(-1)}`);
+    assert.ok(RECOVERY_REFUSAL_CODES.includes(code));
+    assert.equal(requestPresent(dir), false, `${label}: the request must still be consumed`);
+    // The file's bytes are operator input and must never be echoed.
+    if (typeof body === "string") assert.equal(lines.at(-1).includes(body), false, `${label}: the request body must not be echoed`);
+  }
+
+  // A world-readable request is refused: 0600 is the contract, not a suggestion.
+  for (const mode of [0o644, 0o660, 0o666, 0o700]) {
+    const dir = stateDir(t);
+    placeRequest(dir, validRequest(), { mode });
+    const spy = operationSpy();
+    const lines = [];
+    assert.equal(await runRecoveryRequest({ env: { SHU_WORKSPACE_STATE_DIR: dir }, io: { operation: spy }, out: (l) => lines.push(l) }).then((r) => r.exitCode), RECOVERY_REFUSED_EXIT);
+    assert.match(lines.at(-1), /^RECOVERY_REFUSED: REQUEST_INSECURE — the request is mode 0\d{3}, not 0600/);
+    assert.equal(spy.calls.length, 0);
+    assert.equal(requestPresent(dir), false);
+  }
+
+  // A symlink is not a request, however inviting its target looks.
+  const linked = stateDir(t);
+  const elsewhere = nodePath.join(linked, "somewhere-else.json");
+  fs.writeFileSync(elsewhere, JSON.stringify(validRequest()), { mode: 0o600 });
+  fs.symlinkSync(elsewhere, nodePath.join(linked, RECOVERY_REQUEST_FILE));
+  const linkLines = [];
+  const linkSpy = operationSpy();
+  assert.equal((await runRecoveryRequest({ env: { SHU_WORKSPACE_STATE_DIR: linked }, io: { operation: linkSpy }, out: (l) => linkLines.push(l) })).exitCode, RECOVERY_REFUSED_EXIT);
+  assert.match(linkLines.at(-1), /^RECOVERY_REFUSED: REQUEST_INSECURE — the request path is a symbolic link/);
+  assert.equal(linkSpy.calls.length, 0);
+  assert.equal(fs.existsSync(elsewhere), true, "the link's target is somebody else's file and must not be removed");
+
+  // A FOREIGN but well-formed attempt id passes the request layer and is refused
+  // by the reviewed operation's own name, having written nothing: the request
+  // channel narrows what may be asked, the operation still decides.
+  const foreign = stateDir(t);
+  placeRequest(foreign, validRequest({ attempt_id: FOREIGN_ATTEMPT }));
+  const world = cleanWorld();
+  const foreignLines = [];
+  assert.equal(await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: foreign, ENABLE_DISPATCH: "false" }, {
+    tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+    stdout: (l) => foreignLines.push(l),
+    recoveryIo: { operationIo: world, now: () => NOW },
+  }), RECOVERY_REFUSED_EXIT);
+  assert.match(foreignLines.at(-1), /^RECONCILE_REFUSED: EVIDENCE_MISSING — no durable receipt for attempt 0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d/);
+  assert.equal(world.posted.length, 0, "a foreign attempt must not be written for");
+  assert.equal(activeSlots(world.receiptsOnDisk), 1, "the real dangling chain's slot must be preserved");
+});
+
+test("SHU-140 recovery-request: the recovery path cannot reach dispatch, submit or launch — statically and by construction", async (t) => {
+  const moduleUrl = new URL("../service/recovery-request.mjs", import.meta.url);
+  const source = fs.readFileSync(moduleUrl, "utf8");
+
+  // (a) The module's static imports are exactly these four, and the only names
+  // it takes from the tick module are two validators.
+  const specifiers = [...source.matchAll(/^import\s[^;]*?from\s+"([^"]+)";$/gm)].map((m) => m[1]);
+  assert.deepEqual(specifiers.sort(), ["../reconcile-dangling.mjs", "../reconcile.mjs", "node:fs", "node:path"]);
+  assert.match(source, /^import \{ UUID_RE, authorizationRefValid \} from "\.\.\/reconcile\.mjs";$/m);
+  assert.match(source, /^import \{ reconcileDanglingAttempt \} from "\.\.\/reconcile-dangling\.mjs";$/m);
+
+  // (b) No dynamic import, and no dispatch/submit/launch vocabulary in the code
+  // itself. The launchers are reached ONLY through reconcile.mjs's dynamic
+  // import(), which nothing here can perform or name.
+  const code = source.split("\n").filter((line) => !line.trimStart().startsWith("//")).join("\n");
+  for (const forbidden of ["import(", "require(", "dispatchModuleFor", "adapterModuleFor", "adapterFor", "preparedLaunchOptions",
+    "adapterLaunchOptions", "submitToSupervisor", "signedSupervisorRequest", "supervisorAdapter", "supervisorOrder",
+    "store.accept", "schedule(", ".launch(", "adapters/", "child_process", "spawn", "systemctl", "ENABLE_DISPATCH=", "ExecStart"]) {
+    assert.equal(code.includes(forbidden), false, `${forbidden} must not appear in the recovery request path`);
+  }
+
+  // (c) The transitive STATIC import closure of the recovery entry point
+  // contains no adapter and no worker launcher — and adds nothing whatsoever to
+  // the closure the reviewed operation already had.
+  const closureOf = (entry) => {
+    const seen = new Set();
+    const queue = [nodePath.resolve(fileURLToPath(entry))];
+    while (queue.length) {
+      const file = queue.pop();
+      if (seen.has(file)) continue;
+      seen.add(file);
+      let text;
+      try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
+      for (const m of text.matchAll(/^import\s[^;]*?from\s+["'](\.{1,2}\/[^"']+)["'];?$/gm)) {
+        queue.push(nodePath.resolve(nodePath.dirname(file), m[1]));
+      }
+    }
+    return seen;
+  };
+  const recovery = closureOf(moduleUrl);
+  const reviewed = closureOf(new URL("../reconcile-dangling.mjs", import.meta.url));
+  assert.ok(recovery.size > 20, `the closure must actually have been walked, got ${recovery.size}`);
+  for (const file of recovery) {
+    assert.equal(/[/\\]adapters[/\\]/.test(file), false, `${file} is an adapter and must not be statically reachable`);
+    assert.equal(file.endsWith("supervisor-worker.mjs"), false, `${file} forks workers and must not be statically reachable`);
+    assert.equal(file.endsWith("capacity-scheduler.mjs"), false, `${file} schedules launches and must not be statically reachable`);
+  }
+  assert.deepEqual([...recovery].filter((f) => !reviewed.has(f)), [nodePath.resolve(fileURLToPath(moduleUrl))],
+    "the recovery entry point must add NOTHING to the reviewed operation's static closure but itself");
+
+  // (d) By construction: the operation table is frozen, has exactly one entry,
+  // and that entry IS the reviewed operation. It cannot be extended at run time.
+  assert.deepEqual(RECOVERY_OPERATION_NAMES, ["reconcile-dangling"]);
+  assert.equal(Object.keys(RECOVERY_OPERATIONS).length, 1);
+  assert.equal(RECOVERY_OPERATIONS["reconcile-dangling"], reviewedOperation);
+  assert.ok(Object.isFrozen(RECOVERY_OPERATIONS) && Object.isFrozen(RECOVERY_OPERATION_NAMES) && Object.isFrozen(RECOVERY_REQUEST_FIELDS));
+  assert.throws(() => { RECOVERY_OPERATIONS.submit = () => { throw new Error("unreachable"); }; }, TypeError);
+  assert.throws(() => { RECOVERY_OPERATION_NAMES.push("dispatch"); }, TypeError);
+  assert.equal(RECOVERY_OPERATIONS.submit, undefined);
+
+  // (e) The one operation it can reach still signs `status` and nothing else —
+  // supervisor.mjs submit()'s status branch returns before store.accept() and
+  // before schedule(launch), so a submit would mint a slot, a receipt, a launch
+  // marker and a child process.
+  await assert.rejects(
+    async () => sendSupervisorStatus({
+      receipt: resolveChain(danglingChain(), DANGLING),
+      env: { SHU_SUPERVISOR_SECRET: "s".repeat(64) },
+      transport: async () => ({}),
+      operation: "submit",
+    }),
+    /may only send the supervisor `status` operation/,
+  );
+
+  // (f) By construction at the entry point: with a request present the tick is
+  // never invoked, and with no request the recovery operation is never invoked.
+  const withRequest = stateDir(t);
+  placeRequest(withRequest, validRequest());
+  const spy = operationSpy();
+  await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: withRequest, ENABLE_DISPATCH: "false" }, {
+    tick: () => { throw new Error("REACHED THE TICK"); },
+    stdout: () => {},
+    recoveryIo: { operation: spy },
+  });
+  assert.equal(spy.calls.length, 1);
+  const withoutRequest = stateDir(t);
+  const idle = operationSpy();
+  await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: withoutRequest, ENABLE_DISPATCH: "false" }, {
+    tick: () => 0,
+    stdout: () => { throw new Error("an ordinary wake must print no recovery line"); },
+    recoveryIo: { operation: idle },
+  });
+  assert.equal(idle.calls.length, 0);
+});
+
+test("SHU-140 recovery-request: ENABLE_DISPATCH=false and the timer-disabled state are preserved across the invocation, and dispatch-on refuses outright", async (t) => {
+  const dir = stateDir(t);
+  const env = { SHU_WORKSPACE_STATE_DIR: dir, ENABLE_DISPATCH: "false", SHU_SUPERVISOR_SOCKET: "/nonexistent.sock" };
+  const before = JSON.stringify(env);
+  const processDispatchBefore = process.env.ENABLE_DISPATCH;
+  placeRequest(dir, validRequest());
+
+  const world = cleanWorld();
+  const lines = [];
+  assert.equal(await coordinatorEntry(TICK_ARGV, env, {
+    tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+    stdout: (l) => lines.push(l),
+    recoveryIo: { operationIo: world, now: () => NOW },
+  }), 0);
+
+  // The environment the service runs under is not touched, in either direction.
+  assert.equal(JSON.stringify(env), before, "the recovery must not mutate the service environment");
+  assert.equal(env.ENABLE_DISPATCH, "false");
+  assert.equal(process.env.ENABLE_DISPATCH, processDispatchBefore, "the process environment must be untouched");
+
+  // Nothing is armed: the only filesystem effect is the consumed ledger inside
+  // the service's own private state directory.
+  assert.deepEqual(fs.readdirSync(dir).sort(), [RECOVERY_CONSUMED_DIR]);
+  assert.deepEqual(fs.readdirSync(nodePath.join(dir, RECOVERY_CONSUMED_DIR)), [`${REQUEST_ID}.json`]);
+  assert.equal(world.posted.length, 1, "exactly one Linear comment and no other effect");
+
+  // The reviewed operation is handed the dispatch-off environment unchanged, so
+  // nothing downstream can read a different posture than the unit declares.
+  assert.equal(await coordinatorEntry(TICK_ARGV, env, { tick: (args) => (args.length === 0 ? 0 : 1), stdout: (l) => lines.push(l) }), 0,
+    "the next ordinary wake is still a dispatch-off, no-activation tick");
+
+  // ...and a request that arrives while dispatch is ARMED is refused by name,
+  // consumed, and never run: recovery is a dispatch-off posture operation.
+  const armedDir = stateDir(t);
+  placeRequest(armedDir, validRequest({ request_id: SECOND_REQUEST_ID }));
+  const spy = operationSpy();
+  const armedLines = [];
+  assert.equal(await coordinatorEntry(TICK_ARGV, { SHU_WORKSPACE_STATE_DIR: armedDir, ENABLE_DISPATCH: "true" }, {
+    tick: () => { throw new Error("the tick must not run when a recovery request is present"); },
+    stdout: (l) => armedLines.push(l),
+    recoveryIo: { operation: spy },
+  }), RECOVERY_REFUSED_EXIT);
+  assert.match(armedLines.at(-1), /^RECOVERY_REFUSED: REQUEST_DISPATCH_ENABLED — ENABLE_DISPATCH is true; recovery runs only with dispatch off and the timer disabled/);
+  assert.equal(spy.calls.length, 0);
+  assert.equal(requestPresent(armedDir), false);
+
+  // A refusal exits 2, which the unit lists in SuccessExitStatus=, so a correct
+  // refusal cannot trip Restart=on-failure into StartLimitBurst= and leave the
+  // unit failed. Nothing here starts, enables or arms a unit or a timer.
+  assert.equal(RECOVERY_REFUSED_EXIT, 2);
+  const unit = fs.readFileSync(new URL("../service/shu-coordinator.service.in", import.meta.url), "utf8");
+  assert.match(unit, /^SuccessExitStatus=2$/m);
+  assert.match(unit, /^Environment=ENABLE_DISPATCH=false$/m);
+  assert.match(unit, /^ExecStart=@COORDINATOR_EXEC@$/m, "the reviewed ExecStart is unchanged: no one-off run is installed");
+});
