@@ -2301,6 +2301,20 @@
     "SHU-140 reconcile-dangling probe: a supervisor-forked worker is detected despite empty argv and an attempt_id-free environment",
     "SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt",
     "SHU-140 reconcile-dangling: the remaining guards \u2014 binding, measurability, the state machine's veto, the write, and the CLI",
+    "SHU-140 recovery-request: with no request present the tick runs unchanged, dry-run semantics intact, and nothing is read, consumed or written",
+    "SHU-140 recovery-request: a valid single-use request runs ONLY the reviewed recovery, bound to exactly that attempt, and the tick does not run",
+    "SHU-140 recovery-request: the request is single-use \u2014 a replayed request_id refuses REQUEST_REPLAYED, and a fresh request for a terminalized attempt refuses ALREADY_TERMINAL, neither writing",
+    "SHU-140 recovery-request: a foreign, malformed, unauthorized or insecure request is refused BY NAME, consumed, and never reaches the operation",
+    "SHU-140 recovery-request: the recovery path cannot reach dispatch, submit or launch \u2014 statically and by construction",
+    "SHU-140 recovery-request: the documented request path is the code's WORKSPACE_STATE_DIR, the operator is never asked to supply a state directory, and the doc names the silent-ignore trap",
+    "SHU-140 request-recovery: the request is written 0600 at exactly the unit's own $SHU_WORKSPACE_STATE_DIR/recovery-request.json and nowhere else",
+    "SHU-140 request-recovery: a mismatched state directory refuses STATE_DIR_MISMATCH before any file is created, leaving no request at either path and nothing a tick could see",
+    "SHU-140 request-recovery: an unobtainable or unparseable unit SHU_WORKSPACE_STATE_DIR refuses STATE_DIR_UNKNOWN and writes nothing",
+    "SHU-140 recovery-request: ENABLE_DISPATCH=false and the timer-disabled state are preserved across the invocation, and dispatch-on refuses outright",
+    "SHU-140 recovery-request: a request that outlives its refusal is refused REQUEST_UNREMOVABLE and exits OUTSIDE the unit's SuccessExitStatus=, so a permanently-refusing coordinator fails the unit instead of reporting success",
+    "SHU-140 recovery-request: a refusal the next wake can recover from still exits 2 AND really does leave that next wake an ordinary tick, and an oversize request is refused REQUEST_TOO_LARGE before a byte of it is read",
+    "SHU-140 recovery-request: the uid ownership guard refuses a request the service does not own, consumes it, and writes no ledger entry",
+    "SHU-140 recovery-request: WRITE_UNCONFIRMED is the one refusal NOT reported as \"nothing written\", and every other refusal still is",
     "RESEED sealed seed blob literals",
     "RESEED independent manifest literal and complete transition",
     "RESEED blob OIDs are load bearing",
@@ -19111,6 +19125,62 @@
     },
     {
       "name": "SHU-140 reconcile-dangling: the remaining guards \u2014 binding, measurability, the state machine's veto, the write, and the CLI",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: with no request present the tick runs unchanged, dry-run semantics intact, and nothing is read, consumed or written",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: a valid single-use request runs ONLY the reviewed recovery, bound to exactly that attempt, and the tick does not run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: the request is single-use \u2014 a replayed request_id refuses REQUEST_REPLAYED, and a fresh request for a terminalized attempt refuses ALREADY_TERMINAL, neither writing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: a foreign, malformed, unauthorized or insecure request is refused BY NAME, consumed, and never reaches the operation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: the recovery path cannot reach dispatch, submit or launch \u2014 statically and by construction",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: the documented request path is the code's WORKSPACE_STATE_DIR, the operator is never asked to supply a state directory, and the doc names the silent-ignore trap",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 request-recovery: the request is written 0600 at exactly the unit's own $SHU_WORKSPACE_STATE_DIR/recovery-request.json and nowhere else",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 request-recovery: a mismatched state directory refuses STATE_DIR_MISMATCH before any file is created, leaving no request at either path and nothing a tick could see",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 request-recovery: an unobtainable or unparseable unit SHU_WORKSPACE_STATE_DIR refuses STATE_DIR_UNKNOWN and writes nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: ENABLE_DISPATCH=false and the timer-disabled state are preserved across the invocation, and dispatch-on refuses outright",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: a request that outlives its refusal is refused REQUEST_UNREMOVABLE and exits OUTSIDE the unit's SuccessExitStatus=, so a permanently-refusing coordinator fails the unit instead of reporting success",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: a refusal the next wake can recover from still exits 2 AND really does leave that next wake an ordinary tick, and an oversize request is refused REQUEST_TOO_LARGE before a byte of it is read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: the uid ownership guard refuses a request the service does not own, consumes it, and writes no ledger entry",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: WRITE_UNCONFIRMED is the one refusal NOT reported as \"nothing written\", and every other refusal still is",
       "capabilities": []
     },
     {

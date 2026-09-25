@@ -174,6 +174,228 @@ dispatch or activation switch can be smuggled onto the command line.
 Exit codes: `0` terminalized, `2` bad usage, `3` refused by name (slot
 preserved, nothing written).
 
+## Running it ON THE HOST: the coordinator service's own recovery request
+
+The command above cannot be used on the brick box. `supervisorTransportSecret()`
+pins the credential directory to `/run/credentials/shu-coordinator.service`, so a
+transient unit — even with the same uid and the same `LoadCredential=` — gets its
+credentials materialised under its **own** unit name and the operation refuses
+`EVIDENCE_MISSING: ACT_CREDENTIAL_UNAVAILABLE`. Measured twice on the live host.
+
+The pin is not the bug; it is the guard that makes the transport secret
+unreachable from anywhere but the reviewed unit. So the operation is not moved to
+the credential — the **request** is moved to the unit.
+
+### The mechanism
+
+`recovery-request.mjs` adds a single-use, attempt-bound request file that the
+coordinator service's normal entry point consumes:
+
+* the file is `$SHU_WORKSPACE_STATE_DIR/recovery-request.json`, mode **0600**,
+  owned by the service's own uid, inside the unit's private (`0700`) state
+  directory. That path is the **whole** channel: `recoveryPaths()` joins
+  `recovery-request.json` onto `env.SHU_WORKSPACE_STATE_DIR` and looks nowhere
+  else — never a guessed path, never a fallback. A request written to any other
+  directory is **silently ignored**: the entry point's one `open()` still fails
+  `ENOENT`, the wake is an ordinary dry-run tick, and *nothing reports that a
+  request existed*. Deriving the directory from anything but the deployed
+  `SHU_WORKSPACE_STATE_DIR` is therefore a silent no-op, not an error. The
+  request is created by `service/request-recovery.mjs`, which obtains that
+  directory from the deployed unit rather than accepting one, so the writer
+  cannot be pointed anywhere the reader does not look;
+* `coordinator-tick.mjs` — the unit's unchanged `ExecStart`, unchanged argv —
+  consumes it *before* it would otherwise tick, and then invokes **only** the
+  operation it names;
+* the unit, the timer, `ExecStart=` and `Environment=ENABLE_DISPATCH=false` are
+  untouched. **No unit edit swaps `ExecStart` for a one-off run**: that would
+  replace the reviewed command with an unreviewed one and leave the unit in that
+  state if the operator's session died.
+
+The operation therefore executes inside `shu-coordinator.service`, in the process
+systemd gave the credential to, and inherits the existing delivery exactly.
+
+```
+                       no request   ->  the tick, with exactly the argv it
+  timer/systemctl start                 always got (dispatch-off => [])
+      |                             ->  ORDINARY WAKE, byte-identical
+      v
+  coordinator-tick.mjs  --  one open() that fails ENOENT
+      |
+                       request      ->  ONLY reconcileDanglingAttempt({attempt_id})
+                                        the tick does not run at all
+```
+
+### Single use, and replay
+
+Consumption is **unconditional and happens before the operation runs**. Whatever
+the outcome, the request file is gone and its `request_id` has been recorded in
+`recovery-consumed/` with `O_EXCL`, so:
+
+* exactly one invocation can ever act on a given request file;
+* a re-presented `request_id` loses the exclusive create and is refused
+  `REQUEST_REPLAYED`, by name, having run nothing;
+* a refusal **removes** the request, so the next wake finds none and is an
+  ordinary tick again. The one case where removal can fail is an object at the
+  request path that will not unlink — a directory there (an operator typo, a
+  `mkdir`, a `cp -r`/rsync of a staging tree) or a `SHU_WORKSPACE_STATE_DIR` that
+  is not a directory. That case would otherwise refuse on **every** wake forever
+  while `SuccessExitStatus=2` kept systemd reporting the unit as *succeeding*, so
+  `systemctl status` and `is-failed` would look healthy while the coordinator had
+  silently stopped ticking. It is therefore refused by its own name,
+  `REQUEST_UNREMOVABLE`, and exits `4` — a code the unit does **not** list, so the
+  wedge fails the unit and is visible. The refusal names the path to remove by
+  hand, and nothing was consumed and no operation ran;
+* a **fresh** `request_id` for an attempt that has already been terminalized runs
+  the operation, which refuses `ALREADY_TERMINAL` from the durable chain before
+  any supervisor contact and writes nothing. Second use is idempotent.
+
+The ledger entry carries the canonical request and **no timestamp**: journald
+records when, and no clock has any part in deciding whether a request is valid.
+
+### What this path cannot do
+
+* **It cannot dispatch or launch.** `RECOVERY_OPERATIONS` is a frozen table with
+  exactly one entry, bound at module scope to `reconcileDanglingAttempt`; any
+  other operation name is refused `REQUEST_OPERATION_UNKNOWN` before any I/O. The
+  module performs no dynamic `import()`, names no adapter, no dispatch entry
+  point and no launcher, and takes only two validators (`UUID_RE`,
+  `authorizationRefValid`) from `reconcile.mjs`. Its transitive **static** import
+  closure adds nothing at all to the closure the reviewed operation already had,
+  and contains no `adapters/*`, no `supervisor-worker.mjs` and no
+  `capacity-scheduler.mjs` — the launchers are reachable only through
+  `reconcile.mjs`'s dynamic `import()`, which nothing here can perform or name.
+  The operation it does reach still signs only `status`.
+* **It cannot run the tick.** The entry takes one branch or the other, never
+  both.
+* **It cannot enable dispatch or arm anything.** It never writes
+  `ENABLE_DISPATCH`, never touches the activation file, never starts or enables a
+  unit or timer, and refuses `REQUEST_DISPATCH_ENABLED` outright if it is ever
+  reached with `ENABLE_DISPATCH=true`.
+* **It handles no secret.** The request carries three non-secret identifiers and
+  a marker. Nothing is placed in the unit's argv, which stays byte-identical; the
+  requester's own command line carries those same three non-secret identifiers
+  and never a credential. A malformed request's bytes are never
+  echoed — only the shape violation is named — because an operator may paste
+  anything into that file.
+
+### Request refusal codes
+
+Everything is by name here too, and every refusal runs nothing. All but one
+consume the request as well; `REQUEST_UNREMOVABLE` is the exception, and it says
+so, because the request path is precisely what could not be removed.
+
+| code | meaning |
+| --- | --- |
+| `RECOVERY_REFUSED: REQUEST_UNREADABLE` | a request exists but could not be opened or read |
+| `RECOVERY_REFUSED: REQUEST_INSECURE` | not mode 0600, not owned by the service uid, not a regular file, or a symlink |
+| `RECOVERY_REFUSED: REQUEST_MALFORMED` | not JSON, or not exactly the five reviewed fields with a valid marker and `request_id` |
+| `RECOVERY_REFUSED: REQUEST_TOO_LARGE` | over `RECOVERY_REQUEST_MAX_BYTES` (4096) by the `fstat` already in hand — refused *before* the bytes are read into the unit |
+| `RECOVERY_REFUSED: REQUEST_OPERATION_UNKNOWN` | the named operation is not in `RECOVERY_OPERATIONS` |
+| `RECOVERY_REFUSED: REQUEST_ATTEMPT_INVALID` | `attempt_id` is not a UUID |
+| `RECOVERY_REFUSED: REQUEST_UNAUTHORIZED` | `authorization_ref` is not a card ref or a seeded fixture contract ref |
+| `RECOVERY_REFUSED: REQUEST_UNRECORDED` | the single-use ledger could not be written, so single use is not guaranteed |
+| `RECOVERY_REFUSED: REQUEST_REPLAYED` | this `request_id` was already consumed |
+| `RECOVERY_REFUSED: REQUEST_UNREMOVABLE` | the object at the request path outlived the refusal, so every later wake would refuse it again — **exits 4 and fails the unit**, see above |
+| `RECOVERY_REFUSED: REQUEST_DISPATCH_ENABLED` | `ENABLE_DISPATCH` is true; recovery runs only with dispatch off |
+| `RECOVERY_REFUSED: REQUEST_OPERATION_FAILED` | the reviewed operation did not complete |
+
+A well-formed request for an attempt that the operation then refuses reports the
+**operation's** own `RECONCILE_REFUSED: …` code verbatim: the request channel
+narrows what may be *asked*, and the reviewed operation still decides.
+
+Exit codes: `0` terminalized, `2` refused, `4` wedged (`REQUEST_UNREMOVABLE`).
+`2` is deliberate — the unit lists it in `SuccessExitStatus=`, so a correct
+refusal cannot trip `Restart=on-failure` into `StartLimitBurst=` and leave the
+unit failed. `4` is equally deliberate and for the opposite reason: it is **not**
+listed, because a request that cannot be removed means the coordinator will never
+tick again, and that must fail the unit rather than be reported as success.
+
+`WRITE_UNCONFIRMED` is the one refusal whose line does **not** say "nothing
+written": it means the terminal HOLD comment may have landed without confirming,
+and the repair is to re-run the recovery. Every other refusal line ends
+`; nothing written, slot preserved`, which is the literal truth for it.
+
+### The operator command
+
+The destination is not a choice, and it is **not the operator's to supply**. The
+request file must be exactly `$SHU_WORKSPACE_STATE_DIR/recovery-request.json` on
+the deployed host. **A request written anywhere else is silently ignored**: the
+entry point's one `open()` still fails `ENOENT`, the wake is an ordinary dry-run
+tick, and the journal shows no `RECOVERY_*` line at all — so a misrouted request
+is indistinguishable from a recovery that ran, and an operator who typed the
+wrong directory would reasonably believe it had.
+
+That is why there is no directory to type. `service/request-recovery.mjs`
+**obtains** `SHU_WORKSPACE_STATE_DIR` from the deployed unit itself —
+`systemctl show -p Environment --value shu-coordinator.service`, parsed strictly
+— writes into that directory and no other, and refuses **by name, before any
+file is created**, if the unit's value cannot be obtained or if anything the
+operator did supply disagrees with it. A request that would have been misrouted
+therefore cannot be created at all, rather than being created somewhere the tick
+never looks.
+
+```sh
+sudo -u shu-coordinator \
+  node .github/coordinator/service/request-recovery.mjs \
+    --attempt 9c461519-4bc8-4e75-8d65-d61b8954e1f0 \
+    --authorization-ref SHU-140
+
+sudo systemctl start shu-coordinator.service
+sudo journalctl -u shu-coordinator.service -n 20 --no-pager
+```
+
+Run it as the service user, from the coordinator checkout (the unit's
+`WorkingDirectory=`). The command takes `--attempt` and `--authorization-ref`
+and nothing else is required. `--state-dir` is accepted **only to be checked** against the unit's
+deployed value — it is never written to and never trusted — so passing it can
+only ever turn a wrong assumption into a named refusal. `--request-id` defaults
+to a fresh UUID.
+
+On success it prints exactly the path it created, and nothing else:
+
+```
+REQUEST_WRITTEN path=/srv/shu/state/workspaces/recovery-request.json
+```
+
+That is the unit's `Environment=SHU_WORKSPACE_STATE_DIR`, which expands
+`WORKSPACE_STATE_DIR` from `service/units.mjs`, joined with the reader's own
+`recoveryPaths()`. The file is created under a staging name with `umask 077`,
+`chmod 0600`, then linked into place, so the entry point can never read a
+half-written request and an unconsumed request is never silently replaced. Exit codes: `0` written, `2` bad usage, `3` refused by
+name (nothing created).
+
+#### Requester refusal codes
+
+| code | meaning |
+| --- | --- |
+| `RECOVERY_REQUEST_REFUSED: STATE_DIR_UNKNOWN` | the unit's `SHU_WORKSPACE_STATE_DIR` could not be obtained or parsed — the directory is not guessed, and no request is written |
+| `RECOVERY_REQUEST_REFUSED: STATE_DIR_MISMATCH` | a supplied directory (`--state-dir`, or `SHU_WORKSPACE_STATE_DIR` in the invoking environment) is not the unit's deployed one |
+| `RECOVERY_REQUEST_REFUSED: ATTEMPT_INVALID` | `--attempt` is not a UUID |
+| `RECOVERY_REQUEST_REFUSED: AUTHORIZATION_REF_INVALID` | `--authorization-ref` is not a card ref or a seeded fixture contract ref |
+| `RECOVERY_REQUEST_REFUSED: REQUEST_ID_INVALID` | `--request-id` is not a UUID |
+| `RECOVERY_REQUEST_REFUSED: REQUEST_PENDING` | an unconsumed request is already at that path — the channel is one slot, and replacing it would drop the first request silently |
+| `RECOVERY_REQUEST_REFUSED: REQUEST_NOT_WRITTEN` | every check held, but the file could not be created or renamed into place |
+
+The first two are the ones that close the silent misrouting: between them, the
+directory the request lands in is always the one the tick reads, or there is no
+request and a named reason on stderr.
+
+If you nonetheless see neither `RECOVERY_TERMINALIZED` nor a `RECOVERY_REFUSED:`
+line in the journal after the start, the request was never seen — do not conclude
+the recovery ran.
+
+`systemctl start` runs the existing, unmodified unit once. It does not enable the
+timer, does not enable dispatch and arms nothing; `ENABLE_DISPATCH=false` stays
+exactly as the unit declares it. The journal reports either
+
+```
+RECOVERY_TERMINALIZED attempt=<id> stage=HOLD slot=released authorization_ref=<ref> request_id=<id>
+```
+
+or a single named refusal line. Re-running is safe: a landed write makes the next
+request refuse `ALREADY_TERMINAL`, and re-presenting the same `request_id`
+refuses `REQUEST_REPLAYED`.
+
 ## Proofs
 
 `.github/coordinator/test/receipt-state.test.mjs`, the eleven `SHU-140
@@ -190,3 +412,25 @@ which is how both of the fail-opens above reached review. The boundaries the
 sandbox cannot supply are injected at the probe (`gitImpl`, `procRoot`), so the
 proofs still need no real git, no real `/proc`, no socket and no network, and the
 file's audited capability set stays `[]`.
+
+The **requester** cases (`SHU-140 request-recovery: …`, three of them) cover the
+operator command above: the positive, in which the request lands at exactly the
+unit-configured `$SHU_WORKSPACE_STATE_DIR/recovery-request.json`, mode 0600, with
+the neighbouring wrong directory untouched and the service side really consuming
+what was written; and the two refusals that close the silent misrouting — a
+mismatched directory and an unobtainable or unparseable unit value, each proved
+to leave no request and no staging residue at either path, and to leave the entry
+point taking its ordinary tick branch. The unit read is injected, so the proofs
+need no systemd; the files are real on disk, because "nothing was created" is a
+property of the filesystem and not of a decision function.
+
+The **service-request** cases (`SHU-140 recovery-request: …`, seven of them) cover
+the mechanism above: the unchanged ordinary wake, the exact-attempt binding,
+single use and replay, every named request refusal, the static and
+by-construction proof that dispatch and launch are unreachable from this path,
+and the preserved dispatch-off/timer-disabled posture. The request file is real
+on disk in those proofs — a real 0600 file in a real directory, consumed for real
+— because single use, replay refusal and "the ordinary wake is untouched" are
+properties of the filesystem handshake, not of a decision function. Still no
+socket, no network, no real git and no spawned process, so the capability set
+stays `[]`.
