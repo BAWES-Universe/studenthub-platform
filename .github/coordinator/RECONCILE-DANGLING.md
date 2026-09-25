@@ -56,6 +56,22 @@ Every probe stamps its own `observed_at`. An observation from **before** this
 invocation started is a cached snapshot and is refused as `EVIDENCE_STALE`, not
 believed. A probe that does not answer, or throws, is `EVIDENCE_MISSING`.
 
+#### One clock, injected
+
+Freshness is the only thing this operation compares timestamps for, and it
+compares a probe's `observed_at` against this invocation's start. Both instants
+must therefore come from the **same** clock. `reconcileDanglingAttempt` takes
+`now` (default `nowIso`) and hands it to every probe it takes, so no probe reads
+the wall clock behind the caller's back: with a clock injected, the operation's
+verdict is identical whether the host clock is correct, a year fast or a year
+slow. A probe that stamped the wall clock while the start came from anywhere else
+would be measuring the disagreement between two clocks, not the age of the
+evidence — and it would answer `EVIDENCE_STALE` or, worse, accept a genuinely
+cached observation, depending only on which way the two clocks happened to
+differ. The tests pin this: every shipped probe is asserted to stamp the
+instant it was given, so a regression to `new Date()` fails in the suite rather
+than in whichever timezone or clock-shifted job runs next.
+
 ### "I could not look" is never "there is nothing there"
 
 Every condition above is an **absence** claim, so one confusion decides the

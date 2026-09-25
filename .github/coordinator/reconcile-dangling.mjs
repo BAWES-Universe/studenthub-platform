@@ -141,9 +141,21 @@ export function supervisorDisownsAttempt(response) {
 }
 
 // ---------------------------------------------------------------------------
-// Default probes (each one is injectable; each one stamps its own observation)
+// Default probes (each one is injectable; each stamps its own observation, from
+// the one injected clock)
 // ---------------------------------------------------------------------------
-
+//
+// THE CLOCK IS INJECTED, AND THERE IS EXACTLY ONE OF IT. Freshness is the only
+// thing this operation compares timestamps for, and it compares a probe's
+// observation against this invocation's start. Both instants must therefore come
+// from the SAME clock: if a probe read the wall clock on its own while the
+// invocation's start came from anywhere else, the comparison would measure the
+// disagreement between two clocks rather than the age of the evidence. So every
+// probe below takes `now` and stamps `now()`, reconcileDanglingAttempt() passes
+// its own `now` to every probe it takes, and nothing here ever reads the wall
+// clock behind the caller's back. nowIso is the default, used when no clock is
+// injected; a caller that injects one gets an operation whose verdict is
+// identical whether the host clock is correct, a year fast or a year slow.
 const nowIso = () => new Date().toISOString();
 
 function gitIn(dir, args) {
@@ -156,8 +168,8 @@ function gitIn(dir, args) {
 // The supervisor probe is a probe like any other: it stamps its own observation
 // and it never lets a transport fault masquerade as an answer. A reply with no
 // hold_code is read as EVIDENCE_MISSING downstream, never as "no claim".
-export async function defaultSupervisorStatus({ receipt, env }) {
-  return { observed_at: nowIso(), response: await sendSupervisorStatus({ receipt, env }) };
+export async function defaultSupervisorStatus({ receipt, env, now = nowIso }) {
+  return { observed_at: now(), response: await sendSupervisorStatus({ receipt, env }) };
 }
 
 // Every on-disk probe below reads directory ENTRIES, never fs.existsSync().
@@ -219,7 +231,7 @@ function processStartToken(procRoot, pid) {
 //   (c) any process carrying the attempt_id in argv or the environment.
 // Reading /proc itself is never optional: if the process table cannot be
 // listed, this throws and the operation refuses EVIDENCE_MISSING.
-export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc" }) {
+export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now = nowIso }) {
   const live = entriesOf(procRoot).filter((entry) => /^\d+$/.test(entry));
   const pids = new Set();
 
@@ -253,7 +265,7 @@ export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc" }) {
       if (raw.includes(receipt.attempt_id)) { pids.add(pid); break; }
     }
   }
-  return { observed_at: nowIso(), pids: [...pids].filter((pid) => pid !== process.pid).sort((a, b) => a - b) };
+  return { observed_at: now(), pids: [...pids].filter((pid) => pid !== process.pid).sort((a, b) => a - b) };
 }
 
 // An UNCONFIGURED worktree root is not evidence that the worktree is absent; it
@@ -262,16 +274,16 @@ export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc" }) {
 // terminalize over a worktree that had moved off its base and was dirty, having
 // never measured it. `root_configured` is the flag the caller refuses on, the
 // same way `readable` works for the push-receipt and supervisor-store probes.
-export function defaultWorktree({ receipt, env, gitImpl = gitIn }) {
+export function defaultWorktree({ receipt, env, gitImpl = gitIn, now = nowIso }) {
   const root = env.SHU_WORKTREE_ROOT;
-  if (!root) return { observed_at: nowIso(), root_configured: false, present: false, head: null, porcelain: null };
+  if (!root) return { observed_at: now(), root_configured: false, present: false, head: null, porcelain: null };
   const entries = entriesOf(root);
   if (!entries.includes(receipt.attempt_id)) {
-    return { observed_at: nowIso(), root_configured: true, present: false, head: null, porcelain: null };
+    return { observed_at: now(), root_configured: true, present: false, head: null, porcelain: null };
   }
   const dir = path.join(root, receipt.attempt_id);
   return {
-    observed_at: nowIso(),
+    observed_at: now(),
     root_configured: true,
     present: true,
     head: gitImpl(dir, ["rev-parse", "HEAD"]).trim(),
@@ -279,20 +291,20 @@ export function defaultWorktree({ receipt, env, gitImpl = gitIn }) {
   };
 }
 
-export async function defaultBranchHead({ receipt, env, fetchImpl = fetch }) {
+export async function defaultBranchHead({ receipt, env, fetchImpl = fetch, now = nowIso }) {
   const measured = await measureBranchHead({ repo: receipt.repo, branch: receipt.branch, token: env.GITHUB_TOKEN ?? "", fetchImpl });
-  return { observed_at: nowIso(), ok: measured.ok, sha: measured.sha };
+  return { observed_at: now(), ok: measured.ok, sha: measured.sha };
 }
 
-export function defaultPushReceipt({ receipt, env }) {
+export function defaultPushReceipt({ receipt, env, now = nowIso }) {
   const stateDir = env.SHU_WORKSPACE_STATE_DIR;
-  if (!stateDir) return { observed_at: nowIso(), readable: false, record: null };
+  if (!stateDir) return { observed_at: now(), readable: false, record: null };
   const file = prePushRecordPath(stateDir, receipt.attempt_id);
   // `readable` is only true once the directory has actually been listed.
   let entries;
   try { entries = entriesOf(stateDir); }
-  catch { return { observed_at: nowIso(), readable: false, record: null }; }
-  return { observed_at: nowIso(), readable: true, record: entries.includes(path.basename(file)) ? file : null };
+  catch { return { observed_at: now(), readable: false, record: null }; }
+  return { observed_at: now(), readable: true, record: entries.includes(path.basename(file)) ? file : null };
 }
 
 // Read-only by construction: SupervisorStore's constructor mkdirs its own tree,
@@ -307,20 +319,20 @@ export function defaultPushReceipt({ receipt, env }) {
 // `readable: true` requires ALL FOUR directories to have been listed. A state
 // dir that a real supervisor has ever used always has all four (the store's
 // constructor creates them), so anything less is a store we cannot vouch for.
-export function defaultSupervisorStore({ receipt, env }) {
+export function defaultSupervisorStore({ receipt, env, now = nowIso }) {
   const stateDir = env.SHU_SUPERVISOR_STATE_DIR;
-  if (!stateDir) return { observed_at: nowIso(), readable: false, records: [] };
+  if (!stateDir) return { observed_at: now(), readable: false, records: [] };
   const records = [];
   for (const kind of SUPERVISOR_RECORD_KINDS) {
     let entries;
     try { entries = entriesOf(path.join(stateDir, kind)); }
-    catch { return { observed_at: nowIso(), readable: false, records: [] }; }
+    catch { return { observed_at: now(), readable: false, records: [] }; }
     if (entries.includes(`${receipt.attempt_id}.json`)) records.push(kind);
   }
-  return { observed_at: nowIso(), readable: true, records };
+  return { observed_at: now(), readable: true, records };
 }
 
-export async function defaultReadReceipts({ config, env, fetchImpl = fetch }) {
+export async function defaultReadReceipts({ config, env, fetchImpl = fetch, now = nowIso }) {
   const { issues, commentsByIssue } = await fetchLinearBoard({
     token: env.LINEAR_API_TOKEN ?? "", repo: config.pilot_repo, team: config.team ?? "SHU",
     repoLabelMap: config.repo_label_map, fetchImpl, readComments: true,
@@ -335,7 +347,7 @@ export async function defaultReadReceipts({ config, env, fetchImpl = fetch }) {
       if (!linearIdByAttempt.has(receipt.attempt_id)) linearIdByAttempt.set(receipt.attempt_id, issue.linearId ?? issue.id);
     }
   }
-  return { observed_at: nowIso(), receipts, linearIdByAttempt };
+  return { observed_at: now(), receipts, linearIdByAttempt };
 }
 
 export async function defaultPostReceipt({ receipt, linearIssueId, env, fetchImpl = fetch }) {
@@ -377,9 +389,13 @@ export async function reconcileDanglingAttempt({
   // name, never an escaping exception and never a generic failure: an operator
   // reading "the process table could not be read" must not be able to confuse
   // it with "the process table is empty".
+  // `now` is handed to the probe, not just used to judge it: the observation and
+  // the start instant it is compared against must come from ONE clock, or
+  // freshness measures clock skew instead of the age of the evidence. An
+  // injected probe is free to ignore it; every shipped probe stamps it.
   const take = async (label, probe, args) => {
     let value;
-    try { value = await probe(args); }
+    try { value = await probe({ ...args, now }); }
     catch (error) { return { refused: refusal("EVIDENCE_MISSING", `${label}: ${error?.code || error?.message || "probe threw"}`) }; }
     const stale = probeFreshness(value, startedAt);
     return stale ? { refused: stale } : { value };

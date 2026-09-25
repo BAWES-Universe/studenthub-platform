@@ -657,9 +657,28 @@ function sandbox(t) {
   return dir;
 }
 
-// The real probes stamp a REAL observation time, so an invocation that runs
-// them must carry a real start instant for freshness to mean anything.
-const startedNow = () => new Date(Date.now() - 60_000).toISOString();
+// ONE clock, injected, for the invocation AND for the probes it runs. Freshness
+// compares a probe's observation against the invocation's start, so those two
+// instants must come from the same clock or the comparison measures clock skew
+// instead of the age of the evidence. Reading the host's wall clock for either
+// half makes the verdict depend on what time of day the suite runs: an earlier
+// revision derived the start from `Date.now()` while these worlds stamped the
+// fixed NOW, which passed only while real UTC happened to be before NOW and went
+// EVIDENCE_STALE at 12:00 — and a year ahead, or a year behind, every time.
+// Every assertion below therefore also pins observed_at to the injected instant,
+// so a probe that goes back to reading the wall clock fails here rather than in
+// whichever timezone or clock-shifted job runs next.
+const clock = () => NOW;
+
+// Every shipped-probe result below goes through this: it asserts the probe
+// stamped the INJECTED instant rather than the host's wall clock. Without it the
+// `now: clock` arguments would be decorative — a probe that quietly went back to
+// `new Date()` would still satisfy every structural assertion, and would only
+// resurface as EVIDENCE_STALE in a differently-clocked job.
+const stamped = (probe) => {
+  assert.equal(probe.observed_at, NOW, "a probe must stamp the injected clock, never the host wall clock");
+  return probe;
+};
 
 // A supervisor state dir in the shape SupervisorStore's constructor makes.
 function supervisorStateDir(t, records = {}) {
@@ -696,14 +715,14 @@ test("SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree r
 
   // 1. The root is not configured. The worktree was NOT measured, and the probe
   //    must say so rather than reporting an absent worktree.
-  const unset = defaultWorktree({ receipt, env: {}, gitImpl });
+  const unset = stamped(defaultWorktree({ receipt, env: {}, gitImpl, now: clock }));
   assert.equal(unset.root_configured, false, "an unconfigured root must not claim to have been read");
   assert.deepEqual(measured, [], "nothing can be measured without a root");
 
   // 2. Root configured, attempt worktree present: HEAD and porcelain are read.
   const root = sandbox(t);
   fs.mkdirSync(nodePath.join(root, DANGLING));
-  const present = defaultWorktree({ receipt, env: { SHU_WORKTREE_ROOT: root }, gitImpl });
+  const present = stamped(defaultWorktree({ receipt, env: { SHU_WORKTREE_ROOT: root }, gitImpl, now: clock }));
   assert.equal(present.root_configured, true);
   assert.equal(present.present, true);
   assert.equal(present.head, "b".repeat(40));
@@ -711,7 +730,7 @@ test("SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree r
 
   // 3. Root configured, attempt worktree genuinely gone: absent, but MEASURED.
   const emptyRoot = sandbox(t);
-  const absent = defaultWorktree({ receipt, env: { SHU_WORKTREE_ROOT: emptyRoot }, gitImpl });
+  const absent = stamped(defaultWorktree({ receipt, env: { SHU_WORKTREE_ROOT: emptyRoot }, gitImpl, now: clock }));
   assert.equal(absent.root_configured, true);
   assert.equal(absent.present, false);
 
@@ -719,14 +738,14 @@ test("SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree r
   //    "absent", which existsSync() would have done for exactly this fault.
   const notADir = nodePath.join(sandbox(t), "root-is-a-file");
   fs.writeFileSync(notADir, "");
-  assert.throws(() => defaultWorktree({ receipt, env: { SHU_WORKTREE_ROOT: notADir }, gitImpl }),
+  assert.throws(() => defaultWorktree({ receipt, env: { SHU_WORKTREE_ROOT: notADir }, gitImpl, now: clock }),
     (error) => ["ENOTDIR", "ENOENT"].includes(error.code), "an unreadable root must throw, not report absence");
 
   // End to end, with the REAL probe: a worktree that has moved off its base AND
   // is dirty, and SHU_WORKTREE_ROOT simply not set. Fail-open here would write
   // the terminal HOLD having never looked at that worktree at all.
-  const io = cleanWorld({ worktree: async (args) => ({ ...defaultWorktree({ ...args, gitImpl }) }) });
-  const blind = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: {}, io, now: startedNow });
+  const io = cleanWorld({ worktree: async (args) => stamped(defaultWorktree({ ...args, gitImpl })) });
+  const blind = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: {}, io, now: clock });
   assert.equal(blind.ok, false, "an unmeasured worktree must not be terminalized around");
   assert.equal(blind.code, "EVIDENCE_MISSING", `got ${blind.code} (${blind.detail})`);
   assert.match(blind.detail, /SHU_WORKTREE_ROOT/);
@@ -735,8 +754,8 @@ test("SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree r
 
   // ...and with the root configured, the same dirty, diverged worktree is seen
   // and refused BY NAME. Same world, one environment variable different.
-  const seen = cleanWorld({ worktree: async (args) => ({ ...defaultWorktree({ ...args, gitImpl }) }) });
-  const looked = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_WORKTREE_ROOT: root }, io: seen, now: startedNow });
+  const seen = cleanWorld({ worktree: async (args) => stamped(defaultWorktree({ ...args, gitImpl })) });
+  const looked = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_WORKTREE_ROOT: root }, io: seen, now: clock });
   assert.equal(looked.code, "WORKTREE_CHANGED", `got ${looked.code} (${looked.detail})`);
   assert.equal(seen.posted.length, 0);
 });
@@ -746,13 +765,13 @@ test("SHU-140 reconcile-dangling probe: an unreadable supervisor store reports r
   const order = { attempt_id: DANGLING, issue_id: "SHU-140" };
 
   // 1. A real durable order is found by listing orders/, not by existsSync.
-  const held = defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t, { orders: order, runs: { status: "accepted" } }) } });
+  const held = stamped(defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t, { orders: order, runs: { status: "accepted" } }) }, now: clock }));
   assert.equal(held.readable, true);
   assert.deepEqual(held.records, ["orders", "runs"]);
 
   // 2. All four directories readable, no record for this attempt: a genuine,
   //    established absence.
-  const empty = defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t) } });
+  const empty = stamped(defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t) }, now: clock }));
   assert.equal(empty.readable, true);
   assert.deepEqual(empty.records, []);
 
@@ -762,7 +781,7 @@ test("SHU-140 reconcile-dangling probe: an unreadable supervisor store reports r
   const broken = supervisorStateDir(t, { orders: order });
   fs.rmSync(nodePath.join(broken, "orders"), { recursive: true });
   fs.writeFileSync(nodePath.join(broken, "orders"), "not a directory");
-  const unreadable = defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: broken } });
+  const unreadable = stamped(defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: broken }, now: clock }));
   assert.equal(unreadable.readable, false, "a store that could not be listed must not report readable");
   assert.deepEqual(unreadable.records, []);
 
@@ -770,27 +789,27 @@ test("SHU-140 reconcile-dangling probe: an unreadable supervisor store reports r
   //    absence from either: SupervisorStore always creates all four.
   const partial = supervisorStateDir(t, { orders: order });
   fs.rmSync(nodePath.join(partial, "launches"), { recursive: true });
-  assert.equal(defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: partial } }).readable, false);
+  assert.equal(stamped(defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: partial }, now: clock })).readable, false);
 
   // 5. Same fault by permission rather than by type, where the host allows it.
   if (process.getuid && process.getuid() !== 0) {
     const denied = supervisorStateDir(t, { orders: order });
     fs.chmodSync(nodePath.join(denied, "orders"), 0o000);
-    const probed = defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: denied } });
+    const probed = stamped(defaultSupervisorStore({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: denied }, now: clock }));
     fs.chmodSync(nodePath.join(denied, "orders"), 0o700); // restore before the sandbox is removed
     assert.equal(probed.readable, false);
   }
 
   // 6. Unset is not "no records" either.
-  assert.equal(defaultSupervisorStore({ receipt, env: {} }).readable, false);
+  assert.equal(stamped(defaultSupervisorStore({ receipt, env: {}, now: clock })).readable, false);
 
   // End to end, with the REAL probe and the supervisor's catch-all MISSING_CLAIM
   // answer: the status answer alone must NOT be enough. status() returns
   // MISSING_CLAIM from a catch-all that fires on any read fault, so the store
   // probe is the second opinion — and it is only a second opinion if it can
   // prove it actually read the store.
-  const io = cleanWorld({ supervisorStore: async (args) => defaultSupervisorStore(args) });
-  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_SUPERVISOR_STATE_DIR: broken }, io, now: startedNow });
+  const io = cleanWorld({ supervisorStore: async (args) => stamped(defaultSupervisorStore(args)) });
+  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_SUPERVISOR_STATE_DIR: broken }, io, now: clock });
   assert.equal(result.ok, false, "the slot must not be released over an unreadable store");
   assert.equal(result.code, "EVIDENCE_MISSING", `got ${result.code} (${result.detail})`);
   assert.equal(io.posted.length, 0, "nothing may be written");
@@ -818,48 +837,48 @@ test("SHU-140 reconcile-dangling probe: a supervisor-forked worker is detected d
   // 1. The supervisor's own launches/ record is what binds the pid to the
   //    attempt. A scan that only greps argv and environ sees nothing at all.
   const launched = supervisorStateDir(t, { launches: { attempt_id: DANGLING, phase: "launched", pid: 4242 } });
-  const byRecord = defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: launched }, procRoot: proc });
+  const byRecord = stamped(defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: launched }, procRoot: proc, now: clock }));
   assert.deepEqual(byRecord.pids, [4242], "the supervisor's recorded, still-live worker pid must be seen");
 
   // 2. And where no record can be read, the worker is still visible by WHERE it
   //    is working: its cwd is the attempt's own worktree.
-  const byCwd = defaultWorkerProcesses({ receipt, env: { SHU_WORKTREE_ROOT: worktreeRoot }, procRoot: proc });
+  const byCwd = stamped(defaultWorkerProcesses({ receipt, env: { SHU_WORKTREE_ROOT: worktreeRoot }, procRoot: proc, now: clock }));
   assert.deepEqual(byCwd.pids, [4242], "a process whose cwd is the attempt worktree is a live worker");
 
   // 3. A recorded pid that has died leaves nothing behind in /proc.
   const dead = fakeProc(t, { 7: { cmdline: "/usr/bin/sshd " } });
-  assert.deepEqual(defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: launched }, procRoot: dead }).pids, []);
+  assert.deepEqual(stamped(defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: launched }, procRoot: dead, now: clock })).pids, []);
 
   // 4. ...and a pid that was RECYCLED by an unrelated process is not our worker:
   //    the kernel's process-start token no longer matches the recorded one.
   const recycled = supervisorStateDir(t, { runs: { attempt_id: DANGLING, status: "running", pid: 4242, process_token: "555" } });
-  assert.deepEqual(defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: recycled }, procRoot: proc }).pids, [],
+  assert.deepEqual(stamped(defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: recycled }, procRoot: proc, now: clock })).pids, [],
     "a mismatched process-start token means the pid was reused");
 
   // 5. The original argv/environ sighting still works for a worker that does
   //    carry the attempt_id.
   const loud = fakeProc(t, { 99: { cmdline: `/usr/bin/node --attempt ${DANGLING} ` } });
-  assert.deepEqual(defaultWorkerProcesses({ receipt, env: {}, procRoot: loud }).pids, [99]);
+  assert.deepEqual(stamped(defaultWorkerProcesses({ receipt, env: {}, procRoot: loud, now: clock })).pids, [99]);
 
   // 6. Fail closed on both read faults: an unlistable /proc and an unlistable
   //    supervisor store are EVIDENCE_MISSING, never "no worker".
   const notADir = nodePath.join(sandbox(t), "proc-is-a-file");
   fs.writeFileSync(notADir, "");
-  assert.throws(() => defaultWorkerProcesses({ receipt, env: {}, procRoot: notADir }), (e) => ["ENOTDIR", "ENOENT"].includes(e.code));
+  assert.throws(() => defaultWorkerProcesses({ receipt, env: {}, procRoot: notADir, now: clock }), (e) => ["ENOTDIR", "ENOENT"].includes(e.code));
   const brokenStore = supervisorStateDir(t, { launches: { pid: 4242 } });
   fs.rmSync(nodePath.join(brokenStore, "launches"), { recursive: true });
   fs.writeFileSync(nodePath.join(brokenStore, "launches"), "not a directory");
-  assert.throws(() => defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: brokenStore }, procRoot: proc }),
+  assert.throws(() => defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: brokenStore }, procRoot: proc, now: clock }),
     (e) => e.code === "ENOTDIR", "an unreadable launches/ must not read as 'no worker'");
   const absentDir = supervisorStateDir(t, { launches: { pid: 4242 } });
   fs.rmSync(nodePath.join(absentDir, "launches"), { recursive: true });
-  assert.throws(() => defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: absentDir }, procRoot: proc }),
+  assert.throws(() => defaultWorkerProcesses({ receipt, env: { SHU_SUPERVISOR_STATE_DIR: absentDir }, procRoot: proc, now: clock }),
     (e) => e.code === "ENOENT", "a MISSING record directory is a store we did not read, not an absent worker");
 
   // End to end, with the REAL probe: the live worker is refused BY NAME and the
   // slot is preserved.
-  const io = cleanWorld({ workerProcesses: async (args) => defaultWorkerProcesses({ ...args, procRoot: proc }) });
-  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_SUPERVISOR_STATE_DIR: launched, SHU_WORKTREE_ROOT: worktreeRoot }, io, now: startedNow });
+  const io = cleanWorld({ workerProcesses: async (args) => stamped(defaultWorkerProcesses({ ...args, procRoot: proc })) });
+  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_SUPERVISOR_STATE_DIR: launched, SHU_WORKTREE_ROOT: worktreeRoot }, io, now: clock });
   assert.equal(result.code, "WORKER_LIVE", `got ${result.code} (${result.detail})`);
   assert.match(result.detail, /4242/);
   assert.equal(io.posted.length, 0, "a live worker must not be terminalized around");
@@ -871,24 +890,24 @@ test("SHU-140 reconcile-dangling probe: a push receipt is read from a listed dir
 
   const withRecord = sandbox(t);
   fs.writeFileSync(nodePath.join(withRecord, `push-${DANGLING}.json`), JSON.stringify({ stage: "PENDING", attempt_id: DANGLING }));
-  const found = defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: withRecord } });
+  const found = stamped(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: withRecord }, now: clock }));
   assert.equal(found.readable, true);
   assert.equal(found.record, nodePath.join(withRecord, `push-${DANGLING}.json`));
 
   const withoutRecord = sandbox(t);
   fs.writeFileSync(nodePath.join(withoutRecord, "push-00000000-0000-4000-8000-000000000000.json"), "{}");
-  const clean = defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: withoutRecord } });
+  const clean = stamped(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: withoutRecord }, now: clock }));
   assert.equal(clean.readable, true);
   assert.equal(clean.record, null, "another attempt's push receipt is not this attempt's");
 
   const notADir = nodePath.join(sandbox(t), "state-is-a-file");
   fs.writeFileSync(notADir, "");
-  assert.equal(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: notADir } }).readable, false);
-  assert.equal(defaultPushReceipt({ receipt, env: {} }).readable, false);
+  assert.equal(stamped(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: notADir }, now: clock })).readable, false);
+  assert.equal(stamped(defaultPushReceipt({ receipt, env: {}, now: clock })).readable, false);
 
   // End to end, with the REAL probe: a landed push is refused by name.
-  const io = cleanWorld({ pushReceipt: async (args) => defaultPushReceipt(args) });
-  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_WORKSPACE_STATE_DIR: withRecord }, io, now: startedNow });
+  const io = cleanWorld({ pushReceipt: async (args) => stamped(defaultPushReceipt(args)) });
+  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_WORKSPACE_STATE_DIR: withRecord }, io, now: clock });
   assert.equal(result.code, "PUSH_RECEIPT_PRESENT", `got ${result.code} (${result.detail})`);
   assert.equal(io.posted.length, 0);
 });
