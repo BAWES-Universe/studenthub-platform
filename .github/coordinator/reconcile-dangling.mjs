@@ -76,7 +76,9 @@ export const RECONCILE_REFUSAL_CODES = Object.freeze([
   "ALREADY_TERMINAL",        // the chain is already COMPLETED/FAILED/HOLD; nothing to free
   "NOT_DANGLING",            // resolved stage is live (RESERVED/RUNNING), not a dangling launch
   "SUPERVISOR_CLAIM_PRESENT",// the supervisor knows this attempt: it is not ours to terminalize
-  "WORKER_LIVE",             // a worker process for this attempt is still running
+  "WORKER_LIVE",             // a worker process for this attempt is CONFIRMED still running
+  "WORKER_STALE_RECORD",     // a sighted pid is provably not that process any more (gone, or a different start token)
+  "WORKER_UNVERIFIED",       // a sighted pid is still there but its identity could not be established
   "WORKTREE_CHANGED",        // the attempt's worktree moved off its recorded scoped base
   "BRANCH_MOVED",            // the branch's remote head no longer equals the order's target_sha
   "PUSH_RECEIPT_PRESENT",    // a push/commit receipt exists: an external effect may have landed
@@ -85,9 +87,12 @@ export const RECONCILE_REFUSAL_CODES = Object.freeze([
   "WRITE_UNCONFIRMED",       // every condition held, but the Linear write did not confirm
 ]);
 
-export function refusal(code, detail) {
+export function refusal(code, detail, evidence) {
   if (!RECONCILE_REFUSAL_CODES.includes(code)) throw new Error(`unknown reconcile refusal code: ${code}`);
-  return { ok: false, code, refusal: `RECONCILE_REFUSED: ${code}`, detail: detail ?? null };
+  // `evidence` is the machine-readable half of the same statement the detail
+  // string makes. A refusal that can only be read as prose cannot be
+  // reconstructed after the fact, which is the whole reason this exists.
+  return { ok: false, code, refusal: `RECONCILE_REFUSED: ${code}`, detail: detail ?? null, ...(evidence ? { evidence } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +195,11 @@ function entriesOf(dir) {
 // /proc/<pid>/cmdline or /proc/<pid>/environ can ever see a real worker.
 // markLaunch() writes `pid` before the child is even reaped, and writeRun()
 // records `pid` plus the kernel's process-start token.
+//
+// The SOURCE FILE is carried out with the pid: a refusal that names a pid but
+// not where that pid came from cannot be reconstructed afterwards, which is
+// exactly the audit gap that made a vanished pid indistinguishable from a live
+// worker.
 function recordedWorkerIdentities({ receipt, env }) {
   const stateDir = env.SHU_SUPERVISOR_STATE_DIR;
   if (!stateDir) return [];
@@ -207,7 +217,7 @@ function recordedWorkerIdentities({ receipt, env }) {
     let record;
     try { record = JSON.parse(raw); } catch { throw new Error(`${kind} record for the attempt is unparseable`); }
     if (Number.isInteger(record?.pid) && record.pid > 0) {
-      found.push({ pid: record.pid, process_token: typeof record.process_token === "string" ? record.process_token : null });
+      found.push({ pid: record.pid, process_token: typeof record.process_token === "string" ? record.process_token : null, source_path: file });
     }
   }
   return found;
@@ -217,9 +227,45 @@ function recordedWorkerIdentities({ receipt, env }) {
 // the same slice supervisor-worker.mjs takes for `processStartToken`. It is
 // what distinguishes our worker from an unrelated process that inherited its
 // pid after it died.
-function processStartToken(procRoot, pid) {
+export function processStartToken(procRoot, pid) {
   const stat = fs.readFileSync(path.join(procRoot, String(pid), "stat"), "utf8");
   return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+}
+
+// How much of a command line a refusal is allowed to carry. Enough to recognise
+// the process, never enough to be a payload.
+export const WORKER_CMDLINE_MAX = 120;
+
+// A command line goes into the receipt and the journal, so it is sanitised
+// before it is ever stored: /proc separates argv with NULs, and any argument
+// that LOOKS like a credential assignment keeps its name and loses its value.
+// /proc/<pid>/environ is never captured at all — it is read to MATCH the
+// attempt_id and then discarded, because an environment block is a secret
+// store and no truncation makes it safe to log.
+export function redactCommandLine(raw) {
+  if (typeof raw !== "string") return null;
+  const flat = raw.replace(/\0/g, " ").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  const redacted = flat.replace(/(^|\s)(--?[\w.-]*(?:token|secret|key|password|passwd|credential|auth)[\w.-]*)([= ])(\S+)/gi, "$1$2$3<redacted>")
+    .replace(/(^|\s)([\w.]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL|AUTH)[\w.]*)=(\S+)/g, "$1$2=<redacted>");
+  return redacted.length > WORKER_CMDLINE_MAX ? `${redacted.slice(0, WORKER_CMDLINE_MAX)}…` : redacted;
+}
+
+// The stable identity of a pid AT ONE INSTANT: whether /proc/<pid> is there at
+// all, the kernel's process-start token, and a redacted command line. Every
+// field distinguishes "absent" from "unreadable", because the whole point of
+// re-checking is that "I could not look" must never render as a fact.
+export function readProcessIdentity(procRoot, pid) {
+  const dir = path.join(procRoot, String(pid));
+  let present;
+  try { present = fs.statSync(dir).isDirectory(); }
+  catch (error) { return { pid, exists: false, exists_known: error?.code === "ENOENT", start_token: null, cmdline: null }; }
+  if (!present) return { pid, exists: false, exists_known: true, start_token: null, cmdline: null };
+  let start_token = null;
+  try { start_token = processStartToken(procRoot, pid) ?? null; } catch { start_token = null; }
+  let cmdline = null;
+  try { cmdline = redactCommandLine(fs.readFileSync(path.join(dir, "cmdline"), "utf8")); } catch { cmdline = null; }
+  return { pid, exists: true, exists_known: true, start_token, cmdline };
 }
 
 // A live worker is detected from the process table, never from a coordinator
@@ -231,21 +277,43 @@ function processStartToken(procRoot, pid) {
 //   (c) any process carrying the attempt_id in argv or the environment.
 // Reading /proc itself is never optional: if the process table cannot be
 // listed, this throws and the operation refuses EVIDENCE_MISSING.
+//
+// Each sighting now carries a STABLE IDENTITY captured at match time — the pid,
+// the kernel's process-start token and a redacted command line — plus the file
+// that supplied the pid. `pids` stays exactly what it was (the pids that would
+// have been reported live), so no existing guard is weakened; `sightings` is
+// what the re-check and the audit trail are built from.
 export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now = nowIso }) {
   const live = entriesOf(procRoot).filter((entry) => /^\d+$/.test(entry));
-  const pids = new Set();
+  const sightings = new Map();
+  const note = (pid, sighting) => {
+    // First sighting of a pid wins its source; later ones only add sources, so
+    // the audit line says every way the same process was seen.
+    const seen = sightings.get(pid);
+    if (!seen) { sightings.set(pid, sighting); return; }
+    if (!seen.also_seen_by.includes(sighting.source)) seen.also_seen_by.push(sighting.source);
+  };
 
-  for (const { pid, process_token } of recordedWorkerIdentities({ receipt, env })) {
+  for (const { pid, process_token, source_path } of recordedWorkerIdentities({ receipt, env })) {
+    // A record naming a pid that is not in the process table at all never was a
+    // sighting: nothing was seen, so there is nothing to confirm or to refuse
+    // over. The supervisor-store guard below still answers for that record.
     if (!live.includes(String(pid))) continue;
+    const identity = readProcessIdentity(procRoot, pid);
     // A recorded token that no longer matches means the pid was recycled: that
     // process is somebody else's. An unrecorded token cannot exonerate anyone,
-    // so an untokened live pid still counts as live.
-    if (process_token) {
-      let token = null;
-      try { token = processStartToken(procRoot, pid); } catch { token = null; }
-      if (token && token !== process_token) continue;
-    }
-    pids.add(pid);
+    // so an untokened live pid still counts as SIGHTED.
+    const record_token_match = process_token ? (identity.start_token ? identity.start_token === process_token : null) : null;
+    note(pid, {
+      pid,
+      source: "supervisor_record",
+      also_seen_by: [],
+      source_path,
+      recorded_token: process_token ?? null,
+      observed_token: identity.start_token,
+      observed_cmdline: identity.cmdline,
+      record_token_match,
+    });
   }
 
   const worktreeDir = env.SHU_WORKTREE_ROOT ? path.join(env.SHU_WORKTREE_ROOT, receipt.attempt_id) : null;
@@ -257,15 +325,109 @@ export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now =
       // A cwd we may not read (another uid) is skipped, never counted absent.
       let cwd = null;
       try { cwd = fs.readlinkSync(path.join(procRoot, entry, "cwd")); } catch { cwd = null; }
-      if (cwd && (cwd === worktreeDir || cwd.startsWith(`${worktreeDir}${path.sep}`))) { pids.add(pid); continue; }
+      if (cwd && (cwd === worktreeDir || cwd.startsWith(`${worktreeDir}${path.sep}`))) {
+        const identity = readProcessIdentity(procRoot, pid);
+        note(pid, {
+          pid, source: "worktree_cwd", also_seen_by: [], source_path: path.join(procRoot, entry, "cwd"),
+          recorded_token: null, observed_token: identity.start_token, observed_cmdline: identity.cmdline, record_token_match: null,
+        });
+        continue;
+      }
     }
     for (const file of ["cmdline", "environ"]) {
       let raw;
       try { raw = fs.readFileSync(path.join(procRoot, entry, file), "utf8"); } catch { continue; }
-      if (raw.includes(receipt.attempt_id)) { pids.add(pid); break; }
+      if (raw.includes(receipt.attempt_id)) {
+        const identity = readProcessIdentity(procRoot, pid);
+        note(pid, {
+          pid, source: "attempt_id_scan", also_seen_by: [], source_path: path.join(procRoot, entry, file),
+          recorded_token: null, observed_token: identity.start_token, observed_cmdline: identity.cmdline, record_token_match: null,
+        });
+        break;
+      }
     }
   }
-  return { observed_at: now(), pids: [...pids].filter((pid) => pid !== process.pid).sort((a, b) => a - b) };
+
+  const ours = (sighting) => sighting.pid !== process.pid;
+  const kept = [...sightings.values()].filter(ours).sort((a, b) => a.pid - b.pid);
+  return {
+    observed_at: now(),
+    // UNCHANGED semantics: a record-token mismatch was never a live pid, and
+    // still is not. It is carried in `sightings` so the refusal can name it.
+    pids: kept.filter((s) => s.record_token_match !== false).map((s) => s.pid),
+    sightings: kept,
+  };
+}
+
+// The RE-CHECK. Everything above happened at match time; between then and the
+// verdict a process can exit, and its pid can be handed to something else. This
+// probe looks again, by pid, and reports what is there NOW — never a judgement,
+// only the second observation the classifier compares against the first.
+export function defaultWorkerLiveness({ sightings, procRoot = "/proc", now = nowIso }) {
+  const list = Array.isArray(sightings) ? sightings : [];
+  return { observed_at: now(), observations: list.map((s) => readProcessIdentity(procRoot, s.pid)) };
+}
+
+// Match time vs re-check time. A sighting is a CONFIRMED live worker only if
+// the pid is still there AND the kernel says it is still the same process. Every
+// other outcome is named, and the name says what was and was not verified.
+export const WORKER_DISPOSITIONS = Object.freeze({
+  CONFIRMED_LIVE: "pid still present and its process-start token is unchanged since the sighting",
+  VANISHED: "/proc/<pid> is gone: the sighted process exited before the verdict",
+  TOKEN_CHANGED: "the process-start token changed since the sighting: the pid was reused by another process",
+  RECORD_TOKEN_MISMATCH: "the record's process_token does not match the live process's start token",
+  UNVERIFIED: "the pid is still present but its process-start token could not be read at the sighting or at the re-check",
+  UNOBSERVED: "the liveness re-check returned no observation for this pid",
+});
+
+export function classifyWorkerSighting(sighting, observation) {
+  if (!observation || observation.pid !== sighting.pid) return { disposition: "UNOBSERVED", check: "liveness re-check" };
+  if (observation.exists !== true) return { disposition: "VANISHED", check: "/proc/<pid> presence at re-check" };
+  if (sighting.record_token_match === false) return { disposition: "RECORD_TOKEN_MISMATCH", check: "record process_token vs live start token" };
+  if (!sighting.observed_token || !observation.start_token) return { disposition: "UNVERIFIED", check: "/proc/<pid>/stat field 22 readability" };
+  if (observation.start_token !== sighting.observed_token) return { disposition: "TOKEN_CHANGED", check: "process-start token at sighting vs re-check" };
+  return { disposition: "CONFIRMED_LIVE", check: "process-start token at sighting vs re-check" };
+}
+
+// One line per sighting, and it is the WHOLE evidence: which pid, where the pid
+// came from, the token then and now (or its absence), the redacted command line,
+// and the check that decided. A refusal built from these lines can be
+// reconstructed from the log alone, with no access to the host it happened on.
+export function describeWorkerSighting(verdict) {
+  const { sighting, observation, disposition, check } = verdict;
+  const sources = [sighting.source, ...sighting.also_seen_by].join("+");
+  return [
+    `pid=${sighting.pid}`,
+    `disposition=${disposition}`,
+    `check=${check}`,
+    `source=${sources}`,
+    `source_path=${sighting.source_path}`,
+    `recorded_token=${sighting.recorded_token ?? "none"}`,
+    `token_at_sighting=${sighting.observed_token ?? "unreadable"}`,
+    `token_at_recheck=${observation ? (observation.start_token ?? (observation.exists ? "unreadable" : "absent")) : "unobserved"}`,
+    `cmdline=${JSON.stringify(sighting.observed_cmdline ?? observation?.cmdline ?? null)}`,
+  ].join(" ");
+}
+
+// The verdict over ALL sightings, in strict precedence:
+//   confirmed  -> WORKER_LIVE      (proved live; recovery can never proceed)
+//   unverified -> WORKER_UNVERIFIED(neither proved nor disproved; fail closed)
+//   disproved  -> WORKER_STALE_RECORD (proved NOT the sighted process any more)
+// A sighting that was never in the process table at match time is not here at
+// all: nothing was seen, so there is nothing to disprove.
+export function workerVerdict(sightings, observations) {
+  const byPid = new Map((observations ?? []).map((o) => [o?.pid, o]));
+  const verdicts = (sightings ?? []).map((sighting) => {
+    const observation = byPid.get(sighting.pid) ?? null;
+    return { sighting, observation, ...classifyWorkerSighting(sighting, observation) };
+  });
+  const of = (...names) => verdicts.filter((v) => names.includes(v.disposition));
+  return {
+    verdicts,
+    confirmed: of("CONFIRMED_LIVE"),
+    unverified: of("UNVERIFIED", "UNOBSERVED"),
+    disproved: of("VANISHED", "TOKEN_CHANGED", "RECORD_TOKEN_MISMATCH"),
+  };
 }
 
 // An UNCONFIGURED worktree root is not evidence that the worktree is absent; it
@@ -438,7 +600,45 @@ export async function reconcileDanglingAttempt({
   if (workersTaken.refused) return workersTaken.refused;
   const workers = workersTaken.value;
   if (!Array.isArray(workers.pids)) return refusal("EVIDENCE_MISSING", "the process table could not be read");
-  if (workers.pids.length) return refusal("WORKER_LIVE", `live worker process(es) ${workers.pids.join(",")}`);
+  // A probe that reports pids but no sightings has told us a number and nothing
+  // else: there is no identity to re-check and no audit line to write. That is
+  // an unanswered probe, not an empty one.
+  if (!Array.isArray(workers.sightings)) {
+    return refusal("EVIDENCE_MISSING", "the worker probe reported no sightings, so no pid identity could be established");
+  }
+
+  // THE RE-CHECK. Everything above is match-time evidence. A pid that has since
+  // vanished, or that now carries a different kernel process-start token, is not
+  // the process we saw, and calling it a confirmed live worker is how a refusal
+  // becomes unauditable: the operator is told a pid that no longer exists.
+  const livenessTaken = await take("worker liveness", io.workerLiveness ?? defaultWorkerLiveness, { receipt, env, sightings: workers.sightings });
+  if (livenessTaken.refused) return livenessTaken.refused;
+  if (!Array.isArray(livenessTaken.value.observations)) {
+    return refusal("EVIDENCE_MISSING", "the worker liveness re-check did not answer");
+  }
+  const verdict = workerVerdict(workers.sightings, livenessTaken.value.observations);
+  const workerAudit = (group) => ({ sightings: group.map((v) => describeWorkerSighting(v)) });
+
+  // Proved live: the pid is still there and the kernel says it is still the same
+  // process. This is the ONLY thing that may be called WORKER_LIVE.
+  if (verdict.confirmed.length) {
+    return refusal("WORKER_LIVE", `confirmed live worker process(es) ${verdict.confirmed.map((v) => v.sighting.pid).join(",")} — ${verdict.confirmed.map(describeWorkerSighting).join(" | ")}`,
+      workerAudit(verdict.confirmed));
+  }
+  // Neither proved nor disproved: the pid is still there but we could not
+  // establish that it is ours. Fail closed, under its own name, and say exactly
+  // which check could not be completed.
+  if (verdict.unverified.length) {
+    return refusal("WORKER_UNVERIFIED", `pid(s) ${verdict.unverified.map((v) => v.sighting.pid).join(",")} present but not verified as this attempt's worker — ${verdict.unverified.map(describeWorkerSighting).join(" | ")}`,
+      workerAudit(verdict.unverified));
+  }
+  // Proved NOT the sighted process any more. The world changed under this
+  // invocation, so nothing here is terminalized on it: the operator re-runs and
+  // gets a verdict taken over one consistent observation of the host.
+  if (verdict.disproved.length) {
+    return refusal("WORKER_STALE_RECORD", `no live worker: pid(s) ${verdict.disproved.map((v) => v.sighting.pid).join(",")} were sighted and are provably not that process now — ${verdict.disproved.map(describeWorkerSighting).join(" | ")}`,
+      workerAudit(verdict.disproved));
+  }
 
   const worktreeTaken = await take("attempt worktree", io.worktree ?? defaultWorktree, { receipt, env });
   if (worktreeTaken.refused) return worktreeTaken.refused;
@@ -537,6 +737,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 0;
   }
   out(`${result.refusal}${result.detail ? ` — ${result.detail}` : ""}; slot preserved, nothing written`);
+  // The journal must carry the evidence, not just the verdict. One line per
+  // sighting — pid, source file, token then and now, redacted cmdline and the
+  // check that decided — so the refusal can be reconstructed from the log alone.
+  for (const line of result.evidence?.sightings ?? []) out(`WORKER_SIGHTING ${line}`);
   return 3;
 }
 

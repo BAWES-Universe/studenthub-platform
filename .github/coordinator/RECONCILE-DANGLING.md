@@ -105,19 +105,93 @@ over IPC, and `supervisorChildEnvironment()` is a fixed allow-list of variable
 *names* that carries no attempt_id. So neither `/proc/<pid>/cmdline` nor
 `/proc/<pid>/environ` ever contains the attempt_id, and a substring scan of them
 cannot see a real worker at all. `defaultWorkerProcesses` therefore takes three
-sightings, any one of which refuses `WORKER_LIVE`:
+sightings:
 
 1. a pid the **supervisor itself** recorded for the attempt in `launches/` or
-   `runs/`, still present in the process table — and, where the run record
-   carries the kernel's `process_token`, still the same process, so a recycled
-   pid is not mistaken for a live worker;
+   `runs/`, still present in the process table;
 2. any process whose `cwd` resolves into the attempt's own worktree;
 3. any process carrying the attempt_id in argv or the environment.
 
 A `/proc` that cannot be listed, or a `launches/` that cannot be read, throws:
 `EVIDENCE_MISSING`, never "no worker". Sighting 2 means that running this command
-from **inside** the attempt worktree refuses `WORKER_LIVE` on the operator's own
-shell; that is the fail-closed direction — run it from elsewhere.
+from **inside** the attempt worktree refuses on the operator's own shell; that is
+the fail-closed direction — run it from elsewhere.
+
+### A sighting is not a live worker
+
+A sighting is an observation taken at **match time**. By the time the verdict is
+formed the process may have exited, and the kernel may have handed its pid to
+something else. Reporting a sighting as a confirmed live worker is how a refusal
+becomes unauditable: `WORKER_LIVE -- live worker process(es) 2770495`, with pid
+2770495 already absent from `/proc`, unknown to `ps` and absent from the journal,
+is a refusal nobody can confirm or disprove afterwards.
+
+So every sighting captures a **stable identity** at match time — the pid, the
+kernel's process-start token (field 22 of `/proc/<pid>/stat`, the same slice
+`supervisor-worker.mjs` records as `process_token`), a redacted command line, and
+the **file that supplied the pid** — and `defaultWorkerLiveness` then looks again,
+by pid, before any verdict is formed. Comparing the two observations gives one of
+six named dispositions:
+
+| disposition | what was established | refusal |
+| --- | --- | --- |
+| `CONFIRMED_LIVE` | the pid is still present **and** its start token is unchanged | `WORKER_LIVE` |
+| `UNVERIFIED` | the pid is still present, but its start token could not be read at the sighting or at the re-check | `WORKER_UNVERIFIED` |
+| `UNOBSERVED` | the re-check returned no observation for the pid | `WORKER_UNVERIFIED` |
+| `VANISHED` | `/proc/<pid>` is gone: the sighted process exited before the verdict | `WORKER_STALE_RECORD` |
+| `TOKEN_CHANGED` | the start token changed: the pid was reused by another process | `WORKER_STALE_RECORD` |
+| `RECORD_TOKEN_MISMATCH` | the run record's `process_token` disagrees with the live process's start token | `WORKER_STALE_RECORD` |
+
+`WORKER_LIVE` now means **proved**, and nothing else can claim it. Precedence is
+confirmed → unverified → disproved, so a single confirmed worker outranks any
+number of stale sightings.
+
+### Which combination is allowed to proceed, and why the slot stays protected
+
+**No** sighting ever permits terminalization. Every one of the six dispositions
+above is a refusal. The only thing that proceeds past the worker checks is a
+record naming a pid that was **never in the process table during this
+invocation** — nothing was seen, so there is nothing to confirm and nothing to
+disprove, and that is the case the old code already treated this way.
+
+That path is not a hole, because it is still gated by every other safeguard,
+none of which is weakened:
+
+- the supervisor's own **signed `MISSING_CLAIM`** over its authenticated
+  transport (any other answer, or an answer with no hold code, refuses);
+- the **supervisor store**, listed independently, with all four record
+  directories readable and **no record of any kind** for the attempt. Any pid
+  from sighting 1 comes *from* such a record, so a stale supervisor record can
+  never release the slot: the store guard necessarily refuses
+  `SUPERVISOR_CLAIM_PRESENT` first;
+- the attempt **worktree** measured at its recorded `scoped_base_sha` and clean,
+  with an unconfigured root refusing `EVIDENCE_MISSING` rather than reading as
+  absent;
+- the **remote branch head** still equal to `target_sha`;
+- **no push/commit receipt** in a directory that was actually listed;
+- and **freshness** on every probe, so no verdict rests on an observation that
+  predates this invocation.
+
+Only all of those together release the slot.
+
+### The refusal is the evidence
+
+Each worker refusal carries one line per sighting, in the detail string, in the
+structured `evidence.sightings`, and on stdout as `WORKER_SIGHTING …`:
+
+```
+WORKER_SIGHTING pid=2770495 disposition=VANISHED check=/proc/<pid> presence at re-check \
+  source=worktree_cwd source_path=/proc/2770495/cwd recorded_token=none \
+  token_at_sighting=900900 token_at_recheck=absent cmdline="/usr/bin/node …"
+```
+
+pid, the check that decided, where the pid came from, the token then and now (or
+`unreadable`/`absent`), and the command line — so any refusal can be
+reconstructed from the log alone. The command line is flattened from its argv
+NULs, truncated to `WORKER_CMDLINE_MAX` characters, and any argument that looks
+like a credential assignment keeps its name and loses its value.
+`/proc/<pid>/environ` is read to *match* the attempt_id and then discarded: an
+environment block is a secret store and no truncation makes it safe to log.
 
 **It never** reads `ENABLE_DISPATCH`, arms or consumes an activation, loads an
 adapter module, retries, resumes or launches anything. On success it writes
@@ -135,7 +209,9 @@ implies a different repair.
 | `RECONCILE_REFUSED: ALREADY_TERMINAL` | the chain is already `COMPLETED`/`FAILED`/`HOLD`; nothing to free |
 | `RECONCILE_REFUSED: NOT_DANGLING` | the resolved stage is live (`RESERVED`/`RUNNING`), not a dangling launch |
 | `RECONCILE_REFUSED: SUPERVISOR_CLAIM_PRESENT` | the supervisor still owns this attempt (status answer, or a durable store record) |
-| `RECONCILE_REFUSED: WORKER_LIVE` | a worker process for this attempt is still running |
+| `RECONCILE_REFUSED: WORKER_LIVE` | a worker process for this attempt is **confirmed** still running: the sighted pid is still present and its process-start token is unchanged |
+| `RECONCILE_REFUSED: WORKER_STALE_RECORD` | a sighted pid is provably not that process any more — it vanished, its start token changed, or a run record's `process_token` disagrees with the live process |
+| `RECONCILE_REFUSED: WORKER_UNVERIFIED` | a sighted pid is still present but its identity could not be established (its start token could not be read, or the re-check did not answer for it) |
 | `RECONCILE_REFUSED: WORKTREE_CHANGED` | the worktree moved off its recorded scoped base, or is dirty |
 | `RECONCILE_REFUSED: BRANCH_MOVED` | the branch's remote head no longer equals `target_sha` |
 | `RECONCILE_REFUSED: PUSH_RECEIPT_PRESENT` | a push/commit receipt exists: an external effect may have landed |
