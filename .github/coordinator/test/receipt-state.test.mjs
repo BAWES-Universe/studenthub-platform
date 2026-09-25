@@ -1086,7 +1086,7 @@ test("SHU-140 worker-identity: a missing or unreadable /proc entry is auditable 
   assert.match(unreadable.cmdline, /SUPERVISOR_TOKEN=<redacted>/);
   assert.ok(unreadable.cmdline.length <= WORKER_CMDLINE_MAX + 1, `cmdline must be truncated, got ${unreadable.cmdline.length}`);
   assert.equal(redactCommandLine(undefined), null, "an unreadable cmdline is null, never an empty string that reads as 'no arguments'");
-  assert.equal(redactCommandLine("a\u0000b\u0000"), "a b", "argv NULs are flattened, not carried into the log");
+  assert.equal(redactCommandLine("a\u0000b\u0000"), "a b", "argv NULs separate the entries and are never carried into the log");
 
   // 3. End to end: the pid is present and cannot be identified, so the operation
   //    fails CLOSED under its own name — never WORKER_LIVE (it is not proved) and
