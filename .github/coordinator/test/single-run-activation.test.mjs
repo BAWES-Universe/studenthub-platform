@@ -171,8 +171,8 @@ const statusWith = (receipts) => statusOf({}, { receipts });
 test("SHU-63 activation ABSENT: the committed gates decide exactly as before", () => {
   // The 5-combination truth table, re-asserted with the new third argument present
   // in the signature: behaviour when no activation is supplied must not drift.
-  const cfgF = { enable_dispatch: false, max_dispatch: 1 };
-  const cfgT = { enable_dispatch: true, max_dispatch: 1 };
+  const cfgF = { dispatch_scope_mode: "bounded", enable_dispatch: false, max_dispatch: 1 };
+  const cfgT = { dispatch_scope_mode: "bounded", enable_dispatch: true, max_dispatch: 1 };
   const combos = [
     ["config:false env:unset", cfgF, {}, false],
     ["config:false env:true", cfgF, SWITCH_ON, false],
@@ -729,7 +729,7 @@ function episodeConfigPath() {
     pilot_repo: "BAWES-Universe/studenthub-platform",
     team: "SHU",
     max_dispatch: 1,
-    enable_dispatch: false,
+    dispatch_scope_mode: "bounded", enable_dispatch: false,
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
     linear_callback_actor_ids: [TRUSTED_ACTOR],
@@ -958,7 +958,7 @@ test("SHU-63 activation MUTATIONS: every binding, permission, expiry and gate gu
       file: "reconcile.mjs",
       from: "  if (config.enable_dispatch === true && envGate) return true; // committed path, unchanged",
       to: "  if (false) return true; // SHU63-MUTATION-COMMITTED",
-      assertion: `assert.equal(mod.dispatchEnabledFor(ENV_ON, { enable_dispatch: true, max_dispatch: 1 }), true,
+      assertion: `assert.equal(mod.dispatchEnabledFor(ENV_ON, { dispatch_scope_mode: "bounded", enable_dispatch: true, max_dispatch: 1 }), true,
         "the committed two-gate path still enables dispatch");`,
       failure: /the committed two-gate path still enables dispatch/,
     },

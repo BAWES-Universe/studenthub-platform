@@ -227,7 +227,7 @@ export function createEpisodeHarness({
     max_dispatch: 1,
     // The fixture's real committed state: dispatch stays OFF in code, so the armed
     // activation is what authorizes the run.
-    enable_dispatch: false,
+    dispatch_scope_mode: "bounded", enable_dispatch: false,
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
     linear_callback_actor_ids: [callbackActor],
