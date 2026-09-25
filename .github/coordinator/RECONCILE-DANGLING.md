@@ -47,14 +47,61 @@ at run time, never a cached snapshot:
 | probe | required result |
 | --- | --- |
 | process table | no live worker process for the attempt |
-| attempt worktree | `HEAD` equals the receipt's `scoped_base_sha` and `git status --porcelain` is empty |
+| attempt worktree | `SHU_WORKTREE_ROOT` configured and listed, and if the attempt's worktree exists, `HEAD` equals the receipt's `scoped_base_sha` and `git status --porcelain` is empty |
 | remote branch | branch head still equals the order's `target_sha` |
-| push/commit receipts | no push receipt for the attempt |
-| supervisor store | no `orders`/`runs`/`launches`/`completions` record for the attempt |
+| push/commit receipts | the workspace state dir listed, and no push receipt for the attempt |
+| supervisor store | all four of `orders`/`runs`/`launches`/`completions` listed, and no record for the attempt |
 
 Every probe stamps its own `observed_at`. An observation from **before** this
 invocation started is a cached snapshot and is refused as `EVIDENCE_STALE`, not
 believed. A probe that does not answer, or throws, is `EVIDENCE_MISSING`.
+
+### "I could not look" is never "there is nothing there"
+
+Every condition above is an **absence** claim, so one confusion decides the
+whole operation: a probe that could not read must never report an empty result.
+The failure direction is releasing the slot, so all three of these fail closed.
+
+* **No probe uses `fs.existsSync`.** It answers `false` on `EACCES`, `EIO` and
+  `ENOTDIR` exactly as it does for a genuinely absent path, so an unreadable
+  directory would be indistinguishable from an empty one. The probes list
+  directory **entries** instead; a listing that throws is `EVIDENCE_MISSING`.
+* **An unconfigured environment variable is not a measurement.** `defaultWorktree`
+  reports `root_configured: false` when `SHU_WORKTREE_ROOT` is unset and the
+  operation refuses `EVIDENCE_MISSING`. Without this, omitting one variable from
+  the invocation below skipped the HEAD and porcelain comparison entirely and the
+  terminal `HOLD` was written over a worktree that had moved off its base and was
+  dirty. `defaultSupervisorStore` and `defaultPushReceipt` refuse the same way via
+  `readable: false`.
+* **The two supervisor-claim checks must be genuinely independent.**
+  `supervisor.mjs` `status()` returns `hold_code: MISSING_CLAIM` from a
+  **catch-all**: any read fault inside it — an unreadable `orders/`, a truncated
+  run record — produces the same answer as a real absence. The on-disk store
+  probe is only a second opinion if it can prove it actually read the store, so
+  `readable: true` requires **all four** record directories to have been listed.
+  A state dir a real supervisor has used always has all four, because
+  `SupervisorStore`'s constructor creates them.
+
+### Detecting a worker that is invisible to a `grep`
+
+`supervisor-worker.mjs` forks the child with **empty argv**, delivers the order
+over IPC, and `supervisorChildEnvironment()` is a fixed allow-list of variable
+*names* that carries no attempt_id. So neither `/proc/<pid>/cmdline` nor
+`/proc/<pid>/environ` ever contains the attempt_id, and a substring scan of them
+cannot see a real worker at all. `defaultWorkerProcesses` therefore takes three
+sightings, any one of which refuses `WORKER_LIVE`:
+
+1. a pid the **supervisor itself** recorded for the attempt in `launches/` or
+   `runs/`, still present in the process table — and, where the run record
+   carries the kernel's `process_token`, still the same process, so a recycled
+   pid is not mistaken for a live worker;
+2. any process whose `cwd` resolves into the attempt's own worktree;
+3. any process carrying the attempt_id in argv or the environment.
+
+A `/proc` that cannot be listed, or a `launches/` that cannot be read, throws:
+`EVIDENCE_MISSING`, never "no worker". Sighting 2 means that running this command
+from **inside** the attempt worktree refuses `WORKER_LIVE` on the operator's own
+shell; that is the fail-closed direction — run it from elsewhere.
 
 **It never** reads `ENABLE_DISPATCH`, arms or consumes an activation, loads an
 adapter module, retries, resumes or launches anything. On success it writes
@@ -78,6 +125,15 @@ implies a different repair.
 | `RECONCILE_REFUSED: PUSH_RECEIPT_PRESENT` | a push/commit receipt exists: an external effect may have landed |
 | `RECONCILE_REFUSED: EVIDENCE_MISSING` | a required probe did not answer |
 | `RECONCILE_REFUSED: EVIDENCE_STALE` | a probe answered from before this invocation |
+| `RECONCILE_REFUSED: WRITE_UNCONFIRMED` | every condition held, but the Linear write did not confirm |
+
+`WRITE_UNCONFIRMED` is the one code that does not assert the slot is preserved:
+the comment may or may not have landed. Re-running is safe and is the repair — a
+landed write makes the second run refuse `ALREADY_TERMINAL`.
+
+Configuration that cannot be loaded and a Linear write that throws are reported
+by name like everything else; no path leaves the operator reading a bare stack
+trace, which is the one moment the naming discipline exists for.
 
 ## Idempotence
 
@@ -104,7 +160,17 @@ preserved, nothing written).
 
 ## Proofs
 
-`.github/coordinator/test/receipt-state.test.mjs`, the six
-`SHU-140 reconcile-dangling:` cases. All I/O is injected, so the proofs need no
-git, no `/proc`, no socket and no network, and the file's audited capability set
-stays `[]`.
+`.github/coordinator/test/receipt-state.test.mjs`, the eleven `SHU-140
+reconcile-dangling` cases, in two layers.
+
+The **decision** cases inject every probe, so each one degrades exactly one
+condition and a refusal can only come from the guard that case names.
+
+The **probe** cases (`SHU-140 reconcile-dangling probe: …`) run the shipped
+default probes for real, against a real directory tree and a real synthetic
+`/proc` built with node core `fs` — because a suite that pins only the decision
+logic cannot see a probe that reports "I found nothing" when it never looked,
+which is how both of the fail-opens above reached review. The boundaries the
+sandbox cannot supply are injected at the probe (`gitImpl`, `procRoot`), so the
+proofs still need no real git, no real `/proc`, no socket and no network, and the
+file's audited capability set stays `[]`.

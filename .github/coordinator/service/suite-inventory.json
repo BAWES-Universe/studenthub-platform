@@ -2296,6 +2296,11 @@
     "SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push receipt each refuse by name",
     "SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE",
     "SHU-140 reconcile-dangling: a repeated invocation refuses ALREADY_TERMINAL, writes nothing and launches nothing",
+    "SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree root is EVIDENCE_MISSING, never a measured-clean worktree",
+    "SHU-140 reconcile-dangling probe: an unreadable supervisor store reports readable:false, never an empty one",
+    "SHU-140 reconcile-dangling probe: a supervisor-forked worker is detected despite empty argv and an attempt_id-free environment",
+    "SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt",
+    "SHU-140 reconcile-dangling: the remaining guards \u2014 binding, measurability, the state machine's veto, the write, and the CLI",
     "RESEED sealed seed blob literals",
     "RESEED independent manifest literal and complete transition",
     "RESEED blob OIDs are load bearing",
@@ -19086,6 +19091,26 @@
     },
     {
       "name": "SHU-140 reconcile-dangling: a repeated invocation refuses ALREADY_TERMINAL, writes nothing and launches nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree root is EVIDENCE_MISSING, never a measured-clean worktree",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling probe: an unreadable supervisor store reports readable:false, never an empty one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling probe: a supervisor-forked worker is detected despite empty argv and an attempt_id-free environment",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 reconcile-dangling: the remaining guards \u2014 binding, measurability, the state machine's veto, the write, and the CLI",
       "capabilities": []
     },
     {

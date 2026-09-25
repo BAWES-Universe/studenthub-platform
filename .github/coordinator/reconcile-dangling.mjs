@@ -25,13 +25,18 @@
 //     never loads an adapter module, never retries, resumes or launches
 //     anything.
 //   - On success it writes at most ONE Linear comment: the terminal HOLD
-//     receipt produced by the reviewed state machine (nextReceiptState). On any
-//     refusal it writes nothing at all and the slot is preserved.
+//     receipt produced by the reviewed state machine (nextReceiptState). On
+//     every refusal but WRITE_UNCONFIRMED it writes nothing at all and the slot
+//     is preserved; WRITE_UNCONFIRMED is the write itself failing to confirm,
+//     and re-running is the repair (a landed write refuses ALREADY_TERMINAL).
 //
 // EVERY condition below is established INDEPENDENTLY, at run time, from a probe
 // taken during this invocation. A probe whose observation predates this
 // invocation is a cached snapshot and is refused as EVIDENCE_STALE, not
-// believed.
+// believed. And every condition is an ABSENCE claim, so no probe may ever
+// report an empty result it did not actually establish: an unset environment
+// variable, an unlistable directory and a read fault are each EVIDENCE_MISSING
+// by name, never "I looked and there is nothing there". See RECONCILE-DANGLING.md.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -59,6 +64,11 @@ import { prePushRecordPath } from "./push-broker.mjs";
 // by the tick; RUNNING has a live claim; the terminal stages are already done.
 export const RECONCILABLE_STAGE = "LAUNCH_UNKNOWN";
 
+// The four per-attempt record kinds SupervisorStore keeps. Its constructor
+// ensureDir()s every one of them, so a state dir that is missing any of them is
+// not a supervisor store this operation is entitled to draw conclusions from.
+export const SUPERVISOR_RECORD_KINDS = Object.freeze(["orders", "runs", "launches", "completions"]);
+
 // Refusals are BY NAME. There is deliberately no generic failure code: an
 // operator who is told "refused" must be told which independently-established
 // condition did not hold, because each one implies a different repair.
@@ -72,6 +82,7 @@ export const RECONCILE_REFUSAL_CODES = Object.freeze([
   "PUSH_RECEIPT_PRESENT",    // a push/commit receipt exists: an external effect may have landed
   "EVIDENCE_MISSING",        // a required probe did not answer
   "EVIDENCE_STALE",          // a probe answered from before this invocation (cached snapshot)
+  "WRITE_UNCONFIRMED",       // every condition held, but the Linear write did not confirm
 ]);
 
 export function refusal(code, detail) {
@@ -149,31 +160,122 @@ export async function defaultSupervisorStatus({ receipt, env }) {
   return { observed_at: nowIso(), response: await sendSupervisorStatus({ receipt, env }) };
 }
 
-// A live worker is detected from the process table, not from any record the
-// coordinator wrote: the record is exactly what we are declaring untrustworthy.
-export function defaultWorkerProcesses({ receipt }) {
-  const pids = [];
-  for (const entry of fs.readdirSync("/proc")) {
-    if (!/^\d+$/.test(entry)) continue;
-    for (const file of ["cmdline", "environ"]) {
-      let raw;
-      try { raw = fs.readFileSync(path.join("/proc", entry, file), "utf8"); } catch { continue; }
-      if (raw.includes(receipt.attempt_id)) { pids.push(Number(entry)); break; }
-    }
-  }
-  return { observed_at: nowIso(), pids: pids.filter((pid) => pid !== process.pid) };
+// Every on-disk probe below reads directory ENTRIES, never fs.existsSync().
+// existsSync() answers `false` on EACCES, EIO and ENOTDIR exactly as it does on
+// a genuinely absent path, so an UNREADABLE directory would be reported as an
+// EMPTY one — "I could not look" rendered as "I looked and there is nothing".
+// Every condition here is an absence claim, so that one confusion is the whole
+// failure mode: it releases the slot on evidence that was never gathered.
+// readdirSync() throws instead, and a throwing probe is EVIDENCE_MISSING.
+function entriesOf(dir) {
+  return fs.readdirSync(dir);
 }
 
-export function defaultWorktree({ receipt, env }) {
+// The worker's pid, as the SUPERVISOR itself recorded it. This is the only
+// place the attempt_id and a pid are ever bound together: supervisor-worker.mjs
+// forks the child with EMPTY argv and supervisorChildEnvironment() is a fixed
+// allow-list of variable NAMES that carries no attempt_id, so no scan of
+// /proc/<pid>/cmdline or /proc/<pid>/environ can ever see a real worker.
+// markLaunch() writes `pid` before the child is even reaped, and writeRun()
+// records `pid` plus the kernel's process-start token.
+function recordedWorkerIdentities({ receipt, env }) {
+  const stateDir = env.SHU_SUPERVISOR_STATE_DIR;
+  if (!stateDir) return [];
+  const found = [];
+  for (const kind of SUPERVISOR_RECORD_KINDS) {
+    const file = path.join(stateDir, kind, `${receipt.attempt_id}.json`);
+    // The directory must be listable — a missing or unreadable record directory
+    // is a store we could not read, and must never be read as "no worker". This
+    // throws so take() names it EVIDENCE_MISSING.
+    const entries = entriesOf(path.join(stateDir, kind));
+    // Only the absence of THIS file, inside a directory we did list, is a real
+    // absence.
+    if (!entries.includes(path.basename(file))) continue;
+    const raw = fs.readFileSync(file, "utf8");
+    let record;
+    try { record = JSON.parse(raw); } catch { throw new Error(`${kind} record for the attempt is unparseable`); }
+    if (Number.isInteger(record?.pid) && record.pid > 0) {
+      found.push({ pid: record.pid, process_token: typeof record.process_token === "string" ? record.process_token : null });
+    }
+  }
+  return found;
+}
+
+// Field 22 of /proc/<pid>/stat, counted after the comm field's closing paren —
+// the same slice supervisor-worker.mjs takes for `processStartToken`. It is
+// what distinguishes our worker from an unrelated process that inherited its
+// pid after it died.
+function processStartToken(procRoot, pid) {
+  const stat = fs.readFileSync(path.join(procRoot, String(pid), "stat"), "utf8");
+  return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+}
+
+// A live worker is detected from the process table, never from a coordinator
+// receipt: the receipt is exactly what we are declaring untrustworthy. Three
+// independent sightings, because a worker that the supervisor forked is
+// invisible to a naive argv/environ scan (see recordedWorkerIdentities):
+//   (a) a pid the SUPERVISOR recorded for this attempt that is still alive,
+//   (b) any process whose cwd is inside the attempt's own worktree,
+//   (c) any process carrying the attempt_id in argv or the environment.
+// Reading /proc itself is never optional: if the process table cannot be
+// listed, this throws and the operation refuses EVIDENCE_MISSING.
+export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc" }) {
+  const live = entriesOf(procRoot).filter((entry) => /^\d+$/.test(entry));
+  const pids = new Set();
+
+  for (const { pid, process_token } of recordedWorkerIdentities({ receipt, env })) {
+    if (!live.includes(String(pid))) continue;
+    // A recorded token that no longer matches means the pid was recycled: that
+    // process is somebody else's. An unrecorded token cannot exonerate anyone,
+    // so an untokened live pid still counts as live.
+    if (process_token) {
+      let token = null;
+      try { token = processStartToken(procRoot, pid); } catch { token = null; }
+      if (token && token !== process_token) continue;
+    }
+    pids.add(pid);
+  }
+
+  const worktreeDir = env.SHU_WORKTREE_ROOT ? path.join(env.SHU_WORKTREE_ROOT, receipt.attempt_id) : null;
+  for (const entry of live) {
+    const pid = Number(entry);
+    if (worktreeDir) {
+      // readlink, not a substring: the cwd of a supervisor-forked worker is the
+      // attempt worktree even though its command line says nothing at all.
+      // A cwd we may not read (another uid) is skipped, never counted absent.
+      let cwd = null;
+      try { cwd = fs.readlinkSync(path.join(procRoot, entry, "cwd")); } catch { cwd = null; }
+      if (cwd && (cwd === worktreeDir || cwd.startsWith(`${worktreeDir}${path.sep}`))) { pids.add(pid); continue; }
+    }
+    for (const file of ["cmdline", "environ"]) {
+      let raw;
+      try { raw = fs.readFileSync(path.join(procRoot, entry, file), "utf8"); } catch { continue; }
+      if (raw.includes(receipt.attempt_id)) { pids.add(pid); break; }
+    }
+  }
+  return { observed_at: nowIso(), pids: [...pids].filter((pid) => pid !== process.pid).sort((a, b) => a - b) };
+}
+
+// An UNCONFIGURED worktree root is not evidence that the worktree is absent; it
+// is evidence that nobody looked. Reporting `present: false` for it would skip
+// the HEAD and porcelain comparison entirely and fail OPEN — the operation would
+// terminalize over a worktree that had moved off its base and was dirty, having
+// never measured it. `root_configured` is the flag the caller refuses on, the
+// same way `readable` works for the push-receipt and supervisor-store probes.
+export function defaultWorktree({ receipt, env, gitImpl = gitIn }) {
   const root = env.SHU_WORKTREE_ROOT;
-  if (!root) return { observed_at: nowIso(), present: false, head: null, porcelain: null };
+  if (!root) return { observed_at: nowIso(), root_configured: false, present: false, head: null, porcelain: null };
+  const entries = entriesOf(root);
+  if (!entries.includes(receipt.attempt_id)) {
+    return { observed_at: nowIso(), root_configured: true, present: false, head: null, porcelain: null };
+  }
   const dir = path.join(root, receipt.attempt_id);
-  if (!fs.existsSync(dir)) return { observed_at: nowIso(), present: false, head: null, porcelain: null };
   return {
     observed_at: nowIso(),
+    root_configured: true,
     present: true,
-    head: gitIn(dir, ["rev-parse", "HEAD"]).trim(),
-    porcelain: gitIn(dir, ["status", "--porcelain"]),
+    head: gitImpl(dir, ["rev-parse", "HEAD"]).trim(),
+    porcelain: gitImpl(dir, ["status", "--porcelain"]),
   };
 }
 
@@ -186,16 +288,35 @@ export function defaultPushReceipt({ receipt, env }) {
   const stateDir = env.SHU_WORKSPACE_STATE_DIR;
   if (!stateDir) return { observed_at: nowIso(), readable: false, record: null };
   const file = prePushRecordPath(stateDir, receipt.attempt_id);
-  return { observed_at: nowIso(), readable: true, record: fs.existsSync(file) ? file : null };
+  // `readable` is only true once the directory has actually been listed.
+  let entries;
+  try { entries = entriesOf(stateDir); }
+  catch { return { observed_at: nowIso(), readable: false, record: null }; }
+  return { observed_at: nowIso(), readable: true, record: entries.includes(path.basename(file)) ? file : null };
 }
 
 // Read-only by construction: SupervisorStore's constructor mkdirs its own tree,
-// so this checks the four per-attempt paths directly instead of instantiating it.
+// so this lists the four per-attempt record directories instead of
+// instantiating it.
+//
+// This is the check that must stay INDEPENDENT of the supervisor's own status
+// answer, because status() returns hold_code MISSING_CLAIM from a CATCH-ALL:
+// any read fault inside it — an unreadable orders/, a truncated run record —
+// produces the same "no claim" answer as a genuine absence. That is only a
+// second opinion if this probe can prove it really read the store, so
+// `readable: true` requires ALL FOUR directories to have been listed. A state
+// dir that a real supervisor has ever used always has all four (the store's
+// constructor creates them), so anything less is a store we cannot vouch for.
 export function defaultSupervisorStore({ receipt, env }) {
   const stateDir = env.SHU_SUPERVISOR_STATE_DIR;
   if (!stateDir) return { observed_at: nowIso(), readable: false, records: [] };
-  const records = ["orders", "runs", "launches", "completions"]
-    .filter((kind) => fs.existsSync(path.join(stateDir, kind, `${receipt.attempt_id}.json`)));
+  const records = [];
+  for (const kind of SUPERVISOR_RECORD_KINDS) {
+    let entries;
+    try { entries = entriesOf(path.join(stateDir, kind)); }
+    catch { return { observed_at: nowIso(), readable: false, records: [] }; }
+    if (entries.includes(`${receipt.attempt_id}.json`)) records.push(kind);
+  }
   return { observed_at: nowIso(), readable: true, records };
 }
 
@@ -246,7 +367,11 @@ export async function reconcileDanglingAttempt({
   now = nowIso,
 } = {}) {
   const startedAt = now();
-  const config = io.config ?? loadConfig(io.configPath);
+  let config;
+  // Configuration that cannot be loaded is EVIDENCE_MISSING by name, not an
+  // escaping exception: nothing has been established and nothing was written.
+  try { config = io.config ?? loadConfig(io.configPath); }
+  catch (error) { return refusal("EVIDENCE_MISSING", `configuration could not be loaded: ${error?.message ?? "loadConfig failed"}`); }
 
   // A probe that throws has not established anything. It is EVIDENCE_MISSING by
   // name, never an escaping exception and never a generic failure: an operator
@@ -305,6 +430,11 @@ export async function reconcileDanglingAttempt({
   if (typeof receipt.scoped_base_sha !== "string" || !receipt.scoped_base_sha) {
     return refusal("EVIDENCE_MISSING", "the receipt records no scoped_base_sha to compare the worktree against");
   }
+  // The worktree root must have been configured, or the worktree was never
+  // measured and `present: false` means "nobody looked", not "nothing there".
+  if (worktree.root_configured !== true) {
+    return refusal("EVIDENCE_MISSING", "SHU_WORKTREE_ROOT is not configured, so the attempt worktree was never measured");
+  }
   if (worktree.present) {
     if (typeof worktree.head !== "string" || typeof worktree.porcelain !== "string") {
       return refusal("EVIDENCE_MISSING", "the worktree could not be measured");
@@ -336,18 +466,33 @@ export async function reconcileDanglingAttempt({
   if (store.records?.length) return refusal("SUPERVISOR_CLAIM_PRESENT", `supervisor store records ${store.records.join(",")}`);
 
   // --- terminalize ----------------------------------------------------------
-  // The reviewed state machine performs the transition. LAUNCH_UNKNOWN -> HOLD
-  // is the only edge used, and it stamps timestamps.terminal, so the slot is
-  // released by exactly the rule the tick already applies.
+  const terminal = terminalizeReceipt(receipt, { attempt_id, at: now() });
+  if (!terminal.ok) return terminal;
+
+  // A write that did not confirm is reported BY NAME like everything else. The
+  // operator must never be left reading a stack trace to work out whether the
+  // HOLD comment landed, which is the one moment the naming discipline is for.
+  try {
+    await (io.postReceipt ?? defaultPostReceipt)({ receipt: terminal.receipt, linearIssueId, env, config });
+  } catch (error) {
+    return refusal("WRITE_UNCONFIRMED", `the terminal HOLD comment did not confirm: ${error?.message ?? "write failed"}`);
+  }
+  return { ok: true, action: "TERMINALIZED", attempt_id, stage: terminal.receipt.stage, receipt: terminal.receipt, linearIssueId };
+}
+
+// The reviewed state machine performs the transition. LAUNCH_UNKNOWN -> HOLD is
+// the only edge used, and it stamps timestamps.terminal, so the slot is released
+// by exactly the rule the tick already applies. A rejected transition is a
+// refusal by name: the state machine, not this module, has the last word on
+// whether a stage may be terminalized.
+export function terminalizeReceipt(receipt, { attempt_id, at }) {
   const transition = nextReceiptState(receipt, {
     type: "hold",
-    at: now(),
+    at,
     reason: `reconciled dangling ${RECONCILABLE_STAGE}: supervisor reported MISSING_CLAIM and no worker, worktree, branch or push effect exists for attempt ${attempt_id}`,
   });
   if (!transition.accepted) return refusal("NOT_DANGLING", transition.reason);
-
-  await (io.postReceipt ?? defaultPostReceipt)({ receipt: transition.receipt, linearIssueId, env, config });
-  return { ok: true, action: "TERMINALIZED", attempt_id, stage: transition.receipt.stage, receipt: transition.receipt, linearIssueId };
+  return { ok: true, receipt: transition.receipt };
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +515,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     out(args.reason);
     return 2;
   }
-  const result = await reconcileDanglingAttempt({ attempt_id: args.attempt_id, env, io });
+  const result = await reconcileDanglingAttempt({ attempt_id: args.attempt_id, env, io, ...(io.now ? { now: io.now } : {}) });
   if (result.ok) {
     out(`RECONCILE_TERMINALIZED attempt=${result.attempt_id} stage=${result.stage} slot=released`);
     return 0;
