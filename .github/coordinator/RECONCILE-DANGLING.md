@@ -193,7 +193,13 @@ coordinator service's normal entry point consumes:
 
 * the file is `$SHU_WORKSPACE_STATE_DIR/recovery-request.json`, mode **0600**,
   owned by the service's own uid, inside the unit's private (`0700`) state
-  directory;
+  directory. That path is the **whole** channel: `recoveryPaths()` joins
+  `recovery-request.json` onto `env.SHU_WORKSPACE_STATE_DIR` and looks nowhere
+  else — never a guessed path, never a fallback. A request written to any other
+  directory is **silently ignored**: the entry point's one `open()` still fails
+  `ENOENT`, the wake is an ordinary dry-run tick, and *nothing reports that a
+  request existed*. Deriving the directory from anything but the deployed
+  `SHU_WORKSPACE_STATE_DIR` is therefore a silent no-op, not an error;
 * `coordinator-tick.mjs` — the unit's unchanged `ExecStart`, unchanged argv —
   consumes it *before* it would otherwise tick, and then invokes **only** the
   operation it names;
@@ -287,12 +293,23 @@ into `StartLimitBurst=` and leave the unit failed.
 ### The operator command
 
 Run as the service user, into the service's own state directory. Create private,
-then rename into place, so the entry point can never read a half-written request:
+then rename into place, so the entry point can never read a half-written request.
+
+The destination is not a choice: the request file must be exactly
+`$SHU_WORKSPACE_STATE_DIR/recovery-request.json` on the deployed host — today
+`/srv/shu/state/workspaces/recovery-request.json`. **A request written anywhere
+else is silently ignored**, the wake is an ordinary dry-run tick, and the journal
+shows no `RECOVERY_*` line at all. If you see neither `RECOVERY_TERMINALIZED` nor
+a `RECOVERY_REFUSED:` line, the request was never seen — check the path first with
+`systemctl show -p Environment --value shu-coordinator.service`, and do not
+conclude the recovery ran:
 
 ```sh
 ATTEMPT=9c461519-4bc8-4e75-8d65-d61b8954e1f0
 AUTHORIZATION_REF=SHU-140
-STATE_DIR=/srv/shu/state           # = the unit's Environment=SHU_WORKSPACE_STATE_DIR
+STATE_DIR=/srv/shu/state/workspaces  # NOT /srv/shu/state. This is the real value of the
+                                     # unit's Environment=SHU_WORKSPACE_STATE_DIR, which
+                                     # expands WORKSPACE_STATE_DIR from service/units.mjs.
 
 sudo -u shu-coordinator \
   env ATTEMPT="$ATTEMPT" AUTHORIZATION_REF="$AUTHORIZATION_REF" \

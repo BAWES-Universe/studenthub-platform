@@ -1472,3 +1472,73 @@ test("SHU-140 recovery-request: ENABLE_DISPATCH=false and the timer-disabled sta
   assert.match(unit, /^Environment=ENABLE_DISPATCH=false$/m);
   assert.match(unit, /^ExecStart=@COORDINATOR_EXEC@$/m, "the reviewed ExecStart is unchanged: no one-off run is installed");
 });
+
+// SHU-140 — the OPERATOR DOCUMENTATION is pinned to the code's own constant.
+//
+// CodeRabbit #174 (inline 4105414868) caught RECONCILE-DANGLING.md documenting
+// `STATE_DIR=/srv/shu/state` while the unit exports
+// SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces. An operator following that
+// command literally wrote /srv/shu/state/recovery-request.json, the entry point's
+// single open() on $SHU_WORKSPACE_STATE_DIR/recovery-request.json still failed
+// ENOENT, the wake was an ordinary dry-run tick, and NOTHING said a request had
+// been missed — a confident silent failure. Writer and reader cannot disagree
+// (they are the same module), so the documented path is the only thing that can
+// drift, and this case is what stops it drifting again: it reads the value out
+// of the shipped doc and compares it to WORKSPACE_STATE_DIR, so changing either
+// side alone fails. No clock, no wall time, no host state.
+import { WORKSPACE_STATE_DIR } from "../service/units.mjs";
+
+test("SHU-140 recovery-request: the documented operator STATE_DIR is the code's WORKSPACE_STATE_DIR, and the doc names the request path and its silent-ignore trap", () => {
+  const doc = fs.readFileSync(new URL("../RECONCILE-DANGLING.md", import.meta.url), "utf8");
+
+  // (a) The operator command block exists and is the one we are pinning.
+  const section = doc.split("### The operator command")[1];
+  assert.ok(section, "RECONCILE-DANGLING.md must still document the operator command");
+  const block = section.match(/```sh\n([\s\S]*?)\n```/)?.[1];
+  assert.ok(block, "the operator command must still be a fenced sh block");
+  assert.match(block, /^ATTEMPT=9c461519-4bc8-4e75-8d65-d61b8954e1f0$/m, "the documented attempt must be unchanged");
+
+  // (b) THE PIN: the value the operator is told to export is the code's constant,
+  // verbatim. Change units.mjs or change the doc and this fails.
+  const assignments = [...block.matchAll(/^STATE_DIR=(\S+)/gm)].map((m) => m[1]);
+  assert.deepEqual(assignments, [WORKSPACE_STATE_DIR],
+    `the documented STATE_DIR must be WORKSPACE_STATE_DIR (${WORKSPACE_STATE_DIR}) exactly once`);
+
+  // (c) The trailing comment must state where that value comes from, so a reader
+  // can check it against the unit and the source instead of trusting the doc.
+  const assignmentLine = block.split("\n").find((line) => line.startsWith("STATE_DIR="));
+  const comment = block.slice(block.indexOf(assignmentLine)).split(/\n(?!\s*#)/)[0];
+  assert.match(comment, /SHU_WORKSPACE_STATE_DIR/, "the comment must name the unit's environment variable");
+  assert.match(comment, /WORKSPACE_STATE_DIR from service\/units\.mjs/,
+    "the comment must name units.mjs WORKSPACE_STATE_DIR as the origin of the value");
+
+  // (d) The command must still join the request file onto that directory, and the
+  // result must be the path the reader actually opens — asserted through
+  // recoveryPaths() itself, not a second copy of the join.
+  assert.match(block, /f="\$STATE_DIR\/recovery-request\.json"/,
+    "the command must write $STATE_DIR/recovery-request.json");
+  const resolved = recoveryPaths({ SHU_WORKSPACE_STATE_DIR: WORKSPACE_STATE_DIR });
+  assert.equal(resolved.request, nodePath.join(assignments[0], RECOVERY_REQUEST_FILE));
+  assert.equal(resolved.request, "/srv/shu/state/workspaces/recovery-request.json");
+
+  // (e) The substitution chain the deployed unit uses is unchanged: the template
+  // takes SHU_WORKSPACE_STATE_DIR from @WORKSPACE_STATE_DIR@, which is (b)'s
+  // constant. Without this, (b) could agree with a constant the unit never sees.
+  const unit = fs.readFileSync(new URL("../service/shu-coordinator.service.in", import.meta.url), "utf8");
+  assert.match(unit, /^Environment=SHU_WORKSPACE_STATE_DIR=@WORKSPACE_STATE_DIR@$/m);
+
+  // (f) Every absolute request path the doc prints must be that same path. This is
+  // what catches a wrong literal reappearing anywhere in the document.
+  const printed = [...doc.matchAll(/\/srv\/\S*?recovery-request\.json/g)].map((m) => m[0]);
+  assert.ok(printed.length > 0, "the doc must state the absolute request path at least once");
+  for (const path of printed) assert.equal(path, resolved.request);
+
+  // (g) The trap itself must be written down — in the mechanism AND where the
+  // operator types the command — so the failure mode cannot be silent twice.
+  assert.match(doc, /\$SHU_WORKSPACE_STATE_DIR\/recovery-request\.json/,
+    "the doc must state the request path in terms of the environment variable");
+  const mechanism = doc.split("### The mechanism")[1].split("### ")[0];
+  for (const [label, text] of [["the mechanism", mechanism], ["the operator command", section.split("```")[0]]]) {
+    assert.match(text, /silently ignored/, `${label} must say a misplaced request is silently ignored`);
+  }
+});

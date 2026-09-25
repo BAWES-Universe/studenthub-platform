@@ -2306,6 +2306,7 @@
     "SHU-140 recovery-request: the request is single-use \u2014 a replayed request_id refuses REQUEST_REPLAYED, and a fresh request for a terminalized attempt refuses ALREADY_TERMINAL, neither writing",
     "SHU-140 recovery-request: a foreign, malformed, unauthorized or insecure request is refused BY NAME, consumed, and never reaches the operation",
     "SHU-140 recovery-request: the recovery path cannot reach dispatch, submit or launch \u2014 statically and by construction",
+    "SHU-140 recovery-request: the documented operator STATE_DIR is the code's WORKSPACE_STATE_DIR, and the doc names the request path and its silent-ignore trap",
     "SHU-140 recovery-request: ENABLE_DISPATCH=false and the timer-disabled state are preserved across the invocation, and dispatch-on refuses outright",
     "RESEED sealed seed blob literals",
     "RESEED independent manifest literal and complete transition",
@@ -19137,6 +19138,10 @@
     },
     {
       "name": "SHU-140 recovery-request: the recovery path cannot reach dispatch, submit or launch \u2014 statically and by construction",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 recovery-request: the documented operator STATE_DIR is the code's WORKSPACE_STATE_DIR, and the doc names the request path and its silent-ignore trap",
       "capabilities": []
     },
     {
