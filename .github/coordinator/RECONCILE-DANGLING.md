@@ -340,8 +340,8 @@ REQUEST_WRITTEN path=/srv/shu/state/workspaces/recovery-request.json
 That is the unit's `Environment=SHU_WORKSPACE_STATE_DIR`, which expands
 `WORKSPACE_STATE_DIR` from `service/units.mjs`, joined with the reader's own
 `recoveryPaths()`. The file is created under a staging name with `umask 077`,
-`chmod 0600`, then renamed into place, so the entry point can never read a
-half-written request. Exit codes: `0` written, `2` bad usage, `3` refused by
+`chmod 0600`, then linked into place, so the entry point can never read a
+half-written request and an unconsumed request is never silently replaced. Exit codes: `0` written, `2` bad usage, `3` refused by
 name (nothing created).
 
 #### Requester refusal codes
@@ -353,6 +353,7 @@ name (nothing created).
 | `RECOVERY_REQUEST_REFUSED: ATTEMPT_INVALID` | `--attempt` is not a UUID |
 | `RECOVERY_REQUEST_REFUSED: AUTHORIZATION_REF_INVALID` | `--authorization-ref` is not a card ref or a seeded fixture contract ref |
 | `RECOVERY_REQUEST_REFUSED: REQUEST_ID_INVALID` | `--request-id` is not a UUID |
+| `RECOVERY_REQUEST_REFUSED: REQUEST_PENDING` | an unconsumed request is already at that path — the channel is one slot, and replacing it would drop the first request silently |
 | `RECOVERY_REQUEST_REFUSED: REQUEST_NOT_WRITTEN` | every check held, but the file could not be created or renamed into place |
 
 The first two are the ones that close the silent misrouting: between them, the

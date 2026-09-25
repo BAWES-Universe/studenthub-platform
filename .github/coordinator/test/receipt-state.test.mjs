@@ -1575,7 +1575,23 @@ test("SHU-140 request-recovery: the request is written 0600 at exactly the unit'
   assert.equal(written.authorization_ref, "SHU-140");
   assert.equal(written.request_id, REQUEST_ID);
 
-  // (f) THE HANDSHAKE ITSELF: the reader consumes what this writer produced.
+  // (f) A SECOND INVOCATION DOES NOT SILENTLY REPLACE A PENDING REQUEST. The
+  // channel is one slot, so `mv -f` would drop the first request with no signal
+  // while still printing REQUEST_WRITTEN — the same silent loss this command
+  // exists to prevent. It refuses REQUEST_PENDING and the first request stands.
+  const second = runRequester(
+    ["--attempt", FOREIGN_ATTEMPT, "--authorization-ref", "SHU-140", "--request-id", SECOND_REQUEST_ID],
+    {},
+    { exec: world.execFor(world.deployed()) },
+  );
+  assert.equal(second.exitCode, REQUEST_REFUSED_EXIT);
+  assert.deepEqual(second.out, [], "a replaced request must never be reported as written");
+  assert.match(second.err[0], /^RECOVERY_REQUEST_REFUSED: REQUEST_PENDING — /);
+  assert.deepEqual(world.entries(world.unit), [RECOVERY_REQUEST_FILE], "no staging residue from the refused second request");
+  assert.equal(JSON.parse(fs.readFileSync(world.request(world.unit), "utf8")).attempt_id, DOCUMENTED_ATTEMPT,
+    "the pending request is untouched: the first attempt still owns the slot");
+
+  // (g) THE HANDSHAKE ITSELF: the reader consumes what this writer produced.
   const taken = consumeRecoveryRequest({ env: { SHU_WORKSPACE_STATE_DIR: world.unit } });
   assert.equal(taken.present, true);
   assert.equal(taken.refusal, undefined, `the service side must accept the request this command writes: ${taken.refusal?.refusal ?? ""}`);

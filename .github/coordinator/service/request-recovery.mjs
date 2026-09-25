@@ -80,7 +80,8 @@ export const REQUEST_REFUSAL_CODES = Object.freeze([
   "ATTEMPT_INVALID",          // --attempt is not a UUID
   "AUTHORIZATION_REF_INVALID",// --authorization-ref is not a card ref or a seeded fixture contract ref
   "REQUEST_ID_INVALID",       // --request-id is not a UUID
-  "REQUEST_NOT_WRITTEN",      // every check held, but the file could not be created or renamed into place
+  "REQUEST_PENDING",          // an unconsumed request is already at the request path
+  "REQUEST_NOT_WRITTEN",      // every check held, but the file could not be created or placed
 ]);
 
 export const REQUEST_REFUSED_EXIT = 3;
@@ -258,14 +259,26 @@ export function writeRecoveryRequest({ stateDir, request, fsImpl = fs, umaskImpl
   }
   umaskImpl(previousMask);
 
+  // linkSync, NOT renameSync. `mv -f` would replace an unconsumed request with
+  // no signal at all while still reporting REQUEST_WRITTEN — an operator who
+  // issued two requests before the unit woke would lose the first one silently,
+  // which is the very failure this module exists to make impossible. link()
+  // fails EEXIST instead, and the channel is one slot, so that is the truth.
   try {
     fsImpl.chmodSync(staging, 0o600);
-    fsImpl.renameSync(staging, where.request);
+    fsImpl.linkSync(staging, where.request);
   } catch (error) {
     try { fsImpl.unlinkSync(staging); } catch { /* the staging file is this invocation's own */ }
-    return requestRefusal("REQUEST_NOT_WRITTEN",
-      `the request could not be placed at ${where.request}: ${error?.code ?? "unknown"}`);
+    return error?.code === "EEXIST"
+      ? requestRefusal("REQUEST_PENDING",
+        `an unconsumed request is already at ${where.request};` +
+        ` let the unit consume it (systemctl start ${RECOVERY_UNIT}) or remove it deliberately before issuing another`)
+      : requestRefusal("REQUEST_NOT_WRITTEN",
+        `the request could not be placed at ${where.request}: ${error?.code ?? "unknown"}`);
   }
+  // The request and the staging name are now the same inode; dropping the
+  // staging link leaves exactly one name, and no residue either way.
+  try { fsImpl.unlinkSync(staging); } catch { /* best effort: the request is placed */ }
   return { ok: true, path: where.request, request };
 }
 
