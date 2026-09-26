@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
-import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory } from '../units.mjs';
+import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory, assertSupervisorLaunchEnvironment, supervisorAdapterKeys } from '../units.mjs';
 import { SupervisorStore } from '../../supervisor.mjs';
 import { SUPERVISOR_RECORD_KINDS, defaultSupervisorStore } from '../../reconcile-dangling.mjs';
 import { install, rollback, snapshot } from '../install.mjs';
@@ -487,4 +487,44 @@ test('SHU251 mutation: shared supervisor store derivation repointed', async t =>
   // The deployed pin is what dies.
   assert.notEqual(renderedStore(units, names[1]), '/srv/shu/state/workspaces/supervisor');
   named(() => assertPolicy(units, params), "SHU251_SUPERVISOR_STORE: shu-supervisor.service must render the supervisor's authoritative store directory exactly once");
+});
+
+// THE SAME DRIFT ONE LAYER DOWN. MEASURED on systemd 255.4 with a transient unit
+// that set one key through BOTH directives: `EnvironmentFile=` is applied after
+// `Environment=` and its value wins, in either directive order. So a
+// `SHU_SUPERVISOR_STATE_DIR=` line in a credential file would silently redirect
+// the recovery reader's store probe while the rendered units — the text the
+// cross-unit check reads — still agreed perfectly. The units own the store's
+// location; an environment file may not restate it, and the refusal is by name.
+// The two files are not symmetric, and the test states which guard owns which
+// side: the supervisor file was ALREADY sealed to its transport secret alone, so
+// a store key there is refused by the existing SHU251_ENV_SUPERVISOR before the
+// new check is reached. The coordinator file legitimately carries many keys, and
+// that is the side the new refusal covers. Its supervisor branch stays as a
+// backstop if that seal is ever relaxed.
+for (const [label, parameter, code] of [['coordinator', 'coordinatorEnvironmentFile', 'SHU251_SUPERVISOR_STORE'],
+  ['supervisor', 'supervisorEnvironmentFile', 'ERR_ASSERTION']]) {
+  test(`SHU251 mutation: ${label} environment file overrides the supervisor store`, t => {
+    const root = fixture(t), params = fixtureParameters(root);
+    fs.appendFileSync(params[parameter], `SHU_SUPERVISOR_STATE_DIR=${join(root, 'elsewhere')}\n`);
+    for (const operation of [render, p => assertPolicy(render(fixtureParameters(fixture(t))), p), p => install(root, p)]) {
+      assert.throws(() => operation(params), error => error.code === code
+        && (code !== 'ERR_ASSERTION' || error.message.startsWith('SHU251_ENV_SUPERVISOR:')),
+        `a ${label} environment file override must refuse by name`);
+    }
+    assert.deepEqual(fs.readdirSync(root), ['.environment'], 'the override must refuse before staging');
+  });
+}
+test('SHU251 arming refuses a supervisor store override in either credential file', () => {
+  const secret = 'f'.repeat(64);
+  const coordinatorSource = [...supervisorAdapterKeys.map(key => `${key}=fixture`), 'GITHUB_TOKEN=fixture', 'LINEAR_API_TOKEN=fixture'].join('\n') + '\n';
+  const supervisorSource = `SHU_SUPERVISOR_SECRET=${secret}\n`;
+  // The reviewed pair still arms.
+  assert.equal(assertSupervisorLaunchEnvironment(supervisorSource, coordinatorSource).SHU_SUPERVISOR_SECRET, secret);
+  assert.throws(() => assertSupervisorLaunchEnvironment(supervisorSource, `${coordinatorSource}SHU_SUPERVISOR_STATE_DIR=/elsewhere\n`),
+    { code: 'SHU251_SUPERVISOR_STORE' }, 'SHU251_SUPERVISOR_STORE: arming must refuse a coordinator-side override by name');
+  // The supervisor file is already restricted to its transport secret; the store
+  // key must be named by ITS own refusal, not fall through to the generic one.
+  assert.throws(() => assertSupervisorLaunchEnvironment(`${supervisorSource}SHU_SUPERVISOR_STATE_DIR=/elsewhere\n`, coordinatorSource),
+    { code: 'SHU251_ENV_CROSSED' }, 'SHU251_ENV_CROSSED: the supervisor file may still carry only its transport secret');
 });

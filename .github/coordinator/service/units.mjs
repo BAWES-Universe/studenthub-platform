@@ -122,6 +122,7 @@ export function assertSupervisorLaunchEnvironment(source, coordinatorSource) {
   requireSupervisorAdapterEntries(coordinator);
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     Object.assign(new Error('SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required'), { code: 'SHU251_ENV_COORDINATOR' }));
+  assertStoreNotOverridden(supervisor, coordinator);
   return Object.fromEntries([...supervisor, ...[...coordinator].filter(([key]) => supervisorAdapterKeys.includes(key))]);
 }
 function requireSupervisorAdapterEntries(entries) {
@@ -176,6 +177,28 @@ function environmentBindings(identity) {
     'SHU251_ENV_SUPERVISOR: transport secret and reviewed adapter settings only');
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
+  // MEASURED, systemd 255.4: EnvironmentFile= is applied AFTER Environment=, and
+  // the later assignment wins REGARDLESS of directive order (verified by a
+  // transient unit that set the same key both ways and got the file's value both
+  // times). So a SHU_SUPERVISOR_STATE_DIR= line in either environment file would
+  // SILENTLY override the directory both units render, and the override would be
+  // invisible in the unit text the cross-unit check reads — the same drift the
+  // shared derivation exists to make impossible, one layer down. The store's
+  // location is the unit's to state; a credential file may not restate it.
+  assertStoreNotOverridden(supervisor, coordinator);
+}
+// Shared by the install-time binding check and the arming path, so both refuse by
+// the same name. Named, not bare: see the assertSupervisorLaunchEnvironment note.
+// The coordinator file is the side this covers in practice: the supervisor file is
+// already sealed to its transport secret alone (SHU251_ENV_SUPERVISOR at install
+// time, SHU251_ENV_CROSSED while arming), so its branch here is a backstop that
+// keeps the store key refused by name if that seal is ever relaxed.
+function assertStoreNotOverridden(supervisor, coordinator) {
+  for (const [label, entries] of [['supervisor', supervisor], ['coordinator', coordinator]]) {
+    if (entries.has('SHU_SUPERVISOR_STATE_DIR')) throw Object.assign(
+      new Error(`SHU251_SUPERVISOR_STORE: the ${label} environment file must not override the supervisor store directory the units render`),
+      { code: 'SHU251_SUPERVISOR_STORE' });
+  }
 }
 
 export const names = ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'];

@@ -297,8 +297,12 @@ every run it had ever made — the store itself being present, owned by
 from ONE derivation, `supervisorStoreDirectory()` in `service/units.mjs`, through
 the single `@SUPERVISOR_STATE_DIR@` placeholder each template substitutes, and
 `assertPolicy()` refuses to install units that name different directories or that
-stop naming it — see `SHU251_SUPERVISOR_STORE`. Sighting 1 therefore contributes
-in production, and a one-sided edit cannot silently take it away again.
+stop naming it — see `SHU251_SUPERVISOR_STORE`. The same name also refuses a
+`SHU_SUPERVISOR_STATE_DIR=` line in a credential file: `EnvironmentFile=` is applied
+after `Environment=` and wins, so a line there would redirect this probe while the
+rendered units still agreed. Sighting 1 therefore contributes in production, and
+neither a one-sided unit edit nor a credential-file override can silently take it
+away again.
 
 **Why this is safe as it stands.** Every one of the seven dispositions refuses, so
 the failure direction is closed: a racy single-sample binding can only ever
