@@ -227,7 +227,7 @@ line. There is no command line in it:
 | `uid` | the uid owning `/proc/<pid>`, read from the kernel's own inode — the one "which process was this" fact no process can author |
 | `disposition` | one of the seven dispositions above |
 | `check` | **which check fired**: the comparison that actually decided this disposition |
-| `source` | which sighting source supplied the pid (`supervisor_record` / `worktree_cwd` / `attempt_id_scan`), each named once even when two records of the same kind matched |
+| `source` | which sighting source supplied the pid (`supervisor_record` / `worktree_cwd` / `attempt_id_scan`), each named once even when two record kinds supplied the same pid |
 | `source_path` | every file that supplied the pid, in read order |
 | `recorded_token` | **every** record token that named this pid, in the same read order as `source_path`, `none` for a record that carried none |
 | `record_token_check` | the record comparison's result: `match`, `mismatch`, `uncomparable` (a token was recorded but no live token could be read), `no_record_token` |
