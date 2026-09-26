@@ -293,9 +293,10 @@ export function readProcessIdentity(procRoot, pid) {
 //
 // Each sighting now carries a STABLE IDENTITY captured at match time — the pid,
 // the owning uid and the kernel's process-start token — plus the file that
-// supplied the pid. No command line and no argument value is ever captured. `pids` stays exactly what it was (the pids that would
-// have been reported live), so no existing guard is weakened; `sightings` is
-// what the re-check and the audit trail are built from.
+// supplied the pid. No command line and no argument value is ever captured.
+// `pids` stays exactly what it was (the pids that would have been reported
+// live), so no existing guard is weakened; `sightings` is what the re-check and
+// the audit trail are built from.
 export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now = nowIso }) {
   const live = entriesOf(procRoot).filter((entry) => /^\d+$/.test(entry));
   const sightings = new Map();
