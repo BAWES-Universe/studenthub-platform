@@ -400,7 +400,6 @@ import {
   RECONCILE_REFUSAL_CODES,
   defaultPushReceipt,
   defaultSupervisorStore,
-  WORKER_CMDLINE_MAX,
   WORKER_DISPOSITIONS,
   classifyWorkerSighting,
   defaultWorkerLiveness,
@@ -413,7 +412,6 @@ import {
   processStartToken,
   readProcessIdentity,
   reconcileDanglingAttempt,
-  redactCommandLine,
   resolveChain,
   sendSupervisorStatus,
   supervisorDisownsAttempt,
@@ -484,9 +482,11 @@ function sighting(overrides = {}) {
     source: "supervisor_record",
     also_seen_by: [],
     source_path: `/srv/shu/state/supervisor/launches/${DANGLING}.json`,
+    source_paths: [`/srv/shu/state/supervisor/launches/${DANGLING}.json`],
     recorded_token: null,
+    recorded_tokens: [null],
     observed_token: "900900",
-    observed_cmdline: "node worker",
+    observed_uid: 1000,
     record_token_match: null,
     ...overrides,
   };
@@ -564,7 +564,7 @@ test("SHU-140 reconcile-dangling: a live worker process refuses WORKER_LIVE", as
   const io = cleanWorld({
     workerProcesses: async () => ({ observed_at: NOW, pids: [4242], sightings: [sighting({ pid: 4242 })] }),
     // Re-checked: still there, still the SAME process. Only this is WORKER_LIVE.
-    workerLiveness: async () => ({ observed_at: NOW, observations: [{ pid: 4242, exists: true, exists_known: true, start_token: "900900", cmdline: "node worker" }] }),
+    workerLiveness: async () => ({ observed_at: NOW, observations: [{ pid: 4242, exists: true, exists_known: true, start_token: "900900", uid: 1000 }] }),
   });
   const result = await run(io);
   assert.equal(result.code, "WORKER_LIVE");
@@ -1063,7 +1063,7 @@ test("SHU-140 worker-identity: a reused pid whose process-start token changed re
   assert.equal(mismatched.io.posted.length, 0);
 });
 
-test("SHU-140 worker-identity: a missing or unreadable /proc entry is auditable — WORKER_UNVERIFIED by name, with a redacted cmdline and never a secret", async (t) => {
+test("SHU-140 worker-identity: a missing or unreadable /proc entry is auditable — WORKER_UNVERIFIED by name, from structured metadata and never a command line", async (t) => {
   const worktreeRoot = sandbox(t);
   fs.mkdirSync(nodePath.join(worktreeRoot, DANGLING));
   const SECRET = "ghp_liveworkersecretvalue";
@@ -1078,15 +1078,17 @@ test("SHU-140 worker-identity: a missing or unreadable /proc entry is auditable 
   assert.equal(unreadable.exists, true, "the pid IS there — that is not the same as it being ours");
   assert.equal(unreadable.start_token, null, "an unreadable stat must yield no token, never a guessed one");
 
-  // 2. The command line reaches the audit trail redacted and bounded. A refusal
-  //    is written to a receipt and a journal, so it may identify the process and
-  //    must never carry its credentials.
-  assert.ok(!unreadable.cmdline.includes(SECRET), "a credential must never reach the audit trail");
-  assert.match(unreadable.cmdline, /--api-token <redacted>/);
-  assert.match(unreadable.cmdline, /SUPERVISOR_TOKEN=<redacted>/);
-  assert.ok(unreadable.cmdline.length <= WORKER_CMDLINE_MAX + 1, `cmdline must be truncated, got ${unreadable.cmdline.length}`);
-  assert.equal(redactCommandLine(undefined), null, "an unreadable cmdline is null, never an empty string that reads as 'no arguments'");
-  assert.equal(redactCommandLine("a\u0000b\u0000"), "a b", "argv NULs separate the entries and are never carried into the log");
+  // 2. The identity is STRUCTURED METADATA the kernel owns, and nothing else.
+  //    There is no `cmdline` field to redact, so there is no code path that can
+  //    persist an argument value — and the field that replaces it as "which
+  //    process was this", the owning uid, is one no process can author.
+  assert.deepEqual(Object.keys(unreadable).sort(), ["exists", "exists_known", "pid", "start_token", "uid"],
+    "a process identity may carry no command line and no argument text at all");
+  assert.equal(unreadable.uid, process.getuid ? process.getuid() : unreadable.uid,
+    "the owning uid comes from the kernel's own /proc/<pid> inode");
+  assert.ok(!JSON.stringify(unreadable).includes(SECRET), "a credential must never reach a captured identity");
+  assert.ok(!JSON.stringify(unreadable).includes("supervisor-worker.mjs"),
+    "not even a harmless argument is captured: the mechanism, not the instance, is what is removed");
 
   // 3. End to end: the pid is present and cannot be identified, so the operation
   //    fails CLOSED under its own name — never WORKER_LIVE (it is not proved) and
@@ -1099,7 +1101,14 @@ test("SHU-140 worker-identity: a missing or unreadable /proc entry is auditable 
   assert.match(result.detail, /disposition=UNVERIFIED/);
   assert.match(result.detail, /token_at_sighting=unreadable/);
   assert.match(result.detail, /check=\/proc\/<pid>\/stat field 22 readability/);
+  // The refusal still explains itself fully without any argument text: uid, the
+  // comparison that could not be made, and the binding that was not established.
+  assert.match(result.detail, /uid=\d+/, "the refusal must say which uid owned the process it could not identify");
+  assert.match(result.detail, /identity_check=start_token_unreadable/);
+  assert.match(result.detail, /record_token_check=no_record_token/);
+  assert.match(result.detail, /independently_bound=yes/);
   assert.ok(!result.detail.includes(SECRET), "the refusal must never carry a credential");
+  assert.ok(!result.detail.includes("cmdline"), "no command line field may exist to carry one");
   assert.equal(io.posted.length, 0, "an unverified process must not be terminalized around");
   assert.equal(activeSlots(io.receiptsOnDisk), 1, "the slot is preserved");
 
@@ -1112,6 +1121,7 @@ test("SHU-140 worker-identity: a missing or unreadable /proc entry is auditable 
   const unobserved = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: {}, io: silent, now: clock });
   assert.equal(unobserved.code, "WORKER_UNVERIFIED", `got ${unobserved.code} (${unobserved.detail})`);
   assert.match(unobserved.detail, /disposition=UNOBSERVED/);
+  assert.match(unobserved.detail, /identity_check=not_observed/, "a re-check that never answered establishes no identity result");
   assert.equal(silent.posted.length, 0);
 
   // 5. A probe that reports pids but no sightings has established no identity at
@@ -1196,56 +1206,108 @@ test("SHU-140 worker-identity: a stale supervisor record whose pid was never liv
 // Flattening them to spaces first and then hiding one whitespace-delimited word
 // per match published every credential that contained a space, and every
 // credential that names itself rather than its flag.
-test("SHU-140 worker-identity: a credential is redacted as a WHOLE argv entry, so a value with spaces or a self-naming credential never reaches the audit trail", () => {
-  const SECRET = "ghp_deadbeefLIVEWORKERSECRET";
+// THE MECHANISM, NOT THE INSTANCE. An earlier revision of this module carried a
+// redacted command line in the refusal detail, in `evidence.sightings` and on
+// stdout, and defended it with a keyword blacklist. A review then demonstrated
+// six real /proc argv shapes the blacklist still published END TO END through
+// main() — `X-Api-Key: <value>`, a secret as the entry after `-p`, `-u
+// user:pass`, a JSON body carrying a token, `password: <value>`, and argv a
+// caller had already flattened. Each instance was individually fixable; the
+// class was not, because a blacklist must enumerate every way a credential can
+// be spelled and the argv captured is whatever the agent shelled out to.
+//
+// So no command line is captured at all, and this test pins the ABSENCE: every
+// shape below is driven through the shipped main() with a distinct planted
+// secret, and the captured output bytes are searched for each one. A blacklist
+// cannot make this test pass — only having no argument text in the output can.
+test("SHU-140 worker-identity: no argument value can reach the refusal detail, the evidence, stdout or an exception, because no command line is ever captured", async (t) => {
   const NUL = "\u0000";
   const argv = (...args) => `${args.join(NUL)}${NUL}`;
 
-  // 1. A flag whose value is ONE argument that contains spaces. Flattened, it
-  //    looks like four words and a one-word rule hides exactly one of them.
-  const spaced = redactCommandLine(argv("node", "--password", `my ${SECRET} phrase`));
-  assert.ok(!spaced.includes(SECRET), `the WHOLE value of a sensitive flag must be redacted, got ${spaced}`);
-  assert.equal(spaced, "node --password <redacted>");
+  // The six shapes the review PROVED leaked, the ones a blacklist did catch, and
+  // an argv with no credential in it at all — which must be just as absent, or
+  // the mechanism is back. `needles` are the substrings that must not appear;
+  // the first of each is the planted secret.
+  const cases = [
+    { name: "SHORT flag -p, value is the next entry", cmdline: argv("mysql", "-h", "db", "-p", "s3cret_p_flag_AAA"), needles: ["s3cret_p_flag_AAA", "mysql"] },
+    { name: "curl -u user:password", cmdline: argv("curl", "-u", "admin:s3cret_userinfo_BBB", "https://x/"), needles: ["s3cret_userinfo_BBB", "admin:"] },
+    { name: "HEADER colon form, sensitive name", cmdline: argv("curl", "-s", "-H", "X-Api-Key: s3cret_apikey_CCC", "https://api.internal/v1/jobs"), needles: ["s3cret_apikey_CCC", "X-Api-Key"] },
+    { name: "JSON payload carrying a token", cmdline: argv("node", "--data", '{"token":"s3cret_json_DDD"}'), needles: ["s3cret_json_DDD", "--data"] },
+    { name: "password colon form", cmdline: argv("node", "--opt", "password: s3cret_colon_EEE"), needles: ["s3cret_colon_EEE", "--opt"] },
+    { name: "pre-flattened argv (no NULs at all)", cmdline: "node --password alpha_s3cret_FFF omega_s3cret_FFF2 --port 8080", needles: ["omega_s3cret_FFF2", "--port"] },
+    { name: "sensitive flag, value with spaces", cmdline: argv("node", "--password", "my s3cret_spaced_GGG phrase"), needles: ["s3cret_spaced_GGG", "--password"] },
+    { name: "Bearer under a sensitive flag", cmdline: argv("node", "--auth-header", "Bearer s3cret_bearer_HHH"), needles: ["s3cret_bearer_HHH", "Bearer"] },
+    { name: "Authorization under a neutral flag", cmdline: argv("curl", "--header", "Authorization: Bearer s3cret_authz_III"), needles: ["s3cret_authz_III", "Authorization"] },
+    { name: "lower-case assignment, no dash", cmdline: argv("node", "api_key=s3cret_assign_JJJ"), needles: ["s3cret_assign_JJJ", "api_key"] },
+    { name: "credential in a URL's userinfo", cmdline: argv("git", "https://x-access-token:s3cret_url_KKK@github.com/o/r"), needles: ["s3cret_url_KKK", "x-access-token"] },
+    { name: "postgres connection URI", cmdline: argv("psql", "postgresql://u:s3cret_pg_LLL@h/db"), needles: ["s3cret_pg_LLL", "postgresql"] },
+    { name: "a value far beyond any truncation bound", cmdline: argv("node", "--token", "s3cret_long_MMM", "x".repeat(4000)), needles: ["s3cret_long_MMM", "--token"] },
+    { name: "argv with NO credential in it at all", cmdline: argv("/usr/bin/node", "/opt/coordinator/supervisor-worker.mjs", "--worker"), needles: ["supervisor-worker.mjs", "--worker"] },
+  ];
 
-  // 2. An HTTP authorization value: `Bearer` is the only word a word-wise rule
-  //    hides, and the credential is the word after it.
-  const bearer = redactCommandLine(argv("node", "--auth-header", `Bearer ${SECRET}`));
-  assert.ok(!bearer.includes(SECRET), `got ${bearer}`);
+  const leaks = [];
+  for (const shape of cases) {
+    const worktreeRoot = sandbox(t);
+    const worktreeDir = nodePath.join(worktreeRoot, DANGLING);
+    fs.mkdirSync(worktreeDir);
+    const proc = fakeProc(t, { 2770495: { cmdline: shape.cmdline, cwd: worktreeDir, start_token: "900900" } });
+    // The fixture really does carry the secret where /proc would: if this failed,
+    // every assertion below would pass for the wrong reason.
+    assert.ok(fs.readFileSync(nodePath.join(proc, "2770495", "cmdline"), "utf8").includes(shape.needles[0]),
+      `${shape.name}: the /proc fixture must actually contain the planted secret`);
 
-  // 3. ...and the same credential under a flag with NO sensitive name at all.
-  //    `--header` matches no keyword, so only the VALUE can give it away.
-  const header = redactCommandLine(argv("curl", "--header", `Authorization: Bearer ${SECRET}`));
-  assert.ok(!header.includes(SECRET), `a self-naming credential must be redacted whatever flag carries it, got ${header}`);
+    const env = { SHU_WORKTREE_ROOT: worktreeRoot };
+    const { io, run: go } = workerWorld(t, { sightingProc: proc, env });
+    const result = await go();
+    assert.equal(result.code, "WORKER_LIVE", `${shape.name}: got ${result.code} (${result.detail})`);
 
-  // 4. A lower-case assignment with no leading dash.
-  const lower = redactCommandLine(argv("node", `api_key=${SECRET}`));
-  assert.ok(!lower.includes(SECRET), `an assignment must match without regard to case, got ${lower}`);
-  assert.match(lower, /api_key=<redacted>/, "the NAME stays: a refusal has to stay readable enough to recognise the process");
+    // ...and through the SHIPPED main(), which is what writes the unit's journal.
+    const printed = [];
+    const exit = await reconcileMain(["--reconcile-dangling", DANGLING], env,
+      { ...io, now: clock, stdout: (line) => printed.push(line) });
+    assert.equal(exit, 3, `${shape.name}: a confirmed live worker must refuse`);
 
-  // 5. A credential in a URL's userinfo, which no flag and no `=` announces.
-  const url = redactCommandLine(argv("git", `https://x-access-token:${SECRET}@github.com/o/r`));
-  assert.ok(!url.includes(SECRET), `got ${url}`);
+    // Every durable sink this refusal has, searched as bytes.
+    const sinks = {
+      detail: String(result.detail),
+      evidence: JSON.stringify(result.evidence ?? null),
+      stdout: printed.join("\n"),
+      posted: JSON.stringify(io.posted),
+    };
+    for (const [sink, text] of Object.entries(sinks)) {
+      for (const needle of shape.needles) {
+        if (text.includes(needle)) leaks.push(`${shape.name}: '${needle}' in ${sink}`);
+      }
+    }
+    // The refusal is still fully self-describing WITHOUT any argument text.
+    assert.match(sinks.stdout, /WORKER_SIGHTING pid=2770495 uid=\d+ disposition=CONFIRMED_LIVE/);
+    assert.match(sinks.stdout, /check=process-start token at sighting vs re-check/);
+    assert.match(sinks.stdout, /source=worktree_cwd/);
+    assert.match(sinks.stdout, /token_at_sighting=900900 token_at_recheck=900900/);
+    assert.match(sinks.stdout, /identity_check=start_token_unchanged/);
+    assert.match(sinks.stdout, /record_token_check=no_record_token/);
+    assert.match(sinks.stdout, /independently_bound=yes/);
+    assert.equal(io.posted.length, 0, `${shape.name}: nothing may be written on a refusal`);
+  }
+  assert.deepEqual(leaks, [], `no argument value may reach any durable sink:\n${leaks.join("\n")}`);
 
-  // 6. Redaction is not a blanket. A command line with no credential in it is
-  //    carried through intact, or the refusal can no longer identify anything.
-  assert.equal(redactCommandLine(argv("/usr/bin/node", "/opt/coordinator/supervisor-worker.mjs", "--attempt", DANGLING)),
-    `/usr/bin/node /opt/coordinator/supervisor-worker.mjs --attempt ${DANGLING}`);
-  // ...and the answers that are not a command line keep their meanings: null is
-  // "unreadable", "" is "no arguments", and they must never be swapped.
-  assert.equal(redactCommandLine(undefined), null, "an unreadable cmdline is null, never an empty string that reads as 'no arguments'");
-  assert.equal(redactCommandLine(""), "");
-  assert.equal(redactCommandLine(NUL + NUL), "");
+  // A THROWN message is a sink too: a record this probe cannot parse must be
+  // named as EVIDENCE_MISSING without quoting a byte of the file it could not
+  // read. The record body here is a credential, which is the realistic case.
+  const stateDir = supervisorStateDir(t, { launches: { attempt_id: DANGLING, pid: 2770495 } });
+  fs.writeFileSync(nodePath.join(stateDir, "runs", `${DANGLING}.json`), "not json: token=s3cret_unparseable_NNN");
+  const broken = cleanWorld({ workerProcesses: async (args) => stamped(defaultWorkerProcesses({ ...args, procRoot: fakeProc(t, { 2770495: { start_token: "900900" } }) })) });
+  const thrown = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_SUPERVISOR_STATE_DIR: stateDir }, io: broken, now: clock });
+  assert.equal(thrown.code, "EVIDENCE_MISSING", `got ${thrown.code} (${thrown.detail})`);
+  assert.ok(!String(thrown.detail).includes("s3cret_unparseable_NNN"), `a probe failure must not quote what it read, got ${thrown.detail}`);
+  assert.equal(broken.posted.length, 0);
 
-  // 7. Truncation runs LAST, so it can only ever remove characters — it can
-  //    never cut a line in a way that exposes a value redaction replaced.
-  const long = redactCommandLine(argv("node", "--token", SECRET, "x".repeat(400)));
-  assert.ok(!long.includes(SECRET), `got ${long}`);
-  assert.ok(long.length <= WORKER_CMDLINE_MAX + 1, `cmdline must stay bounded, got ${long.length}`);
-
-  // 8. A caller that pre-flattened argv (no NUL anywhere) is still redacted: the
-  //    space-separated rules survive as the last resort, not as the mechanism.
-  const flat = redactCommandLine(`node --api-token ${SECRET} SUPERVISOR_TOKEN=${SECRET}`);
-  assert.ok(!flat.includes(SECRET), `got ${flat}`);
+  // And the mechanism cannot be reintroduced by accident: the module exports no
+  // command-line redactor and no truncation bound, because it captures nothing
+  // that would need either.
+  const shipped = await import("../reconcile-dangling.mjs");
+  assert.equal(shipped.redactCommandLine, undefined, "a command-line redactor is the rejected mechanism, not the fix");
+  assert.equal(shipped.WORKER_CMDLINE_MAX, undefined, "there is no command line to bound");
 });
 
 // A supervisor record that disagrees with the kernel disproves nothing about a
@@ -1303,6 +1365,128 @@ test("SHU-140 worker-identity: a process sighted working IN the attempt worktree
   assert.deepEqual(scanned.pids, [2770495], "a process carrying the attempt_id is independent evidence too");
   assert.equal(scanned.sightings[0].independently_bound, true);
   assert.equal(classifyWorkerSighting(scanned.sightings[0], readProcessIdentity(byArgv, 2770495)).disposition, "CONFIRMED_LIVE");
+});
+
+// RECORD ORDER MUST NOT DECIDE A DISPOSITION. `note()` used to let the FIRST
+// sighting of a pid win every field, so an earlier record kind that named the pid
+// without a `process_token` suppressed a later kind's DISAGREEING token outright:
+// the disposition flipped from RECORD_TOKEN_MISMATCH to CONFIRMED_LIVE and the
+// audit line printed `recorded_token=none`, with the disagreement gone from the
+// evidence. The repair is not to pick the "strongest" record — that discards the
+// conflict just as thoroughly, in the other direction — but to KEEP BOTH tokens
+// and re-run the comparison over all of them, fail-closed.
+test("SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token — both tokens reach the audit line and the disagreement still refuses", async (t) => {
+  const PID = 2770495;
+  const LIVE = "900900";
+  const STALE = "STALE999";
+  // One live process, whose kernel start token is LIVE. Every case below differs
+  // only in which record kinds name its pid, and in what order they are read.
+  const live = () => fakeProc(t, { [PID]: { cmdline: "/usr/bin/node worker.mjs ", start_token: LIVE } });
+
+  const probe = (records, procRoot) => stamped(defaultWorkerProcesses({
+    receipt: { attempt_id: DANGLING }, env: { SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t, records) },
+    procRoot, now: clock,
+  }));
+
+  // 1. THE DEFECT: an UNTOKENED `orders` record is read before the tokened
+  //    `runs` record (SUPERVISOR_RECORD_KINDS is orders, runs, launches,
+  //    completions). The untokened one must not swallow the disagreement.
+  const shadowedProc = live();
+  const shadowed = probe({
+    orders: { attempt_id: DANGLING, pid: PID },
+    runs: { attempt_id: DANGLING, status: "running", pid: PID, process_token: STALE },
+  }, shadowedProc);
+  assert.equal(shadowed.sightings.length, 1, "one pid, named by two records");
+  assert.equal(shadowed.sightings[0].record_token_match, false,
+    "a later record's disagreeing token must decide, whatever was read before it");
+  assert.deepEqual(shadowed.sightings[0].recorded_tokens, [null, STALE],
+    "both records' token evidence is kept, in read order, with `none` for the untokened one");
+  assert.deepEqual(shadowed.pids, [], "a mismatch with no independent sighting behind it is not a live pid");
+
+  // End to end: it refuses by name, and BOTH tokens are in the audit line.
+  const { io, run: go } = workerWorld(t, {
+    sightingProc: shadowedProc,
+    env: { SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t, {
+      orders: { attempt_id: DANGLING, pid: PID },
+      runs: { attempt_id: DANGLING, status: "running", pid: PID, process_token: STALE },
+    }) },
+  });
+  const result = await go();
+  assert.equal(result.code, "WORKER_STALE_RECORD", `got ${result.code} (${result.detail})`);
+  assert.notEqual(result.code, "WORKER_LIVE", "a record that disagrees with the kernel is never a confirmed live worker");
+  assert.match(result.detail, /disposition=RECORD_TOKEN_MISMATCH/);
+  assert.match(result.detail, new RegExp(`recorded_token=none\\+${STALE}`),
+    "the untokened record AND the disagreeing one are both represented");
+  assert.match(result.detail, /record_token_check=mismatch/);
+  assert.match(result.detail, new RegExp(`token_at_sighting=${LIVE}`), "the live token is in the same line as the record's");
+  assert.match(result.detail, /identity_check=not_reached/, "the record decided before the identity comparison ran");
+  assert.match(result.detail, /independently_bound=no/);
+  // 2. The duplicate-source wart: two record kinds are ONE source, named once.
+  assert.match(result.detail, /source=supervisor_record /);
+  assert.ok(!result.detail.includes("supervisor_record+supervisor_record"),
+    `two records of the same kind of source must render once, got ${result.detail}`);
+  // ...and both files that named the pid are still in the line, in read order.
+  assert.match(result.detail, /source_path=\S*orders\S*,\S*runs\S*/);
+  assert.equal(io.posted.length, 0, "nothing may be written on a refusal");
+  assert.equal(activeSlots(io.receiptsOnDisk), 1, "the slot is preserved");
+
+  // 3. THE REVERSE ORDER, which is the arrangement the shipped writers actually
+  //    produce today (writeRun records a token, markLaunch does not, and `runs`
+  //    is read before `launches`). The outcome must not depend on which came
+  //    first, so it is asserted from the other direction too.
+  const reversed = probe({
+    runs: { attempt_id: DANGLING, status: "running", pid: PID, process_token: STALE },
+    launches: { attempt_id: DANGLING, phase: "launched", pid: PID },
+  }, live());
+  assert.equal(reversed.sightings[0].record_token_match, false, "order must not change the answer");
+  assert.deepEqual(reversed.sightings[0].recorded_tokens, [STALE, null]);
+
+  // 4. FAIL-CLOSED, not "strongest evidence": a record that AGREES with the
+  //    kernel must not exonerate one that disagrees. Both are printed.
+  const conflicting = probe({
+    orders: { attempt_id: DANGLING, pid: PID, process_token: LIVE },
+    runs: { attempt_id: DANGLING, status: "running", pid: PID, process_token: STALE },
+  }, live());
+  assert.equal(conflicting.sightings[0].record_token_match, false,
+    "one agreeing record may never outvote a disagreeing one");
+  const conflictLine = describeWorkerSighting(workerVerdict(conflicting.sightings,
+    [readProcessIdentity(live(), PID)]).verdicts[0]);
+  assert.match(conflictLine, new RegExp(`recorded_token=${LIVE}\\+${STALE}`), `got ${conflictLine}`);
+  assert.match(conflictLine, /disposition=RECORD_TOKEN_MISMATCH/);
+
+  // 5. CONTROL: the tokened record ALONE already refused before this fix, so the
+  //    cases above cannot be passing for some unrelated reason.
+  const control = probe({ runs: { attempt_id: DANGLING, status: "running", pid: PID, process_token: STALE } }, live());
+  assert.equal(control.sightings[0].record_token_match, false);
+  assert.deepEqual(control.sightings[0].recorded_tokens, [STALE]);
+  assert.match(describeWorkerSighting(workerVerdict(control.sightings, [readProcessIdentity(live(), PID)]).verdicts[0]),
+    new RegExp(`recorded_token=${STALE} record_token_check=mismatch`), "a single record still renders as a bare token");
+
+  // 6. An INDEPENDENT sighting still outranks the record, and the retained
+  //    conflict is still visible — the record's disagreement never disappears,
+  //    it just does not get to decide a process we can see working here.
+  const worktreeRoot = sandbox(t);
+  const worktreeDir = nodePath.join(worktreeRoot, DANGLING);
+  fs.mkdirSync(worktreeDir);
+  const inWorktree = fakeProc(t, { [PID]: { cmdline: "/usr/bin/node worker.mjs ", cwd: worktreeDir, start_token: LIVE } });
+  const bound = stamped(defaultWorkerProcesses({
+    receipt: { attempt_id: DANGLING },
+    env: {
+      SHU_SUPERVISOR_STATE_DIR: supervisorStateDir(t, {
+        orders: { attempt_id: DANGLING, pid: PID },
+        runs: { attempt_id: DANGLING, status: "running", pid: PID, process_token: STALE },
+      }),
+      SHU_WORKTREE_ROOT: worktreeRoot,
+    },
+    procRoot: inWorktree, now: clock,
+  }));
+  assert.equal(bound.sightings[0].independently_bound, true);
+  assert.equal(bound.sightings[0].record_token_match, false, "the record still disagrees, and the audit must keep saying so");
+  const boundLine = describeWorkerSighting(workerVerdict(bound.sightings, [readProcessIdentity(inWorktree, PID)]).verdicts[0]);
+  assert.match(boundLine, /disposition=CONFIRMED_LIVE/);
+  assert.match(boundLine, /source=supervisor_record\+worktree_cwd/, `got ${boundLine}`);
+  assert.match(boundLine, new RegExp(`recorded_token=none\\+${STALE} record_token_check=mismatch`), `got ${boundLine}`);
+  assert.match(boundLine, /independently_bound=yes/);
 });
 
 // "I could not look" must never render as a fact. VANISHED states that /proc was
@@ -1482,13 +1666,13 @@ test("SHU-140 reconcile-dangling: the remaining guards — binding, measurabilit
   assert.match(lines.at(-1), /exactly one argument/);
   const refused = cleanWorld({
     workerProcesses: async () => ({ observed_at: NOW, pids: [4242], sightings: [sighting({ pid: 4242 })] }),
-    workerLiveness: async () => ({ observed_at: NOW, observations: [{ pid: 4242, exists: true, exists_known: true, start_token: "900900", cmdline: "node worker" }] }),
+    workerLiveness: async () => ({ observed_at: NOW, observations: [{ pid: 4242, exists: true, exists_known: true, start_token: "900900", uid: 1000 }] }),
   });
   assert.equal(await reconcileMain(["--reconcile-dangling", DANGLING], {}, { ...refused, now: () => NOW, stdout: (l) => lines.push(l) }), 3);
   assert.match(lines.at(-2), /RECONCILE_REFUSED: WORKER_LIVE.*slot preserved, nothing written/);
   // The journal carries the EVIDENCE, not just the verdict: the refusal is
   // reconstructible from these lines without access to the host.
-  assert.match(lines.at(-1), /^WORKER_SIGHTING pid=4242 disposition=CONFIRMED_LIVE check=\S/);
+  assert.match(lines.at(-1), /^WORKER_SIGHTING pid=4242 uid=1000 disposition=CONFIRMED_LIVE check=\S/);
   assert.equal(refused.posted.length, 0);
   const world = cleanWorld();
   assert.equal(await reconcileMain(["--reconcile-dangling", DANGLING], {}, { ...world, now: () => NOW, stdout: (l) => lines.push(l) }), 0);

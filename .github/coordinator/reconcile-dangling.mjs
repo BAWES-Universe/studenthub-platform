@@ -232,91 +232,53 @@ export function processStartToken(procRoot, pid) {
   return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
 }
 
-// How much of a command line a refusal is allowed to carry. Enough to recognise
-// the process, never enough to be a payload.
-export const WORKER_CMDLINE_MAX = 120;
-
-// A command line goes into the receipt and the journal, so it is sanitised
-// before it is ever stored: /proc separates argv with NULs, and any argument
-// that LOOKS like a credential assignment keeps its name and loses its value.
-// /proc/<pid>/environ is never captured at all — it is read to MATCH the
-// attempt_id and then discarded, because an environment block is a secret
-// store and no truncation makes it safe to log.
+// A COMMAND LINE IS NEVER CAPTURED. Not redacted, not truncated, not quoted —
+// not captured at all.
 //
-// The NUL separators are what make this safe, so they are honoured BEFORE any
-// redaction runs. Flattening argv to a space-separated line first destroys the
-// only evidence of where one argument ends: `--password` followed by the single
-// argument `my secret phrase` then looks like four words, and a `\S+` rule hides
-// exactly one of them and logs the rest. Split first, redact whole entries.
-
-// A name that, wherever it appears, means the thing next to it is a credential.
-const SENSITIVE_NAME = /(?:token|secret|key|password|passwd|credential|auth)/i;
-// A credential that names ITSELF, whatever argument it is carried in: an HTTP
-// authorization value, or the userinfo of a URL. `--header Authorization: Bearer
-// x` has no sensitive flag name at all, so nothing else would catch it.
-const SELF_NAMING_CREDENTIAL = /(?:^|[\s:=])(?:bearer|basic)\s+\S|\/\/[^/\s:@]+:[^/\s@]+@/i;
-// `NAME=value` embedded inside one argument, case-insensitively and with or
-// without leading dashes — `api_key=xyz` and `--API-Key=xyz` alike.
-const INNER_ASSIGNMENT = /(^|[\s,;])(-{0,2}[\w.-]*(?:token|secret|key|password|passwd|credential|auth)[\w.-]*)=([^\s,;]+)/gi;
-// `--flag value` INSIDE a single argument. Only reachable when the input had no
-// NUL separators at all (a caller that pre-flattened argv); with real /proc
-// input the whole-entry rules above have already handled it. It can only hide
-// one whitespace-delimited word, which is why it is the last resort and not the
-// mechanism.
-const FLAG_THEN_VALUE = /(^|\s)(--?[\w.-]*(?:token|secret|key|password|passwd|credential|auth)[\w.-]*)(\s+)(\S+)/gi;
-
-const scrubInline = (text) => text.replace(INNER_ASSIGNMENT, "$1$2=<redacted>").replace(FLAG_THEN_VALUE, "$1$2$3<redacted>");
-
-// One argv entry, redacted as a WHOLE. The name is kept wherever there is one,
-// because a refusal has to stay readable enough to recognise the process.
-function redactArgument(arg) {
-  const assign = /^(-{0,2}[\w.-]+)=([\s\S]*)$/.exec(arg);
-  if (assign) {
-    const [, name, value] = assign;
-    if (SENSITIVE_NAME.test(name) || SELF_NAMING_CREDENTIAL.test(value)) return `${name}=<redacted>`;
-    return `${name}=${scrubInline(value)}`;
-  }
-  if (SELF_NAMING_CREDENTIAL.test(arg)) return "<redacted>";
-  return scrubInline(arg);
-}
-
-export function redactCommandLine(raw) {
-  if (typeof raw !== "string") return null;
-  const args = raw.split("\0").filter((arg) => arg !== "");
-  if (!args.length) return "";
-  const out = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    // A bare sensitive flag: the WHOLE next entry is its value, spaces and all.
-    if (/^--?[\w.-]+$/.test(arg) && SENSITIVE_NAME.test(arg) && i + 1 < args.length) {
-      out.push(arg, "<redacted>");
-      i += 1;
-      continue;
-    }
-    out.push(redactArgument(arg));
-  }
-  // Newlines and runs of whitespace inside an argument are collapsed only now,
-  // once no rule depends on where the whitespace was, so the audit line is one
-  // line. Truncation is last: it can only ever remove characters.
-  const redacted = out.join(" ").replace(/\s+/g, " ").trim();
-  return redacted.length > WORKER_CMDLINE_MAX ? `${redacted.slice(0, WORKER_CMDLINE_MAX)}…` : redacted;
-}
+// An earlier revision of this module carried a redacted `cmdline` in the refusal
+// detail, in `evidence.sightings` and on stdout (which on the host is the unit's
+// journal), on the theory that a blacklist of credential-looking shapes could
+// make third-party argv safe to persist. It cannot. The sighting sources are
+// (b) cwd-inside-the-worktree and (c) attempt_id-in-argv, so the argv captured
+// is whatever the agent shelled out to — curl, gh, psql, mysql — and a blacklist
+// has to enumerate every way a credential can be spelled. A review demonstrated
+// six shapes that a keyword blacklist still published end to end through main(),
+// including `X-Api-Key: <value>` and a secret passed as the entry after a short
+// flag. Each instance was individually fixable and the class was not, so the
+// MECHANISM is rejected rather than extended: there is no longer any code path
+// that can persist or print an argument value.
+//
+// /proc/<pid>/cmdline and /proc/<pid>/environ are still READ — sighting (c)
+// matches the attempt_id against them — and the bytes are discarded in the same
+// expression that tests them. They are never stored on a sighting, never
+// rendered into an audit line, and never interpolated into an error message.
+//
+// What the audit line carries instead is STRUCTURED METADATA the kernel owns and
+// a process cannot choose the contents of: the pid, the owning uid, the
+// process-start token then and now, which sighting source supplied the pid and
+// from which file, the record-token comparison, the identity comparison, and
+// which of those checks actually decided. That is enough to reconstruct any
+// refusal from the log alone — see RECONCILE-DANGLING.md — and none of it can
+// carry a credential.
 
 // The stable identity of a pid AT ONE INSTANT: whether /proc/<pid> is there at
-// all, the kernel's process-start token, and a redacted command line. Every
-// field distinguishes "absent" from "unreadable", because the whole point of
+// all, the uid that owns it, and the kernel's process-start token. Every field
+// distinguishes "absent" from "unreadable", because the whole point of
 // re-checking is that "I could not look" must never render as a fact.
 export function readProcessIdentity(procRoot, pid) {
   const dir = path.join(procRoot, String(pid));
-  let present;
-  try { present = fs.statSync(dir).isDirectory(); }
-  catch (error) { return { pid, exists: false, exists_known: error?.code === "ENOENT", start_token: null, cmdline: null }; }
-  if (!present) return { pid, exists: false, exists_known: true, start_token: null, cmdline: null };
+  let stat;
+  try { stat = fs.statSync(dir); }
+  catch (error) { return { pid, exists: false, exists_known: error?.code === "ENOENT", start_token: null, uid: null }; }
+  if (!stat.isDirectory()) return { pid, exists: false, exists_known: true, start_token: null, uid: null };
+  // The owning uid comes from the /proc/<pid> directory itself, so it is the
+  // kernel's answer and not anything the process supplied. It is what tells an
+  // operator "this was the runner" from "this was somebody's shell" now that no
+  // command line is carried.
+  const uid = Number.isInteger(stat.uid) ? stat.uid : null;
   let start_token = null;
   try { start_token = processStartToken(procRoot, pid) ?? null; } catch { start_token = null; }
-  let cmdline = null;
-  try { cmdline = redactCommandLine(fs.readFileSync(path.join(dir, "cmdline"), "utf8")); } catch { cmdline = null; }
-  return { pid, exists: true, exists_known: true, start_token, cmdline };
+  return { pid, exists: true, exists_known: true, start_token, uid };
 }
 
 // A live worker is detected from the process table, never from a coordinator
@@ -330,26 +292,58 @@ export function readProcessIdentity(procRoot, pid) {
 // listed, this throws and the operation refuses EVIDENCE_MISSING.
 //
 // Each sighting now carries a STABLE IDENTITY captured at match time — the pid,
-// the kernel's process-start token and a redacted command line — plus the file
-// that supplied the pid. `pids` stays exactly what it was (the pids that would
+// the owning uid and the kernel's process-start token — plus the file that
+// supplied the pid. No command line and no argument value is ever captured. `pids` stays exactly what it was (the pids that would
 // have been reported live), so no existing guard is weakened; `sightings` is
 // what the re-check and the audit trail are built from.
 export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now = nowIso }) {
   const live = entriesOf(procRoot).filter((entry) => /^\d+$/.test(entry));
   const sightings = new Map();
+  // The record-token comparison, over ALL the record tokens that named this pid.
+  // It is fail-closed: ANY recorded token that disagrees with the live start
+  // token decides `false`, even if another record agrees. RECORD ORDER MUST NOT
+  // BE ABLE TO DECIDE A DISPOSITION — an earlier untokened record used to win
+  // every field of a pid's sighting and silently suppress a later record's
+  // disagreeing `process_token`, which flipped RECORD_TOKEN_MISMATCH into
+  // CONFIRMED_LIVE and dropped the disagreement out of the audit line entirely.
+  const recordTokenMatch = (recordedTokens, observedToken) => {
+    const named = recordedTokens.filter((token) => typeof token === "string" && token !== "");
+    if (!named.length) return null;      // no record named a token: nothing to compare
+    if (!observedToken) return null;     // no live token to compare it against
+    return !named.some((token) => token !== observedToken);
+  };
+
   const note = (pid, sighting) => {
-    // First sighting of a pid wins its source; later ones only add sources, so
-    // the audit line says every way the same process was seen.
     const seen = sightings.get(pid);
     if (!seen) { sightings.set(pid, sighting); return; }
-    if (!seen.also_seen_by.includes(sighting.source)) seen.also_seen_by.push(sighting.source);
-    // ...but a later sighting from a NON-record source is not just another way
-    // of saying the same thing: a process whose cwd is the attempt's worktree,
-    // or that carries the attempt_id, was bound to this attempt BY OBSERVATION.
-    // A supervisor record's stale process_token can never exonerate a process we
-    // can see working here, so that binding is recorded rather than dropped.
-    // `record_token_match` is deliberately left alone: the record's disagreement
-    // with the kernel is still a fact, and it stays in the audit line.
+    // Later sightings only ADD evidence; none of them may overwrite what an
+    // earlier one established. The new source is deduplicated against the FIRST
+    // source too, or one pid named by two record kinds renders
+    // `source=supervisor_record+supervisor_record`.
+    if (sighting.source !== seen.source && !seen.also_seen_by.includes(sighting.source)) {
+      seen.also_seen_by.push(sighting.source);
+    }
+    // Every file that supplied the pid is kept, in read order, so a line naming
+    // two record tokens also names the two records they came from.
+    for (const sourcePath of sighting.source_paths) {
+      if (!seen.source_paths.includes(sourcePath)) seen.source_paths.push(sourcePath);
+    }
+    // CONFLICTING TOKEN EVIDENCE IS PRESERVED, never replaced. Both records'
+    // tokens stay on the sighting and both reach the audit line, and the
+    // comparison is re-run over all of them, so a disagreement always decides no
+    // matter which record was read first. Re-running can only move the answer
+    // towards a mismatch: adding a token can turn `null` into true or false and
+    // true into false, and can never turn false back into true.
+    for (const token of sighting.recorded_tokens) seen.recorded_tokens.push(token);
+    seen.record_token_match = recordTokenMatch(seen.recorded_tokens, seen.observed_token);
+    if (seen.recorded_token === null) seen.recorded_token = sighting.recorded_token ?? null;
+    // A later sighting from a NON-record source is not just another way of saying
+    // the same thing: a process whose cwd is the attempt's worktree, or that
+    // carries the attempt_id, was bound to this attempt BY OBSERVATION. A
+    // supervisor record's stale process_token can never exonerate a process we
+    // can see working here, so that binding is recorded rather than dropped —
+    // and `record_token_match` is still never cleared, because the record's
+    // disagreement with the kernel remains a fact and stays in the audit line.
     if (sighting.source !== "supervisor_record") seen.independently_bound = true;
   };
 
@@ -361,17 +355,21 @@ export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now =
     const identity = readProcessIdentity(procRoot, pid);
     // A recorded token that no longer matches means the pid was recycled: that
     // process is somebody else's. An unrecorded token cannot exonerate anyone,
-    // so an untokened live pid still counts as SIGHTED.
-    const record_token_match = process_token ? (identity.start_token ? identity.start_token === process_token : null) : null;
+    // so an untokened live pid still counts as SIGHTED — and the fact that THIS
+    // record carried no token is itself recorded, as a null in `recorded_tokens`,
+    // so a later record's token can never be read as this record's.
+    const recorded_tokens = [process_token ?? null];
     note(pid, {
       pid,
       source: "supervisor_record",
       also_seen_by: [],
       source_path,
+      source_paths: [source_path],
       recorded_token: process_token ?? null,
+      recorded_tokens,
       observed_token: identity.start_token,
-      observed_cmdline: identity.cmdline,
-      record_token_match,
+      observed_uid: identity.uid,
+      record_token_match: recordTokenMatch(recorded_tokens, identity.start_token),
       // A record alone binds the pid to the attempt only as well as the record
       // is trusted, and the record is exactly what is in question here.
       independently_bound: false,
@@ -389,9 +387,11 @@ export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now =
       try { cwd = fs.readlinkSync(path.join(procRoot, entry, "cwd")); } catch { cwd = null; }
       if (cwd && (cwd === worktreeDir || cwd.startsWith(`${worktreeDir}${path.sep}`))) {
         const identity = readProcessIdentity(procRoot, pid);
+        const source_path = path.join(procRoot, entry, "cwd");
         note(pid, {
-          pid, source: "worktree_cwd", also_seen_by: [], source_path: path.join(procRoot, entry, "cwd"),
-          recorded_token: null, observed_token: identity.start_token, observed_cmdline: identity.cmdline, record_token_match: null,
+          pid, source: "worktree_cwd", also_seen_by: [], source_path, source_paths: [source_path],
+          recorded_token: null, recorded_tokens: [], observed_token: identity.start_token,
+          observed_uid: identity.uid, record_token_match: null,
           independently_bound: true,
         });
         continue;
@@ -402,9 +402,13 @@ export function defaultWorkerProcesses({ receipt, env, procRoot = "/proc", now =
       try { raw = fs.readFileSync(path.join(procRoot, entry, file), "utf8"); } catch { continue; }
       if (raw.includes(receipt.attempt_id)) {
         const identity = readProcessIdentity(procRoot, pid);
+        // `raw` is tested and then dropped: the only thing this scan carries out
+        // is WHICH FILE matched, never a byte of what was in it.
+        const source_path = path.join(procRoot, entry, file);
         note(pid, {
-          pid, source: "attempt_id_scan", also_seen_by: [], source_path: path.join(procRoot, entry, file),
-          recorded_token: null, observed_token: identity.start_token, observed_cmdline: identity.cmdline, record_token_match: null,
+          pid, source: "attempt_id_scan", also_seen_by: [], source_path, source_paths: [source_path],
+          recorded_token: null, recorded_tokens: [], observed_token: identity.start_token,
+          observed_uid: identity.uid, record_token_match: null,
           independently_bound: true,
         });
         break;
@@ -471,10 +475,16 @@ export function classifyWorkerSighting(sighting, observation) {
   return { disposition: "CONFIRMED_LIVE", check: "process-start token at sighting vs re-check" };
 }
 
-// One line per sighting, and it is the WHOLE evidence: which pid, where the pid
-// came from, the token then and now (or its absence), the redacted command line,
-// and the check that decided. A refusal built from these lines can be
-// reconstructed from the log alone, with no access to the host it happened on.
+// One line per sighting, and it is the WHOLE evidence: which pid, which uid owns
+// it, where the pid came from, the token then and now (or the reason there is
+// none), what the record-token and identity comparisons concluded, and which of
+// them actually decided. A refusal built from these lines can be reconstructed
+// from the log alone, with no access to the host it happened on.
+//
+// EVERY FIELD IS STRUCTURED METADATA THE KERNEL OWNS. There is no command line
+// and no argument value here, in any form, redacted or otherwise — see the note
+// above readProcessIdentity for why that mechanism was removed rather than
+// extended.
 // What the re-check saw, and never more than it saw: a token, or the REASON
 // there is no token. "absent" is a claim that /proc/<pid> was looked at and was
 // not there, so it is reserved for an absence the kernel actually confirmed.
@@ -485,22 +495,64 @@ function tokenAtRecheck(observation) {
   return observation.exists_known === true ? "absent" : "unreadable";
 }
 
+// EVERY record token that named this pid, in the order the records were read and
+// aligned with `source_path`, with `none` standing for a record that carried no
+// token at all. Two records that disagree both appear: the disagreement is the
+// fact, and losing it to record order is exactly the defect this renders around.
+function recordedTokens(sighting) {
+  const tokens = Array.isArray(sighting.recorded_tokens) ? sighting.recorded_tokens : null;
+  // A caller-built sighting (an injected probe) may carry only the scalar.
+  if (!tokens?.length) return sighting.recorded_token ? String(sighting.recorded_token) : "none";
+  return tokens.map((token) => (token ? String(token) : "none")).join("+");
+}
+
+// What the RECORD comparison concluded, stated even when it was not the check
+// that decided: a retained mismatch under an independent binding has to remain
+// visible, or the line cannot show that a record disagreed at all.
+function recordTokenCheck(sighting) {
+  if (sighting.record_token_match === true) return "match";
+  if (sighting.record_token_match === false) return "mismatch";
+  const tokens = Array.isArray(sighting.recorded_tokens) ? sighting.recorded_tokens : [];
+  const named = tokens.some((token) => typeof token === "string" && token !== "") || Boolean(sighting.recorded_token);
+  return named ? "uncomparable" : "no_record_token";
+}
+
+// What the IDENTITY comparison — the sighting's start token against the
+// re-check's — concluded. `not_reached` is the honest answer for a sighting the
+// record comparison decided before the identity comparison ran: the line must
+// never imply an identity result that was never established.
+const IDENTITY_CHECK_RESULTS = Object.freeze({
+  CONFIRMED_LIVE: "start_token_unchanged",
+  TOKEN_CHANGED: "start_token_changed",
+  UNVERIFIED: "start_token_unreadable",
+  VANISHED: "pid_absent",
+  PRESENCE_UNREADABLE: "presence_unreadable",
+  UNOBSERVED: "not_observed",
+  RECORD_TOKEN_MISMATCH: "not_reached",
+});
+
 export function describeWorkerSighting(verdict) {
   const { sighting, observation, disposition, check } = verdict;
   const sources = [sighting.source, ...sighting.also_seen_by].join("+");
+  const paths = Array.isArray(sighting.source_paths) && sighting.source_paths.length
+    ? sighting.source_paths.join(",") : sighting.source_path;
   return [
     `pid=${sighting.pid}`,
+    // The owning uid, from the kernel's own /proc/<pid> inode: the one piece of
+    // "which process was this" that no process can author.
+    `uid=${Number.isInteger(sighting.observed_uid) ? sighting.observed_uid : "unreadable"}`,
     `disposition=${disposition}`,
     `check=${check}`,
     `source=${sources}`,
-    `source_path=${sighting.source_path}`,
-    `recorded_token=${sighting.recorded_token ?? "none"}`,
+    `source_path=${paths}`,
+    `recorded_token=${recordedTokens(sighting)}`,
+    `record_token_check=${recordTokenCheck(sighting)}`,
     `token_at_sighting=${sighting.observed_token ?? "unreadable"}`,
     `token_at_recheck=${tokenAtRecheck(observation)}`,
+    `identity_check=${IDENTITY_CHECK_RESULTS[disposition] ?? "unknown"}`,
     // Why a record that disagrees with the kernel did, or did not, decide this
     // sighting — without it the line cannot explain its own disposition.
     `independently_bound=${sighting.independently_bound === true ? "yes" : "no"}`,
-    `cmdline=${JSON.stringify(sighting.observed_cmdline ?? observation?.cmdline ?? null)}`,
   ].join(" ");
 }
 
@@ -833,8 +885,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
   out(`${result.refusal}${result.detail ? ` — ${result.detail}` : ""}; slot preserved, nothing written`);
   // The journal must carry the evidence, not just the verdict. One line per
-  // sighting — pid, source file, token then and now, redacted cmdline and the
-  // check that decided — so the refusal can be reconstructed from the log alone.
+  // sighting — pid, uid, source file, token then and now, the record-token and
+  // identity comparisons and which check decided — so the refusal can be
+  // reconstructed from the log alone. Structured metadata only: no command line
+  // and no argument value is ever printed here.
   for (const line of result.evidence?.sightings ?? []) out(`WORKER_SIGHTING ${line}`);
   return 3;
 }
