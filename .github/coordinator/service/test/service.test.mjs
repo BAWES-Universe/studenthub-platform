@@ -11,7 +11,9 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
-import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters } from '../units.mjs';
+import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory, assertSupervisorLaunchEnvironment, supervisorAdapterKeys } from '../units.mjs';
+import { SupervisorStore } from '../../supervisor.mjs';
+import { SUPERVISOR_RECORD_KINDS, defaultSupervisorStore } from '../../reconcile-dangling.mjs';
 import { install, rollback, snapshot } from '../install.mjs';
 import { verify, fixtureParameters, assertQuiet } from '../verify.mjs';
 import { assertFixtureEnvironmentUnchanged } from '../verify.mjs';
@@ -329,4 +331,200 @@ test('SHU251 unsafe identity and secret file parameters fail before staging', t 
   }
   assert.deepEqual(fs.readdirSync(root), ['.environment']);
   assertFixtureEnvironmentUnchanged(root);
+});
+
+// ---------------------------------------------------------------------------
+// SHU251 CROSS-UNIT AGREEMENT: the supervisor store directory
+// ---------------------------------------------------------------------------
+//
+// THE FAILURE THIS CLOSES. shu-supervisor.service set
+// SHU_SUPERVISOR_STATE_DIR=/srv/shu/state/workspaces/supervisor in its own
+// Environment=. shu-coordinator.service set ENABLE_DISPATCH, SHU_SUPERVISOR_SOCKET
+// and SHU_WORKSPACE_STATE_DIR — and did not set SHU_SUPERVISOR_STATE_DIR AT ALL.
+// The reviewed recovery reader (reconcile-dangling.mjs) reads
+// `env.SHU_SUPERVISOR_STATE_DIR`, and an unset variable is EVIDENCE_MISSING by
+// design, so the live recovery refused "the supervisor store could not be read" on
+// every run it had ever made. The store was not wrong and not denied: right path,
+// right owner (shu-coordinator), listable, simply never named on the reading side.
+//
+// This is the THIRD member of one family — a documented STATE_DIR that disagreed
+// with the unit (#174), an attempt id that disagreed with the live record, and a
+// store path that one side never set. Each was individually fixable by editing one
+// literal; the class is only closed by making disagreement impossible to express.
+// So: one derivation (units.supervisorStoreDirectory), one rendered value
+// (values.SUPERVISOR_STATE_DIR) substituted into BOTH templates through the SAME
+// @SUPERVISOR_STATE_DIR@ placeholder, and the proofs below, which read the
+// RENDERED units rather than the templates and fail if either side moves alone.
+//
+// No clock, no host systemd, no host account: the store is a real SupervisorStore
+// tree built under a fixture root, and the reader's clock is injected.
+const STORE_ATTEMPT = '9c461519-4bc8-4e75-8d65-d61b8954e1f0';
+const EPOCH = () => '1970-01-01T00:00:00.000Z';
+function unitEnvironment(unit) {
+  return Object.fromEntries(unit.split('\n').filter(line => line.startsWith('Environment='))
+    .map(line => line.slice('Environment='.length))
+    .map(assignment => [assignment.slice(0, assignment.indexOf('=')), assignment.slice(assignment.indexOf('=') + 1)]));
+}
+// Rendered units over a fixture workspace, so the agreed value can be a directory
+// the supervisor's OWN store code is allowed to create. The deployed value is
+// pinned separately, against the constant, in the same test.
+function storeWorld(t) {
+  const root = fixture(t);
+  const params = { ...fixtureParameters(root), workdir: root, workspaceStateDir: root, writerLock: join(root, 'host-tick.lock'), allowWorkspaceStateDirOverride: true };
+  return { root, params, units: render(params) };
+}
+function renderedStore(units, name) {
+  const found = [...units[name].matchAll(/^Environment=SHU_SUPERVISOR_STATE_DIR=(\S+)$/gm)];
+  assert.equal(found.length, 1, `SHU251_SUPERVISOR_STORE: ${name} must name the supervisor store exactly once`);
+  return found[0][1];
+}
+
+test("SHU251 cross-unit agreement: both units render the supervisor's authoritative store directory", t => {
+  // (a) The DEPLOYED rendering. Both units, read back from render() output.
+  const deployedParams = fixtureParameters(fixture(t));
+  const deployed = render(deployedParams);
+  const supervisorValue = renderedStore(deployed, names[0]);
+  const coordinatorValue = renderedStore(deployed, names[1]);
+  assert.equal(coordinatorValue, supervisorValue,
+    'SHU251_SUPERVISOR_STORE: the coordinator unit must name the supervisor unit\'s own store directory');
+
+  // (b) It is the supervisor's REAL store directory, not merely a value the two
+  // units happen to share: the shared derivation, the deployed literal, and the
+  // parameters an installer prints all agree.
+  assert.equal(supervisorValue, supervisorStoreDirectory({}));
+  assert.equal(supervisorValue, join(WORKSPACE_STATE_DIR, 'supervisor'));
+  assert.equal(supervisorValue, '/srv/shu/state/workspaces/supervisor');
+  assert.equal(serviceParameters({ workdir: '/reviewed/repo' }).supervisorStateDir, supervisorValue);
+  assertDeployedWorkspaceState(WORKSPACE_STATE_DIR);
+
+  // (c) NO SECOND COPY CAN DRIFT: each template takes the value from the one
+  // @SUPERVISOR_STATE_DIR@ placeholder render() resolves once, and the supervisor's
+  // own entrypoint takes its store root from that same variable — so the variable
+  // the coordinator now reads is the directory the supervisor actually writes.
+  for (const name of names.filter(each => each.endsWith('.service'))) {
+    const template = fs.readFileSync(new URL(`../${name}.in`, import.meta.url), 'utf8');
+    assert.deepEqual(template.split('\n').filter(line => line.startsWith('Environment=SHU_SUPERVISOR_STATE_DIR=')),
+      ['Environment=SHU_SUPERVISOR_STATE_DIR=@SUPERVISOR_STATE_DIR@'],
+      `SHU251_SUPERVISOR_STORE: ${name} must substitute the shared placeholder, never a second literal`);
+  }
+  const entrypoint = fs.readFileSync(new URL('../supervisor-service.mjs', import.meta.url), 'utf8');
+  assert.match(entrypoint, /stateDir: process\.env\.SHU_SUPERVISOR_STATE_DIR/,
+    'SHU251_SUPERVISOR_STORE: the supervisor must take its store root from the variable both units render');
+
+  // (d) assertPolicy refuses the disagreement, so an out-of-band edit to either
+  // unit cannot be installed.
+  assertPolicy(deployed, deployedParams);
+
+  // (e) THE FUNCTIONAL PROOF. A real SupervisorStore tree under a fixture root,
+  // and the reviewed reader taking its probe from the RENDERED COORDINATOR UNIT's
+  // environment: it reads the store instead of returning EVIDENCE_MISSING, and it
+  // sees the very records the supervisor wrote there.
+  const { root, units } = storeWorld(t);
+  const agreed = renderedStore(units, names[1]);
+  assert.equal(agreed, renderedStore(units, names[0]));
+  assert.equal(agreed, join(root, 'supervisor'));
+  const store = new SupervisorStore(agreed);
+  assert.equal(store.root, agreed);
+  for (const kind of SUPERVISOR_RECORD_KINDS) assert.ok(fs.statSync(join(agreed, kind)).isDirectory(),
+    `SHU251_SUPERVISOR_STORE: the supervisor's store keeps ${kind}`);
+  const environment = unitEnvironment(units[names[1]]);
+  assert.equal(environment.SHU_SUPERVISOR_STATE_DIR, agreed);
+  const empty = defaultSupervisorStore({ receipt: { attempt_id: STORE_ATTEMPT }, env: environment, now: EPOCH });
+  assert.deepEqual({ readable: empty.readable, records: empty.records }, { readable: true, records: [] },
+    'SHU251_SUPERVISOR_STORE: an empty but listable store must read, not go EVIDENCE_MISSING');
+  for (const kind of SUPERVISOR_RECORD_KINDS) fs.writeFileSync(join(agreed, kind, `${STORE_ATTEMPT}.json`), '{}');
+  const claimed = defaultSupervisorStore({ receipt: { attempt_id: STORE_ATTEMPT }, env: environment, now: EPOCH });
+  assert.deepEqual(claimed.records, [...SUPERVISOR_RECORD_KINDS],
+    'SHU251_SUPERVISOR_STORE: the reader must see the records the supervisor wrote to the agreed directory');
+
+  // (f) THE PRE-FIX SHAPE STILL FAILS CLOSED. With the coordinator's assignment
+  // removed the reader is back to an unset variable — and that is still
+  // EVIDENCE_MISSING, never "I looked and the store is empty".
+  const priorShape = unitEnvironment(units[names[1]].replace(/^Environment=SHU_SUPERVISOR_STATE_DIR=.*\n/m, ''));
+  assert.equal('SHU_SUPERVISOR_STATE_DIR' in priorShape, false);
+  const unset = defaultSupervisorStore({ receipt: { attempt_id: STORE_ATTEMPT }, env: priorShape, now: EPOCH });
+  assert.deepEqual({ readable: unset.readable, records: unset.records }, { readable: false, records: [] },
+    'SHU251_SUPERVISOR_STORE: an unset store directory must stay EVIDENCE_MISSING');
+});
+
+// EITHER UNIT MOVING ALONE IS A FAILURE. Four mutations: each unit stops setting
+// the variable, and each unit's value drifts to a plausible neighbour.
+for (const [label, name] of [['coordinator', names[1]], ['supervisor', names[0]]]) {
+  test(`SHU251 mutation: ${label} unit stops setting the supervisor store`, t => {
+    const { params, units } = storeWorld(t);
+    assert.match(units[name], /^Environment=SHU_SUPERVISOR_STATE_DIR=/m);
+    units[name] = units[name].replace(/^Environment=SHU_SUPERVISOR_STATE_DIR=.*\n/m, '');
+    named(() => assertPolicy(units, params), `SHU251_SUPERVISOR_STORE: ${name} must render the supervisor's authoritative store directory exactly once`);
+    named(() => renderedStore(units, name), `SHU251_SUPERVISOR_STORE: ${name} must name the supervisor store exactly once`);
+  });
+  test(`SHU251 mutation: ${label} unit supervisor store drifts alone`, t => {
+    const { root, params, units } = storeWorld(t);
+    const other = names[name === names[0] ? 1 : 0];
+    units[name] = units[name].replace(/^Environment=SHU_SUPERVISOR_STATE_DIR=.*$/m, `Environment=SHU_SUPERVISOR_STATE_DIR=${join(root, 'supervisor-state')}`);
+    named(() => assertPolicy(units, params), `SHU251_SUPERVISOR_STORE: ${name} must render the supervisor's authoritative store directory exactly once`);
+    assert.notEqual(renderedStore(units, name), renderedStore(units, other),
+      'SHU251_SUPERVISOR_STORE: a one-sided drift must be observable between the rendered units');
+  });
+}
+// A SHARED derivation that is repointed keeps the two units in agreement — which
+// is exactly why agreement alone is not the whole proof. The deployed pin is what
+// catches it.
+test('SHU251 mutation: shared supervisor store derivation repointed', async t => {
+  const root = fixture(t), file = join(root, 'units-store-mutant.mjs');
+  const source = fs.readFileSync(new URL('../units.mjs', import.meta.url), 'utf8');
+  const declaration = "export const SUPERVISOR_STORE_DIRNAME = 'supervisor';";
+  assert.ok(source.includes(declaration));
+  fs.copyFileSync(new URL('../credential-delivery.mjs', import.meta.url), join(root, 'credential-delivery.mjs'));
+  // render() resolves the templates relative to its own module URL.
+  for (const name of names) fs.copyFileSync(new URL(`../${name}.in`, import.meta.url), join(root, `${name}.in`));
+  fs.writeFileSync(file, source.replace(declaration, "export const SUPERVISOR_STORE_DIRNAME = 'supervisor-state';"));
+  const mutant = await import(pathToFileURL(file));
+  const params = fixtureParameters(fixture(t));
+  const units = mutant.render(params);
+  // Still internally consistent, and still accepted by the mutant's own policy:
+  assert.equal(renderedStore(units, names[0]), renderedStore(units, names[1]));
+  mutant.assertPolicy(units, params);
+  // The deployed pin is what dies.
+  assert.notEqual(renderedStore(units, names[1]), '/srv/shu/state/workspaces/supervisor');
+  named(() => assertPolicy(units, params), "SHU251_SUPERVISOR_STORE: shu-supervisor.service must render the supervisor's authoritative store directory exactly once");
+});
+
+// THE SAME DRIFT ONE LAYER DOWN. MEASURED on systemd 255.4 with a transient unit
+// that set one key through BOTH directives: `EnvironmentFile=` is applied after
+// `Environment=` and its value wins, in either directive order. So a
+// `SHU_SUPERVISOR_STATE_DIR=` line in a credential file would silently redirect
+// the recovery reader's store probe while the rendered units — the text the
+// cross-unit check reads — still agreed perfectly. The units own the store's
+// location; an environment file may not restate it, and the refusal is by name.
+// The two files are not symmetric, and the test states which guard owns which
+// side: the supervisor file was ALREADY sealed to its transport secret alone, so
+// a store key there is refused by the existing SHU251_ENV_SUPERVISOR before the
+// new check is reached. The coordinator file legitimately carries many keys, and
+// that is the side the new refusal covers. Its supervisor branch stays as a
+// backstop if that seal is ever relaxed.
+for (const [label, parameter, code] of [['coordinator', 'coordinatorEnvironmentFile', 'SHU251_SUPERVISOR_STORE'],
+  ['supervisor', 'supervisorEnvironmentFile', 'ERR_ASSERTION']]) {
+  test(`SHU251 mutation: ${label} environment file overrides the supervisor store`, t => {
+    const root = fixture(t), params = fixtureParameters(root);
+    fs.appendFileSync(params[parameter], `SHU_SUPERVISOR_STATE_DIR=${join(root, 'elsewhere')}\n`);
+    for (const operation of [render, p => assertPolicy(render(fixtureParameters(fixture(t))), p), p => install(root, p)]) {
+      assert.throws(() => operation(params), error => error.code === code
+        && (code !== 'ERR_ASSERTION' || error.message.startsWith('SHU251_ENV_SUPERVISOR:')),
+        `a ${label} environment file override must refuse by name`);
+    }
+    assert.deepEqual(fs.readdirSync(root), ['.environment'], 'the override must refuse before staging');
+  });
+}
+test('SHU251 arming refuses a supervisor store override in either credential file', () => {
+  const secret = 'f'.repeat(64);
+  const coordinatorSource = [...supervisorAdapterKeys.map(key => `${key}=fixture`), 'GITHUB_TOKEN=fixture', 'LINEAR_API_TOKEN=fixture'].join('\n') + '\n';
+  const supervisorSource = `SHU_SUPERVISOR_SECRET=${secret}\n`;
+  // The reviewed pair still arms.
+  assert.equal(assertSupervisorLaunchEnvironment(supervisorSource, coordinatorSource).SHU_SUPERVISOR_SECRET, secret);
+  assert.throws(() => assertSupervisorLaunchEnvironment(supervisorSource, `${coordinatorSource}SHU_SUPERVISOR_STATE_DIR=/elsewhere\n`),
+    { code: 'SHU251_SUPERVISOR_STORE' }, 'SHU251_SUPERVISOR_STORE: arming must refuse a coordinator-side override by name');
+  // The supervisor file is already restricted to its transport secret; the store
+  // key must be named by ITS own refusal, not fall through to the generic one.
+  assert.throws(() => assertSupervisorLaunchEnvironment(`${supervisorSource}SHU_SUPERVISOR_STATE_DIR=/elsewhere\n`, coordinatorSource),
+    { code: 'SHU251_ENV_CROSSED' }, 'SHU251_ENV_CROSSED: the supervisor file may still carry only its transport secret');
 });

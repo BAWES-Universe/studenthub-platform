@@ -666,6 +666,15 @@
     "SHU251 mutation: shu-coordinator.service secret file removed or optional",
     "SHU251 mutation: embedded secret in any unit refused",
     "SHU251 unsafe identity and secret file parameters fail before staging",
+    "SHU251 cross-unit agreement: both units render the supervisor's authoritative store directory",
+    "SHU251 mutation: coordinator unit stops setting the supervisor store",
+    "SHU251 mutation: coordinator unit supervisor store drifts alone",
+    "SHU251 mutation: supervisor unit stops setting the supervisor store",
+    "SHU251 mutation: supervisor unit supervisor store drifts alone",
+    "SHU251 mutation: shared supervisor store derivation repointed",
+    "SHU251 mutation: coordinator environment file overrides the supervisor store",
+    "SHU251 mutation: supervisor environment file overrides the supervisor store",
+    "SHU251 arming refuses a supervisor store override in either credential file",
     "B1_SINGLE_LANE: production credential drives coordinator build BLOCK revision re-review",
     "B1_TWO_LANES: B completes while A revision remains running, then A completes",
     "B1_CROSS_TEARDOWN: retired A wake protects B, retired B wake protects next A",
@@ -7254,6 +7263,105 @@
     },
     {
       "name": "SHU251 unsafe identity and secret file parameters fail before staging",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 cross-unit agreement: both units render the supervisor's authoritative store directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: coordinator unit stops setting the supervisor store",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: coordinator unit supervisor store drifts alone",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor unit stops setting the supervisor store",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor unit supervisor store drifts alone",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: shared supervisor store derivation repointed",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: coordinator environment file overrides the supervisor store",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor environment file overrides the supervisor store",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 arming refuses a supervisor store override in either credential file",
       "capabilities": [
         {
           "name": "systemd_analyze"

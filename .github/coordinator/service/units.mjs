@@ -14,6 +14,33 @@ function workspaceDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWork
   return workspaceStateDir;
 }
 
+// The supervisor's AUTHORITATIVE store location, and the ONE place it is derived.
+//
+// The store SupervisorStore keeps (branches/orders/runs/launches/completions) is
+// this directory, and BOTH units must name it: the supervisor because it writes
+// there, and the coordinator because the reviewed recovery reader
+// (reconcile-dangling.mjs) reads `env.SHU_SUPERVISOR_STATE_DIR` to take its
+// supervisor-store probe. Until this function existed the supervisor unit set the
+// variable and the coordinator unit did not set it at all, so on the host the
+// recovery's store probe saw an UNSET variable — EVIDENCE_MISSING by design — and
+// refused "the supervisor store could not be read" on every single run. The store
+// itself was fine: right path, right owner, listable, merely never named on the
+// reading side.
+//
+// A SECOND HARDCODED COPY IS THE FAILURE, not the cure. render() resolves this
+// once into values.SUPERVISOR_STATE_DIR and BOTH templates substitute
+// @SUPERVISOR_STATE_DIR@ from that single entry, so the two units cannot disagree
+// even in principle; serviceParameters() resolves it through this same function
+// so a caller that prints the parameters sees the value the units will carry.
+// assertPolicy() then re-reads both rendered units and refuses if they differ or
+// if either names anything but this value.
+export const SUPERVISOR_STORE_DIRNAME = 'supervisor';
+export function supervisorStoreDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir } = {}) {
+  const directory = supervisorStateDir ?? join(workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride }), SUPERVISOR_STORE_DIRNAME);
+  assert.match(directory, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
+  return directory;
+}
+
 // System services share the identity owning the private workspace/socket directory.
 function serviceConfiguration({ serviceUser = 'shu-coordinator', serviceGroup = serviceUser,
   supervisorEnvironmentFile = '/etc/shu/supervisor.env', coordinatorEnvironmentFile = '/srv/shu/coordinator.env' } = {}) {
@@ -95,6 +122,7 @@ export function assertSupervisorLaunchEnvironment(source, coordinatorSource) {
   requireSupervisorAdapterEntries(coordinator);
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     Object.assign(new Error('SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required'), { code: 'SHU251_ENV_COORDINATOR' }));
+  assertStoreNotOverridden(supervisor, coordinator);
   return Object.fromEntries([...supervisor, ...[...coordinator].filter(([key]) => supervisorAdapterKeys.includes(key))]);
 }
 function requireSupervisorAdapterEntries(entries) {
@@ -149,6 +177,28 @@ function environmentBindings(identity) {
     'SHU251_ENV_SUPERVISOR: transport secret and reviewed adapter settings only');
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
+  // MEASURED, systemd 255.4: EnvironmentFile= is applied AFTER Environment=, and
+  // the later assignment wins REGARDLESS of directive order (verified by a
+  // transient unit that set the same key both ways and got the file's value both
+  // times). So a SHU_SUPERVISOR_STATE_DIR= line in either environment file would
+  // SILENTLY override the directory both units render, and the override would be
+  // invisible in the unit text the cross-unit check reads — the same drift the
+  // shared derivation exists to make impossible, one layer down. The store's
+  // location is the unit's to state; a credential file may not restate it.
+  assertStoreNotOverridden(supervisor, coordinator);
+}
+// Shared by the install-time binding check and the arming path, so both refuse by
+// the same name. Named, not bare: see the assertSupervisorLaunchEnvironment note.
+// The coordinator file is the side this covers in practice: the supervisor file is
+// already sealed to its transport secret alone (SHU251_ENV_SUPERVISOR at install
+// time, SHU251_ENV_CROSSED while arming), so its branch here is a backstop that
+// keeps the store key refused by name if that seal is ever relaxed.
+function assertStoreNotOverridden(supervisor, coordinator) {
+  for (const [label, entries] of [['supervisor', supervisor], ['coordinator', coordinator]]) {
+    if (entries.has('SHU_SUPERVISOR_STATE_DIR')) throw Object.assign(
+      new Error(`SHU251_SUPERVISOR_STORE: the ${label} environment file must not override the supervisor store directory the units render`),
+      { code: 'SHU251_SUPERVISOR_STORE' });
+  }
 }
 
 export const names = ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'];
@@ -167,7 +217,7 @@ export function render({ workdir, supervisor, coordinator, writerLock, workspace
   // invoke the reviewed tick directly, not recursively acquire this lock.
   assert.match(workdir, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: workdir must use plain absolute path characters');
   workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
-  if (supervisorStateDir === undefined) supervisorStateDir = join(workspaceStateDir, 'supervisor');
+  supervisorStateDir = supervisorStoreDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir });
   if (supervisorSocket === undefined) supervisorSocket = join(workspaceStateDir, 'supervisor.sock');
   assert.equal(writerLock, `${workspaceStateDir}/host-tick.lock`, 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
   for (const path of [supervisorStateDir, supervisorSocket]) assert.match(path, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
@@ -195,6 +245,20 @@ export function assertPolicy(units, options = {}) {
   const states = [...writer.matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
   assert.ok(states.length === 1 && states[0][1] === expectedState, 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
   if (options.allowWorkspaceStateDirOverride === true) assert.ok(writer.startsWith(`${overrideWarning}\n`), 'SHU251_WRITER_LOCK: explicit override must carry the two-writer hazard warning');
+  // CROSS-UNIT AGREEMENT. Same shape as the SHU_WORKSPACE_STATE_DIR check above,
+  // applied to BOTH services: each must name the supervisor's authoritative store
+  // exactly once, and the two must be byte-identical. A unit that stops setting it
+  // fails here rather than degrading the live recovery to a permanent
+  // EVIDENCE_MISSING, and a unit whose value drifts independently fails too.
+  const expectedStore = supervisorStoreDirectory(options);
+  const stores = names.filter(name => name.endsWith('.service')).map(name => {
+    const found = [...units[name].matchAll(/^Environment=SHU_SUPERVISOR_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
+    assert.ok(found.length === 1 && found[0][1] === expectedStore,
+      `SHU251_SUPERVISOR_STORE: ${name} must render the supervisor's authoritative store directory exactly once`);
+    return found[0][1];
+  });
+  assert.ok(stores.length === 2 && stores[0] === stores[1],
+    'SHU251_SUPERVISOR_STORE: supervisor and coordinator units must name the same supervisor store directory');
   const starts = writer.split('\n').filter(line => line.startsWith('ExecStart='));
   assert.ok(states.length === 1 && starts.length === 1 && starts[0].startsWith(`ExecStart="/usr/bin/flock" "--nonblock" "--conflict-exit-code" "2" ${quote(`${expectedState}/host-tick.lock`)} `), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
   assert.match(writer, /^Requires=shu-supervisor.service$/m, 'SHU251_DEPENDENCY: coordinator must require supervisor');
@@ -222,7 +286,8 @@ export function verifySyntax(directory) {
 // Concrete merged interface; secrets and activation are supplied separately at deployment.
 export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile, node = process.execPath }) {
   workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
-  return { ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket,
+  return { ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorSocket,
+    supervisorStateDir: supervisorStoreDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir }),
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
     coordinator: [node, join(workdir, '.github/coordinator/service/coordinator-tick.mjs'), '--activation', ACTIVATION_FILE] };

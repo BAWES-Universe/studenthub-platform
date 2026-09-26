@@ -284,9 +284,25 @@ argv/environ) are single-sample heuristic bindings, and the re-check reads only
 So the re-check can only ever *downgrade* a sighting. It can never add one, and
 it cannot correct a wrong binding: a long-lived unrelated process present in both
 samples — an operator's shell, a `grep`, a backup or indexer walking the worktree
-— is still reported `CONFIRMED_LIVE`. Note also that the host unit does not set
-`SHU_SUPERVISOR_STATE_DIR`, so in production sighting 1 contributes nothing and
-every sighting comes from exactly these two bindings.
+— is still reported `CONFIRMED_LIVE`.
+
+Sighting 1 used to contribute nothing in production for a reason that had nothing
+to do with binding: `shu-coordinator.service` never set
+`SHU_SUPERVISOR_STATE_DIR` at all, while `shu-supervisor.service` set it in its
+own `Environment=`. An unset variable is `EVIDENCE_MISSING` by design, so both
+`recordedWorkerIdentities()` and the independent supervisor-store probe read
+nothing, and the operation refused *the supervisor store could not be read* on
+every run it had ever made — the store itself being present, owned by
+`shu-coordinator` and listable the whole time. Both units now render the value
+from ONE derivation, `supervisorStoreDirectory()` in `service/units.mjs`, through
+the single `@SUPERVISOR_STATE_DIR@` placeholder each template substitutes, and
+`assertPolicy()` refuses to install units that name different directories or that
+stop naming it — see `SHU251_SUPERVISOR_STORE`. The same name also refuses a
+`SHU_SUPERVISOR_STATE_DIR=` line in a credential file: `EnvironmentFile=` is applied
+after `Environment=` and wins, so a line there would redirect this probe while the
+rendered units still agreed. Sighting 1 therefore contributes in production, and
+neither a one-sided unit edit nor a credential-file override can silently take it
+away again.
 
 **Why this is safe as it stands.** Every one of the seven dispositions refuses, so
 the failure direction is closed: a racy single-sample binding can only ever

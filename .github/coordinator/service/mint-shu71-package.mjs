@@ -8,7 +8,7 @@ import { canonicalBytes, SHU71_FIXED_SEEDS } from '../shu71-activation-package.m
 import { createGitAdapter, precomputeReseedBinding } from '../reseed-append-contract.mjs';
 import { composeApproval } from './compose-shu71-approval.mjs';
 import { hash, UNIT_NAMES } from './phase-a-driver.mjs';
-import { serviceParameters, quote, WORKSPACE_STATE_DIR } from './units.mjs';
+import { serviceParameters, quote, supervisorStoreDirectory, WORKSPACE_STATE_DIR } from './units.mjs';
 import { REQUIRED_CAPABILITIES } from './host-lifecycle.mjs';
 import { validateWindowSpec } from './host-window-bindings.mjs';
 
@@ -153,7 +153,7 @@ export function derive(options, facts, now = Date.now()) {
       fixtures: fixtures.map(({ linear_id, ...f }) => f), gates: { reviewed: true, runtime: true }, signature: '' }, signature: '' };
   const render = { workdir: options.checkout, node: '/usr/bin/node', serviceUser: o.identity.user, serviceGroup: o.identity.group,
     supervisorEnvironmentFile: o.environment.supervisor.path, coordinatorEnvironmentFile: o.environment.coordinator.path,
-    workspaceStateDir: WORKSPACE_STATE_DIR, supervisorStateDir: `${WORKSPACE_STATE_DIR}/supervisor`, supervisorSocket: `${WORKSPACE_STATE_DIR}/supervisor.sock` };
+    workspaceStateDir: WORKSPACE_STATE_DIR, supervisorStateDir: supervisorStoreDirectory({}), supervisorSocket: `${WORKSPACE_STATE_DIR}/supervisor.sock` };
   const p = serviceParameters(render), command = argv => argv.map(quote).join(' ');
   const values = { SERVICE_USER: p.serviceUser, SERVICE_GROUP: p.serviceGroup, WORKDIR: p.workdir, WORKSPACE_STATE_DIR,
     SUPERVISOR_STATE_DIR: p.supervisorStateDir, SUPERVISOR_SOCKET: p.supervisorSocket,
