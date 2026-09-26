@@ -2300,6 +2300,15 @@
     "SHU-140 reconcile-dangling probe: an unreadable supervisor store reports readable:false, never an empty one",
     "SHU-140 reconcile-dangling probe: a supervisor-forked worker is detected despite empty argv and an attempt_id-free environment",
     "SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt",
+    "SHU-140 worker-identity: a live process re-checked with the same start token is the only sighting called WORKER_LIVE",
+    "SHU-140 worker-identity: a pid that vanished between the sighting and the verdict refuses WORKER_STALE_RECORD, never WORKER_LIVE",
+    "SHU-140 worker-identity: a reused pid whose process-start token changed refuses WORKER_STALE_RECORD, never WORKER_LIVE",
+    "SHU-140 worker-identity: a missing or unreadable /proc entry is auditable — WORKER_UNVERIFIED by name, from structured metadata and never a command line",
+    "SHU-140 worker-identity: a stale supervisor record whose pid was never live cannot by itself block recovery, and every other safeguard still protects the slot",
+    "SHU-140 worker-identity: no argument value can reach the refusal detail, the evidence, stdout or an exception, because no command line is ever captured",
+    "SHU-140 worker-identity: a process sighted working IN the attempt worktree is not exonerated by a stale supervisor record, and a record mismatch alone still refuses WORKER_STALE_RECORD",
+    "SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token — both tokens reach the audit line and the disagreement still refuses",
+    "SHU-140 worker-identity: a /proc entry that could not be READ at the re-check is PRESENCE_UNREADABLE and refuses WORKER_UNVERIFIED, never VANISHED and never 'absent'",
     "SHU-140 reconcile-dangling: the remaining guards \u2014 binding, measurability, the state machine's veto, the write, and the CLI",
     "SHU-140 recovery-request: with no request present the tick runs unchanged, dry-run semantics intact, and nothing is read, consumed or written",
     "SHU-140 recovery-request: a valid single-use request runs ONLY the reviewed recovery, bound to exactly that attempt, and the tick does not run",
@@ -19121,6 +19130,42 @@
     },
     {
       "name": "SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a live process re-checked with the same start token is the only sighting called WORKER_LIVE",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a pid that vanished between the sighting and the verdict refuses WORKER_STALE_RECORD, never WORKER_LIVE",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a reused pid whose process-start token changed refuses WORKER_STALE_RECORD, never WORKER_LIVE",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a missing or unreadable /proc entry is auditable — WORKER_UNVERIFIED by name, from structured metadata and never a command line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a stale supervisor record whose pid was never live cannot by itself block recovery, and every other safeguard still protects the slot",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: no argument value can reach the refusal detail, the evidence, stdout or an exception, because no command line is ever captured",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a process sighted working IN the attempt worktree is not exonerated by a stale supervisor record, and a record mismatch alone still refuses WORKER_STALE_RECORD",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token — both tokens reach the audit line and the disagreement still refuses",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-140 worker-identity: a /proc entry that could not be READ at the re-check is PRESENCE_UNREADABLE and refuses WORKER_UNVERIFIED, never VANISHED and never 'absent'",
       "capabilities": []
     },
     {

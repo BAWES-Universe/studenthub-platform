@@ -105,19 +105,214 @@ over IPC, and `supervisorChildEnvironment()` is a fixed allow-list of variable
 *names* that carries no attempt_id. So neither `/proc/<pid>/cmdline` nor
 `/proc/<pid>/environ` ever contains the attempt_id, and a substring scan of them
 cannot see a real worker at all. `defaultWorkerProcesses` therefore takes three
-sightings, any one of which refuses `WORKER_LIVE`:
+sightings:
 
 1. a pid the **supervisor itself** recorded for the attempt in `launches/` or
-   `runs/`, still present in the process table — and, where the run record
-   carries the kernel's `process_token`, still the same process, so a recycled
-   pid is not mistaken for a live worker;
+   `runs/`, still present in the process table;
 2. any process whose `cwd` resolves into the attempt's own worktree;
 3. any process carrying the attempt_id in argv or the environment.
 
 A `/proc` that cannot be listed, or a `launches/` that cannot be read, throws:
 `EVIDENCE_MISSING`, never "no worker". Sighting 2 means that running this command
-from **inside** the attempt worktree refuses `WORKER_LIVE` on the operator's own
-shell; that is the fail-closed direction — run it from elsewhere.
+from **inside** the attempt worktree refuses on the operator's own shell; that is
+the fail-closed direction — run it from elsewhere.
+
+### A sighting is not a live worker
+
+A sighting is an observation taken at **match time**. By the time the verdict is
+formed the process may have exited, and the kernel may have handed its pid to
+something else. Reporting a sighting as a confirmed live worker is how a refusal
+becomes unauditable: `WORKER_LIVE -- live worker process(es) 2770495`, with pid
+2770495 already absent from `/proc`, unknown to `ps` and absent from the journal,
+is a refusal nobody can confirm or disprove afterwards.
+
+So every sighting captures a **stable identity** at match time — the pid, the
+owning uid, the kernel's process-start token (field 22 of `/proc/<pid>/stat`, the
+same slice `supervisor-worker.mjs` records as `process_token`), and the **file
+that supplied the pid**; no command line and no argument value is ever captured,
+for the reasons below — and `defaultWorkerLiveness` then looks again,
+by pid, before any verdict is formed. Comparing the two observations gives one of
+seven named dispositions:
+
+| disposition | what was established | refusal |
+| --- | --- | --- |
+| `CONFIRMED_LIVE` | the pid is still present **and** its start token is unchanged | `WORKER_LIVE` |
+| `UNVERIFIED` | the pid is still present, but its start token could not be read at the sighting or at the re-check | `WORKER_UNVERIFIED` |
+| `UNOBSERVED` | the re-check returned no observation for the pid | `WORKER_UNVERIFIED` |
+| `PRESENCE_UNREADABLE` | `/proc/<pid>` could not be read at the re-check (any stat fault but `ENOENT` — `EACCES`, `ENOTDIR`, an I/O error), so the pid was neither observed present nor proved gone | `WORKER_UNVERIFIED` |
+| `VANISHED` | `/proc/<pid>` is gone: the sighted process exited before the verdict | `WORKER_STALE_RECORD` |
+| `TOKEN_CHANGED` | the start token changed: the pid was reused by another process | `WORKER_STALE_RECORD` |
+| `RECORD_TOKEN_MISMATCH` | the run record's `process_token` disagrees with the live process's start token **and** no independent sighting binds the pid to this attempt | `WORKER_STALE_RECORD` |
+
+`WORKER_LIVE` now means **proved**, and nothing else can claim it. Precedence is
+confirmed → unverified → disproved, so a single confirmed worker outranks any
+number of stale sightings.
+
+`VANISHED` is the only disposition that asserts an absence, so it is reserved for
+an absence the kernel confirmed: `readProcessIdentity` reports `exists_known:
+false` for every stat fault but `ENOENT`, and that is `PRESENCE_UNREADABLE`, which
+fails closed as unverified. "I could not look" is never rendered as a fact — the
+audit line prints `token_at_recheck=unreadable`, never `absent`.
+
+`RECORD_TOKEN_MISMATCH` is a statement about a **record**, and the record is what
+this operation was invoked because it does not trust. It therefore decides only a
+pid that nothing but that record binds to the attempt. A process whose cwd is the
+attempt's own worktree, or that carries the attempt_id, was bound to the attempt
+*by observation* (`independently_bound=yes` in the audit line): a stale
+`process_token` cannot exonerate it, so it falls through to the token checks,
+which can reach only `CONFIRMED_LIVE`, `TOKEN_CHANGED` or `UNVERIFIED` — never a
+release. The record's disagreement stays in the evidence either way:
+`recorded_token`, `record_token_check` and `token_at_sighting` are all printed.
+
+**Record order can never decide a disposition.** Several record kinds may name
+the same pid, and `SUPERVISOR_RECORD_KINDS` is read in a fixed order (`orders`,
+`runs`, `launches`, `completions`). A sighting therefore keeps **every** record
+token that named its pid, and re-runs the comparison over all of them: any
+recorded token that disagrees with the live start token decides `mismatch`, even
+if another record agrees. An agreeing record may not outvote a disagreeing one,
+and an *untokened* record read first may not swallow a later record's
+disagreement — which is what used to happen, flipping `RECORD_TOKEN_MISMATCH`
+into `CONFIRMED_LIVE` and printing `recorded_token=none` with the conflict gone
+from the audit line. Both tokens now appear, in the same read order as
+`source_path`.
+
+### Which combination is allowed to proceed, and why the slot stays protected
+
+**No** sighting ever permits terminalization. Every one of the seven dispositions
+above is a refusal. The only thing that proceeds past the worker checks is a
+record naming a pid that was **never in the process table during this
+invocation** — nothing was seen, so there is nothing to confirm and nothing to
+disprove, and that is the case the old code already treated this way.
+
+That path is not a hole, because it is still gated by every other safeguard,
+none of which is weakened:
+
+- the supervisor's own **signed `MISSING_CLAIM`** over its authenticated
+  transport (any other answer, or an answer with no hold code, refuses);
+- the **supervisor store**, listed independently, with all four record
+  directories readable and **no record of any kind** for the attempt. Any pid
+  from sighting 1 comes *from* such a record, so a stale supervisor record can
+  never release the slot: the store guard necessarily refuses
+  `SUPERVISOR_CLAIM_PRESENT` first;
+- the attempt **worktree** measured at its recorded `scoped_base_sha` and clean,
+  with an unconfigured root refusing `EVIDENCE_MISSING` rather than reading as
+  absent;
+- the **remote branch head** still equal to `target_sha`;
+- **no push/commit receipt** in a directory that was actually listed;
+- and **freshness** on every probe, so no verdict rests on an observation that
+  predates this invocation.
+
+Only all of those together release the slot.
+
+### The refusal is the evidence
+
+Each worker refusal carries one line per sighting, in the detail string, in the
+structured `evidence.sightings`, and on stdout as `WORKER_SIGHTING …`:
+
+```
+WORKER_SIGHTING pid=2770495 uid=1000 disposition=VANISHED \
+  check=/proc/<pid> presence at re-check \
+  source=worktree_cwd source_path=/proc/2770495/cwd \
+  recorded_token=none record_token_check=no_record_token \
+  token_at_sighting=900900 token_at_recheck=absent \
+  identity_check=pid_absent independently_bound=no
+```
+
+Every field is **structured metadata the kernel owns**, and that is the whole
+line. There is no command line in it:
+
+| field | what it says |
+| --- | --- |
+| `pid` | the pid that was sighted |
+| `uid` | the uid owning `/proc/<pid>`, read from the kernel's own inode — the one "which process was this" fact no process can author |
+| `disposition` | one of the seven dispositions above |
+| `check` | **which check fired**: the comparison that actually decided this disposition |
+| `source` | which sighting source supplied the pid (`supervisor_record` / `worktree_cwd` / `attempt_id_scan`), each named once even when two record kinds supplied the same pid |
+| `source_path` | every file that supplied the pid, in read order |
+| `recorded_token` | **every** record token that named this pid, in the same read order as `source_path`, `none` for a record that carried none |
+| `record_token_check` | the record comparison's result: `match`, `mismatch`, `uncomparable` (a token was recorded but no live token could be read), `no_record_token` |
+| `token_at_sighting` | the kernel start token at match time, or `unreadable` |
+| `token_at_recheck` | the kernel start token at the re-check, or `unreadable`/`absent`/`unobserved` |
+| `identity_check` | the identity comparison's result: `start_token_unchanged`, `start_token_changed`, `start_token_unreadable`, `pid_absent`, `presence_unreadable`, `not_observed`, or `not_reached` when the record comparison decided first |
+| `independently_bound` | the binding check's result: whether an independent observation (a cwd in the worktree, or the attempt_id) bound the pid to this attempt, rather than a record alone |
+
+Together that is enough to reconstruct any refusal from the log alone, with no
+access to the host it happened on.
+
+#### No command line and no argument value is ever captured
+
+An earlier revision of this module carried a **redacted** command line in the
+refusal detail, in `evidence.sightings` and on stdout, on the theory that a
+blacklist of credential-looking shapes made third-party argv safe to persist. It
+does not, and the mechanism is now **removed rather than extended**.
+
+A review demonstrated six real `/proc` argv shapes that the blacklist still
+published end to end through `main()` — `X-Api-Key: <value>`, a secret as the
+entry after a short flag (`-p <value>`), `-u user:password`, a JSON body carrying
+a token, `password: <value>`, and argv a caller had already flattened. Each
+instance was individually fixable; the class was not. A blacklist has to
+enumerate every way a credential can be spelled, and the argv this module would
+capture is **arbitrary third-party argv**: sighting 2 matches any process whose
+cwd is inside the attempt worktree, so it is whatever the agent shelled out to —
+`curl`, `gh`, `psql`, `mysql`. On the host, stdout is the unit's journal, so the
+sink is durable and possibly off-host.
+
+So there is no longer any code path that can persist or print an argument value:
+
+- `readProcessIdentity` captures `pid`, `exists`, `exists_known`, `start_token`
+  and `uid`. There is no `cmdline` field, so there is nothing to redact;
+- nothing from argv or the environment is stored on a sighting, rendered into an
+  audit line, or interpolated into an error message. A probe that fails names
+  what it could not read, never what it read;
+- `/proc/<pid>/cmdline` and `/proc/<pid>/environ` are still **read** — sighting 3
+  matches the attempt_id against them — and the bytes are discarded in the same
+  expression that tests them. Only *which file* matched is carried out, in
+  `source_path`. An environment block is a secret store and no truncation makes
+  it safe to log; the same is now true of argv.
+
+The `uid` field is what replaces a command line for recognising a process: it
+distinguishes the runner's own worker from an operator's shell without carrying a
+single byte the process chose.
+
+### What a sighting still does not prove, and the expected operator experience
+
+The re-check settles **identity over time** — "is this pid still the same
+process?" It does not re-establish **binding** — "is this process *this
+attempt's* worker?" Sightings 2 (cwd inside the worktree) and 3 (attempt_id in
+argv/environ) are single-sample heuristic bindings, and the re-check reads only
+`/proc/<pid>/stat`: it never re-reads the cwd and never re-checks the attempt_id.
+So the re-check can only ever *downgrade* a sighting. It can never add one, and
+it cannot correct a wrong binding: a long-lived unrelated process present in both
+samples — an operator's shell, a `grep`, a backup or indexer walking the worktree
+— is still reported `CONFIRMED_LIVE`. Note also that the host unit does not set
+`SHU_SUPERVISOR_STATE_DIR`, so in production sighting 1 contributes nothing and
+every sighting comes from exactly these two bindings.
+
+**Why this is safe as it stands.** Every one of the seven dispositions refuses, so
+the failure direction is closed: a racy single-sample binding can only ever
+produce a *refusal*, never an unsafe terminalization. There is no input on which a
+mis-bound sighting releases the slot. What it costs is not safety but recovery.
+
+**The expected operator experience**, stated so it is not mistaken for a bug: a
+recurring transient sighting in the attempt worktree can block recovery
+repeatedly, and the recourse is to **re-run** — from outside the attempt
+worktree, and ideally when nothing else is walking it. The refusal now says which
+pid, which uid and which file produced the sighting, so the blocking process can
+be identified from the log alone; that reconstructability is what the incident
+actually lacked.
+
+**Follow-up (not implemented here): confirm the binding, not just liveness.**
+`readProcessIdentity` already re-opens `/proc/<pid>` at re-check time. The
+re-check should also re-read *the same evidence that produced the sighting* — the
+cwd still resolving inside the attempt worktree for `worktree_cwd`, the
+attempt_id still present in argv/environ for `attempt_id_scan` — and carry the
+result as a `binding_confirmed` field, reserving `CONFIRMED_LIVE`/`WORKER_LIVE`
+for a sighting whose binding was observed in **both** samples and routing
+binding-seen-once-only to the existing fail-closed `WORKER_UNVERIFIED`. That
+costs one extra `readlink`/read per sighting, keeps the direction closed, and
+makes "proved" mean proved. It is deliberately a follow-up rather than part of
+this change: it improves the *recovery* rate and the strength of the claim, not
+the safety of the slot, which every disposition already protects.
 
 **It never** reads `ENABLE_DISPATCH`, arms or consumes an activation, loads an
 adapter module, retries, resumes or launches anything. On success it writes
@@ -135,7 +330,9 @@ implies a different repair.
 | `RECONCILE_REFUSED: ALREADY_TERMINAL` | the chain is already `COMPLETED`/`FAILED`/`HOLD`; nothing to free |
 | `RECONCILE_REFUSED: NOT_DANGLING` | the resolved stage is live (`RESERVED`/`RUNNING`), not a dangling launch |
 | `RECONCILE_REFUSED: SUPERVISOR_CLAIM_PRESENT` | the supervisor still owns this attempt (status answer, or a durable store record) |
-| `RECONCILE_REFUSED: WORKER_LIVE` | a worker process for this attempt is still running |
+| `RECONCILE_REFUSED: WORKER_LIVE` | a worker process for this attempt is **confirmed** still running: the sighted pid is still present and its process-start token is unchanged |
+| `RECONCILE_REFUSED: WORKER_STALE_RECORD` | a sighted pid is provably not that process any more — it vanished, its start token changed, or a run record's `process_token` disagrees with the live process |
+| `RECONCILE_REFUSED: WORKER_UNVERIFIED` | a sighted pid is still present but its identity could not be established (its start token could not be read, or the re-check did not answer for it) |
 | `RECONCILE_REFUSED: WORKTREE_CHANGED` | the worktree moved off its recorded scoped base, or is dirty |
 | `RECONCILE_REFUSED: BRANCH_MOVED` | the branch's remote head no longer equals `target_sha` |
 | `RECONCILE_REFUSED: PUSH_RECEIPT_PRESENT` | a push/commit receipt exists: an external effect may have landed |
@@ -412,6 +609,22 @@ which is how both of the fail-opens above reached review. The boundaries the
 sandbox cannot supply are injected at the probe (`gitImpl`, `procRoot`), so the
 proofs still need no real git, no real `/proc`, no socket and no network, and the
 file's audited capability set stays `[]`.
+
+The **identity** cases (`SHU-140 worker-identity: …`, nine of them) pin the
+sighting/re-check contract against a real synthetic `/proc`: a matching token is
+the only thing called `WORKER_LIVE`; a vanished pid and a reused pid are
+`WORKER_STALE_RECORD`; an unreadable `/proc` or an unanswered re-check is
+`WORKER_UNVERIFIED` and never a claimed absence; a stale record cannot exonerate
+a process seen working in the worktree, nor block recovery on a pid that was
+never live; a record read first cannot shadow a later record's disagreeing
+`process_token`; and **no argument value can reach the refusal detail, the
+evidence, stdout or an exception**. That last case drives the shipped `main()`
+over fourteen real NUL-separated argv shapes — including the six a redaction
+blacklist was proved to publish — with a distinct planted secret per shape, and
+searches the captured output bytes for each one. A blacklist cannot make it pass;
+only capturing no argument text can. It also asserts the module exports no
+command-line redactor and no truncation bound, so the rejected mechanism cannot
+be reintroduced quietly.
 
 The **requester** cases (`SHU-140 request-recovery: …`, three of them) cover the
 operator command above: the positive, in which the request lands at exactly the
