@@ -252,6 +252,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-claim-manifest.test.mjs",
+    "capabilities": [
+      "git"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-composition.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects commands and fetch; episode harness injects revision, workspace and launch boundaries",

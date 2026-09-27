@@ -16,6 +16,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # The manifest guard proves the manifest's code revision is an ancestor of this checkout with no
+          # executable difference. A depth-1 checkout does not contain that revision, so the guard cannot
+          # validate the manifest at all - the suite needs the history, not just the tip.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -53,6 +57,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # The manifest guard proves the manifest's code revision is an ancestor of this checkout with no
+          # executable difference. A depth-1 checkout does not contain that revision, so the guard cannot
+          # validate the manifest at all - the suite needs the history, not just the tip.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -85,6 +93,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # The manifest guard proves the manifest's code revision is an ancestor of this checkout with no
+          # executable difference. A depth-1 checkout does not contain that revision, so the guard cannot
+          # validate the manifest at all - the suite needs the history, not just the tip.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22

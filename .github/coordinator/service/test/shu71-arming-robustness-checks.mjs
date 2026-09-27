@@ -40,6 +40,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { READ_RETRY, COMMAND_RETRY, commandFailureDetail, haltCode, readOnlyCommand } from '../shu71-production.mjs';
+import { serializeReseedCommit } from '../../reseed-append-contract.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { environmentText, supervisorEnvironment, coordinatorText } from './shu71-supervisor-environment-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
@@ -659,6 +660,41 @@ export async function bindingLegNamedCheck(create, h, leg = 'readback') {
   assert.equal(h.journal().filter(e => e.event === 'HALTED').at(-1)?.binding_leg, leg, `B6_BINDING_LEG_IN_JOURNAL_${leg}`);
 }
 
+// WHICH FIXTURE - AND THEREFORE WHETHER THE SECOND ONE IS BOUND AT ALL.
+// `heads()` walks every fixture the package pins, and fixture_2's head is a term
+// of the sealed block (the window arms two slots). No committed control
+// independently pinned fixture_2's local or remote leg. Its readback leg had only
+// a pre-existing post-push assertion, without a named leg and without a
+// refusal-code check - it asserts HALT with no code and no leg named.
+// Measured at the parent a51c8490, a mutant that neuters either of those two legs
+// alone fires no ref-binding assertion anywhere in the parent's committed suite.
+// The discriminator is that name diff against an unmutated baseline, not an exit
+// code - an unrelated SHU251 row can redden a run in that configuration.
+// The two mutant shapes that truncate the loop or skip its legs are a different
+// matter, and are not claimed here as holes: five committed tests outside this
+// file kill each of them at the parent, so they pin the loop's shape.
+// Each leg of the second fixture now fails alone, under its own name, while the
+// other two agree.
+export async function secondFixtureRefBindingCheck(create, h, leg = 'readback') {
+  clean(h);
+  const foreign = `${'e'.repeat(40)}`;
+  if (leg === 'readback') {
+    const inner = h.boundary.fetch;
+    h.boundary.fetch = async (url, options) => url.includes('SHU-254')
+      ? replied({ object: { sha: foreign } }) : inner(url, options);
+  }
+  if (leg === 'remote') interceptCommands(h, (exe, key) =>
+    key.includes(' ls-remote ') && key.endsWith('refs/heads/coordinator/SHU-254')
+      ? { status: 0, stdout: `${foreign}\trefs/heads/coordinator/SHU-254\n` } : undefined);
+  if (leg === 'local') interceptCommands(h, (exe, key) =>
+    key.includes(' rev-parse --verify refs/heads/coordinator/SHU-254')
+      ? { status: 0, stdout: `${foreign}\n` } : undefined);
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.equal(result.code, 'ACT_REF_BINDING', `B6_SECOND_FIXTURE_REF_BINDING ${leg} ${JSON.stringify(result)}`);
+  assert.equal(result.binding_leg, leg, `B6_SECOND_FIXTURE_REF_BINDING_LEG ${leg}`);
+  assert.equal(h.journal().filter(e => e.event === 'HALTED').at(-1)?.binding_leg, leg, `B6_SECOND_FIXTURE_REF_IN_JOURNAL ${leg}`);
+}
+
 // The legs SHORT-CIRCUIT exactly as the conjunction they replace did: a
 // disagreeing HEAD still means `status --porcelain` is never run at all, so
 // naming the leg added no command and no API call to any path.
@@ -786,6 +822,63 @@ export function readOnlyCommandClosureCheck(classify) {
   for (const argv of [undefined, null, 'show', {}]) assert.equal(classify('/usr/bin/systemctl', argv), false, 'B6_READ_ONLY_COMMAND_CLOSED');
 }
 
+// THE PRE-PUSH ACCEPTANCE IS THE LAST GATE BEFORE THE MUTATION.
+// `verifyReseedCommit` re-derives the whole signed reseed claim - parents in the bound
+// order, tree, metadata, sealed paths, patch digest, result sha - from the LOCAL object
+// store, immediately before the push is issued. The steps before it verify the same
+// commit, so the property only this call carries is the one the mutation needs: the
+// object AS IT IS WHEN THE PUSH IS ABOUT TO BE ISSUED. The fixture serves the genuine
+// commit to every earlier read and the same commit with its two `parent` lines swapped
+// to the read the push step makes - measured at the third `cat-file commit <seed>` of a
+// clean run, immediately before `ls-remote`, `merge-base --is-ancestor` and the push
+// itself - so every earlier gate has already passed by the time it refuses.
+// Asserted: the refusal is named, the push is never issued, the push path is never
+// entered, the remote ref is untouched and nothing arms. The refusal carries the
+// CONTRACT's own name for what is wrong with the object, not the read-back's
+// `ACT_REMOTE_ANCESTRY`: this gate is local, and no push has happened for an ancestry
+// read to judge.
+// 3 on the appendReseed path: it verifies after hash-object and again after the CAS update-ref, so the
+// push step's read is the third. On the observeReseed path (one verification) it would be the second -
+// this is a measured index for the path the fixture takes, not a free parameter. If a fixture change
+// routed the run through observeReseed, `served` would stay null and the control would fail loudly
+// rather than pass vacuously.
+const PREPUSH_ACCEPTANCE_READ = 3;
+const PREPUSH_ANCESTRY_READS = 1;   // the local-reseed append's own, not the push path's
+const swapParentLines = text => {
+  const lines = text.split('\n');
+  const positions = lines.map((line, index) => (line.startsWith('parent ') ? index : -1)).filter(index => index >= 0);
+  if (positions.length !== 2) return null;
+  const swapped = [...lines];
+  [swapped[positions[0]], swapped[positions[1]]] = [swapped[positions[1]], swapped[positions[0]]];
+  return swapped.join('\n');
+};
+
+export async function reseedAcceptanceBeforePushCheck(create, h) {
+  const oid = h.spec.pkg.reseed.expected_seed_head;
+  const genuine = serializeReseedCommit(h.spec.binding.tree, h.spec.pkg.reseed.expected_parent,
+    h.spec.binding.approvedExecutionRevision).toString();
+  const corrupted = swapParentLines(genuine);
+  const remoteBefore = h.refs.remote;
+  let served = null;
+  const commands = interceptCommands(h, (exe, argv, attempt) => {
+    if (!`${exe} ${argv}`.includes(`cat-file commit ${oid}`)) return undefined;
+    if (attempt !== PREPUSH_ACCEPTANCE_READ) return undefined;
+    served = attempt;
+    return { status: 0, stdout: corrupted };
+  });
+  const result = await create(h.id, h.boundary).execute('run')
+    .catch(error => ({ state: 'threw', code: error?.code }));
+  assert.ok(corrupted && corrupted !== genuine, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(served, PREPUSH_ACCEPTANCE_READ, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(result.state, 'HALT', 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(result.code, 'SHU71_RESEED_UNEXPECTED_PARENT', 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(commands.count('push --porcelain'), 0, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(commands.count(`cat-file commit ${oid}`), PREPUSH_ACCEPTANCE_READ, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(commands.count('merge-base --is-ancestor'), PREPUSH_ANCESTRY_READS, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(h.refs.remote, remoteBefore, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+  assert.equal(h.exists(ACTIVATION), false, 'B6_PREPUSH_ACCEPTANCE_ENFORCED');
+}
+
 export const controls = [
   ['a failed measurement is not a state claim about the host', measurementIsNotAStateClaimCheck],
   ['a transient unit read is retried and the teardown completes', transientMeasurementRetriedCheck],
@@ -807,6 +900,7 @@ export const controls = [
   ['the failing binding leg is short-circuited and named', bindingLegShortCircuitCheck],
   ['the package validator own refusal is carried into the halt', packageValidationNamedCheck],
   ['a failed teardown step names its cause as well as its step', teardownCauseNamedCheck],
+  ['the pre-push acceptance refuses before any push is issued', reseedAcceptanceBeforePushCheck],
 ];
 
 // Controls that take a variant, expanded one test per variant so each has its
@@ -819,6 +913,7 @@ export const variantControls = [
   ['a systemctl mutation is attempted exactly once', commandMutationNotRetriedCheck, ['restart', 'start', 'enable']],
   ['a pre-arm refusal names itself and orders no effect', preArmRefusalNamedCheck, ['approval', 'custody', 'action']],
   ['the disagreeing binding leg is named', bindingLegNamedCheck, ['readback', 'local', 'clean']],
+  ['the second fixture is bound too, leg by leg', secondFixtureRefBindingCheck, ['readback', 'remote', 'local']],
 ];
 
 // One anchored substitution, loaded from a disposable path, across the three
@@ -847,6 +942,7 @@ export async function killedBy(t, run) {
   t.diagnostic(`killed by ${/B6_[A-Z_0-9]+/.exec(killed.message)?.[0]}`);
 }
 
+const PUSH_ACCEPTANCE = '        verifyReseedCommit({ git: (args, options) => git(spec, args, options), binding: spec.binding, oid: next });';
 const MEASURED = 'export const measuredPredicate = predicate => { try { return predicate() === true; } catch (error) { throw measurementFailure(error); } };';
 const GATE_LIVE = "        need(measuredPredicate(() => unitProperty('shu-supervisor.service', 'ActiveState') === 'active'\n"
   + "          && unitProperty('shu-supervisor.service', 'SubState') === 'running'), 'ACT_GATE_NOT_LIVE');";
@@ -926,6 +1022,35 @@ export const mutations = [
   ['the pre-arm region loses its handler again', '      return { ok: false, state: \'HALT\', code: haltCode(error?.code),',
     '      throw error;\n      return { ok: false, state: \'HALT\', code: haltCode(error?.code),',
     (create, h) => preArmRefusalNamedCheck(create, h, 'approval')],
+  ['the fixture loop covers only the first fixture',
+    '    for (const fixture of spec.pkg.fixtures) {',
+    '    for (const fixture of spec.pkg.fixtures.slice(0, 1)) {',
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'readback')],
+  ['fixture_2 keeps every read but loses its LOCAL leg check',
+    "['local', local === expected], ['remote', remote === `${expected}\\t${ref}`],",
+    "['local', fixture.issue_id === 'SHU-140' ? local === expected : true], ['remote', remote === `${expected}\\t${ref}`],",
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'local')],
+  ['fixture_2 keeps every read but loses its REMOTE leg check',
+    "['remote', remote === `${expected}\\t${ref}`],",
+    "['remote', fixture.issue_id === 'SHU-140' ? remote === `${expected}\\t${ref}` : true],",
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'remote')],
+  ['fixture_2 keeps every read but loses its READBACK leg check',
+    "['readback', readback.object?.sha === expected]], 'ACT_REF_BINDING');",
+    "['readback', fixture.issue_id === 'SHU-140' ? readback.object?.sha === expected : true]], 'ACT_REF_BINDING');",
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'readback')],
+  ['the second fixture skips its own binding legs',
+    "      const expected = fixture.issue_id === 'SHU-140' && !seeded ? spec.pkg.reseed.expected_parent : fixture.seed_head;",
+    "      const expected = fixture.issue_id === 'SHU-140' && !seeded ? spec.pkg.reseed.expected_parent : fixture.seed_head;\n      if (fixture.issue_id !== 'SHU-140') { result[fixture.branch] = expected; continue; }",
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'local')],
+  // The pre-push acceptance is the last gate before the mutation. These two mutants
+  // are what prove the control pins it: one swallows the refusal and lets the push
+  // through, one never makes the read at all. Both die on the control's own name.
+  ['the pre-push acceptance refusal is swallowed', PUSH_ACCEPTANCE,
+    '        try { verifyReseedCommit({ git: (args, options) => git(spec, args, options), binding: spec.binding, oid: next }); } catch { /* mutation: the refusal is ignored */ }',
+    reseedAcceptanceBeforePushCheck],
+  ['the pre-push acceptance read is not made', PUSH_ACCEPTANCE,
+    '        /* mutation: the acceptance read is not made */',
+    reseedAcceptanceBeforePushCheck],
   ['the binding leg is no longer named', "    throw Object.assign(activationError(code), typeof leg === 'string' && BINDING_LEG_PATTERN.test(leg) ? { leg } : {});",
     '    throw activationError(code);', (create, h) => bindingLegNamedCheck(create, h, 'readback')],
   ['the binding legs are evaluated eagerly instead of in order',

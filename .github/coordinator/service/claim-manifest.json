@@ -1,0 +1,1345 @@
+{
+  "schema": 1,
+  "code_revision": {
+    "head": "5298cce383c88cc361992f810afd50adee16fe61",
+    "tree": "1667833da7eb2ac0384f4ba10126edea43a25426"
+  },
+  "coverage": {
+    "scope": "the sealed arming terms the registries declare; not a coverage report on the whole suite",
+    "controls": 53,
+    "sealed_terms": 41,
+    "controls_never_approvable_through_this_path": 12,
+    "inventory_names": 3667,
+    "duplicate_inventory_names": 2,
+    "control_names_referenced_in_inventory": 132,
+    "suite_names_outside_scope": 3535,
+    "outside_scope_sample": [
+      "RECON_ENV_POSITIVE: distinct credential roles render and pass policy",
+      "RECON_ENV_MUTATION: crossed file paths",
+      "RECON_ENV_MUTATION: identical file paths and hardlinked contents",
+      "RECON_ENV_MUTATION: supervisorEnvironmentFile missing",
+      "RECON_ENV_MUTATION: supervisorEnvironmentFile pointed at other contents",
+      "RECON_ENV_MUTATION: supervisorEnvironmentFile unsafe absolute path",
+      "RECON_ENV_MUTATION: coordinatorEnvironmentFile missing",
+      "RECON_ENV_MUTATION: coordinatorEnvironmentFile pointed at other contents",
+      "RECON_ENV_MUTATION: coordinatorEnvironmentFile unsafe absolute path",
+      "RECON_ENV_MUTATION: coordinator GITHUB_TOKEN missing or empty",
+      "RECON_ENV_MUTATION: coordinator LINEAR_API_TOKEN missing or empty",
+      "RECON_DOC_POSITIVE: closed owner decision and actual error contract"
+    ],
+    "referenced_not_in_inventory": 0,
+    "mutation_rows": 66,
+    "mutation_rows_paired": 65,
+    "mutation_rows_unpaired": [
+      {
+        "test_name": "B6 arming robustness mutation: the gate step stops repeating on a resume",
+        "reason": "no registered control is named by this row, so no control is measured to die"
+      }
+    ]
+  },
+  "receipt_files_present": [
+    {
+      "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+      "kind": "suite",
+      "verdict": null,
+      "head": "5e61f57aed691ec01d24da403ade07a291c39e02",
+      "tree": "ec84d564d662f372af492259369ecc6e6fa7e907",
+      "exit": 1,
+      "records_failing_run": true
+    },
+    {
+      "file": "receipts/verifier-r32.json",
+      "kind": "verified",
+      "verdict": "PASS",
+      "head": "e2ba8e12bbe03c11e094e7c9be280b5b59a8df34",
+      "tree": "aac1eea21fefbf51786573adc7640ba91ab4ba80",
+      "exit": null,
+      "records_failing_run": false
+    }
+  ],
+  "receipt_files_are_not_evidence": true,
+  "pins_present": [],
+  "entries": [
+    {
+      "id": "b5-post-push-read-back/a-failing-linear-issueupdate-is-never-retried",
+      "sealed_term": "a failing Linear issueUpdate is never retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a failing Linear issueUpdate is never retried"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b5-post-push-read-back/a-failing-push-is-never-retried",
+      "sealed_term": "a failing push is never retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a failing push is never retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the push is retried like a read",
+          "test_name": "B5 post-push read-back mutation: the push is retried like a read",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-genuinely-wrong-ancestry-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely wrong ancestry refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ancestry read itself is retried until it agrees",
+          "test_name": "B5 post-push read-back mutation: the ancestry read itself is retried until it agrees",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the signed reseed sha is not compared",
+          "test_name": "B5 post-push read-back mutation: the signed reseed sha is not compared",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-genuinely-wrong-ref-sha-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely wrong ref sha refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ref comparison itself is retried until it agrees",
+          "test_name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-graphql-refusal-is-named-by-its-codes",
+      "sealed_term": "a GraphQL refusal is named by its codes",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a GraphQL refusal is named by its codes"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the GraphQL error codes are not collected",
+          "test_name": "B5 post-push read-back mutation: the GraphQL error codes are not collected",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-landed-push-whose-reseed-commit-read-is-not-answerable-yet-still-arms",
+      "sealed_term": "a landed push whose reseed commit read is not answerable yet still arms",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a landed push whose reseed commit read is not answerable yet still arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the backoff schedule is emptied",
+          "test_name": "B5 post-push read-back mutation: the backoff schedule is emptied",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the post-push ancestry read goes back to the unretried door",
+          "test_name": "B5 post-push read-back mutation: the post-push ancestry read goes back to the unretried door",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-persistently-failing-read-still-refuses-under-the-same-name",
+      "sealed_term": "a persistently failing read still refuses under the same name",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a persistently failing read still refuses under the same name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "an exhausted retry returns an empty answer instead of refusing",
+          "test_name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-ref-that-moved-after-the-push-refuses-instead-of-being-retried",
+      "sealed_term": "a ref that moved after the push refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a ref that moved after the push refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ref is not required to still carry the reseed commit",
+          "test_name": "B5 post-push read-back mutation: the ref is not required to still carry the reseed commit",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-third-parent-refuses-instead-of-being-retried",
+      "sealed_term": "a third parent refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a third parent refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the exact parent count is not required",
+          "test_name": "B5 post-push read-back mutation: the exact parent count is not required",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/a-transient-ref-read-back-is-retried-and-the-window-arms",
+      "sealed_term": "a transient ref read-back is retried and the window arms",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a transient ref read-back is retried and the window arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ref read-back goes back to the unretried door",
+          "test_name": "B5 post-push read-back mutation: the ref read-back goes back to the unretried door",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the retry policy allows a single attempt",
+          "test_name": "B5 post-push read-back mutation: the retry policy allows a single attempt",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/arming-never-asks-for-the-patch-bearing-comparison",
+      "sealed_term": "arming never asks for the patch-bearing comparison",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: arming never asks for the patch-bearing comparison"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the patch-bearing comparison comes back",
+          "test_name": "B5 post-push read-back mutation: the patch-bearing comparison comes back",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/only-a-measured-transient-outcome-is-retryable",
+      "sealed_term": "only a measured transient outcome is retryable",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: only a measured transient outcome is retryable"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "a refusal with no measured detail is retryable",
+          "test_name": "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
+          "paired_by": "identity"
+        },
+        {
+          "name": "every reason is retryable once a status matches",
+          "test_name": "B5 post-push read-back mutation: every reason is retryable once a status matches",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/parents-in-the-other-order-refuse-instead-of-being-retried",
+      "sealed_term": "parents in the other order refuse instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: parents in the other order refuse instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the parent order is not required",
+          "test_name": "B5 post-push read-back mutation: the parent order is not required",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/retrying-stops-at-the-authorization-expiry",
+      "sealed_term": "retrying stops at the authorization expiry",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: retrying stops at the authorization expiry"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the authorization expiry does not stop the retry",
+          "test_name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/the-first-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
+      "sealed_term": "the first parent position alone is wrong and refuses under its own name",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the first parent position alone is wrong and refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the first parent position is not required",
+          "test_name": "B5 post-push read-back mutation: the first parent position is not required",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/the-halt-names-the-failing-route-and-status-and-carries-no-secret",
+      "sealed_term": "the halt names the failing route and status and carries no secret",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the halt names the failing route and status and carries no secret"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "a definitive status is treated as transient",
+          "test_name": "B5 post-push read-back mutation: a definitive status is treated as transient",
+          "paired_by": "identity"
+        },
+        {
+          "name": "a failed call is no longer described at all",
+          "test_name": "B5 post-push read-back mutation: a failed call is no longer described at all",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the halt record drops the measured API detail",
+          "test_name": "B5 post-push read-back mutation: the halt record drops the measured API detail",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/the-reported-detail-is-closed-to-the-reviewed-fields",
+      "sealed_term": "the reported detail is closed to the reviewed fields",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the GraphQL codes are echoed unfiltered",
+          "test_name": "B5 post-push read-back mutation: the GraphQL codes are echoed unfiltered",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the operation label is echoed unsanitized",
+          "test_name": "B5 post-push read-back mutation: the operation label is echoed unsanitized",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the reason vocabulary is opened",
+          "test_name": "B5 post-push read-back mutation: the reason vocabulary is opened",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the status is echoed unchecked",
+          "test_name": "B5 post-push read-back mutation: the status is echoed unchecked",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the transport fault is echoed unfiltered",
+          "test_name": "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/the-retry-sleep-budget-is-bounded-across-the-whole-invocation",
+      "sealed_term": "the retry sleep budget is bounded across the whole invocation",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the overall sleep budget is not enforced",
+          "test_name": "B5 post-push read-back mutation: the overall sleep budget is not enforced",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/the-second-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
+      "sealed_term": "the second parent position alone is wrong and refuses under its own name",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the second parent position alone is wrong and refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the second parent position is not required",
+          "test_name": "B5 post-push read-back mutation: the second parent position is not required",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-boundary-that-throws-is-never-retried-and-echoes-no-text",
+      "sealed_term": "a boundary that throws is never retried and echoes no text",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a boundary that throws is never retried and echoes no text"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command retry repeats a boundary fault as well as a command failure",
+          "test_name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-card-read-back-that-never-reaches-the-target-still-refuses",
+      "sealed_term": "a card read-back that never reaches the target still refuses",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)",
+          "B6 arming robustness: a card read-back that never reaches the target still refuses (never)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the card read-back accepts a card that is not the target",
+          "test_name": "B6 arming robustness mutation: the card read-back accepts a card that is not the target",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the card read-back re-issues the write it is reading back",
+          "test_name": "B6 arming robustness mutation: the card read-back re-issues the write it is reading back",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-failed-measurement-is-not-a-state-claim-about-the-host",
+      "sealed_term": "a failed measurement is not a state claim about the host",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a failed measurement is not a state claim about the host"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "a failed measurement is reported as the state the caller named",
+          "test_name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-failed-teardown-step-names-its-cause-as-well-as-its-step",
+      "sealed_term": "a failed teardown step names its cause as well as its step",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a failed teardown step names its cause as well as its step"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the teardown records step codes without causes",
+          "test_name": "B6 arming robustness mutation: the teardown records step codes without causes",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-drifted-fixture-card-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely drifted fixture card refuses instead of being retried",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-live-expiry-companion-still-refuses-by-its-own-name",
+      "sealed_term": "a genuinely live expiry companion still refuses by its own name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely live expiry companion still refuses by its own name"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-wrong-fixture-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely wrong fixture refuses instead of being retried",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-wrong-remote-sha-refuses-and-names-the-leg",
+      "sealed_term": "a genuinely wrong remote sha refuses and names the leg",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-landed-push-that-reported-failure-is-re-read-not-re-pushed",
+      "sealed_term": "a landed push that reported failure is re-read, not re-pushed",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-persistently-failing-linear-read-still-refuses-under-the-same-name",
+      "sealed_term": "a persistently failing Linear read still refuses under the same name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a persistently failing Linear read still refuses under the same name"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-persistently-failing-ls-remote-names-the-command-it-ran",
+      "sealed_term": "a persistently failing ls-remote names the command it ran",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a persistently failing ls-remote names the command it ran"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the failing command is no longer described",
+          "test_name": "B6 arming robustness mutation: the failing command is no longer described",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the halt record drops the measured command detail",
+          "test_name": "B6 arming robustness mutation: the halt record drops the measured command detail",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-pre-arm-refusal-names-itself-and-orders-no-effect",
+      "sealed_term": "a pre-arm refusal names itself and orders no effect",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)",
+          "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+          "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the pre-arm region loses its handler again",
+          "test_name": "B6 arming robustness mutation: the pre-arm region loses its handler again",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-push-that-did-not-land-still-refuses",
+      "sealed_term": "a push that did not land still refuses",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a push that did not land still refuses (old)",
+          "B6 arming robustness: a push that did not land still refuses (third)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the push recovery accepts a third sha",
+          "test_name": "B6 arming robustness mutation: the push recovery accepts a third sha",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the push recovery accepts any remote answer",
+          "test_name": "B6 arming robustness mutation: the push recovery accepts any remote answer",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-short-supervisor-transport-secret-refuses-under-its-own-name",
+      "sealed_term": "a short supervisor transport secret refuses under its own name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a short supervisor transport secret refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the supervisor secret refusal goes back to a bare string",
+          "test_name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-stale-read-back-of-a-landed-card-transition-is-re-read-not-refused",
+      "sealed_term": "a stale read-back of a landed card transition is re-read, not refused",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the card read-back is never re-read",
+          "test_name": "B6 arming robustness mutation: the card read-back is never re-read",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-supervisor-that-did-not-come-up-refuses-instead-of-arming",
+      "sealed_term": "a supervisor that did not come up refuses instead of arming",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+          "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+          "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the dispatch timer liveness read-back is removed",
+          "test_name": "B6 arming robustness mutation: the dispatch timer liveness read-back is removed",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the supervisor liveness read-back is removed",
+          "test_name": "B6 arming robustness mutation: the supervisor liveness read-back is removed",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the supervisor SubState term is dropped",
+          "test_name": "B6 arming robustness mutation: the supervisor SubState term is dropped",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-systemctl-mutation-is-attempted-exactly-once",
+      "sealed_term": "a systemctl mutation is attempted exactly once",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)",
+          "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+          "B6 arming robustness: a systemctl mutation is attempted exactly once (start)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/a-transient-linear-fixture-card-read-is-retried-and-the-window-arms",
+      "sealed_term": "a transient Linear fixture-card read is retried and the window arms",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the Linear fixture-card read goes back to the unretried door",
+          "test_name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-transient-ls-remote-failure-is-retried-and-the-window-arms",
+      "sealed_term": "a transient ls-remote failure is retried and the window arms",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a transient ls-remote failure is retried and the window arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command backoff schedule is emptied",
+          "test_name": "B6 arming robustness mutation: the host-command backoff schedule is emptied",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the host-command read policy allows a single attempt",
+          "test_name": "B6 arming robustness mutation: the host-command read policy allows a single attempt",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/a-transient-unit-read-is-retried-and-the-teardown-completes",
+      "sealed_term": "a transient unit read is retried and the teardown completes",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a transient unit read is retried and the teardown completes"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command read retry is removed",
+          "test_name": "B6 arming robustness mutation: the host-command read retry is removed",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/an-absent-coordinator-credential-refuses-under-its-own-name",
+      "sealed_term": "an absent coordinator credential refuses under its own name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: an absent coordinator credential refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the coordinator credential refusal goes back to a bare string",
+          "test_name": "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the halt code goes back to an allow-list",
+          "test_name": "B6 arming robustness mutation: the halt code goes back to an allow-list",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/only-a-reviewed-refusal-name-reaches-a-halt-record",
+      "sealed_term": "only a reviewed refusal name reaches a halt record",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: only a reviewed refusal name reaches a halt record"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/only-an-enumerated-host-read-may-be-repeated",
+      "sealed_term": "only an enumerated host read may be repeated",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: only an enumerated host read may be repeated"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/the-cli-names-the-refusal-it-caught",
+      "sealed_term": "the CLI names the refusal it caught",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the CLI names the refusal it caught"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/the-credential-store-is-opened-at-most-once-per-invocation",
+      "sealed_term": "the credential store is opened at most once per invocation",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the credential store is opened at most once per invocation"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the credential is resolved on every call again",
+          "test_name": "B6 arming robustness mutation: the credential is resolved on every call again",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-disagreeing-binding-leg-is-named",
+      "sealed_term": "the disagreeing binding leg is named",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the disagreeing binding leg is named (clean)",
+          "B6 arming robustness: the disagreeing binding leg is named (local)",
+          "B6 arming robustness: the disagreeing binding leg is named (readback)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the binding leg is no longer named",
+          "test_name": "B6 arming robustness mutation: the binding leg is no longer named",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-expiry-installation-is-measured-not-assumed",
+      "sealed_term": "the expiry installation is measured, not assumed",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+          "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+          "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the expiry durable-file term is dropped",
+          "test_name": "B6 arming robustness mutation: the expiry durable-file term is dropped",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the expiry enablement term is dropped",
+          "test_name": "B6 arming robustness mutation: the expiry enablement term is dropped",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the expiry installation read-back is removed",
+          "test_name": "B6 arming robustness mutation: the expiry installation read-back is removed",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-failing-binding-leg-is-short-circuited-and-named",
+      "sealed_term": "the failing binding leg is short-circuited and named",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the failing binding leg is short-circuited and named"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the binding legs are evaluated eagerly instead of in order",
+          "test_name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-host-read-sleep-budget-is-bounded-across-the-whole-invocation",
+      "sealed_term": "the host-read sleep budget is bounded across the whole invocation",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command sleep budget is not enforced",
+          "test_name": "B6 arming robustness mutation: the host-command sleep budget is not enforced",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-linear-issueupdate-mutation-is-still-final-on-its-first-error",
+      "sealed_term": "the Linear issueUpdate mutation is still final on its first error",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the Linear issueUpdate is routed through the retried read door",
+          "test_name": "B6 arming robustness mutation: the Linear issueUpdate is routed through the retried read door",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-package-validator-own-refusal-is-carried-into-the-halt",
+      "sealed_term": "the package validator own refusal is carried into the halt",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the package validator own refusal is carried into the halt"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the package validator code is dropped again",
+          "test_name": "B6 arming robustness mutation: the package validator code is dropped again",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-pre-push-acceptance-refuses-before-any-push-is-issued",
+      "sealed_term": "the pre-push acceptance refuses before any push is issued",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the pre-push acceptance refuses before any push is issued"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the pre-push acceptance read is not made",
+          "test_name": "B6 arming robustness mutation: the pre-push acceptance read is not made",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the pre-push acceptance refusal is swallowed",
+          "test_name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-reported-command-detail-is-closed-to-the-reviewed-fields",
+      "sealed_term": "the reported command detail is closed to the reviewed fields",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the reported command detail is closed to the reviewed fields"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/the-second-fixture-is-bound-too-leg-by-leg",
+      "sealed_term": "the second fixture is bound too, leg by leg",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
+          "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+          "B6 arming robustness: the second fixture is bound too, leg by leg (remote)"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "fixture_2 keeps every read but loses its LOCAL leg check",
+          "test_name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its LOCAL leg check",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "fixture_2 keeps every read but loses its READBACK leg check",
+          "test_name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its READBACK leg check",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "fixture_2 keeps every read but loses its REMOTE leg check",
+          "test_name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its REMOTE leg check",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the fixture loop covers only the first fixture",
+          "test_name": "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the second fixture skips its own binding legs",
+          "test_name": "B6 arming robustness mutation: the second fixture skips its own binding legs",
+          "paired_by": "wrapper-body"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "exit": 1,
+  "head": "5e61f57aed691ec01d24da403ade07a291c39e02",
+  "kind": "suite",
+  "log_path": "/home/bawes/work/round/b6-at-5e61f57a.log",
+  "log_sha256": "079af8ddcbf81ca70dc5e3f9e6e1c9f763d82a88c3a3b5fce9504d3793ff92ba",
+  "name": "b6-arming-robustness-and-manifest-guard",
+  "not_ok": 1,
+  "ok": 97,
+  "recorded_at": "2026-09-22T14:17:53+0300",
+  "tap_path": "/home/bawes/work/round/scratch/reports/b6-at-5e61f57a.tap",
+  "tap_sha256": "4b23d13f609fdb30c8a309aed23d3c654e2ed32f90d180599e696a788185cd88",
+  "tree": "ec84d564d662f372af492259369ecc6e6fa7e907"
+}
