@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
-import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory, assertSupervisorLaunchEnvironment, supervisorAdapterKeys } from '../units.mjs';
+import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory, assertSupervisorLaunchEnvironment, supervisorAdapterKeys, unitEnvironmentKeys, UNIT_ENVIRONMENT_KEYS } from '../units.mjs';
 import { SupervisorStore } from '../../supervisor.mjs';
 import { SUPERVISOR_RECORD_KINDS, defaultSupervisorStore } from '../../reconcile-dangling.mjs';
 import { install, rollback, snapshot } from '../install.mjs';
@@ -613,4 +613,38 @@ test('SHU251 arming refuses a workspace state override in either credential file
     { code: 'SHU251_WORKSPACE_STATE' }, 'SHU251_WORKSPACE_STATE: arming must refuse a coordinator-side override by name');
   assert.throws(() => assertSupervisorLaunchEnvironment(`${supervisorSource}SHU_WORKSPACE_STATE_DIR=/elsewhere\n`, coordinatorSource),
     { code: 'SHU251_ENV_CROSSED' }, 'SHU251_ENV_CROSSED: the supervisor file may still carry only its transport secret');
+});
+
+// R4-3 (audit): the two named guards covered two of the coordinator unit's four
+// Environment= keys. EnvironmentFile= wins over Environment=, so ENABLE_DISPATCH or
+// SHU_SUPERVISOR_SOCKET in the coordinator file silently replaced what the unit
+// renders, e.g. ENABLE_DISPATCH=false cancelling an arming drop-in. The refused set
+// is read from the templates, so it cannot fall behind a new Environment= line.
+test('SHU251 env override: the refused keys are exactly the keys each unit template renders', () => {
+  for (const name of ['shu-supervisor.service', 'shu-coordinator.service']) {
+    assert.deepEqual([...UNIT_ENVIRONMENT_KEYS[name]].sort(), unitEnvironmentKeys(name).sort(),
+      `SHU251_ENV_OVERRIDE: the refused keys for ${name} must match its template's Environment= lines`);
+  }
+  assert.ok(UNIT_ENVIRONMENT_KEYS['shu-coordinator.service'].includes('ENABLE_DISPATCH'));
+});
+for (const key of ['ENABLE_DISPATCH', 'SHU_SUPERVISOR_SOCKET']) {
+  test(`SHU251 mutation: coordinator environment file overrides ${key}`, t => {
+    const root = fixture(t), params = fixtureParameters(root);
+    fs.appendFileSync(params.coordinatorEnvironmentFile, `${key}=${key === 'ENABLE_DISPATCH' ? 'true' : join(root, 'elsewhere.sock')}\n`);
+    for (const operation of [render, p => assertPolicy(render(fixtureParameters(fixture(t))), p), p => install(root, p)]) {
+      assert.throws(() => operation(params), error => error.code === 'SHU251_ENV_OVERRIDE' && error.key === key,
+        `SHU251_ENV_OVERRIDE: a coordinator-file ${key} must refuse by name`);
+    }
+    assert.deepEqual(fs.readdirSync(root), ['.environment'], 'the override must refuse before staging');
+  });
+}
+test('SHU251 arming refuses every other key the coordinator unit renders', () => {
+  const secret = 'f'.repeat(64);
+  const coordinatorSource = [...supervisorAdapterKeys.map(key => `${key}=fixture`), 'GITHUB_TOKEN=fixture', 'LINEAR_API_TOKEN=fixture'].join('\n') + '\n';
+  const supervisorSource = `SHU_SUPERVISOR_SECRET=${secret}\n`;
+  assert.equal(assertSupervisorLaunchEnvironment(supervisorSource, coordinatorSource).SHU_SUPERVISOR_SECRET, secret);
+  for (const [line, key] of [['ENABLE_DISPATCH=false', 'ENABLE_DISPATCH'], ['ENABLE_DISPATCH=true', 'ENABLE_DISPATCH'], ['SHU_SUPERVISOR_SOCKET=/elsewhere.sock', 'SHU_SUPERVISOR_SOCKET']]) {
+    assert.throws(() => assertSupervisorLaunchEnvironment(supervisorSource, `${coordinatorSource}${line}\n`),
+      { code: 'SHU251_ENV_OVERRIDE', key }, `SHU251_ENV_OVERRIDE: arming must refuse ${line} in the coordinator file`);
+  }
 });
