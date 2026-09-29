@@ -2022,6 +2022,8 @@
     "routing: codex-builder -> codex-cli; launch options carry cwd/env/resume, zero credentials",
     "monitor fails closed: no remote poll endpoint for synchronous exec",
     "prompt carries the bound head, the attempt echo, and the schema contract; no secrets",
+    "role stage: the schema and prompt allow only the phase's own success stage",
+    "role stage: a writer answering the other phase's stage is held before the broker",
     "durable session failure after thread.started HOLDs and pauses (clean exit)",
     "durable session failure after thread.started HOLDs and pauses (killed after thread.started)",
     "durable session failure on the BUFFERED path also HOLDs and pauses",
@@ -2917,6 +2919,8 @@
     "SHU-250: worker death surfaces a terminal HOLD receipt without blocking later tick",
     "SHU-250: completion with no worker evidence HOLDs",
     "SHU-250: carried result SHA disagrees with verified head and HOLDs",
+    "role stage: an adapter's own refusal code reaches the receipt note through the supervisor",
+    "role stage: a carried result can never supply the coordinator's live-head codes",
     "SHU-250: bound callback and observed identity survive completion and restart",
     "SHU-250: stopped heartbeat never declares a live worker dead",
     "SHU-250: unknown socket and result contract versions fail closed",
@@ -17711,6 +17715,28 @@
       ]
     },
     {
+      "name": "role stage: the schema and prompt allow only the phase's own success stage",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "role stage: a writer answering the other phase's stage is held before the broker",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "durable session failure after thread.started HOLDs and pauses (clean exit)",
       "capabilities": [
         {
@@ -23805,6 +23831,14 @@
     },
     {
       "name": "SHU-250: carried result SHA disagrees with verified head and HOLDs",
+      "capabilities": []
+    },
+    {
+      "name": "role stage: an adapter's own refusal code reaches the receipt note through the supervisor",
+      "capabilities": []
+    },
+    {
+      "name": "role stage: a carried result can never supply the coordinator's live-head codes",
       "capabilities": []
     },
     {
