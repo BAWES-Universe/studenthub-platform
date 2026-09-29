@@ -591,3 +591,26 @@ test('SHU251 mutation: supervisor unit workspace state directory drifts alone', 
   named(() => assertPolicy(units, params), "SHU251_WORKSPACE_STATE: the supervisor unit must render the writer's SHU_WORKSPACE_STATE_DIR exactly once");
   assert.notEqual(renderedWorkspaceState(units, names[0]), renderedWorkspaceState(units, names[1]));
 });
+for (const [label, parameter, code] of [['coordinator', 'coordinatorEnvironmentFile', 'SHU251_WORKSPACE_STATE'],
+  ['supervisor', 'supervisorEnvironmentFile', 'ERR_ASSERTION']]) {
+  test(`SHU251 mutation: ${label} environment file overrides the workspace state directory`, t => {
+    const root = fixture(t), params = fixtureParameters(root);
+    fs.appendFileSync(params[parameter], `SHU_WORKSPACE_STATE_DIR=${join(root, 'elsewhere')}\n`);
+    for (const operation of [render, p => assertPolicy(render(fixtureParameters(fixture(t))), p), p => install(root, p)]) {
+      assert.throws(() => operation(params), error => error.code === code
+        && (code !== 'ERR_ASSERTION' || error.message.startsWith('SHU251_ENV_SUPERVISOR:')),
+        `a ${label} environment file override must refuse by name`);
+    }
+    assert.deepEqual(fs.readdirSync(root), ['.environment'], 'the override must refuse before staging');
+  });
+}
+test('SHU251 arming refuses a workspace state override in either credential file', () => {
+  const secret = 'f'.repeat(64);
+  const coordinatorSource = [...supervisorAdapterKeys.map(key => `${key}=fixture`), 'GITHUB_TOKEN=fixture', 'LINEAR_API_TOKEN=fixture'].join('\n') + '\n';
+  const supervisorSource = `SHU_SUPERVISOR_SECRET=${secret}\n`;
+  assert.equal(assertSupervisorLaunchEnvironment(supervisorSource, coordinatorSource).SHU_SUPERVISOR_SECRET, secret);
+  assert.throws(() => assertSupervisorLaunchEnvironment(supervisorSource, `${coordinatorSource}SHU_WORKSPACE_STATE_DIR=/elsewhere\n`),
+    { code: 'SHU251_WORKSPACE_STATE' }, 'SHU251_WORKSPACE_STATE: arming must refuse a coordinator-side override by name');
+  assert.throws(() => assertSupervisorLaunchEnvironment(`${supervisorSource}SHU_WORKSPACE_STATE_DIR=/elsewhere\n`, coordinatorSource),
+    { code: 'SHU251_ENV_CROSSED' }, 'SHU251_ENV_CROSSED: the supervisor file may still carry only its transport secret');
+});
