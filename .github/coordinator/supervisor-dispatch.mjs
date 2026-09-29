@@ -61,7 +61,18 @@ export function supervisorAdapter(receipt, env, io = {}) {
     try {
       const request = signedSupervisorRequest(supervisorOrder(receipt, options), supervisorTransportSecret(env), operation);
       return await (io.supervisorTransport ?? submitToSupervisor)({ socketPath: env.SHU_SUPERVISOR_SOCKET, request });
-    } catch (error) { return { ok: false, stage: "HOLD", reason: `supervisor configuration unavailable: ${error?.code || error?.message}` }; }
+    } catch (error) {
+      // A non-Error throw, or one carrying an empty code AND message, used to
+      // render an empty cause ("supervisor configuration unavailable: "), which
+      // made the fault read the same as no fault at all. Fall back to the
+      // stringified throw, and to a fixed label when even that is empty or the
+      // literal "undefined", so the cause is always non-empty and meaningful.
+      // Verdict unchanged: still not-ok, still HOLD.
+      const described = error?.code || error?.message || String(error);
+      const cause = typeof described === "string" && described.length > 0 && described !== "undefined"
+        ? described : "unknown error";
+      return { ok: false, stage: "HOLD", reason: `supervisor configuration unavailable: ${cause}` };
+    }
   };
   return {
     supervised: true,
