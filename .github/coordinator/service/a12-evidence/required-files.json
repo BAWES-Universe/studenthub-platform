@@ -65,6 +65,7 @@
   ".github/coordinator/test/future-clock.test.mjs",
   ".github/coordinator/test/hermes-adversarial.test.mjs",
   ".github/coordinator/test/hermes-pool.test.mjs",
+  ".github/coordinator/test/launch-refusal-visibility.test.mjs",
   ".github/coordinator/test/lifecycle.test.mjs",
   ".github/coordinator/test/linear-issues.test.mjs",
   ".github/coordinator/test/merge-readiness.test.mjs",

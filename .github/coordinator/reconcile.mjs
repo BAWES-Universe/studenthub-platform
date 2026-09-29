@@ -1118,6 +1118,23 @@ export async function verifyActivationTarget(adapter, { repo, target_sha, github
   }
 }
 
+// launchNotAcknowledgedNote — the note that makes a refused launch visible.
+// A LAUNCH_UNKNOWN with no discovered run means the adapter never acknowledged
+// the order: the supervisor gate was disabled, a legacy launch was ambiguous, or
+// the transport was lost. The adapter already knows which one — it returns it as
+// `reason` — and that reason used to be dropped by foldLaunchOutcome, so the held
+// receipt (and the dispatch line) read only as "outcome unknown" and a disabled
+// gate was indistinguishable from a vanished socket. Returns null when there is
+// nothing to report (a discovered run, another stage, or an absent/blank reason)
+// so both the fold and the dispatch line can branch on it directly.
+export function launchNotAcknowledgedNote(launch = {}) {
+  const hasDiscoveredRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
+  const reason = typeof launch.reason === "string" ? launch.reason.trim() : "";
+  return launch.stage === "LAUNCH_UNKNOWN" && !hasDiscoveredRun && reason.length > 0
+    ? `launch not acknowledged: ${reason}`
+    : null;
+}
+
 // Fold any adapter's normalized launch result through the same receipt machine.
 // Remote adapters usually return RUNNING. A synchronous adapter such as
 // `claude -p` can return its terminal result in the launch call; it is still
@@ -1130,13 +1147,23 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
 
   if (launch.stage === "LAUNCH_UNKNOWN") {
     const hasDiscoveredRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
-    return hasDiscoveredRun
-      ? nextReceiptState(transition.receipt, {
-          type: "run_discovered",
-          external_run_id: launch.external_run_id,
-          worker_identity: launch.worker_identity,
-        }, ctx)
-      : transition;
+    if (hasDiscoveredRun) {
+      return nextReceiptState(transition.receipt, {
+        type: "run_discovered",
+        external_run_id: launch.external_run_id,
+        worker_identity: launch.worker_identity,
+      }, ctx);
+    }
+    // No discovered run: the launch was never acknowledged. Carry the adapter's
+    // own refusal reason into the notes so the held slot explains itself instead
+    // of reading as a bare "outcome unknown" — a disabled dispatch gate, an
+    // ambiguous legacy launch and a lost socket all looked identical before.
+    // Deduped: a retry tick repeats the same refusal and must not grow the trail.
+    // Stage (LAUNCH_UNKNOWN), the held slot and every verdict are unchanged.
+    const note = launchNotAcknowledgedNote(launch);
+    const notes = transition.receipt.notes ?? [];
+    if (!note || notes.includes(note)) return transition;
+    return { ...transition, receipt: { ...transition.receipt, notes: [...notes, note] } };
   }
 
   const hasRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
@@ -3057,7 +3084,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   // not depend on a later wakeup. The reporter remains read-only with respect to
   // coordinator state and absorbs every delivery failure.
   await reportCurrentIncident([...receipts, next]);
-  if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})`);
+  // A refused launch names itself on the dispatch line too, not only in the
+  // receipt: an operator watching the tick must see WHY the slot stayed held.
+  const notAcknowledged = launchNotAcknowledgedNote(launch);
+  if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})${notAcknowledged ? ` — ${notAcknowledged}` : ""}`);
   return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;
 }
 
