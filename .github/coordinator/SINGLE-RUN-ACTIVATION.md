@@ -431,8 +431,11 @@ options and report the expected model on the host; contract tests inspect the
 arguments but do not spend subscription usage or establish account availability.
 Model aliases/worker labels are not evidence of the model actually used.
 
-The builder edits and tests files, then returns `result_sha: null` with
-`BUILD_READY` or `REVISION_READY`. It must stop writing before returning. The
+The builder edits and tests files, then returns `result_sha: null` with the one
+success stage its phase allows: `BUILD_READY` for the initial build,
+`REVISION_READY` for a revision. The schema and prompt offer only that stage, and
+the host holds any other success stage as `CALLBACK_ROLE_MISMATCH` without
+pushing. It must stop writing before returning. The
 host validates the attempt/head callback before invoking the existing broker.
 The broker reads ordinary tracked and non-ignored untracked files without
 following symlinks, stages raw bytes in its own index, and creates a commit with
