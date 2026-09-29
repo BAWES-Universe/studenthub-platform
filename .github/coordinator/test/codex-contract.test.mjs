@@ -1181,20 +1181,20 @@ test("role stage: a writer answering the other phase's stage is held before the 
   const WRAPPED_ENV = { PATH: "/usr/bin", HOME: "/root", SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper" };
   for (const [scope_phase, stage] of [["revision", "BUILD_READY"], ["initial", "REVISION_READY"]]) {
     let brokered = 0;
-    const out = await launchBuilder({ ...launchInput({ scope_phase }), env: WRAPPED_ENV,
-      execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson(stage, { result_sha: null }) }) }),
+    const out = await launchBuilder({ ...launchInput({ scope_phase, env: WRAPPED_ENV,
       io: { pushBrokerEnabled: true, worktreeRoot: "/repo", pushRemoteUrl: "https://example.invalid/r.git",
-        pushBrokerImpl: async () => { brokered += 1; return { ok: true, remote_head: RESULT_SHA }; } } });
+        pushBrokerImpl: async () => { brokered += 1; return { ok: true, remote_head: RESULT_SHA }; } } }),
+      execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson(stage, { result_sha: null }) }) }) });
     assert.equal(out.stage, "HOLD", `${scope_phase}/${stage}`);
     assert.equal(out.reason_code, "CALLBACK_ROLE_MISMATCH");
     assert.equal(brokered, 0, "nothing is pushed for a stage the receipt would refuse");
     assert.equal(out.callback, undefined, "a refused callback is never offered as routable evidence");
   }
   let brokered = 0;
-  const accepted = await launchBuilder({ ...launchInput({ scope_phase: "revision" }), env: WRAPPED_ENV,
-    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY", { result_sha: null }) }) }),
+  const accepted = await launchBuilder({ ...launchInput({ scope_phase: "revision", env: WRAPPED_ENV,
     io: { pushBrokerEnabled: true, worktreeRoot: "/repo", pushRemoteUrl: "https://example.invalid/r.git",
-      pushBrokerImpl: async () => { brokered += 1; return { ok: true, remote_head: RESULT_SHA }; } } });
+      pushBrokerImpl: async () => { brokered += 1; return { ok: true, remote_head: RESULT_SHA }; } } }),
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY", { result_sha: null }) }) }) });
   assert.equal(accepted.stage, "COMPLETED", accepted.reason);
   assert.equal(accepted.callback.result_sha, RESULT_SHA);
   assert.equal(brokered, 1);
