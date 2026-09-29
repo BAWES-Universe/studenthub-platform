@@ -116,7 +116,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     "Review and test the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
     "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",
-    "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha; never cite another head or an unsafe path.",
+    "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha, optionally followed by :line or :start-end (for example path@bound-head-sha:19); never cite another head or an unsafe path.",
     "Return the required structured callback. PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
   ].filter(Boolean).join("\n");
 }
@@ -279,7 +279,12 @@ function allowedSourceCitation(rawLink, { target_sha, cwd, fsImpl = fs }) {
   const separator = rawLink.lastIndexOf("@");
   if (separator <= 0) return false;
   const sourcePath = rawLink.slice(0, separator);
-  const citedSha = rawLink.slice(separator + 1);
+  // Reviewers cite a line as path@sha:19 or a range as path@sha:19-27. The
+  // anchor only points into the file at the bound head; the head itself stays
+  // exact, and anything else after it still fails closed.
+  const anchored = /^([^:]*):([1-9]\d{0,6})(?:-([1-9]\d{0,6}))?$/.exec(rawLink.slice(separator + 1));
+  if (anchored && anchored[3] !== undefined && Number(anchored[3]) < Number(anchored[2])) return false;
+  const citedSha = anchored ? anchored[1] : rawLink.slice(separator + 1);
   if (!SHA_RE.test(citedSha) || citedSha !== target_sha) return false;
   if (
     path.posix.isAbsolute(sourcePath)
