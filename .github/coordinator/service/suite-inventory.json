@@ -2594,10 +2594,12 @@
     "SHU-245 mutation M4 drop mandatory machine evidence",
     "SHU-245 mutation M5 accept a citation from a foreign head",
     "SHU-245 mutation M6 admit the git control path",
+    "SHU-245 mutation M7 accept a reversed line range",
     "SHU-245 A1: Run #5 file evidence plus exact path@sha citations produces the bound PASS",
     "SHU-245 A2: exact attempt and exact head binding cannot be widened",
     "SHU-245 A3: canonical machine file evidence remains mandatory and non-vacuous",
     "SHU-245 A4: malformed, unsafe, missing, and foreign-head source citations fail closed",
+    "SHU-245 A5: a line or range anchor on an exact-head citation keeps the verdict",
     "SHU-246 A1: prior episode reviews do not spend the current revision budget",
     "SHU-246 A2: current episode exhaustion remains fail-closed",
     "SHU-246 A3: no armed episode preserves global routing byte-for-byte",
@@ -21422,6 +21424,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-245 mutation M7 accept a reversed line range",
+      "capabilities": []
+    },
+    {
       "name": "SHU-245 A1: Run #5 file evidence plus exact path@sha citations produces the bound PASS",
       "capabilities": []
     },
@@ -21435,6 +21441,10 @@
     },
     {
       "name": "SHU-245 A4: malformed, unsafe, missing, and foreign-head source citations fail closed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-245 A5: a line or range anchor on an exact-head citation keeps the verdict",
       "capabilities": []
     },
     {

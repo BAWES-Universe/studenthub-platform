@@ -42,6 +42,12 @@ const CASES = [
     to: '  if (parts.some((part) => !part || part === "." || part === "..")) return false;',
     pattern: "SHU-245 A4",
   },
+  {
+    name: "M7 accept a reversed line range",
+    from: "  if (anchored && anchored[3] !== undefined && Number(anchored[3]) < Number(anchored[2])) return false;",
+    to: "",
+    pattern: "SHU-245 A5",
+  },
 ];
 
 for (const mutation of CASES) {
