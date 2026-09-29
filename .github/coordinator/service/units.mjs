@@ -123,6 +123,7 @@ export function assertSupervisorLaunchEnvironment(source, coordinatorSource) {
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     Object.assign(new Error('SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required'), { code: 'SHU251_ENV_COORDINATOR' }));
   assertStoreNotOverridden(supervisor, coordinator);
+  assertWorkspaceStateNotOverridden(supervisor, coordinator);
   return Object.fromEntries([...supervisor, ...[...coordinator].filter(([key]) => supervisorAdapterKeys.includes(key))]);
 }
 function requireSupervisorAdapterEntries(entries) {
@@ -186,6 +187,7 @@ function environmentBindings(identity) {
   // shared derivation exists to make impossible, one layer down. The store's
   // location is the unit's to state; a credential file may not restate it.
   assertStoreNotOverridden(supervisor, coordinator);
+  assertWorkspaceStateNotOverridden(supervisor, coordinator);
 }
 // Shared by the install-time binding check and the arming path, so both refuse by
 // the same name. Named, not bare: see the assertSupervisorLaunchEnvironment note.
@@ -198,6 +200,17 @@ function assertStoreNotOverridden(supervisor, coordinator) {
     if (entries.has('SHU_SUPERVISOR_STATE_DIR')) throw Object.assign(
       new Error(`SHU251_SUPERVISOR_STORE: the ${label} environment file must not override the supervisor store directory the units render`),
       { code: 'SHU251_SUPERVISOR_STORE' });
+  }
+}
+
+// Same rule for the workspace state directory: both units render it, and an
+// environment-file line would silently override one side after Environment=,
+// splitting the writer's base bundles from the supervisor's result fold.
+function assertWorkspaceStateNotOverridden(supervisor, coordinator) {
+  for (const [label, entries] of [['supervisor', supervisor], ['coordinator', coordinator]]) {
+    if (entries.has('SHU_WORKSPACE_STATE_DIR')) throw Object.assign(
+      new Error(`SHU251_WORKSPACE_STATE: the ${label} environment file must not override the workspace state directory the units render`),
+      { code: 'SHU251_WORKSPACE_STATE' });
   }
 }
 
@@ -245,6 +258,14 @@ export function assertPolicy(units, options = {}) {
   const states = [...writer.matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
   assert.ok(states.length === 1 && states[0][1] === expectedState, 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
   if (options.allowWorkspaceStateDirOverride === true) assert.ok(writer.startsWith(`${overrideWarning}\n`), 'SHU251_WRITER_LOCK: explicit override must carry the two-writer hazard warning');
+  // The supervisor's worker children fold results against the base bundle the
+  // writer stored under SHU_WORKSPACE_STATE_DIR (base-bundle.mjs), and their
+  // environment is filtered from the supervisor's own (credential-delivery.mjs).
+  // A supervisor unit that does not name the writer's directory refuses every
+  // result with BASE_BUNDLE_UNAVAILABLE, so the two must agree.
+  const supervisorStates = [...units['shu-supervisor.service'].matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
+  assert.ok(supervisorStates.length === 1 && supervisorStates[0][1] === expectedState,
+    'SHU251_WORKSPACE_STATE: the supervisor unit must render the writer\'s SHU_WORKSPACE_STATE_DIR exactly once');
   // CROSS-UNIT AGREEMENT. Same shape as the SHU_WORKSPACE_STATE_DIR check above,
   // applied to BOTH services: each must name the supervisor's authoritative store
   // exactly once, and the two must be byte-identical. A unit that stops setting it

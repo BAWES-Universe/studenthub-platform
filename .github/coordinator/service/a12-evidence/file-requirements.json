@@ -799,7 +799,7 @@
     ],
     "justification": "F4: M13 executes the attempt-workspace mutation child, whose disposable repository setup requires real Git. Other selected children execute Bash. Mutation-child union: bash, git.",
     "call_sites": [
-      ".github/coordinator/test/shu239-mutations.test.mjs:60"
+      ".github/coordinator/test/shu239-mutations.test.mjs:62"
     ]
   },
   {

@@ -421,3 +421,27 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   }
 });
+
+test("SHU-239: a reviewer checkout under the service umask stays readable below its 0750 gate", () => {
+  const f = setup(); try {
+    fs.mkdirSync(path.join(f.seed, "tools", "fixture", "test"), { recursive: true });
+    fs.writeFileSync(path.join(f.seed, "tools", "fixture", "test", "scan.test.mjs"), "export {};\n");
+    fs.writeFileSync(path.join(f.seed, "tools", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    fs.symlinkSync("fixture", path.join(f.seed, "tools", "alias"));
+    git(f.seed, "add", "."); git(f.seed, "commit", "-m", "nested fixture");
+    const sha = git(f.seed, "rev-parse", "HEAD");
+    git(f.seed, "push", f.remote, "HEAD:refs/heads/coordinator/SHU-140");
+    const previous = process.umask(0o077);
+    let cwd;
+    try { ({ cwd } = f.prepare(f.receipt({ target_sha: sha }))); } finally { process.umask(previous); }
+    const mode = (...p) => fs.lstatSync(path.join(cwd, ...p)).mode & 0o777;
+    assert.equal(mode(), 0o750, "SHU-239: the attempt root remains the only gate");
+    for (const dir of [["tools"], ["tools", "fixture"], ["tools", "fixture", "test"], [".git"], [".git", "objects"]]) {
+      assert.equal(mode(...dir), 0o755, `SHU-239: ${dir.join("/")} must be traversable by the reviewer`);
+    }
+    assert.equal(mode("tools", "fixture", "test", "scan.test.mjs"), 0o644, "SHU-239: builder tests must be readable by the reviewer");
+    assert.equal(mode("tools", "run.sh"), 0o755, "SHU-239: executable bits survive normalization");
+    assert.equal(mode("round"), 0o644);
+    assert.ok(fs.lstatSync(path.join(cwd, "tools", "alias")).isSymbolicLink(), "symlinks are left untouched");
+  } finally { f.cleanup(); }
+});

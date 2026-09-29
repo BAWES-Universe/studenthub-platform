@@ -676,6 +676,12 @@
     "SHU251 mutation: coordinator environment file overrides the supervisor store",
     "SHU251 mutation: supervisor environment file overrides the supervisor store",
     "SHU251 arming refuses a supervisor store override in either credential file",
+    "SHU251 cross-unit agreement: the supervisor unit renders the writer's workspace state directory",
+    "SHU251 mutation: supervisor unit stops setting the workspace state directory",
+    "SHU251 mutation: supervisor unit workspace state directory drifts alone",
+    "SHU251 mutation: coordinator environment file overrides the workspace state directory",
+    "SHU251 mutation: supervisor environment file overrides the workspace state directory",
+    "SHU251 arming refuses a workspace state override in either credential file",
     "B1_SINGLE_LANE: production credential drives coordinator build BLOCK revision re-review",
     "B1_TWO_LANES: B completes while A revision remains running, then A completes",
     "B1_CROSS_TEARDOWN: retired A wake protects B, retired B wake protects next A",
@@ -1923,6 +1929,7 @@
     "SHU-227: generated schema is worker-readable while session authority remains private",
     "SHU-227: host tick requires an explicit initial head and an already-enabled gate",
     "SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards are bound",
+    "SHU-239: a reviewer checkout under the service umask stays readable below its 0750 gate",
     "four-task batch reserves review progress, one writer per branch, and isolated worktrees",
     "Hermes sessions sharing one provider account consume one shared quota",
     "LAUNCH_UNKNOWN and ambiguous HOLD retain capacity",
@@ -2212,6 +2219,8 @@
     "LINEAR BUDGET: a full comment page is followed to the end of the thread; a short page is not",
     "LINEAR BUDGET: a rate-limited answer HOLDs the tick with the retry Linear stated and exits cleanly",
     "LINEAR BUDGET: the reported retry is the one Linear stated, in seconds",
+    "LINEAR READ: a single issue's comment thread is read to its end, oldest receipts included",
+    "LINEAR READ: a repeated or missing comment cursor fails closed instead of truncating",
     "stale-head",
     "self-same-family-verdict",
     "red-required-check",
@@ -2516,6 +2525,7 @@
     "SHU-239 mutation M13 restore world-readable attempt directories",
     "SHU-239 mutation M14 stop masking sibling workspaces",
     "SHU-239 mutation M15 retain reviewer ACL after execution",
+    "SHU-239 mutation M16 leave the reviewer checkout owner-only",
     "SHU-239 A1/A2: restricted subscription launch replaces bare and keeps only OAuth",
     "SHU-239 A3/A4: tool and customization surface is the exact read/search-only restricted contract",
     "SHU-239 A5: hostile project customizations cannot change cwd, argv, environment, or tool policy",
@@ -2658,6 +2668,10 @@
     "SHU261 mutation provider overclaim dies by SHU261_NETWORK_CLAIM",
     "SHU261 mutation widened model families dies by SHU261_NETWORK_ENFORCEMENT",
     "SHU261 mutation destination filter added dies by SHU261_NETWORK_NO_ALLOWLIST",
+    "SHU261 shipped profiles hide /run and bind back only the model's resolver",
+    "SHU261 mutation model profile keeps the host /run dies by SHU261_PROCESS",
+    "SHU261 mutation extra path bound back into /run dies by SHU261_RESOLVER",
+    "SHU261 mutation writable bind into /run dies by SHU261_RESOLVER",
     "SHU-261 mutation: wrapper environment canary placement removed",
     "SHU-261 mutation: preflight service-home Claude path omitted",
     "SHU-261 mutation: host validation service-home Claude directory omitted",
@@ -7368,6 +7382,72 @@
     },
     {
       "name": "SHU251 arming refuses a supervisor store override in either credential file",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 cross-unit agreement: the supervisor unit renders the writer's workspace state directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor unit stops setting the workspace state directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor unit workspace state directory drifts alone",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: coordinator environment file overrides the workspace state directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor environment file overrides the workspace state directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 arming refuses a workspace state override in either credential file",
       "capabilities": [
         {
           "name": "systemd_analyze"
@@ -16885,6 +16965,23 @@
       ]
     },
     {
+      "name": "SHU-239: a reviewer checkout under the service umask stays readable below its 0750 gate",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
       "name": "four-task batch reserves review progress, one writer per branch, and isolated worktrees",
       "capabilities": []
     },
@@ -18722,6 +18819,14 @@
       "capabilities": []
     },
     {
+      "name": "LINEAR READ: a single issue's comment thread is read to its end, oldest receipts included",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR READ: a repeated or missing comment cursor fails closed instead of truncating",
+      "capabilities": []
+    },
+    {
       "name": "stale-head",
       "capabilities": []
     },
@@ -20514,6 +20619,17 @@
       ]
     },
     {
+      "name": "SHU-239 mutation M16 leave the reviewer checkout owner-only",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "SHU-239 A1/A2: restricted subscription launch replaces bare and keeps only OAuth",
       "capabilities": [
         {
@@ -21815,6 +21931,50 @@
     },
     {
       "name": "SHU261 mutation destination filter added dies by SHU261_NETWORK_NO_ALLOWLIST",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU261 shipped profiles hide /run and bind back only the model's resolver",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU261 mutation model profile keeps the host /run dies by SHU261_PROCESS",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU261 mutation extra path bound back into /run dies by SHU261_RESOLVER",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU261 mutation writable bind into /run dies by SHU261_RESOLVER",
       "capabilities": [
         {
           "name": "bash"
