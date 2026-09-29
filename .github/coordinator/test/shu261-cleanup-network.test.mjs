@@ -139,3 +139,56 @@ for (const [name, from, to, assertion] of [
     dies(t, assertion, () => assertReviewerSandboxContract(mutated(from, to)));
   });
 }
+
+function runProfile(profile, { varRun = "/run", resolver = "/run/systemd/resolve/stub-resolv.conf", resolverMode = "regular file:644" } = {}) {
+  const start = source.indexOf('if [[ "$profile" == "test" ]]; then');
+  assert.ok(start >= 0, "SHU261_RUNTIME_HARNESS: execute the shipped profile branches and launch argv");
+  return spawnSync("/bin/bash", ["-p", "-c", `
+set -euo pipefail
+profile=${profile}
+reviewer_uid=12345
+reviewer_gid=12345
+canonical_workspace=/fixture/attempt
+systemd_args=()
+CLAUDE_CODE_OAUTH_TOKEN=fixture-only
+trusted_executable() { printf '%s\\n' "$1"; }
+claude() { :; }
+function /usr/bin/realpath { case "$3" in /var/run) printf '%s\\n' '${varRun}' ;; /etc/resolv.conf) printf '%s\\n' '${resolver}' ;; *) return 1 ;; esac; }
+function /usr/bin/stat { printf '%s\\n' '${resolverMode}'; }
+function /usr/bin/systemd-run { printf '%s\\n' "$@"; }
+${profile === "test" ? 'set -- /fixture/node /srv/shu/studenthub-platform/.github/coordinator/review-execution-child.mjs' : 'set -- claude'}
+${source.slice(start)}
+`], { encoding: "utf8" });
+}
+const runtimeArgs = (run) => run.stdout.split("\n").filter((arg) => /InaccessiblePaths=\/(?:var\/)?run$|TemporaryFileSystem|BindReadOnlyPaths/.test(arg));
+
+test("SHU261 shipped profiles hide /run and bind back only the model's resolver", () => {
+  const test = runProfile("test");
+  assert.equal(test.status, 0, `SHU261_RUNTIME_BRANCH: ${test.stderr}`);
+  assert.deepEqual(runtimeArgs(test), ["--property=InaccessiblePaths=/run", "--property=InaccessiblePaths=/var/run"],
+    "SHU261_PROCESS: the networkless test profile keeps /run fully inaccessible");
+  const model = runProfile("model");
+  assert.equal(model.status, 0, `SHU261_RUNTIME_BRANCH: ${model.stderr}`);
+  assert.deepEqual(runtimeArgs(model), ["--property=TemporaryFileSystem=/run:ro", "--property=BindReadOnlyPaths=/run/systemd/resolve/stub-resolv.conf"],
+    "SHU261_RESOLVER: the model profile sees an empty /run except the resolver file");
+  assert.deepEqual(runtimeArgs(runProfile("model", { resolver: "/etc/resolv.conf" })), ["--property=TemporaryFileSystem=/run:ro"],
+    "SHU261_RESOLVER: a resolver outside /run needs no bind");
+  assert.deepEqual(runtimeArgs(runProfile("model", { varRun: "/var/run" })),
+    ["--property=TemporaryFileSystem=/run:ro", "--property=InaccessiblePaths=/var/run", "--property=BindReadOnlyPaths=/run/systemd/resolve/stub-resolv.conf"],
+    "SHU261_PROCESS: a /var/run that is not the /run symlink stays masked");
+  for (const unsafe of [{ resolverMode: "regular file:666" }, { resolverMode: "directory:755" }, { resolver: "/run/bad path" }]) {
+    const refused = runProfile("model", unsafe);
+    assert.equal(refused.status, 64, "SHU261_RESOLVER: an unsafe resolver must refuse the launch");
+    assert.match(refused.stderr, /refuses an unsafe resolver configuration/);
+    assert.deepEqual(runtimeArgs(refused), [], "SHU261_RESOLVER: a refused resolver never reaches systemd-run");
+  }
+});
+for (const [name, from, to, assertion] of [
+  ["model profile keeps the host /run", 'runtime_args=("--property=TemporaryFileSystem=/run:ro")', 'runtime_args=("--property=BindReadOnlyPaths=/run")', "SHU261_PROCESS"],
+  ["extra path bound back into /run", '    runtime_args+=("--property=BindReadOnlyPaths=$resolver")',
+    '    runtime_args+=("--property=BindReadOnlyPaths=$resolver" "--property=BindReadOnlyPaths=/run/user")', "SHU261_RESOLVER"],
+]) {
+  test(`SHU261 mutation ${name} dies by ${assertion}`, (t) => {
+    dies(t, assertion, () => assertReviewerSandboxContract(mutated(from, to)));
+  });
+}

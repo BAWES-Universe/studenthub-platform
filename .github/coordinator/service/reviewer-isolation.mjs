@@ -62,6 +62,11 @@ export function assertReviewerSandboxContract(source) {
     "SHU261_PROCESS: concurrent reviewer refusal must be explicit");
   required(source, /ProtectProc=invisible/, "SHU261_PROCESS: host processes must be invisible");
   required(source, /InaccessiblePaths=\/run/, "SHU261_PROCESS: runtime authority and journal sockets must be hidden");
+  required(source, /runtime_args=\("--property=TemporaryFileSystem=\/run:ro"\)/,
+    "SHU261_PROCESS: the model profile must replace /run with an empty read-only tmpfs");
+  assert.deepEqual([...source.matchAll(/BindReadOnlyPaths=([^"\s]*)/g)].map((match) => match[1]), ["$resolver"],
+    "SHU261_RESOLVER: the only path bound back into /run is the host resolver configuration");
+  required(source, /"\$resolver" == \/run\/\*/, "SHU261_RESOLVER: the resolver bind must stay inside /run");
   required(source, /ProtectSystem=strict/, "SHU261_WRITE: host filesystem must be read-only");
   required(source, /NoNewPrivileges=yes/, "SHU261_PRIVILEGE: reviewer must not gain privileges");
   required(source, /CapabilityBoundingSet=/, "SHU261_PRIVILEGE: reviewer capability set must be empty");

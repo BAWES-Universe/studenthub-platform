@@ -111,6 +111,23 @@ export function workspaceBindingConflicts(record, binding) {
     JSON.stringify(record?.allowed_paths) !== JSON.stringify(binding?.allowed_paths);
 }
 
+function reviewerReadableCheckout(cwd) {
+  // The coordinator runs under UMask=0077, so its checkout is owner-only below
+  // the gate. The sandbox grants shu-reviewer access to the 0750 attempt root
+  // only; everything beneath it must be world-readable for that grant to work.
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name);
+      const s = fs.lstatSync(p);
+      if (s.isSymbolicLink()) continue;
+      if (s.isDirectory()) { walk(p); fs.chmodSync(p, (s.mode & 0o7777) | 0o055); }
+      else if (s.isFile()) fs.chmodSync(p, (s.mode & 0o7777) | 0o044 | (s.mode & 0o100 ? 0o011 : 0));
+    }
+  };
+  walk(cwd);
+  fs.chmodSync(cwd, 0o750);
+}
+
 function publicReadOnlyTree(dir) {
   // This temporary repository contains only public-to-the-worker source objects,
   // never credentials. The different worker uid may read it but cannot edit it.
@@ -245,7 +262,7 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       // Each attempt is its own non-world-readable gate; the sandbox grants its
       // reviewer UID temporary access to only the bound review attempt.
       if (writer) workerRun("chmod", ["0750", "--", cwd], root);
-      else fs.chmodSync(cwd, 0o750);
+      else reviewerReadableCheckout(cwd);
     }
     directory(cwd);
     privateAttemptDirectory(cwd);

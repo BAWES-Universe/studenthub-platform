@@ -196,6 +196,10 @@ if [[ "$profile" == "test" ]]; then
     "--property=PrivateNetwork=yes"
     "--property=RestrictAddressFamilies=AF_UNIX"
   )
+  runtime_args=(
+    "--property=InaccessiblePaths=/run"
+    "--property=InaccessiblePaths=/var/run"
+  )
   environment_args=()
 else
   if [[ "$1" != "claude" || -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
@@ -210,6 +214,27 @@ else
   shift
   set -- "$canonical_claude" "$@"
   network_args=("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
+  # Claude must resolve its API host. /etc/resolv.conf usually points into /run,
+  # which an inaccessible mask would hide, so the model profile replaces /run
+  # with an empty read-only tmpfs and binds back only that resolver file.
+  # Everything else under /run stays hidden, as in the test profile.
+  runtime_args=("--property=TemporaryFileSystem=/run:ro")
+  if [[ "$(/usr/bin/realpath -m -- /var/run)" != "/run" ]]; then
+    runtime_args+=("--property=InaccessiblePaths=/var/run")
+  fi
+  resolver="$(/usr/bin/realpath -e -- /etc/resolv.conf)" || {
+    echo "reviewer model profile requires a host resolver configuration" >&2
+    exit 64
+  }
+  if [[ "$resolver" == /run/* ]]; then
+    resolver_mode="$(/usr/bin/stat -c '%F:%a' -- "$resolver")"
+    if [[ ! "$resolver" =~ ^/run/[A-Za-z0-9._/-]+$ || "${resolver_mode%%:*}" != "regular file" ||
+          $(( 8#${resolver_mode##*:} & 8#022 )) -ne 0 ]]; then
+      echo "reviewer model profile refuses an unsafe resolver configuration" >&2
+      exit 64
+    fi
+    runtime_args+=("--property=BindReadOnlyPaths=$resolver")
+  fi
   # The reviewer necessarily receives its own bounded subscription credential.
   # It receives no coordinator, GitHub, Linear, SSH or supervisor credential.
   # Copy the one permitted value from this process environment without placing
@@ -232,8 +257,7 @@ fi
   --property=PrivateDevices=yes \
   --property=NoNewPrivileges=yes \
   --property=CapabilityBoundingSet= \
-  --property=InaccessiblePaths=/run \
-  --property=InaccessiblePaths=/var/run \
+  "${runtime_args[@]}" \
   --property=ProtectProc=invisible \
   --property=ProcSubset=pid \
   --property=ProtectKernelTunables=yes \
