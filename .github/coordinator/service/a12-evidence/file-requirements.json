@@ -624,6 +624,12 @@
     "call_sites": []
   },
   {
+    "file": ".github/coordinator/test/launch-refusal-visibility.test.mjs",
+    "capabilities": [],
+    "justification": "Pure in-process assertions: the real coordinator tick is driven through an injected supervisor transport and a fake Linear fetch; no external command, privileged operation or host facility is required",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/test/lifecycle.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

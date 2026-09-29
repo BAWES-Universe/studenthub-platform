@@ -67,6 +67,7 @@
     ".github/coordinator/test/future-clock.test.mjs",
     ".github/coordinator/test/hermes-adversarial.test.mjs",
     ".github/coordinator/test/hermes-pool.test.mjs",
+    ".github/coordinator/test/launch-refusal-visibility.test.mjs",
     ".github/coordinator/test/lifecycle.test.mjs",
     ".github/coordinator/test/linear-issues.test.mjs",
     ".github/coordinator/test/merge-readiness.test.mjs",
@@ -2183,6 +2184,11 @@
     "a spawn record that does not bind to its lease is refused, never merged",
     "CR-2: the lifecycle poll monitors through the SAME adapter instance it resolved",
     "CR-3: a COMPLETED recovery against a MOVED head must HOLD, never complete",
+    "a 'dispatch disabled' refusal appears in the receipt note",
+    "the carried reason is deduped across retry ticks and never invented",
+    "a non-Error or empty-code throw still names a non-empty cause",
+    "a rejected launch can never read as RUNNING",
+    "end-to-end: a refused launch names itself on the dispatch line and in the durable receipt",
     "lifecycle: polled completed WITHOUT callback -> durable HOLD; the issue is parked, never auto-redispatched",
     "lifecycle: polled completed WITH matching callback -> durable COMPLETED with agent_id",
     "lifecycle: upstream failure -> durable FAILED; the slot retries with exactly ONE new attempt",
@@ -18601,6 +18607,26 @@
     },
     {
       "name": "CR-3: a COMPLETED recovery against a MOVED head must HOLD, never complete",
+      "capabilities": []
+    },
+    {
+      "name": "a 'dispatch disabled' refusal appears in the receipt note",
+      "capabilities": []
+    },
+    {
+      "name": "the carried reason is deduped across retry ticks and never invented",
+      "capabilities": []
+    },
+    {
+      "name": "a non-Error or empty-code throw still names a non-empty cause",
+      "capabilities": []
+    },
+    {
+      "name": "a rejected launch can never read as RUNNING",
+      "capabilities": []
+    },
+    {
+      "name": "end-to-end: a refused launch names itself on the dispatch line and in the durable receipt",
       "capabilities": []
     },
     {
