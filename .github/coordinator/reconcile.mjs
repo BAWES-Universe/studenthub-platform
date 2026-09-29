@@ -1446,10 +1446,11 @@ export const LINEAR_COMMENT_CREATE_MUTATION = `
   }`;
 
 export const LINEAR_ISSUE_COMMENTS_QUERY = `
-  query CoordinatorIssueComments($issueId: String!) {
+  query CoordinatorIssueComments($issueId: String!, $after: String) {
     issue(id: $issueId) {
-      comments(first: 100, orderBy: createdAt) {
+      comments(first: 100, orderBy: createdAt, after: $after) {
         nodes { body createdAt user { id displayName } }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }`;
@@ -1577,12 +1578,30 @@ export async function fetchLinearIssues(request) {
   return (await fetchLinearBoard({ ...request, readComments: false })).issues;
 }
 
-// fetchIssueComments — read an issue's comment thread (durable receipts + pause
-// markers + worker callbacks live there). issueId is the Linear UUID when known,
-// else the identifier (mocked tests / snapshot mode tolerate either).
+// fetchIssueComments — read an issue's COMPLETE comment thread (durable receipts
+// + pause markers + worker callbacks live there). issueId is the Linear UUID when
+// known, else the identifier (mocked tests / snapshot mode tolerate either).
+// Linear returns the newest comments first, so a single page silently dropped the
+// oldest receipts once a thread passed 100 comments (SHU-140 did on 2026-09-29).
+// Every page is followed to the end; a bad cursor throws rather than truncating.
 export async function fetchIssueComments({ issueId, token, fetchImpl = fetch }) {
-  const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId }, token, fetchImpl);
-  return data?.issue?.comments?.nodes ?? [];
+  const comments = [];
+  const seenCursors = new Set();
+  let after = null;
+  for (;;) {
+    const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId, after }, token, fetchImpl);
+    const page = data?.issue?.comments;
+    comments.push(...(page?.nodes ?? []));
+    if (page?.pageInfo?.hasNextPage !== true) return comments;
+    const cursor = page.pageInfo.endCursor;
+    if (typeof cursor !== "string" || cursor.length === 0 || seenCursors.has(cursor)) {
+      const err = new Error("Linear comment pagination returned an invalid or repeated cursor");
+      err.code = "LINEAR_PAGINATION_INVALID";
+      throw err;
+    }
+    seenCursors.add(cursor);
+    after = cursor;
+  }
 }
 
 // measureBranchHead — the same read, reporting whether it ANSWERED.

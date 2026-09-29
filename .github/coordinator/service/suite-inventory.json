@@ -2219,6 +2219,8 @@
     "LINEAR BUDGET: a full comment page is followed to the end of the thread; a short page is not",
     "LINEAR BUDGET: a rate-limited answer HOLDs the tick with the retry Linear stated and exits cleanly",
     "LINEAR BUDGET: the reported retry is the one Linear stated, in seconds",
+    "LINEAR READ: a single issue's comment thread is read to its end, oldest receipts included",
+    "LINEAR READ: a repeated or missing comment cursor fails closed instead of truncating",
     "stale-head",
     "self-same-family-verdict",
     "red-required-check",
@@ -18813,6 +18815,14 @@
     },
     {
       "name": "LINEAR BUDGET: the reported retry is the one Linear stated, in seconds",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR READ: a single issue's comment thread is read to its end, oldest receipts included",
+      "capabilities": []
+    },
+    {
+      "name": "LINEAR READ: a repeated or missing comment cursor fails closed instead of truncating",
       "capabilities": []
     },
     {

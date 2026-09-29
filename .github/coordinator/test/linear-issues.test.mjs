@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   bindClaimingPullRequests,
   computeEligibility,
+  fetchIssueComments,
   fetchLinearIssues,
   isLinearRateLimited,
   LINEAR_ISSUE_COMMENT_PAGE,
@@ -342,4 +343,35 @@ test("LINEAR BUDGET: the reported retry is the one Linear stated, in seconds", (
   assert.equal(isLinearRateLimited({ status: 429 }, null), true);
   assert.equal(isLinearRateLimited({ status: 200 }, { errors: [{ extensions: { code: "RATELIMITED" } }] }), true);
   assert.equal(isLinearRateLimited({ status: 200 }, { errors: [{ message: "Entity not found" }] }), false);
+});
+
+test("LINEAR READ: a single issue's comment thread is read to its end, oldest receipts included", async () => {
+  // Linear answers newest-first, so a one-page read dropped the OLDEST receipts
+  // once SHU-140 passed 100 comments (2026-09-29). Page 2 holds them here.
+  const newest = Array.from({ length: 100 }, (_, index) => ({ body: `newer ${index}`, createdAt: "2026-09-29T14:00:00.000Z", user: { id: "u1" } }));
+  const oldest = [{ body: "oldest receipt", createdAt: "2026-09-13T00:00:00.000Z", user: { id: "u1" } }];
+  const calls = [];
+  const fetchImpl = async (_url, { body }) => {
+    const { query, variables } = JSON.parse(body);
+    assert.match(query, /CoordinatorIssueComments/);
+    calls.push(variables);
+    const page = variables.after === null
+      ? { nodes: newest, pageInfo: { hasNextPage: true, endCursor: "c1" } }
+      : { nodes: oldest, pageInfo: { hasNextPage: false, endCursor: "c2" } };
+    return { ok: true, status: 200, json: async () => ({ data: { issue: { comments: page } } }) };
+  };
+  const comments = await fetchIssueComments({ issueId: "SHU-140", token: "t", fetchImpl });
+  assert.equal(comments.length, 101, "every page is read");
+  assert.equal(comments.at(-1).body, "oldest receipt", "a receipt past the first page is still read");
+  assert.deepEqual(calls, [{ issueId: "SHU-140", after: null }, { issueId: "SHU-140", after: "c1" }]);
+});
+
+test("LINEAR READ: a repeated or missing comment cursor fails closed instead of truncating", async () => {
+  for (const endCursor of ["c1", null]) {
+    const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({
+      data: { issue: { comments: { nodes: [{ body: "x" }], pageInfo: { hasNextPage: true, endCursor } } } },
+    }) });
+    await assert.rejects(fetchIssueComments({ issueId: "SHU-140", token: "t", fetchImpl }),
+      (error) => error.code === "LINEAR_PAGINATION_INVALID");
+  }
 });
