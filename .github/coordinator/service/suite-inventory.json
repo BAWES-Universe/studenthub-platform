@@ -2671,6 +2671,7 @@
     "SHU261 shipped profiles hide /run and bind back only the model's resolver",
     "SHU261 mutation model profile keeps the host /run dies by SHU261_PROCESS",
     "SHU261 mutation extra path bound back into /run dies by SHU261_RESOLVER",
+    "SHU261 mutation writable bind into /run dies by SHU261_RESOLVER",
     "SHU-261 mutation: wrapper environment canary placement removed",
     "SHU-261 mutation: preflight service-home Claude path omitted",
     "SHU-261 mutation: host validation service-home Claude directory omitted",
@@ -21963,6 +21964,17 @@
     },
     {
       "name": "SHU261 mutation extra path bound back into /run dies by SHU261_RESOLVER",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU261 mutation writable bind into /run dies by SHU261_RESOLVER",
       "capabilities": [
         {
           "name": "bash"

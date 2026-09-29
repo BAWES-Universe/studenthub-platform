@@ -66,6 +66,7 @@ export function assertReviewerSandboxContract(source) {
     "SHU261_PROCESS: the model profile must replace /run with an empty read-only tmpfs");
   assert.deepEqual([...source.matchAll(/BindReadOnlyPaths=([^"\s]*)/g)].map((match) => match[1]), ["$resolver"],
     "SHU261_RESOLVER: the only path bound back into /run is the host resolver configuration");
+  assert.doesNotMatch(source, /\bBindPaths=/, "SHU261_RESOLVER: the sandbox never binds a writable path");
   required(source, /"\$resolver" == \/run\/\*/, "SHU261_RESOLVER: the resolver bind must stay inside /run");
   required(source, /ProtectSystem=strict/, "SHU261_WRITE: host filesystem must be read-only");
   required(source, /NoNewPrivileges=yes/, "SHU261_PRIVILEGE: reviewer must not gain privileges");

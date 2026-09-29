@@ -187,6 +187,8 @@ for (const [name, from, to, assertion] of [
   ["model profile keeps the host /run", 'runtime_args=("--property=TemporaryFileSystem=/run:ro")', 'runtime_args=("--property=BindReadOnlyPaths=/run")', "SHU261_PROCESS"],
   ["extra path bound back into /run", '    runtime_args+=("--property=BindReadOnlyPaths=$resolver")',
     '    runtime_args+=("--property=BindReadOnlyPaths=$resolver" "--property=BindReadOnlyPaths=/run/user")', "SHU261_RESOLVER"],
+  ["writable bind into /run", '    runtime_args+=("--property=BindReadOnlyPaths=$resolver")',
+    '    runtime_args+=("--property=BindReadOnlyPaths=$resolver" "--property=BindPaths=/run/user")', "SHU261_RESOLVER"],
 ]) {
   test(`SHU261 mutation ${name} dies by ${assertion}`, (t) => {
     dies(t, assertion, () => assertReviewerSandboxContract(mutated(from, to)));
