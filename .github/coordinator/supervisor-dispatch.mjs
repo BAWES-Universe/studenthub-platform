@@ -58,7 +58,7 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
   // callback identifiers verbatim: a socket response cannot mint their binding.
   return { ...identity, stage: result.stage === "COMPLETED" ? "COMPLETED" : "HOLD",
     callback, worker_identity: result.worker_identity ?? null,
-    reason_code: result.reason_code, audit_evidence_links: result.audit_evidence_links,
+    reason_code: identity.reason_code, audit_evidence_links: result.audit_evidence_links,
     audit_notes: result.audit_notes };
 }
 

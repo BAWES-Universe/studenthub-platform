@@ -116,6 +116,11 @@ test("role stage: a carried result can never supply the coordinator's live-head 
   for (const code of ["LIVE_HEAD_STALE", "LIVE_HEAD_UNREADABLE", "lower case", 7]) {
     assert.equal(carriedSupervisorOutcome(response(code), receipt).reason_code, undefined, String(code));
   }
+  const bound = { ...response("lower case"), stage: "COMPLETED",
+    result: { stage: "HOLD", reason_code: "lower case", callback: { attempt_id: "a", target_sha: SHA_INPUT, result_sha: SHA_INPUT, stage: "BLOCKED", links: ["x"] } } };
+  const blocked = carriedSupervisorOutcome(bound, { ...receipt, role: "review" }, { current_head: SHA_INPUT, headVerified: true });
+  assert.equal(blocked.callback.stage, "BLOCKED");
+  assert.equal(blocked.reason_code, undefined, "a bound verdict carries only a validated code");
 });
 
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
