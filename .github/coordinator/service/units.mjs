@@ -124,6 +124,7 @@ export function assertSupervisorLaunchEnvironment(source, coordinatorSource) {
     Object.assign(new Error('SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required'), { code: 'SHU251_ENV_COORDINATOR' }));
   assertStoreNotOverridden(supervisor, coordinator);
   assertWorkspaceStateNotOverridden(supervisor, coordinator);
+  assertUnitEnvironmentNotOverridden(supervisor, coordinator);
   return Object.fromEntries([...supervisor, ...[...coordinator].filter(([key]) => supervisorAdapterKeys.includes(key))]);
 }
 function requireSupervisorAdapterEntries(entries) {
@@ -188,6 +189,7 @@ function environmentBindings(identity) {
   // location is the unit's to state; a credential file may not restate it.
   assertStoreNotOverridden(supervisor, coordinator);
   assertWorkspaceStateNotOverridden(supervisor, coordinator);
+  assertUnitEnvironmentNotOverridden(supervisor, coordinator);
 }
 // Shared by the install-time binding check and the arming path, so both refuse by
 // the same name. Named, not bare: see the assertSupervisorLaunchEnvironment note.
@@ -211,6 +213,32 @@ function assertWorkspaceStateNotOverridden(supervisor, coordinator) {
     if (entries.has('SHU_WORKSPACE_STATE_DIR')) throw Object.assign(
       new Error(`SHU251_WORKSPACE_STATE: the ${label} environment file must not override the workspace state directory the units render`),
       { code: 'SHU251_WORKSPACE_STATE' });
+  }
+}
+
+// The whole class, not two instances of it. Every key a unit template states with
+// Environment= belongs to the unit, and its EnvironmentFile= would silently win
+// over it (measured note above). The two named refusals above keep their codes;
+// this catches every other rendered key, e.g. ENABLE_DISPATCH=false in the
+// coordinator file cancelling an arming drop-in. The list is a constant so the
+// arming path does no template I/O; a test pins it to unitEnvironmentKeys(), which
+// reads the templates, so a new Environment= line cannot be left uncovered.
+export const UNIT_ENVIRONMENT_KEYS = Object.freeze({
+  'shu-supervisor.service': Object.freeze(['ENABLE_DISPATCH', 'SHU_SUPERVISOR_ACTIVATION_FILE', 'SHU71_EVIDENCE_BROKER',
+    'SHU_SUPERVISOR_SOCKET', 'SHU_SUPERVISOR_STATE_DIR', 'SHU_WORKSPACE_STATE_DIR']),
+  'shu-coordinator.service': Object.freeze(['ENABLE_DISPATCH', 'SHU_SUPERVISOR_SOCKET', 'SHU_SUPERVISOR_STATE_DIR', 'SHU_WORKSPACE_STATE_DIR']),
+});
+export function unitEnvironmentKeys(name) {
+  return [...fs.readFileSync(new URL(`${name}.in`, import.meta.url), 'utf8')
+    .matchAll(/^Environment=([A-Z_][A-Z0-9_]*)=/gm)].map(match => match[1]);
+}
+function assertUnitEnvironmentNotOverridden(supervisor, coordinator) {
+  for (const [name, entries] of [['shu-supervisor.service', supervisor], ['shu-coordinator.service', coordinator]]) {
+    for (const key of UNIT_ENVIRONMENT_KEYS[name]) {
+      if (entries.has(key)) throw Object.assign(
+        new Error(`SHU251_ENV_OVERRIDE: the ${name} environment file must not override ${key}, which the unit renders`),
+        { code: 'SHU251_ENV_OVERRIDE', key });
+    }
   }
 }
 
