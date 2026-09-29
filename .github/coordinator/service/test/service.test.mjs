@@ -528,3 +528,66 @@ test('SHU251 arming refuses a supervisor store override in either credential fil
   assert.throws(() => assertSupervisorLaunchEnvironment(`${supervisorSource}SHU_SUPERVISOR_STATE_DIR=/elsewhere\n`, coordinatorSource),
     { code: 'SHU251_ENV_CROSSED' }, 'SHU251_ENV_CROSSED: the supervisor file may still carry only its transport secret');
 });
+
+// ---------------------------------------------------------------------------
+// SHU251 CROSS-UNIT AGREEMENT: the workspace state directory
+// ---------------------------------------------------------------------------
+//
+// THE FAILURE THIS CLOSES. The first supervised builder run (2026-09-29) built,
+// returned BUILD_READY, and was then refused at the result fold:
+// "BASE_BUNDLE_UNAVAILABLE: configured SHU_WORKSPACE_STATE_DIR=null". The writer
+// stores the attempt's base bundle under SHU_WORKSPACE_STATE_DIR, the worker
+// child folds against it (base-bundle.mjs), and the child's environment is
+// filtered from the SUPERVISOR's own (credential-delivery.mjs). Only the
+// coordinator unit set the variable. Same family as the store directory above:
+// one rendered value through the same @WORKSPACE_STATE_DIR@ placeholder in both
+// units, refused by assertPolicy when either side moves alone.
+import { baseBundlePath } from '../../base-bundle.mjs';
+import { supervisorChildEnvironment } from '../credential-delivery.mjs';
+const BUNDLE_ATTEMPT = '77fb4843-6fb0-4768-a47c-c2a69b004145';
+function renderedWorkspaceState(units, name) {
+  const found = [...units[name].matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\S+)$/gm)];
+  assert.equal(found.length, 1, `SHU251_WORKSPACE_STATE: ${name} must name the workspace state directory exactly once`);
+  return found[0][1];
+}
+
+test("SHU251 cross-unit agreement: the supervisor unit renders the writer's workspace state directory", t => {
+  // (a) The DEPLOYED rendering: both units name the deployed directory.
+  const deployedParams = fixtureParameters(fixture(t));
+  const deployed = render(deployedParams);
+  assert.equal(renderedWorkspaceState(deployed, names[0]), WORKSPACE_STATE_DIR);
+  assert.equal(renderedWorkspaceState(deployed, names[1]), WORKSPACE_STATE_DIR);
+  assertPolicy(deployed, deployedParams);
+
+  // (b) NO SECOND COPY CAN DRIFT: the supervisor template substitutes the one
+  // placeholder render() resolves, never a literal.
+  const template = fs.readFileSync(new URL(`../${names[0]}.in`, import.meta.url), 'utf8');
+  assert.deepEqual(template.split('\n').filter(line => line.startsWith('Environment=SHU_WORKSPACE_STATE_DIR=')),
+    ['Environment=SHU_WORKSPACE_STATE_DIR=@WORKSPACE_STATE_DIR@'],
+    'SHU251_WORKSPACE_STATE: the supervisor must substitute the shared placeholder, never a second literal');
+
+  // (c) THE FUNCTIONAL PROOF. The worker child's environment, filtered from the
+  // RENDERED supervisor unit exactly as the spawner does, resolves the base
+  // bundle under the directory the writer uses.
+  const { root, units } = storeWorld(t);
+  const child = supervisorChildEnvironment(unitEnvironment(units[names[0]]));
+  assert.equal(child.SHU_WORKSPACE_STATE_DIR, renderedWorkspaceState(units, names[1]));
+  assert.equal(baseBundlePath(child, BUNDLE_ATTEMPT), join(root, `${BUNDLE_ATTEMPT}.base.bundle`));
+
+  // (d) THE PRE-FIX SHAPE STILL FAILS CLOSED, with the measured refusal.
+  const priorShape = supervisorChildEnvironment(unitEnvironment(units[names[0]].replace(/^Environment=SHU_WORKSPACE_STATE_DIR=.*\n/m, '')));
+  assert.equal('SHU_WORKSPACE_STATE_DIR' in priorShape, false);
+  assert.throws(() => baseBundlePath(priorShape, BUNDLE_ATTEMPT),
+    error => error.code === 'BASE_BUNDLE_UNAVAILABLE' && error.message.includes('SHU_WORKSPACE_STATE_DIR=null'));
+});
+test('SHU251 mutation: supervisor unit stops setting the workspace state directory', t => {
+  const { params, units } = storeWorld(t);
+  units[names[0]] = units[names[0]].replace(/^Environment=SHU_WORKSPACE_STATE_DIR=.*\n/m, '');
+  named(() => assertPolicy(units, params), "SHU251_WORKSPACE_STATE: the supervisor unit must render the writer's SHU_WORKSPACE_STATE_DIR exactly once");
+});
+test('SHU251 mutation: supervisor unit workspace state directory drifts alone', t => {
+  const { root, params, units } = storeWorld(t);
+  units[names[0]] = units[names[0]].replace(/^Environment=SHU_WORKSPACE_STATE_DIR=.*$/m, `Environment=SHU_WORKSPACE_STATE_DIR=${join(root, 'elsewhere')}`);
+  named(() => assertPolicy(units, params), "SHU251_WORKSPACE_STATE: the supervisor unit must render the writer's SHU_WORKSPACE_STATE_DIR exactly once");
+  assert.notEqual(renderedWorkspaceState(units, names[0]), renderedWorkspaceState(units, names[1]));
+});

@@ -676,6 +676,9 @@
     "SHU251 mutation: coordinator environment file overrides the supervisor store",
     "SHU251 mutation: supervisor environment file overrides the supervisor store",
     "SHU251 arming refuses a supervisor store override in either credential file",
+    "SHU251 cross-unit agreement: the supervisor unit renders the writer's workspace state directory",
+    "SHU251 mutation: supervisor unit stops setting the workspace state directory",
+    "SHU251 mutation: supervisor unit workspace state directory drifts alone",
     "B1_SINGLE_LANE: production credential drives coordinator build BLOCK revision re-review",
     "B1_TWO_LANES: B completes while A revision remains running, then A completes",
     "B1_CROSS_TEARDOWN: retired A wake protects B, retired B wake protects next A",
@@ -7368,6 +7371,39 @@
     },
     {
       "name": "SHU251 arming refuses a supervisor store override in either credential file",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 cross-unit agreement: the supervisor unit renders the writer's workspace state directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor unit stops setting the workspace state directory",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
+      "name": "SHU251 mutation: supervisor unit workspace state directory drifts alone",
       "capabilities": [
         {
           "name": "systemd_analyze"
