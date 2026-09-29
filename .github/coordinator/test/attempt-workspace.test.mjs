@@ -364,7 +364,7 @@ test("SHU-227: generated schema is worker-readable while session authority remai
     await codex.launchBuilder({ ...r, cwd: f.seed, env: f.env, execFileImpl, io: { codexStateDir:f.state, pushBrokerEnabled:false } });
     assert.ok(schemaPath, "real checkout check reached schema/CLI boundary");
     assert.equal(path.dirname(path.dirname(schemaPath)),"/tmp","schema must not inherit a private TMPDIR");
-    assert.deepEqual(observed,[0o755,0o644,0o700,codex.CALLBACK_SCHEMA],"schema is readable by worker; session state is private");
+    assert.deepEqual(observed,[0o755,0o644,0o700,JSON.parse(JSON.stringify(codex.callbackSchemaFor(r.scope_phase)))],"schema is readable by worker; session state is private");
     assert.equal(fs.existsSync(schemaPath), false, "public schema cleaned after invocation");
   } finally { if(previousTmp===undefined)delete process.env.TMPDIR;else process.env.TMPDIR=previousTmp;f.cleanup(); }
 });

@@ -2612,7 +2612,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         }
       } else if (outcome.stage === "HOLD") {
         event = { type: "run_status", status: "completed",
-          ...(adapterModule.supervised ? { callback: outcome.callback, worker_identity: outcome.worker_identity } : {}) }; // absent or invalid callback → machine HOLDs
+          ...(adapterModule.supervised ? { callback: outcome.callback, worker_identity: outcome.worker_identity } : {}),
+          ...(adapterModule.supervised && typeof outcome.reason_code === "string" && !outcome.reason_code.startsWith("LIVE_HEAD_") ? { reason_code: outcome.reason_code } : {}) }; // absent or invalid callback → machine HOLDs
       } else if (outcome.stage === "FAILED") {
         event = { type: "run_status", status: "failed", error_code: outcome.error_code, error_kind: outcome.error_kind, worker_identity: outcome.worker_identity ?? null };
       } else {

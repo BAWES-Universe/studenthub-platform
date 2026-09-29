@@ -17,6 +17,13 @@ export function supervisorOrder(receipt, options = {}) {
   };
 }
 
+// Reserved codes are the coordinator's own live-head findings; they set the stop
+// reason, so a carried adapter result can never supply them.
+function carriedReasonCode(result) {
+  const code = result?.reason_code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,63}$/.test(code) && !code.startsWith("LIVE_HEAD_") ? code : null;
+}
+
 export function carriedSupervisorOutcome(response, receipt, { current_head, headVerified = false } = {}) {
   if (response?.version !== SUPERVISOR_PROTOCOL_VERSION || !response.ok
       || response.attempt_id !== receipt.attempt_id || response.target_sha !== receipt.target_sha || response.durable !== true) {
@@ -31,6 +38,9 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
   }
   if (!["COMPLETED", "FAILED"].includes(response.stage)) return { ...identity, stage: "HOLD" };
   const result = response.result;
+  // An adapter that refused on its own carries why. Without its code every such
+  // HOLD read as missing evidence in the receipt note.
+  if (carriedReasonCode(result)) identity.reason_code = carriedReasonCode(result);
   const callback = result?.callback;
   const expectedHead = isWriterRole(roleForReceipt(receipt)) ? callback?.result_sha : receipt.target_sha;
   if (!callback || !Array.isArray(callback.links) || !callback.links.length

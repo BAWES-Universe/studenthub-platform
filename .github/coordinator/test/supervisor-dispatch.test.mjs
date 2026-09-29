@@ -98,6 +98,26 @@ test("SHU-250: completion with no worker evidence HOLDs", async t => {
   assert.equal(f.h.receipts()[0].stage, "HOLD", "SHU250_NO_EVIDENCE: completion without worker callback must HOLD");
 });
 
+test("role stage: an adapter's own refusal code reaches the receipt note through the supervisor", async t => {
+  const f = setup(t); await f.tick(); await f.drain();
+  f.complete({ stage: "HOLD", reason_code: "CALLBACK_ROLE_MISMATCH", reason: "CALLBACK_ROLE_MISMATCH: revision writer returned BUILD_READY", evidence_links: ["notes.md"] }, 1);
+  await f.tick();
+  const held = f.h.receipts()[0];
+  assert.equal(held.stage, "HOLD");
+  assert.ok(held.notes.includes("adapter reason code: CALLBACK_ROLE_MISMATCH"), held.notes.join("\n"));
+  assert.ok(held.notes.some(n => n.includes("HOLD (CALLBACK_ROLE_MISMATCH)")), "the HOLD note names the refusal, not missing evidence");
+});
+
+test("role stage: a carried result can never supply the coordinator's live-head codes", () => {
+  const receipt = { attempt_id: "a", target_sha: SHA_INPUT, requested_worker: "codex-builder", receipt_version: "1.1.0", role: "build", runtime: "codex-cli" };
+  const response = (reason_code) => ({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, attempt_id: "a", target_sha: SHA_INPUT, durable: true,
+    stage: "FAILED", result: { stage: "HOLD", reason_code } });
+  assert.equal(carriedSupervisorOutcome(response("CALLBACK_ROLE_MISMATCH"), receipt).reason_code, "CALLBACK_ROLE_MISMATCH");
+  for (const code of ["LIVE_HEAD_STALE", "LIVE_HEAD_UNREADABLE", "lower case", 7]) {
+    assert.equal(carriedSupervisorOutcome(response(code), receipt).reason_code, undefined, String(code));
+  }
+});
+
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
   const f = setup(t); await f.tick(); await f.drain();
   // Also exercise a review transport directly: input head matches but a forged

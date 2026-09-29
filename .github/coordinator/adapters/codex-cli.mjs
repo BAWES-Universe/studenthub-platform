@@ -49,6 +49,23 @@ export const CALLBACK_SCHEMA = Object.freeze({
   },
 });
 
+// A writer has exactly one success stage, fixed by its phase: the initial build
+// answers BUILD_READY and a revision answers REVISION_READY. The receipt folds a
+// callback only when its stage names the receipt's role, so a revision that said
+// BUILD_READY was pushed and then refused, leaving the lane ahead of any review.
+// The schema, the prompt and a pre-push check all name the one stage the phase
+// allows, so a mismatched answer never reaches the broker.
+export function writerSuccessStage(scope_phase = "initial") {
+  return scope_phase === "revision" ? "REVISION_READY" : "BUILD_READY";
+}
+export function callbackSchemaFor(scope_phase = "initial") {
+  return Object.freeze({
+    ...CALLBACK_SCHEMA,
+    properties: Object.freeze({ ...CALLBACK_SCHEMA.properties,
+      stage: Object.freeze({ type: "string", enum: Object.freeze([writerSuccessStage(scope_phase), "BLOCKED", "FAILED"]) }) }),
+  });
+}
+
 const QUOTA_RE = /(?:rate|usage|spending|plan|subscription|credit)[-_ ]?limit|quota|capacity/i;
 // Authentication-expiry shapes: 401, expired, invalid token, "please sign in".
 // These surface a VISIBLE re-authentication HOLD (GPT requirement), never a
@@ -99,8 +116,8 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
     "Implement the change and run the relevant tests. Leave the tested changes in the workspace; do NOT git add, commit, modify .git, push, open a PR or touch the network. A separate host broker snapshots your files, creates the result commit and pushes it after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":null,"stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
-    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. For BUILD_READY or REVISION_READY use result_sha:null to declare that the tested workspace is ready for the host to commit. For BLOCKED or FAILED use the bound head as result_sha. Stop all file writers before returning; the host refuses an unstable workspace.",
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":null,"stage":"${writerSuccessStage(scope_phase)}|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
+    `This is ${scope_phase === "revision" ? "a REVISION addressing review findings" : "the INITIAL build"}, so the only success stage is ${writerSuccessStage(scope_phase)}; the host refuses any other success stage. Use BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. For ${writerSuccessStage(scope_phase)} use result_sha:null to declare that the tested workspace is ready for the host to commit. For BLOCKED or FAILED use the bound head as result_sha. Stop all file writers before returning; the host refuses an unstable workspace.`,
   ].filter(Boolean).join("\n");
 }
 
@@ -694,7 +711,7 @@ export async function launchBuilder({
       fs.chmodSync(schemaDir, 0o755);
       schemaPath = path.join(schemaDir, "callback.json");
     }
-    writeSchemaFile(schemaPath, CALLBACK_SCHEMA);
+    writeSchemaFile(schemaPath, callbackSchemaFor(scope_phase));
     if (ownsSchemaFile) fs.chmodSync(schemaPath, 0o644);
   } catch {
     return { stage: "FAILED", error_code: "SCHEMA_FILE_UNWRITABLE", ok: false };
@@ -878,6 +895,13 @@ export async function launchBuilder({
   }
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };
+  }
+  // Refuse before the broker: pushing a result whose stage the receipt will
+  // reject advances the lane with no review able to follow it.
+  if (callback.stage !== writerSuccessStage(scope_phase)) {
+    return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+      evidence_links: callback.links, reason_code: "CALLBACK_ROLE_MISMATCH",
+      reason: `CALLBACK_ROLE_MISMATCH: ${scope_phase} writer returned ${callback.stage}, expected ${writerSuccessStage(scope_phase)}; nothing pushed`, ok: false };
   }
 
   // OPTION A (ratified 2026-09-07): the sandboxed worker never pushes. The
