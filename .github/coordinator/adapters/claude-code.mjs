@@ -402,8 +402,10 @@ function accountFailure(detail) {
 
 function failureFrom(error, stdout, stderr) {
   // Do not classify arbitrary model stdout as an account failure: reviewed code
-  // can legitimately contain words like "quota" or "capacity".
-  const account = accountFailure(`${stderr}\n${error?.message ?? ""}\n${cliErrorDetail(stdout)}`);
+  // can legitimately contain words like "quota" or "capacity". Nor the error
+  // message: execFile echoes every argument into it, prompt included, and it
+  // repeats stderr, which is classified directly.
+  const account = accountFailure(`${stderr}\n${cliErrorDetail(stdout)}`);
   if (account) return account;
   if (error?.killed || error?.signal) {
     return { stage: "LAUNCH_UNKNOWN", reason: "Claude process ended without a trustworthy terminal result; session is held for resume", ok: false };

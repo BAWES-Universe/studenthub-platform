@@ -490,4 +490,10 @@ test("SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible 
   assert.equal(spoken.stage, "FAILED");
   const raw = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: "Not logged in · Please run /login" }) });
   assert.equal(raw.stage, "FAILED");
+  // execFile echoes the arguments, prompt included, into the error message.
+  const context = "The user is not logged in; quota and 403 forbidden appear in this task.";
+  const echoed = Object.assign(new Error(`Command failed: claude -p ${context}`), { code: 1 });
+  const prompted = await launchBuilder({ ...launchInput, task_context: context, execFileImpl: execResult({ error: echoed }) });
+  assert.equal(prompted.stage, "FAILED", "prompt text echoed into the error message never classifies");
+  assert.equal(prompted.error_code, "CLAUDE_1");
 });
