@@ -41,6 +41,17 @@ export function reviewFindingsFromCallback(callback) {
   return { verdict_stage: "BLOCKED", target_sha: callback.target_sha, summary, links };
 }
 
+// A writer's own BLOCKED or FAILED explanation, kept as a receipt note so a
+// held attempt explains itself without reading the worker's session log
+// (run 5 needed exactly that). Same credential rule as the findings.
+export const WORKER_SUMMARY_NOTE_MAX = 500;
+
+export function workerSummaryNote(callback) {
+  const text = typeof callback?.summary === "string" ? callback.summary.trim().replace(/\s+/g, " ") : "";
+  if (!text || TOKEN_SHAPE.test(text)) return null;
+  return `worker summary: ${JSON.stringify(text.slice(0, WORKER_SUMMARY_NOTE_MAX))}`;
+}
+
 // Stored findings are checked for credential shapes too, so no writer other
 // than reviewFindingsFromCallback can put a secret into a receipt or prompt.
 export function validReviewFindings(findings) {

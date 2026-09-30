@@ -15,6 +15,7 @@ import {
   REVIEW_FINDINGS_LINK_LENGTH_MAX,
   REVIEW_FINDINGS_LINKS_MAX,
   REVIEW_FINDINGS_SUMMARY_MAX,
+  WORKER_SUMMARY_NOTE_MAX,
   reviewFindingsContext,
   reviewFindingsFromCallback,
   validReviewFindings,
@@ -235,6 +236,25 @@ test("review findings: only a bound review BLOCK is kept, and only a revision at
   const writer = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }), rfBlocked());
   assert.equal(writer.verdict_stage, "BLOCKED");
   assert.equal(writer.review_findings, undefined, "a writer's own BLOCKED is not review findings");
+  // Run 5's reviser FAILED with only a verdict on its receipt; its reason was
+  // recoverable only from the codex session log.
+  const run5 = "The execution window closed before I could safely edit and verify the authorized revision.";
+  const failed = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", summary: `  ${run5}\n` }));
+  assert.equal(failed.verdict_stage, "FAILED");
+  assert.ok(failed.notes.includes(`worker summary: ${JSON.stringify(run5)}`), "a held writer explains itself on its receipt");
+  const leaky = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", summary: `token ghp_${"a".repeat(36)}` }));
+  assert.equal(leaky.notes.some((n) => n.startsWith("worker summary:")), false, "a credential-shaped summary is not published");
+  const long = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", summary: "x".repeat(2000) }));
+  assert.equal(long.notes.at(-1), `worker summary: ${JSON.stringify("x".repeat(WORKER_SUMMARY_NOTE_MAX))}`);
+  const unbound = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", target_sha: "c".repeat(40) }));
+  assert.equal(unbound.notes.some((n) => n.startsWith("worker summary:")), false, "an unbound callback's words are not recorded");
+  const reviewBlock = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "claude-verifier", stage: "RUNNING", minute: 48 }), rfBlocked());
+  assert.ok(reviewBlock.review_findings);
+  assert.equal(reviewBlock.notes.some((n) => n.startsWith("worker summary:")), false, "a reviewer's BLOCK is kept once, as findings");
 
   const foreign = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "claude-verifier", stage: "RUNNING", minute: 48 }), rfBlocked({ target_sha: "c".repeat(40) }));
   assert.equal(foreign.review_findings, undefined, "an unbound callback never becomes findings");

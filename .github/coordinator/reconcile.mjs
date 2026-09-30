@@ -34,7 +34,7 @@ import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDir
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
-import { reviewFindingsContext, reviewFindingsFromCallback, validReviewFindings } from "./review-findings.mjs";
+import { reviewFindingsContext, reviewFindingsFromCallback, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
@@ -1000,6 +1000,10 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           // The reviewer's own words, for the revision that must address them.
           const findings = roleForReceipt(receipt) === "review" ? reviewFindingsFromCallback(callback) : null;
           if (findings) next.review_findings = findings;
+          else {
+            const said = workerSummaryNote(callback);
+            if (said) next.notes = [...next.notes, said];
+          }
         }
         if (typeof event.worker_identity === "string" && event.worker_identity.length) {
           next.worker_identity = event.worker_identity; // agent_id is known even when the callback is not
