@@ -24,6 +24,8 @@ export const REVIEWER_LAYOUT = Object.freeze({
   service_home_claude_sidecars: "/srv/shu/.claude",
   claude_session_sidecars: "/home/shu-coordinator",
   coordinator_logs: "/srv/shu/logs",
+  // SHU-71: the Codex reviewer's own login. Visible only to the Codex model launch.
+  reviewer_codex_home: "/var/lib/shu-reviewer-codex",
 });
 
 export const PROTECTED_CLASSES = Object.freeze([
@@ -90,6 +92,16 @@ export function assertReviewerSandboxContract(source) {
     "SHU261_COMMAND: test profile must bind the reviewed child");
   required(source, /accepts only subscription-authenticated Claude/,
     "SHU261_COMMAND: model profile must bind Claude");
+  required(source, /reviewer_codex_home=\/var\/lib\/shu-reviewer-codex\n/,
+    "SHU71_CODEX_HOME: the Codex reviewer home is one fixed path");
+  required(source, /if \[\[ "\$profile" != "model" \|\| "\$1" != "codex" \]\]; then\n\s*systemd_args\+=\("--property=InaccessiblePaths=-\$reviewer_codex_home"\)/,
+    "SHU71_CODEX_HOME_MASKED: tests and the Claude reviewer must not see the Codex reviewer login");
+  required(source, /"\$\(\/usr\/bin\/stat -c '%u:%a' -- "\$reviewer_codex_home"\)" != "\$\{reviewer_uid\}:700"/,
+    "SHU71_CODEX_HOME_OWNER: the Codex home must be reviewer-owned and private");
+  assert.deepEqual([...source.matchAll(/ReadWritePaths=([^"\s]*)/g)].map((match) => match[1]), ["$reviewer_codex_home"],
+    "SHU71_CODEX_WRITE: the Codex reviewer home is the only writable host path the sandbox grants");
+  assert.deepEqual([...source.matchAll(/--setenv=CODEX_HOME=([^"\s]*)/g)].map((match) => match[1]), ["$reviewer_codex_home"],
+    "SHU71_CODEX_ENVIRONMENT: Codex receives only its fixed reviewer home");
   required(source, /--setenv=CLAUDE_CODE_OAUTH_TOKEN"\)/,
     "SHU261_ENVIRONMENT: reviewer OAuth may be copied only without an argv value");
   assert.equal(source.includes("--setenv=CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN"), false,

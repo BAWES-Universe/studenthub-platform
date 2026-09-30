@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "attempt_id",
+    "target_sha",
+    "stage",
+    "links",
+    "summary"
+  ],
+  "properties": {
+    "attempt_id": {
+      "type": "string"
+    },
+    "target_sha": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "BLOCKED",
+        "FAILED"
+      ]
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "summary": {
+      "type": "string"
+    }
+  }
+}

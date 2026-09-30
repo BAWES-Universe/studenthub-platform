@@ -2,9 +2,9 @@
 # Install this reviewed file root-owned and non-writable at
 # /usr/local/libexec/shu-reviewer-sandbox. The coordinator invokes it through a
 # narrowly-scoped sudo rule. It executes both phases of review as shu-reviewer:
-# builder-authored tests use the no-network `test` profile and Claude uses the
-# address-family-restricted `model` profile (AF_UNIX, AF_INET, AF_INET6), with
-# no destination allowlist. Both profiles share the same filesystem,
+# builder-authored tests use the no-network `test` profile and the reviewer model
+# (Claude, or Codex since SHU-71) uses the address-family-restricted `model`
+# profile (AF_UNIX, AF_INET, AF_INET6), with no destination allowlist. Both profiles share the same filesystem,
 # process and identity boundary. Privileged bash mode prevents startup files,
 # imported functions, BASH_ENV and caller shell options from running as root.
 while IFS= read -r environment_name; do
@@ -180,6 +180,14 @@ for protected in \
   systemd_args+=("--property=InaccessiblePaths=-$protected")
 done
 
+# The Codex reviewer's own subscription login lives in a reviewer-owned home.
+# Only the Codex model launch may see it; builder-authored tests and the Claude
+# reviewer run as the same uid, so they must find it masked.
+reviewer_codex_home=/var/lib/shu-reviewer-codex
+if [[ "$profile" != "model" || "$1" != "codex" ]]; then
+  systemd_args+=("--property=InaccessiblePaths=-$reviewer_codex_home")
+fi
+
 if [[ "$profile" == "test" ]]; then
   if [[ "$1" != /* || "$(basename -- "$1")" != "node" ||
         "${2:-}" != "/srv/shu/studenthub-platform/.github/coordinator/review-execution-child.mjs" ]]; then
@@ -202,17 +210,39 @@ if [[ "$profile" == "test" ]]; then
   )
   environment_args=()
 else
-  if [[ "$1" != "claude" || -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-    echo "reviewer model profile accepts only subscription-authenticated Claude" >&2
-    exit 64
+  model_runtime="$1"
+  if [[ "$model_runtime" == "codex" ]]; then
+    # Codex authenticates from its own home, not from an environment value, and
+    # must write there to refresh the login and keep resumable sessions. That
+    # home is a fixed reviewer-owned 0700 directory under a root-owned parent.
+    if [[ -L "$reviewer_codex_home" || ! -d "$reviewer_codex_home" ||
+          "$(/usr/bin/realpath -e -- "$reviewer_codex_home")" != "$reviewer_codex_home" ||
+          "$(/usr/bin/stat -c '%u:%a' -- "$reviewer_codex_home")" != "${reviewer_uid}:700" ||
+          "$(/usr/bin/stat -c '%u' -- "$(/usr/bin/dirname -- "$reviewer_codex_home")")" != "0" ]]; then
+      echo "reviewer model profile requires the reviewer-owned 0700 Codex home" >&2
+      exit 64
+    fi
+    codex_path="$(command -v -- codex)"
+    canonical_codex="$(trusted_executable "$codex_path")" || {
+      echo "reviewer model profile requires a root-owned non-writable Codex executable" >&2
+      exit 64
+    }
+    shift
+    set -- "$canonical_codex" "$@"
+    unset CLAUDE_CODE_OAUTH_TOKEN
+  else
+    if [[ "$1" != "claude" || -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+      echo "reviewer model profile accepts only subscription-authenticated Claude" >&2
+      exit 64
+    fi
+    claude_path="$(command -v -- claude)"
+    canonical_claude="$(trusted_executable "$claude_path")" || {
+      echo "reviewer model profile requires a root-owned non-writable Claude executable" >&2
+      exit 64
+    }
+    shift
+    set -- "$canonical_claude" "$@"
   fi
-  claude_path="$(command -v -- claude)"
-  canonical_claude="$(trusted_executable "$claude_path")" || {
-    echo "reviewer model profile requires a root-owned non-writable Claude executable" >&2
-    exit 64
-  }
-  shift
-  set -- "$canonical_claude" "$@"
   network_args=("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
   # Claude must resolve its API host. /etc/resolv.conf usually points into /run,
   # which an inaccessible mask would hide, so the model profile replaces /run
@@ -239,7 +269,14 @@ else
   # It receives no coordinator, GitHub, Linear, SSH or supervisor credential.
   # Copy the one permitted value from this process environment without placing
   # the credential in systemd-run's inspectable command line.
-  environment_args=("--setenv=CLAUDE_CODE_OAUTH_TOKEN")
+  if [[ "$model_runtime" == "codex" ]]; then
+    # Codex reads its login from its reviewer-owned home: the only writable
+    # host path the sandbox ever grants, and only to this launch.
+    runtime_args+=("--property=ReadWritePaths=$reviewer_codex_home")
+    environment_args=("--setenv=CODEX_HOME=$reviewer_codex_home")
+  else
+    environment_args=("--setenv=CLAUDE_CODE_OAUTH_TOKEN")
+  fi
 fi
 
 /usr/bin/systemd-run \

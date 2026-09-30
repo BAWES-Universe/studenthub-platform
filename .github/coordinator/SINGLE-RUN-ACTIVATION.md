@@ -295,6 +295,17 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   no process view of other service identities, no view of
   coordinator/worker/session/SSH/state/log paths, and a read-only non-executable
   assigned checkout. Missing model isolation HOLDs before Claude starts.
+* Codex as the reviewer (SHU-71, `codex-verifier` lane): the same model wrapper
+  launches `codex exec --sandbox read-only` with the committed verdict schema
+  `adapters/codex-review-callback.schema.json`, after the same confined test
+  phase. Codex reads its subscription login from its own home, so the host needs
+  `/var/lib/shu-reviewer-codex`: owned by `shu-reviewer`, mode 0700, under the
+  root-owned `/var/lib`, logged in once as `shu-reviewer` with
+  `CODEX_HOME=/var/lib/shu-reviewer-codex codex login` (device code).
+  It is the only writable host path the sandbox grants, and only to the Codex
+  model launch; builder tests and the Claude reviewer find it masked. `codex`
+  must resolve on the sandbox `PATH` to a root-owned, non-writable executable.
+  A missing or wrongly owned home refuses the launch before Codex starts.
 * `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
   For SHU-140 this is
   `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is
