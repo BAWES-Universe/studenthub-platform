@@ -15,6 +15,7 @@ import {
   REVIEW_FINDINGS_LINK_LENGTH_MAX,
   REVIEW_FINDINGS_LINKS_MAX,
   REVIEW_FINDINGS_SUMMARY_MAX,
+  WORKER_SUMMARY_NOTE_MAX,
   reviewFindingsContext,
   reviewFindingsFromCallback,
   validReviewFindings,
@@ -235,6 +236,32 @@ test("review findings: only a bound review BLOCK is kept, and only a revision at
   const writer = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }), rfBlocked());
   assert.equal(writer.verdict_stage, "BLOCKED");
   assert.equal(writer.review_findings, undefined, "a writer's own BLOCKED is not review findings");
+  // Run 5's reviser FAILED with only a verdict on its receipt; its reason was
+  // recoverable only from the codex session log.
+  const run5 = "The execution window closed before I could safely edit and verify the authorized revision.";
+  const failed = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", summary: `  ${run5}\n` }));
+  assert.equal(failed.verdict_stage, "FAILED");
+  assert.ok(failed.notes.includes(`worker summary: ${JSON.stringify(run5)}`), "a held writer explains itself on its receipt");
+  const leaky = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", summary: `token ghp_${"a".repeat(36)}` }));
+  assert.equal(leaky.notes.some((n) => n.startsWith("worker summary:")), false, "a credential-shaped summary is not published");
+  const hmac = "q".repeat(12) + "Z9/+".repeat(6);
+  for (const summary of [`SHU_SUPERVISOR_SECRET=${hmac}`, `export SHU_SUPERVISOR_SECRET="${hmac}"`, `saw SHU_SUPERVISOR_SECRET = '${hmac}' in env`, `CLAUDE_CODE_OAUTH_TOKEN: ${hmac}`,
+    `PASSWORD=${hmac}`, `TOKEN="${hmac}"`, `api_key: ${hmac}`, `SECRET = ${hmac}`]) {
+    const assigned = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+      rfBlocked({ stage: "FAILED", summary }));
+    assert.equal(assigned.notes.some((n) => n.startsWith("worker summary:")), false, `a secret assignment is not published: ${summary.slice(0, 30)}`);
+  }
+  const long = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", summary: "x".repeat(2000) }));
+  assert.equal(long.notes.at(-1), `worker summary: ${JSON.stringify("x".repeat(WORKER_SUMMARY_NOTE_MAX))}`);
+  const unbound = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+    rfBlocked({ stage: "FAILED", target_sha: "c".repeat(40) }));
+  assert.equal(unbound.notes.some((n) => n.startsWith("worker summary:")), false, "an unbound callback's words are not recorded");
+  const reviewBlock = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "claude-verifier", stage: "RUNNING", minute: 48 }), rfBlocked());
+  assert.ok(reviewBlock.review_findings);
+  assert.equal(reviewBlock.notes.some((n) => n.startsWith("worker summary:")), false, "a reviewer's BLOCK is kept once, as findings");
 
   const foreign = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "claude-verifier", stage: "RUNNING", minute: 48 }), rfBlocked({ target_sha: "c".repeat(40) }));
   assert.equal(foreign.review_findings, undefined, "an unbound callback never becomes findings");
@@ -272,6 +299,17 @@ test("review findings: credential-shaped text is dropped and the summary is boun
     assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `quoted ${linear}` })).summary, null, "a Linear credential never reaches a Linear comment");
     assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [`notes/${linear}`, LINKS[1]] })).links, [LINKS[1]]);
   }
+  // A secret with no token prefix, written as an assignment, is dropped from
+  // findings as it is from notes: findings are published and quoted to the writer.
+  const hmac = "q".repeat(12) + "Z9/+".repeat(6);
+  for (const assignment of [`SHU_SUPERVISOR_SECRET=${hmac}`, `export PASSWORD="${hmac}"`, `API_KEY: ${hmac}`]) {
+    assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `env had ${assignment}` })).summary, null, assignment);
+    assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [`env:${assignment}`, LINKS[1]] })).links, [LINKS[1]], assignment);
+    assert.equal(validReviewFindings({ ...stored, summary: assignment }), false, `stored: ${assignment}`);
+    assert.equal(reviewFindingsContext({ scope_phase: "revision", review_findings: { ...stored, summary: assignment } }), "");
+  }
+  assert.ok(reviewFindingsFromCallback(rfBlocked({ summary: "The token count check at line 48 is wrong; see the password field docs." })).summary,
+    "ordinary prose about tokens or passwords is kept");
   const oversized = "a".repeat(REVIEW_FINDINGS_LINK_LENGTH_MAX + 1);
   assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [oversized, LINKS[1]] })).links, [LINKS[1]]);
   assert.equal(validReviewFindings({ ...reviewFindingsFromCallback(rfBlocked()), links: [oversized] }), false);
