@@ -1047,7 +1047,7 @@
   {
     "file": ".github/coordinator/test/shu71-journal-directory.test.mjs",
     "capabilities": [],
-    "justification": "Node core filesystem APIs; environment parsing and journal resolution run on synthetic values and the supervisor worker source is inspected, no external tool operation required",
+    "justification": "Node filesystem and a forked Node child of the supervisor worker; coordinator.env is served from memory and the adapter is a stub, no external tool operation required",
     "call_sites": [
       ".github/coordinator/test/shu71-journal-directory.test.mjs"
     ]

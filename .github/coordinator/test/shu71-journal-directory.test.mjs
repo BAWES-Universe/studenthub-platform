@@ -5,7 +5,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fork } from "node:child_process";
 import { coordinatorJournalDirectory } from "../push-broker.mjs";
+import { createSupervisorSpawner } from "../supervisor-worker.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment } from "../service/units.mjs";
 import { coordinatorText } from "../service/test/shu71-supervisor-environment-fixture.mjs";
@@ -35,8 +39,45 @@ test("SHU71_JOURNAL_ONE_DIRECTORY: the adapter child resolves the journal the co
   assert.equal(coordinatorJournalDirectory(replaced), "/srv/shu/state/coordinator-runs");
 });
 
-test("SHU71_JOURNAL_CHILD_WIRING: the supervisor child applies coordinator.env through the journal rule", () => {
-  const source = fs.readFileSync(new URL("../supervisor-worker.mjs", import.meta.url), "utf8");
-  assert.match(source, /applyAdapterLaunchEnvironment\(process\.env, readAdapterLaunchEnvironment\(\)\)/);
-  assert.doesNotMatch(source, /Object\.assign\(process\.env/, "a plain merge keeps a CODEX_HOME the file does not name");
+// The real supervisor worker, forked by the real spawner, with coordinator.env
+// served from memory and an adapter that reports the environment it was given.
+async function forkedAdapterEnvironment(t, fileText, supervisorEnv) {
+  const url = new URL("../supervisor-worker.mjs", import.meta.url);
+  const source = fs.readFileSync(url, "utf8").replace(/from (["'])(\.\.?\/[^"']+)\1/g, (_, q, p) => `from '${new URL(p, url).href}'`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shu71-journal-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const worker = path.join(dir, "supervisor-worker.mjs"), preload = path.join(dir, "preload.mjs"), authorizationModule = path.join(dir, "authorize.mjs");
+  fs.writeFileSync(worker, source);
+  fs.writeFileSync(authorizationModule, "export const authorizeWorkOrder = () => true;");
+  fs.writeFileSync(preload, `import fs from 'node:fs';
+process.getuid = () => 999; process.getgid = () => 982;
+const open = fs.openSync, stat = fs.fstatSync, read = fs.readFileSync, close = fs.closeSync;
+fs.openSync = (p, ...args) => p === '/srv/shu/coordinator.env' ? 987654 : open(p, ...args);
+fs.fstatSync = (fd) => fd === 987654 ? { isFile: () => true, nlink: 1, uid: 999, gid: 982, mode: 0o100600, size: 100 } : stat(fd);
+fs.readFileSync = (fd, ...args) => fd === 987654 ? ${JSON.stringify(fileText)} : read(fd, ...args);
+fs.closeSync = (fd) => fd === 987654 ? undefined : close(fd);
+`);
+  fs.mkdirSync(path.join(dir, "adapters"));
+  fs.writeFileSync(path.join(dir, "adapters/claude-code.mjs"),
+    "export async function launchBuilder(options) { await new Promise(() => process.send({ adapterEnvironment: options.env }, () => process.exit(0))); }");
+  const spawn = createSupervisorSpawner({ stateDir: dir, authorizationModule, env: supervisorEnv,
+    forkImpl: (_file, args, options) => fork(worker, args, { ...options, execArgv: ["--import", preload] }) });
+  const child = spawn({ runtime: "claude-code" }, {});
+  const messages = []; let stderr = "";
+  child.on("message", (value) => messages.push(value)); child.stderr.on("data", (value) => { stderr += value; });
+  const exit = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("forked adapter timed out")); }, 10000);
+    child.once("error", reject); child.once("close", (code) => { clearTimeout(timeout); resolve(code); });
+  });
+  assert.equal(exit, 0, stderr);
+  return messages.find((m) => m.adapterEnvironment)?.adapterEnvironment;
+}
+
+test("SHU71_JOURNAL_CHILD_WIRING: the forked supervisor child journals where the coordinator reads", async (t) => {
+  const supervisorEnv = { ...supervisor, CODEX_HOME: "/var/elsewhere" };
+  const named = await forkedAdapterEnvironment(t, coordinatorText() + "CODEX_HOME='/srv/shu/state'\n", supervisorEnv);
+  assert.equal(coordinatorJournalDirectory(named), "/srv/shu/state/coordinator-runs");
+  const unnamed = await forkedAdapterEnvironment(t, coordinatorText(), supervisorEnv);
+  assert.equal(unnamed.CODEX_HOME, undefined, "the supervisor's own CODEX_HOME does not reach the adapter");
+  assert.equal(coordinatorJournalDirectory(unnamed), `${HOME}/.codex/coordinator-runs`);
 });

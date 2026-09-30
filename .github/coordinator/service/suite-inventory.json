@@ -3877,7 +3877,7 @@
     "SHU71_CLAUDE_WRITER_GATED_RECOVERY: recovering an unacknowledged Claude build reruns the writer contract",
     "SHU71_CLAUDE_WRITER_TARGET_PROBE: a wired host still refuses a Claude build whose bound commit GitHub cannot show",
     "SHU71_JOURNAL_ONE_DIRECTORY: the adapter child resolves the journal the coordinator reads",
-    "SHU71_JOURNAL_CHILD_WIRING: the supervisor child applies coordinator.env through the journal rule",
+    "SHU71_JOURNAL_CHILD_WIRING: the forked supervisor child journals where the coordinator reads",
     "SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate"
   ],
   "requirements": [
@@ -29439,7 +29439,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU71_JOURNAL_CHILD_WIRING: the supervisor child applies coordinator.env through the journal rule",
+      "name": "SHU71_JOURNAL_CHILD_WIRING: the forked supervisor child journals where the coordinator reads",
       "capabilities": []
     },
     {
