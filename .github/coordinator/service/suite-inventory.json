@@ -110,6 +110,7 @@
     ".github/coordinator/test/shu68-wiring.test.mjs",
     ".github/coordinator/test/shu71-activation-package.test.mjs",
     ".github/coordinator/test/shu71-battery.test.mjs",
+    ".github/coordinator/test/shu71-codex-reviewer.test.mjs",
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
     ".github/coordinator/test/shu86-durable-intent.test.mjs",
@@ -3839,7 +3840,19 @@
     "SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement",
     "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
     "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
-    "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement"
+    "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement",
+    "SHU-71 Codex review schema: the committed file is the exported closed verdict schema",
+    "SHU-71 Codex review argv: read-only sandbox, committed schema, reviewer prompt",
+    "SHU-71 Codex review PASS: launched as shu-reviewer through the model profile, never the writer wrapper or broker",
+    "SHU-71 Codex review BLOCKED: HOLD carries the callback, so findings route to the writer",
+    "SHU-71 Codex review refuses to launch without confined test evidence or its model wrapper",
+    "SHU-71 Codex role authority: scope, role and runtime mismatches fail closed before any launch",
+    "SHU-71 Codex review callback binding: another head, unsafe or missing evidence is never a verdict",
+    "SHU-71 Codex review stays at the exact head, even on resume",
+    "SHU-71 Codex writer contract is unchanged when no role is given",
+    "SHU-71 sandbox masks the Codex reviewer home from tests and from the Claude reviewer",
+    "SHU-71 sandbox Codex model launch: fixed reviewer home is its only writable path and credential",
+    "SHU-71 sandbox contract: removing the Codex home mask or widening writes dies by a named assertion"
   ],
   "requirements": [
     {
@@ -29168,6 +29181,138 @@
     {
       "name": "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement",
       "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review schema: the committed file is the exported closed verdict schema",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review argv: read-only sandbox, committed schema, reviewer prompt",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review PASS: launched as shu-reviewer through the model profile, never the writer wrapper or broker",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review BLOCKED: HOLD carries the callback, so findings route to the writer",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review refuses to launch without confined test evidence or its model wrapper",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex role authority: scope, role and runtime mismatches fail closed before any launch",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review callback binding: another head, unsafe or missing evidence is never a verdict",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review stays at the exact head, even on resume",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex writer contract is unchanged when no role is given",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 sandbox masks the Codex reviewer home from tests and from the Claude reviewer",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 sandbox Codex model launch: fixed reviewer home is its only writable path and credential",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 sandbox contract: removing the Codex home mask or widening writes dies by a named assertion",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
         {
           "name": "shell_toolchain"
         }

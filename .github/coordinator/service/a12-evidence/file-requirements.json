@@ -1017,6 +1017,18 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-codex-reviewer.test.mjs",
+    "capabilities": [
+      "bash",
+      "shell_toolchain"
+    ],
+    "justification": "The shipped reviewer-sandbox mask block and Codex model branch run in Bash; the model branch calls realpath and dirname from the shell toolchain. Privileged tools (stat, systemd-run) are doubled.",
+    "call_sites": [
+      ".github/coordinator/test/shu71-codex-reviewer.test.mjs:249",
+      ".github/coordinator/test/shu71-codex-reviewer.test.mjs:272"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu71-public-key.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

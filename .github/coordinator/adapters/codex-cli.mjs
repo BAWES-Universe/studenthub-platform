@@ -24,7 +24,12 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { hostname as nodeHostname, platform as nodePlatform, tmpdir } from "node:os";
 import * as nodePath from "node:path";
+import { fileURLToPath } from "node:url";
+import { isRole } from "../launch-vocabulary.mjs";
 import { pushExactSha } from "../push-broker.mjs";
+import { runReviewEvidence } from "../review-execution.mjs";
+import { fixtureReviewScope } from "../workspace-scope.mjs";
+import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
 const path = nodePath;
 
 export const ADAPTER_NAME = "codex-cli";
@@ -65,6 +70,29 @@ export function callbackSchemaFor(scope_phase = "initial") {
       stage: Object.freeze({ type: "string", enum: Object.freeze([writerSuccessStage(scope_phase), "BLOCKED", "FAILED"]) }) }),
   });
 }
+
+// SHU-71: Codex as the independent REVIEWER. The verdict is the same closed
+// shape the Claude reviewer returns, so the coordinator folds either family's
+// PASS or BLOCKED identically. Strict structured output requires every property,
+// so summary is required here where Claude's schema leaves it optional. The
+// schema is static, so it ships as a committed file the confined reviewer can
+// read: the private /tmp the writer's per-launch schema uses is invisible inside
+// the reviewer sandbox.
+export const REVIEW_CALLBACK_STAGES = Object.freeze(["PASS", "BLOCKED", "FAILED"]);
+export const REVIEW_CALLBACK_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  required: ["attempt_id", "target_sha", "stage", "links", "summary"],
+  properties: {
+    attempt_id: { type: "string" },
+    target_sha: { type: "string" },
+    stage: { type: "string", enum: REVIEW_CALLBACK_STAGES },
+    links: { type: "array", items: { type: "string" }, minItems: 1 },
+    summary: { type: "string" },
+  },
+});
+export const REVIEW_SCHEMA_FILE = fileURLToPath(new URL("./codex-review-callback.schema.json", import.meta.url));
+const MAX_REVIEW_EVIDENCE_BYTES = 1024 * 1024;
 
 const QUOTA_RE = /(?:rate|usage|spending|plan|subscription|credit)[-_ ]?limit|quota|capacity/i;
 // Authentication-expiry shapes: 401, expired, invalid token, "please sign in".
@@ -121,7 +149,38 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
   ].filter(Boolean).join("\n");
 }
 
+export function buildCodexReviewPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context }) {
+  const reviewScope = fixtureReviewScope(issue_id);
+  return [
+    "You are the independent verifier for an authorized StudentHub change. You did not write it.",
+    `Issue: ${issue_id}`,
+    `Authorized contract ref: ${authorization_ref}`,
+    `Bound head: ${target_sha}`,
+    `Attempt: ${attempt_id}`,
+    task_context,
+    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against the contract the files and their folders document, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
+    "Review the exact bound head. Do not merge.",
+    "The coordinator already executed the bound test command through its confined reviewer evidence runner; the trusted evidence payload is included above. The private file URI is machine provenance only and is not readable from your sandbox.",
+    "You are read-only. Inspect files only with read-only commands such as ls, cat, sed -n, grep and rg. Do not run the tests, node, npm or any builder-authored code, and do not edit, commit or push.",
+    "If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it.",
+    "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha, optionally followed by :line or :start-end (for example path@bound-head-sha:19); never cite another head or an unsafe path.",
+    "Your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","stage":"PASS|BLOCKED|FAILED","links":["<the file: evidence URI>","<path@${target_sha}:line citations>"],"summary":"<your findings>"}`,
+    "PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
+  ].filter(Boolean).join("\n");
+}
+
 function buildBaseArgs(input, { schemaFile, cwd }) {
+  if (input.role === "review") return [
+    "--json",
+    "--model", CODEX_MODEL,
+    "--sandbox", "read-only", // the reviewer never writes, and its commands get no network
+    // The checkout belongs to the control plane, not to shu-reviewer, so Git's
+    // ownership check would refuse it; the coordinator already bound its head.
+    "--skip-git-repo-check",
+    "-C", cwd,
+    "--output-schema", schemaFile,
+  ];
   return [
     "--json",
     "--model", CODEX_MODEL,
@@ -133,7 +192,7 @@ function buildBaseArgs(input, { schemaFile, cwd }) {
 }
 
 export function buildCodexArgs(input, { resume = false, sessionId = null, schemaFile, cwd } = {}) {
-  const prompt = buildCodexPrompt(input);
+  const prompt = input.role === "review" ? buildCodexReviewPrompt(input) : buildCodexPrompt(input);
   const baseArgs = buildBaseArgs(input, { schemaFile, cwd });
   if (resume) {
     // Resume by EXACT thread id only — --last is forbidden (GPT requirement).
@@ -299,6 +358,34 @@ export function parseCodexCallback(stdout) {
 // must never disagree about whether the broker is in play.
 export function brokerOptedOut(io = {}, env = {}) {
   return io.pushBrokerEnabled === false || env.SHU_PUSH_BROKER_ENABLED === "false";
+}
+
+// The reviewer runs under the root-owned reviewer sandbox's model profile, the
+// same confinement the Claude reviewer uses: shu-reviewer identity, read-only
+// host, masked secrets and sibling attempts. Only the command differs.
+export function isolatedCodexReviewerCommand({ isolationWrapper, cwd, args }) {
+  if (!Array.isArray(isolationWrapper) || isolationWrapper.length === 0
+    || isolationWrapper.some((part) => typeof part !== "string" || part.length === 0)) {
+    throw new Error("reviewer model launch requires the wrapper validated by the confined test phase");
+  }
+  return {
+    file: isolationWrapper[0],
+    args: [
+      ...isolationWrapper.slice(1),
+      "--profile", "model",
+      "--workspace-root", path.dirname(cwd),
+      "--workspace", cwd,
+      "--",
+      "codex",
+      ...args,
+    ],
+  };
+}
+
+function inlineReviewEvidence(reviewEvidence) {
+  if (!reviewEvidence?.report || typeof reviewEvidence.report !== "object" || Array.isArray(reviewEvidence.report)) return null;
+  const payload = JSON.stringify(reviewEvidence.report);
+  return Buffer.byteLength(payload) > MAX_REVIEW_EVIDENCE_BYTES ? null : payload;
 }
 
 export function callbackValid(callback, { attempt_id, target_sha }) {
@@ -585,6 +672,8 @@ export async function launchBuilder({
   attempt_id,
   target_sha,
   task_context,
+  role = null, // trusted receipt authority; null keeps the pre-SHU-71 writer contract
+  runtime = "codex-cli",
   workspace_scope = "full",
   scope_phase = "initial",
   allowed_paths = [],
@@ -597,6 +686,7 @@ export async function launchBuilder({
   spawnImpl = nodeSpawn,
   readHeadImpl = readHead,
   verifyDescendantImpl = headDescendsFromTarget,
+  reviewEvidenceImpl = runReviewEvidence,
   schemaFile = null,
   io = {},
   branch = null,
@@ -608,6 +698,16 @@ export async function launchBuilder({
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
+  }
+  if (role !== null && (!isRole(role) || runtime !== "codex-cli")) {
+    return { stage: "HOLD", reason: "invalid Codex role/runtime authority", ok: false };
+  }
+  const reviewer = role === "review";
+  if (reviewer && (workspace_scope !== "full" || scope_phase !== "review" || !Array.isArray(allowed_paths) || allowed_paths.length !== 0 || scoped_base_sha !== null)) {
+    return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: "reviewer checkout must be complete and unscoped", pause_adapter: true, ok: false };
+  }
+  if (!reviewer && scope_phase === "review") {
+    return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: "writer cannot use review scope", ok: false };
   }
   const execImpl = io.execFileImpl ?? execFileImpl;
   const durableStateDir = stateDirectory(env, io);
@@ -682,7 +782,9 @@ export async function launchBuilder({
   }
   const localCheckoutHead = workspace_scope === "scoped" ? scoped_base_sha : target_sha;
   let checkoutIsBound = checkoutHead === localCheckoutHead;
-  if (!checkoutIsBound && resume) {
+  // A resumed writer may already have advanced its own workspace; a reviewer
+  // never writes, so its checkout stays at the exact bound head on every path.
+  if (!checkoutIsBound && resume && !reviewer) {
     try {
       checkoutIsBound = await verifyDescendantImpl({ cwd, execFileImpl: execImpl, env, target_sha: localCheckoutHead });
     } catch {
@@ -693,12 +795,42 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo,
+  // The reviewer launches only after the coordinator has run the bound tests
+  // through the confined test profile, exactly as the Claude reviewer does.
+  let reviewEvidence = null;
+  let inlineEvidence = null;
+  const auditEvidenceLinks = [];
+  if (reviewer) {
+    reviewEvidence = await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env });
+    if (reviewEvidence?.evidence_link) auditEvidenceLinks.push(reviewEvidence.evidence_link);
+    inlineEvidence = inlineReviewEvidence(reviewEvidence);
+    if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link || !inlineEvidence) {
+      return { stage: "HOLD", pause_adapter: true, reason_code: "REVIEW_EXECUTION_UNAVAILABLE",
+        reason: "REVIEW_EXECUTION_UNAVAILABLE — confined exact-head test execution was not proven; no reviewer launched",
+        audit_evidence_links: auditEvidenceLinks, audit_notes: ["review execution proof: REVIEW_EXECUTION_UNAVAILABLE"], ok: false };
+    }
+    if (!Array.isArray(reviewEvidence.isolation_wrapper) || reviewEvidence.isolation_wrapper.length === 0) {
+      return { stage: "HOLD", pause_adapter: true, reason_code: "REVIEW_EXECUTION_UNAVAILABLE",
+        reason: "REVIEW_EXECUTION_UNAVAILABLE — the validated reviewer model wrapper is unavailable; no reviewer launched",
+        audit_evidence_links: auditEvidenceLinks, audit_notes: ["review model isolation: REVIEW_EXECUTION_UNAVAILABLE"], ok: false };
+    }
+  }
+  const auditNotes = reviewer ? [`review execution proof: ${reviewEvidence.reason_code}`] : [];
+
+  const input = { issue_id, authorization_ref, attempt_id, target_sha, branch, repo, role,
+    task_context: reviewer ? [
+      task_context,
+      `Confined exact-head test evidence URI (machine provenance only; not readable): ${reviewEvidence.evidence_link}`,
+      `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
+      `Trusted confined evidence payload (inline): ${inlineEvidence}`,
+    ].filter(Boolean).join("\n") : task_context,
     workspace_scope, scope_phase, allowed_paths: [...allowed_paths], scoped_base_sha };
-  let schemaPath = schemaFile;
+  // The committed reviewer schema is read, never written: the file that
+  // constrains the reviewer's verdict is the reviewed one.
+  let schemaPath = reviewer ? (schemaFile ?? REVIEW_SCHEMA_FILE) : schemaFile;
   let schemaDir = null;
-  const ownsSchemaFile = schemaFile === null;
-  try {
+  const ownsSchemaFile = schemaPath === null;
+  if (!reviewer) try {
     if (ownsSchemaFile) fs.mkdirSync(durableStateDir, { recursive: true, mode: 0o700 });
     if (ownsSchemaFile) {
       // The schema is public, static data, not session authority. A distinct
@@ -817,13 +949,21 @@ export async function launchBuilder({
     // opt-out, and the mechanism must refuse on its own rather than trusting a
     // gate somewhere upstream.
     const wrapper = (env.SHU_WORKER_LAUNCH_WRAPPER ?? "").trim();
-    if (!brokerOptedOut(io, env) && !wrapper) {
+    if (!reviewer && !brokerOptedOut(io, env) && !wrapper) {
       return { stage: "HOLD", pause_adapter: true, ok: false,
         reason: "push broker enabled but SHU_WORKER_LAUNCH_WRAPPER is unset — refusing to run the builder under the coordinator's OS identity" };
     }
-    const [launchBin, launchArgs] = wrapper
-      ? [wrapper.split(/\s+/)[0], [...wrapper.split(/\s+/).slice(1), "codex", ...args]]
-      : ["codex", args];
+    let launchBin;
+    let launchArgs;
+    if (reviewer) {
+      // Never the writer's wrapper: a reviewer runs only as shu-reviewer.
+      const command = isolatedCodexReviewerCommand({ isolationWrapper: reviewEvidence.isolation_wrapper, cwd, args });
+      [launchBin, launchArgs] = [command.file, command.args];
+    } else {
+      [launchBin, launchArgs] = wrapper
+        ? [wrapper.split(/\s+/)[0], [...wrapper.split(/\s+/).slice(1), "codex", ...args]]
+        : ["codex", args];
+    }
     result = execImpl !== nodeExecFile && !io.spawnImpl
       ? await runExecFile(execImpl, launchBin, launchArgs, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
       : await runSpawn(io.spawnImpl ?? spawnImpl, launchBin, launchArgs, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
@@ -861,7 +1001,8 @@ export async function launchBuilder({
   // release the slot, let a fresh attempt be minted, and start a SECOND codex
   // exec against work that can never be resumed.
   if (durabilityError) {
-    return { stage: "HOLD", reason: `Codex session could not be durably recorded: ${durabilityError.message}`, pause_adapter: true, ok: false };
+    return { stage: "HOLD", reason: `Codex session could not be durably recorded: ${durabilityError.message}`, pause_adapter: true, ok: false,
+      ...(reviewer ? { audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes } : {}) };
   }
   if (resumeOwnershipError) {
     return { stage: "HOLD", reason: `resumed Codex process could not be durably owned: ${resumeOwnershipError.message}`, pause_adapter: true, ok: false };
@@ -877,7 +1018,8 @@ export async function launchBuilder({
   const runId = threadId ? externalRunId(threadId) : null;
   const identity = workerIdentity(attempt_id);
   if (result.error) {
-    const failure = failureFrom(result.error, result.stdout, result.stderr, { threadId });
+    const failure = { ...failureFrom(result.error, result.stdout, result.stderr, { threadId }),
+      ...(reviewer ? { audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes } : {}) };
     return failure.stage === "LAUNCH_UNKNOWN" && runId
       ? { ...failure, external_run_id: runId, worker_identity: identity, adapter_status: "in_progress" }
       : failure;
@@ -890,6 +1032,20 @@ export async function launchBuilder({
   }
 
   const callback = parseCodexCallback(result.stdout);
+  if (reviewer) {
+    const audit = { audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes };
+    const checked = validateReviewerCallback(callback, { attempt_id, target_sha, cwd, evidence_dir: env.SHU_REVIEW_EVIDENCE_DIR, role: "review" });
+    if (!checked.valid) {
+      return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+        reason_code: "CALLBACK_BINDING_INVALID", reason: `CALLBACK_BINDING_INVALID — ${checked.field}: ${checked.detail}`, ...audit, ok: false };
+    }
+    if (callback.stage !== "PASS") {
+      return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+        callback, evidence_links: callback.links, reason: `verifier returned ${callback.stage}`, ...audit, ok: false };
+    }
+    return { stage: "COMPLETED", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+      callback, evidence_links: callback.links, ...audit, ok: true };
+  }
   if (!callbackValid(callback, { attempt_id, target_sha })) {
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", reason: "completed without a valid attempt/SHA-bound schema callback", ok: false };
   }
