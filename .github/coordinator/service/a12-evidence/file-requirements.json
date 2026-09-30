@@ -284,6 +284,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-evidence-paging.test.mjs",
+    "capabilities": [],
+    "justification": "evidence reader child runs unchanged with fetch replaced in-process; broker client runs against a temporary local socket",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-evidence-paging.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
