@@ -95,7 +95,7 @@ import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane
 // SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
 // the activation record's accepted lanes and the routing module's review
 // capability can never drift apart.
-import { ACTIVATION_WRITER_LANES, REVIEW_LANES, adapterForLane, familyForLane } from "./launch-vocabulary.mjs";
+import { ACTIVATION_REVIEWER_LANES, ACTIVATION_WRITER_LANES, adapterForLane, familyForLane } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -490,12 +490,13 @@ export function validateActivationRecord(record) {
   }
   // SHU-225: the optional first-review bootstrap lane. Absent is valid (no
   // bootstrap — the routing then holds visibly, exactly as before this change).
-  // Present must be a KNOWN reviewer-capable lane; an unrecognised value refuses
+  // Present must be a KNOWN reviewer-capable lane on a runtime the supervisor can
+  // start (SHU-71: a Hermes reviewer can only hold); an unrecognised value refuses
   // rather than being ignored, because a silently-dropped reviewer declaration
   // would leave an operator believing a review was configured when it was not.
   if ("reviewer_lane" in record) {
-    if (typeof record.reviewer_lane !== "string" || !REVIEW_LANES.includes(record.reviewer_lane)) {
-      return { ok: false, reason: `reviewer_lane must be one of ${REVIEW_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
+    if (typeof record.reviewer_lane !== "string" || !ACTIVATION_REVIEWER_LANES.includes(record.reviewer_lane)) {
+      return { ok: false, reason: `reviewer_lane must be one of ${ACTIVATION_REVIEWER_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
     }
   }
   // SHU-71: a named writer must be a writer lane the supervisor can start, and

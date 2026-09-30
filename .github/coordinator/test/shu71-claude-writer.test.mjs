@@ -13,7 +13,7 @@ import { readProgressionPush } from "../two-fixture-progression.mjs";
 import { defaultPushReceipt } from "../reconcile-dangling.mjs";
 import * as claude from "../adapters/claude-code.mjs";
 import { executeSupervisedOrder } from "../supervisor-worker.mjs";
-import { ACTIVATION_WRITER_LANES, LAUNCHABLE_WRITER_RUNTIMES, REVIEW_ROLE_LANES, WRITER_LANES, adapterForLane, familyForLane, runtimeForLane } from "../launch-vocabulary.mjs";
+import { ACTIVATION_REVIEWER_LANES, ACTIVATION_WRITER_LANES, LAUNCHABLE_RUNTIMES, WRITER_LANES, adapterForLane, familyForLane, runtimeForLane } from "../launch-vocabulary.mjs";
 import { createEpisodeHarness, SHA_INPUT, SHA_WRITE, SHA_REVISED, REVISION } from "./fixture/episode-harness.mjs";
 
 const NOW = new Date("2026-09-10T12:00:00.000Z");
@@ -45,7 +45,7 @@ test("SHU71_WRITER_LANE: the record names a launchable writer and its reviewer, 
   assert.equal(activation.validateActivationRecord({ ...base, writer_lane: "claude-builder", reviewer_lane: "codex-verifier", unrelated_key: 1 }).ok, false, "the key set stays exact");
   // Independence comes from the lane registry, not the lane names.
   for (const writer of ACTIVATION_WRITER_LANES) {
-    for (const reviewer of REVIEW_ROLE_LANES) {
+    for (const reviewer of ACTIVATION_REVIEWER_LANES) {
       const ok = activation.validateActivationRecord({ ...base, writer_lane: writer, reviewer_lane: reviewer }).ok;
       assert.equal(ok, familyForLane(writer) !== familyForLane(reviewer) && adapterForLane(writer) !== adapterForLane(reviewer), `${writer}/${reviewer}`);
     }
@@ -57,7 +57,7 @@ test("SHU71_WRITER_LAUNCHABLE: every writer lane an activation may not name runs
   assert.deepEqual(excluded, ["hermes-box"]);
   // Drive the real supervisor with a Hermes order: the adapter receives no spawn
   // and cannot start a worker. When the Hermes runtime is wired this fails, and
-  // LAUNCHABLE_WRITER_RUNTIMES must be revisited with it.
+  // LAUNCHABLE_RUNTIMES must be revisited with it.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shu71-hermes-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const authorizationModule = path.join(dir, "authorize.mjs");
@@ -77,7 +77,7 @@ test("SHU71_WRITER_LAUNCHABLE: every writer lane an activation may not name runs
   await executeSupervisedOrder({ order, contract: {}, stateDir: path.join(dir, "state"), authorizationModule }, { env: {}, loadAdapter }).catch(() => {});
   assert.equal(launched?.sawSpawn, false, "the supervisor passes the Hermes adapter no spawn");
   assert.equal(launched?.stage, "LAUNCH_UNKNOWN", "so a Hermes build can only hold");
-  for (const lane of ACTIVATION_WRITER_LANES) assert.ok(LAUNCHABLE_WRITER_RUNTIMES.includes(runtimeForLane(lane)));
+  for (const lane of ACTIVATION_WRITER_LANES) assert.ok(LAUNCHABLE_RUNTIMES.includes(runtimeForLane(lane)));
 });
 
 test("SHU71_WRITER_ELIGIBILITY: the activation's writer lane replaces only the card's worker label", () => {

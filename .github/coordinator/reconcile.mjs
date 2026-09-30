@@ -1080,16 +1080,24 @@ export function nextReceiptState(receipt, event, ctx = {}) {
 // host-local session state, so the requirements would not apply to it.
 export const ACTIVATION_GATED_ADAPTERS = Object.freeze(["codex-cli"]);
 
+// SHU-71: the contract belongs to the local CLI that WRITES, whatever its
+// runtime. A Claude writer pushes through the same broker, as the same distinct
+// worker, from the same brick box, so it carries the same contract and the same
+// GitHub target probe. The Claude reviewer stays ungated, as before.
+export function activationGated(adapter, role = null) {
+  return ACTIVATION_GATED_ADAPTERS.includes(adapter) || (adapter === "claude-code" && isWriterRole(role));
+}
+
 // activationPreflightFor — null when the lane carries no contract, otherwise the
 // preflight result. Kept beside the dispatch path so the gate and the lane list
 // cannot drift apart.
-export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undefined } = {}) {
+export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undefined, role = null } = {}) {
   // Named opt-out for tests whose subject is some OTHER dispatch property, in
   // the same style as io.pollRuns / io.fetchDurable / io.adapterModules. It is
   // greppable, it is never set by the workflow, and production therefore always
   // runs the contract.
   if (io.skipActivationPreflight === true) return null;
-  if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return null;
+  if (!activationGated(adapter, role)) return null;
   const stateDir = io.codexStateDir ?? coordinatorJournalDirectory(env);
   return preflightActivation({ env, stateDir, cwd, io });
 }
@@ -1114,8 +1122,8 @@ export async function resolveLiveHead(receipt, { githubToken, fetchImpl }) {
 // repository commit before a local worker is started. Probing the commit (not
 // the destination branch) also supports a first-time builder branch that does
 // not exist until Codex pushes it.
-export async function verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl }) {
-  if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return { ok: true };
+export async function verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl, role = null }) {
+  if (!activationGated(adapter, role)) return { ok: true };
   if (!githubToken || !repo || !target_sha) return { ok: false, reason: "GitHub target verification is not configured" };
   try {
     const res = await fetchImpl(`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(target_sha)}`, {
@@ -2449,7 +2457,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       // Recovery is a worker launch too. Rechecking only first dispatch lets a
       // later coordinator with missing credentials, wrong host, or ephemeral
       // state resume an existing Codex session around the activation contract.
-      const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+      const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined, role: roleForReceipt(receipt) });
       if (activation && !activation.ok) {
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
         config.adapter_pause_map[adapter] = true;
@@ -2461,6 +2469,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         target_sha: receipt.target_sha,
         githubToken,
         fetchImpl,
+        role: roleForReceipt(receipt),
       }) : { ok: true };
       if (!activationTarget.ok) {
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
@@ -2904,7 +2913,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   // refused preflight sent no launch, and RESERVED receipts are not processed
   // by launch recovery; writing one here would consume the slot permanently
   // even after the operator repaired the missing wiring.
-  const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+  const launchRole = successor?.role ?? roleForLane(requested_worker);
+  const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined, role: launchRole });
   if (activation && !activation.ok) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
     config.adapter_pause_map[adapter] = true;
@@ -2913,7 +2923,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     return 2;
   }
   const activationTarget = activation
-    ? await verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl })
+    ? await verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl, role: launchRole })
     : { ok: true };
   if (!activationTarget.ok) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
