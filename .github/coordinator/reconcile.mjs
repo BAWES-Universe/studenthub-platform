@@ -28,7 +28,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 //
 // Linear API token names only — no secrets live in this repository.
 
-import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane } from "./launch-vocabulary.mjs";
+import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
@@ -1083,15 +1083,17 @@ export const ACTIVATION_GATED_ADAPTERS = Object.freeze(["codex-cli"]);
 // SHU-71: the contract belongs to the local CLI that WRITES, whatever its
 // runtime. A Claude writer pushes through the same broker, as the same distinct
 // worker, from the same brick box, so it carries the same contract and the same
-// GitHub target probe. The Claude reviewer stays ungated, as before.
-export function activationGated(adapter, role = null) {
-  return ACTIVATION_GATED_ADAPTERS.includes(adapter) || (adapter === "claude-code" && isWriterRole(role));
+// GitHub target probe. The Claude reviewer stays ungated, as before. Only an
+// explicit review role lifts the gate: a caller that omits the role, or passes
+// one it could not resolve, runs the writer contract rather than skipping it.
+export function activationGated(adapter, role) {
+  return ACTIVATION_GATED_ADAPTERS.includes(adapter) || (adapter === "claude-code" && role !== ROLE_REVIEW);
 }
 
 // activationPreflightFor — null when the lane carries no contract, otherwise the
 // preflight result. Kept beside the dispatch path so the gate and the lane list
 // cannot drift apart.
-export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undefined, role = null } = {}) {
+export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undefined, role } = {}) {
   // Named opt-out for tests whose subject is some OTHER dispatch property, in
   // the same style as io.pollRuns / io.fetchDurable / io.adapterModules. It is
   // greppable, it is never set by the workflow, and production therefore always
@@ -1122,7 +1124,7 @@ export async function resolveLiveHead(receipt, { githubToken, fetchImpl }) {
 // repository commit before a local worker is started. Probing the commit (not
 // the destination branch) also supports a first-time builder branch that does
 // not exist until Codex pushes it.
-export async function verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl, role = null }) {
+export async function verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl, role }) {
   if (!activationGated(adapter, role)) return { ok: true };
   if (!githubToken || !repo || !target_sha) return { ok: false, reason: "GitHub target verification is not configured" };
   try {

@@ -140,7 +140,19 @@ export function adapterLaunchEnvironment(source) {
   assert.ok(!entries.has('SHU_SUPERVISOR_SECRET'), 'SHU251_ENV_CROSSED: secret in coordinator file');
   requireSupervisorAdapterEntries(entries);
   return Object.fromEntries([...entries].filter(([key]) => supervisorAdapterKeys.includes(key)
-    || ['CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'WORKSPACE_AGENT_TRIGGER_ID'].includes(key)));
+    || ['CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'WORKSPACE_AGENT_TRIGGER_ID'].includes(key)
+    || adapterJournalKeys.includes(key)));
+}
+
+// The push journal resolves from these keys (push-broker.mjs
+// coordinatorJournalDirectory). The coordinator reads them from this same file,
+// so the adapter child takes the file's value or none at all: a value the
+// supervisor's own environment carries would split the writers' journal from
+// the one the coordinator's readers consult.
+export const adapterJournalKeys = Object.freeze(['CODEX_HOME']);
+export function applyAdapterLaunchEnvironment(target, launch) {
+  for (const key of adapterJournalKeys) if (!Object.hasOwn(launch, key)) delete target[key];
+  return Object.assign(target, launch);
 }
 
 export function readAdapterLaunchEnvironment(io = fs, uid = process.getuid(), gid = process.getgid()) {
