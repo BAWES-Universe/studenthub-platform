@@ -44,7 +44,7 @@ export const CALLBACK_SCHEMA = Object.freeze({
 const QUOTA_RE = /(?:rate|usage|spending|plan|subscription|credit)[-_ ]?limit|quota|capacity/i;
 // Authentication-expiry shapes (401, expired, invalid token, auth failures):
 // these map to a visible re-authentication HOLD, never a silent retry.
-const REAUTH_RE = /(?:401|expired|invalid(?: oauth)? token|authentication|re-?auth|sign ?in|login required)/i;
+const REAUTH_RE = /(?:401|expired|invalid(?: oauth)? token|authentication|re-?auth|sign ?in|login required|not logged in)/i;
 // Non-auth access shapes (403, forbidden) stay FAILED + access.
 const ACCESS_RE = /(?:forbidden|403|unauthori[sz]ed)/i;
 
@@ -377,21 +377,36 @@ function inlineEvidencePayload(reviewEvidence) {
   return payload;
 }
 
-function failureFrom(error, stdout, stderr) {
-  // Do not classify arbitrary model stdout as an account failure: reviewed code
-  // can legitimately contain words like "quota" or "capacity".
-  const detail = `${stderr}\n${error?.message ?? ""}`;
+// The CLI's own error envelope (`is_error: true`) carries the CLI's message, not
+// model output, so it may classify an account failure. The CLI reports a missing
+// login there ("Not logged in · Please run /login") and nowhere else.
+function cliErrorDetail(stdout) {
+  const envelope = parseJson(String(stdout ?? "").trim());
+  return envelope?.is_error === true && typeof envelope.result === "string" ? envelope.result : "";
+}
+
+function accountFailure(detail) {
   if (QUOTA_RE.test(detail)) {
     return { stage: "FAILED", error_code: "CLAUDE_QUOTA", error_kind: "quota", pause_adapter: true, ok: false };
   }
   if (REAUTH_RE.test(detail)) {
     // GPT 2026-09-05: authentication expiry must surface a VISIBLE
     // re-authentication HOLD — never a silent retry or a fabricated failure.
-    return { stage: "HOLD", reason: "Claude authentication expired or invalid — re-run `claude setup-token` on the worker host", pause_adapter: true, ok: false };
+    return { stage: "HOLD", reason: "Claude authentication missing, expired or invalid — log the launching identity in (`claude /login`) or re-run `claude setup-token` on the worker host", pause_adapter: true, ok: false };
   }
   if (ACCESS_RE.test(detail)) {
     return { stage: "FAILED", error_code: "CLAUDE_ACCESS", error_kind: "access", pause_adapter: true, ok: false };
   }
+  return null;
+}
+
+function failureFrom(error, stdout, stderr) {
+  // Do not classify arbitrary model stdout as an account failure: reviewed code
+  // can legitimately contain words like "quota" or "capacity". Nor the error
+  // message: execFile echoes every argument into it, prompt included, and it
+  // repeats stderr, which is classified directly.
+  const account = accountFailure(`${stderr}\n${cliErrorDetail(stdout)}`);
+  if (account) return account;
   if (error?.killed || error?.signal) {
     return { stage: "LAUNCH_UNKNOWN", reason: "Claude process ended without a trustworthy terminal result; session is held for resume", ok: false };
   }
@@ -551,6 +566,10 @@ export async function launchBuilder({
   const parsed = parseClaudeCallback(result.stdout);
   const identity = workerIdentity(attempt_id);
   const runId = externalRunId(attempt_id);
+  const account = parsed.envelope?.is_error === true ? accountFailure(cliErrorDetail(result.stdout)) : null;
+  if (account) {
+    return { ...account, external_run_id: runId, worker_identity: identity, audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes };
+  }
   if (parsed.envelope?.is_error === true || parsed.reason_code === "INVALID_ENVELOPE_JSON") {
     return {
       stage: "FAILED",

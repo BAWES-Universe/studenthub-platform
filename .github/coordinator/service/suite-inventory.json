@@ -3878,7 +3878,8 @@
     "SHU71_CLAUDE_WRITER_TARGET_PROBE: a wired host still refuses a Claude build whose bound commit GitHub cannot show",
     "SHU71_JOURNAL_ONE_DIRECTORY: the adapter child resolves the journal the coordinator reads",
     "SHU71_JOURNAL_CHILD_WIRING: the forked supervisor child journals where the coordinator reads",
-    "SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate"
+    "SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate",
+    "SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry"
   ],
   "requirements": [
     {
@@ -29444,6 +29445,10 @@
     },
     {
       "name": "SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry",
       "capabilities": []
     }
   ],

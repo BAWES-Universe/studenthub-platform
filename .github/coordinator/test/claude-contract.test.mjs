@@ -457,3 +457,43 @@ test("a synchronous PASS whose live head cannot be read must HOLD (fail closed)"
   assert.ok(terminal, "expected a terminal receipt");
   assert.equal(terminal.stage, "HOLD", "an unverifiable head must never silently become 'head matches'");
 });
+
+test("SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry", async () => {
+  // The exact envelope the stage-4 writer produced on a host with no worker login.
+  const notLoggedIn = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", terminal_reason: "api_error", duration_ms: 112 });
+  const exited = Object.assign(new Error("Command failed: claude -p"), { code: 1 });
+  const review = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: notLoggedIn }) });
+  assert.equal(review.stage, "HOLD", "exit 1 with the CLI's error envelope");
+  assert.equal(review.pause_adapter, true);
+  assert.match(review.reason, /claude \/login/);
+  const zeroExit = await launchBuilder({ ...launchInput, execFileImpl: execResult({ stdout: notLoggedIn }) });
+  assert.equal(zeroExit.stage, "HOLD", "exit 0 with the CLI's error envelope");
+  assert.equal(zeroExit.external_run_id, externalRunId(ATTEMPT));
+
+  const home = mkdtempSync(join(tmpdir(), "claude-writer-auth-"));
+  try {
+    const writer = await launchBuilder({ ...launchInput, role: "build", workspace_scope: "scoped", scope_phase: "initial", allowed_paths: ["allowed.txt"],
+      scoped_base_sha: SHA, repo: "BAWES-Universe/studenthub-platform", branch: "coordinator/SHU-140", cwd: home,
+      env: { HOME: home, SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper", SHU_WORKER_UID: String(process.getuid() + 1) },
+      execFileImpl: execResult({ error: exited, stdout: notLoggedIn }) });
+    assert.equal(writer.stage, "HOLD", "the Claude writer holds the same way");
+    assert.match(writer.reason, /claude \/login/, writer.reason);
+    assert.equal(writer.pause_adapter, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+
+  // Only the CLI's own error envelope classifies: model text that says the same
+  // words in a successful envelope, or in stdout that is not an envelope, does not.
+  const modelSays = JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: ATTEMPT, result: "Not logged in · Please run /login" });
+  const spoken = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: modelSays }) });
+  assert.equal(spoken.stage, "FAILED");
+  const raw = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: "Not logged in · Please run /login" }) });
+  assert.equal(raw.stage, "FAILED");
+  // execFile echoes the arguments, prompt included, into the error message.
+  const context = "The user is not logged in; quota and 403 forbidden appear in this task.";
+  const echoed = Object.assign(new Error(`Command failed: claude -p ${context}`), { code: 1 });
+  const prompted = await launchBuilder({ ...launchInput, task_context: context, execFileImpl: execResult({ error: echoed }) });
+  assert.equal(prompted.stage, "FAILED", "prompt text echoed into the error message never classifies");
+  assert.equal(prompted.error_code, "CLAUDE_1");
+});
