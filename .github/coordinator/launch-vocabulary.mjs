@@ -205,6 +205,16 @@ export const REVIEW_LANES = Object.freeze(
 export const WRITER_LANES = Object.freeze(LANE_NAMES.filter((name) => isWriterRole(LANES[name].role)));
 export const REVIEW_ROLE_LANES = Object.freeze(LANE_NAMES.filter((name) => LANES[name].role === ROLE_REVIEW));
 
+// Writer runtimes the supervisor can actually start. hermes-pool is routed, but
+// the supervisor gives it no spawn, so its launch can only return
+// LAUNCH_UNKNOWN (adapters/hermes-pool.mjs) until the Hermes runtime is wired.
+// An activation may name only a writer lane on one of these runtimes, so it can
+// never arm an episode whose first build can only hold.
+export const LAUNCHABLE_WRITER_RUNTIMES = Object.freeze(["codex-cli", "claude-code"]);
+export const ACTIVATION_WRITER_LANES = Object.freeze(
+  WRITER_LANES.filter((name) => LAUNCHABLE_WRITER_RUNTIMES.includes(LANES[name].runtime)),
+);
+
 // ---------------------------------------------------------------------------
 // Receipt version gate + role authority
 // ---------------------------------------------------------------------------

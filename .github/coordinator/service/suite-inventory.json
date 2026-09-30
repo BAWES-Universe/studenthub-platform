@@ -111,6 +111,7 @@
     ".github/coordinator/test/shu68-wiring.test.mjs",
     ".github/coordinator/test/shu71-activation-package.test.mjs",
     ".github/coordinator/test/shu71-battery.test.mjs",
+    ".github/coordinator/test/shu71-claude-writer.test.mjs",
     ".github/coordinator/test/shu71-codex-reviewer.test.mjs",
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
@@ -3858,7 +3859,16 @@
     "SHU71_EVIDENCE_PAGE_BOUND accepts exactly the page bound and refuses one comment more",
     "SHU71_EVIDENCE_CURSOR refuses a repeated, empty or missing cursor instead of truncating",
     "SHU71_EVIDENCE_IDENTITY refuses a thread whose issue changes between pages",
-    "SHU71_EVIDENCE_BROKER_SIZE the broker path carries answers past 64 KiB and still bounds them"
+    "SHU71_EVIDENCE_BROKER_SIZE the broker path carries answers past 64 KiB and still bounds them",
+    "SHU71_WRITER_LANE: the record names a launchable writer and its reviewer, never two lanes of one family",
+    "SHU71_WRITER_LAUNCHABLE: every writer lane an activation may not name runs on the runtime the supervisor cannot start",
+    "SHU71_WRITER_ELIGIBILITY: the activation's writer lane replaces only the card's worker label",
+    "SHU71_PUSH_JOURNAL: every writer journals where the progression reader looks",
+    "SHU71_CLAUDE_WRITER_PROMPT: the Claude writer is told it cannot run commands; the reviewer is unchanged",
+    "SHU71_REVERSED_EPISODE: Claude builds, Codex reviews, the revision returns to Claude, Codex re-reviews",
+    "SHU71_WRITER_LANE_SAME_FAMILY_REFUSED: an activation naming a writer and reviewer of one family launches nothing",
+    "SHU-71 Codex review of a failing confined run: the reviewer still launches, told FAIL, and its BLOCK carries findings",
+    "SHU-71: a failing confined run still launches the Claude reviewer, told FAIL, and its BLOCK carries findings"
   ],
   "requirements": [
     {
@@ -29343,6 +29353,56 @@
     {
       "name": "SHU71_EVIDENCE_BROKER_SIZE the broker path carries answers past 64 KiB and still bounds them",
       "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_LANE: the record names a launchable writer and its reviewer, never two lanes of one family",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_LAUNCHABLE: every writer lane an activation may not name runs on the runtime the supervisor cannot start",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_ELIGIBILITY: the activation's writer lane replaces only the card's worker label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_PUSH_JOURNAL: every writer journals where the progression reader looks",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_CLAUDE_WRITER_PROMPT: the Claude writer is told it cannot run commands; the reviewer is unchanged",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_REVERSED_EPISODE: Claude builds, Codex reviews, the revision returns to Claude, Codex re-reviews",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_LANE_SAME_FAMILY_REFUSED: an activation naming a writer and reviewer of one family launches nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 Codex review of a failing confined run: the reviewer still launches, told FAIL, and its BLOCK carries findings",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71: a failing confined run still launches the Claude reviewer, told FAIL, and its BLOCK carries findings",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

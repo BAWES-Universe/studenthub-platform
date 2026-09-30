@@ -39,6 +39,7 @@ import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailur
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
 import { triageCoordinatorIncident } from "./incident-triage.mjs";
+import { coordinatorJournalDirectory } from "./push-broker.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -249,11 +250,11 @@ export const SAME_FAMILY_VERIFIERS = Object.freeze(Object.fromEntries(
   LANE_NAMES.map((lane) => [lane, FAMILY_VERIFIERS[familyForLane(lane)]]),
 ));
 
-function verifierConflictsWithImplementationWorker(issue, verifier) {
+function verifierConflictsWithImplementationWorker(issue, verifier, worker = requestedWorkerFor(issue)) {
   if (!verifier || !hasLabel(issue, /^type:implementation$/i)) return false;
   // Array.isArray also keeps an inherited key (e.g. "constructor") from ever
   // resolving to something truthy here.
-  const sameFamily = SAME_FAMILY_VERIFIERS[requestedWorkerFor(issue)];
+  const sameFamily = SAME_FAMILY_VERIFIERS[worker];
   return Array.isArray(sameFamily) && sameFamily.includes(verifier);
 }
 
@@ -269,7 +270,9 @@ function stateLabel(state) {
 //   { id, title, state, priority, labels[], assignee|null, delegate|null,
 //     linkedPRs:[{number,state}], parent:{id,state}|null, blockers:[{id,state}] }
 // Exclusion rules are checked in a fixed order so the reported reason is stable.
-export function computeEligibility({ issues, openPRs = [], config = {} }) {
+// writerLanes: issue id -> writer lane named by the armed activation (SHU-71).
+// It replaces only the card's worker label; every other rule is unchanged.
+export function computeEligibility({ issues, openPRs = [], config = {}, writerLanes = null }) {
   const openPRNumbers = new Set(openPRs.map((p) => (typeof p === "number" ? p : p.number)).filter((n) => n !== undefined));
   const pilotRepo = config.pilot_repo ?? "BAWES-Universe/studenthub-platform";
 
@@ -333,7 +336,8 @@ export function computeEligibility({ issues, openPRs = [], config = {} }) {
       exclude(`${reviewRisk} card without a named verifier label (verifier:<name>)`);
       continue;
     }
-    if (reviewRisk && verifierConflictsWithImplementationWorker(issue, verifier)) {
+    const worker = writerLanes?.get(issue.id) ?? requestedWorkerFor(issue);
+    if (reviewRisk && verifierConflictsWithImplementationWorker(issue, verifier, worker)) {
       exclude(`${reviewRisk} implementation would be authored by its named verifier (${verifier})`);
       continue;
     }
@@ -367,7 +371,7 @@ export function computeEligibility({ issues, openPRs = [], config = {} }) {
       labels: [...(issue.labels ?? [])],
       repo: issue.repo,
       verifier,
-      requested_worker: requestedWorkerFor(issue),
+      requested_worker: worker,
     });
   }
 
@@ -1086,8 +1090,7 @@ export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undef
   // runs the contract.
   if (io.skipActivationPreflight === true) return null;
   if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return null;
-  const stateDir = io.codexStateDir
-    ?? (env.CODEX_HOME ? `${env.CODEX_HOME}/coordinator-runs` : (env.HOME ? `${env.HOME}/.codex/coordinator-runs` : null));
+  const stateDir = io.codexStateDir ?? coordinatorJournalDirectory(env);
   return preflightActivation({ env, stateDir, cwd, io });
 }
 
@@ -1999,8 +2002,8 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
 
 // reconcileOnce — pure-ish orchestration shared by dry-run and dispatch paths.
 // Returns { report, plan } and performs NO I/O except what the caller injects.
-export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set() }) {
-  const eligibility = computeEligibility({ issues, openPRs, config });
+export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null }) {
+  const eligibility = computeEligibility({ issues, openPRs, config, writerLanes });
   const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   return { eligibility, selection };
 }
@@ -2688,7 +2691,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   if (!singleRunActivation.requested) {
     for (const [id, continuation] of handoffContinuations(receipts, config.linear_receipt_actor_ids)) episodeContinuations.set(id, continuation);
   }
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
+  // SHU-71: the armed activation may name the first build's writer lane.
+  const writerLanes = singleRunActivation.state === "armed" && singleRunActivation.writer_lane && singleRunActivation.target_issue_id
+    ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.writer_lane]]) : null;
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
   if (!singleRunActivation.requested) {
     const trustedReceiptActors = new Set(config.linear_receipt_actor_ids ?? []);
@@ -2819,7 +2825,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${refreshedIssue.id} is not the activated target`);
       return 2;
     }
-    const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config });
+    const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config, writerLanes });
     if (refreshedEligibility.ready.length !== 1) {
       const reason = refreshedEligibility.excluded[0]?.reason ?? "candidate is no longer eligible";
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${candidate.id}: ${reason}`);

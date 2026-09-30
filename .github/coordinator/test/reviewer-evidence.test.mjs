@@ -10,6 +10,7 @@ import {
   persistClaudeEnvelope,
 } from "../adapters/claude-code.mjs";
 import { runReviewEvidence } from "../review-execution.mjs";
+import { reviewFindingsFromCallback } from "../review-findings.mjs";
 import { bounded, MAX_CAPTURE_BYTES } from "../review-execution-child.mjs";
 import { CANONICAL_SEED, inspectFixtureSeed, SEED_MARKER } from "../fixture-seed.mjs";
 import { createReceipt, foldLaunchOutcome } from "../reconcile.mjs";
@@ -455,4 +456,22 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
     },
   });
   assert.equal(refused.executed, false, "a reviewer-identity-owned workspace violates the selected B-ii boundary");
+});
+
+test("SHU-71: a failing confined run still launches the Claude reviewer, told FAIL, and its BLOCK carries findings", async (t) => {
+  const dir = privateTemp("shu71-failed-run-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cli = executor(output("BLOCKED", {}, dir));
+  const failed = reviewProof({ passed: false, reason_code: "REVIEW_TESTS_FAILED" });
+  const proof = await failed();
+  const out = await launchBuilder(launchArgs(dir, null, {
+    execFileImpl: cli,
+    reviewEvidenceImpl: async () => ({ ...proof, report: { ...proof.report, tests: { ...proof.report.tests, exit_code: 1, stdout: "fail 1" } } }),
+  }));
+  assert.equal(cli.calls.length, 1, "a failing run is evidence, not a missing one");
+  assert.ok(cli.calls[0].args.some((arg) => arg.includes("Confined test result: FAIL")), "SHU71_REVIEW_TESTS_FAILED: the reviewer is told the run failed");
+  assert.equal(out.stage, "HOLD");
+  assert.notEqual(out.reason_code, "REVIEW_EXECUTION_UNAVAILABLE");
+  assert.equal(out.callback?.stage, "BLOCKED");
+  assert.ok(reviewFindingsFromCallback(out.callback)?.links.length > 0, "the BLOCK's findings reach the writer");
 });

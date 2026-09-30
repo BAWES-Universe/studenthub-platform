@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { pushExactSha } from "../push-broker.mjs";
+import { pushExactSha, coordinatorJournalDirectory } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 
 export const ADAPTER_NAME = "claude-code";
@@ -104,6 +104,9 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     task_context,
     `Implement only the authorized paths: ${allowed_paths.length ? allowed_paths.join(", ") : "the bound full workspace"}.`,
     "Leave changes in the workspace. Do not commit, push, merge, access the network, or alter .git. The host broker validates and publishes the result.",
+    // SHU-71: the Claude writer has file tools only. Say so plainly, and why,
+    // because the quoted review findings ask the reviser to run the tests.
+    "You have no shell here, so you cannot run tests or any other command, whatever the task text says: your launch has no network sandbox, so it is given file tools only. Read the code and its tests and make the change correct by reading them. The independent reviewer runs the lane's tests in a confined sandbox before it reviews your result.",
     `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
   ].filter(Boolean).join("\n");
   const reviewScope = fixtureReviewScope(issue_id);
@@ -435,6 +438,9 @@ export async function launchBuilder({
     const scope = validateWorkspaceScope({ workspace_scope, scope_phase, allowed_paths, scoped_base_sha }, { requireScopedBase: true });
     if (!scope.ok || scope_phase === "review") return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: scope.reason ?? "writer cannot use review scope", ok: false };
     if (!env.SHU_WORKER_LAUNCH_WRAPPER || !/^\d+$/.test(env.SHU_WORKER_UID ?? "") || Number(env.SHU_WORKER_UID) === 0 || Number(env.SHU_WORKER_UID) === process.getuid()) return { stage: "HOLD", reason: "Claude writer requires the configured distinct worker identity", ok: false };
+    // The push journal is resolved before any model time is spent: a writer
+    // whose push could land nowhere a reader looks would look like no push.
+    if (!coordinatorJournalDirectory(env)) return { stage: "HOLD", reason: "Claude writer requires an absolute coordinator push journal directory (CODEX_HOME or HOME)", ok: false };
   }
   if (!oauth_token) {
     if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {
@@ -614,7 +620,7 @@ export async function launchBuilder({
   }
   if (isWriterRole(role)) {
     const push = await (io.pushBrokerImpl ?? pushExactSha)({
-      stateDir: env.SHU_WORKSPACE_STATE_DIR, attempt_id, target_sha, result_sha: null,
+      stateDir: coordinatorJournalDirectory(env), attempt_id, target_sha, result_sha: null,
       workspaceReady: true, beforePublish: io.resultStillAuthorized, repo, branch,
       worktree: cwd, allowedRoot: env.SHU_WORKTREE_ROOT, remoteUrl: env.SHU_PUSH_REMOTE_URL,
       branchPrefix: env.SHU_LANE_BRANCH_PREFIX ?? "coordinator/",

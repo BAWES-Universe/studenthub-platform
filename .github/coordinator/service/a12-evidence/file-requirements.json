@@ -725,12 +725,12 @@
     ],
     "justification": "unconfined /bin/sh fixture directly executes reviewer child; descriptor/environment/process canary reads; TCP and process-canary launch doubled",
     "call_sites": [
-      ".github/coordinator/test/reviewer-evidence.test.mjs:239",
-      ".github/coordinator/test/reviewer-evidence.test.mjs:251",
-      ".github/coordinator/test/reviewer-evidence.test.mjs:312",
-      ".github/coordinator/test/reviewer-evidence.test.mjs:362",
-      ".github/coordinator/test/reviewer-evidence.test.mjs:417",
-      ".github/coordinator/test/reviewer-evidence.test.mjs:444"
+      ".github/coordinator/test/reviewer-evidence.test.mjs:240",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:252",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:313",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:363",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:418",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:445"
     ]
   },
   {
@@ -1022,6 +1022,14 @@
       ".github/coordinator/test/shu71-battery.test.mjs:141",
       ".github/coordinator/test/shu71-battery.test.mjs:253",
       ".github/coordinator/test/shu71-battery.test.mjs:331"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-claude-writer.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and process APIs; the Claude CLI, push broker, supervisor adapter and Linear/GitHub are doubled, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-claude-writer.test.mjs"
     ]
   },
   {

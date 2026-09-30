@@ -6,14 +6,16 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { receiptCommentActorId, validateReceipt } from './reconcile.mjs';
 import { resolveReceiptRoleAuthority } from './launch-vocabulary.mjs';
+import { coordinatorJournalDirectory } from './push-broker.mjs';
 
 export const activationDigest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export function readProgressionPush(receipt, env) {
   if (!/^[0-9a-f-]{36}$/.test(receipt?.attempt_id ?? '')) return null;
-  const home = env.CODEX_HOME || (env.HOME ? path.join(env.HOME, '.codex') : null);
-  if (!home) return null;
-  const dir = path.join(home, 'coordinator-runs');
+  const dir = coordinatorJournalDirectory(env);
+  // An unresolvable journal is not "nothing was pushed": progressionHeads
+  // turns the throw into a refusal.
+  if (!dir) throw new Error('coordinator push journal directory is unresolvable');
   const file = path.join(dir, `push-${receipt.attempt_id}.json`);
   try {
     for (const p of [dir, file]) {

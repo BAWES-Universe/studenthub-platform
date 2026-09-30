@@ -1551,27 +1551,31 @@ test("SHU-140 worker-identity: a /proc entry that could not be READ at the re-ch
 
 test("SHU-140 reconcile-dangling probe: a push receipt is read from a listed directory, and an unlistable one is not an absent receipt", async (t) => {
   const receipt = { attempt_id: DANGLING };
+  // SHU-71: the shared push journal must resolve and list before the older
+  // workspace-state directory counts; here it is empty.
+  const codexHome = sandbox(t);
+  fs.mkdirSync(nodePath.join(codexHome, "coordinator-runs"));
 
   const withRecord = sandbox(t);
   fs.writeFileSync(nodePath.join(withRecord, `push-${DANGLING}.json`), JSON.stringify({ stage: "PENDING", attempt_id: DANGLING }));
-  const found = stamped(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: withRecord }, now: clock }));
+  const found = stamped(defaultPushReceipt({ receipt, env: { CODEX_HOME: codexHome, SHU_WORKSPACE_STATE_DIR: withRecord }, now: clock }));
   assert.equal(found.readable, true);
   assert.equal(found.record, nodePath.join(withRecord, `push-${DANGLING}.json`));
 
   const withoutRecord = sandbox(t);
   fs.writeFileSync(nodePath.join(withoutRecord, "push-00000000-0000-4000-8000-000000000000.json"), "{}");
-  const clean = stamped(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: withoutRecord }, now: clock }));
+  const clean = stamped(defaultPushReceipt({ receipt, env: { CODEX_HOME: codexHome, SHU_WORKSPACE_STATE_DIR: withoutRecord }, now: clock }));
   assert.equal(clean.readable, true);
   assert.equal(clean.record, null, "another attempt's push receipt is not this attempt's");
 
   const notADir = nodePath.join(sandbox(t), "state-is-a-file");
   fs.writeFileSync(notADir, "");
-  assert.equal(stamped(defaultPushReceipt({ receipt, env: { SHU_WORKSPACE_STATE_DIR: notADir }, now: clock })).readable, false);
+  assert.equal(stamped(defaultPushReceipt({ receipt, env: { CODEX_HOME: codexHome, SHU_WORKSPACE_STATE_DIR: notADir }, now: clock })).readable, false);
   assert.equal(stamped(defaultPushReceipt({ receipt, env: {}, now: clock })).readable, false);
 
   // End to end, with the REAL probe: a landed push is refused by name.
   const io = cleanWorld({ pushReceipt: async (args) => stamped(defaultPushReceipt(args)) });
-  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { SHU_WORKSPACE_STATE_DIR: withRecord }, io, now: clock });
+  const result = await reconcileDanglingAttempt({ attempt_id: DANGLING, env: { CODEX_HOME: codexHome, SHU_WORKSPACE_STATE_DIR: withRecord }, io, now: clock });
   assert.equal(result.code, "PUSH_RECEIPT_PRESENT", `got ${result.code} (${result.detail})`);
   assert.equal(io.posted.length, 0);
 });

@@ -377,6 +377,20 @@ export async function brokerRepoHasCommit({ dir, sha, gitImpl, env = {} }) {
   return !r.error;
 }
 
+// coordinatorJournalDirectory — the coordinator's ONE push journal, used by
+// every writer runtime and consulted by every reader: CODEX_HOME (else
+// $HOME/.codex) + /coordinator-runs. The Codex writer has always journaled here,
+// so the name keeps `.codex` for every runtime; CODEX_HOME is only an override.
+// It is resolved from the adapter process's own environment (the service user,
+// shu-coordinator), never from a stepped-down child whose HOME differs. A value
+// that is not an absolute path resolves to null, and callers refuse on null
+// rather than reading "no journal" as "nothing was pushed". The journals from
+// episodes before this directory was shared stay where they are.
+export function coordinatorJournalDirectory(env = {}) {
+  const home = env.CODEX_HOME || (env.HOME ? `${env.HOME}/.codex` : null);
+  return typeof home === "string" && home.startsWith("/") ? `${home}/coordinator-runs` : null;
+}
+
 // loadPrePushRecord — durable record distinguishing crash-after-start from
 // crash-after-pushed. Written by persistPrePush BEFORE the push.
 export function prePushRecordPath(stateDir, attempt_id) {

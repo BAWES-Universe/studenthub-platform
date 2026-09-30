@@ -26,7 +26,7 @@ import { hostname as nodeHostname, platform as nodePlatform, tmpdir } from "node
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRole } from "../launch-vocabulary.mjs";
-import { pushExactSha } from "../push-broker.mjs";
+import { pushExactSha, coordinatorJournalDirectory } from "../push-broker.mjs";
 import { runReviewEvidence } from "../review-execution.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
@@ -454,8 +454,7 @@ function writeSchemaFile(schemaFile, schema) {
 
 function stateDirectory(env, io) {
   if (typeof io.codexStateDir === "string" && io.codexStateDir.length) return io.codexStateDir;
-  const codexHome = env.CODEX_HOME || (env.HOME ? path.join(env.HOME, ".codex") : null);
-  return codexHome ? path.join(codexHome, "coordinator-runs") : null;
+  return coordinatorJournalDirectory(env);
 }
 
 function sidecarPath(stateDir, attemptId) {
