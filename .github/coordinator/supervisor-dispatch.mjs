@@ -4,6 +4,7 @@ import { hasLaunchReceipt, requireHoldCode } from './intended-work.mjs';
 // unit fixtures; production always uses the durable supervisor socket.
 import { signedSupervisorRequest, submitToSupervisor, SUPERVISOR_PROTOCOL_VERSION } from "./supervisor.mjs";
 import { roleForReceipt, runtimeForLane, isWriterRole } from "./launch-vocabulary.mjs";
+import { reviewFindingsContext } from "./review-findings.mjs";
 
 export const SUPERVISOR_DISPATCH_NOTE = "launch transport: supervisor 2.0.0";
 
@@ -12,7 +13,8 @@ export function supervisorOrder(receipt, options = {}) {
     version: "1.0.0", role: roleForReceipt(receipt), runtime: receipt.runtime ?? runtimeForLane(receipt.requested_worker),
     ...Object.fromEntries(["issue_id", "authorization_ref", "attempt_id", "target_sha", "repo", "branch",
       "workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha"].filter(k => receipt[k] !== undefined).map(k => [k, receipt[k]])),
-    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
+    // Findings are read from the durable receipt, so a resubmitted order is identical.
+    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt),
     ...(options.cwd ? { cwd: options.cwd } : {}),
   };
 }

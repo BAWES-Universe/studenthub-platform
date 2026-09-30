@@ -86,6 +86,7 @@ import { readProgressionPush } from './two-fixture-progression.mjs';
 import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
 import { resolveFixtureLane } from "./workspace-scope.mjs";
+import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -283,7 +284,12 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   }
 
   if (routed.ok && routed.order) {
-    return { ended: false, reason: `mid-episode: ${routed.order.role} successor is routable`, successor: routed.order };
+    // V1 contract step 3: the revision is dispatched with the review's findings.
+    // They come from the BLOCKED review receipt at the very head being revised.
+    const findings = routed.order.scope_phase === "revision" && validReviewFindings(terminal.review_findings)
+      && terminal.review_findings.target_sha === routed.order.target_sha ? terminal.review_findings : null;
+    const successor = findings ? { ...routed.order, review_findings: findings } : routed.order;
+    return { ended: false, reason: `mid-episode: ${routed.order.role} successor is routable`, successor };
   }
   if (routed.ok && routed.terminal) return { ended: true, reason: "review PASS — the episode is complete" };
 
