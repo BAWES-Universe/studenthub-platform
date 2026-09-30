@@ -28,6 +28,12 @@ const FIXTURE_CONTRACTS = Object.freeze({
   "SHU-254": { initial_build_paths: SHU254_INITIAL_BUILD_PATHS, revision_paths: SHU254_REVISION_PATHS, seeded_defect_path: SHU254_TRAP_PATH },
 });
 
+// A reviewer is told the lane's whole declared scope, not only the last diff:
+// the acceptance oracle is in scope although node --test never loads it.
+export function fixtureReviewScope(issueId) {
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId].revision_paths : null;
+}
+
 // The legacy object remains supported; additional lanes must have unique IDs.
 export function resolveFixtureLane(config = {}, issueId) {
   const extra = config.fixture_lanes ?? [];

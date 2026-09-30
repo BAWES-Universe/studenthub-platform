@@ -15,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
-import { validateWorkspaceScope } from "../workspace-scope.mjs";
+import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
 import { pushExactSha } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 
@@ -106,6 +106,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     "Leave changes in the workspace. Do not commit, push, merge, access the network, or alter .git. The host broker validates and publishes the result.",
     `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
   ].filter(Boolean).join("\n");
+  const reviewScope = fixtureReviewScope(issue_id);
   return [
     "You are the independent verifier for an authorized StudentHub change.",
     `Issue: ${issue_id}`,
@@ -113,6 +114,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `Bound head: ${target_sha}`,
     `Attempt: ${attempt_id}`,
     task_context,
+    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against the contract the files and their folders document, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
     "Review and test the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
     "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",

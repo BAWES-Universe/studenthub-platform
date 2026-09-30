@@ -1958,6 +1958,8 @@
     "persisted reservation estimated cost must remain an integer",
     "four concurrent processes cannot oversubscribe a two-slot ledger",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
+    "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
+    "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
     "subscription OAuth is the only Claude credential passed to the child",
     "checkout must resolve to the receipt target SHA before Claude starts",
     "default checkout verifier calls git rev-parse HEAD before claude",
@@ -17129,6 +17131,14 @@
     },
     {
       "name": "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
+      "capabilities": []
+    },
+    {
+      "name": "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
+      "capabilities": []
+    },
+    {
+      "name": "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
       "capabilities": []
     },
     {
