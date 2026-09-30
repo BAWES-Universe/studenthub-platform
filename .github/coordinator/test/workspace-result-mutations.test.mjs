@@ -14,7 +14,7 @@ const mutations = [
   ["M4 wrong parent", "workspace-result.mjs", 'tree, "-p", target_sha,', 'tree,', "host commits raw files"],
   ["M5 empty result", "workspace-result.mjs", 'if (tree === original) throw', 'if (false) throw', "refuses empty"],
   ["M6 dirty race", "push-broker.mjs", '} else if (workspaceReady) {', '} else if (workspaceReady) { cleanOk = true; } else if (workspaceReady) {', "refuses raced"],
-  ["M7 broker HOLD promotion", "adapters/codex-cli.mjs", 'if (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? ""))) {', 'if (false) {', "callback is bound"],
+  ["M7 broker HOLD promotion", "adapters/codex-cli.mjs", 'if (!unchanged && (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? "")))) {', 'if (false) {', "callback is bound"],
   ["M8 network enabled", "adapters/codex-cli.mjs", 'sandbox_workspace_write.network_access=false', 'sandbox_workspace_write.network_access=true', "model choices"],
   ["M9 nondeterministic retry", "workspace-result.mjs", '`StudentHub worker result ${attempt_id}`', '`StudentHub worker result ${attempt_id} ${randomUUID()}`', "host commits raw files"],
   ["M10 wrong tree", "workspace-result.mjs", 'const tree = (await git("write-tree")).trim();', 'const tree = (await git("rev-parse", `${target_sha}^{tree}`)).trim();', "host commits raw files"],

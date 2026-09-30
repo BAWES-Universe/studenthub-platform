@@ -391,6 +391,18 @@ export function coordinatorJournalDirectory(env = {}) {
   return typeof home === "string" && home.startsWith("/") ? `${home}/coordinator-runs` : null;
 }
 
+// SHU-71: an INITIAL build that changed nothing is the writer's claim that the
+// bound head already meets the card. The broker publishes nothing for it, and
+// the writer's adapter reports the bound head itself as the result, so the
+// independent reviewer judges that claim like any other build output: a
+// missed defect gets a BLOCK with findings and a revision, as the loop
+// intends. A revision that changes nothing answers no finding, so it stays
+// refused, as does every other broker refusal.
+export const UNCHANGED_BUILD_NOTE = "unchanged build: the writer changed nothing, so nothing was published and the bound head goes to review as the result";
+export function unchangedInitialBuild(push, { role, scope_phase } = {}) {
+  return push?.ok !== true && push?.reason_code === "RESULT_EMPTY" && role === "build" && scope_phase === "initial";
+}
+
 // loadPrePushRecord — durable record distinguishing crash-after-start from
 // crash-after-pushed. Written by persistPrePush BEFORE the push.
 export function prePushRecordPath(stateDir, attempt_id) {
@@ -569,7 +581,7 @@ export async function pushExactSha({
         attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
     } catch (error) {
       return { ...held(`workspace result refused: ${error.message}`),
-        ...(error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE" ? { reason_code: error.workspaceCode } : {}) };
+        ...(["BASE_BUNDLE_UNAVAILABLE", "RESULT_EMPTY"].includes(error.workspaceCode) ? { reason_code: error.workspaceCode } : {}) };
     }
   }
 

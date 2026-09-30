@@ -194,7 +194,9 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     }
   }
   const original = (await git("rev-parse", `${target_sha}^{tree}`)).trim();
-  if (tree === original) throw new Error("workspace result contains no changes");
+  // SHU-71: named, so a writer's own adapter can tell "the writer changed
+  // nothing" from every other refusal. The broker still publishes nothing.
+  if (tree === original) throw Object.assign(new Error("workspace result contains no changes"), { workspaceCode: "RESULT_EMPTY" });
   const result_sha = (await git("-c", "commit.gpgSign=false", "commit-tree", tree, "-p", target_sha,
     "-m", `StudentHub worker result ${attempt_id}`)).trim();
   const parents = (await git("rev-list", "--parents", "-n", "1", result_sha)).trim();

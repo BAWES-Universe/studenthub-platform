@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { pushExactSha, coordinatorJournalDirectory } from "../push-broker.mjs";
+import { pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 
 export const ADAPTER_NAME = "claude-code";
@@ -645,12 +645,14 @@ export async function launchBuilder({
       branchPrefix: env.SHU_LANE_BRANCH_PREFIX ?? "coordinator/",
       workspace_scope, scope_phase, allowed_paths, scoped_base_sha, env,
     });
-    if (!push.ok || !SHA_RE.test(push.remote_head ?? "")) return {
+    const unchanged = unchangedInitialBuild(push, { role, scope_phase });
+    if (!unchanged && (!push.ok || !SHA_RE.test(push.remote_head ?? ""))) return {
       stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
       reason: `writer result broker refused: ${push.reason ?? "missing exact result head"}`,
       reason_code: push.reason_code, audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes, ok: false,
     };
-    selected.callback.result_sha = push.remote_head;
+    selected.callback.result_sha = unchanged ? target_sha : push.remote_head;
+    if (unchanged) auditNotes.push(UNCHANGED_BUILD_NOTE);
   }
   return {
     stage: "COMPLETED",

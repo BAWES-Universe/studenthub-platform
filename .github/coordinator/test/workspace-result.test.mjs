@@ -164,3 +164,13 @@ test("SHU-228: new and resumed model choices and worker network are explicit",()
     const review=buildClaudeArgs(input,{resume});assert.equal(review[review.indexOf("--model")+1],"opus");
   }
 });
+
+test("SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing", async () => {
+  const f = fixture(); try {
+    const result = await pushExactSha(f.options);
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.reason_code, "RESULT_EMPTY", "the refusal says the writer changed nothing");
+    assert.match(result.reason, /contains no changes/);
+    assert.equal(f.remoteHead(), f.options.target_sha, "the lane keeps the bound head");
+  } finally { f.cleanup(); }
+});
