@@ -253,6 +253,10 @@ test("review findings: credential-shaped text is dropped and the summary is boun
   assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `leaked ${token}` })).summary, null);
   assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [token, LINKS[1]] })).links, [LINKS[1]]);
   assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: token, links: [token] })), null);
+  const stored = reviewFindingsFromCallback(rfBlocked());
+  assert.equal(validReviewFindings({ ...stored, summary: `leaked ${token}` }), false, "stored findings are checked, not only the fold");
+  assert.equal(validReviewFindings({ ...stored, links: [...stored.links, token] }), false);
+  assert.equal(reviewFindingsContext({ scope_phase: "revision", review_findings: { ...stored, summary: token } }), "");
   for (const linear of [`lin_api_${"b".repeat(40)}`, `lin_oauth_${"c".repeat(64)}`]) {
     assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `quoted ${linear}` })).summary, null, "a Linear credential never reaches a Linear comment");
     assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [`notes/${linear}`, LINKS[1]] })).links, [LINKS[1]]);

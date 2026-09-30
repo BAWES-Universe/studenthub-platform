@@ -36,13 +36,16 @@ export function reviewFindingsFromCallback(callback) {
   return { verdict_stage: "BLOCKED", target_sha: callback.target_sha, summary, links };
 }
 
+// Stored findings are checked for credential shapes too, so no writer other
+// than reviewFindingsFromCallback can put a secret into a receipt or prompt.
 export function validReviewFindings(findings) {
   return Boolean(findings) && typeof findings === "object" && !Array.isArray(findings)
     && findings.verdict_stage === "BLOCKED"
     && typeof findings.target_sha === "string" && /^[0-9a-f]{40}$/.test(findings.target_sha)
     && (findings.summary === null || (typeof findings.summary === "string" && findings.summary.length <= REVIEW_FINDINGS_SUMMARY_MAX))
     && Array.isArray(findings.links) && findings.links.length <= REVIEW_FINDINGS_LINKS_MAX
-    && findings.links.every((link) => typeof link === "string" && link.length <= REVIEW_FINDINGS_LINK_LENGTH_MAX)
+    && findings.links.every((link) => typeof link === "string" && link.length <= REVIEW_FINDINGS_LINK_LENGTH_MAX && !TOKEN_SHAPE.test(link))
+    && !(findings.summary && TOKEN_SHAPE.test(findings.summary))
     && renderedBytes(findings.summary, findings.links) <= REVIEW_FINDINGS_CONTEXT_BYTES_MAX;
 }
 
