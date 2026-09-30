@@ -10,7 +10,10 @@ import {
 import { episodeVerdict } from "../single-run-activation.mjs";
 import { supervisorOrder } from "../supervisor-dispatch.mjs";
 import { buildCodexPrompt } from "../adapters/codex-cli.mjs";
+import { signedSupervisorRequest } from "../supervisor.mjs";
 import {
+  REVIEW_FINDINGS_LINK_LENGTH_MAX,
+  REVIEW_FINDINGS_LINKS_MAX,
   REVIEW_FINDINGS_SUMMARY_MAX,
   reviewFindingsContext,
   reviewFindingsFromCallback,
@@ -205,6 +208,16 @@ test("review findings: the reviewer's BLOCK reaches the revise worker's task con
   assert.ok(order.task_context.includes(JSON.stringify(LINKS[1])), "the reviewer's citations reach the writer");
   assert.deepEqual(supervisorOrder(structuredClone(reserved.receipt)), order, "a resubmitted order is identical");
   assert.ok(buildCodexPrompt({ ...order, scope_phase: "revision" }).includes(order.task_context), "the codex prompt carries the findings as given");
+
+  for (const escaped of ["\"", "\\", "\u0001", "\u00e9"]) {
+    const largest = reviewFindingsFromCallback(rfBlocked({ summary: escaped.repeat(REVIEW_FINDINGS_SUMMARY_MAX),
+      links: Array.from({ length: REVIEW_FINDINGS_LINKS_MAX }, () => escaped.repeat(REVIEW_FINDINGS_LINK_LENGTH_MAX)) }));
+    assert.equal(validReviewFindings(largest), true);
+    assert.ok(largest.summary, "the summary survives the budget");
+    assert.doesNotThrow(() => signedSupervisorRequest(supervisorOrder({ ...reserved.receipt, review_findings: largest }), "s".repeat(32)),
+      "the largest findings a reviewer can produce still fit the supervisor's work-order limit");
+    assert.equal(validReviewFindings({ ...largest, links: [...largest.links, escaped.repeat(REVIEW_FINDINGS_LINK_LENGTH_MAX)] }), false);
+  }
 });
 
 test("review findings: only a bound review BLOCK is kept, and only a revision at that head receives it", () => {
@@ -244,6 +257,9 @@ test("review findings: credential-shaped text is dropped and the summary is boun
     assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `quoted ${linear}` })).summary, null, "a Linear credential never reaches a Linear comment");
     assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [`notes/${linear}`, LINKS[1]] })).links, [LINKS[1]]);
   }
+  const oversized = "a".repeat(REVIEW_FINDINGS_LINK_LENGTH_MAX + 1);
+  assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [oversized, LINKS[1]] })).links, [LINKS[1]]);
+  assert.equal(validReviewFindings({ ...reviewFindingsFromCallback(rfBlocked()), links: [oversized] }), false);
   const long = reviewFindingsFromCallback(rfBlocked({ summary: "x".repeat(REVIEW_FINDINGS_SUMMARY_MAX + 50) }));
   assert.equal(long.summary.length, REVIEW_FINDINGS_SUMMARY_MAX);
   assert.equal(validReviewFindings(long), true);
