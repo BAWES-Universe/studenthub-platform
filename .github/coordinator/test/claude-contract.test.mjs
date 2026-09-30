@@ -10,6 +10,7 @@ import {
   CLAUDE_MODEL,
   buildClaudeArgs,
   buildClaudeEnvironment,
+  buildClaudePrompt,
   externalRunId,
   launchBuilder,
   monitorRun,
@@ -21,6 +22,7 @@ import {
   foldLaunchOutcome,
   validateReceipt,
 } from "../reconcile.mjs";
+import { SHU140_REVISION_PATHS, fixtureReviewScope } from "../workspace-scope.mjs";
 
 const ATTEMPT = "11111111-2222-4333-8444-555555555555";
 const SHA = "d".repeat(40);
@@ -113,6 +115,29 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.match(call.args.at(-1), new RegExp(`Bound head: ${SHA}`));
   assert.match(call.args.at(-1), new RegExp(`Attempt: ${ATTEMPT}`));
   assert.match(call.args.at(-1), /repo-relative path@bound-head-sha/);
+});
+
+test("review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff", async () => {
+  const execFileImpl = execResult({ stdout: successOutput() });
+  await launchBuilder({ ...launchInput, issue_id: "SHU-140", execFileImpl, env: { PATH: "/bin" } });
+  const prompt = execFileImpl.calls[0].args.at(-1);
+  assert.ok(prompt.includes(`Declared scope of SHU-140: ${SHU140_REVISION_PATHS.join(", ")}.`), prompt);
+  assert.match(prompt, /not only the files the last change touched/);
+  assert.match(prompt, /never loads is still in scope/);
+  assert.doesNotMatch(prompt, /seeded|trap|defect_path/i, "the scope names the files, never which one is seeded");
+});
+
+test("review scope: no scope line for a non-fixture issue, a writer, or an inherited key", () => {
+  const base = { authorization_ref: "SHU-61", attempt_id: ATTEMPT, target_sha: SHA, task_context: "ctx" };
+  assert.doesNotMatch(buildClaudePrompt({ ...base, issue_id: "SHU-61" }), /Declared scope/);
+  assert.doesNotMatch(buildClaudePrompt({ ...base, issue_id: "SHU-140", role: "build", allowed_paths: ["tools/fixture/scan-vacuous.mjs"] }), /Declared scope/);
+  assert.equal(fixtureReviewScope("constructor"), null);
+  assert.equal(fixtureReviewScope("__proto__"), null);
+  assert.deepEqual(fixtureReviewScope("SHU-254"), [
+    "tools/fixture-2/scan-unawaited.mjs",
+    "tools/fixture-2/test/scan-unawaited.test.mjs",
+    "tools/fixture-2-conformance/scan-unawaited.expectations.mjs",
+  ]);
 });
 
 test("subscription OAuth is the only Claude credential passed to the child", async () => {
