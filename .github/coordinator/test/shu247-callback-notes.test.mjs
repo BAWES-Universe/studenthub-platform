@@ -246,6 +246,12 @@ test("review findings: only a bound review BLOCK is kept, and only a revision at
   const leaky = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
     rfBlocked({ stage: "FAILED", summary: `token ghp_${"a".repeat(36)}` }));
   assert.equal(leaky.notes.some((n) => n.startsWith("worker summary:")), false, "a credential-shaped summary is not published");
+  const hmac = "q".repeat(12) + "Z9/+".repeat(6);
+  for (const summary of [`SHU_SUPERVISOR_SECRET=${hmac}`, `export SHU_SUPERVISOR_SECRET="${hmac}"`, `saw SHU_SUPERVISOR_SECRET = '${hmac}' in env`, `CLAUDE_CODE_OAUTH_TOKEN: ${hmac}`]) {
+    const assigned = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
+      rfBlocked({ stage: "FAILED", summary }));
+    assert.equal(assigned.notes.some((n) => n.startsWith("worker summary:")), false, `a secret assignment is not published: ${summary.slice(0, 30)}`);
+  }
   const long = rfFold(rfReceipt({ attempt_id: REVIEW, requested_worker: "codex-builder", stage: "RUNNING", minute: 48 }),
     rfBlocked({ stage: "FAILED", summary: "x".repeat(2000) }));
   assert.equal(long.notes.at(-1), `worker summary: ${JSON.stringify("x".repeat(WORKER_SUMMARY_NOTE_MAX))}`);

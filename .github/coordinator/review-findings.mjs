@@ -44,11 +44,15 @@ export function reviewFindingsFromCallback(callback) {
 // A writer's own BLOCKED or FAILED explanation, kept as a receipt note so a
 // held attempt explains itself without reading the worker's session log
 // (run 5 needed exactly that). Same credential rule as the findings.
+// A secret with no recognizable token prefix (the supervisor's HMAC key, for
+// example) can still leak as an environment assignment, so any assignment to a
+// secret-named variable drops the note too (CodeRabbit on #185).
 export const WORKER_SUMMARY_NOTE_MAX = 500;
+const SECRET_ASSIGNMENT = /\b[A-Za-z_][A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Za-z0-9_]*\s*[:=]\s*["']?[^\s"']{8,}/i;
 
 export function workerSummaryNote(callback) {
   const text = typeof callback?.summary === "string" ? callback.summary.trim().replace(/\s+/g, " ") : "";
-  if (!text || TOKEN_SHAPE.test(text)) return null;
+  if (!text || TOKEN_SHAPE.test(text) || SECRET_ASSIGNMENT.test(text)) return null;
   return `worker summary: ${JSON.stringify(text.slice(0, WORKER_SUMMARY_NOTE_MAX))}`;
 }
 
