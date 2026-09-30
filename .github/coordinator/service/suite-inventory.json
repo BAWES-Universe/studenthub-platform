@@ -114,6 +114,7 @@
     ".github/coordinator/test/shu71-claude-writer.test.mjs",
     ".github/coordinator/test/shu71-codex-reviewer.test.mjs",
     ".github/coordinator/test/shu71-public-key.test.mjs",
+    ".github/coordinator/test/shu71-reversed-gates.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
     ".github/coordinator/test/shu86-durable-intent.test.mjs",
     ".github/coordinator/test/single-run-activation.test.mjs",
@@ -3868,7 +3869,12 @@
     "SHU71_REVERSED_EPISODE: Claude builds, Codex reviews, the revision returns to Claude, Codex re-reviews",
     "SHU71_WRITER_LANE_SAME_FAMILY_REFUSED: an activation naming a writer and reviewer of one family launches nothing",
     "SHU-71 Codex review of a failing confined run: the reviewer still launches, told FAIL, and its BLOCK carries findings",
-    "SHU-71: a failing confined run still launches the Claude reviewer, told FAIL, and its BLOCK carries findings"
+    "SHU-71: a failing confined run still launches the Claude reviewer, told FAIL, and its BLOCK carries findings",
+    "SHU71_REVIEWER_LAUNCHABLE: an activation names only a reviewer lane the supervisor can start",
+    "SHU71_CLAUDE_WRITER_GATED: a Claude writer carries the writer contract; the Claude reviewer does not",
+    "SHU71_CLAUDE_WRITER_GATED_DISPATCH: an unwired host refuses the Claude build before reservation",
+    "SHU71_CLAUDE_WRITER_GATED_RECOVERY: recovering an unacknowledged Claude build reruns the writer contract",
+    "SHU71_CLAUDE_WRITER_TARGET_PROBE: a wired host still refuses a Claude build whose bound commit GitHub cannot show"
   ],
   "requirements": [
     {
@@ -29403,6 +29409,26 @@
           "name": "linux_proc"
         }
       ]
+    },
+    {
+      "name": "SHU71_REVIEWER_LAUNCHABLE: an activation names only a reviewer lane the supervisor can start",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_CLAUDE_WRITER_GATED: a Claude writer carries the writer contract; the Claude reviewer does not",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_CLAUDE_WRITER_GATED_DISPATCH: an unwired host refuses the Claude build before reservation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_CLAUDE_WRITER_GATED_RECOVERY: recovering an unacknowledged Claude build reruns the writer contract",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_CLAUDE_WRITER_TARGET_PROBE: a wired host still refuses a Claude build whose bound commit GitHub cannot show",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [
