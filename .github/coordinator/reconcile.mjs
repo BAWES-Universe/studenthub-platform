@@ -34,6 +34,7 @@ import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDir
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
+import { reviewFindingsContext, reviewFindingsFromCallback, validReviewFindings } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
@@ -723,6 +724,7 @@ export function createReceipt({
   scoped_base_sha = null,
   episode_id = null,
   activation_digest = null,
+  review_findings = null,
   attempt_id = randomUUID(),
   reserved_at = new Date().toISOString(),
 }) {
@@ -737,6 +739,7 @@ export function createReceipt({
     // receipts stay readable exactly as before.
     episode_id,
     ...(activation_digest ? { activation_digest } : {}),
+    ...(scope_phase === "revision" && validReviewFindings(review_findings) ? { review_findings } : {}),
     stage: "RESERVED",
     requested_worker,
     worker_identity: null,
@@ -994,6 +997,9 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
             next.result_sha = callback.result_sha;
           }
+          // The reviewer's own words, for the revision that must address them.
+          const findings = roleForReceipt(receipt) === "review" ? reviewFindingsFromCallback(callback) : null;
+          if (findings) next.review_findings = findings;
         }
         if (typeof event.worker_identity === "string" && event.worker_identity.length) {
           next.worker_identity = event.worker_identity; // agent_id is known even when the callback is not
@@ -2941,6 +2947,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // attempt — and the reservation below is written once — instead of minting a
     // second successor for the same step. A first dispatch keeps randomUUID().
     ...(successor?.attempt_id ? { attempt_id: successor.attempt_id } : {}),
+    ...(successor?.review_findings ? { review_findings: successor.review_findings } : {}),
   });
   if (!reservedOk) {
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);
@@ -3039,7 +3046,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     scope_phase: receipt.scope_phase,
     allowed_paths: [...receipt.allowed_paths],
     scoped_base_sha: receipt.scoped_base_sha,
-    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
+    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt) + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
     ...options,
     fetchImpl,
     io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },

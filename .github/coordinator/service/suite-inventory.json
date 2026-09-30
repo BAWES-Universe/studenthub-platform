@@ -2615,6 +2615,9 @@
     "SHU-247 A2: a bound FAILED verdict is recorded truthfully without becoming COMPLETED",
     "SHU-247 A3: actual attempt, target, and live-head mismatches remain rejected and fail closed",
     "SHU-247 A4: malformed and non-verdict callbacks remain rejected and fail closed",
+    "review findings: the reviewer's BLOCK reaches the revise worker's task context through durable receipts",
+    "review findings: only a bound review BLOCK is kept, and only a revision at that head receives it",
+    "review findings: credential-shaped text is dropped and the summary is bounded",
     "SHU-247 mutation M1 restore the false rejection note",
     "SHU-247 mutation M2 classify a terminal verdict by callback presence instead of binding",
     "SHU-247 mutation M3 drop truthful FAILED verdict handling",
@@ -21507,6 +21510,18 @@
     },
     {
       "name": "SHU-247 A4: malformed and non-verdict callbacks remain rejected and fail closed",
+      "capabilities": []
+    },
+    {
+      "name": "review findings: the reviewer's BLOCK reaches the revise worker's task context through durable receipts",
+      "capabilities": []
+    },
+    {
+      "name": "review findings: only a bound review BLOCK is kept, and only a revision at that head receives it",
+      "capabilities": []
+    },
+    {
+      "name": "review findings: credential-shaped text is dropped and the summary is bounded",
       "capabilities": []
     },
     {
