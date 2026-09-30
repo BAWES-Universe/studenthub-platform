@@ -284,7 +284,7 @@ test("every declared requirement is actually enforced by the preflight", () => {
 
 test("only the local-CLI builder lane carries the contract", () => {
   assert.deepEqual([...ACTIVATION_GATED_ADAPTERS], ["codex-cli"]);
-  assert.equal(activationPreflightFor("claude-code", { env: {}, io: {} }), null, "a hosted verifier lane has no brick box");
+  assert.equal(activationPreflightFor("claude-code", { env: {}, io: {}, role: "review" }), null, "a hosted verifier lane has no brick box");
   assert.equal(activationPreflightFor("hermes-pool", { env: {}, io: {} }), null);
   const gated = activationPreflightFor("codex-cli", { env: {}, io: { hostname: () => HOST } });
   assert.ok(gated && gated.ok === false, "the codex lane is gated and unwired fails closed");

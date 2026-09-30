@@ -155,7 +155,7 @@ test('CLOSURE_WIRING forked adapter receives nine keys and custody refusal is na
   await workerControl(t); await workerControl(t, undefined, undefined, true);
 });
 for (const [label, from, to, bad, assertion] of [
-  ['worker child delivery omitted', 'Object.assign(process.env, readAdapterLaunchEnvironment());', '', false, 'CLOSURE_WIRING_NINE_KEYS'],
+  ['worker child delivery omitted', 'applyAdapterLaunchEnvironment(process.env, readAdapterLaunchEnvironment());', '', false, 'CLOSURE_WIRING_NINE_KEYS'],
   ['worker process gid ignored', 'readAdapterLaunchEnvironment()', 'readAdapterLaunchEnvironment(undefined, process.getuid(), process.getuid())', false, 'CLOSURE_WIRING_EXIT'],
   ['worker custody diagnostic swallowed', 'process.stderr.write(`${code}\\n`);', '', true, 'CLOSURE_WIRING_NAMED_REFUSAL'],
 ]) test(`CLOSURE_WIRING mutation ${label}`, async t => {

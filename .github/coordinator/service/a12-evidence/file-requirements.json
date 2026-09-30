@@ -1045,6 +1045,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-journal-directory.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem and a forked Node child of the supervisor worker; coordinator.env is served from memory and the adapter is a stub, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-journal-directory.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu71-public-key.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

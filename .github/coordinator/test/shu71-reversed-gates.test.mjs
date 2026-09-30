@@ -112,3 +112,16 @@ test("SHU71_CLAUDE_WRITER_TARGET_PROBE: a wired host still refuses a Claude buil
     h.cleanup();
   }
 });
+
+test("SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate", async () => {
+  for (const role of [undefined, null, "bogus"]) {
+    assert.equal(activationGated("claude-code", role), true, String(role));
+    const preflight = activationPreflightFor("claude-code", { env: {}, io: {}, ...(role === undefined ? {} : { role }) });
+    assert.equal(preflight?.ok, false, `a Claude launch with role ${role} runs the writer contract`);
+    const probe = await verifyActivationTarget("claude-code", { repo: "BAWES-Universe/studenthub-platform", target_sha: "d".repeat(40), githubToken: "",
+      fetchImpl: async () => { throw new Error("unreachable"); }, ...(role === undefined ? {} : { role }) });
+    assert.equal(probe.ok, false, `the GitHub probe runs for role ${role}`);
+  }
+  assert.equal(activationGated("claude-code", "review"), false);
+  assert.equal(activationGated("hermes-pool"), false, "a hosted lane stays ungated");
+});
