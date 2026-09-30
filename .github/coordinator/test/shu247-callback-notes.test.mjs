@@ -240,6 +240,10 @@ test("review findings: credential-shaped text is dropped and the summary is boun
   assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `leaked ${token}` })).summary, null);
   assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [token, LINKS[1]] })).links, [LINKS[1]]);
   assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: token, links: [token] })), null);
+  for (const linear of [`lin_api_${"b".repeat(40)}`, `lin_oauth_${"c".repeat(64)}`]) {
+    assert.equal(reviewFindingsFromCallback(rfBlocked({ summary: `quoted ${linear}` })).summary, null, "a Linear credential never reaches a Linear comment");
+    assert.deepEqual(reviewFindingsFromCallback(rfBlocked({ links: [`notes/${linear}`, LINKS[1]] })).links, [LINKS[1]]);
+  }
   const long = reviewFindingsFromCallback(rfBlocked({ summary: "x".repeat(REVIEW_FINDINGS_SUMMARY_MAX + 50) }));
   assert.equal(long.summary.length, REVIEW_FINDINGS_SUMMARY_MAX);
   assert.equal(validReviewFindings(long), true);
