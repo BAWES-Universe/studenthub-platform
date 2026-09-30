@@ -95,7 +95,7 @@ import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane
 // SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
 // the activation record's accepted lanes and the routing module's review
 // capability can never drift apart.
-import { REVIEW_LANES } from "./launch-vocabulary.mjs";
+import { ACTIVATION_WRITER_LANES, REVIEW_LANES, adapterForLane, familyForLane } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -120,7 +120,11 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
 // SHU-231: `supersedes_attempt_ids` names the specific retained evidence this
 // approval retires. It is optional like `reviewer_lane` — but nothing else about
 // the exact-key-set rule relaxes: an unreviewed extra key still refuses.
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids"]);
+// SHU-71: `writer_lane` names the lane of the episode's first build, so a run
+// can reverse the roles (a Claude build reviewed by Codex) without relabelling
+// the card. It is read only for the first build: every revision returns to the
+// runtime of the build receipt, so the writer is fixed for the whole episode.
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane"]);
 
 export const ACTIVATION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -494,6 +498,22 @@ export function validateActivationRecord(record) {
       return { ok: false, reason: `reviewer_lane must be one of ${REVIEW_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
     }
   }
+  // SHU-71: a named writer must be a writer lane the supervisor can start, and
+  // the record must name its reviewer too, so the approved pair is the record's
+  // and never resolved later from mutable config. Independence is read from the
+  // lane registry: the two lanes may share neither a family nor an adapter.
+  if ("writer_lane" in record) {
+    if (typeof record.writer_lane !== "string" || !ACTIVATION_WRITER_LANES.includes(record.writer_lane)) {
+      return { ok: false, reason: `writer_lane must be one of ${ACTIVATION_WRITER_LANES.join(", ")} (got ${JSON.stringify(record.writer_lane)})` };
+    }
+    if (typeof record.reviewer_lane !== "string") {
+      return { ok: false, reason: "writer_lane requires reviewer_lane in the same record" };
+    }
+    if (familyForLane(record.writer_lane) === familyForLane(record.reviewer_lane) ||
+        adapterForLane(record.writer_lane) === adapterForLane(record.reviewer_lane)) {
+      return { ok: false, reason: `writer_lane ${record.writer_lane} and reviewer_lane ${record.reviewer_lane} are the same family — a lane never reviews its own work` };
+    }
+  }
   // SHU-231: the episode boundary. Optional; when present it must be a
   // non-empty, duplicate-free list of canonical attempt UUIDs. An EMPTY list is
   // refused rather than ignored, because it reads as "I retired something" while
@@ -674,6 +694,7 @@ export function singleRunActivationStatus({
     slots: record.slots,
     expires_at: record.expires_at,
     reviewer_lane: record.reviewer_lane ?? null,
+    writer_lane: record.writer_lane ?? null,
     supersedes_attempt_ids: record.supersedes_attempt_ids ?? [],
     initial_target_sha: record.initial_target_sha ?? null,
     episode: episode.reason,
@@ -700,7 +721,8 @@ export function activationAllowsTarget(activation, issueId) {
 export function renderActivationLine(activation) {
   if (!activation || activation.state === "absent") return "activation=absent (committed gates only)";
   if (activation.state === "armed") {
-    return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}`;
+    const pair = activation.writer_lane ? ` writer=${activation.writer_lane} reviewer=${activation.reviewer_lane}` : "";
+    return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}${pair}`;
   }
   return `activation=REFUSED (${activation.reason})`;
 }

@@ -30,6 +30,8 @@ export function createEpisodeHarness({
   expiresInMs = 60 * 60 * 1000,
   reviewerLane = "claude-verifier",
   withReviewerLane = true,
+  // SHU-71: the record's optional first-build lane (role reversal).
+  writerLane = null,
   // SHU-231: the episode identity is the record's activation_id, and
   // `supersedes_attempt_ids` names the retained evidence this approval retires.
   activationId = "shu225fixtureactivation",
@@ -249,6 +251,7 @@ export function createEpisodeHarness({
     expires_at: new Date(now.getTime() + expiresInMs).toISOString(),
   };
   if (withReviewerLane) record.reviewer_lane = reviewerLane;
+  if (writerLane) record.writer_lane = writerLane;
   if (supersedesAttemptIds) record.supersedes_attempt_ids = supersedesAttemptIds;
   const activationPath = join(dir, "activation.json");
   writeFileSync(activationPath, JSON.stringify(record, null, 1));

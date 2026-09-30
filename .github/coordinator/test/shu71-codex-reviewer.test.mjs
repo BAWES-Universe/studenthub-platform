@@ -332,3 +332,16 @@ test("SHU-71 sandbox contract: removing the Codex home mask or widening writes d
     assert.throws(() => assertReviewerSandboxContract(source), (error) => error.code === "ERR_ASSERTION" && error.message.includes(name), name);
   }
 });
+
+test("SHU-71 Codex review of a failing confined run: the reviewer still launches, told FAIL, and its BLOCK carries findings", async () => {
+  const failed = evidence({ passed: false, reason_code: "REVIEW_TESTS_FAILED",
+    report: { version: "1.0.0", target_sha: SHA, tests: { executed: true, exit_code: 1 } } });
+  const blocked = verdict("BLOCKED", { summary: "The confined run fails at tools/scan.mjs:1." });
+  const execFileImpl = execDouble(codexOutput(blocked));
+  const out = await launchBuilder(reviewInput({ execFileImpl, reviewEvidenceImpl: failed }));
+  assert.equal(execFileImpl.calls.length, 1, "a failing run is evidence, not a missing one");
+  assert.ok(execFileImpl.calls[0].args.some((arg) => arg.includes("Confined test result: FAIL")), "SHU71_REVIEW_TESTS_FAILED: the reviewer is told the run failed");
+  assert.equal(out.stage, "HOLD");
+  assert.notEqual(out.reason_code, "REVIEW_EXECUTION_UNAVAILABLE");
+  assert.equal(reviewFindingsFromCallback(out.callback)?.summary, "The confined run fails at tools/scan.mjs:1.");
+});

@@ -58,7 +58,7 @@ import {
 import { signedSupervisorRequest, submitToSupervisor } from "./supervisor.mjs";
 import { supervisorOrder } from "./supervisor-dispatch.mjs";
 import { supervisorTransportSecret } from "./service/credential-delivery.mjs";
-import { prePushRecordPath } from "./push-broker.mjs";
+import { coordinatorJournalDirectory, prePushRecordPath } from "./push-broker.mjs";
 
 // The ONE stage this operation is allowed to terminalize. RESERVED is repaired
 // by the tick; RUNNING has a live claim; the terminal stages are already done.
@@ -606,15 +606,24 @@ export async function defaultBranchHead({ receipt, env, fetchImpl = fetch, now =
   return { observed_at: now(), ok: measured.ok, sha: measured.sha };
 }
 
+// Every writer journals to the coordinator push journal; older code journaled
+// under SHU_WORKSPACE_STATE_DIR, so that directory is still searched when it is
+// configured. The journal must resolve and every searched directory must list,
+// or nothing is readable: an unread journal is never "nothing was pushed".
 export function defaultPushReceipt({ receipt, env, now = nowIso }) {
-  const stateDir = env.SHU_WORKSPACE_STATE_DIR;
-  if (!stateDir) return { observed_at: now(), readable: false, record: null };
-  const file = prePushRecordPath(stateDir, receipt.attempt_id);
-  // `readable` is only true once the directory has actually been listed.
-  let entries;
-  try { entries = entriesOf(stateDir); }
-  catch { return { observed_at: now(), readable: false, record: null }; }
-  return { observed_at: now(), readable: true, record: entries.includes(path.basename(file)) ? file : null };
+  const journal = coordinatorJournalDirectory(env);
+  if (!journal) return { observed_at: now(), readable: false, record: null };
+  const dirs = [journal, ...(env.SHU_WORKSPACE_STATE_DIR ? [env.SHU_WORKSPACE_STATE_DIR] : [])];
+  // `readable` is only true once every directory has actually been listed.
+  let record = null;
+  for (const stateDir of dirs) {
+    const file = prePushRecordPath(stateDir, receipt.attempt_id);
+    let entries;
+    try { entries = entriesOf(stateDir); }
+    catch { return { observed_at: now(), readable: false, record: null }; }
+    if (!record && entries.includes(path.basename(file))) record = file;
+  }
+  return { observed_at: now(), readable: true, record };
 }
 
 // Read-only by construction: SupervisorStore's constructor mkdirs its own tree,
