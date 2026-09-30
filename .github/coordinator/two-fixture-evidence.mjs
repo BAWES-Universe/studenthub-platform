@@ -3,6 +3,11 @@
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
+// A fixture thread may hold at most EVIDENCE_MAX_PAGES pages of 250 comments;
+// the combined answer of both threads may be at most EVIDENCE_MAX_BYTES.
+export const EVIDENCE_MAX_PAGES = 8;
+export const EVIDENCE_MAX_BYTES = 8 * 1024 * 1024;
+
 const READ_EVIDENCE = `
 const input = JSON.parse(await new Promise(resolve => {
   let text = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => text += chunk);
@@ -23,14 +28,28 @@ await Promise.all(ids.map(async id => {
     headers: { Authorization: 'Bearer ' + input.githubToken, Accept: 'application/vnd.github+json' }
   });
   heads[branch] = head.object?.sha;
-  const result = await read('https://api.linear.app/graphql', {
-    method: 'POST', headers: { Authorization: input.linearToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: 'query ActivationFixture($id: String!) { issue(id: $id) { id identifier comments(first: 250) { nodes { body createdAt user { id } } pageInfo { hasNextPage } } } }', variables: { id } })
-  });
-  if (result.errors || result.data?.issue?.identifier !== id || !result.data.issue.id) throw new Error('fixture unresolved');
-  if (result.data.issue.comments?.pageInfo?.hasNextPage) throw new Error('evidence pagination exceeds bound');
-  comments.push(...(result.data.issue.comments?.nodes ?? []));
-  issues.push({ id, linearId: result.data.issue.id });
+  // Every page of the thread is read: receipts past the first page are part of
+  // the episode. A bad or repeated cursor, or a thread past the page bound,
+  // refuses the whole read rather than returning a truncated history.
+  const seen = new Set();
+  let after = null, linearId = null;
+  for (let page = 0; ; page++) {
+    if (page === ${EVIDENCE_MAX_PAGES}) throw new Error('evidence pagination exceeds bound');
+    const result = await read('https://api.linear.app/graphql', {
+      method: 'POST', headers: { Authorization: input.linearToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'query ActivationFixture($id: String!, $after: String) { issue(id: $id) { id identifier comments(first: 250, orderBy: createdAt, after: $after) { nodes { body createdAt user { id } } pageInfo { hasNextPage endCursor } } } }', variables: { id, after } })
+    });
+    if (result.errors || result.data?.issue?.identifier !== id || !result.data.issue.id) throw new Error('fixture unresolved');
+    if (linearId !== null && result.data.issue.id !== linearId) throw new Error('fixture unresolved');
+    linearId = result.data.issue.id;
+    const connection = result.data.issue.comments;
+    comments.push(...(connection?.nodes ?? []));
+    if (connection?.pageInfo?.hasNextPage !== true) break;
+    after = connection.pageInfo.endCursor;
+    if (typeof after !== 'string' || !after || seen.has(after)) throw new Error('evidence pagination invalid');
+    seen.add(after);
+  }
+  issues.push({ id, linearId });
 }));
 process.stdout.write(JSON.stringify({ heads, issues, comments }));
 `;
@@ -39,7 +58,7 @@ function brokerRead(request, run) {
   try {
     return JSON.parse(run(process.execPath, [fileURLToPath(new URL('./service/fixture-evidence-client.mjs', import.meta.url))], {
       input: JSON.stringify(request), env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 15000,
-      maxBuffer: 65536, stdio: ['pipe', 'pipe', 'ignore'],
+      maxBuffer: EVIDENCE_MAX_BYTES, stdio: ['pipe', 'pipe', 'ignore'],
     }));
   } catch { return {}; }
 }
@@ -54,7 +73,7 @@ export function readTwoFixtureEvidence(config, env, run = execFileSync) {
     return JSON.parse(run(process.execPath, ['--input-type=module', '-e', READ_EVIDENCE], {
       // Credentials go over stdin, never process arguments or diagnostic output.
       input: JSON.stringify({ repo: config.pilot_repo, githubToken: env.GITHUB_TOKEN, linearToken: env.LINEAR_API_TOKEN }),
-      env: { PATH: process.env.PATH }, encoding: 'utf8', timeout: 12000, maxBuffer: 65536,
+      env: { PATH: process.env.PATH }, encoding: 'utf8', timeout: 12000, maxBuffer: EVIDENCE_MAX_BYTES,
       stdio: ['pipe', 'pipe', 'ignore'],
     }));
   } catch { return { heads: {}, issues: [] }; }

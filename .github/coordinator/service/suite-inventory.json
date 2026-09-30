@@ -31,6 +31,7 @@
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-evidence-paging.test.mjs",
     ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
@@ -3852,7 +3853,12 @@
     "SHU-71 Codex writer contract is unchanged when no role is given",
     "SHU-71 sandbox masks the Codex reviewer home from tests and from the Claude reviewer",
     "SHU-71 sandbox Codex model launch: fixed reviewer home is its only writable path and credential",
-    "SHU-71 sandbox contract: removing the Codex home mask or widening writes dies by a named assertion"
+    "SHU-71 sandbox contract: removing the Codex home mask or widening writes dies by a named assertion",
+    "SHU71_EVIDENCE_PAGING reads every page of a fixture thread past 250 comments",
+    "SHU71_EVIDENCE_PAGE_BOUND accepts exactly the page bound and refuses one comment more",
+    "SHU71_EVIDENCE_CURSOR refuses a repeated, empty or missing cursor instead of truncating",
+    "SHU71_EVIDENCE_IDENTITY refuses a thread whose issue changes between pages",
+    "SHU71_EVIDENCE_BROKER_SIZE the broker path carries answers past 64 KiB and still bounds them"
   ],
   "requirements": [
     {
@@ -29317,6 +29323,26 @@
           "name": "shell_toolchain"
         }
       ]
+    },
+    {
+      "name": "SHU71_EVIDENCE_PAGING reads every page of a fixture thread past 250 comments",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_EVIDENCE_PAGE_BOUND accepts exactly the page bound and refuses one comment more",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_EVIDENCE_CURSOR refuses a repeated, empty or missing cursor instead of truncating",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_EVIDENCE_IDENTITY refuses a thread whose issue changes between pages",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_EVIDENCE_BROKER_SIZE the broker path carries answers past 64 KiB and still bounds them",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [
