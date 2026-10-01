@@ -174,3 +174,17 @@ test("SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by nam
     assert.equal(f.remoteHead(), f.options.target_sha, "the lane keeps the bound head");
   } finally { f.cleanup(); }
 });
+
+test("SHU71_UNCHANGED_BUILD_AFTER_BINDING: an attempt that already bound a result is never reported unchanged", async () => {
+  const f = fixture(); try {
+    f.edit();
+    const first = await pushExactSha(f.options);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    fs.writeFileSync(path.join(f.wt, "file.txt"), "old\n");
+    const again = await pushExactSha(f.options);
+    assert.equal(again.ok, false, JSON.stringify(again));
+    assert.equal(again.reason_code, undefined, "not RESULT_EMPTY, so no adapter can treat it as an unchanged build");
+    assert.match(again.reason, /binding conflict/);
+    assert.equal(f.remoteHead(), first.remote_head, "the published result stays");
+  } finally { f.cleanup(); }
+});
