@@ -1062,6 +1062,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-receipt-order.test.mjs",
+    "capabilities": [],
+    "justification": "Pure comment parsing, receipt folding and routing over in-memory receipts; no filesystem, process or external tool operation is required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-receipt-order.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu71-reversed-gates.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem APIs; the adapters, Linear and GitHub are doubled in the episode harness and host stat/realpath/hostname are injected, no external tool operation required",

@@ -1700,7 +1700,14 @@ export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
 // the newest comment per attempt_id wins, regardless of the order the API or any
 // future code change returns nodes in. A stale RESERVED comment can therefore
 // never replace a newer terminal one. Fallbacks: receipt.last_activity, then the
-// array position (query uses orderBy createdAt ascending).
+// array position.
+//
+// The returned list is oldest first by each attempt's first comment, whatever
+// order the comments arrive in. Linear's `orderBy: createdAt` does not promise
+// ascending order (SHU-140's comments come back newest first), and routing reads
+// this list as lineage order (activeWriter takes the last write), so trusting the
+// API order could send a revision to the oldest writer on the card (SHU-71, found
+// replaying try 5). Comments without a timestamp sort first, in array order.
 // Fields that can never legitimately differ between two records of one attempt.
 // Shared by the comment parser and main()'s conflict check so both layers apply
 // the SAME rule — a control that only one layer enforces is unreachable if the
@@ -1732,7 +1739,11 @@ export function parseReceiptsFromComments(comments = [], allowedActorIds = null)
   const allowed = Array.isArray(allowedActorIds) ? new Set(allowedActorIds.filter((id) => typeof id === "string" && id.length)) : null;
   const byAttempt = new Map(); // attempt_id -> { receipt, createdAt }
   const conflicts = []; // records held back so main()'s conflict check can fire
-  for (const comment of comments ?? []) {
+  const ordered = (comments ?? [])
+    .map((comment, index) => ({ comment, index, at: typeof comment?.createdAt === "string" ? comment.createdAt : "" }))
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.index - b.index))
+    .map(({ comment }) => comment);
+  for (const comment of ordered) {
     if (allowed && !allowed.has(comment?.user?.id)) continue;
     const parsed = parseReceiptCommentBody(comment?.body);
     if (parsed && typeof parsed === "object" && RECEIPT_VERSIONS.includes(parsed.receipt_version) && parsed.attempt_id) {
@@ -1755,7 +1766,7 @@ export function parseReceiptsFromComments(comments = [], allowedActorIds = null)
         continue;
       }
       // Newest-by-createdAt wins; a comment WITHOUT a timestamp loses to one
-      // with one; a tie keeps the LATER array element (query is createdAt ASC).
+      // with one; a tie keeps the LATER array element.
       const ct = prior.createdAt;
       const replace = createdAt === null ? false : ct === null ? true : createdAt >= ct;
       if (replace) byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });

@@ -115,6 +115,7 @@
     ".github/coordinator/test/shu71-codex-reviewer.test.mjs",
     ".github/coordinator/test/shu71-journal-directory.test.mjs",
     ".github/coordinator/test/shu71-public-key.test.mjs",
+    ".github/coordinator/test/shu71-receipt-order.test.mjs",
     ".github/coordinator/test/shu71-reversed-gates.test.mjs",
     ".github/coordinator/test/shu71-reviewed-lineage.test.mjs",
     ".github/coordinator/test/shu71-unchanged-build.test.mjs",
@@ -3897,7 +3898,9 @@
     "SHU71_LINEAGE_ANCESTOR: an earlier Codex write the head was built on still makes Codex an author",
     "SHU71_LINEAGE_UNRECORDED: an earlier write that started from this head and recorded no result still counts",
     "SHU71_LINEAGE_UNTAGGED: a review outside any episode keeps the whole issue as its lineage",
-    "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds"
+    "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds",
+    "SHU71_RECEIPT_ORDER: receipts come back oldest first whatever order Linear returns comments in",
+    "SHU71_RECEIPT_ORDER_ROUTE: a Codex BLOCK or FAILED review of a Claude build revises with Claude, not the card's oldest writer"
   ],
   "requirements": [
     {
@@ -29557,6 +29560,14 @@
     },
     {
       "name": "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_RECEIPT_ORDER: receipts come back oldest first whatever order Linear returns comments in",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_RECEIPT_ORDER_ROUTE: a Codex BLOCK or FAILED review of a Claude build revises with Claude, not the card's oldest writer",
       "capabilities": []
     }
   ],
