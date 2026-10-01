@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { buildCodexReviewPrompt, launchBuilder as launchCodex } from "../adapters/codex-cli.mjs";
 import { buildClaudePrompt, launchBuilder as launchClaude } from "../adapters/claude-code.mjs";
 import { laneForRuntimeRole } from "../launch-vocabulary.mjs";
+import { BROKER_GIT_CONFIG_ARGS } from "../push-broker.mjs";
 import { createReceipt, foldLaunchOutcome } from "../reconcile.mjs";
 import {
   REVIEW_CHANGE_DIFF_BYTES_MAX,
@@ -105,9 +106,11 @@ test("SHU71_REVIEW_CHANGE_BUDGET: a diff over budget is cut to fit, measured on 
   const head = commit(cwd, { [SCANNER]: `${big}\n` }, workerSubject(1));
   const change = await readReviewChange({ target_sha: head, paths: SHU140_REVISION_PATHS, git: gitIn(cwd) });
   assert.equal(change.truncated, true);
-  assert.ok(Buffer.byteLength(JSON.stringify(change.diff.replace(/</g, "\\u003c"))) <= REVIEW_CHANGE_DIFF_BYTES_MAX);
+  const rule = reviewChangeContext(change);
+  assert.ok(Buffer.byteLength(rule.split("\n")[1]) <= REVIEW_CHANGE_DIFF_BYTES_MAX, "the quoted line itself fits");
+  assert.ok(Buffer.byteLength(rule.split("\n")[1]) > REVIEW_CHANGE_DIFF_BYTES_MAX * 0.8, "the cut keeps most of the budget");
   assert.ok(change.diff.startsWith("diff --git"), "the cut keeps the diff's head");
-  assert.match(reviewChangeContext(change), /it was cut to fit, so read the files for the rest/);
+  assert.match(rule, /it was cut to fit, so read the files for the rest/);
 });
 
 test("SHU71_REVIEW_RULE: only what the change broke, or the card's acceptance check, blocks", async () => {
@@ -215,8 +218,10 @@ test("SHU71_REVIEW_RULE_LAUNCH: each reviewer family reads the change in its own
   assert.ok(gitCalls.length >= 4);
   for (const call of gitCalls) {
     assert.equal(call.file, "git");
-    assert.deepEqual(call.args.slice(0, 2), ["-c", `safe.directory=${cwd}`]);
-    assert.ok(["log", "diff"].includes(call.args[2]), `read-only git only: ${call.args[2]}`);
+    const at = call.args.indexOf(`safe.directory=${cwd}`);
+    assert.deepEqual(call.args.slice(0, at - 1), [...BROKER_GIT_CONFIG_ARGS], "the broker's hardened git config, replace refs off");
+    assert.ok(["log", "diff"].includes(call.args[at + 1]), `read-only git only: ${call.args[at + 1]}`);
+    assert.equal(call.options.env.GIT_CONFIG_GLOBAL, "/dev/null");
     assert.equal(call.options.cwd, cwd);
     assert.equal(call.options.env.GIT_DIR, join(cwd, ".git"), "git never searches above the checkout");
     assert.equal("CLAUDE_CODE_OAUTH_TOKEN" in call.options.env, false);

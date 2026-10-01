@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
+import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 
@@ -233,12 +233,13 @@ async function readHead({ cwd, execFileImpl, env }) {
   return result.stdout.trim();
 }
 
-// Read-only git in the coordinator's own review checkout, for review-change.mjs.
-// GIT_DIR pins the checkout's own repository: git never searches above it.
+// Read-only git in the coordinator's own review checkout, for review-change.mjs,
+// behind the broker's hardened config. GIT_DIR pins the checkout's own
+// repository, so git never searches above it.
 async function gitInCheckout({ cwd, execFileImpl, env }, args) {
-  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, ...args], {
+  const result = await runExecFile(execFileImpl, "git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], {
     cwd,
-    env: { ...buildClaudeEnvironment(env), GIT_DIR: `${cwd}/.git` },
+    env: { ...brokerGitEnv(buildClaudeEnvironment(env)), GIT_DIR: `${cwd}/.git` },
     encoding: "utf8",
     timeout: 10_000,
     windowsHide: true,

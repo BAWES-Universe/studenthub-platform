@@ -26,7 +26,7 @@ import { hostname as nodeHostname, platform as nodePlatform, tmpdir } from "node
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRole } from "../launch-vocabulary.mjs";
-import { pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild } from "../push-broker.mjs";
+import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild } from "../push-broker.mjs";
 import { runReviewEvidence } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
@@ -295,12 +295,13 @@ async function readHead({ cwd, execFileImpl, env }) {
   return result.stdout.trim();
 }
 
-// Read-only git in the coordinator's own review checkout, for review-change.mjs.
-// GIT_DIR pins the checkout's own repository: git never searches above it.
+// Read-only git in the coordinator's own review checkout, for review-change.mjs,
+// behind the broker's hardened config. GIT_DIR pins the checkout's own
+// repository, so git never searches above it.
 async function gitInCheckout({ cwd, execFileImpl, env }, args) {
-  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, ...args], {
+  const result = await runExecFile(execFileImpl, "git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], {
     cwd,
-    env: { ...buildCodexEnvironment(env), GIT_DIR: `${cwd}/.git` },
+    env: { ...brokerGitEnv(buildCodexEnvironment(env)), GIT_DIR: `${cwd}/.git` },
     encoding: "utf8",
     timeout: 10_000,
     windowsHide: true,
