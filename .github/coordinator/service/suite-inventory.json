@@ -117,6 +117,7 @@
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu71-receipt-order.test.mjs",
     ".github/coordinator/test/shu71-reversed-gates.test.mjs",
+    ".github/coordinator/test/shu71-review-change.test.mjs",
     ".github/coordinator/test/shu71-reviewed-lineage.test.mjs",
     ".github/coordinator/test/shu71-unchanged-build.test.mjs",
     ".github/coordinator/test/shu71-writer-edit-permission.test.mjs",
@@ -3901,7 +3902,14 @@
     "SHU71_LINEAGE_UNTAGGED: a review outside any episode keeps the whole issue as its lineage",
     "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds",
     "SHU71_RECEIPT_ORDER: receipts come back oldest first whatever order Linear returns comments in",
-    "SHU71_RECEIPT_ORDER_ROUTE: a Codex BLOCK or FAILED review of a Claude build revises with Claude, not the card's oldest writer"
+    "SHU71_RECEIPT_ORDER_ROUTE: a Codex BLOCK or FAILED review of a Claude build revises with Claude, not the card's oldest writer",
+    "SHU71_REVIEW_CHANGE_BASE: the change is the broker's commits on the bound head, its base the commit below them",
+    "SHU71_REVIEW_CHANGE_UNKNOWN: an unreadable or unbounded change leaves the base unknown",
+    "SHU71_REVIEW_CHANGE_BUDGET: a diff over budget is cut to fit, measured on its escaped rendering, and says so",
+    "SHU71_REVIEW_RULE: only what the change broke, or the card's acceptance check, blocks",
+    "SHU71_REVIEW_RULE_PROMPT: both reviewer prompts carry the rule they are given, and the strict rule by default",
+    "SHU71_REVIEW_RULE_LAUNCH: each reviewer family reads the change in its own checkout, and git sees only that repository",
+    "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before"
   ],
   "requirements": [
     {
@@ -29581,6 +29589,62 @@
     {
       "name": "SHU71_RECEIPT_ORDER_ROUTE: a Codex BLOCK or FAILED review of a Claude build revises with Claude, not the card's oldest writer",
       "capabilities": []
+    },
+    {
+      "name": "SHU71_REVIEW_CHANGE_BASE: the change is the broker's commits on the bound head, its base the commit below them",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_REVIEW_CHANGE_UNKNOWN: an unreadable or unbounded change leaves the base unknown",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_REVIEW_CHANGE_BUDGET: a diff over budget is cut to fit, measured on its escaped rendering, and says so",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_REVIEW_RULE: only what the change broke, or the card's acceptance check, blocks",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_REVIEW_RULE_PROMPT: both reviewer prompts carry the rule they are given, and the strict rule by default",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_REVIEW_RULE_LAUNCH: each reviewer family reads the change in its own checkout, and git sees only that repository",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

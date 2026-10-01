@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { isRole } from "../launch-vocabulary.mjs";
 import { pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild } from "../push-broker.mjs";
 import { runReviewEvidence } from "../review-execution.mjs";
+import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
 const path = nodePath;
@@ -149,7 +150,7 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
   ].filter(Boolean).join("\n");
 }
 
-export function buildCodexReviewPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context }) {
+export function buildCodexReviewPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, review_rule = STRICT_REVIEW_RULE }) {
   const reviewScope = fixtureReviewScope(issue_id);
   return [
     "You are the independent verifier for an authorized StudentHub change. You did not write it.",
@@ -162,7 +163,7 @@ export function buildCodexReviewPrompt({ issue_id, authorization_ref, attempt_id
     "Review the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner; the trusted evidence payload is included above. The private file URI is machine provenance only and is not readable from your sandbox.",
     "You are read-only. Inspect files only with read-only commands such as ls, cat, sed -n, grep and rg. Do not run the tests, node, npm or any builder-authored code, and do not edit, commit or push.",
-    "If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it.",
+    review_rule,
     "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha, optionally followed by :line or :start-end (for example path@bound-head-sha:19); never cite another head or an unsafe path.",
     "Your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
     `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","stage":"PASS|BLOCKED|FAILED","links":["<the file: evidence URI>","<path@${target_sha}:line citations>"],"summary":"<your findings>"}`,
@@ -292,6 +293,20 @@ async function readHead({ cwd, execFileImpl, env }) {
   });
   if (result.error) throw result.error;
   return result.stdout.trim();
+}
+
+// Read-only git in the coordinator's own review checkout, for review-change.mjs.
+// GIT_DIR pins the checkout's own repository: git never searches above it.
+async function gitInCheckout({ cwd, execFileImpl, env }, args) {
+  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, ...args], {
+    cwd,
+    env: { ...buildCodexEnvironment(env), GIT_DIR: `${cwd}/.git` },
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result.stdout;
 }
 
 async function headDescendsFromTarget({ cwd, execFileImpl, env, target_sha }) {
@@ -686,6 +701,8 @@ export async function launchBuilder({
   readHeadImpl = readHead,
   verifyDescendantImpl = headDescendsFromTarget,
   reviewEvidenceImpl = runReviewEvidence,
+  reviewRuleImpl = reviewRule,
+  reviewGitExecImpl = nodeExecFile,
   schemaFile = null,
   io = {},
   branch = null,
@@ -815,6 +832,9 @@ export async function launchBuilder({
     }
   }
   const auditNotes = reviewer ? [`review execution proof: ${reviewEvidence.reason_code}`] : [];
+  const review_rule = reviewer
+    ? await reviewRuleImpl({ issue_id, target_sha, git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) })
+    : undefined;
 
   const input = { issue_id, authorization_ref, attempt_id, target_sha, branch, repo, role,
     task_context: reviewer ? [
@@ -823,6 +843,7 @@ export async function launchBuilder({
       `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
     ].filter(Boolean).join("\n") : task_context,
+    ...(reviewer ? { review_rule } : {}),
     workspace_scope, scope_phase, allowed_paths: [...allowed_paths], scoped_base_sha };
   // The committed reviewer schema is read, never written: the file that
   // constrains the reviewer's verdict is the reviewed one.

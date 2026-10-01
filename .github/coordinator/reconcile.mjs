@@ -34,7 +34,7 @@ import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDir
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
-import { reviewFindingsContext, reviewFindingsFromCallback, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
+import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
@@ -956,6 +956,9 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
+          // A PASS's own words carry its follow-ups (review-change.mjs).
+          const passed = roleForReceipt(receipt) === "review" ? reviewPassNote(callback) : null;
+          if (passed) next.notes = [...next.notes, passed];
           // Durable verdict facts (SHU-68 wiring replay): the terminal receipt
           // records the verdict stage + output head that routing consumed, so a
           // crash AFTER this persist can re-derive the successor directive on the

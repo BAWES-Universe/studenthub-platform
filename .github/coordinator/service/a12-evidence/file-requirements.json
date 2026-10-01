@@ -1078,6 +1078,17 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-review-change.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Real local Git lanes (seed plus broker-subject commits) exercise the review change reader and both reviewer launches; the model processes are doubled and nothing reaches a remote",
+    "call_sites": [
+      ".github/coordinator/test/shu71-review-change.test.mjs:39",
+      ".github/coordinator/test/shu71-review-change.test.mjs:178"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu71-reviewed-lineage.test.mjs",
     "capabilities": [],
     "justification": "Pure receipt folding and routing over in-memory receipts; no filesystem, process or external tool operation is required",
