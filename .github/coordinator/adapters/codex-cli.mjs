@@ -26,7 +26,7 @@ import { hostname as nodeHostname, platform as nodePlatform, tmpdir } from "node
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRole } from "../launch-vocabulary.mjs";
-import { pushExactSha, coordinatorJournalDirectory } from "../push-broker.mjs";
+import { pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild } from "../push-broker.mjs";
 import { runReviewEvidence } from "../review-execution.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
@@ -1119,7 +1119,8 @@ export async function launchBuilder({
         env,
         io,
       });
-      if (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? ""))) {
+      const unchanged = workspaceReady && unchangedInitialBuild(push, { role, scope_phase: input.scope_phase ?? "initial" });
+      if (!unchanged && (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? "")))) {
         const reasonCode = /\bRESULT_SCOPE_REFUSED\b/.test(String(push.reason ?? "")) ? "RESULT_SCOPE_REFUSED" : undefined;
         return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
           callback, evidence_links: callback.links,
@@ -1127,9 +1128,11 @@ export async function launchBuilder({
           pause_adapter: true, ok: false };
       }
       // Only a confirmed host result can become routable callback evidence.
-      if (workspaceReady) callback.result_sha = push.remote_head;
+      // An unchanged initial build (push-broker.mjs) publishes nothing: the
+      // bound head itself is the result the reviewer judges.
+      if (workspaceReady) callback.result_sha = unchanged ? target_sha : push.remote_head;
       if (!callback.links) callback.links = [];
-      callback.links = [...callback.links, `pushed:${push.remote_head ?? callback.result_sha}@${push.stage ?? "PUSHED"}`];
+      if (!unchanged) callback.links = [...callback.links, `pushed:${push.remote_head ?? callback.result_sha}@${push.stage ?? "PUSHED"}`];
     }
   }
 

@@ -1070,6 +1070,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-unchanged-build.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem only; both writer adapters run with doubled CLI output and a doubled push broker, and the episode runs through the in-memory harness, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-unchanged-build.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu73-enforcement.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

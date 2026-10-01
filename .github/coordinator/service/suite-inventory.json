@@ -116,6 +116,7 @@
     ".github/coordinator/test/shu71-journal-directory.test.mjs",
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu71-reversed-gates.test.mjs",
+    ".github/coordinator/test/shu71-unchanged-build.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
     ".github/coordinator/test/shu86-durable-intent.test.mjs",
     ".github/coordinator/test/single-run-activation.test.mjs",
@@ -3879,7 +3880,12 @@
     "SHU71_JOURNAL_ONE_DIRECTORY: the adapter child resolves the journal the coordinator reads",
     "SHU71_JOURNAL_CHILD_WIRING: the forked supervisor child journals where the coordinator reads",
     "SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate",
-    "SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry"
+    "SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry",
+    "SHU71_UNCHANGED_BUILD_RULE: only an initial build's named empty result is reviewable",
+    "SHU71_UNCHANGED_BUILD_CLAUDE: the Claude writer hands an unchanged build to review at the bound head",
+    "SHU71_UNCHANGED_BUILD_CODEX: the Codex writer follows the same rule",
+    "SHU71_UNCHANGED_BUILD_REVIEWED: the episode reviews the unchanged head, and the BLOCK returns to the writer",
+    "SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing"
   ],
   "requirements": [
     {
@@ -29450,6 +29456,36 @@
     {
       "name": "SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry",
       "capabilities": []
+    },
+    {
+      "name": "SHU71_UNCHANGED_BUILD_RULE: only an initial build's named empty result is reviewable",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_UNCHANGED_BUILD_CLAUDE: the Claude writer hands an unchanged build to review at the bound head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_UNCHANGED_BUILD_CODEX: the Codex writer follows the same rule",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_UNCHANGED_BUILD_REVIEWED: the episode reviews the unchanged head, and the BLOCK returns to the writer",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [
