@@ -3862,6 +3862,7 @@
     "SHU-71 sandbox masks the Codex reviewer home from tests and from the Claude reviewer",
     "SHU-71 sandbox Codex model launch: fixed reviewer home is its only writable path and credential",
     "SHU-71 sandbox contract: removing the Codex home mask or widening writes dies by a named assertion",
+    "SHU-71 sandbox namespaces: only the Codex model launch may create the namespaces its own sandbox needs",
     "SHU71_EVIDENCE_PAGING reads every page of a fixture thread past 250 comments",
     "SHU71_EVIDENCE_PAGE_BOUND accepts exactly the page bound and refuses one comment more",
     "SHU71_EVIDENCE_CURSOR refuses a repeated, empty or missing cursor instead of truncating",
@@ -29371,6 +29372,17 @@
     },
     {
       "name": "SHU-71 sandbox contract: removing the Codex home mask or widening writes dies by a named assertion",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 sandbox namespaces: only the Codex model launch may create the namespaces its own sandbox needs",
       "capabilities": [
         {
           "name": "bash"

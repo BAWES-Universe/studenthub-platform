@@ -1041,7 +1041,7 @@
     "justification": "The shipped reviewer-sandbox mask block and Codex model branch run in Bash; the model branch calls realpath and dirname from the shell toolchain. Privileged tools (stat, systemd-run) are doubled.",
     "call_sites": [
       ".github/coordinator/test/shu71-codex-reviewer.test.mjs:249",
-      ".github/coordinator/test/shu71-codex-reviewer.test.mjs:272"
+      ".github/coordinator/test/shu71-codex-reviewer.test.mjs:274"
     ]
   },
   {
