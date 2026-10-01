@@ -265,13 +265,15 @@ test("SHU-71 sandbox masks the Codex reviewer home from tests and from the Claud
   assert.deepEqual(maskArgs("model", "codex exec"), [], "only the Codex model launch sees its own login");
 });
 
-// Execute the shipped model branch for Codex with privileged tools doubled.
-function codexModelBranch({ home, mode = "700", owner = null, parentOwner = "0" }) {
+// Execute the shipped profile branches with privileged tools doubled. The
+// profile and the argv under test are parameters so the same harness drives the
+// test profile, the Codex model launch and the Claude model launch.
+function sandboxBranch({ home, profile = "model", argv = ["codex", "exec", "--json"], executable = "/fixture/bin/codex", mode = "700", owner = null, parentOwner = "0" }) {
   const start = sandboxSource.indexOf('if [[ "$profile" == "test" ]]; then');
   assert.ok(start >= 0, "SHU71_MODEL_HARNESS: execute the shipped profile branches and launch argv");
   return spawnSync("/bin/bash", ["-p", "-c", `
 set -euo pipefail
-profile=model
+profile=${profile}
 reviewer_uid=12345
 reviewer_gid=12345
 canonical_workspace=/fixture/attempt
@@ -279,7 +281,7 @@ reviewer_codex_home=${home}
 systemd_args=()
 CLAUDE_CODE_OAUTH_TOKEN=must-not-reach-codex
 trusted_executable() { printf '%s\\n' "$1"; }
-command() { printf '/fixture/bin/codex\\n'; }
+command() { printf '${executable}\\n'; }
 function /usr/bin/stat {
   case "$2" in
     '%u:%a') printf '%s:%s\\n' "${owner ?? "12345"}" "${mode}" ;;
@@ -288,9 +290,13 @@ function /usr/bin/stat {
   esac
 }
 function /usr/bin/systemd-run { printf '%s\\n' "$@"; }
-set -- codex exec --json
+set -- ${argv.join(" ")}
 ${sandboxSource.slice(start)}
 `], { encoding: "utf8" });
+}
+
+function codexModelBranch(options) {
+  return sandboxBranch(options);
 }
 
 test("SHU-71 sandbox Codex model launch: fixed reviewer home is its only writable path and credential", () => {
@@ -301,7 +307,7 @@ test("SHU-71 sandbox Codex model launch: fixed reviewer home is its only writabl
     const argv = run.stdout.split("\n");
     assert.deepEqual(argv.filter((arg) => /ReadWritePaths|CODEX_HOME|CLAUDE_CODE_OAUTH_TOKEN/.test(arg)),
       [`--property=ReadWritePaths=${home}`, `--setenv=CODEX_HOME=${home}`]);
-    assert.deepEqual(argv.filter((arg) => /RestrictAddressFamilies|PrivateNetwork/.test(arg)), ["--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"]);
+    assert.deepEqual(argv.filter((arg) => /RestrictAddressFamilies|PrivateNetwork/.test(arg)), ["--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"]);
     assert.ok(argv.includes("--uid=12345"));
     assert.deepEqual(argv.slice(argv.indexOf("--") + 1).filter(Boolean), ["/fixture/bin/codex", "exec", "--json"]);
     for (const [label, over] of [["group/world access", { mode: "755" }], ["another owner", { owner: "0" }], ["a writable parent", { parentOwner: "1000" }]]) {
@@ -312,6 +318,39 @@ test("SHU-71 sandbox Codex model launch: fixed reviewer home is its only writabl
     }
     const missing = codexModelBranch({ home: join(home, "absent") });
     assert.equal(missing.status, 64);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("SHU-71 sandbox namespaces: only the Codex model launch may create the namespaces its own sandbox needs", () => {
+  const home = mkdtempSync(join(tmpdir(), "shu71-codex-home-"));
+  const child = "/srv/shu/studenthub-platform/.github/coordinator/review-execution-child.mjs";
+  try {
+    const launches = [
+      ["test profile", sandboxBranch({ home, profile: "test", executable: "/fixture/bin/node", argv: ["/fixture/bin/node", child] }),
+        ["--property=ProcSubset=pid", "--property=RestrictNamespaces=yes"]],
+      ["Codex model", sandboxBranch({ home }), ["--property=ProcSubset=all", "--property=RestrictNamespaces=user mnt pid ipc net"]],
+      ["Claude model", sandboxBranch({ home, argv: ["claude", "exec"], executable: "/fixture/bin/claude" }),
+        ["--property=ProcSubset=pid", "--property=RestrictNamespaces=yes"]],
+    ];
+    for (const [label, run, namespaces] of launches) {
+      assert.equal(run.status, 0, `${label}: ${run.stderr}`);
+      const argv = run.stdout.split("\n");
+      assert.deepEqual(argv.filter((arg) => /ProcSubset|RestrictNamespaces/.test(arg)), namespaces,
+        `${label}: exactly its own proc and namespace properties`);
+      assert.ok(!argv.some((arg) => /\b(uts|cgroup)\b/.test(arg)), `${label}: uts and cgroup namespaces stay forbidden`);
+      for (const kept of [
+        "--property=ProtectProc=invisible", "--property=ProtectKernelTunables=yes",
+        "--property=NoNewPrivileges=yes", "--property=CapabilityBoundingSet=",
+      ]) {
+        assert.ok(argv.includes(kept), `${label}: ${kept} must still be passed`);
+      }
+      assert.ok(argv.includes('--property=ProtectSystem=strict'), `${label}: the host filesystem stays read-only`);
+      assert.deepEqual(argv.filter((arg) => /AF_NETLINK/.test(arg)), label === "Codex model"
+        ? ["--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"] : [],
+      `${label}: only the Codex launch may create netlink sockets, for bwrap's own loopback step`);
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -328,6 +367,26 @@ test("SHU-71 sandbox contract: removing the Codex home mask or widening writes d
     ["SHU71_CODEX_WRITE", mutate('runtime_args+=("--property=ReadWritePaths=$reviewer_codex_home")', 'runtime_args+=("--property=ReadWritePaths=$reviewer_codex_home" "--property=ReadWritePaths=/srv/shu")')],
     ["SHU71_CODEX_HOME_OWNER", mutate(`"\${reviewer_uid}:700"`, `"\${reviewer_uid}:755"`)],
     ["SHU71_CODEX_ENVIRONMENT", mutate('environment_args=("--setenv=CODEX_HOME=$reviewer_codex_home")', 'environment_args=("--setenv=CODEX_HOME=/srv/codex")')],
+    ["SHU71_CODEX_NAMESPACES", mutate('"--property=RestrictNamespaces=user mnt pid ipc net"', '"--property=RestrictNamespaces=user mnt pid ipc net uts"')],
+    ["SHU71_CODEX_NAMESPACES", mutate('"--property=RestrictNamespaces=user mnt pid ipc net"', '"--property=RestrictNamespaces=user mnt pid ipc cgroup"')],
+    ["SHU71_CODEX_NAMESPACES", mutate(`    network_args=(
+      "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"
+    )
+    namespace_args=(
+      "--property=ProcSubset=pid"
+      "--property=RestrictNamespaces=yes"
+    )`, `    network_args=(
+      "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"
+    )
+    namespace_args=(
+      "--property=ProcSubset=all"
+      "--property=RestrictNamespaces=user mnt pid ipc net"
+    )`)],
+    ["SHU71_CODEX_NAMESPACES", mutate("--property=ProtectKernelTunables=yes", "--property=ProtectKernelTunables=no")],
+    ["SHU261_NETWORK_ENFORCEMENT", mutate('"--property=RestrictAddressFamilies=AF_UNIX"', '"--property=RestrictAddressFamilies=AF_UNIX AF_NETLINK"')],
+    ["SHU261_NETWORK_ENFORCEMENT", mutate('"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"', '"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"')],
+    ["SHU71_CODEX_NAMESPACES", mutate('  "${namespace_args[@]}" \\', '  "${namespace_args[@]}" \\\n  --property=ProcSubset=all \\')],
+    ["SHU71_CODEX_NAMESPACES", mutate('"--property=RestrictNamespaces=user mnt pid ipc net"', '"--property=RestrictNamespaces=user mnt pid ipc net AF_NETLINK"')],
   ]) {
     assert.throws(() => assertReviewerSandboxContract(source), (error) => error.code === "ERR_ASSERTION" && error.message.includes(name), name);
   }
@@ -345,3 +404,4 @@ test("SHU-71 Codex review of a failing confined run: the reviewer still launches
   assert.notEqual(out.reason_code, "REVIEW_EXECUTION_UNAVAILABLE");
   assert.equal(reviewFindingsFromCallback(out.callback)?.summary, "The confined run fails at tools/scan.mjs:1.");
 });
+

@@ -132,7 +132,7 @@ test("SHU261 model network claim pins exact families and absence of destination 
 });
 for (const [name, from, to, assertion] of [
   ["provider overclaim", "address-family-restricted", ["provider", "network", "only"].join("-"), "SHU261_NETWORK_CLAIM"],
-  ["widened model families", 'AF_UNIX AF_INET AF_INET6")', 'AF_UNIX AF_INET AF_INET6 AF_PACKET")', "SHU261_NETWORK_ENFORCEMENT"],
+  ["widened model families", 'AF_UNIX AF_INET AF_INET6"', 'AF_UNIX AF_INET AF_INET6 AF_PACKET"', "SHU261_NETWORK_ENFORCEMENT"],
   ["destination filter added", "--property=ProtectSystem=strict", "--property=IPAddressAllow=192.0.2.1 \\\n  --property=ProtectSystem=strict", "SHU261_NETWORK_NO_ALLOWLIST"],
 ]) {
   test(`SHU261 mutation ${name} dies by ${assertion}`, (t) => {

@@ -78,8 +78,42 @@ export function assertReviewerSandboxContract(source) {
     "SHU261_MODEL_NETWORK: model profile permits AF_UNIX, AF_INET, AF_INET6; no destination allowlist");
   assert.deepEqual([...source.matchAll(/network_args=\(([\s\S]*?)\)/g)].map((match) => match[1].trim()), [
     '"--property=PrivateNetwork=yes"\n    "--property=RestrictAddressFamilies=AF_UNIX"',
+    '"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"',
     '"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"',
-  ], "SHU261_NETWORK_ENFORCEMENT: exact test isolation and model address families must stay pinned");
+    ], "SHU261_NETWORK_ENFORCEMENT: exact test isolation and model address families must stay pinned");
+  // SHU-71 try 5: Codex runs its own per-command bubblewrap sandbox, which needs
+  // the user, mount, pid, ipc and net namespaces, a readable
+  // /proc/sys/kernel/overflowuid, and a NETLINK_ROUTE socket to bring up
+  // loopback. Only the Codex model launch may relax those; the test profile and
+  // the Claude reviewer keep the strict values, and no launch may add uts or
+  // cgroup namespaces.
+  const namespaceDefs = [...source.matchAll(/namespace_args=\(([\s\S]*?)\)/g)];
+  assert.deepEqual(namespaceDefs.map((match) => match[1].trim()), [
+    '"--property=ProcSubset=pid"\n    "--property=RestrictNamespaces=yes"',
+    '"--property=ProcSubset=all"\n      "--property=RestrictNamespaces=user mnt pid ipc net"',
+    '"--property=ProcSubset=pid"\n      "--property=RestrictNamespaces=yes"',
+  ], "SHU71_CODEX_NAMESPACES: exactly the Codex model launch may create the namespaces bwrap needs");
+  const codexBranchStart = source.indexOf('if [[ "$model_runtime" == "codex" ]]; then');
+  const codexBranchElse = source.indexOf("\n  else\n", codexBranchStart);
+  assert.ok(codexBranchStart > 0 && codexBranchElse > codexBranchStart &&
+    namespaceDefs[1]?.index > codexBranchStart && namespaceDefs[1]?.index < codexBranchElse,
+    "SHU71_CODEX_NAMESPACES: the relaxed namespace definition must sit inside the Codex branch, before the Claude else");
+  const launchCall = source.slice(source.indexOf("/usr/bin/systemd-run"));
+  required(launchCall, /"\$\{namespace_args\[@\]\}"/,
+    "SHU71_CODEX_NAMESPACES: the launch must pass the per-branch namespace properties");
+  assert.doesNotMatch(launchCall.replace(/^\s*#.*$/gm, ""),
+    /--property=(?:ProcSubset|RestrictNamespaces)=/,
+    "SHU71_CODEX_NAMESPACES: no literal proc or namespace property may survive in the launch");
+  required(source.replace(/^\s*#.*$/gm, ""), /ProtectKernelTunables=yes/, "SHU71_CODEX_NAMESPACES: /proc/sys must stay read-only");
+  required(source, /ProtectProc=invisible/, "SHU71_CODEX_NAMESPACES: host processes must stay invisible");
+  assert.doesNotMatch(source, /RestrictNamespaces=[^\n"]*\b(?:uts|cgroup)\b/,
+    "SHU71_CODEX_NAMESPACES: uts and cgroup namespaces stay forbidden for every launch");
+  assert.deepEqual(source.match(/RestrictAddressFamilies=[^"\n]*AF_NETLINK/g) ?? [],
+    ["RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"],
+    "SHU71_CODEX_NAMESPACES: AF_NETLINK is granted to the Codex sandbox only, for bwrap's loopback step");
+  const codeSource = source.replace(/^\s*#.*$/gm, "");
+  assert.ok(codeSource.indexOf("AF_NETLINK") > codeSource.indexOf('if [[ "$model_runtime" == "codex" ]]; then'),
+    "SHU71_CODEX_NAMESPACES: the netlink grant must sit inside the Codex branch, never in the test or Claude launch");
   assert.doesNotMatch(source, /provider[- ]network[- ]only|ordinary[ ]provider[ ]network/i,
     "SHU261_NETWORK_CLAIM: address families do not confine destinations");
   required(source, /no destination allowlist/,
