@@ -29,6 +29,22 @@ function quoted(diff) {
 }
 const renderedBytes = (diff) => Buffer.byteLength(quoted(diff));
 
+// The longest head of the diff whose quoted rendering fits, ended at a line
+// break when it holds one. A single line longer than the budget is cut inside
+// the line rather than dropped, so the reviewer always sees the change's start.
+function fittingPrefix(diff) {
+  let fits = 0;
+  for (let low = 1, high = diff.length; low <= high;) {
+    const mid = Math.floor((low + high) / 2);
+    if (renderedBytes(diff.slice(0, mid)) <= REVIEW_CHANGE_DIFF_BYTES_MAX) { fits = mid; low = mid + 1; } else high = mid - 1;
+  }
+  // Never end on half of a surrogate pair.
+  if (fits > 0 && /[\uD800-\uDBFF]/.test(diff[fits - 1])) fits -= 1;
+  const head = diff.slice(0, fits);
+  const lineEnd = head.lastIndexOf("\n");
+  return lineEnd > 0 ? head.slice(0, lineEnd) : head;
+}
+
 // git(args) runs git in the review checkout and resolves to its stdout. Any
 // failure answers { ok: false }: the caller then keeps the strict rule.
 export async function readReviewChange({ target_sha, paths = null, git }) {
@@ -46,15 +62,8 @@ export async function readReviewChange({ target_sha, paths = null, git }) {
     const base_sha = entries[commits].sha;
     let diff = commits === 0 ? "" : await git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=3",
       base_sha, target_sha, "--", ...(Array.isArray(paths) && paths.length ? paths : [])]);
-    let truncated = false;
-    if (renderedBytes(diff) > REVIEW_CHANGE_DIFF_BYTES_MAX) {
-      truncated = true;
-      const lines = diff.split("\n");
-      while (lines.length && renderedBytes(lines.join("\n")) > REVIEW_CHANGE_DIFF_BYTES_MAX) {
-        lines.length = Math.floor(lines.length * 0.9);
-      }
-      diff = lines.join("\n");
-    }
+    const truncated = renderedBytes(diff) > REVIEW_CHANGE_DIFF_BYTES_MAX;
+    if (truncated) diff = fittingPrefix(diff);
     return { ok: true, base_sha, commits, diff, truncated };
   } catch {
     return { ok: false };

@@ -111,6 +111,21 @@ test("SHU71_REVIEW_CHANGE_BUDGET: a diff over budget is cut to fit, measured on 
   assert.ok(Buffer.byteLength(rule.split("\n")[1]) > REVIEW_CHANGE_DIFF_BYTES_MAX * 0.8, "the cut keeps most of the budget");
   assert.ok(change.diff.startsWith("diff --git"), "the cut keeps the diff's head");
   assert.match(rule, /it was cut to fit, so read the files for the rest/);
+  assert.ok(change.diff.endsWith(";") || change.diff.endsWith('"'), "a multi-line cut ends on a whole line");
+
+  // One line over the whole budget (a minified file) is cut inside the line,
+  // never dropped: the reviewer still sees the change's start.
+  const line = `+${"<x\\".repeat(REVIEW_CHANGE_DIFF_BYTES_MAX)}`;
+  const single = await readReviewChange({ target_sha: head, git: async (args) => (args[0] === "log" ? `${head}\t${workerSubject(1)}\n${"c".repeat(40)}\tseed\n` : line) });
+  assert.equal(single.truncated, true);
+  assert.ok(single.diff.length > 0 && line.startsWith(single.diff), "a prefix of the one line");
+  const quotedLine = reviewChangeContext(single).split("\n")[1];
+  assert.ok(Buffer.byteLength(quotedLine) <= REVIEW_CHANGE_DIFF_BYTES_MAX);
+  assert.ok(Buffer.byteLength(quotedLine) > REVIEW_CHANGE_DIFF_BYTES_MAX - 16, "the cut uses the whole budget");
+  // A cut never leaves half of a surrogate pair.
+  const astral = await readReviewChange({ target_sha: head, git: async (args) => (args[0] === "log" ? `${head}\t${workerSubject(1)}\n${"c".repeat(40)}\tseed\n` : "😀".repeat(REVIEW_CHANGE_DIFF_BYTES_MAX)) });
+  assert.equal(astral.diff.length % 2, 0);
+  assert.equal(JSON.stringify(astral.diff).includes("\\ud83d\""), false);
 });
 
 test("SHU71_REVIEW_RULE: only what the change broke, or the card's acceptance check, blocks", async () => {
