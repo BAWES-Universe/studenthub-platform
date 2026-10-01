@@ -16,8 +16,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
+import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
+import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 
 export const ADAPTER_NAME = "claude-code";
 export const CLAUDE_MODEL = "opus";
@@ -97,7 +98,7 @@ export function isolatedReviewerModelCommand({ isolationWrapper, cwd, args }) {
   };
 }
 
-export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, role = "review", allowed_paths = [], scoped_base_sha = null }) {
+export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, role = "review", allowed_paths = [], scoped_base_sha = null, review_rule = STRICT_REVIEW_RULE }) {
   if (isWriterRole(role)) return [
     `You are the authorized ${role} worker for ${issue_id}; contract ${authorization_ref}.`,
     `Attempt: ${attempt_id}. Bound target: ${target_sha}. Local head: ${scoped_base_sha ?? target_sha}.`,
@@ -120,7 +121,8 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against the contract the files and their folders document, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
     "Review and test the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
-    "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",
+    "You are read-only. Do not edit, commit, or push.",
+    review_rule,
     "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha, optionally followed by :line or :start-end (for example path@bound-head-sha:19); never cite another head or an unsafe path.",
     "Return the required structured callback. PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
   ].filter(Boolean).join("\n");
@@ -229,6 +231,21 @@ async function readHead({ cwd, execFileImpl, env }) {
   });
   if (result.error) throw result.error;
   return result.stdout.trim();
+}
+
+// Read-only git in the coordinator's own review checkout, for review-change.mjs,
+// behind the broker's hardened config. GIT_DIR pins the checkout's own
+// repository, so git never searches above it.
+async function gitInCheckout({ cwd, execFileImpl, env }, args) {
+  const result = await runExecFile(execFileImpl, "git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], {
+    cwd,
+    env: { ...brokerGitEnv(buildClaudeEnvironment(env)), GIT_DIR: `${cwd}/.git` },
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result.stdout;
 }
 
 function parseJson(text) {
@@ -456,6 +473,8 @@ export async function launchBuilder({
   execFileImpl = nodeExecFile,
   readHeadImpl = readHead,
   reviewEvidenceImpl = runReviewEvidence,
+  reviewRuleImpl = reviewRule,
+  reviewGitExecImpl = nodeExecFile,
   persistEnvelopeImpl = persistClaudeEnvelope,
   io = {},
   timeout_ms = 30 * 60 * 1000,
@@ -542,6 +561,7 @@ export async function launchBuilder({
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
       ] : []),
     ].filter(Boolean).join("\n"),
+    ...(role === "review" ? { review_rule: await reviewRuleImpl({ issue_id, target_sha, git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) }) } : {}),
   };
   const args = buildClaudeArgs(input, { resume });
   let result;

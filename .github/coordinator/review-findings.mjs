@@ -57,6 +57,18 @@ export function workerSummaryNote(callback) {
   return `worker summary: ${JSON.stringify(text.slice(0, WORKER_SUMMARY_NOTE_MAX))}`;
 }
 
+// A PASS may carry follow-ups: defects the reviewer found that were already
+// there before the card's writers started (review-change.mjs). They are kept
+// on the review's receipt so they can become cards. Same credential rule.
+export const REVIEW_PASS_NOTE_MAX = 2000;
+
+export function reviewPassNote(callback) {
+  if (callback?.stage !== "PASS") return null;
+  const text = typeof callback.summary === "string" ? callback.summary.trim().replace(/\s+/g, " ") : "";
+  if (!text || secretShaped(text)) return null;
+  return `reviewer summary: ${JSON.stringify(text.slice(0, REVIEW_PASS_NOTE_MAX))}`;
+}
+
 // Stored findings are checked for credential shapes too, so no writer other
 // than reviewFindingsFromCallback can put a secret into a receipt or prompt.
 export function validReviewFindings(findings) {

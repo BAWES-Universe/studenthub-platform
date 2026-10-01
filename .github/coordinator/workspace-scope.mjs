@@ -34,6 +34,14 @@ export function fixtureReviewScope(issueId) {
   return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId].revision_paths : null;
 }
 
+// A fixture card's acceptance check. Its reviewer holds the lane to it whatever
+// the change touched, because the seeded defect predates every writer
+// (review-change.mjs).
+export const FIXTURE_ACCEPTANCE = "every test and every acceptance-oracle row in the declared scope agrees with the contract the lane's files document.";
+export function fixtureAcceptance(issueId) {
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_ACCEPTANCE : null;
+}
+
 // The legacy object remains supported; additional lanes must have unique IDs.
 export function resolveFixtureLane(config = {}, issueId) {
   const extra = config.fixture_lanes ?? [];
