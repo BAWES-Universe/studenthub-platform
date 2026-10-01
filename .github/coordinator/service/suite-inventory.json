@@ -117,6 +117,7 @@
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu71-reversed-gates.test.mjs",
     ".github/coordinator/test/shu71-unchanged-build.test.mjs",
+    ".github/coordinator/test/shu71-writer-edit-permission.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
     ".github/coordinator/test/shu86-durable-intent.test.mjs",
     ".github/coordinator/test/single-run-activation.test.mjs",
@@ -3885,7 +3886,10 @@
     "SHU71_UNCHANGED_BUILD_CLAUDE: the Claude writer hands an unchanged build to review at the bound head",
     "SHU71_UNCHANGED_BUILD_CODEX: the Codex writer follows the same rule",
     "SHU71_UNCHANGED_BUILD_REVIEWED: the episode reviews the unchanged head, and the BLOCK returns to the writer",
-    "SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing"
+    "SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing",
+    "SHU71_WRITER_EDIT_RULES: a writer may edit exactly its authorized paths, and the reviewer edits nothing",
+    "SHU71_WRITER_EDIT_RULES_LAUNCHED: the launched writer carries its own path rules, not the whole workspace",
+    "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time"
   ],
   "requirements": [
     {
@@ -29486,6 +29490,18 @@
           "name": "shell_toolchain"
         }
       ]
+    },
+    {
+      "name": "SHU71_WRITER_EDIT_RULES: a writer may edit exactly its authorized paths, and the reviewer edits nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_EDIT_RULES_LAUNCHED: the launched writer carries its own path rules, not the whole workspace",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

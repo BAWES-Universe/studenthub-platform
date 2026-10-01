@@ -1078,6 +1078,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-writer-edit-permission.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem only; the Claude CLI is doubled, so the tests read the arguments a writer would launch with and no external tool operation is required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-writer-edit-permission.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu73-enforcement.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
