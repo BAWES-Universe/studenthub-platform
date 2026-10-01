@@ -7,6 +7,17 @@
 # profile (AF_UNIX, AF_INET, AF_INET6), with no destination allowlist. Both profiles share the same filesystem,
 # process and identity boundary. Privileged bash mode prevents startup files,
 # imported functions, BASH_ENV and caller shell options from running as root.
+#
+# SHU-71: the Codex reviewer runs each of its own commands inside a bubblewrap
+# sandbox (--unshare-user/pid/ipc/net), so ONLY the Codex model branch loosens
+# what would otherwise block that sandbox: ProcSubset=all (bwrap must read
+# /proc/sys/kernel/overflowuid to name its unmapped ids), RestrictNamespaces=user
+# mnt pid ipc net (the namespaces it creates), and AF_NETLINK (it brings up
+# loopback inside its new netns over a NETLINK_ROUTE socket). The test profile
+# and the Claude model branch keep ProcSubset=pid, RestrictNamespaces=yes and
+# their current address families, and every other property is unchanged for all
+# three launches — the filesystem, identity, capability and process boundary is
+# the same for the Codex reviewer as for every other reviewer launch.
 while IFS= read -r environment_name; do
   case "$environment_name" in
     CLAUDE_CODE_OAUTH_TOKEN|SUDO_UID) ;;
@@ -204,6 +215,13 @@ if [[ "$profile" == "test" ]]; then
     "--property=PrivateNetwork=yes"
     "--property=RestrictAddressFamilies=AF_UNIX"
   )
+  # The test profile runs only the reviewed exact-head Node evidence child,
+  # which starts no nested sandbox, so it keeps the strict proc and namespace
+  # restrictions and gets no namespace relaxation at all.
+  namespace_args=(
+    "--property=ProcSubset=pid"
+    "--property=RestrictNamespaces=yes"
+  )
   runtime_args=(
     "--property=InaccessiblePaths=/run"
     "--property=InaccessiblePaths=/var/run"
@@ -230,6 +248,23 @@ else
     shift
     set -- "$canonical_codex" "$@"
     unset CLAUDE_CODE_OAUTH_TOKEN
+    # bwrap — Codex's own per-command read-only sandbox — creates user, mount,
+    # pid, ipc and net namespaces, reads /proc/sys/kernel/overflowuid to name
+    # its unmapped ids, and brings up loopback inside its new network namespace
+    # over a NETLINK_ROUTE socket. So the Codex reviewer is the only launch
+    # permitted to create those namespaces, the only one that can see
+    # /proc/sys, and the only one allowed AF_NETLINK; ProtectKernelTunables=yes
+    # still keeps /proc/sys read-only, and uts and cgroup namespaces stay
+    # forbidden. Every other property is identical to the Claude reviewer's:
+    # Codex's own sandbox grants no writable host path and no network
+    # destination beyond the address families above.
+    network_args=(
+      "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"
+    )
+    namespace_args=(
+      "--property=ProcSubset=all"
+      "--property=RestrictNamespaces=user mnt pid ipc net"
+    )
   else
     if [[ "$1" != "claude" || -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
       echo "reviewer model profile accepts only subscription-authenticated Claude" >&2
@@ -242,8 +277,16 @@ else
     }
     shift
     set -- "$canonical_claude" "$@"
+    # Claude runs no nested sandbox, so its launch keeps the strict proc and
+    # namespace restrictions.
+    network_args=(
+      "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"
+    )
+    namespace_args=(
+      "--property=ProcSubset=pid"
+      "--property=RestrictNamespaces=yes"
+    )
   fi
-  network_args=("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
   # Claude must resolve its API host. /etc/resolv.conf usually points into /run,
   # which an inaccessible mask would hide, so the model profile replaces /run
   # with an empty read-only tmpfs and binds back only that resolver file.
@@ -296,14 +339,13 @@ fi
   --property=CapabilityBoundingSet= \
   "${runtime_args[@]}" \
   --property=ProtectProc=invisible \
-  --property=ProcSubset=pid \
+  "${namespace_args[@]}" \
   --property=ProtectKernelTunables=yes \
   --property=ProtectKernelModules=yes \
   --property=ProtectKernelLogs=yes \
   --property=ProtectControlGroups=yes \
   --property=ProtectClock=yes \
   --property=LockPersonality=yes \
-  --property=RestrictNamespaces=yes \
   --property=RestrictRealtime=yes \
   --property=RestrictSUIDSGID=yes \
   --property=UMask=0077 \
