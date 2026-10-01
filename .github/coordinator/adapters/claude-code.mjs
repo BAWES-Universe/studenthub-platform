@@ -126,6 +126,19 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
   ].filter(Boolean).join("\n");
 }
 
+// A scoped writer may edit only its authorized paths; a full-workspace writer
+// may edit inside its workspace (--restricted already confines file tools to
+// the cwd). Rules are anchored to the cwd with "./". The CLI splits a rule list
+// on commas and spaces, so a path that could break a rule apart is refused.
+const RULE_SAFE_PATH_RE = /^[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*$/;
+export function writerEditRules({ workspace_scope, allowed_paths = [] } = {}) {
+  if (workspace_scope === "full") return ["Edit(./**)"];
+  if (workspace_scope !== "scoped" || !Array.isArray(allowed_paths) || allowed_paths.length === 0 || allowed_paths.some((p) => !RULE_SAFE_PATH_RE.test(p))) {
+    throw new Error("authorized writer paths cannot be expressed as edit permission rules");
+  }
+  return allowed_paths.map((p) => `Edit(./${p})`);
+}
+
 export function buildClaudeArgs(input, { resume = false } = {}) {
   const sessionFlag = resume ? "--resume" : "--session-id";
   return [
@@ -145,6 +158,12 @@ export function buildClaudeArgs(input, { resume = false } = {}) {
     // therefore need both an empty strict config and an explicit deny pattern.
     "--strict-mcp-config",
     "--disallowedTools", "mcp__*",
+    // SHU-71 try 4: dontAsk denies every tool call no rule allows, and Edit and
+    // Write need one, so the writer could read the card but change nothing. It
+    // may edit exactly its authorized paths (one Edit rule covers Edit and
+    // Write on that file); everything else stays denied. Both tool flags take a
+    // variable list, so each must be followed by another flag, never the prompt.
+    ...(isWriterRole(input.role) ? ["--allowedTools", ...writerEditRules(input)] : []),
     "--permission-mode", "dontAsk",
     sessionFlag, input.attempt_id,
     buildClaudePrompt(input),
@@ -452,6 +471,7 @@ export async function launchBuilder({
   } else {
     const scope = validateWorkspaceScope({ workspace_scope, scope_phase, allowed_paths, scoped_base_sha }, { requireScopedBase: true });
     if (!scope.ok || scope_phase === "review") return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: scope.reason ?? "writer cannot use review scope", ok: false };
+    try { writerEditRules({ workspace_scope, allowed_paths }); } catch (error) { return { stage: "HOLD", reason: error.message, ok: false }; }
     if (!env.SHU_WORKER_LAUNCH_WRAPPER || !/^\d+$/.test(env.SHU_WORKER_UID ?? "") || Number(env.SHU_WORKER_UID) === 0 || Number(env.SHU_WORKER_UID) === process.getuid()) return { stage: "HOLD", reason: "Claude writer requires the configured distinct worker identity", ok: false };
     // The push journal is resolved before any model time is spent: a writer
     // whose push could land nowhere a reader looks would look like no push.
@@ -509,7 +529,7 @@ export async function launchBuilder({
   }
 
   const input = {
-    role, allowed_paths, scoped_base_sha,
+    role, workspace_scope, allowed_paths, scoped_base_sha,
     issue_id,
     authorization_ref,
     attempt_id,

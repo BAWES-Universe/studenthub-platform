@@ -117,6 +117,7 @@
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu71-reversed-gates.test.mjs",
     ".github/coordinator/test/shu71-unchanged-build.test.mjs",
+    ".github/coordinator/test/shu71-writer-edit-permission.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
     ".github/coordinator/test/shu86-durable-intent.test.mjs",
     ".github/coordinator/test/single-run-activation.test.mjs",
@@ -3120,6 +3121,7 @@
     "SHU-228 mutation: M11 premium builder",
     "SHU-228 mutation: M12 premium reviewer",
     "SHU-228 mutation: M13 expiry at publication",
+    "SHU-228 mutation: M14 empty after binding",
     "SHU-228: host commits raw files with one bound parent and leaves worker metadata untouched",
     "SHU-228: filters, hooks, worker index and URL rewrites cannot influence host snapshot or push",
     "SHU-228: refuses empty without changing remote",
@@ -3885,7 +3887,11 @@
     "SHU71_UNCHANGED_BUILD_CLAUDE: the Claude writer hands an unchanged build to review at the bound head",
     "SHU71_UNCHANGED_BUILD_CODEX: the Codex writer follows the same rule",
     "SHU71_UNCHANGED_BUILD_REVIEWED: the episode reviews the unchanged head, and the BLOCK returns to the writer",
-    "SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing"
+    "SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing",
+    "SHU71_UNCHANGED_BUILD_AFTER_BINDING: an attempt that already bound a result is never reported unchanged",
+    "SHU71_WRITER_EDIT_RULES: a writer may edit exactly its authorized paths, and the reviewer edits nothing",
+    "SHU71_WRITER_EDIT_RULES_LAUNCHED: the launched writer carries its own path rules, not the whole workspace",
+    "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time"
   ],
   "requirements": [
     {
@@ -25510,6 +25516,20 @@
       ]
     },
     {
+      "name": "SHU-228 mutation: M14 empty after binding",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "SHU-228: host commits raw files with one bound parent and leaves worker metadata untouched",
       "capabilities": [
         {
@@ -29486,6 +29506,32 @@
           "name": "shell_toolchain"
         }
       ]
+    },
+    {
+      "name": "SHU71_UNCHANGED_BUILD_AFTER_BINDING: an attempt that already bound a result is never reported unchanged",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_WRITER_EDIT_RULES: a writer may edit exactly its authorized paths, and the reviewer edits nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_EDIT_RULES_LAUNCHED: the launched writer carries its own path rules, not the whole workspace",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

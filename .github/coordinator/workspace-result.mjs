@@ -196,7 +196,14 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
   const original = (await git("rev-parse", `${target_sha}^{tree}`)).trim();
   // SHU-71: named, so a writer's own adapter can tell "the writer changed
   // nothing" from every other refusal. The broker still publishes nothing.
-  if (tree === original) throw Object.assign(new Error("workspace result contains no changes"), { workspaceCode: "RESULT_EMPTY" });
+  if (tree === original) {
+    // A binding exists only for a changed tree, so an attempt that already
+    // bound a result and now shows none conflicts with it: never "unchanged".
+    if (fs.lstatSync(path.join(stateDir, `workspace-result-${attempt_id}.json`), { throwIfNoEntry: false })) {
+      throw new Error("attempt result binding conflict; never replace an earlier snapshot");
+    }
+    throw Object.assign(new Error("workspace result contains no changes"), { workspaceCode: "RESULT_EMPTY" });
+  }
   const result_sha = (await git("-c", "commit.gpgSign=false", "commit-tree", tree, "-p", target_sha,
     "-m", `StudentHub worker result ${attempt_id}`)).trim();
   const parents = (await git("rev-list", "--parents", "-n", "1", result_sha)).trim();
