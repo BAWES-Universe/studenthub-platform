@@ -116,6 +116,7 @@
     ".github/coordinator/test/shu71-journal-directory.test.mjs",
     ".github/coordinator/test/shu71-public-key.test.mjs",
     ".github/coordinator/test/shu71-reversed-gates.test.mjs",
+    ".github/coordinator/test/shu71-reviewed-lineage.test.mjs",
     ".github/coordinator/test/shu71-unchanged-build.test.mjs",
     ".github/coordinator/test/shu71-writer-edit-permission.test.mjs",
     ".github/coordinator/test/shu73-enforcement.test.mjs",
@@ -3891,7 +3892,12 @@
     "SHU71_UNCHANGED_BUILD_AFTER_BINDING: an attempt that already bound a result is never reported unchanged",
     "SHU71_WRITER_EDIT_RULES: a writer may edit exactly its authorized paths, and the reviewer edits nothing",
     "SHU71_WRITER_EDIT_RULES_LAUNCHED: the launched writer carries its own path rules, not the whole workspace",
-    "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time"
+    "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time",
+    "SHU71_LINEAGE_OTHER_EPISODE: a Codex build on a lane state this head does not contain is not an author",
+    "SHU71_LINEAGE_ANCESTOR: an earlier Codex write the head was built on still makes Codex an author",
+    "SHU71_LINEAGE_UNRECORDED: an earlier write that started from this head and recorded no result still counts",
+    "SHU71_LINEAGE_UNTAGGED: a review outside any episode keeps the whole issue as its lineage",
+    "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds"
   ],
   "requirements": [
     {
@@ -29531,6 +29537,26 @@
     },
     {
       "name": "SHU71_WRITER_EDIT_RULES_UNSAFE: a path the CLI would split apart holds before any model time",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_OTHER_EPISODE: a Codex build on a lane state this head does not contain is not an author",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_ANCESTOR: an earlier Codex write the head was built on still makes Codex an author",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_UNRECORDED: an earlier write that started from this head and recorded no result still counts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_UNTAGGED: a review outside any episode keeps the whole issue as its lineage",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds",
       "capabilities": []
     }
   ],
