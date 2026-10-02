@@ -94,6 +94,14 @@ function bindResult(stateDir, record) {
   }
 }
 
+// git's own last stderr line, printable and capped. A line that carries a URL
+// with credentials is dropped rather than repeated.
+function gitCause(stderr) {
+  const line = String(stderr ?? "").split("\n").map((entry) => entry.replace(/[^\x20-\x7e]/g, "").trim()).filter(Boolean).at(-1);
+  if (!line || /:\/\/[^\s/]*@/.test(line)) return "";
+  return `: ${line.slice(0, 160)}`;
+}
+
 export function validateScopedResultDiff(raw, allowed_paths) {
   const allowed = new Set(allowed_paths);
   const fields = String(raw).split("\0");
@@ -133,7 +141,11 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
   const git = async (...args) => {
     const r = await brokerGit(gitImpl, ["-c", "core.bare=false", "--git-dir", dir, "--work-tree", worktree, ...args],
       { cwd: dir, env: fixedEnv, indexFile });
-    if (r.error) throw new Error(`workspace snapshot Git operation failed at ${args[0]}`);
+    // SHU-71 try 8: a failed fetch from the base bundle held a fifteen-minute
+    // build, and the hold said only "failed at fetch". Name the step as a code
+    // and keep git's last line, so the next one says what went wrong.
+    if (r.error) throw Object.assign(new Error(`workspace snapshot Git operation failed at ${args[0]}${gitCause(r.stderr)}`),
+      { workspaceCode: `SNAPSHOT_${String(args[0]).toUpperCase().replace(/[^A-Z]/g, "_")}_FAILED` });
     return r.stdout;
   };
   if (workspace_scope === "scoped") {
