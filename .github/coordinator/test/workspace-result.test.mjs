@@ -205,5 +205,17 @@ test("SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with 
     assert.doesNotMatch(secret.reason, /hunter2/);
     assert.match(secret.reason, /failed at read-tree$/);
     assert.equal(f.remoteHead(), f.options.target_sha, "a held snapshot publishes nothing");
+    const commitTree = await pushExactSha({ ...f.options, attempt_id: randomUUID(), gitImpl: (file, args, options, callback) =>
+      args.includes("commit-tree") ? callback(Object.assign(new Error("exit 128"), { code: 128 }), "", "fatal: simulated commit-tree failure\n")
+        : execFile(file, args, options, callback) });
+    assert.equal(commitTree.reason_code, "SNAPSHOT_COMMIT_TREE_FAILED", "a step behind -c options is named by its subcommand");
+    assert.match(commitTree.reason, /failed at commit-tree: fatal: simulated commit-tree failure$/);
+    let snapshots = 0;
+    const verification = await pushExactSha({ ...f.options, attempt_id: randomUUID(), snapshotImpl: async (options) => {
+      if (++snapshots === 1) return snapshotWorkspaceResult(options);
+      throw Object.assign(new Error("workspace snapshot Git operation failed at write-tree"), { workspaceCode: "SNAPSHOT_WRITE_TREE_FAILED" });
+    } });
+    assert.equal(verification.reason_code, "SNAPSHOT_WRITE_TREE_FAILED", "the verification snapshot carries its code too");
+    assert.equal(f.remoteHead(), f.options.target_sha, "a held snapshot publishes nothing");
   } finally { f.cleanup(); }
 });

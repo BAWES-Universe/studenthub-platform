@@ -644,6 +644,9 @@ export async function pushExactSha({
       if (error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE") {
         return { ...held(error.message), reason_code: error.workspaceCode };
       }
+      if (/^SNAPSHOT_[A-Z_]{2,32}_FAILED$/.test(error.workspaceCode ?? "")) {
+        return { ...held(error.message), reason_code: error.workspaceCode };
+      }
       cleanOk = false; cleanDetail = error.message;
     }
   } else {

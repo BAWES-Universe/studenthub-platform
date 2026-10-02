@@ -144,8 +144,12 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     // SHU-71 try 8: a failed fetch from the base bundle held a fifteen-minute
     // build, and the hold said only "failed at fetch". Name the step as a code
     // and keep git's last line, so the next one says what went wrong.
-    if (r.error) throw Object.assign(new Error(`workspace snapshot Git operation failed at ${args[0]}${gitCause(r.stderr)}`),
-      { workspaceCode: `SNAPSHOT_${String(args[0]).toUpperCase().replace(/[^A-Z]/g, "_")}_FAILED` });
+    if (r.error) {
+      // The subcommand, past any leading "-c key=value" options.
+      const step = String(args.find((arg, index) => !String(arg).startsWith("-") && args[index - 1] !== "-c") ?? "git");
+      throw Object.assign(new Error(`workspace snapshot Git operation failed at ${step}${gitCause(r.stderr)}`),
+        { workspaceCode: `SNAPSHOT_${step.toUpperCase().replace(/[^A-Z]/g, "_")}_FAILED` });
+    }
     return r.stdout;
   };
   if (workspace_scope === "scoped") {
