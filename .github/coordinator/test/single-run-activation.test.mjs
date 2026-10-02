@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ACTIVATION_ID_RE,
   MAX_ACTIVATION_WINDOW_MS,
+  MIN_TMP_FREE_BYTES,
   SINGLE_RUN_ACTIVATION_KEYS,
   parseActivationArgs,
   renderActivationLine,
@@ -212,6 +213,19 @@ test("SHU-63 activation ARMED: arms one run, and still requires the runtime swit
   // disk cannot arm anything by itself.
   assert.equal(dispatchEnabledFor(NO_SWITCH, COMMITTED, status), false, "the runtime switch is still required");
   assert.match(renderActivationLine(status), /^activation=ARMED /);
+});
+
+test("SHU71_TMP_FLOOR: an activation does not arm while the temp filesystem is short of room to publish", () => {
+  const withFree = (bytes) => statusOf({}, { io: { tmpFreeBytes: () => bytes } });
+  assert.equal(withFree(MIN_TMP_FREE_BYTES).state, "armed", "exactly the floor arms");
+  const low = withFree(943_656 * 1024);
+  assert.equal(low.state, "refused");
+  assert.match(low.reason, /^only 921 MiB free in .+; a run needs at least 1024 MiB$/);
+  const unreadable = withFree(null);
+  assert.equal(unreadable.state, "refused");
+  assert.match(unreadable.reason, /could not be read \(fail closed\)$/);
+  const spent = statusOf({}, { io: { tmpFreeBytes: () => 0 }, now: new Date(Date.parse(record({}).expires_at) + 1) });
+  assert.match(spent.reason, /^activation expired/, "expiry and spend still explain a refusal first");
 });
 
 // ---------------------------------------------------------------------------
