@@ -621,7 +621,7 @@ export function singleRunActivationStatus({
     };
     const evidence = io.fixtureHeadResolver
       ? { heads: Object.fromEntries(["SHU-140", "SHU-254"].map(id => [`coordinator/${id}`, io.fixtureHeadResolver(`coordinator/${id}`)])), issues }
-      : readTwoFixtureEvidence(config, env);
+      : readTwoFixtureEvidence(config, env, io.evidenceRun);
     const status = validateTwoFixtureActivation({ record: pairRecord, config,
       revision: resolveCoordinatorRevision({ dir, gitHead, io }),
       mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now,

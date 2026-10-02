@@ -19,9 +19,14 @@ export async function fixtureEvidenceRequest(request, env, run) {
   }
   return { code: 'ACT_EVIDENCE_REQUEST_INVALID' };
 }
+// At most this many reads run at once; a caller past it is refused at once
+// (ACT_EVIDENCE_UNAVAILABLE, a read to retry next tick) rather than queued. A
+// two-lane run needs the coordinator's read plus one per live worker.
+export const EVIDENCE_MAX_READS = 8;
 // One connection, one bounded request. Each read runs on its own, so a slow read
 // never holds another caller's answer.
 export function evidenceConnection(env, run) {
+  let reading = 0;
   return socket => {
     let input = ''; socket.setTimeout(15000, () => socket.destroy());
     socket.on('error', () => {});
@@ -30,7 +35,10 @@ export function evidenceConnection(env, run) {
       if (Buffer.byteLength(input) > 512) return socket.destroy();
       if (!input.endsWith('\n')) return;
       socket.pause();
+      if (reading >= EVIDENCE_MAX_READS) return socket.end('{"code":"ACT_EVIDENCE_UNAVAILABLE"}\n');
+      reading += 1;
       Promise.resolve().then(() => fixtureEvidenceRequest(JSON.parse(input), env, run))
+        .finally(() => { reading -= 1; })
         .then(result => socket.end(JSON.stringify(result) + '\n'), () => socket.end('{"code":"ACT_EVIDENCE_UNAVAILABLE"}\n'));
     });
   };

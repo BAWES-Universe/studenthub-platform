@@ -369,8 +369,9 @@ test('SHU71_EVIDENCE_UNAVAILABLE: a failed evidence read refuses by its own name
   // evidence read had timed out and arrived as no cards at all.
   const h = harness(); try {
     assert.equal(h.status({ fixtureHeadResolver: undefined }).code, 'ACT_PARTIAL_ARMING', 'SHU71_NO_CREDENTIALS_STILL_PARTIAL');
-    h.env.SHU71_EVIDENCE_BROKER = 'true'; // no broker listens here, so the read fails
-    const refused = h.status({ fixtureHeadResolver: undefined });
+    // The broker read fails inside the test, whatever service the host runs.
+    h.env.SHU71_EVIDENCE_BROKER = 'true';
+    const refused = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => { throw new Error('broker unreachable'); } });
     assert.equal(refused.code, 'ACT_EVIDENCE_UNAVAILABLE', refused.reason);
     assert.equal(refused.valid, false, 'SHU71_UNREAD_EVIDENCE_STILL_REFUSES');
     assert.notEqual(refused.state, 'armed', 'SHU71_UNREAD_EVIDENCE_NEVER_ARMS');

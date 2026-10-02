@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { supervisorTransportSecret, supervisorChildEnvironment, ACTIVATION_FILE } from '../credential-delivery.mjs';
-import { fixtureEvidenceRequest, evidenceConnection } from '../fixture-evidence-broker.mjs';
-import { readTwoFixtureEvidence, readFixtureAncestry } from '../../two-fixture-evidence.mjs';
+import { fixtureEvidenceRequest, evidenceConnection, EVIDENCE_MAX_READS } from '../fixture-evidence-broker.mjs';
+import { readTwoFixtureEvidence, readFixtureAncestry, execFileAsync } from '../../two-fixture-evidence.mjs';
 import { serviceParameters } from '../units.mjs';
 import { renderEvidenceBroker } from '../shu71-production.mjs';
 
@@ -81,6 +81,21 @@ test('SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past i
   assert.deepEqual(answers[3], { ancestor: true }, 'SHU71_BROKER_ANCESTRY_ANSWERED');
   assert.equal(peak, 4, 'SHU71_BROKER_READS_RUN_TOGETHER');
   assert.ok(elapsed < 2 * READ_MS, `SHU71_BROKER_NO_QUEUE: four reads took ${elapsed}ms`);
+
+  // A burst past the bound is refused by name, never queued or spawned, and
+  // the slots come back once the reads finish.
+  peak = 0;
+  const burst = await Promise.all(Array.from({ length: EVIDENCE_MAX_READS + 2 }, () => ask({ operation: 'evidence' })));
+  const refused = burst.filter(answer => answer.code === 'ACT_EVIDENCE_UNAVAILABLE');
+  assert.equal(refused.length, 2, 'SHU71_BROKER_BURST_REFUSED');
+  assert.equal(burst.filter(answer => Array.isArray(answer.issues)).length, EVIDENCE_MAX_READS, 'SHU71_BROKER_BURST_SERVED');
+  assert.equal(peak, EVIDENCE_MAX_READS, 'SHU71_BROKER_READS_BOUNDED');
+  assert.deepEqual((await ask({ operation: 'evidence' })).issues.map(i => i.id), ['SHU-140', 'SHU-254'], 'SHU71_BROKER_SLOTS_RELEASED');
+
+  // A read child that exits before taking its input breaks the pipe: a failed
+  // read, not an uncaught error that would stop the broker.
+  await assert.rejects(execFileAsync(process.execPath, ['-e', 'process.exit(0)'], { input: 'x'.repeat(16 << 20), encoding: 'utf8' }),
+    { code: 'EPIPE' }, 'SHU71_BROKER_BROKEN_PIPE_REFUSED');
 });
 
 test('B2 broker: actual child-side wiring sends no API tokens, env secrets or shell/eval source', () => {

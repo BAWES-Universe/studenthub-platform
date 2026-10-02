@@ -103,6 +103,9 @@ export async function readTwoFixtureEvidenceAsync(config, env, run = execFileAsy
 export function execFileAsync(file, args, { input, ...options } = {}) {
   return new Promise((resolve, reject) => {
     const child = execFile(file, args, options, (error, stdout) => error ? reject(error) : resolve(stdout));
+    // A child that exits before reading its input breaks the pipe; that is a
+    // failed read, never an uncaught error that takes the broker down.
+    child.stdin?.on('error', reject);
     child.stdin?.end(input);
   });
 }
