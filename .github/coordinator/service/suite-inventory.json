@@ -29742,6 +29742,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "linux_proc"
         }
       ]
     }
