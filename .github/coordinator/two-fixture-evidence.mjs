@@ -84,7 +84,8 @@ function evidenceCall(config, env) {
 export function readTwoFixtureEvidence(config, env, run = execFileSync) {
   if (env.SHU71_EVIDENCE_BROKER === 'true') {
     const result = brokerRead({ operation: 'evidence' }, run);
-    if (!Array.isArray(result.issues)) return { ...UNAVAILABLE };
+    // The broker's own failed read arrives as a well-formed answer; keep its name.
+    if (!Array.isArray(result.issues) || result.unavailable === true) return { ...UNAVAILABLE };
     return { heads: result.heads ?? {}, issues: result.issues, comments: result.comments ?? [] };
   }
   const call = evidenceCall(config, env);

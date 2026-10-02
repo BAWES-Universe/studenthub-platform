@@ -1163,8 +1163,8 @@
     "call_sites": [
       ".github/coordinator/test/two-fixture-activation.test.mjs:136",
       ".github/coordinator/test/two-fixture-activation.test.mjs:158",
-      ".github/coordinator/test/two-fixture-activation.test.mjs:183",
-      ".github/coordinator/test/two-fixture-activation.test.mjs:207"
+      ".github/coordinator/test/two-fixture-activation.test.mjs:185",
+      ".github/coordinator/test/two-fixture-activation.test.mjs:209"
     ]
   },
   {
