@@ -123,6 +123,45 @@ test("role stage: a carried result can never supply the coordinator's live-head 
   assert.equal(blocked.reason_code, undefined, "a bound verdict carries only a validated code");
 });
 
+test("SHU-71 hold cause: a supervisor hold names its cause on the receipt", async t => {
+  const f = setup(t, { maxOutputBytes: 5 }); await f.tick(); await f.drain();
+  f.children[0].stdout.emit("data", "more than five bytes");
+  await f.tick();
+  const held = f.h.receipts()[0];
+  assert.equal(held.stage, "HOLD");
+  assert.ok(held.notes.some(n => n.includes("HOLD (SUPERVISOR_OUTPUT_LIMIT)")), JSON.stringify(held.notes));
+});
+
+test("SHU-71 hold cause: a run that ended without a result carries a code, never free text", () => {
+  const receipt = { attempt_id: "a", target_sha: SHA_INPUT, requested_worker: "claude-builder", receipt_version: "1.1.0", role: "build", runtime: "claude-code" };
+  const response = (stage, extra) => ({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, attempt_id: "a", target_sha: SHA_INPUT, durable: true, stage, ...extra });
+  const code = (stage, extra) => carriedSupervisorOutcome(response(stage, extra), receipt).reason_code;
+  assert.equal(code("HOLD", { detail_code: "DEADLINE" }), "SUPERVISOR_DEADLINE");
+  assert.equal(code("FAILED", { result: null, detail_code: "WORKER_EXIT" }), "SUPERVISOR_WORKER_EXIT");
+  assert.equal(code("FAILED", { result: { stage: "FAILED", error_code: "CLAUDE_PROCESS_FAILED" } }), "CLAUDE_PROCESS_FAILED");
+  assert.equal(code("FAILED", { result: { stage: "LAUNCH_UNKNOWN", reason: "Claude process ended without a trustworthy terminal result" } }), "ADAPTER_LAUNCH_UNKNOWN");
+  assert.equal(code("FAILED", { result: { stage: "HOLD", reason_code: "NO_STRUCTURED_OUTPUT", error_code: "OTHER" } }), "NO_STRUCTURED_OUTPUT", "the adapter's own refusal code wins");
+  for (const detail_code of ["LIVE_HEAD_STALE", "lower case", "free text with spaces", 7]) {
+    assert.equal(code("HOLD", { detail_code }), undefined, String(detail_code));
+    assert.equal(code("FAILED", { result: null, detail_code }), undefined, String(detail_code));
+  }
+  assert.equal(code("HOLD", {}), undefined);
+});
+
+test("SHU-71 hold cause: the supervisor reports its own hold code in status", async t => {
+  const f = setup(t);
+  let order = null;
+  await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
+  await f.drain();
+  f.children[0].emit("exit", 1);
+  const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
+  assert.equal(status.stage, "FAILED");
+  assert.equal(status.detail_code, "WORKER_EXIT");
+  const outcome = carriedSupervisorOutcome(status, f.h.receipts()[0]);
+  assert.equal(outcome.stage, "HOLD");
+  assert.equal(outcome.reason_code, "SUPERVISOR_WORKER_EXIT");
+});
+
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
   const f = setup(t); await f.tick(); await f.drain();
   // Also exercise a review transport directly: input head matches but a forged

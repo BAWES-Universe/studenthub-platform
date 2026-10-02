@@ -3909,7 +3909,10 @@
     "SHU71_REVIEW_RULE: only what the change broke, or the card's acceptance check, blocks",
     "SHU71_REVIEW_RULE_PROMPT: both reviewer prompts carry the rule they are given, and the strict rule by default",
     "SHU71_REVIEW_RULE_LAUNCH: each reviewer family reads the change in its own checkout, and git sees only that repository",
-    "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before"
+    "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before",
+    "SHU-71 hold cause: a supervisor hold names its cause on the receipt",
+    "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
+    "SHU-71 hold cause: the supervisor reports its own hold code in status"
   ],
   "requirements": [
     {
@@ -29645,6 +29648,18 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "SHU-71 hold cause: a supervisor hold names its cause on the receipt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 hold cause: the supervisor reports its own hold code in status",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

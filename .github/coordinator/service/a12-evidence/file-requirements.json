@@ -1143,7 +1143,7 @@
     "capabilities": [],
     "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
     "call_sites": [
-      ".github/coordinator/test/supervisor-dispatch.test.mjs:195"
+      ".github/coordinator/test/supervisor-dispatch.test.mjs:234"
     ]
   },
   {
