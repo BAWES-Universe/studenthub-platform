@@ -314,25 +314,53 @@ function tickWorld() {
   return { f, h, other, tick, cleanup: () => { h.cleanup(); f.cleanup(); } };
 }
 
+// Run 2's supervised codex-cli: every poll returns a fresh heartbeat.
+function heartbeating(w) {
+  const codex = w.h.adapters['codex-cli'], monitor = codex.monitorRun;
+  let beat = 0;
+  codex.supervised = true;
+  codex.monitorRun = async o => {
+    const outcome = await monitor(o);
+    return outcome.stage === 'RUNNING' ? { ...outcome, worker_identity: o.attempt_id === w.other.attempt_id ? w.other.worker_identity : outcome.worker_identity,
+      heartbeat: `2026-09-14T11:30:${String(++beat).padStart(2, '0')}.000Z` } : outcome;
+  };
+}
+const inFlight = (w, issue) => w.h.receipts().filter(r => r.issue_id === issue && !['COMPLETED', 'FAILED', 'HOLD'].includes(r.stage)).at(-1);
+
 test('SHU71_PAIR_CONCURRENT: a heartbeating supervised run does not hold the other lane\'s slot', async () => {
   // Stage 5 run 2: every poll of a supervised RUNNING worker persists a fresh
   // heartbeat, and any persisted write deferred dispatch, so the second lane
   // only launched once the first went quiet. Both lanes passed, one at a time.
   const w = tickWorld(); try {
-    const codex = w.h.adapters['codex-cli'], monitor = codex.monitorRun;
-    let beat = 0;
-    codex.supervised = true;
-    codex.monitorRun = async o => {
-      const outcome = await monitor(o);
-      return outcome.stage === 'RUNNING' ? { ...outcome, worker_identity: o.run_id === w.other.external_run_id ? w.other.worker_identity : outcome.worker_identity,
-        heartbeat: `2026-09-14T11:30:${String(++beat).padStart(2, '0')}.000Z` } : outcome;
-    };
+    heartbeating(w);
     const result = await w.tick();
     assert.match(result.text, /lifecycle: SHU-254 RUNNING -> RUNNING/, 'SHU71_PAIR_HEARTBEAT_PERSISTED');
-    const active = w.h.receipts().filter(r => r.stage === 'RUNNING' || r.stage === 'RESERVED' || r.stage === 'LAUNCHING');
-    const latest = issue => active.filter(r => r.issue_id === issue).at(-1);
-    assert.ok(latest('SHU-140')?.requested_worker === 'codex-builder', `SHU71_PAIR_SECOND_LANE_LAUNCHED: ${result.text}`);
-    assert.equal(latest('SHU-254')?.attempt_id, w.other.attempt_id, 'SHU71_PAIR_FIRST_LANE_STILL_RUNNING');
+    assert.equal(inFlight(w, 'SHU-140')?.requested_worker, 'codex-builder', `SHU71_PAIR_SECOND_LANE_LAUNCHED: ${result.text}`);
+    assert.equal(inFlight(w, 'SHU-254')?.attempt_id, w.other.attempt_id, 'SHU71_PAIR_FIRST_LANE_STILL_RUNNING');
+  } finally { w.cleanup(); }
+});
+
+test('SHU71_PAIR_RECOVERY: a launch acknowledged through LAUNCH_UNKNOWN recovery does not hold the other lane\'s slot', async () => {
+  // Run 2's receipts: every supervised launch returned LAUNCH_UNKNOWN and was
+  // recovered to RUNNING on the next tick, and that write deferred dispatch too.
+  const w = tickWorld(); try {
+    heartbeating(w);
+    const seeded = w.h.comments.find(c => c.body === receiptCommentBody(w.other));
+    seeded.body = receiptCommentBody({ ...w.other, stage: 'LAUNCH_UNKNOWN', external_run_id: null, worker_identity: null, adapter_status: null });
+    const result = await w.tick();
+    assert.match(result.text, /lifecycle: SHU-254 LAUNCH_UNKNOWN -> RUNNING/, 'SHU71_PAIR_LAUNCH_RECOVERED');
+    assert.equal(inFlight(w, 'SHU-254')?.stage, 'RUNNING', 'SHU71_PAIR_RECOVERED_RUN_ACTIVE');
+    assert.equal(inFlight(w, 'SHU-140')?.requested_worker, 'codex-builder', `SHU71_PAIR_SECOND_LANE_LAUNCHED: ${result.text}`);
+  } finally { w.cleanup(); }
+});
+
+test('SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick', async () => {
+  const w = tickWorld(); try {
+    w.h.failRun(w.other.external_run_id);
+    const result = await w.tick();
+    assert.match(result.text, /lifecycle: SHU-254 RUNNING -> FAILED/, 'SHU71_PAIR_SLOT_RELEASED');
+    assert.match(result.text, /dispatch: DEFERRED/, 'SHU71_PAIR_RELEASE_DEFERRED');
+    assert.equal(w.h.receipts().some(r => r.issue_id === 'SHU-140'), false, 'SHU71_PAIR_NOTHING_LAUNCHED_ON_RELEASE');
   } finally { w.cleanup(); }
 });
 

@@ -319,8 +319,11 @@ test('SHU-71 recovery: child death yields terminal receipt', async t => {
 for (const failing of [false, true]) test(`SHU-71 isolation: ${failing ? 'dead' : 'hanging'} worker permits later unit`, async t => {
   const f = setup(t, true); await f.tick();
   assert.equal(f.h.allReceipts()[0].stage, 'LAUNCH_UNKNOWN', 'SHU86_UNLAUNCHED: acceptance alone must not report RUNNING');
-  await f.drain(); await f.tick(); // Observe the durable launch receipt before testing later-unit isolation.
+  await f.drain();
   assert.equal(f.children[0]?.order.issue_id, 'SHU-71', named.isolation);
+  // The tick that acknowledges a live launch also selects the later unit
+  // (SHU-71 stage 5), so a dead worker dies first: its HOLD is then on the
+  // board when the later unit is selected.
   if (failing) f.children[0].emit('exit', 1, 'SIGKILL');
   const started = performance.now(); await f.tick();
   // A terminal transition consumes this tick; dispatch resumes on the next tick.

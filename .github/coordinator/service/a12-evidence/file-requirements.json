@@ -1021,7 +1021,7 @@
     "call_sites": [
       ".github/coordinator/test/shu71-battery.test.mjs:141",
       ".github/coordinator/test/shu71-battery.test.mjs:253",
-      ".github/coordinator/test/shu71-battery.test.mjs:331"
+      ".github/coordinator/test/shu71-battery.test.mjs:334"
     ]
   },
   {
@@ -1188,9 +1188,9 @@
       ".github/coordinator/test/two-fixture-progression.test.mjs:166",
       ".github/coordinator/test/two-fixture-progression.test.mjs:206",
       ".github/coordinator/test/two-fixture-progression.test.mjs:281",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:387",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:498",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:501"
+      ".github/coordinator/test/two-fixture-progression.test.mjs:415",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:526",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:529"
     ]
   },
   {
