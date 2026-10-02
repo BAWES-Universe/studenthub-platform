@@ -3922,7 +3922,10 @@
     "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed",
     "SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one",
     "SHU71_SUPERVISOR_RUN_ID: accepts the supervisor run named after its own attempt, and only that one",
-    "SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane"
+    "SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane",
+    "SHU71_PAIR_CONCURRENT: a heartbeating supervised run does not hold the other lane's slot",
+    "SHU71_PAIR_RECOVERY: a launch acknowledged through LAUNCH_UNKNOWN recovery does not hold the other lane's slot",
+    "SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick"
   ],
   "requirements": [
     {
@@ -29739,6 +29742,39 @@
     },
     {
       "name": "SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_PAIR_CONCURRENT: a heartbeating supervised run does not hold the other lane's slot",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_PAIR_RECOVERY: a launch acknowledged through LAUNCH_UNKNOWN recovery does not hold the other lane's slot",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick",
       "capabilities": [
         {
           "name": "git"

@@ -264,7 +264,10 @@ test('SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with 
   } finally { h.cleanup(); }
 });
 
-test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review', async () => {
+// The coordinator-tick world of B3_MAIN_SEQUENCE: both fixture lanes armed,
+// SHU-254 holding a RUNNING build, and the harness serving each card only its
+// own receipts.
+function tickWorld() {
   const f = harness();
   const actor = f.config.linear_receipt_actor_ids[0];
   const h = createEpisodeHarness({ revision: f.record.coordinator_revision, activationId: f.record.activation_id,
@@ -272,43 +275,98 @@ test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-
     now: new Date('2026-09-14T11:30:00Z'), configOverrides: f.config,
     extraNodes: [{ id: 'uuid-SHU-254', identifier: 'SHU-254', title: 'second fixture', state: { name: 'Todo' },
       priorityLabel: 'Low', labels: { nodes: [{ name: 'repo:platform' }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } }] });
+  fs.writeFileSync(h.activationPath, JSON.stringify(f.record));
+  const other = f.reserve(1); h.comments.push(...f.comments);
+  const tick = async () => {
+    const result = await h.runTick({ env: { DISPATCH_TARGET_SHA: f.seed, CODEX_HOME: path.join(f.root, 'codex') }, io: {
+      mainRevision: f.record.coordinator_revision,
+      fixtureHeadResolver: branch => f.git(f.remote, 'rev-parse', `refs/heads/${branch}`),
+      fixtureAncestryResolver: (base, head) => spawnSync('git', ['-C', f.remote, 'merge-base', '--is-ancestor', base, head]).status === 0,
+      deriveScopedBaseSha: async () => 'd'.repeat(40), prepareWorkspace: async () => ({ cwd: f.wt }),
+      fetchImpl: async (...args) => {
+        const response = await h.fetchImpl(...args);
+        // The API transport authenticates coordinator-created receipt comments.
+        for (const c of h.comments) if (c.body.startsWith('<!-- coordinator-receipt') && !c.user) c.user = { id: actor };
+        const request = JSON.parse(args[1]?.body ?? "{}");
+        // The harness serves one shared thread; each card may only see its own
+        // receipts — applied to the BATCHED board read and to the single-card read.
+        const ownedBy = issue => c => {
+          const body = /```json\n([\s\S]*?)\n```/.exec(c.body);
+          const value = body ? JSON.parse(body[1]) : null;
+          return value?.issue_id ? value.issue_id === issue : issue === 'SHU-140';
+        };
+        if (request.query?.includes('CoordinatorIssues')) {
+          const payload = await response.json();
+          for (const node of payload.data.issues.nodes) node.comments.nodes = node.comments.nodes.filter(ownedBy(node.identifier));
+          return { ...response, json: async () => payload };
+        }
+        if (request.query?.includes('CoordinatorIssueComments')) {
+          const payload = await response.json();
+          const issue = h.nodes.find(n => n.id === request.variables.issueId || n.identifier === request.variables.issueId)?.identifier;
+          payload.data.issue.comments.nodes = payload.data.issue.comments.nodes.filter(ownedBy(issue));
+          return { ...response, json: async () => payload };
+        }
+        return response;
+      },
+    } });
+    assert.equal(result.code, 0, result.text); return result;
+  };
+  return { f, h, other, tick, cleanup: () => { h.cleanup(); f.cleanup(); } };
+}
+
+// Run 2's supervised codex-cli: every poll returns a fresh heartbeat.
+function heartbeating(w) {
+  const codex = w.h.adapters['codex-cli'], monitor = codex.monitorRun;
+  let beat = 0;
+  codex.supervised = true;
+  codex.monitorRun = async o => {
+    const outcome = await monitor(o);
+    return outcome.stage === 'RUNNING' ? { ...outcome, worker_identity: o.attempt_id === w.other.attempt_id ? w.other.worker_identity : outcome.worker_identity,
+      heartbeat: `2026-09-14T11:30:${String(++beat).padStart(2, '0')}.000Z` } : outcome;
+  };
+}
+const inFlight = (w, issue) => w.h.receipts().filter(r => r.issue_id === issue && !['COMPLETED', 'FAILED', 'HOLD'].includes(r.stage)).at(-1);
+
+test('SHU71_PAIR_CONCURRENT: a heartbeating supervised run does not hold the other lane\'s slot', async () => {
+  // Stage 5 run 2: every poll of a supervised RUNNING worker persists a fresh
+  // heartbeat, and any persisted write deferred dispatch, so the second lane
+  // only launched once the first went quiet. Both lanes passed, one at a time.
+  const w = tickWorld(); try {
+    heartbeating(w);
+    const result = await w.tick();
+    assert.match(result.text, /lifecycle: SHU-254 RUNNING -> RUNNING/, 'SHU71_PAIR_HEARTBEAT_PERSISTED');
+    assert.equal(inFlight(w, 'SHU-140')?.requested_worker, 'codex-builder', `SHU71_PAIR_SECOND_LANE_LAUNCHED: ${result.text}`);
+    assert.equal(inFlight(w, 'SHU-254')?.attempt_id, w.other.attempt_id, 'SHU71_PAIR_FIRST_LANE_STILL_RUNNING');
+  } finally { w.cleanup(); }
+});
+
+test('SHU71_PAIR_RECOVERY: a launch acknowledged through LAUNCH_UNKNOWN recovery does not hold the other lane\'s slot', async () => {
+  // Run 2's receipts: every supervised launch returned LAUNCH_UNKNOWN and was
+  // recovered to RUNNING on the next tick, and that write deferred dispatch too.
+  const w = tickWorld(); try {
+    heartbeating(w);
+    const seeded = w.h.comments.find(c => c.body === receiptCommentBody(w.other));
+    seeded.body = receiptCommentBody({ ...w.other, stage: 'LAUNCH_UNKNOWN', external_run_id: null, worker_identity: null, adapter_status: null });
+    const result = await w.tick();
+    assert.match(result.text, /lifecycle: SHU-254 LAUNCH_UNKNOWN -> RUNNING/, 'SHU71_PAIR_LAUNCH_RECOVERED');
+    assert.equal(inFlight(w, 'SHU-254')?.stage, 'RUNNING', 'SHU71_PAIR_RECOVERED_RUN_ACTIVE');
+    assert.equal(inFlight(w, 'SHU-140')?.requested_worker, 'codex-builder', `SHU71_PAIR_SECOND_LANE_LAUNCHED: ${result.text}`);
+  } finally { w.cleanup(); }
+});
+
+test('SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick', async () => {
+  const w = tickWorld(); try {
+    w.h.failRun(w.other.external_run_id);
+    const result = await w.tick();
+    assert.match(result.text, /lifecycle: SHU-254 RUNNING -> FAILED/, 'SHU71_PAIR_SLOT_RELEASED');
+    assert.match(result.text, /dispatch: DEFERRED/, 'SHU71_PAIR_RELEASE_DEFERRED');
+    assert.equal(w.h.receipts().some(r => r.issue_id === 'SHU-140'), false, 'SHU71_PAIR_NOTHING_LAUNCHED_ON_RELEASE');
+  } finally { w.cleanup(); }
+});
+
+test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review', async () => {
+  const { f, h, tick, cleanup } = tickWorld();
   try {
-    fs.writeFileSync(h.activationPath, JSON.stringify(f.record));
-    f.reserve(1); h.comments.push(...f.comments);
-    const tick = async () => {
-      const result = await h.runTick({ env: { DISPATCH_TARGET_SHA: f.seed, CODEX_HOME: path.join(f.root, 'codex') }, io: {
-        mainRevision: f.record.coordinator_revision,
-        fixtureHeadResolver: branch => f.git(f.remote, 'rev-parse', `refs/heads/${branch}`),
-        fixtureAncestryResolver: (base, head) => spawnSync('git', ['-C', f.remote, 'merge-base', '--is-ancestor', base, head]).status === 0,
-        deriveScopedBaseSha: async () => 'd'.repeat(40), prepareWorkspace: async () => ({ cwd: f.wt }),
-        fetchImpl: async (...args) => {
-          const response = await h.fetchImpl(...args);
-          // The API transport authenticates coordinator-created receipt comments.
-          for (const c of h.comments) if (c.body.startsWith('<!-- coordinator-receipt') && !c.user) c.user = { id: actor };
-          const request = JSON.parse(args[1]?.body ?? "{}");
-          // The harness serves one shared thread; each card may only see its own
-          // receipts — applied to the BATCHED board read and to the single-card read.
-          const ownedBy = issue => c => {
-            const body = /```json\n([\s\S]*?)\n```/.exec(c.body);
-            const value = body ? JSON.parse(body[1]) : null;
-            return value?.issue_id ? value.issue_id === issue : issue === 'SHU-140';
-          };
-          if (request.query?.includes('CoordinatorIssues')) {
-            const payload = await response.json();
-            for (const node of payload.data.issues.nodes) node.comments.nodes = node.comments.nodes.filter(ownedBy(node.identifier));
-            return { ...response, json: async () => payload };
-          }
-          if (request.query?.includes('CoordinatorIssueComments')) {
-            const payload = await response.json();
-            const issue = h.nodes.find(n => n.id === request.variables.issueId || n.identifier === request.variables.issueId)?.identifier;
-            payload.data.issue.comments.nodes = payload.data.issue.comments.nodes.filter(ownedBy(issue));
-            return { ...response, json: async () => payload };
-          }
-          return response;
-        },
-      } });
-      assert.equal(result.code, 0, result.text); return result;
-    };
     const latest = worker => h.receipts().filter(r => r.issue_id === 'SHU-140' && r.requested_worker === worker).at(-1);
     const complete = async (r, stage, head) => {
       h.postCallback({ attemptId: r.attempt_id, stage, targetSha: r.target_sha, resultSha: head });
@@ -327,7 +385,7 @@ test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-
     assert.equal(rereview.target_sha, revised, 'B3_MAIN_REREVIEW_HEAD');
     assert.equal(h.triggers['claude-code'], 2, 'B3_MAIN_TWO_REVIEWS');
     assert.equal(f.git(f.remote, 'rev-parse', 'refs/heads/coordinator/SHU-254'), f.seed, 'B3_MAIN_OTHER_LANE_UNCHANGED');
-  } finally { h.cleanup(); f.cleanup(); }
+  } finally { cleanup(); }
 });
 
 test('B3_REMOTE_REWRITES: real unrelated and unauthorized descendant heads refuse', async () => {
