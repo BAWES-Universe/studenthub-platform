@@ -3925,7 +3925,9 @@
     "SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane",
     "SHU71_PAIR_CONCURRENT: a heartbeating supervised run does not hold the other lane's slot",
     "SHU71_PAIR_RECOVERY: a launch acknowledged through LAUNCH_UNKNOWN recovery does not hold the other lane's slot",
-    "SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick"
+    "SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick",
+    "SHU71_EVIDENCE_UNAVAILABLE: a failed evidence read refuses by its own name, not as a partial record",
+    "SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout"
   ],
   "requirements": [
     {
@@ -29783,6 +29785,21 @@
           "name": "linux_proc"
         }
       ]
+    },
+    {
+      "name": "SHU71_EVIDENCE_UNAVAILABLE: a failed evidence read refuses by its own name, not as a partial record",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

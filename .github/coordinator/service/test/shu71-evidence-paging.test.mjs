@@ -63,7 +63,8 @@ function readWith(t, fixtures) {
   return { result, requests };
 }
 
-const refused = { heads: {}, issues: [] };
+// A refused read is named: it never reads as a board with no cards.
+const refused = { heads: {}, issues: [], unavailable: true };
 
 test('SHU71_EVIDENCE_PAGING reads every page of a fixture thread past 250 comments', t => {
   const { result, requests } = readWith(t, { 'SHU-140': { count: 600, bodySize: 400 }, 'SHU-254': { count: 0, bodySize: 0 } });
