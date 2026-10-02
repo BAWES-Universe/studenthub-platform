@@ -9,6 +9,7 @@ import { initialWorkspaceScope, successorWorkspaceScope, resolveFixtureLane, nor
 import { routeSuccessorFromReceipts } from "../review-routing.mjs";
 import { prepareAttemptWorkspace } from "../attempt-workspace.mjs";
 import { singleRunActivationStatus } from "../single-run-activation.mjs";
+import { reviewTestFiles } from "../review-execution.mjs";
 
 // Two-fixture world stated explicitly: this whole file is about two-lane
 // behaviour, and the committed config is now the one-fixture demonstration
@@ -158,4 +159,14 @@ for (const [name, file, from, to, pattern, message] of [
     assert.ok(output.includes(message), output);
     assert.doesNotMatch(output, /SyntaxError|ERR_MODULE_NOT_FOUND/, output);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SHU71_LANE_REVIEW_TESTS: each fixture lane's review runs that lane's own tests, other cards the host list", () => {
+  const env = { SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["host/listed.test.mjs"]) };
+  assert.deepEqual(reviewTestFiles(env, "SHU-140"), ["tools/fixture/test/scan-vacuous.test.mjs"]);
+  assert.deepEqual(reviewTestFiles(env, "SHU-254"), ["tools/fixture-2/test/scan-unawaited.test.mjs"]);
+  assert.deepEqual(reviewTestFiles({}, "SHU-254"), ["tools/fixture-2/test/scan-unawaited.test.mjs"], "a lane needs no host list");
+  assert.deepEqual(reviewTestFiles(env, "SHU-9"), ["host/listed.test.mjs"]);
+  assert.deepEqual(reviewTestFiles(env), ["host/listed.test.mjs"]);
+  assert.throws(() => reviewTestFiles({}, "SHU-9"), /SHU_REVIEW_TEST_FILES_JSON must be a JSON array/);
 });

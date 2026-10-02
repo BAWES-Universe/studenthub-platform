@@ -752,7 +752,7 @@
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
     "call_sites": [
-      ".github/coordinator/test/shu224-dispatch-scope.test.mjs:288"
+      ".github/coordinator/test/shu224-dispatch-scope.test.mjs:287"
     ]
   },
   {
@@ -1085,7 +1085,7 @@
     "justification": "Real local Git lanes (seed plus broker-subject commits) exercise the review change reader and both reviewer launches; the model processes are doubled and nothing reaches a remote",
     "call_sites": [
       ".github/coordinator/test/shu71-review-change.test.mjs:40",
-      ".github/coordinator/test/shu71-review-change.test.mjs:196"
+      ".github/coordinator/test/shu71-review-change.test.mjs:197"
     ]
   },
   {
@@ -1135,7 +1135,7 @@
     ],
     "justification": "F3: the RUNNING revision end-to-end proof at :602 leaves revision resolution uninjected and executes real git rev-parse HEAD. File union: git.",
     "call_sites": [
-      ".github/coordinator/test/single-run-activation.test.mjs:1128"
+      ".github/coordinator/test/single-run-activation.test.mjs:1126"
     ]
   },
   {
@@ -1172,7 +1172,7 @@
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
     "call_sites": [
-      ".github/coordinator/test/two-fixture-lanes.test.mjs:145"
+      ".github/coordinator/test/two-fixture-lanes.test.mjs:146"
     ]
   },
   {

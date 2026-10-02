@@ -9,6 +9,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFile as nodeExecFile, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { fixtureReviewTests } from "./workspace-scope.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHILD = path.join(HERE, "review-execution-child.mjs");
@@ -38,7 +39,11 @@ function privateDirectory(dir, { fsImpl = fs, ownUid = process.getuid?.() } = {}
   return resolved;
 }
 
-export function reviewTestFiles(env = {}) {
+// A fixture lane runs its own committed tests; every other card runs the host's
+// configured list.
+export function reviewTestFiles(env = {}, issueId = null) {
+  const laneTests = fixtureReviewTests(issueId);
+  if (laneTests?.length) return laneTests;
   let files;
   try { files = JSON.parse(env.SHU_REVIEW_TEST_FILES_JSON ?? ""); }
   catch { throw new Error("SHU_REVIEW_TEST_FILES_JSON must be a JSON array"); }
@@ -193,6 +198,7 @@ function persistEvidence(dir, attemptId, report, fsImpl = fs, sensitiveValues = 
 
 export async function runReviewEvidence({
   attempt_id,
+  issue_id = null,
   target_sha,
   cwd,
   env = process.env,
@@ -231,7 +237,7 @@ export async function runReviewEvidence({
     if (!trustedControlPlaneObject(childStat, { ownUid, expectedUid, kind: "file" })) {
       throw new Error("review evidence child must be a root/coordinator-owned, non-writable regular file");
     }
-    const files = reviewTestFiles(env);
+    const files = reviewTestFiles(env, issue_id);
     const evidenceDir = privateDirectory(env.SHU_REVIEW_EVIDENCE_DIR, { fsImpl, ownUid });
     const resolvedCwd = fsImpl.realpathSync(cwd);
     if (path.basename(resolvedCwd) !== attempt_id) {

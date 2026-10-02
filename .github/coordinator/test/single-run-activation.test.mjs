@@ -23,6 +23,7 @@ import {
   ACTIVATION_ID_RE,
   MAX_ACTIVATION_WINDOW_MS,
   MIN_TMP_FREE_BYTES,
+  tmpFloorRefusal,
   SINGLE_RUN_ACTIVATION_KEYS,
   parseActivationArgs,
   renderActivationLine,
@@ -215,17 +216,14 @@ test("SHU-63 activation ARMED: arms one run, and still requires the runtime swit
   assert.match(renderActivationLine(status), /^activation=ARMED /);
 });
 
-test("SHU71_TMP_FLOOR: an activation does not arm while the temp filesystem is short of room to publish", () => {
-  const withFree = (bytes) => statusOf({}, { io: { tmpFreeBytes: () => bytes } });
-  assert.equal(withFree(MIN_TMP_FREE_BYTES).state, "armed", "exactly the floor arms");
-  const low = withFree(943_656 * 1024);
-  assert.equal(low.state, "refused");
-  assert.match(low.reason, /^only 921 MiB free in .+; a run needs at least 1024 MiB$/);
-  const unreadable = withFree(null);
-  assert.equal(unreadable.state, "refused");
-  assert.match(unreadable.reason, /could not be read \(fail closed\)$/);
-  const spent = statusOf({}, { io: { tmpFreeBytes: () => 0 }, now: new Date(Date.parse(record({}).expires_at) + 1) });
-  assert.match(spent.reason, /^activation expired/, "expiry and spend still explain a refusal first");
+test("SHU71_TMP_FLOOR: a launch needs room to publish, and an armed activation never depends on it", () => {
+  const withFree = (bytes) => tmpFloorRefusal({ tmpFreeBytes: () => bytes });
+  assert.equal(withFree(MIN_TMP_FREE_BYTES), null, "exactly the floor launches");
+  assert.match(withFree(943_656 * 1024), /^only 921 MiB free in .+; a launch needs at least 1024 MiB$/);
+  assert.match(withFree(null), /could not be read \(fail closed\)$/);
+  // The status is re-read before a finished result is published; a short /tmp
+  // must not turn that check into a refusal (reconcile.mjs checks the floor).
+  assert.equal(statusOf({}, { io: { tmpFreeBytes: () => 0 } }).state, "armed");
 });
 
 // ---------------------------------------------------------------------------

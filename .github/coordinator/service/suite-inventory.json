@@ -2463,7 +2463,7 @@
     "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
     "SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run",
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
-    "SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled",
+    "SHU-224: committed scope is pinned to the SHU-140/SHU-254 pair while dispatch stays disabled",
     "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
     "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card",
     "SHU-226 A1: a synchronous breaker is reported in the tick that persists it",
@@ -3914,7 +3914,12 @@
     "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
     "SHU-71 hold cause: the supervisor reports its own hold code in status",
     "SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line",
-    "SHU71_TMP_FLOOR: an activation does not arm while the temp filesystem is short of room to publish"
+    "SHU71_TMP_FLOOR: a launch needs room to publish, and an armed activation never depends on it",
+    "SHU71_LANE_WRITERS: an armed pair carries each lane writer, and the selected lane names its own",
+    "SHU71_LANE_WRITERS: a lane whose writer and reviewer share a family refuses before arming",
+    "SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication",
+    "SHU71_LANE_REVIEW_TESTS: each fixture lane's review runs that lane's own tests, other cards the host list",
+    "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed"
   ],
   "requirements": [
     {
@@ -20216,7 +20221,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-224: committed scope is pinned to SHU-140 alone while dispatch stays disabled",
+      "name": "SHU-224: committed scope is pinned to the SHU-140/SHU-254 pair while dispatch stays disabled",
       "capabilities": []
     },
     {
@@ -29678,12 +29683,44 @@
       ]
     },
     {
-      "name": "SHU71_TMP_FLOOR: an activation does not arm while the temp filesystem is short of room to publish",
+      "name": "SHU71_TMP_FLOOR: a launch needs room to publish, and an armed activation never depends on it",
       "capabilities": [
         {
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "SHU71_LANE_WRITERS: an armed pair carries each lane writer, and the selected lane names its own",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_LANE_WRITERS: a lane whose writer and reviewer share a family refuses before arming",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_LANE_REVIEW_TESTS: each fixture lane's review runs that lane's own tests, other cards the host list",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

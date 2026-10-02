@@ -163,8 +163,9 @@ test("SHU71_REVIEW_RULE_PROMPT: both reviewer prompts carry the rule they are gi
   assert.equal(writer.includes("RULE-UNDER-TEST"), false, "a writer is never given the reviewer's rule");
 });
 
+const evidenceCalls = [];
 function evidenceFor(head, link) {
-  return async () => ({
+  return async (args) => (evidenceCalls.push(args), {
     executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED", evidence_link: link,
     isolation_wrapper: ["/test/reviewer-model-wrapper"],
     report: { version: "1.0.0", target_sha: head, tests: { executed: true, exit_code: 0 } },
@@ -229,6 +230,8 @@ test("SHU71_REVIEW_RULE_LAUNCH: each reviewer family reads the change in its own
   assert.equal(claude.stage, "COMPLETED", claude.reason);
   assert.equal(claudeExec.calls.length, 1);
   assert.ok(claudeExec.calls[0].args.at(-1).includes(`on top of the base ${seed}`));
+  // Each reviewer runs the test files of its own lane (review-execution.mjs).
+  assert.deepEqual(evidenceCalls.slice(-2).map((args) => args.issue_id), ["SHU-140", "SHU-140"]);
 
   assert.ok(gitCalls.length >= 4);
   for (const call of gitCalls) {

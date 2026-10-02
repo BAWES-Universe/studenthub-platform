@@ -166,3 +166,25 @@ test("end-to-end: a refused launch names itself on the dispatch line and in the 
     h.cleanup();
   }
 });
+
+// SHU-71: a launch needs room in /tmp for its workspace and the broker's result.
+// A short /tmp refuses before reservation, so it costs no slot and no episode,
+// and the activation itself stays armed: publication re-reads that status and
+// must never be refused for the room its own snapshot takes.
+test("SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed", async () => {
+  const h = createEpisodeHarness();
+  try {
+    const short = await h.runTick({ io: { tmpFreeBytes: () => 300 * 1048576 } });
+    assert.equal(short.code, 2, short.text);
+    assert.match(short.text, /dispatch: ABORTED before reservation — only 300 MiB free in .+; a launch needs at least 1024 MiB/);
+    assert.equal(h.receipts().length, 0, "no slot is reserved");
+    assert.deepEqual(h.triggers, { "codex-cli": 0, "claude-code": 0, "hermes-pool": 0 });
+    const unreadable = await h.runTick({ io: { tmpFreeBytes: () => null } });
+    assert.match(unreadable.text, /dispatch: ABORTED before reservation — free space in .+ could not be read \(fail closed\)/);
+    assert.equal(h.receipts().length, 0);
+    const roomy = await h.runTick({ io: { tmpFreeBytes: () => 1024 * 1048576 } });
+    assert.equal(roomy.code, 0, roomy.text);
+    assert.equal(h.receipts().length, 1, "exactly the floor launches");
+    assert.equal(h.triggers["codex-cli"], 1);
+  } finally { h.cleanup(); }
+});

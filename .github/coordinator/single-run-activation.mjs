@@ -139,8 +139,8 @@ export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
 export const MAX_ACTIVATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 // SHU-71 try 8: /tmp (a 3.8G tmpfs on the host) was full, so the broker's
 // fetch into its temporary repository died with ENOSPC after a fifteen-minute
-// build and spent the episode. An activation does not arm while the temp
-// filesystem holds less than this.
+// build and spent the episode. The coordinator starts no launch while the temp
+// filesystem holds less than this (reconcile.mjs, before each reservation).
 export const MIN_TMP_FREE_BYTES = 1024 * 1024 * 1024;
 
 // Free bytes where the broker and attempt workspaces put their temporary
@@ -153,6 +153,33 @@ function tmpFreeBytes(io = {}) {
   } catch {
     return null;
   }
+}
+
+// Room to publish. null when the temp filesystem can hold a launch's workspace
+// and its result. Deliberately not part of the activation status: that status
+// is re-read before a finished result is published, and the result's own
+// snapshot must never be what refuses it.
+export function tmpFloorRefusal(io = {}) {
+  const free = tmpFreeBytes(io);
+  if (!Number.isFinite(free)) return `free space in ${tmpdir()} could not be read (fail closed)`;
+  if (free < MIN_TMP_FREE_BYTES) {
+    return `only ${Math.floor(free / 1048576)} MiB free in ${tmpdir()}; a launch needs at least ${MIN_TMP_FREE_BYTES / 1048576} MiB`;
+  }
+  return null;
+}
+
+// SHU-71: a named writer must be a writer lane the supervisor can start beside
+// a named reviewer, and the two may share neither a family nor an adapter, so a
+// lane never reviews its own work. null when the pair is acceptable.
+function writerPairError(writerLane, reviewerLane) {
+  if (typeof writerLane !== "string" || !ACTIVATION_WRITER_LANES.includes(writerLane)) {
+    return `writer_lane must be one of ${ACTIVATION_WRITER_LANES.join(", ")} (got ${JSON.stringify(writerLane)})`;
+  }
+  if (typeof reviewerLane !== "string") return "writer_lane requires reviewer_lane in the same record";
+  if (familyForLane(writerLane) === familyForLane(reviewerLane) || adapterForLane(writerLane) === adapterForLane(reviewerLane)) {
+    return `writer_lane ${writerLane} and reviewer_lane ${reviewerLane} are the same family — a lane never reviews its own work`;
+  }
+  return null;
 }
 
 // The durable stages a receipt can rest in (mirrors reconcile.mjs TERMINAL_STAGES).
@@ -522,16 +549,8 @@ export function validateActivationRecord(record) {
   // and never resolved later from mutable config. Independence is read from the
   // lane registry: the two lanes may share neither a family nor an adapter.
   if ("writer_lane" in record) {
-    if (typeof record.writer_lane !== "string" || !ACTIVATION_WRITER_LANES.includes(record.writer_lane)) {
-      return { ok: false, reason: `writer_lane must be one of ${ACTIVATION_WRITER_LANES.join(", ")} (got ${JSON.stringify(record.writer_lane)})` };
-    }
-    if (typeof record.reviewer_lane !== "string") {
-      return { ok: false, reason: "writer_lane requires reviewer_lane in the same record" };
-    }
-    if (familyForLane(record.writer_lane) === familyForLane(record.reviewer_lane) ||
-        adapterForLane(record.writer_lane) === adapterForLane(record.reviewer_lane)) {
-      return { ok: false, reason: `writer_lane ${record.writer_lane} and reviewer_lane ${record.reviewer_lane} are the same family — a lane never reviews its own work` };
-    }
+    const pairError = writerPairError(record.writer_lane, record.reviewer_lane);
+    if (pairError) return { ok: false, reason: pairError };
   }
   // SHU-231: the episode boundary. Optional; when present it must be a
   // non-empty, duplicate-free list of canonical attempt UUIDs. An EMPTY list is
@@ -609,6 +628,16 @@ export function singleRunActivationStatus({
       receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
       isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
     if (!status.valid || status.state !== "armed") return status;
+    // SHU-71 stage 5: a lane may name its writer beside its reviewer. Both sit
+    // in the signed lane definition, which must equal the committed lane, so
+    // the pair is reviewed config and never read from card labels.
+    const writerLanes = {};
+    for (const fixture of status.fixtures) {
+      if (fixture.lane.writer_lane === undefined) continue;
+      const pairError = writerPairError(fixture.lane.writer_lane, fixture.lane.reviewer_lane);
+      if (pairError) return { ...refused(`ACT_LANE_CROSS: ${fixture.issue_id} ${pairError}`), code: "ACT_LANE_CROSS", kind: "two-fixture-v1" };
+      writerLanes[fixture.issue_id] = fixture.lane.writer_lane;
+    }
     const episodes = status.fixtures.map(fixture => ({ fixture, episode: episodeVerdict({ receipts,
       targetIssueId: fixture.issue_id, config, bootstrapReviewer: fixture.lane.reviewer_lane ? { lane: fixture.lane.reviewer_lane } : null, episodeScope: episodeScopeFor(status) }) }));
     const ongoing = episodes.filter(entry => !entry.episode.ended);
@@ -616,6 +645,7 @@ export function singleRunActivationStatus({
     const selected = ongoing.find(entry => !receipts.some(r => r.issue_id === entry.fixture.issue_id && !TERMINAL_RECEIPT_STAGES.includes(r.stage))) ?? ongoing[0];
     return { ...status, target_issue_id: selected.fixture.issue_id,
       authorization_ref: selected.fixture.lane.authorization_ref, reviewer_lane: selected.fixture.lane.reviewer_lane, initial_target_sha: selected.fixture.seed_head,
+      writer_lane: writerLanes[selected.fixture.issue_id] ?? null, writer_lanes: writerLanes,
       successor: selected.episode.successor ?? null, episode: selected.episode.reason,
       target_issue_ids: ongoing.map(entry => entry.fixture.issue_id) };
   }
@@ -699,13 +729,6 @@ export function singleRunActivationStatus({
       `activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`,
       reportingRefusal(record, "spent"),
     );
-  }
-
-  // (8) Room to publish — the temp filesystem must hold a writer's result.
-  const free = tmpFreeBytes(io);
-  if (!Number.isFinite(free)) return refused(`free space in ${tmpdir()} could not be read (fail closed)`);
-  if (free < MIN_TMP_FREE_BYTES) {
-    return refused(`only ${Math.floor(free / 1048576)} MiB free in ${tmpdir()}; a run needs at least ${MIN_TMP_FREE_BYTES / 1048576} MiB`);
   }
 
   return {

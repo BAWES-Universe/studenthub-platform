@@ -34,6 +34,13 @@ export function fixtureReviewScope(issueId) {
   return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId].revision_paths : null;
 }
 
+// The node tests a fixture lane's reviewer runs: the test files of that lane's
+// own declared scope, so each lane's review runs its own tests (SHU-71).
+export function fixtureReviewTests(issueId) {
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId)
+    ? FIXTURE_CONTRACTS[issueId].revision_paths.filter((file) => /\.test\.(?:m?js|cjs)$/.test(file)) : null;
+}
+
 // A fixture card's acceptance check. Its reviewer holds the lane to it whatever
 // the change touched, because the seeded defect predates every writer
 // (review-change.mjs).

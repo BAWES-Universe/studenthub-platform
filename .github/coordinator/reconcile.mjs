@@ -31,7 +31,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
+import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
@@ -2716,9 +2716,12 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   if (!singleRunActivation.requested) {
     for (const [id, continuation] of handoffContinuations(receipts, config.linear_receipt_actor_ids)) episodeContinuations.set(id, continuation);
   }
-  // SHU-71: the armed activation may name the first build's writer lane.
-  const writerLanes = singleRunActivation.state === "armed" && singleRunActivation.writer_lane && singleRunActivation.target_issue_id
-    ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.writer_lane]]) : null;
+  // SHU-71: the armed activation may name the first build's writer lane; a
+  // two-fixture activation names one per lane.
+  const writerLanes = singleRunActivation.state !== "armed" ? null
+    : singleRunActivation.writer_lanes ? new Map(Object.entries(singleRunActivation.writer_lanes))
+    : singleRunActivation.writer_lane && singleRunActivation.target_issue_id
+      ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.writer_lane]]) : null;
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
   if (!singleRunActivation.requested) {
@@ -2924,6 +2927,16 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     }
   }
   const linearIssueId = candidate.linearId ?? candidate.id; // UUID for the real API, identifier tolerated by mocks
+
+  // SHU-71: every launch needs room in the temp filesystem for its workspace and
+  // the broker's result repository. Nothing is reserved without it, so a short
+  // /tmp costs no slot and no episode; a launch already running is not refused
+  // for the room its own result takes.
+  const tmpRefusal = tmpFloorRefusal(io);
+  if (tmpRefusal) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — ${tmpRefusal}`);
+    return 2;
+  }
 
   // Activation is checked before minting and persisting a reservation. A
   // refused preflight sent no launch, and RESERVED receipts are not processed

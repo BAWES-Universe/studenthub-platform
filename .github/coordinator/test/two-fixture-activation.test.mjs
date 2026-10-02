@@ -228,3 +228,48 @@ test('B3_REPRO_CURRENT_MAIN: real descendant invalidates armed activation', () =
     console.log(JSON.stringify({ scope: 'current checkout: unreceipted descendant refusal, not a base reproduction', seed, descendant, ancestry: true, first: 'armed', next: result.code }));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// SHU-71 stage 5: each lane names its own writer beside its reviewer, so one
+// run can prove both directions: Codex builds SHU-140 for a Claude review and
+// Claude builds SHU-254 for a Codex review.
+function armedFixture(change = () => {}) {
+  const x = fixture(); change(x);
+  x.record.gates = { reviewed: true, runtime: true }; x.env.ENABLE_DISPATCH = 'true';
+  return signed(x);
+}
+const armedStatus = (x, extra = {}) => singleRunActivationStatus({ ...x, gitHead: revision, filePath: '/in-memory-only', io: { ...statusIO(x), ...extra.io }, receipts: extra.receipts ?? [] });
+
+test('SHU71_LANE_WRITERS: an armed pair carries each lane writer, and the selected lane names its own', () => {
+  const x = armedFixture();
+  const first = armedStatus(x);
+  assert.equal(first.state, 'armed', 'SHU71_LANE_WRITERS_ARMED');
+  assert.deepEqual(first.writer_lanes, { 'SHU-140': 'codex-builder', 'SHU-254': 'claude-builder' }, 'SHU71_LANE_WRITERS_MAP');
+  assert.equal(first.target_issue_id, 'SHU-140');
+  assert.equal(first.writer_lane, 'codex-builder', 'SHU71_LANE_WRITERS_SHU140');
+  assert.equal(first.reviewer_lane, 'claude-verifier', 'SHU71_LANE_WRITERS_SHU140_REVIEWER');
+  const second = armedStatus(x, { receipts: [{ issue_id: 'SHU-140', stage: 'RUNNING' }] });
+  assert.equal(second.target_issue_id, 'SHU-254');
+  assert.equal(second.writer_lane, 'claude-builder', 'SHU71_LANE_WRITERS_SHU254');
+  assert.equal(second.reviewer_lane, 'codex-verifier', 'SHU71_LANE_WRITERS_SHU254_REVIEWER');
+});
+
+test('SHU71_LANE_WRITERS: a lane whose writer and reviewer share a family refuses before arming', () => {
+  const sameFamily = x => {
+    for (const lanes of [x.config.fixture_lanes, x.record.fixtures.map(f => f.lane)]) {
+      const lane = lanes.find(l => l.id === 'SHU-254');
+      lane.writer_lane = 'codex-builder';
+    }
+  };
+  const status = armedStatus(armedFixture(sameFamily));
+  assert.equal(status.state, 'refused', 'SHU71_LANE_WRITERS_SAME_FAMILY_REFUSED');
+  assert.equal(status.code, 'ACT_LANE_CROSS');
+  assert.match(status.reason, /SHU-254 writer_lane codex-builder and reviewer_lane codex-verifier are the same family/);
+  const unknown = armedStatus(armedFixture(x => { for (const l of [x.config.fixture_lane, x.record.fixtures[0].lane]) l.writer_lane = 'codex-verifier'; }));
+  assert.equal(unknown.code, 'ACT_LANE_CROSS', 'SHU71_LANE_WRITERS_UNKNOWN_WRITER_REFUSED');
+  assert.match(unknown.reason, /SHU-140 writer_lane must be one of/);
+});
+
+test('SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication', () => {
+  const x = armedFixture();
+  for (const bytes of [0, null]) assert.equal(armedStatus(x, { io: { tmpFreeBytes: () => bytes } }).state, 'armed', 'SHU71_TMP_FLOOR_PUBLICATION_UNAFFECTED');
+});
