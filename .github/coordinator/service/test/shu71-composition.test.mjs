@@ -127,8 +127,11 @@ async function composition(t) {
     await tick(); const observed = await tick();
     const r = latest(id);
     assert.ok(r, 'B1_RECEIPT_PRESENT');
-    assert.equal(r?.role, role === 'build' ? undefined : role, `B1_SEQUENCE_${id}_${role}: ${observed.text}`);
-    assert.equal(r.requested_worker, role === 'review' ? 'claude-verifier' : 'codex-builder', 'B1_WORKER_ROLE');
+    // Each lane's committed writer and reviewer: SHU-254 is the reversed lane.
+    // A legacy codex-builder build receipt carries no role.
+    const { writer_lane: writer, reviewer_lane: reviewer } = pkg.fixtures.find(f => f.issue_id === id).lane;
+    assert.equal(r?.role, role === 'build' && writer === 'codex-builder' ? undefined : role, `B1_SEQUENCE_${id}_${role}: ${observed.text}`);
+    assert.equal(r.requested_worker, role === 'review' ? reviewer : writer, 'B1_WORKER_ROLE');
     assert.equal(r.stage, 'RUNNING', 'B1_RUNNING');
     assert.equal(r.target_sha, head, 'B1_EXACT_HEAD');
     assert.equal(r.activation_digest, createHash('sha256').update(canonicalBytes(JSON.parse(signed))).digest('hex'), 'B1_SIGNED_DIGEST');

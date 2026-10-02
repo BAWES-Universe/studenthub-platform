@@ -818,7 +818,7 @@ export async function launchBuilder({
   let inlineEvidence = null;
   const auditEvidenceLinks = [];
   if (reviewer) {
-    reviewEvidence = await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env });
+    reviewEvidence = await reviewEvidenceImpl({ attempt_id, issue_id, target_sha, cwd, env });
     if (reviewEvidence?.evidence_link) auditEvidenceLinks.push(reviewEvidence.evidence_link);
     inlineEvidence = inlineReviewEvidence(reviewEvidence);
     if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link || !inlineEvidence) {

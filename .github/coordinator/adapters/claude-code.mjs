@@ -517,7 +517,7 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const reviewEvidence = role === "review" ? await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env }) : null;
+  const reviewEvidence = role === "review" ? await reviewEvidenceImpl({ attempt_id, issue_id, target_sha, cwd, env }) : null;
   const auditEvidenceLinks = reviewEvidence?.evidence_link ? [reviewEvidence.evidence_link] : [];
   let inlineEvidence;
   try { inlineEvidence = inlineEvidencePayload(reviewEvidence); } catch { inlineEvidence = null; }
