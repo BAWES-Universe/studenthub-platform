@@ -151,8 +151,8 @@
     },
     "external_run_id": {
       "type": ["string", "null"],
-      "description": "Provider run id (apirun_..., clauderun_... or codexrun_<thread-uuid>) stored once known. May be present at LAUNCH_UNKNOWN for an exact-id recoverable local session.",
-      "pattern": "^(apirun|clauderun|codexrun)_[A-Za-z0-9_-]+$"
+      "description": "Provider run id (apirun_..., clauderun_... or codexrun_<thread-uuid>), or supervisor_<attempt_id> for the supervisor transport, stored once known. May be present at LAUNCH_UNKNOWN for an exact-id recoverable local session.",
+      "pattern": "^(apirun|clauderun|codexrun|supervisor)_[A-Za-z0-9_-]+$"
     },
     "adapter_status": {
       "type": ["string", "null"],

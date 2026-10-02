@@ -3920,7 +3920,9 @@
     "SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication",
     "SHU71_LANE_REVIEW_TESTS: each fixture lane's review runs that lane's own tests, other cards the host list",
     "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed",
-    "SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one"
+    "SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one",
+    "SHU71_SUPERVISOR_RUN_ID: accepts the supervisor run named after its own attempt, and only that one",
+    "SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane"
   ],
   "requirements": [
     {
@@ -29728,6 +29730,21 @@
       "capabilities": [
         {
           "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_SUPERVISOR_RUN_ID: accepts the supervisor run named after its own attempt, and only that one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
         }
       ]
     }

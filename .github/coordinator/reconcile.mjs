@@ -598,7 +598,13 @@ export function validateReceipt(receipt) {
     if (!allowed.includes(t)) errors.push(`field "${field}" must be ${allowed.join("|")} (nullable)`);
   }
   if (receipt.external_run_id !== null) {
-    expectPattern("external_run_id", /^(?:apirun|clauderun|codexrun)_[A-Za-z0-9_-]+$/);
+    expectPattern("external_run_id", /^(?:apirun|clauderun|codexrun|supervisor)_[A-Za-z0-9_-]+$/);
+    // The supervisor transport names a run after its attempt
+    // (supervisor-dispatch.mjs); any other suffix is not that run.
+    if (typeof receipt.external_run_id === "string" && receipt.external_run_id.startsWith("supervisor_") &&
+        receipt.external_run_id !== `supervisor_${receipt.attempt_id}`) {
+      errors.push('field "external_run_id" names a supervisor run other than this attempt');
+    }
   }
   if (receipt.adapter_status !== null) {
     expectEnum("adapter_status", ADAPTER_STATUSES);

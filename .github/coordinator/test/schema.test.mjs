@@ -160,6 +160,15 @@ test("rejects: external_run_id without an approved provider prefix", () => {
   assertInvalid(r, /fails pattern/, "bad run id prefix");
 });
 
+test("SHU71_SUPERVISOR_RUN_ID: accepts the supervisor run named after its own attempt, and only that one", () => {
+  const r = validRunning();
+  r.external_run_id = `supervisor_${r.attempt_id}`;
+  r.worker_identity = null;
+  assert.equal(validateReceipt(r).valid, true, JSON.stringify(validateReceipt(r).errors));
+  r.external_run_id = "supervisor_99999999-2222-4333-8444-555555555555";
+  assertInvalid(r, /supervisor run other than this attempt/, "another attempt's supervisor run");
+});
+
 test("accepts provider-neutral Claude Code run identifiers", () => {
   const r = validRunning();
   r.requested_worker = "claude-verifier";

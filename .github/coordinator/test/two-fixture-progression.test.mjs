@@ -244,6 +244,26 @@ test('B3_BOTH_LANES: independently bound descendants can both progress', async (
   } finally { h.cleanup(); }
 });
 
+test('SHU71_SUPERVISOR_PROGRESSION: an in-flight supervisor-launched build with a pushed journal advances its lane', async () => {
+  // Stage 5 run 1: the real transport names the run supervisor_<attempt>, the
+  // receipt was still RUNNING when the next tick read the pushed journal, and
+  // the pair refused ACT_STALE_SEED_HEAD on that receipt's run id.
+  const h = harness(); try {
+    const r = h.reserve(1);
+    const running = { ...r, worker_identity: null, external_run_id: `supervisor_${r.attempt_id}`, adapter_status: 'in_progress',
+      last_activity: '2026-09-14T11:05:00.000Z' };
+    h.persist(running);
+    assert.notEqual(await h.push(running), h.seed);
+    const after = h.status();
+    assert.equal(after.state, 'armed', after.reason);
+    assert.deepEqual(after.target_issue_ids, h.record.fixtures.map(f => f.issue_id));
+    // The run id still binds to its attempt: a borrowed one cannot carry the edge.
+    h.comments.push({ user: { id: h.config.linear_receipt_actor_ids[0] }, createdAt: '2026-09-14T11:59:00.000Z',
+      body: receiptCommentBody({ ...running, external_run_id: `supervisor_${randomUUID()}`, last_activity: '2026-09-14T11:06:00.000Z' }) });
+    assert.match(h.status().reason ?? '', /ACT_STALE_SEED_HEAD: invalid receipt-bound progression/);
+  } finally { h.cleanup(); }
+});
+
 test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review', async () => {
   const f = harness();
   const actor = f.config.linear_receipt_actor_ids[0];
