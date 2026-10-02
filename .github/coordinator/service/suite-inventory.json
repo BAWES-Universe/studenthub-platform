@@ -3909,7 +3909,12 @@
     "SHU71_REVIEW_RULE: only what the change broke, or the card's acceptance check, blocks",
     "SHU71_REVIEW_RULE_PROMPT: both reviewer prompts carry the rule they are given, and the strict rule by default",
     "SHU71_REVIEW_RULE_LAUNCH: each reviewer family reads the change in its own checkout, and git sees only that repository",
-    "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before"
+    "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before",
+    "SHU-71 hold cause: a supervisor hold names its cause on the receipt",
+    "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
+    "SHU-71 hold cause: the supervisor reports its own hold code in status",
+    "SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line",
+    "SHU71_TMP_FLOOR: an activation does not arm while the temp filesystem is short of room to publish"
   ],
   "requirements": [
     {
@@ -29640,6 +29645,40 @@
     },
     {
       "name": "SHU71_REVIEW_PASS_NOTE: a PASS keeps its follow-ups on the review receipt; a BLOCK keeps its findings as before",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 hold cause: a supervisor hold names its cause on the receipt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 hold cause: the supervisor reports its own hold code in status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_TMP_FLOOR: an activation does not arm while the temp filesystem is short of room to publish",
       "capabilities": [
         {
           "name": "git"

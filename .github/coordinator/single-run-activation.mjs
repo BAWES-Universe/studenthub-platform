@@ -89,6 +89,7 @@ import { resolveFixtureLane } from "./workspace-scope.mjs";
 import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
 import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid } from "./review-routing.mjs";
@@ -136,6 +137,23 @@ export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
 
 // An expiry that reaches further than a day is not an expiry, it is a permanence.
 export const MAX_ACTIVATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+// SHU-71 try 8: /tmp (a 3.8G tmpfs on the host) was full, so the broker's
+// fetch into its temporary repository died with ENOSPC after a fifteen-minute
+// build and spent the episode. An activation does not arm while the temp
+// filesystem holds less than this.
+export const MIN_TMP_FREE_BYTES = 1024 * 1024 * 1024;
+
+// Free bytes where the broker and attempt workspaces put their temporary
+// repositories. null when it cannot be read.
+function tmpFreeBytes(io = {}) {
+  if (typeof io.tmpFreeBytes === "function") return io.tmpFreeBytes();
+  try {
+    const stat = fs.statfsSync(tmpdir());
+    return Number(stat.bavail) * Number(stat.bsize);
+  } catch {
+    return null;
+  }
+}
 
 // The durable stages a receipt can rest in (mirrors reconcile.mjs TERMINAL_STAGES).
 export const TERMINAL_RECEIPT_STAGES = Object.freeze(["COMPLETED", "FAILED", "HOLD"]);
@@ -681,6 +699,13 @@ export function singleRunActivationStatus({
       `activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`,
       reportingRefusal(record, "spent"),
     );
+  }
+
+  // (8) Room to publish — the temp filesystem must hold a writer's result.
+  const free = tmpFreeBytes(io);
+  if (!Number.isFinite(free)) return refused(`free space in ${tmpdir()} could not be read (fail closed)`);
+  if (free < MIN_TMP_FREE_BYTES) {
+    return refused(`only ${Math.floor(free / 1048576)} MiB free in ${tmpdir()}; a run needs at least ${MIN_TMP_FREE_BYTES / 1048576} MiB`);
   }
 
   return {

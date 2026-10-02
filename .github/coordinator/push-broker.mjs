@@ -581,7 +581,8 @@ export async function pushExactSha({
         attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
     } catch (error) {
       return { ...held(`workspace result refused: ${error.message}`),
-        ...(["BASE_BUNDLE_UNAVAILABLE", "RESULT_EMPTY"].includes(error.workspaceCode) ? { reason_code: error.workspaceCode } : {}) };
+        ...(["BASE_BUNDLE_UNAVAILABLE", "RESULT_EMPTY"].includes(error.workspaceCode) ? { reason_code: error.workspaceCode } : {}),
+        ...(/^SNAPSHOT_[A-Z_]{2,32}_FAILED$/.test(error.workspaceCode ?? "") ? { reason_code: error.workspaceCode } : {}) };
     }
   }
 
@@ -641,6 +642,9 @@ export async function pushExactSha({
       cleanDetail = "workspace changed after snapshot";
     } catch (error) {
       if (error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE") {
+        return { ...held(error.message), reason_code: error.workspaceCode };
+      }
+      if (/^SNAPSHOT_[A-Z_]{2,32}_FAILED$/.test(error.workspaceCode ?? "")) {
         return { ...held(error.message), reason_code: error.workspaceCode };
       }
       cleanOk = false; cleanDetail = error.message;
