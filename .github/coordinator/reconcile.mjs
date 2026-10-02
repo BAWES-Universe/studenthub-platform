@@ -2436,6 +2436,11 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   };
 
   let lifecyclePersisted = false; // a lifecycle transition was durably written this run
+  // SHU-71 stage 5: only a stage change (a recovered launch or a terminal
+  // result) defers new dispatch. A supervised run persists a heartbeat on
+  // every poll, so deferring on any write let one running worker hold every
+  // other slot idle and serialized a two-lane run.
+  let lifecycleStageChanged = false;
   // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
   // compute/report only and ZERO writes — never poll upstream or persist receipts
   // while both dispatch gates are false.
@@ -2564,6 +2569,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       }
       await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
+      lifecycleStageChanged = true;
       if (transition.pause_adapter === true || launch.pause_adapter === true) {
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
@@ -2704,6 +2710,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       if (!linearIssueId) continue; // fail closed: never write to a wrong/unresolved issue
       await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
+      if (nextReceipt.stage !== receipt.stage) lifecycleStageChanged = true;
       if (transition.pause_adapter === true) {
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
@@ -2793,7 +2800,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     if (io.stdout) io.stdout(`dispatch: PREVENTED — durable receipt state could not be fully read (fail closed); reconcile after the read path recovers`);
     return 2;
   }
-  if (lifecyclePersisted) {
+  if (lifecycleStageChanged) {
     // One decision per reconcile tick: this run already advanced active runs to
     // their terminal states — new dispatch waits for the next tick so a retry
     // never compounds onto a transition made seconds ago in the same process.

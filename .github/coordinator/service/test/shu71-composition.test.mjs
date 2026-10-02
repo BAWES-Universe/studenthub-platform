@@ -232,7 +232,10 @@ test('B1_TWO_LANES: B completes while A revision remains running, then A complet
   await c.finish(rereview, 'PASS', '2'.repeat(40));
   assert.deepEqual(c.trace, ['SHU-140:build', 'SHU-140:review', 'SHU-140:revise', 'SHU-254:build', 'SHU-254:review', 'SHU-254:revise', 'SHU-254:review', 'SHU-140:review'], 'B1_INTERLEAVED_ORDER');
   assert.equal(c.h.launched.length, 8, 'B1_TWO_EIGHT_LAUNCHES');
-  assert.deepEqual(c.h.launched.map(l => { const r = c.h.receiptFor(l.attempt_id); return `${r.issue_id}:${r.role ?? 'build'}`; }), c.trace, 'B1_ACTUAL_LAUNCH_ORDER');
+  // SHU-71 stage 5: the second slot fills while A's build is still running, so
+  // B's build launches second even though this test only steps it later.
+  assert.deepEqual(c.h.launched.map(l => { const r = c.h.receiptFor(l.attempt_id); return `${r.issue_id}:${r.role ?? 'build'}`; }),
+    ['SHU-140:build', 'SHU-254:build', 'SHU-140:review', 'SHU-140:revise', 'SHU-254:review', 'SHU-254:revise', 'SHU-254:review', 'SHU-140:review'], 'B1_ACTUAL_LAUNCH_ORDER');
 
   c.p.expire();
   const cleanupStart = c.p.events.length;
