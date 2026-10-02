@@ -3919,7 +3919,8 @@
     "SHU71_LANE_WRITERS: a lane whose writer and reviewer share a family refuses before arming",
     "SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication",
     "SHU71_LANE_REVIEW_TESTS: each fixture lane's review runs that lane's own tests, other cards the host list",
-    "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed"
+    "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed",
+    "SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one"
   ],
   "requirements": [
     {
@@ -29721,6 +29722,14 @@
     {
       "name": "SHU71_TMP_FLOOR: a short /tmp refuses the launch visibly before reservation and leaves the activation armed",
       "capabilities": []
+    },
+    {
+      "name": "SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

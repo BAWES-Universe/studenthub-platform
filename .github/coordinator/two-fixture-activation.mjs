@@ -8,7 +8,12 @@ import { resolveFixtureLane, validateFixtureScopePolicy } from './workspace-scop
 
 const SHA = /^[0-9a-f]{40}$/;
 const IDS = ['SHU-140', 'SHU-254'];
-const keys = ['kind', 'activation_id', 'coordinator_revision', 'slots', 'expires_at', 'stop_before_merge', 'fixtures', 'gates', 'signature'];
+const requiredKeys = ['kind', 'activation_id', 'coordinator_revision', 'slots', 'expires_at', 'stop_before_merge', 'fixtures', 'gates', 'signature'];
+// SHU-71 stage 5: like a single-run record (SHU-231), a pair may name the
+// retained untagged attempts it retires; untagged and unnamed still spends.
+// The list is signed with every other field.
+const ATTEMPT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const supersedesValid = ids => Array.isArray(ids) && ids.length > 0 && new Set(ids).size === ids.length && ids.every(id => typeof id === 'string' && ATTEMPT.test(id));
 const fixtureKeys = ['issue_id', 'branch', 'seed_head', 'lane'];
 const exact = (value, expected) => value && typeof value === 'object' && !Array.isArray(value) && isDeepStrictEqual(Object.keys(value).sort(), [...expected].sort());
 export function reviewedActivationBytes(record) {
@@ -23,13 +28,16 @@ const refusal = (code, detail) => ({ requested: true, state: 'refused', valid: f
 export function validateTwoFixtureActivation({ record, config, revision, mainRevision, heads = {}, issues = [], env = {}, now = new Date(), publicKeyPath = SHU71_PUBLIC_KEY_PATH, receipts = [], readPush = () => null, isAncestor = () => false }) {
   const at = new Date(now).getTime();
   const expiry = Date.parse(record?.expires_at);
+  const supersedes = record && typeof record === 'object' && Object.hasOwn(record, 'supersedes_attempt_ids');
+  const keys = supersedes ? [...requiredKeys, 'supersedes_attempt_ids'] : requiredKeys;
   if (!exact(record, keys) || record.kind !== 'two-fixture-v1' || typeof record.activation_id !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(record.activation_id ?? '') ||
       !SHA.test(record.coordinator_revision ?? '') || !Number.isInteger(record.slots) || record.stop_before_merge !== true ||
       typeof record.expires_at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(record.expires_at) ||
       !Number.isFinite(at) || !Number.isFinite(expiry) || expiry <= at || expiry - at > 86400000 ||
       !Array.isArray(record.fixtures) || !exact(record.gates, ['reviewed', 'runtime']) ||
       typeof record.gates.reviewed !== 'boolean' || typeof record.gates.runtime !== 'boolean' || typeof record.signature !== 'string' ||
-      record.fixtures.some(f => !exact(f, fixtureKeys) || typeof f.issue_id !== 'string' || typeof f.branch !== 'string' || !SHA.test(f.seed_head ?? '') || !f.lane)) return refusal('ACT_MALFORMED', 'invalid or missing bound field');
+      record.fixtures.some(f => !exact(f, fixtureKeys) || typeof f.issue_id !== 'string' || typeof f.branch !== 'string' || !SHA.test(f.seed_head ?? '') || !f.lane) ||
+      (supersedes && !supersedesValid(record.supersedes_attempt_ids))) return refusal('ACT_MALFORMED', 'invalid or missing bound field');
   if (record.fixtures.length < 2) return refusal('ACT_MISSING_FIXTURE', 'exactly two fixtures required');
   if (record.fixtures.length > 2) return refusal('ACT_EXTRA_FIXTURE', 'only two fixtures allowed');
   const configured = [config.fixture_lane, ...(Array.isArray(config.fixture_lanes) ? config.fixture_lanes : [])].filter(Boolean);

@@ -8,7 +8,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { validateTwoFixtureActivation, reviewedActivationBytes } from '../two-fixture-activation.mjs';
 import { readTwoFixtureEvidence } from '../two-fixture-evidence.mjs';
 import { singleRunActivationStatus } from '../single-run-activation.mjs';
-import { dispatchEnabledFor, main } from '../reconcile.mjs';
+import { createReceipt, dispatchEnabledFor, main } from '../reconcile.mjs';
 const committed = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
 import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
 import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
@@ -272,4 +272,36 @@ test('SHU71_LANE_WRITERS: a lane whose writer and reviewer share a family refuse
 test('SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication', () => {
   const x = armedFixture();
   for (const bytes of [0, null]) assert.equal(armedStatus(x, { io: { tmpFreeBytes: () => bytes } }).state, 'armed', 'SHU71_TMP_FLOOR_PUBLICATION_UNAFFECTED');
+});
+
+// SHU-71 stage 5: SHU-140 carries a retained, untagged legacy HOLD (8dd0526b).
+// Untagged and unnamed still spends, so a pair that does not name it runs one
+// lane; the signed record may name it, exactly as a single-run record does.
+const RETAINED = '8dd0526b-8e5b-4505-930a-97d272bfa346';
+function retainedHold() {
+  const made = createReceipt({ issue_id: 'SHU-140', authorization_ref: 'FIXTURE-OPUS-CONTRACT-20260905', requested_worker: 'codex-builder',
+    repo: 'BAWES-Universe/studenthub-platform', branch: 'coordinator/SHU-140', target_sha: '1'.repeat(40),
+    attempt_id: RETAINED, episode_id: null, reserved_at: '2026-09-10T21:18:38.244Z' });
+  assert.equal(made.ok, true, JSON.stringify(made.errors));
+  return { ...made.receipt, stage: 'HOLD', worker_identity: 'codex-cli:session-1', external_run_id: 'codexrun_f', adapter_status: 'completed',
+    timestamps: { reserved: '2026-09-10T21:18:38.244Z', launch: null, heartbeat: null, terminal: '2026-09-10T21:19:52.623Z' },
+    evidence_links: ['https://example.invalid/evidence'], last_activity: '2026-09-10T21:19:52.623Z', notes: [] };
+}
+
+test('SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one', () => {
+  const receipts = [retainedHold()];
+  const unnamed = armedStatus(armedFixture(), { receipts });
+  assert.equal(unnamed.state, 'armed');
+  assert.deepEqual(unnamed.target_issue_ids, ['SHU-254'], 'SHU71_PAIR_UNNAMED_SPENDS: the unnamed retained HOLD ends the SHU-140 episode');
+  const named = armedStatus(armedFixture(x => { x.record.supersedes_attempt_ids = [RETAINED]; }), { receipts });
+  assert.equal(named.state, 'armed', named.reason);
+  assert.deepEqual(named.target_issue_ids, ['SHU-140', 'SHU-254'], 'SHU71_PAIR_NAMED_RETIRES: both lanes run');
+  assert.equal(named.target_issue_id, 'SHU-140');
+  for (const ids of [[], ['not-an-attempt'], [RETAINED, RETAINED], 'x']) {
+    const bad = armedFixture(x => { x.record.supersedes_attempt_ids = ids; });
+    assert.equal(validateTwoFixtureActivation(bad).code, 'ACT_MALFORMED', `SHU71_PAIR_SUPERSEDES_SHAPE ${JSON.stringify(ids)}`);
+  }
+  const altered = armedFixture(x => { x.record.supersedes_attempt_ids = [RETAINED]; });
+  altered.record.supersedes_attempt_ids = ['1f1f1f1f-1111-4111-8111-111111111111'];
+  assert.equal(validateTwoFixtureActivation(altered).code, 'ACT_MANUAL_GATE_BYPASS', 'SHU71_PAIR_SUPERSEDES_SIGNED');
 });
