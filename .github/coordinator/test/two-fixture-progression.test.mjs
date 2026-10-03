@@ -8,7 +8,7 @@ import { randomUUID, sign } from 'node:crypto';
 import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
 import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
 import { reviewedActivationBytes } from '../two-fixture-activation.mjs';
-import { singleRunActivationStatus } from '../single-run-activation.mjs';
+import { singleRunActivationStatus, STALE_HEAD_RETRIES, STALE_HEAD_WAIT_MS } from '../single-run-activation.mjs';
 import { createReceipt, receiptCommentBody, parseReceiptsFromComments, validateReceipt } from '../reconcile.mjs';
 import { pushExactSha } from '../push-broker.mjs';
 import { readProgressionPush } from '../two-fixture-progression.mjs';
@@ -375,6 +375,36 @@ test('SHU71_EVIDENCE_UNAVAILABLE: a failed evidence read refuses by its own name
     assert.equal(refused.code, 'ACT_EVIDENCE_UNAVAILABLE', refused.reason);
     assert.equal(refused.valid, false, 'SHU71_UNREAD_EVIDENCE_STILL_REFUSES');
     assert.notEqual(refused.state, 'armed', 'SHU71_UNREAD_EVIDENCE_NEVER_ARMS');
+  } finally { h.cleanup(); }
+});
+
+test('SHU71_HEAD_RACE: a push landing between the head read and the journal read is read again, a real rewind still refuses', async () => {
+  // Stage 5 run 4 refused "branch rewound after authorized progression" in the
+  // very second SHU-254's build push landed: the tick read the heads before the
+  // push and the push journal after it.
+  const h = harness(); try {
+    const build = h.reserve(); await h.push(build);
+    const live = () => Object.fromEntries(h.record.fixtures.map(f => [f.branch, h.git(h.remote, 'rev-parse', `refs/heads/${f.branch}`)]));
+    const answer = heads => JSON.stringify({ heads, issues: h.record.fixtures.map(f => ({ id: f.issue_id, linearId: `uuid-${f.issue_id}` })), comments: [] });
+    h.env.SHU71_EVIDENCE_BROKER = 'true';
+    const reads = [answer(Object.fromEntries(h.record.fixtures.map(f => [f.branch, h.seed]))), answer(live())];
+    const waits = [];
+    const raced = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => reads.shift(), staleHeadWait: ms => waits.push(ms) });
+    assert.equal(raced.state, 'armed', `SHU71_HEAD_RACE_READ_AGAIN: ${raced.reason}`);
+    assert.deepEqual(waits, [STALE_HEAD_WAIT_MS], 'SHU71_HEAD_RACE_ONE_WAIT');
+
+    // A retry is judged at its own time, so one that runs past expires_at refuses.
+    reads.push(answer(Object.fromEntries(h.record.fixtures.map(f => [f.branch, h.seed]))), answer(live()));
+    const late = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => reads.shift(), staleHeadWait: () => {},
+      staleHeadClock: () => new Date(Date.parse(h.record.expires_at) + 1) });
+    assert.equal(late.code, 'ACT_MALFORMED', `SHU71_HEAD_RACE_RETRY_EXPIRES: ${late.reason}`);
+
+    h.git(h.remote, 'update-ref', 'refs/heads/coordinator/SHU-140', h.seed);
+    let rereads = 0; waits.length = 0;
+    const rewound = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => { rereads += 1; return answer(live()); }, staleHeadWait: ms => waits.push(ms) });
+    assert.equal(rewound.code, 'ACT_STALE_SEED_HEAD', 'SHU71_REAL_REWIND_STILL_REFUSES');
+    assert.equal(rereads, 1 + STALE_HEAD_RETRIES, 'SHU71_REWIND_READS_BOUNDED');
+    assert.deepEqual(waits, Array(STALE_HEAD_RETRIES).fill(STALE_HEAD_WAIT_MS), 'SHU71_REWIND_WAITS_BOUNDED');
   } finally { h.cleanup(); }
 });
 
