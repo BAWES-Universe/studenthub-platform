@@ -629,10 +629,11 @@ export function singleRunActivationStatus({
       : readTwoFixtureEvidence(config, env, io.evidenceRun);
     const revision = resolveCoordinatorRevision({ dir, gitHead, io });
     const mainRevision = io.mainRevision ?? readRef("refs/heads/main");
-    const validatePair = evidence => validateTwoFixtureActivation({ record: pairRecord, config,
-      revision, mainRevision, heads: evidence.heads, issues: evidence.issues, env, now,
+    const validatePair = (evidence, at = now) => validateTwoFixtureActivation({ record: pairRecord, config,
+      revision, mainRevision, heads: evidence.heads, issues: evidence.issues, env, now: at,
       receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
       isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
+    const started = Date.now();
     let evidence = readEvidence();
     let status = validatePair(evidence);
     // SHU-71 run 4: the broker journals a push (PENDING) before sending it, and
@@ -644,7 +645,8 @@ export function singleRunActivationStatus({
     for (let retry = 0; status.code === "ACT_STALE_SEED_HEAD" && !io.fixtureHeadResolver && retry < STALE_HEAD_RETRIES; retry++) {
       (io.staleHeadWait ?? (delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }))(STALE_HEAD_WAIT_MS);
       evidence = readEvidence();
-      status = validatePair(evidence);
+      // Each read is judged at its own time: a retry that runs past expires_at refuses.
+      status = validatePair(evidence, io.staleHeadClock?.() ?? new Date(new Date(now).getTime() + Date.now() - started));
     }
     // SHU-71 run 3: an evidence read that failed reaches the validator as no
     // cards at all. Still refused, but named for what it is: a read to retry,

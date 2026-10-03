@@ -393,6 +393,12 @@ test('SHU71_HEAD_RACE: a push landing between the head read and the journal read
     assert.equal(raced.state, 'armed', `SHU71_HEAD_RACE_READ_AGAIN: ${raced.reason}`);
     assert.deepEqual(waits, [STALE_HEAD_WAIT_MS], 'SHU71_HEAD_RACE_ONE_WAIT');
 
+    // A retry is judged at its own time, so one that runs past expires_at refuses.
+    reads.push(answer(Object.fromEntries(h.record.fixtures.map(f => [f.branch, h.seed]))), answer(live()));
+    const late = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => reads.shift(), staleHeadWait: () => {},
+      staleHeadClock: () => new Date(Date.parse(h.record.expires_at) + 1) });
+    assert.equal(late.code, 'ACT_MALFORMED', `SHU71_HEAD_RACE_RETRY_EXPIRES: ${late.reason}`);
+
     h.git(h.remote, 'update-ref', 'refs/heads/coordinator/SHU-140', h.seed);
     let rereads = 0; waits.length = 0;
     const rewound = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => { rereads += 1; return answer(live()); }, staleHeadWait: ms => waits.push(ms) });
