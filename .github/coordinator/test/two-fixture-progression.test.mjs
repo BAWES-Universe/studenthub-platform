@@ -12,6 +12,7 @@ import { singleRunActivationStatus, STALE_HEAD_RETRIES, STALE_HEAD_WAIT_MS } fro
 import { createReceipt, receiptCommentBody, parseReceiptsFromComments, validateReceipt } from '../reconcile.mjs';
 import { pushExactSha } from '../push-broker.mjs';
 import { readProgressionPush } from '../two-fixture-progression.mjs';
+import { workOrderAuthorization, AUTH_EVIDENCE_RETRIES, AUTH_EVIDENCE_WAIT_MS } from '../supervisor-authorization.mjs';
 const { privateKey, publicKey } = ephemeralPublicSource();
 
 function harness() {
@@ -405,6 +406,62 @@ test('SHU71_HEAD_RACE: a push landing between the head read and the journal read
     assert.equal(rewound.code, 'ACT_STALE_SEED_HEAD', 'SHU71_REAL_REWIND_STILL_REFUSES');
     assert.equal(rereads, 1 + STALE_HEAD_RETRIES, 'SHU71_REWIND_READS_BOUNDED');
     assert.deepEqual(waits, Array(STALE_HEAD_RETRIES).fill(STALE_HEAD_WAIT_MS), 'SHU71_REWIND_WAITS_BOUNDED');
+  } finally { h.cleanup(); }
+});
+
+test('SHU71_PUBLISH_AUTH: the worker\'s host check names the clause that refuses and reads failed evidence again', async () => {
+  // Stage 5 run 5: a correct Codex revision was held at publication because the
+  // worker's host check said no, and nothing said which clause it was.
+  const h = harness(); try {
+    const build = h.reserve(); const built = await h.push(build); h.finish(build, 'BUILD_READY', built);
+    const review = h.reserve(0, built, 'review'); h.finish(review, 'BLOCKED', built);
+    // The revision is in flight, as run 5's was when it published.
+    const revise = h.reserve(0, built, 'revise');
+    const live = () => Object.fromEntries(h.record.fixtures.map(f => [f.branch, h.git(h.remote, 'rev-parse', `refs/heads/${f.branch}`)]));
+    const answer = () => JSON.stringify({ heads: live(), comments: h.comments,
+      issues: h.record.fixtures.map(f => ({ id: f.issue_id, linearId: `uuid-${f.issue_id}` })) });
+    const order = { issue_id: 'SHU-140', runtime: 'codex-cli', authorization_ref: h.record.fixtures[0].lane.authorization_ref };
+    let reads = 0; const waits = [];
+    const check = ({ evidenceRun = () => { reads += 1; return answer(); }, env = {}, config = h.config, ...changed } = {}) => {
+      reads = 0; waits.length = 0;
+      return workOrderAuthorization({ ...order, ...changed }, { config, evidenceRun, wait: ms => waits.push(ms),
+        env: { ...h.env, SHU71_EVIDENCE_BROKER: 'true', SHU_SUPERVISOR_ACTIVATION_FILE: '/isolated/activation', ...env },
+        activation: { now: new Date('2026-09-14T11:30:00Z'), gitHead: h.record.coordinator_revision,
+          io: { lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => JSON.stringify(h.record),
+            mainRevision: h.record.coordinator_revision, evidenceRun, staleHeadWait: () => {},
+            fixtureAncestryResolver: (base, head) => spawnSync('git', ['-C', h.remote, 'merge-base', '--is-ancestor', base, head]).status === 0 } } });
+    };
+    assert.deepEqual(check(), { ok: true, code: null }, 'SHU71_PUBLISH_AUTH_REVISION_IN_FLIGHT');
+    assert.equal(revise.stage, 'RUNNING');
+
+    // A failed read is read again before it denies, and denies by its own name.
+    let failures = 1;
+    const flaky = () => { reads += 1; if (failures-- > 0) throw new Error('broker unreachable'); return answer(); };
+    assert.equal(check({ evidenceRun: flaky }).ok, true, 'SHU71_PUBLISH_AUTH_READ_AGAIN');
+    assert.deepEqual(waits, [AUTH_EVIDENCE_WAIT_MS], 'SHU71_PUBLISH_AUTH_ONE_WAIT');
+    const down = () => { reads += 1; throw new Error('broker unreachable'); };
+    assert.equal(check({ evidenceRun: down }).code, 'HOST_AUTH_EVIDENCE_UNAVAILABLE', 'SHU71_PUBLISH_AUTH_EVIDENCE_NAMED');
+    assert.equal(reads, 1 + AUTH_EVIDENCE_RETRIES, 'SHU71_PUBLISH_AUTH_READS_BOUNDED');
+    assert.deepEqual(waits, Array(AUTH_EVIDENCE_RETRIES).fill(AUTH_EVIDENCE_WAIT_MS), 'SHU71_PUBLISH_AUTH_WAITS_BOUNDED');
+    // The pair's own read failing is the same denial, not a partial record.
+    const second = () => { reads += 1; if (reads % 2 === 0) throw new Error('broker unreachable'); return answer(); };
+    assert.equal(check({ evidenceRun: second }).code, 'HOST_AUTH_EVIDENCE_UNAVAILABLE', 'SHU71_PUBLISH_AUTH_PAIR_READ_NAMED');
+
+    // Every other clause names itself.
+    assert.equal(check({ issue_id: 'SHU-999' }).code, 'HOST_AUTH_DISPATCH_SCOPE', 'SHU71_PUBLISH_AUTH_SCOPE');
+    assert.equal(check({ config: { ...h.config, adapter_pause_map: { 'codex-cli': true } } }).code, 'HOST_AUTH_ADAPTER_PAUSED', 'SHU71_PUBLISH_AUTH_PAUSED');
+    assert.equal(check({ authorization_ref: 'SHU-140' }).code, 'HOST_AUTH_LANE_REF', 'SHU71_PUBLISH_AUTH_LANE_REF');
+    assert.equal(check({ workspace_scope: 'scoped', scope_phase: 'revision', allowed_paths: ['elsewhere.mjs'] }).code, 'HOST_AUTH_ATTEMPT_SCOPE', 'SHU71_PUBLISH_AUTH_ATTEMPT_SCOPE');
+    assert.equal(check({ env: { ENABLE_DISPATCH: 'false' } }).code, 'HOST_AUTH_ACT_MANUAL_GATE_BYPASS', 'SHU71_PUBLISH_AUTH_ACTIVATION_CODE');
+    assert.equal(check({ config: { get dispatch_scope() { throw new Error('unreadable'); } } }).code, 'HOST_AUTH_CHECK_FAILED', 'SHU71_PUBLISH_AUTH_THROW');
+    h.git(h.remote, 'update-ref', 'refs/heads/coordinator/SHU-140', h.seed);
+    assert.equal(check().code, 'HOST_AUTH_ACT_STALE_SEED_HEAD', 'SHU71_PUBLISH_AUTH_REWIND');
+    h.git(h.remote, 'update-ref', 'refs/heads/coordinator/SHU-140', built);
+
+    // A lane whose episode ended is no longer a target.
+    const revised = await h.push(revise); h.finish(revise, 'REVISION_READY', revised);
+    const rereview = h.reserve(0, revised, 'review'); h.finish(rereview, 'PASS', revised);
+    assert.equal(check().code, 'HOST_AUTH_TARGET_NOT_ALLOWED', 'SHU71_PUBLISH_AUTH_TARGET');
   } finally { h.cleanup(); }
 });
 

@@ -27,9 +27,17 @@ export function createSupervisorSpawner({ stateDir, authorizationModule = fileUR
 }
 
 export async function executeSupervisedOrder({ order, contract, stateDir, authorizationModule }, { env = process.env, send = () => {}, loadAdapter = name => import(`./adapters/${name}.mjs`) } = {}) {
-  const { authorizeWorkOrder } = await import(authorizationModule);
-  const authorized = () => authorizeWorkOrder(order) === true;
-  if (!authorized()) throw new Error("host authorization refused supervised order");
+  const policy = await import(authorizationModule);
+  // A policy that names its denial (supervisor-authorization.mjs) hands the name
+  // to the push broker, which puts it on the held result; a plain boolean policy
+  // still decides alone.
+  const authorized = () => {
+    if (typeof policy.workOrderAuthorization !== "function") return policy.authorizeWorkOrder(order) === true;
+    const verdict = policy.workOrderAuthorization(order);
+    return verdict?.ok === true ? true : { code: verdict?.code ?? null };
+  };
+  const launch = authorized();
+  if (launch !== true) throw new Error(`host authorization refused supervised order${launch?.code ? ` (${launch.code})` : ""}`);
   const adapters = { "codex-cli": "codex-cli", "claude-code": "claude-code", "hermes-pool": "hermes-pool", "workspace-agents": "workspace-agents" };
   const name = adapters[order.runtime];
   if (!name) throw new Error("unsupported supervised runtime");

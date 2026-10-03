@@ -1183,14 +1183,14 @@
     ],
     "justification": "real Git fixture/broker workspace snapshots and recovery subprocess controls",
     "call_sites": [
-      ".github/coordinator/test/two-fixture-progression.test.mjs:18",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:50",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:166",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:206",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:281",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:459",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:570",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:573"
+      ".github/coordinator/test/two-fixture-progression.test.mjs:19",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:51",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:167",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:207",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:282",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:516",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:627",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:630"
     ]
   },
   {
