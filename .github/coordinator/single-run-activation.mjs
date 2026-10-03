@@ -784,6 +784,31 @@ export function singleRunActivationStatus({
 // the activated target. The committed scope already guarantees this; this exists so
 // that a future change to selection logic cannot quietly dispatch something else
 // under a live activation.
+// The name an operator needs for an activation that is not armed: its own
+// ACT_* code when it has one, else what the refusal says about its lifetime.
+export function activationRefusalCode(activation) {
+  if (/^ACT_[A-Z0-9_]{2,32}$/.test(activation?.code ?? "")) return activation.code;
+  if (["expired", "spent"].includes(activation?.reporting_exception)) return `ACTIVATION_${activation.reporting_exception.toUpperCase()}`;
+  if (/^activation is spent/.test(activation?.reason ?? "")) return "ACTIVATION_SPENT";
+  return "ACTIVATION_REFUSED";
+}
+
+// SHU-71 run 6: the check made just before a worker crosses the adapter
+// boundary. A failed evidence read is read again, a bounded number of times,
+// as the tick and the worker's own check do; any refusal comes back named.
+export const FINAL_CHECK_RETRIES = 2;
+export const FINAL_CHECK_WAIT_MS = 3000;
+export function finalLaunchActivation(check, issueId, wait = delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }) {
+  let activation = check();
+  for (let retry = 0; activation?.code === "ACT_EVIDENCE_UNAVAILABLE" && retry < FINAL_CHECK_RETRIES; retry++) {
+    wait(FINAL_CHECK_WAIT_MS);
+    activation = check();
+  }
+  if (activation?.state !== "armed") return { ok: false, code: activationRefusalCode(activation) };
+  if (!activationAllowsTarget(activation, issueId)) return { ok: false, code: "ACTIVATION_TARGET_NOT_ALLOWED" };
+  return { ok: true, code: null };
+}
+
 export function activationAllowsTarget(activation, issueId) {
   if (!activation || activation.state !== "armed") return true;
   if (activation.kind === "two-fixture-v1") return activation.target_issue_ids.includes(issueId);

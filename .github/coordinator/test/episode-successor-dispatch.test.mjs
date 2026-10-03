@@ -17,6 +17,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import * as reconcile from "../reconcile.mjs";
+import { roleForReceipt } from "../launch-vocabulary.mjs";
 import * as routing from "../review-routing.mjs";
 import * as activation from "../single-run-activation.mjs";
 import { createEpisodeHarness, SHA_INPUT, SHA_WRITE, SHA_REVISED, REVISION } from "./fixture/episode-harness.mjs";
@@ -115,6 +116,24 @@ test("SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor 
   assert.equal(withContinuation.candidate?.id, TARGET, "the bound issue is re-admitted for its next step");
   assert.equal(withContinuation.successor?.role, "review");
   assert.equal(withContinuation.adapter, "claude-code", "the successor's own lane selects the adapter");
+});
+
+// SHU-71 run 6: SHU-254's Codex review started while SHU-140's Claude review
+// held the host's one reviewer sandbox; it failed REVIEW_EXECUTION_UNAVAILABLE.
+test("SHU71_ONE_REVIEW_AT_A_TIME: a review successor waits while another card's review runs", () => {
+  const running = receipt({ issue: OTHER, attempt: ATTEMPT("rereview"), worker: "claude-verifier", stage: "RUNNING", verdict: undefined, identity: "claude-code:session-2" });
+  assert.equal(roleForReceipt(running), "review");
+  const built = receipt({ stage: "COMPLETED", verdict: "BUILD_READY", result: SHA_WRITE });
+  const select = (receipts, ready = [readyIssue()], continuations = new Map([[TARGET, { successor: successorOrder() }]])) =>
+    reconcile.selectNextReservation({ ready, config: { max_dispatch: 2 }, receipts, episodeContinuations: continuations });
+  const waiting = select([built, running]);
+  assert.equal(waiting.candidate, null, "SHU71_REVIEW_WAITS");
+  assert.match(waiting.skipped.at(-1).reason, /one review at a time/);
+  assert.equal(select([built, { ...running, stage: "HOLD" }]).candidate?.id, TARGET, "SHU71_REVIEW_GOES_WHEN_THE_OTHER_ENDS");
+  const building = receipt({ issue: OTHER, attempt: ATTEMPT("build"), stage: "RUNNING", verdict: undefined });
+  assert.equal(select([built, building]).candidate?.id, TARGET, "SHU71_BUILD_ELSEWHERE_DOES_NOT_HOLD_A_REVIEW");
+  const revise = { ...successorOrder(), role: "revise", runtime: "codex-cli", actor: "codex-builder", requested_worker: "codex-builder" };
+  assert.equal(select([built, running], [readyIssue()], new Map([[TARGET, { successor: revise }]])).candidate?.id, TARGET, "SHU71_WRITER_NOT_HELD_BY_A_REVIEW");
 });
 
 test("SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable", () => {

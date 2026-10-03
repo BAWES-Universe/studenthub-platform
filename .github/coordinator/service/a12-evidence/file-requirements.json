@@ -591,7 +591,7 @@
     ],
     "justification": "execFileSync(\"node\", ...) resolves child node on PATH; shell_toolchain establishes this resolution via /usr/bin/env node --version; no shell interpreter used by this call",
     "call_sites": [
-      ".github/coordinator/test/episode-successor-dispatch.test.mjs:610"
+      ".github/coordinator/test/episode-successor-dispatch.test.mjs:629"
     ]
   },
   {
@@ -1188,9 +1188,9 @@
       ".github/coordinator/test/two-fixture-progression.test.mjs:167",
       ".github/coordinator/test/two-fixture-progression.test.mjs:207",
       ".github/coordinator/test/two-fixture-progression.test.mjs:282",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:516",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:627",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:630"
+      ".github/coordinator/test/two-fixture-progression.test.mjs:554",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:665",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:668"
     ]
   },
   {
