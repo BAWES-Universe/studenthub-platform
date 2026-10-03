@@ -571,12 +571,17 @@ export async function pushExactSha({
     cleanupBrokerRepo();
     return { stage: "HOLD", reason, pause_adapter: true, ok: false };
   };
+  // A host policy may name why it said no (supervisor-authorization.mjs). The
+  // name rides on the held result, so the receipt says which check refused.
+  const revoked = (verdict) => ({ ...held("result authorization expired or revoked"),
+    ...(/^HOST_AUTH_[A-Z0-9_]{2,40}$/.test(verdict?.code ?? "") ? { reason_code: verdict.code } : {}) });
 
   // SHU-228: the broker owns the index and result objects. The sandboxed
   // builder supplies files, never authority to write repository metadata.
   if (workspaceReady) {
     try {
-      if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
+      const verdict = beforePublish ? await beforePublish() : true;
+      if (verdict !== true) return revoked(verdict);
       result_sha = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
         attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
     } catch (error) {
@@ -757,7 +762,8 @@ export async function pushExactSha({
 
   // --- durable pre-push record (BEFORE the push, distinguished from after) ----
   try {
-    if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
+    const verdict = beforePublish ? await beforePublish() : true;
+    if (verdict !== true) return revoked(verdict);
   } catch { return held("result authorization unavailable"); }
   const pre = recovering ? { ok: true, path: prePushRecordPath(stateDir, attempt_id) }
     : persistImpl({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree: cwd });

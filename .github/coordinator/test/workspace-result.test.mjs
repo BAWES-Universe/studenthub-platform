@@ -130,6 +130,44 @@ test("SHU-228: expiry during snapshot refuses publication",async()=>{
   }finally{f.cleanup();}
 });
 
+// SHU-71 run 5: the host check refused a correct revision at publication and the
+// receipt could not say which check it was. Its name now rides on the held result.
+test("SHU71_PUBLISH_DENIAL_NAMED: a named host denial reaches the held result",async()=>{
+  const f=fixture();try{
+    f.edit();
+    const snapshot=await pushExactSha({...f.options,beforePublish:()=>({code:"HOST_AUTH_EVIDENCE_UNAVAILABLE"})});
+    assert.equal(snapshot.ok,false);assert.match(snapshot.reason,/authorization expired/);
+    assert.equal(snapshot.reason_code,"HOST_AUTH_EVIDENCE_UNAVAILABLE","SHU71_DENIAL_NAMED_AT_SNAPSHOT");
+    let checks=0;
+    const push=await pushExactSha({...f.options,beforePublish:()=>++checks===1||{code:"HOST_AUTH_TARGET_NOT_ALLOWED"}});
+    assert.equal(checks,2);assert.equal(push.reason_code,"HOST_AUTH_TARGET_NOT_ALLOWED","SHU71_DENIAL_NAMED_AT_PUSH");
+    assert.equal(f.remoteHead(),f.options.target_sha,"SHU71_NAMED_DENIAL_NEVER_PUBLISHES");
+    // Only a host check's own name is carried; anything else is held unnamed.
+    for(const verdict of [false,{code:"LIVE_HEAD_STALE"},{code:"HOST_AUTH_x; rm"},{}]){
+      const held=await pushExactSha({...f.options,beforePublish:()=>verdict});
+      assert.equal(held.ok,false);assert.equal(held.reason_code,undefined,`SHU71_UNNAMED_DENIAL: ${JSON.stringify(verdict)}`);
+    }
+  }finally{f.cleanup();}
+});
+
+test("SHU71_PUBLISH_DENIAL_CARRIED: the Codex writer carries a host denial's name, nothing else",async()=>{
+  const f=fixture();try{
+    const input={issue_id:"SHU-228",authorization_ref:"SHU-228",attempt_id:f.options.attempt_id,target_sha:f.options.target_sha};
+    const run=async reason_code=>{
+      input.attempt_id=randomUUID();
+      const cb={...input,result_sha:null,stage:"REVISION_READY",links:["file.txt tests"]};
+      return codex.launchBuilder({...input,role:"revise",scope_phase:"revision",cwd:f.wt,readHeadImpl:async()=>input.target_sha,env:{...process.env,SHU_WORKER_LAUNCH_WRAPPER:"test-wrapper"},
+        io:{codexStateDir:f.state,worktreeRoot:f.root,pushRemoteUrl:f.options.remoteUrl},
+        execFileImpl:(_f,_a,_o,done)=>done(null,[{type:"thread.started",thread_id:randomUUID()},
+        {type:"item.completed",item:{type:"agent_message",text:JSON.stringify(cb)}}].map(x=>JSON.stringify(x)).join("\n"),""),
+        pushBrokerImpl:async()=>({ok:false,stage:"HOLD",reason:"result authorization expired or revoked",reason_code})});
+    };
+    const named=await run("HOST_AUTH_ACT_STALE_SEED_HEAD");
+    assert.equal(named.stage,"HOLD");assert.equal(named.reason_code,"HOST_AUTH_ACT_STALE_SEED_HEAD","SHU71_CODEX_CARRIES_DENIAL");
+    assert.equal((await run("B3_RECOVERY_AUTHORIZATION")).reason_code,undefined,"SHU71_CODEX_CARRIES_ONLY_HOST_DENIAL");
+  }finally{f.cleanup();}
+});
+
 test("SHU-228: workspace-ready callback is bound and host refusal never publishes a result",async()=>{
   const f=fixture();try{
     const input={issue_id:"SHU-228",authorization_ref:"SHU-228",attempt_id:f.options.attempt_id,target_sha:f.options.target_sha};

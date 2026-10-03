@@ -326,6 +326,28 @@ test("SHU-250: child wrapper transports adapter artifact verbatim and rechecks a
   }), /authorization refused/);
 });
 
+// SHU-71 run 5: a publish refused by the host check reached the receipt unnamed.
+test("SHU71_WORKER_DENIAL_NAMED: the child hands the host check's denial name to the adapter", async t => {
+  const { executeSupervisedOrder } = await import("../supervisor-worker.mjs");
+  const f = setup(t); await f.tick(); await f.drain();
+  const policy = join(f.h.dir, "named.mjs");
+  fs.writeFileSync(policy, 'let checks = 0; export const authorizeWorkOrder = () => { throw new Error("the named policy decides"); };\n' +
+    'export const workOrderAuthorization = () => ++checks === 1 ? { ok: true, code: null } : { ok: false, code: "HOST_AUTH_TARGET_NOT_ALLOWED" };');
+  const result = f.callback();
+  await executeSupervisedOrder({ order: f.supervisor.store.readOrder(f.contracts[0].attempt_id), contract: f.contracts[0],
+    stateDir: join(f.h.dir, "supervisor"), authorizationModule: policy }, {
+    loadAdapter: async () => ({ launchBuilder: async options => {
+      assert.deepEqual(options.io.resultStillAuthorized(), { code: "HOST_AUTH_TARGET_NOT_ALLOWED" }, "SHU71_WORKER_PUBLISH_DENIAL_NAMED");
+      return result;
+    } }),
+  });
+  const refused = join(f.h.dir, "refused.mjs");
+  fs.writeFileSync(refused, 'export const workOrderAuthorization = () => ({ ok: false, code: "HOST_AUTH_EVIDENCE_UNAVAILABLE" });');
+  await assert.rejects(executeSupervisedOrder({ order: {}, authorizationModule: refused }, {
+    loadAdapter: async () => { assert.fail("denied order must not load adapter"); },
+  }), /authorization refused supervised order \(HOST_AUTH_EVIDENCE_UNAVAILABLE\)/, "SHU71_WORKER_LAUNCH_DENIAL_NAMED");
+});
+
 test("SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervised child", async t => {
   const f = setup(t);
   f.h.adapters["codex-cli"].launchBuilder = async () => ({ stage: "LAUNCH_UNKNOWN" });
