@@ -3927,7 +3927,8 @@
     "SHU71_PAIR_RECOVERY: a launch acknowledged through LAUNCH_UNKNOWN recovery does not hold the other lane's slot",
     "SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers new dispatch to the next tick",
     "SHU71_EVIDENCE_UNAVAILABLE: a failed evidence read refuses by its own name, not as a partial record",
-    "SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout"
+    "SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout",
+    "SHU71_HEAD_RACE: a push landing between the head read and the journal read is read again, a real rewind still refuses"
   ],
   "requirements": [
     {
@@ -29800,6 +29801,17 @@
     {
       "name": "SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout",
       "capabilities": []
+    },
+    {
+      "name": "SHU71_HEAD_RACE: a push landing between the head read and the journal read is read again, a real rewind still refuses",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

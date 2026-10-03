@@ -575,6 +575,11 @@ export function validateActivationRecord(record) {
 // Status
 // ---------------------------------------------------------------------------
 
+// SHU-71 run 4: how many times, and how far apart, the pair's branch heads are
+// read again before a head behind the receipt-bound progression refuses.
+export const STALE_HEAD_RETRIES = 2;
+export const STALE_HEAD_WAIT_MS = 3000;
+
 // Returns the single decision the caller needs. `state` is one of:
 //   "absent"  — no --activation was given; the committed gates decide alone
 //   "armed"   — a valid, unspent, unexpired, correctly-bound authorization
@@ -619,14 +624,28 @@ export function singleRunActivationStatus({
         }).trim();
       } catch { return null; }
     };
-    const evidence = io.fixtureHeadResolver
+    const readEvidence = () => io.fixtureHeadResolver
       ? { heads: Object.fromEntries(["SHU-140", "SHU-254"].map(id => [`coordinator/${id}`, io.fixtureHeadResolver(`coordinator/${id}`)])), issues }
       : readTwoFixtureEvidence(config, env, io.evidenceRun);
-    const status = validateTwoFixtureActivation({ record: pairRecord, config,
-      revision: resolveCoordinatorRevision({ dir, gitHead, io }),
-      mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now,
+    const revision = resolveCoordinatorRevision({ dir, gitHead, io });
+    const mainRevision = io.mainRevision ?? readRef("refs/heads/main");
+    const validatePair = evidence => validateTwoFixtureActivation({ record: pairRecord, config,
+      revision, mainRevision, heads: evidence.heads, issues: evidence.issues, env, now,
       receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
       isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
+    let evidence = readEvidence();
+    let status = validatePair(evidence);
+    // SHU-71 run 4: the broker journals a push (PENDING) before sending it, and
+    // the branch heads are read before that journal. A push landing in between
+    // leaves the heads one push behind the receipt-bound progression, which
+    // reads as a rewind (run 4 refused in the very second its push landed).
+    // Read the heads again, a bounded number of times, before refusing; a real
+    // rewind or a lost push still refuses.
+    for (let retry = 0; status.code === "ACT_STALE_SEED_HEAD" && !io.fixtureHeadResolver && retry < STALE_HEAD_RETRIES; retry++) {
+      (io.staleHeadWait ?? (delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }))(STALE_HEAD_WAIT_MS);
+      evidence = readEvidence();
+      status = validatePair(evidence);
+    }
     // SHU-71 run 3: an evidence read that failed reaches the validator as no
     // cards at all. Still refused, but named for what it is: a read to retry,
     // not a record that cannot arm.
