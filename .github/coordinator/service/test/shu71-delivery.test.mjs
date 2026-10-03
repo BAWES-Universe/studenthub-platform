@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { supervisorTransportSecret, supervisorChildEnvironment, ACTIVATION_FILE } from '../credential-delivery.mjs';
-import { fixtureEvidenceRequest } from '../fixture-evidence-broker.mjs';
-import { readTwoFixtureEvidence, readFixtureAncestry } from '../../two-fixture-evidence.mjs';
+import { fixtureEvidenceRequest, evidenceConnection, EVIDENCE_MAX_READS } from '../fixture-evidence-broker.mjs';
+import { readTwoFixtureEvidence, readFixtureAncestry, execFileAsync } from '../../two-fixture-evidence.mjs';
 import { serviceParameters } from '../units.mjs';
 import { renderEvidenceBroker } from '../shu71-production.mjs';
 
@@ -35,10 +35,67 @@ test('B2 rendered coordinator carries exact activation argv; broker identity and
   assert.match(fs.readFileSync(new URL('../shu-supervisor.service.in', import.meta.url), 'utf8'), /^Environment=SHU71_EVIDENCE_BROKER=true$/m);
 });
 
-test('B2 broker: arbitrary queries, URLs and command input are refused before credentials are used', () => {
+test('B2 broker: arbitrary queries, URLs and command input are refused before credentials are used', async () => {
   for (const input of [{ operation: 'write' }, { operation: 'evidence', url: 'https://evil' }, { operation: 'ancestry', base: 'x', head: 'y' }]) {
-    assert.deepEqual(fixtureEvidenceRequest(input, {}, () => assert.fail('no command')), { code: 'ACT_EVIDENCE_REQUEST_INVALID' });
+    assert.deepEqual(await fixtureEvidenceRequest(input, {}, () => assert.fail('no command')), { code: 'ACT_EVIDENCE_REQUEST_INVALID' });
   }
+});
+
+test('SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout', async t => {
+  // Stage 5 run 3: the coordinator and both live workers read evidence through
+  // one broker. Its reads were synchronous, so each queued behind the others and
+  // the coordinator's read timed out to "no cards" (ACT_PARTIAL_ARMING).
+  const { createServer, createConnection } = await import('node:net');
+  const { mkdtempSync, rmSync } = fs;
+  const dir = mkdtempSync(`${(await import('node:os')).tmpdir()}/shu71-broker-`);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const socketPath = `${dir}/fixture.sock`;
+  const READ_MS = 400;
+  let inFlight = 0, peak = 0;
+  const run = async (file, args) => {
+    inFlight += 1; peak = Math.max(peak, inFlight);
+    await new Promise(resolve => setTimeout(resolve, READ_MS));
+    inFlight -= 1;
+    return args.includes('-e') && args[2].includes('ActivationFixture')
+      ? JSON.stringify({ heads: {}, issues: [{ id: 'SHU-140', linearId: 'a' }, { id: 'SHU-254', linearId: 'b' }], comments: [] })
+      : 'true';
+  };
+  const server = createServer(evidenceConnection({ GITHUB_TOKEN: 'synthetic', LINEAR_API_TOKEN: 'synthetic' }, run));
+  await new Promise(resolve => server.listen(socketPath, resolve));
+  t.after(() => server.close());
+  const ask = request => new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let out = '';
+    socket.on('connect', () => socket.write(JSON.stringify(request) + '\n'));
+    socket.on('data', chunk => { out += chunk; });
+    socket.on('end', () => resolve(JSON.parse(out)));
+    socket.on('error', reject);
+  });
+  const started = Date.now();
+  const answers = await Promise.all([
+    ask({ operation: 'evidence' }), ask({ operation: 'evidence' }), ask({ operation: 'evidence' }),
+    ask({ operation: 'ancestry', base: 'a'.repeat(40), head: 'b'.repeat(40) }),
+  ]);
+  const elapsed = Date.now() - started;
+  for (const answer of answers.slice(0, 3)) assert.deepEqual(answer.issues.map(i => i.id), ['SHU-140', 'SHU-254'], 'SHU71_BROKER_EVERY_CALLER_ANSWERED');
+  assert.deepEqual(answers[3], { ancestor: true }, 'SHU71_BROKER_ANCESTRY_ANSWERED');
+  assert.equal(peak, 4, 'SHU71_BROKER_READS_RUN_TOGETHER');
+  assert.ok(elapsed < 2 * READ_MS, `SHU71_BROKER_NO_QUEUE: four reads took ${elapsed}ms`);
+
+  // A burst past the bound is refused by name, never queued or spawned, and
+  // the slots come back once the reads finish.
+  peak = 0;
+  const burst = await Promise.all(Array.from({ length: EVIDENCE_MAX_READS + 2 }, () => ask({ operation: 'evidence' })));
+  const refused = burst.filter(answer => answer.code === 'ACT_EVIDENCE_UNAVAILABLE');
+  assert.equal(refused.length, 2, 'SHU71_BROKER_BURST_REFUSED');
+  assert.equal(burst.filter(answer => Array.isArray(answer.issues)).length, EVIDENCE_MAX_READS, 'SHU71_BROKER_BURST_SERVED');
+  assert.equal(peak, EVIDENCE_MAX_READS, 'SHU71_BROKER_READS_BOUNDED');
+  assert.deepEqual((await ask({ operation: 'evidence' })).issues.map(i => i.id), ['SHU-140', 'SHU-254'], 'SHU71_BROKER_SLOTS_RELEASED');
+
+  // A read child that exits before taking its input breaks the pipe: a failed
+  // read, not an uncaught error that would stop the broker.
+  await assert.rejects(execFileAsync(process.execPath, ['-e', 'process.exit(0)'], { input: 'x'.repeat(16 << 20), encoding: 'utf8' }),
+    { code: 'EPIPE' }, 'SHU71_BROKER_BROKEN_PIPE_REFUSED');
 });
 
 test('B2 broker: actual child-side wiring sends no API tokens, env secrets or shell/eval source', () => {

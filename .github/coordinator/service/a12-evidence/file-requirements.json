@@ -1163,8 +1163,8 @@
     "call_sites": [
       ".github/coordinator/test/two-fixture-activation.test.mjs:136",
       ".github/coordinator/test/two-fixture-activation.test.mjs:158",
-      ".github/coordinator/test/two-fixture-activation.test.mjs:182",
-      ".github/coordinator/test/two-fixture-activation.test.mjs:206"
+      ".github/coordinator/test/two-fixture-activation.test.mjs:185",
+      ".github/coordinator/test/two-fixture-activation.test.mjs:209"
     ]
   },
   {
@@ -1188,9 +1188,9 @@
       ".github/coordinator/test/two-fixture-progression.test.mjs:166",
       ".github/coordinator/test/two-fixture-progression.test.mjs:206",
       ".github/coordinator/test/two-fixture-progression.test.mjs:281",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:415",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:526",
-      ".github/coordinator/test/two-fixture-progression.test.mjs:529"
+      ".github/coordinator/test/two-fixture-progression.test.mjs:429",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:540",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:543"
     ]
   },
   {

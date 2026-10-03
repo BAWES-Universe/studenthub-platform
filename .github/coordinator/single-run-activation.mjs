@@ -621,12 +621,18 @@ export function singleRunActivationStatus({
     };
     const evidence = io.fixtureHeadResolver
       ? { heads: Object.fromEntries(["SHU-140", "SHU-254"].map(id => [`coordinator/${id}`, io.fixtureHeadResolver(`coordinator/${id}`)])), issues }
-      : readTwoFixtureEvidence(config, env);
+      : readTwoFixtureEvidence(config, env, io.evidenceRun);
     const status = validateTwoFixtureActivation({ record: pairRecord, config,
       revision: resolveCoordinatorRevision({ dir, gitHead, io }),
       mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now,
       receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
       isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
+    // SHU-71 run 3: an evidence read that failed reaches the validator as no
+    // cards at all. Still refused, but named for what it is: a read to retry,
+    // not a record that cannot arm.
+    if (status.code === "ACT_PARTIAL_ARMING" && evidence.unavailable === true) {
+      return { ...status, code: "ACT_EVIDENCE_UNAVAILABLE", reason: "ACT_EVIDENCE_UNAVAILABLE: fixture evidence could not be read; refused this tick" };
+    }
     if (!status.valid || status.state !== "armed") return status;
     // SHU-71 stage 5: a lane may name its writer beside its reviewer. Both sit
     // in the signed lane definition, which must equal the committed lane, so

@@ -175,7 +175,10 @@ test('ACT_REMOTE_EVIDENCE: real helper resolves both heads and identities throug
 
 test('ACT_REMOTE_FAILURE: absent credentials and failed API reads cannot supply evidence', () => {
   assert.deepEqual(readTwoFixtureEvidence(committed, {}, () => { throw new Error('must not execute'); }), { heads: {}, issues: [] });
-  assert.deepEqual(readTwoFixtureEvidence(committed, { GITHUB_TOKEN: 'fake', LINEAR_API_TOKEN: 'fake' }, () => { throw new Error('API failure'); }), { heads: {}, issues: [] });
+  assert.deepEqual(readTwoFixtureEvidence(committed, { GITHUB_TOKEN: 'fake', LINEAR_API_TOKEN: 'fake' }, () => { throw new Error('API failure'); }), { heads: {}, issues: [], unavailable: true });
+  assert.deepEqual(readTwoFixtureEvidence(committed, { SHU71_EVIDENCE_BROKER: 'true' }, () => { throw new Error('broker timeout'); }), { heads: {}, issues: [], unavailable: true });
+  // The broker reached, but its own read failed: the answer is well formed and still unavailable.
+  assert.deepEqual(readTwoFixtureEvidence(committed, { SHU71_EVIDENCE_BROKER: 'true' }, () => JSON.stringify({ heads: {}, issues: [], unavailable: true })), { heads: {}, issues: [], unavailable: true });
 });
 
 import { killExecutionMutant } from './fixture/execution-mutants.mjs';

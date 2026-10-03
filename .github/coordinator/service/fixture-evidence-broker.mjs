@@ -4,19 +4,30 @@
 import net from 'node:net';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { readTwoFixtureEvidence, readFixtureAncestry } from '../two-fixture-evidence.mjs';
+import { readTwoFixtureEvidenceAsync, readFixtureAncestryAsync } from '../two-fixture-evidence.mjs';
 import { EVIDENCE_SOCKET } from './credential-delivery.mjs';
 const config = Object.freeze({ pilot_repo: 'BAWES-Universe/studenthub-platform' });
-export function fixtureEvidenceRequest(request, env, run) {
-  if (JSON.stringify(request) === '{"operation":"evidence"}') return readTwoFixtureEvidence(config, env, run);
+// SHU-71 run 3: reads run asynchronously. A synchronous read blocked the one
+// event loop, so with two lanes live the coordinator's and both workers' reads
+// queued behind each other past the client's timeout, and the coordinator saw
+// no evidence at all.
+export async function fixtureEvidenceRequest(request, env, run) {
+  if (JSON.stringify(request) === '{"operation":"evidence"}') return readTwoFixtureEvidenceAsync(config, env, run);
   if (request?.operation === 'ancestry' && Object.keys(request).sort().join() === 'base,head,operation'
       && /^[a-f0-9]{40}$/.test(request.base) && /^[a-f0-9]{40}$/.test(request.head)) {
-    return { ancestor: readFixtureAncestry(config, env, request.base, request.head, run) };
+    return { ancestor: await readFixtureAncestryAsync(config, env, request.base, request.head, run) };
   }
   return { code: 'ACT_EVIDENCE_REQUEST_INVALID' };
 }
-export function startEvidenceBroker(env = process.env) {
-  const server = net.createServer(socket => {
+// At most this many reads run at once; a caller past it is refused at once
+// (ACT_EVIDENCE_UNAVAILABLE, a read to retry next tick) rather than queued. A
+// two-lane run needs the coordinator's read plus one per live worker.
+export const EVIDENCE_MAX_READS = 8;
+// One connection, one bounded request. Each read runs on its own, so a slow read
+// never holds another caller's answer.
+export function evidenceConnection(env, run) {
+  let reading = 0;
+  return socket => {
     let input = ''; socket.setTimeout(15000, () => socket.destroy());
     socket.on('error', () => {});
     socket.on('data', chunk => {
@@ -24,10 +35,16 @@ export function startEvidenceBroker(env = process.env) {
       if (Buffer.byteLength(input) > 512) return socket.destroy();
       if (!input.endsWith('\n')) return;
       socket.pause();
-      try { socket.end(JSON.stringify(fixtureEvidenceRequest(JSON.parse(input), env)) + '\n'); }
-      catch { socket.end('{"code":"ACT_EVIDENCE_UNAVAILABLE"}\n'); }
+      if (reading >= EVIDENCE_MAX_READS) return socket.end('{"code":"ACT_EVIDENCE_UNAVAILABLE"}\n');
+      reading += 1;
+      Promise.resolve().then(() => fixtureEvidenceRequest(JSON.parse(input), env, run))
+        .finally(() => { reading -= 1; })
+        .then(result => socket.end(JSON.stringify(result) + '\n'), () => socket.end('{"code":"ACT_EVIDENCE_UNAVAILABLE"}\n'));
     });
-  });
+  };
+}
+export function startEvidenceBroker(env = process.env) {
+  const server = net.createServer(evidenceConnection(env));
   server.listen(EVIDENCE_SOCKET, () => fs.chmodSync(EVIDENCE_SOCKET, 0o660));
   return server;
 }

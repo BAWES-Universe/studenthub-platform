@@ -364,6 +364,20 @@ test('SHU71_PAIR_RELEASE_DEFERS: a run reaching a terminal stage still defers ne
   } finally { w.cleanup(); }
 });
 
+test('SHU71_EVIDENCE_UNAVAILABLE: a failed evidence read refuses by its own name, not as a partial record', () => {
+  // Stage 5 run 3 stopped on ACT_PARTIAL_ARMING with the record intact: the
+  // evidence read had timed out and arrived as no cards at all.
+  const h = harness(); try {
+    assert.equal(h.status({ fixtureHeadResolver: undefined }).code, 'ACT_PARTIAL_ARMING', 'SHU71_NO_CREDENTIALS_STILL_PARTIAL');
+    // The broker read fails inside the test, whatever service the host runs.
+    h.env.SHU71_EVIDENCE_BROKER = 'true';
+    const refused = h.status({ fixtureHeadResolver: undefined, evidenceRun: () => { throw new Error('broker unreachable'); } });
+    assert.equal(refused.code, 'ACT_EVIDENCE_UNAVAILABLE', refused.reason);
+    assert.equal(refused.valid, false, 'SHU71_UNREAD_EVIDENCE_STILL_REFUSES');
+    assert.notEqual(refused.state, 'armed', 'SHU71_UNREAD_EVIDENCE_NEVER_ARMS');
+  } finally { h.cleanup(); }
+});
+
 test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review', async () => {
   const { f, h, tick, cleanup } = tickWorld();
   try {
