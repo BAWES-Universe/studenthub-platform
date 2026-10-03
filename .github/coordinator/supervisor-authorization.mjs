@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
 import { dispatchEnabledFor, resolveDispatchScope, parseReceiptsFromComments } from "./reconcile.mjs";
-import { singleRunActivationStatus, activationAllowsTarget } from "./single-run-activation.mjs";
+import { singleRunActivationStatus, activationAllowsTarget, activationRefusalCode } from "./single-run-activation.mjs";
 
 // SHU-71 run 5: a correct revision was held because this check said no at
 // publication, and nothing said which part said no. Every denial now names its
@@ -17,13 +17,6 @@ export const AUTH_EVIDENCE_RETRIES = 2;
 export const AUTH_EVIDENCE_WAIT_MS = 3000;
 
 const denied = code => ({ ok: false, code: `HOST_AUTH_${code}` });
-
-function activationCode(activation) {
-  if (/^ACT_[A-Z0-9_]{2,32}$/.test(activation?.code ?? "")) return activation.code;
-  if (["expired", "spent"].includes(activation?.reporting_exception)) return `ACTIVATION_${activation.reporting_exception.toUpperCase()}`;
-  if (/^activation is spent/.test(activation?.reason ?? "")) return "ACTIVATION_SPENT";
-  return "ACTIVATION_REFUSED";
-}
 
 function evaluate(order, io) {
   try {
@@ -43,7 +36,7 @@ function evaluate(order, io) {
       initialTargetSha: env.DISPATCH_TARGET_SHA, ...io.activation }) : null;
     if (activation?.code === "ACT_EVIDENCE_UNAVAILABLE") return denied("EVIDENCE_UNAVAILABLE");
     if (!dispatchEnabledFor(env, config, activation)) {
-      return denied(activation && activation.state !== "armed" ? activationCode(activation) : "DISPATCH_DISABLED");
+      return denied(activation && activation.state !== "armed" ? activationRefusalCode(activation) : "DISPATCH_DISABLED");
     }
     if (activation && !activationAllowsTarget(activation, order.issue_id)) return denied("TARGET_NOT_ALLOWED");
     const fixtureLane = resolveFixtureLane(config, order.issue_id);

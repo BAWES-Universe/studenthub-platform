@@ -398,7 +398,7 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
     { file:"reconcile.mjs", from:'const prepare = io.prepareWorkspace ?? (io.adapterModules?.[adapter] ? null : prepareAttemptWorkspace);', to:'const prepare = null;', test:"both real adapters require preparation", reason:/Missing expected rejection/ },
     { file:"single-run-activation.mjs", from:'let root = fs.realpathSync(dir);', to:'let root = fs.realpathSync(process.cwd());', test:"coordinator revision binds the executing root", reason:/AssertionError/ },
     { file:"adapters/codex-cli.mjs", from:'fs.chmodSync(schemaDir, 0o755);', to:'fs.chmodSync(schemaDir, 0o700);', test:"generated schema is worker-readable", reason:/AssertionError|schema directory is traversable/ },
-    { file:"reconcile.mjs", from:'currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)', to:'false', test:"activation expiring during preparation", reason:/AssertionError/ },
+    { file:"reconcile.mjs", from:'if (!final.ok) throw', to:'if (false) throw', test:"activation expiring during preparation", reason:/AssertionError/ },
   ];
   // This guard MUST be killed on the compatibility host where the original
   // directory transfer fails. Newer Git accepting inherited trust is not proof.

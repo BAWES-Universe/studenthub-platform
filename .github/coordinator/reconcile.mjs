@@ -31,7 +31,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
+import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
@@ -1338,6 +1338,14 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
     // pause map is not bypassed by being mid-episode.
     const continuation = episodeContinuations.get(issue.id) ?? null;
     const successor = continuation?.successor ?? null;
+    // SHU-71 run 6: the reviewer sandbox runs one review at a time on a host
+    // (reviewer-sandbox.sh holds a root lock and refuses a second at once), so a
+    // review that starts beside another fails REVIEW_EXECUTION_UNAVAILABLE and
+    // ends its lane. It waits for a later tick instead.
+    if (successor?.role === ROLE_REVIEW && active.some((r) => roleForReceipt(r) === ROLE_REVIEW)) {
+      skipped.push({ id: issue.id, reason: "a review is already running — the reviewer sandbox runs one review at a time" });
+      continue;
+    }
     const requestedWorker = successor?.requested_worker ?? issue.requested_worker;
     const adapter = adapterNameFor(requestedWorker);
     if (pauseMap[adapter] === true) {
@@ -3080,18 +3088,21 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // Fetching/cloning can outlast the approval. Recheck before crossing into
     // the worker; preparation does not extend an activation's lifetime.
     if (singleRunActivation.requested) {
-      const currentActivation = singleRunActivationStatus({ filePath: activationArg.path, env, issues, config,
-        receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io });
-      if (currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)) throw new Error("activation no longer allows this launch");
+      const final = finalLaunchActivation(() => singleRunActivationStatus({ filePath: activationArg.path, env, issues, config,
+        receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io }),
+        receipt.issue_id, io.finalCheckWait);
+      // SHU-71 run 6: this refusal used to read as a failed git command (COMMAND_FAILED).
+      if (!final.ok) throw Object.assign(new Error("activation no longer allows this launch"), { activationCode: final.code });
     }
   } catch (error) {
-    const diagnosis = workspaceFailureCode(error);
+    const diagnosis = error?.activationCode ? `FINAL_CHECK_${error.activationCode}` : workspaceFailureCode(error);
     const bundleDetail = diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? `; ${error.message}` : "";
+    const step = error?.activationCode ? "final activation check" : "attempt workspace preparation";
     const held = nextReceiptState(launchIntent.receipt, { type: "hold",
-      reason: `attempt workspace preparation or final activation check refused (${diagnosis})${bundleDetail}; no worker launched`,
-      ...(diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? { reason_code: diagnosis } : {}) }, { now: io.now });
+      reason: `${step} refused (${diagnosis})${bundleDetail}; no worker launched`,
+      ...(diagnosis === "BASE_BUNDLE_UNAVAILABLE" || error?.activationCode ? { reason_code: diagnosis } : {}) }, { now: io.now });
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
-    if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — workspace preparation or final activation check refused (${diagnosis})`);
+    if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — ${step} refused (${diagnosis})`);
     return 2;
   }
   if (!launch) {

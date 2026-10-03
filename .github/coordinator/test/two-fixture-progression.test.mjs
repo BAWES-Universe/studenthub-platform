@@ -8,7 +8,7 @@ import { randomUUID, sign } from 'node:crypto';
 import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
 import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
 import { reviewedActivationBytes } from '../two-fixture-activation.mjs';
-import { singleRunActivationStatus, STALE_HEAD_RETRIES, STALE_HEAD_WAIT_MS } from '../single-run-activation.mjs';
+import { singleRunActivationStatus, STALE_HEAD_RETRIES, STALE_HEAD_WAIT_MS, finalLaunchActivation, FINAL_CHECK_RETRIES, FINAL_CHECK_WAIT_MS } from '../single-run-activation.mjs';
 import { createReceipt, receiptCommentBody, parseReceiptsFromComments, validateReceipt } from '../reconcile.mjs';
 import { pushExactSha } from '../push-broker.mjs';
 import { readProgressionPush } from '../two-fixture-progression.mjs';
@@ -463,6 +463,44 @@ test('SHU71_PUBLISH_AUTH: the worker\'s host check names the clause that refuses
     const rereview = h.reserve(0, revised, 'review'); h.finish(rereview, 'PASS', revised);
     assert.equal(check().code, 'HOST_AUTH_TARGET_NOT_ALLOWED', 'SHU71_PUBLISH_AUTH_TARGET');
   } finally { h.cleanup(); }
+});
+
+test('SHU71_FINAL_CHECK: the check before a worker launches reads failed evidence again and names its refusal', async () => {
+  // Stage 5 run 6: SHU-140's re-review was held "COMMAND_FAILED; no worker
+  // launched". That name also covered this check refusing, and one failed read
+  // here ended the lane where the same read at tick start only skips the tick.
+  const h = harness(); try {
+    const answer = () => JSON.stringify({ heads: Object.fromEntries(h.record.fixtures.map(f => [f.branch, h.seed])), comments: [],
+      issues: h.record.fixtures.map(f => ({ id: f.issue_id, linearId: `uuid-${f.issue_id}` })) });
+    let failures = 1, reads = 0; const waits = [];
+    const read = () => { reads += 1; if (failures-- > 0) throw new Error('broker unreachable'); return answer(); };
+    h.env.SHU71_EVIDENCE_BROKER = 'true';
+    const check = () => h.status({ fixtureHeadResolver: undefined, evidenceRun: read, staleHeadWait: () => {} });
+    assert.deepEqual(finalLaunchActivation(check, 'SHU-140', ms => waits.push(ms)), { ok: true, code: null }, 'SHU71_FINAL_CHECK_READ_AGAIN');
+    assert.deepEqual(waits, [FINAL_CHECK_WAIT_MS], 'SHU71_FINAL_CHECK_ONE_WAIT');
+    failures = Infinity; reads = 0; waits.length = 0;
+    assert.deepEqual(finalLaunchActivation(check, 'SHU-140', ms => waits.push(ms)), { ok: false, code: 'ACT_EVIDENCE_UNAVAILABLE' }, 'SHU71_FINAL_CHECK_EVIDENCE_NAMED');
+    assert.equal(reads, 1 + FINAL_CHECK_RETRIES, 'SHU71_FINAL_CHECK_READS_BOUNDED');
+    assert.deepEqual(waits, Array(FINAL_CHECK_RETRIES).fill(FINAL_CHECK_WAIT_MS), 'SHU71_FINAL_CHECK_WAITS_BOUNDED');
+    assert.deepEqual(finalLaunchActivation(() => ({ state: 'armed', kind: 'two-fixture-v1', target_issue_ids: ['SHU-254'] }), 'SHU-140', () => assert.fail('no wait')),
+      { ok: false, code: 'ACTIVATION_TARGET_NOT_ALLOWED' }, 'SHU71_FINAL_CHECK_TARGET');
+  } finally { h.cleanup(); }
+
+  // End to end: a refusal at this check reaches the receipt by its own name.
+  const w = tickWorld();
+  try {
+    const original = w.h.runTick;
+    w.h.runTick = options => original({ ...options, io: { ...options.io, finalCheckWait: () => {}, prepareWorkspace: async () => {
+      fs.writeFileSync(w.h.activationPath, JSON.stringify({ ...w.f.record, expires_at: 'never' }));
+      return { cwd: w.f.wt };
+    } } });
+    // The refusing tick exits 2, as any pre-launch HOLD does.
+    await assert.rejects(w.tick(), /HOLD before worker launch — final activation check refused \(FINAL_CHECK_ACT_MALFORMED\)/);
+    const held = w.h.receipts().find(r => r.issue_id === 'SHU-140' && r.stage === 'HOLD');
+    assert.ok(held, 'SHU71_FINAL_CHECK_HELD');
+    assert.ok(held.notes.includes('held: final activation check refused (FINAL_CHECK_ACT_MALFORMED); no worker launched'), `SHU71_FINAL_CHECK_NAMED_ON_RECEIPT: ${JSON.stringify(held.notes)}`);
+    assert.equal(held.notes.some(note => note.includes('COMMAND_FAILED')), false, 'SHU71_FINAL_CHECK_NOT_A_COMMAND');
+  } finally { w.cleanup(); }
 });
 
 test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review', async () => {
