@@ -71,8 +71,10 @@ Receipt rows hold references and closed vocabulary only. The before half is a
 presence flag. The after half holds the contract version, person reference,
 change-set digest, `["language"]`, the commit instant and a hashed token
 reference. The database's summary check rejects any other key or shape.
+The receipt's author must be its owner and may not be NULL.
 `readReceipt(principalId, receiptRef)` returns only the caller's own receipt.
-Another person's reference reads exactly like a missing one.
+Another person's reference reads exactly like a missing one. A stored row that
+is not a well-formed receipt is never served: the read fails closed.
 
 The gateway mounts the path only when `SAFE_WRITE_SIGNING_KEY` (base64, at
 least 32 bytes) is set. The deployment does not pass that variable, so no

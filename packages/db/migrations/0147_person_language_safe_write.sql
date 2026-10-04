@@ -31,8 +31,11 @@ ALTER TABLE authorization_mutation_audit
     (operation IN ('grants.grant', 'grants.revoke') AND cardinality(target_org_refs) > 0)
   ),
   -- A receipt is self-authored: the person who confirmed is the person changed.
+  -- The actor is nullable for older operations, so it is required explicitly
+  -- here: a NULL comparison would satisfy a CHECK.
   ADD CONSTRAINT auth_audit_safe_write_self CHECK (
-    operation <> 'profile.safe_write' OR actor_principal_ref = target_principal_ref
+    operation <> 'profile.safe_write'
+    OR (actor_principal_ref IS NOT NULL AND actor_principal_ref = target_principal_ref)
   );
 
 -- Positional receipt shape. Every key is closed and every value has the shape

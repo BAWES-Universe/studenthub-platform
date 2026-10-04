@@ -49,6 +49,11 @@ export function safeWritePrincipalRef(principalId: string): string {
   return principalAuditRef(principalId);
 }
 
+function isInstant(value: string): boolean {
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
+}
+
 function tokenRef(tokenId: string): string {
   return domainRef("safe-write-token-ref", tokenId);
 }
@@ -60,7 +65,7 @@ export interface PostgresSafeWriteStoreOptions {
 
 interface ReceiptRow {
   readonly request_ref: string;
-  readonly actor_principal_ref: string;
+  readonly actor_principal_ref: string | null;
   readonly after_summary: {
     readonly contractVersion: string;
     readonly personRef: string;
@@ -127,15 +132,27 @@ export class PostgresSafeWriteStore {
     );
     const row = rows[0];
     if (!row) return null;
-    return Object.freeze({
-      contractVersion: row.after_summary.contractVersion,
+    const receipt = {
+      contractVersion: row.after_summary?.contractVersion,
       receiptRef: row.request_ref,
-      personRef: row.after_summary.personRef,
+      personRef: row.after_summary?.personRef,
       principalRef: row.actor_principal_ref,
-      changeSetDigest: row.after_summary.changeSetDigest,
-      fields: Object.freeze([...row.after_summary.fields]),
-      committedAt: row.after_summary.committedAt,
-    });
+      changeSetDigest: row.after_summary?.changeSetDigest,
+      fields: row.after_summary?.fields,
+      committedAt: row.after_summary?.committedAt,
+    };
+    // Fail closed: a row the database should have refused is never served as a
+    // receipt. Every position must hold exactly the kind of value it is for.
+    if (receipt.receiptRef !== receiptRef
+      || receipt.principalRef !== safeWritePrincipalRef(principalId)
+      || receipt.personRef !== personRecordRef(principalId)
+      || typeof receipt.contractVersion !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(receipt.contractVersion)
+      || typeof receipt.changeSetDigest !== "string" || !REFERENCE.test(receipt.changeSetDigest)
+      || !Array.isArray(receipt.fields) || receipt.fields.length !== 1 || receipt.fields[0] !== LANGUAGE_FIELD
+      || typeof receipt.committedAt !== "string" || !isInstant(receipt.committedAt)) {
+      throw new Error("malformed safe-write receipt");
+    }
+    return Object.freeze({ ...receipt, fields: Object.freeze([LANGUAGE_FIELD]) }) as Receipt;
   }
 
   /**

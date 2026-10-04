@@ -380,3 +380,59 @@ test("SHU-84/AC-09 WHITELIST receipts, errors and audit rows carry only approved
       fields: ["language"], committedAt: "2026-10-04T00:00:00.000Z", tokenRef: "e".repeat(64), value: "en",
     })]), /auth_audit_after_summary_shape/);
 });
+
+test("SHU-84/AC-12 AUTHOR the database requires a receipt's author to be its owner", async () => {
+  const insert = (client: pg.PoolClient, actor: string | null, tokenRef: string) => client.query(
+    `INSERT INTO authorization_mutation_audit (request_ref, actor_principal_ref, operation, target_principal_ref,
+       before_summary, after_summary) VALUES ($1, $2, 'profile.safe_write', $3, '{"valuePresent":false}', $4)`,
+    [randomBytes(32).toString("hex"), actor, "b".repeat(64), JSON.stringify({
+      contractVersion: "3.0.0", personRef: "c".repeat(64), changeSetDigest: "d".repeat(64),
+      fields: ["language"], committedAt: "2026-10-04T00:00:00.000Z", tokenRef,
+    })],
+  );
+  const client = await admin.connect();
+  try {
+    // Control: the same row with its owner as author is accepted (then rolled back,
+    // since the ledger is append-only).
+    await client.query("BEGIN");
+    await insert(client, "b".repeat(64), randomBytes(32).toString("hex"));
+    await client.query("ROLLBACK");
+    for (const actor of [null, "f".repeat(64)]) {
+      await client.query("BEGIN");
+      await assert.rejects(insert(client, actor, randomBytes(32).toString("hex")), /auth_audit_safe_write_self/,
+        `actor ${String(actor)} is refused`);
+      await client.query("ROLLBACK");
+    }
+  } finally {
+    client.release();
+  }
+});
+
+test("SHU-84/AC-12 AUTHOR a receipt row that is not well formed is never served", async () => {
+  const id = `shu84-${randomUUID()}`;
+  const good = {
+    request_ref: "a".repeat(64), actor_principal_ref: safeWritePrincipalRef(id),
+    after_summary: {
+      contractVersion: SAFE_WRITE_CONTRACT_VERSION, personRef: personRecordRef(id), changeSetDigest: "d".repeat(64),
+      fields: ["language"], committedAt: "2026-10-04T00:00:00.000Z",
+    },
+  };
+  const serving = (row: unknown) => new PostgresSafeWriteStore({
+    pool: { query: async () => ({ rows: [row] }) } as unknown as pg.Pool,
+  });
+  assert.deepEqual(await serving(good).readReceipt(id, "a".repeat(64)), {
+    contractVersion: SAFE_WRITE_CONTRACT_VERSION, receiptRef: "a".repeat(64), personRef: personRecordRef(id),
+    principalRef: safeWritePrincipalRef(id), changeSetDigest: "d".repeat(64), fields: ["language"],
+    committedAt: "2026-10-04T00:00:00.000Z",
+  }, "control: a well-formed row is served");
+  for (const bad of [
+    { ...good, actor_principal_ref: null },
+    { ...good, actor_principal_ref: "f".repeat(64) },
+    { ...good, after_summary: { ...good.after_summary, personRef: "c".repeat(64) } },
+    { ...good, after_summary: { ...good.after_summary, fields: ["language", "email"] } },
+    { ...good, after_summary: { ...good.after_summary, committedAt: "yesterday" } },
+    { ...good, after_summary: { ...good.after_summary, changeSetDigest: null } },
+  ]) {
+    await assert.rejects(serving(bad).readReceipt(id, "a".repeat(64)), /malformed safe-write receipt/);
+  }
+});

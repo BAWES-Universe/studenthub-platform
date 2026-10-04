@@ -46,6 +46,10 @@ const mutations = [
     "AND request_ref = $2 AND target_principal_ref = $3`", "AND request_ref = $2 AND $3::text IS NOT NULL`",
   ],
   [
+    store, "serve a receipt without checking its author", "SHU-84/AC-12 AUTHOR",
+    "|| receipt.principalRef !== safeWritePrincipalRef(principalId)\n", "",
+  ],
+  [
     gateway, "accept a write from any origin", "SHU-84/AC-11 BOUNDARY",
     "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\") {", "if (false) {",
   ],
