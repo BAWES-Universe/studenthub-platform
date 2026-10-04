@@ -61,5 +61,30 @@
       ],
       "seeded_defect_path": "tools/fixture-2-conformance/scan-unawaited.expectations.mjs"
     }
+  ],
+  "card_lanes": [
+    {
+      "id": "SHU-197",
+      "authorization_ref": "SHU-197",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first real StudentHub card through the loop: typed preflight config and the integration register; brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "deploy/coolify/preflight.mjs",
+        "deploy/coolify/integration-register.json",
+        "deploy/coolify/integration-register.mjs",
+        "docs/integrations.md",
+        "deploy/coolify/test/config-schema.test.mjs",
+        "deploy/coolify/test/integration-register.test.mjs"
+      ],
+      "revision_paths": [
+        "deploy/coolify/preflight.mjs",
+        "deploy/coolify/integration-register.json",
+        "deploy/coolify/integration-register.mjs",
+        "docs/integrations.md",
+        "deploy/coolify/test/config-schema.test.mjs",
+        "deploy/coolify/test/integration-register.test.mjs"
+      ]
+    }
   ]
 }
