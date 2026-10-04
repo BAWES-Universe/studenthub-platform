@@ -1097,6 +1097,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-stranded-reservation.test.mjs",
+    "capabilities": [],
+    "justification": "Pure in-process assertions: the real coordinator tick is driven through the episode harness with a fake Linear fetch and frozen clock, and the production tick entry with a stubbed tick; no external command, privileged operation or host facility is required",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/test/shu71-unchanged-build.test.mjs",
     "capabilities": [],
     "justification": "Node filesystem only; both writer adapters run with doubled CLI output and a doubled push broker, and the episode runs through the in-memory harness, no external tool operation required",
