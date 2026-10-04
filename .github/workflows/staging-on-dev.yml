@@ -34,8 +34,16 @@ env:
 jobs:
   decide:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    # Label decisions run one at a time, so two PRs taking the label can't remove each other's.
+    # Only on-dev events: the label added or removed, or a push to or close of a PR that holds it.
+    # Fork PRs never trigger it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.label.name == 'on-dev' ||
+        ((github.event.action == 'synchronize' || github.event.action == 'closed') &&
+         contains(github.event.pull_request.labels.*.name, 'on-dev'))))
+    # Label decisions run one at a time. GitHub keeps only the newest queued decision,
+    # which is safe because each decision reconciles the whole live label state.
     concurrency:
       group: staging-label
       cancel-in-progress: false
@@ -56,11 +64,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          ACTION: ${{ github.event.action }}
-          EVENT_LABEL: ${{ github.event.label.name }}
-          HAD_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'on-dev') }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           INPUT_BRANCH: ${{ inputs.branch }}
         run: |
           # Until this workflow's scripts reach main, on-dev does nothing (no branch is selected).

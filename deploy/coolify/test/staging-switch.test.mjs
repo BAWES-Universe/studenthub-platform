@@ -67,6 +67,11 @@ test('label decisions are serialized and ownership code comes from main', () => 
   assert.match(jobs.decide, /if \[ ! -f deploy\/coolify\/staging-ownership\.mjs \]; then[\s\S]*?printf 'branch=\\npr=\\nmode=\\n'[\s\S]*?exit 0\n\s+fi/);
   assert.match(jobs.switch, /SHA: \$\{\{ needs\.build\.outputs\.sha \}\}\n\s+run: node deploy\/coolify\/staging-ownership\.mjs guard/);
 });
+test('only on-dev events start a label decision, so unrelated PR activity never queues one', () => {
+  assert.match(jobs.decide, /github\.event\.label\.name == 'on-dev' \|\|\n\s+\(\(github\.event\.action == 'synchronize' \|\| github\.event\.action == 'closed'\) &&\n\s+contains\(github\.event\.pull_request\.labels\.\*\.name, 'on-dev'\)\)/);
+  // The decision reads only live state, never the event's PR, label or branch.
+  assert.doesNotMatch(jobs.decide, /HEAD_REF|EVENT_LABEL|HAD_LABEL|\bPR:/);
+});
 test('staging ownership is rechecked right before the switch', () => {
   const check = jobs.switch.indexOf("Check staging is still this run's to change"), run = jobs.switch.indexOf('node deploy/coolify/staging-switch.mjs');
   assert.ok(check > 0 && run > check);
