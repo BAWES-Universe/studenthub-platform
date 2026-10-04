@@ -58,10 +58,16 @@ function decodeCursor(raw: unknown, type: string): CatalogueSortKey | undefined 
     if (Object.keys(parsed).sort().join(",") !== "id,sortKey,type,v" || parsed.v !== 1 || parsed.type !== type
       || typeof parsed.sortKey !== "string" || typeof parsed.id !== "string"
       || parsed.sortKey.length > 200 || !UUID_PATTERN.test(parsed.id)) throw new Error();
+    // Submission cursors sort by submittedAt, which the store compares as a timestamp.
+    if (type.startsWith("submission:") && !isIsoInstant(parsed.sortKey)) throw new Error();
     return { sortKey: parsed.sortKey, id: parsed.id };
   } catch {
     throw new CatalogueError("invalid_cursor", 400);
   }
+}
+
+function isIsoInstant(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && new Date(value).toISOString() === value;
 }
 
 function requireWriter(actor: CatalogueActor): void {

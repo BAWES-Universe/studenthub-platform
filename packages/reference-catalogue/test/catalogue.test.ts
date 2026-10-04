@@ -78,3 +78,18 @@ test("closed input rejects extra fields, unsafe text, bad codes, bad ids and dup
   await assert.rejects(() => catalogue.remove(admin, "tag", "not-an-id"), (error: unknown) =>
     error instanceof CatalogueError && error.code === "invalid_catalogue_id");
 });
+
+test("submission cursors must carry a real timestamp, so a forged one is a 400 and never reaches the store", async () => {
+  const catalogue = service();
+  await catalogue.submit(candidate, "university", { name: "Kuwait University" });
+  await catalogue.submit(candidate, "university", { name: "Gulf University" });
+  const first = await catalogue.submissions(staff, { status: "pending", pageSize: 1 });
+  assert.ok(first.nextCursor);
+  assert.equal((await catalogue.submissions(staff, { status: "pending", pageSize: 1, cursor: first.nextCursor })).items.length, 1);
+  const decoded = JSON.parse(Buffer.from(first.nextCursor, "base64url").toString("utf8")) as Record<string, unknown>;
+  for (const sortKey of ["not-a-date", "2026-02-30T00:00:00.000Z", "2026-09-14 12:00:00"]) {
+    const forged = Buffer.from(JSON.stringify({ ...decoded, sortKey }), "utf8").toString("base64url");
+    await assert.rejects(() => catalogue.submissions(staff, { status: "pending", cursor: forged }), (error: unknown) =>
+      error instanceof CatalogueError && error.code === "invalid_cursor" && error.status === 400);
+  }
+});
