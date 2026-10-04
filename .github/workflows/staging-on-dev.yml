@@ -1,0 +1,228 @@
+name: Staging on-dev
+
+# Puts a pull request's code on staging (https://staging.studenthub.co) for hands-on testing.
+#
+# - Add the `on-dev` label to a PR: its branch is built, smoke-tested and staging switches to it.
+#   Staging has one slot: the PR labelled most recently holds it, and other PRs lose the label.
+# - Push to a labelled PR: it is rebuilt and staging follows.
+# - Remove the label, merge or close the PR: staging returns to the latest main.
+# - While no PR holds the label, staging follows main.
+# - Run it by hand (Actions > Staging on-dev > Run workflow) to bring staging back in line.
+#
+# Every run reconciles live state rather than acting on its own event (see
+# deploy/coolify/staging-ownership.mjs), so GitHub dropping a queued run loses nothing.
+# Staging is a test site. Production has no path here. Fork PRs are never built.
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, synchronize, closed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEFAULT_BRANCH: main
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: bawes-universe
+  IMAGE_NAME: studenthub-gateway
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    # Only on-dev events: the label added or removed, a push to or close of a PR that holds it,
+    # a push to main, or a manual run. Events from fork PRs never start a run.
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event_name == 'push' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.label.name == 'on-dev' ||
+        ((github.event.action == 'synchronize' || github.event.action == 'closed') &&
+         contains(github.event.pull_request.labels.*.name, 'on-dev'))))
+    # One label decision at a time. GitHub keeps only the newest queued one, which is safe
+    # because each decision reconciles the whole live label state.
+    concurrency:
+      group: staging-label
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      branch: ${{ steps.decide.outputs.branch }}
+      pr: ${{ steps.decide.outputs.pr }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEFAULT_BRANCH }}
+          persist-credentials: false
+
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Until this workflow's scripts reach main, on-dev does nothing (no branch is selected).
+          if [ ! -f deploy/coolify/staging-ownership.mjs ]; then
+            echo "on-dev is not on $DEFAULT_BRANCH yet; staging was not changed"
+            printf 'branch=\npr=\n' >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          node deploy/coolify/staging-ownership.mjs decide
+
+  build:
+    # Builds and smoke-tests the wanted branch. It runs branch code, so it gets no Coolify secrets.
+    needs: decide
+    if: needs.decide.outputs.branch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.decide.outputs.branch }}
+          persist-credentials: false
+
+      - id: target
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            SOURCE_REVISION=${{ steps.target.outputs.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}:dev-${{ steps.target.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The smoke script below is branch code, so it must not hold the registry write token.
+      - name: Pull the pushed digest and log out of the registry
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker pull "${REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}@${DIGEST}"
+          docker logout ghcr.io
+          rm -f "${HOME}/.docker/config.json"
+
+      - name: Smoke-test the exact pushed digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          DATABASE_URL: postgres://postgres@localhost:55432/studenthub_authz
+        run: bash deploy/coolify/image-smoke.sh "${REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}@${DIGEST}"
+
+  switch:
+    # Holds the Coolify secrets, so it runs only code from main, never branch code.
+    # It switches staging to whatever is wanted now, which may be newer than this run's build.
+    needs: [decide, build]
+    if: always() && needs.decide.result == 'success' && needs.decide.outputs.branch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The only job that moves staging's `latest` tag. One switch at a time; never cancel one half-way.
+    concurrency:
+      group: staging-switch
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEFAULT_BRANCH }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Work out what staging should run now
+        id: want
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node deploy/coolify/staging-ownership.mjs resolve
+
+      - name: Smoke-test the wanted image with main's smoke test
+        if: steps.want.outputs.digest != ''
+        env:
+          DIGEST: ${{ steps.want.outputs.digest }}
+          DATABASE_URL: postgres://postgres@localhost:55432/studenthub_authz
+        run: bash deploy/coolify/image-smoke.sh "${REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Check it is still wanted
+        id: confirm
+        if: steps.want.outputs.digest != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.want.outputs.sha }}
+        run: node deploy/coolify/staging-ownership.mjs confirm
+
+      - name: Switch staging and verify it serves this revision
+        id: switch
+        if: steps.confirm.outputs.current == 'true'
+        env:
+          DIGEST: ${{ steps.want.outputs.digest }}
+          REVISION: ${{ steps.want.outputs.sha }}
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
+        run: node deploy/coolify/staging-switch.mjs
+
+      - name: Tell the pull request
+        if: always() && steps.want.outputs.pr != '' && (steps.switch.outcome == 'success' || failure())
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.want.outputs.pr }}
+          SHA: ${{ steps.want.outputs.sha }}
+          OUTCOME: ${{ steps.switch.outcome }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = success ]; then
+            body="Staging now runs this PR at ${SHA::7}: https://staging.studenthub.co"
+          else
+            body="Putting this PR on staging failed; staging may still run the previous build. Run: $RUN"
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$body"

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { IMAGE } from '../select-artifact.mjs';
 const source = new URL('../rollback-artifact.mjs', import.meta.url);
 const { discoverRollback, previous, readRunningArtifact, rollbackIO } = await import(process.env.ROLLBACK_MUTANT || source.href);
@@ -83,10 +86,19 @@ if (!process.env.ROLLBACK_MUTANT) {
     ['ROLLBACK_NO_LATEST_SUBSTITUTION', 'published running revision', 'const published = await io.inspect(`${IMAGE}:${tag}`);', 'await io.inspect(`${IMAGE}:latest`); const published = await io.inspect(`${IMAGE}:${tag}`);'],
     ['ROLLBACK_UNTAGGED_TYPED', 'today running', "outcome: 'ROLLBACK_RUNNING_REVISION_UNTAGGED'", "outcome: 'ROLLBACK_READY'"],
   ];
+  // The mutant is written under TMPDIR, never beside the module it mutates. Sibling
+  // test files run in parallel workers of the same `node --test` invocation and copy
+  // deploy/coolify/ wholesale (env-manifest-mutations.test.mjs), and a transient file
+  // that appears and vanishes inside a directory being copied fails that copy with
+  // ENOENT. Relative specifiers are re-anchored on the real module's directory, so the
+  // mutant still loads exactly the modules it would have loaded in place.
+  const moduleDirectory = new URL('./', source).href;
   for (const [name, pattern, from, to] of mutations) test(`mutation killed by AssertionError ${name}`, (t) => {
-    const path = new URL(`../.rollback-mutant-${name}.mjs`, import.meta.url);
+    const directory = mkdtempSync(join(tmpdir(), `rollback-mutant-${name}-`));
+    const path = pathToFileURL(join(directory, 'rollback-artifact.mjs'));
     const original = readFileSync(source, 'utf8'); assert.ok(original.includes(from));
-    const mutant = original.replace(from, to);
+    const mutant = original.replace(from, to).replaceAll("from './", `from '${moduleDirectory}`);
+    assert.doesNotMatch(mutant, /from '\.\//, `${name}: the mutant must not keep a specifier relative to a directory it no longer lives in`);
     writeFileSync(path, mutant);
     try {
       const child = spawnSync(process.execPath, ['--test', `--test-name-pattern=${pattern}`, new URL(import.meta.url).pathname], { encoding: 'utf8', env: { PATH: process.env.PATH, ROLLBACK_MUTANT: path.href }, timeout: 10_000 });
@@ -95,6 +107,6 @@ if (!process.env.ROLLBACK_MUTANT) {
       assert.match(output, /AssertionError/, output);
       assert.ok(output.includes(name), output);
       t.diagnostic(`AssertionError: ${name}`);
-    } finally { unlinkSync(path); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 }

@@ -1,0 +1,26 @@
+{
+  ".github/workflows/ci.yml": {
+    "unchanged": true,
+    "sha256": "138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46"
+  },
+  ".github/coordinator/service/shu251-operational-bindings.sh": {
+    "unchanged": true,
+    "sha256": "a32082aefc94836cf2235804d204837d354f2c36005ef1702437f3ac7bc8009d"
+  },
+  ".github/coordinator/test/push-broker-gitconfig.test.mjs": {
+    "unchanged": true,
+    "sha256": "fafb65f9797489f8410a5ed4914b15449c87e6d95cb35ce0e7bf7194faf97f56"
+  },
+  ".github/coordinator/test/workspace-result.test.mjs": {
+    "unchanged": true,
+    "sha256": "2c5ec51ed2d9a5f7583b31f12e876bc8ed3b80f2cda9661287e75b99ac2f033b"
+  },
+  ".github/coordinator/test/codex-contract.test.mjs": {
+    "unchanged": true,
+    "sha256": "a0ac21be65b90ef76c9e9dcc61f90a0052255d2fc667f3d896d4315688331a39"
+  },
+  "PERMITTED_SKIPS": {
+    "unchanged": true,
+    "sha256": "9d6eebfd832d8e76650aefd725c11059af1b0ab5a05c1d2adfee3269c456607f"
+  }
+}

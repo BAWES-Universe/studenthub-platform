@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -156,7 +157,7 @@ test("SHU-224: an unscoped active receipt remains lifecycle-reconcilable during 
       const { query } = JSON.parse(options.body);
       if (query.includes("CoordinatorIssues")) {
         return { ok: true, status: 200, json: async () => ({ data: { issues: {
-          nodes: [issueNode("SHU-90"), issueNode("SHU-140")],
+          nodes: withBatchedComments([issueNode("SHU-90"), issueNode("SHU-140")], []),
           pageInfo: { hasNextPage: false, endCursor: null },
         } } }) };
       }
@@ -211,10 +212,14 @@ test("SHU-224: invalid trusted scope prevents dispatch before any mutation", asy
   }
 });
 
-test("SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled", () => {
+// The committed scope is the reviewed two-fixture pair for SHU-71 stage 5:
+// SHU-140 and SHU-254, one slot each. Dispatch stays disabled, as it always has;
+// only a signed two-fixture activation arms it.
+test("SHU-224: committed scope is pinned to the SHU-197 card while dispatch stays disabled", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
-  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-140", "SHU-254"] });
+  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-197"] });
+  assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
 test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed", () => {

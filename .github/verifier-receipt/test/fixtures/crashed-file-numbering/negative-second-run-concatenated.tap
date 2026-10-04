@@ -1,0 +1,90 @@
+TAP version 13
+# Subtest: the first point this run reports
+ok 1 - the first point this run reports
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/a.test.mjs:5:1'
+  ...
+# Subtest: the second point this run reports
+ok 2 - the second point this run reports
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/a.test.mjs:6:1'
+  ...
+# Error: ENOENT: no such file or directory, mkdir '/src/.scratch'
+# Node.js v22.22.3
+# Subtest: /src/b.test.mjs
+not ok 2 - /src/b.test.mjs
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/b.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: the point after the file that died
+ok 4 - the point after the file that died
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/c.test.mjs:5:1'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 3
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.8
+TAP version 13
+# Subtest: the first point this run reports
+ok 1 - the first point this run reports
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/a.test.mjs:5:1'
+  ...
+# Subtest: the second point this run reports
+ok 2 - the second point this run reports
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/a.test.mjs:6:1'
+  ...
+# Error: ENOENT: no such file or directory, mkdir '/src/.scratch'
+# Node.js v22.22.3
+# Subtest: /src/b.test.mjs
+not ok 2 - /src/b.test.mjs
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/b.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: the point after the file that died
+ok 4 - the point after the file that died
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/c.test.mjs:5:1'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 3
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.8

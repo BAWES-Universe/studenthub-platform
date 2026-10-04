@@ -56,8 +56,8 @@ function setup() {
         for (const name of fs.readdirSync(root)) {
           const target = path.join(root, name);
           if (!fs.lstatSync(target).isSymbolicLink() && fs.statSync(target).uid === 65534) {
-            execFileSync(switchCommand[0], [...switchCommand.slice(1), "chmod", "-R", "u+w", target]);
-            execFileSync(switchCommand[0], [...switchCommand.slice(1), "rm", "-rf", "--", target]);
+            execFileSync(switchCommand[0], [...switchCommand.slice(1), nodeBin, "-e",
+              "const fs=require('node:fs'),path=require('node:path');function writable(p){const s=fs.lstatSync(p);if(s.isSymbolicLink())return;fs.chmodSync(p,s.mode|0o200);if(s.isDirectory())for(const n of fs.readdirSync(p))writable(path.join(p,n));}writable(process.argv[1]);fs.rmSync(process.argv[1],{recursive:true,force:true});", target]);
           }
         }
       }
@@ -232,7 +232,8 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
             const p=path.join(dir,name); if(fs.lstatSync(p).isDirectory())protect(p); else fs.chmodSync(p,0o444);
           } fs.chmodSync(dir,0o555); };
           if (process.getuid() === 0) protect(metadata);
-          else execFileSync(switchCommand[0],[...switchCommand.slice(1),"chmod","-R","a-w",metadata]);
+          else execFileSync(switchCommand[0],[...switchCommand.slice(1),nodeBin,"-e",
+            "const fs=require('node:fs'),path=require('node:path');function protect(p){const s=fs.lstatSync(p);if(s.isSymbolicLink())return;if(s.isDirectory())for(const n of fs.readdirSync(p))protect(path.join(p,n));fs.chmodSync(p,s.mode&~0o222);}protect(process.argv[1]);",metadata]);
         }
         snapshots.push({ ...options.receipt, cwd: workspace.cwd }); return workspace;
       },
@@ -363,7 +364,7 @@ test("SHU-227: generated schema is worker-readable while session authority remai
     await codex.launchBuilder({ ...r, cwd: f.seed, env: f.env, execFileImpl, io: { codexStateDir:f.state, pushBrokerEnabled:false } });
     assert.ok(schemaPath, "real checkout check reached schema/CLI boundary");
     assert.equal(path.dirname(path.dirname(schemaPath)),"/tmp","schema must not inherit a private TMPDIR");
-    assert.deepEqual(observed,[0o755,0o644,0o700,codex.CALLBACK_SCHEMA],"schema is readable by worker; session state is private");
+    assert.deepEqual(observed,[0o755,0o644,0o700,JSON.parse(JSON.stringify(codex.callbackSchemaFor(r.scope_phase)))],"schema is readable by worker; session state is private");
     assert.equal(fs.existsSync(schemaPath), false, "public schema cleaned after invocation");
   } finally { if(previousTmp===undefined)delete process.env.TMPDIR;else process.env.TMPDIR=previousTmp;f.cleanup(); }
 });
@@ -397,7 +398,7 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
     { file:"reconcile.mjs", from:'const prepare = io.prepareWorkspace ?? (io.adapterModules?.[adapter] ? null : prepareAttemptWorkspace);', to:'const prepare = null;', test:"both real adapters require preparation", reason:/Missing expected rejection/ },
     { file:"single-run-activation.mjs", from:'let root = fs.realpathSync(dir);', to:'let root = fs.realpathSync(process.cwd());', test:"coordinator revision binds the executing root", reason:/AssertionError/ },
     { file:"adapters/codex-cli.mjs", from:'fs.chmodSync(schemaDir, 0o755);', to:'fs.chmodSync(schemaDir, 0o700);', test:"generated schema is worker-readable", reason:/AssertionError|schema directory is traversable/ },
-    { file:"reconcile.mjs", from:'currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)', to:'false', test:"activation expiring during preparation", reason:/AssertionError/ },
+    { file:"reconcile.mjs", from:'if (!final.ok) throw', to:'if (false) throw', test:"activation expiring during preparation", reason:/AssertionError/ },
   ];
   // This guard MUST be killed on the compatibility host where the original
   // directory transfer fails. Newer Git accepting inherited trust is not proof.
@@ -419,4 +420,28 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
       assert.equal(child.signal,null,"a crash or timeout is not a mutation kill");
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   }
+});
+
+test("SHU-239: a reviewer checkout under the service umask stays readable below its 0750 gate", () => {
+  const f = setup(); try {
+    fs.mkdirSync(path.join(f.seed, "tools", "fixture", "test"), { recursive: true });
+    fs.writeFileSync(path.join(f.seed, "tools", "fixture", "test", "scan.test.mjs"), "export {};\n");
+    fs.writeFileSync(path.join(f.seed, "tools", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    fs.symlinkSync("fixture", path.join(f.seed, "tools", "alias"));
+    git(f.seed, "add", "."); git(f.seed, "commit", "-m", "nested fixture");
+    const sha = git(f.seed, "rev-parse", "HEAD");
+    git(f.seed, "push", f.remote, "HEAD:refs/heads/coordinator/SHU-140");
+    const previous = process.umask(0o077);
+    let cwd;
+    try { ({ cwd } = f.prepare(f.receipt({ target_sha: sha }))); } finally { process.umask(previous); }
+    const mode = (...p) => fs.lstatSync(path.join(cwd, ...p)).mode & 0o777;
+    assert.equal(mode(), 0o750, "SHU-239: the attempt root remains the only gate");
+    for (const dir of [["tools"], ["tools", "fixture"], ["tools", "fixture", "test"], [".git"], [".git", "objects"]]) {
+      assert.equal(mode(...dir), 0o755, `SHU-239: ${dir.join("/")} must be traversable by the reviewer`);
+    }
+    assert.equal(mode("tools", "fixture", "test", "scan.test.mjs"), 0o644, "SHU-239: builder tests must be readable by the reviewer");
+    assert.equal(mode("tools", "run.sh"), 0o755, "SHU-239: executable bits survive normalization");
+    assert.equal(mode("round"), 0o644);
+    assert.ok(fs.lstatSync(path.join(cwd, "tools", "alias")).isSymbolicLink(), "symlinks are left untouched");
+  } finally { f.cleanup(); }
 });

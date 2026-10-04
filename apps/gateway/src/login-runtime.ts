@@ -17,6 +17,7 @@ import {
 } from "@studenthub/profile";
 
 import { createLoginApplication } from "./login-application.js";
+import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
@@ -224,7 +225,11 @@ export function createRuntimeLoginFromEnv(
   return {
     application: {
       ...application,
-      navigation: createContextNavigation(loginStore.sessions, authzStore),
+      // Organization snapshots stay unconfigured until an approved import exists:
+      // the card shows the registry name and visibly unavailable fields.
+      navigation: createContextNavigation(loginStore.sessions, authzStore, new OrganizationRepository({
+        store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(),
+      })),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,

@@ -53,7 +53,7 @@ function fixture() {
     workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha: scopedBase, ...over });
   return { dir, remote, seed, sha, hiddenBlob, scopedBase, root, state, env, receipt,
     prepare(r = receipt()) { return prepareAttemptWorkspace({ receipt: r, env, allowedHost: "file" }); },
-    cleanup() { try { execFileSync("chmod", ["-R", "u+w", dir]); } catch {} fs.rmSync(dir, { recursive: true, force: true }); } };
+    cleanup() { try { const writable = p => { const stat = fs.lstatSync(p); if (stat.isSymbolicLink()) return; fs.chmodSync(p, stat.mode | 0o200); if (stat.isDirectory()) for (const n of fs.readdirSync(p)) writable(path.join(p, n)); }; writable(dir); } catch {} fs.rmSync(dir, { recursive: true, force: true }); } };
 }
 
 function scopedWorkspace(f, attemptId = randomUUID()) {
@@ -101,7 +101,11 @@ test("SHU-241 A2: R1 parentless scoped base contains neither hidden objects nor 
     assert.notEqual(spawnSync("git", ["-C", cwd, "cat-file", "-e", `${f.sha}^{commit}`]).status, 0, "full target commit must not reach the worker object store");
     const names = git(cwd, "ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean);
     assert.deepEqual(names, [...SHU140_INITIAL_BUILD_PATHS].sort(), "no hidden path name is present in the scoped tree");
-    const grep = spawnSync("grep", ["-r", "-l", "SHU241_HIDDEN_SENTINEL", path.join(cwd, ".git")], { encoding: "utf8" });
+    const matches = [];
+    const scan = p => { const stat = fs.lstatSync(p); if (stat.isDirectory()) for (const n of fs.readdirSync(p)) scan(path.join(p, n));
+      else if (stat.isFile() && fs.readFileSync(p).includes(Buffer.from("SHU241_HIDDEN_SENTINEL"))) matches.push(p); };
+    scan(path.join(cwd, ".git"));
+    const grep = { status: matches.length ? 0 : 1, stdout: matches.join("\n") };
     assert.equal(grep.status, 1, `sentinel bytes reached worker metadata: ${grep.stdout}`);
     assert.equal(fs.existsSync(path.join(cwd, ".git/info/sparse-checkout")), false);
     assert.doesNotMatch(fs.readFileSync(path.join(cwd, ".git/config"), "utf8"), /partialclone|promisor|safe\.directory/i);

@@ -1,0 +1,277 @@
+{
+  "base": "f346e539b51ef35a6e4be9f7020bbb5ce6078694",
+  "tested_revision": "f9e4ed51af53dd5968557c218310e45959bbc235",
+  "tested_tree": "26362f2b8bf7797853d626c463768d46408d7a29",
+  "constraints": {
+    "uid": 1000,
+    "umask": "0022",
+    "target_accounts": "absent",
+    "runtime": "absent",
+    "reviewer": "absent"
+  },
+  "clock_offset_ms": 31536000000,
+  "runs": {
+    "focused-plain": {
+      "tests": 1178,
+      "pass": 1178,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..1178"
+      ],
+      "tap_sha256": "413f8554c881d8b3f6de21766bcf609ea1febd69624b4c555f0d203cd29ecc26",
+      "tested_revision": "698913ad27a65c4cf6f780852d71540300046e62",
+      "tested_tree": "2ace2689d9c32e56355cbceedca4efd8acf47568",
+      "exit_code": 0
+    },
+    "focused-clock": {
+      "tests": 1178,
+      "pass": 1178,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..1178"
+      ],
+      "tap_sha256": "811a6416349558e9bb66a7a9f68a85b43684068456e7e736609b6652fe73c926",
+      "tested_revision": "f9e4ed51af53dd5968557c218310e45959bbc235",
+      "tested_tree": "26362f2b8bf7797853d626c463768d46408d7a29",
+      "exit_code": 0
+    },
+    "full-plain": {
+      "tests": 3151,
+      "pass": 3143,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..3146"
+      ],
+      "tap_sha256": "49d835f50e4d88ee1f88172a5569a96349f348eb09d10bd7caf085c9be1d8d5f",
+      "tested_revision": "f9e4ed51af53dd5968557c218310e45959bbc235",
+      "tested_tree": "26362f2b8bf7797853d626c463768d46408d7a29",
+      "exit_code": 0,
+      "terminal_reporter_markers": 1,
+      "outcomes_sha256": "117aac95dd3f8ddc674d1b2fe51608cfe7a7cba5871619015878a6523d2415a4",
+      "skips": [
+        {
+          "type": "outcome",
+          "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+          "status": "skip",
+          "reason": "requires root or passwordless sudo for distinct-uid proof"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+          "status": "skip",
+          "reason": "host cannot switch to the fixture worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+          "status": "skip",
+          "reason": "host cannot switch worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-71 restricted capability refusal",
+          "status": "skip",
+          "reason": "production vocabulary has no undeclared runtime/role pair"
+        },
+        {
+          "type": "outcome",
+          "name": "READER operator-owned checkout read by non-root account",
+          "status": "skip",
+          "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+        }
+      ],
+      "named_killing_mutants": [
+        "CONTRACT_KILL_EVIDENCE_SERVICE_OWNER",
+        "CONTRACT_KILL_ACTIVATION_UID_AS_GID",
+        "CONTRACT_KILL_GIT_OLD_IDENTITY",
+        "CONTRACT_KILL_GIT_CLEAR_GROUPS",
+        "CONTRACT_KILL_STATE_ROOT_ONLY",
+        "CONTRACT_KILL_EXACT_GATE_GID",
+        "CONTRACT_KILL_EXACT_GATE_MODE",
+        "CONTRACT_KILL_EXACT_PRODUCTION_GID",
+        "CONTRACT_KILL_EXACT_PRODUCTION_MODE",
+        "CONTRACT_KILL_READBACK_UID_AS_GID",
+        "CONTRACT_KILL_SERVICE_ROOT_ACCEPTANCE",
+        "CONTRACT_KILL_READER_PROBE_OMISSION",
+        "CONTRACT_KILL_GATE_CLEAR_GROUPS",
+        "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY"
+      ]
+    },
+    "full-clock": {
+      "tests": 3151,
+      "pass": 3143,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..3146"
+      ],
+      "tap_sha256": "3f2379cbd8395acbbac39b5b6b6f99baa06e79caf7936386106594ab7594c00d",
+      "tested_revision": "f9e4ed51af53dd5968557c218310e45959bbc235",
+      "tested_tree": "26362f2b8bf7797853d626c463768d46408d7a29",
+      "exit_code": 0,
+      "terminal_reporter_markers": 1,
+      "outcomes_sha256": "117aac95dd3f8ddc674d1b2fe51608cfe7a7cba5871619015878a6523d2415a4",
+      "skips": [
+        {
+          "type": "outcome",
+          "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+          "status": "skip",
+          "reason": "requires root or passwordless sudo for distinct-uid proof"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+          "status": "skip",
+          "reason": "host cannot switch to the fixture worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+          "status": "skip",
+          "reason": "host cannot switch worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-71 restricted capability refusal",
+          "status": "skip",
+          "reason": "production vocabulary has no undeclared runtime/role pair"
+        },
+        {
+          "type": "outcome",
+          "name": "READER operator-owned checkout read by non-root account",
+          "status": "skip",
+          "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+        }
+      ],
+      "named_killing_mutants": [
+        "CONTRACT_KILL_EVIDENCE_SERVICE_OWNER",
+        "CONTRACT_KILL_ACTIVATION_UID_AS_GID",
+        "CONTRACT_KILL_GIT_OLD_IDENTITY",
+        "CONTRACT_KILL_GIT_CLEAR_GROUPS",
+        "CONTRACT_KILL_STATE_ROOT_ONLY",
+        "CONTRACT_KILL_EXACT_GATE_GID",
+        "CONTRACT_KILL_EXACT_GATE_MODE",
+        "CONTRACT_KILL_EXACT_PRODUCTION_GID",
+        "CONTRACT_KILL_EXACT_PRODUCTION_MODE",
+        "CONTRACT_KILL_READBACK_UID_AS_GID",
+        "CONTRACT_KILL_SERVICE_ROOT_ACCEPTANCE",
+        "CONTRACT_KILL_READER_PROBE_OMISSION",
+        "CONTRACT_KILL_GATE_CLEAR_GROUPS",
+        "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY"
+      ]
+    }
+  },
+  "permitted_skips": {
+    "byte_identical_to": "f346e539b51ef35a6e4be9f7020bbb5ce6078694",
+    "bytes": 1093,
+    "sha256": "03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e",
+    "entire_source_identical": true
+  },
+  "inventory": {
+    "files": {
+      "before": 111,
+      "after": 112,
+      "additive": true
+    },
+    "names": {
+      "before": 3121,
+      "after": 3151,
+      "additive": true
+    },
+    "requirements": {
+      "before": 3121,
+      "after": 3151,
+      "additive": true
+    }
+  },
+  "historical_sources": {
+    "shu71-production.mjs": "51af5a2ada47786fd0762b21533ebf50873e4bf5fa24382c364673048a1fd4f3",
+    "provision-shu71-prerequisites.mjs": "111f640fad6818d089eb922676bdc6135cf4ad4e1a1beeaa00ee663838da5518"
+  },
+  "initial_full_run": {
+    "tests": 3144,
+    "pass": 3127,
+    "fail": 9,
+    "cancelled": 0,
+    "skipped": 8,
+    "todo": 0,
+    "terminal_tap_markers": [
+      "1..3139"
+    ],
+    "tap_sha256": "e1faf1571ea18f405d03f82b7273f6ced90f68d35a2cb0cc74dfc33c8bd81a68",
+    "correction": "Three identity fixture/mutation-anchor failures, two additive reader-probe operation-count failures, three historical root-state fixture failures, and recursive inventory failure. Original assertions retained; corrected controls and all final suites pass."
+  },
+  "remaining_inconsistent_paths": [],
+  "identity_proof_scope": "One filesystem/account model, POSIX DAC interpreter and real Git object writes; target-account kernel execution is not claimed by CI. Production performs the named reader identity access probe.",
+  "tested_file_sha256": {
+    ".github/coordinator/service/a12-evidence/file-requirements.json": "b21a160283f8a8db7a6035ff134bcb58d49aeacdca4b56f3e2c0e9e80bef96d2",
+    ".github/coordinator/service/a12-evidence/required-files.json": "885bc0337208a0c421d6c56ac2bf9f1d7f15746e98419e343d7b01d7e56b6b80",
+    ".github/coordinator/service/provision-shu71-prerequisites.mjs": "a78833caacec3143027d28c3c8e6c0fa61f2dd35f1f51bec783f774b5281e3a1",
+    ".github/coordinator/service/shu71-journal.mjs": "3586c01910012fcb3adae54dd9414635cbb5a1288a08d70d7a5b6a8c97a9295d",
+    ".github/coordinator/service/shu71-production.mjs": "9a723c516104a50d76f7b068294b4d635ee7f018425f60914374f7f63461e2ee",
+    ".github/coordinator/service/suite-inventory.json": "c4e26a513cfb24219eacd8c3216e29764fdd18c0bf5f2c0646ddca2d6da21a2c",
+    ".github/coordinator/service/test/fixtures/shu71-history/f346e539b51ef35a6e4be9f7020bbb5ce6078694/provision-shu71-prerequisites.mjs": "111f640fad6818d089eb922676bdc6135cf4ad4e1a1beeaa00ee663838da5518",
+    ".github/coordinator/service/test/fixtures/shu71-history/f346e539b51ef35a6e4be9f7020bbb5ce6078694/shu71-production.mjs": "51af5a2ada47786fd0762b21533ebf50873e4bf5fa24382c364673048a1fd4f3",
+    ".github/coordinator/service/test/provision-host-reality.test.mjs": "f32c98b5acf59cadedeb9b805b160424a0ca1c45e703a3a4fec680a36bff5878",
+    ".github/coordinator/service/test/provision-prerequisites-fixture.mjs": "c2c9cc221e711816e176c97757a34a0e5d66717247e70113b2b2be382cc7b64e",
+    ".github/coordinator/service/test/provision-review-regressions.test.mjs": "8d04da8c4a4351db4a86f250126c8c7d319097bdab6102234d155a7ede3edf8d",
+    ".github/coordinator/service/test/shu71-composition.test.mjs": "6f4e617eed6aa33422752c7e59ffc96a0a7d7cf69ac932fa7b4e05f9a8c5a763",
+    ".github/coordinator/service/test/shu71-exhausted-invariants.mjs": "95bbf1acf5b5b6dbb2fdeb71fc6dc2aea31796c6be619745c30b031c939ba12c",
+    ".github/coordinator/service/test/shu71-history.test.mjs": "890ff3b12229dd645148e440ea138df59ea74cac7912973e09167787319c8be7",
+    ".github/coordinator/service/test/shu71-host-contract.test.mjs": "2aa1c8f804278ec81f4509e8bb486be1066ac8d665956ce90fe8447d5ba800fd",
+    ".github/coordinator/service/test/shu71-phase-readback.test.mjs": "8645449bbdc001de22772fca19a38c8c879286db3d5e5fdb33fae8e99f948603",
+    ".github/coordinator/service/test/shu71-production-fixture.mjs": "ccc4b1708178c2b020f50fdd8aec2d37ea767a026e9d86d6498f3d925ac2a498",
+    ".github/coordinator/service/test/shu71-r4-differential.mjs": "655da76d1431d91f20c20a311f2c5bfd1972acd68d1f76785579a307a82cf890",
+    ".github/coordinator/service/test/shu71-r5-checks.mjs": "9771e44f7f7da0eb192a6f84ca3f9158242bcfdecd25d0b5272f6c148fb176ff",
+    ".github/coordinator/service/test/shu71-r6-checks.mjs": "a2a9539ff037530ae837e2f9f30506ac80e18a0101f2a9534a103265be0eb06c",
+    ".github/coordinator/service/test/shu71-r8-state-model.mjs": "8b231455504972bcc461312dae0b4a0a4b5f614f6ef22866d03abca92f1db301",
+    ".github/coordinator/service/test/shu71-trust-checks.mjs": "efc7c6dd393026f762ffef554fcfad03f917c1cb6c7c17a2fce5967b122fb029"
+  }
+}

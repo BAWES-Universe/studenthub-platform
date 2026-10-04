@@ -1,5 +1,5 @@
 # SHU-261: install as root:root 0440 only in a separately approved host window.
-# NOSETENV refuses arbitrary caller environment overrides. Command-specific
-# env_keep preserves only the reviewer OAuth credential needed by this wrapper.
+# The command-specific env_keep supplies only the reviewer OAuth credential;
+# NOSETENV prevents caller-controlled PATH, BASH_ENV, or arbitrary variables.
 Defaults!/usr/local/libexec/shu-reviewer-sandbox env_keep += "CLAUDE_CODE_OAUTH_TOKEN"
 shu-coordinator ALL=(root) NOPASSWD:NOSETENV: /usr/local/libexec/shu-reviewer-sandbox *

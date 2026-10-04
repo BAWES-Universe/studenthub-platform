@@ -24,6 +24,8 @@ export const REVIEWER_LAYOUT = Object.freeze({
   service_home_claude_sidecars: "/srv/shu/.claude",
   claude_session_sidecars: "/home/shu-coordinator",
   coordinator_logs: "/srv/shu/logs",
+  // SHU-71: the Codex reviewer's own login. Visible only to the Codex model launch.
+  reviewer_codex_home: "/var/lib/shu-reviewer-codex",
 });
 
 export const PROTECTED_CLASSES = Object.freeze([
@@ -33,6 +35,7 @@ export const PROTECTED_CLASSES = Object.freeze([
   "coordinator_environment",
   "ssh_credentials",
   "codex_session_sidecars",
+  "service_home_claude_sidecars",
   "claude_session_sidecars",
   "coordinator_logs",
   "sibling_attempts",
@@ -61,17 +64,78 @@ export function assertReviewerSandboxContract(source) {
     "SHU261_PROCESS: concurrent reviewer refusal must be explicit");
   required(source, /ProtectProc=invisible/, "SHU261_PROCESS: host processes must be invisible");
   required(source, /InaccessiblePaths=\/run/, "SHU261_PROCESS: runtime authority and journal sockets must be hidden");
+  required(source, /runtime_args=\("--property=TemporaryFileSystem=\/run:ro"\)/,
+    "SHU261_PROCESS: the model profile must replace /run with an empty read-only tmpfs");
+  assert.deepEqual([...source.matchAll(/BindReadOnlyPaths=([^"\s]*)/g)].map((match) => match[1]), ["$resolver"],
+    "SHU261_RESOLVER: the only path bound back into /run is the host resolver configuration");
+  assert.doesNotMatch(source, /\bBindPaths=/, "SHU261_RESOLVER: the sandbox never binds a writable path");
+  required(source, /"\$resolver" == \/run\/\*/, "SHU261_RESOLVER: the resolver bind must stay inside /run");
   required(source, /ProtectSystem=strict/, "SHU261_WRITE: host filesystem must be read-only");
   required(source, /NoNewPrivileges=yes/, "SHU261_PRIVILEGE: reviewer must not gain privileges");
   required(source, /CapabilityBoundingSet=/, "SHU261_PRIVILEGE: reviewer capability set must be empty");
   required(source, /PrivateNetwork=yes/, "SHU261_TEST_NETWORK: assigned tests must have no network");
   required(source, /RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6/,
-    "SHU261_MODEL_NETWORK: model profile may use only ordinary provider network families");
+    "SHU261_MODEL_NETWORK: model profile permits AF_UNIX, AF_INET, AF_INET6; no destination allowlist");
+  assert.deepEqual([...source.matchAll(/network_args=\(([\s\S]*?)\)/g)].map((match) => match[1].trim()), [
+    '"--property=PrivateNetwork=yes"\n    "--property=RestrictAddressFamilies=AF_UNIX"',
+    '"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"',
+    '"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"',
+    ], "SHU261_NETWORK_ENFORCEMENT: exact test isolation and model address families must stay pinned");
+  // SHU-71 try 5: Codex runs its own per-command bubblewrap sandbox, which needs
+  // the user, mount, pid, ipc and net namespaces, a readable
+  // /proc/sys/kernel/overflowuid, and a NETLINK_ROUTE socket to bring up
+  // loopback. Only the Codex model launch may relax those; the test profile and
+  // the Claude reviewer keep the strict values, and no launch may add uts or
+  // cgroup namespaces.
+  const namespaceDefs = [...source.matchAll(/namespace_args=\(([\s\S]*?)\)/g)];
+  assert.deepEqual(namespaceDefs.map((match) => match[1].trim()), [
+    '"--property=ProcSubset=pid"\n    "--property=RestrictNamespaces=yes"',
+    '"--property=ProcSubset=all"\n      "--property=RestrictNamespaces=user mnt pid ipc net"',
+    '"--property=ProcSubset=pid"\n      "--property=RestrictNamespaces=yes"',
+  ], "SHU71_CODEX_NAMESPACES: exactly the Codex model launch may create the namespaces bwrap needs");
+  const codexBranchStart = source.indexOf('if [[ "$model_runtime" == "codex" ]]; then');
+  const codexBranchElse = source.indexOf("\n  else\n", codexBranchStart);
+  assert.ok(codexBranchStart > 0 && codexBranchElse > codexBranchStart &&
+    namespaceDefs[1]?.index > codexBranchStart && namespaceDefs[1]?.index < codexBranchElse,
+    "SHU71_CODEX_NAMESPACES: the relaxed namespace definition must sit inside the Codex branch, before the Claude else");
+  const launchCall = source.slice(source.indexOf("/usr/bin/systemd-run"));
+  required(launchCall, /"\$\{namespace_args\[@\]\}"/,
+    "SHU71_CODEX_NAMESPACES: the launch must pass the per-branch namespace properties");
+  assert.doesNotMatch(launchCall.replace(/^\s*#.*$/gm, ""),
+    /--property=(?:ProcSubset|RestrictNamespaces)=/,
+    "SHU71_CODEX_NAMESPACES: no literal proc or namespace property may survive in the launch");
+  required(source.replace(/^\s*#.*$/gm, ""), /ProtectKernelTunables=yes/, "SHU71_CODEX_NAMESPACES: /proc/sys must stay read-only");
+  required(source, /ProtectProc=invisible/, "SHU71_CODEX_NAMESPACES: host processes must stay invisible");
+  assert.doesNotMatch(source, /RestrictNamespaces=[^\n"]*\b(?:uts|cgroup)\b/,
+    "SHU71_CODEX_NAMESPACES: uts and cgroup namespaces stay forbidden for every launch");
+  assert.deepEqual(source.match(/RestrictAddressFamilies=[^"\n]*AF_NETLINK/g) ?? [],
+    ["RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"],
+    "SHU71_CODEX_NAMESPACES: AF_NETLINK is granted to the Codex sandbox only, for bwrap's loopback step");
+  const codeSource = source.replace(/^\s*#.*$/gm, "");
+  assert.ok(codeSource.indexOf("AF_NETLINK") > codeSource.indexOf('if [[ "$model_runtime" == "codex" ]]; then'),
+    "SHU71_CODEX_NAMESPACES: the netlink grant must sit inside the Codex branch, never in the test or Claude launch");
+  assert.doesNotMatch(source, /provider[- ]network[- ]only|ordinary[ ]provider[ ]network/i,
+    "SHU261_NETWORK_CLAIM: address families do not confine destinations");
+  required(source, /no destination allowlist/,
+    "SHU261_NETWORK_CLAIM: disclose the absence of destination confinement");
+  assert.doesNotMatch(source.replace(/^\s*#.*$/gm, ""),
+    /IPAddressAllow|IPAddressDeny|RestrictNetworkInterfaces|NFTSet|SocketBindAllow|SocketBindDeny|\b(?:nft|iptables|ip6tables|firewall-cmd)\b|(?:HTTP|HTTPS|ALL)_PROXY/i,
+    "SHU261_NETWORK_NO_ALLOWLIST: wrapper has no destination filtering or proxy mechanism");
   required(source, /HOME=\/tmp\/shu-reviewer-home/, "SHU261_SIDECAR: reviewer home must be transient and private");
   required(source, /accepts only the reviewed exact-head evidence child/,
     "SHU261_COMMAND: test profile must bind the reviewed child");
   required(source, /accepts only subscription-authenticated Claude/,
     "SHU261_COMMAND: model profile must bind Claude");
+  required(source, /reviewer_codex_home=\/var\/lib\/shu-reviewer-codex\n/,
+    "SHU71_CODEX_HOME: the Codex reviewer home is one fixed path");
+  required(source, /if \[\[ "\$profile" != "model" \|\| "\$1" != "codex" \]\]; then\n\s*systemd_args\+=\("--property=InaccessiblePaths=-\$reviewer_codex_home"\)/,
+    "SHU71_CODEX_HOME_MASKED: tests and the Claude reviewer must not see the Codex reviewer login");
+  required(source, /"\$\(\/usr\/bin\/stat -c '%u:%a' -- "\$reviewer_codex_home"\)" != "\$\{reviewer_uid\}:700"/,
+    "SHU71_CODEX_HOME_OWNER: the Codex home must be reviewer-owned and private");
+  assert.deepEqual([...source.matchAll(/ReadWritePaths=([^"\s]*)/g)].map((match) => match[1]), ["$reviewer_codex_home"],
+    "SHU71_CODEX_WRITE: the Codex reviewer home is the only writable host path the sandbox grants");
+  assert.deepEqual([...source.matchAll(/--setenv=CODEX_HOME=([^"\s]*)/g)].map((match) => match[1]), ["$reviewer_codex_home"],
+    "SHU71_CODEX_ENVIRONMENT: Codex receives only its fixed reviewer home");
   required(source, /--setenv=CLAUDE_CODE_OAUTH_TOKEN"\)/,
     "SHU261_ENVIRONMENT: reviewer OAuth may be copied only without an argv value");
   assert.equal(source.includes("--setenv=CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN"), false,
@@ -123,7 +187,7 @@ export function readOnlyHostPreflight({ lookupIdentity, lookupGroup, fsImpl = fs
   const paths = [REVIEWER_LAYOUT.checkout, REVIEWER_LAYOUT.worktree_root, REVIEWER_LAYOUT.activation_records,
     REVIEWER_LAYOUT.workspace_authority, REVIEWER_LAYOUT.supervisor_secrets, REVIEWER_LAYOUT.coordinator_environment,
     REVIEWER_LAYOUT.deployed_supervisor_environment, REVIEWER_LAYOUT.ssh_credentials, REVIEWER_LAYOUT.codex_session_sidecars,
-    REVIEWER_LAYOUT.claude_session_sidecars];
+    REVIEWER_LAYOUT.service_home_claude_sidecars, REVIEWER_LAYOUT.claude_session_sidecars];
   const metadata = paths.map((path) => inspectPath(path, { fsImpl }));
   return { version: "shu261-host-preflight-v1", identities, paths: metadata };
 }

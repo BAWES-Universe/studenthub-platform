@@ -1,5 +1,17 @@
 # SHU-251 correction validation
 
+## Coordinator environment evidence
+
+Read-only host evidence supplied by the orchestration lane establishes
+`/srv/shu/coordinator.env` as the authoritative coordinator file. Both it and
+`/srv/shu/service.env` are owned by `shu-coordinator:shu-coordinator`, mode 0600,
+and carry the coordinator credential key names, including `GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`. Only the legacy combined `/srv/shu/service.env` also carries
+`SHU_SUPERVISOR_SECRET`, so the enforced crossed-file guard refuses it as a
+coordinator file. The supervisor remains `/etc/shu/supervisor.env`, root:root
+0600. This default correction follows that evidence; the crossed-file guard
+remains enforced. No environment values were read for this correction.
+
 Earlier correction measurements below are historical; the host-acceptance
 correction and current-main measurements are recorded first.
 
@@ -23,22 +35,24 @@ Both service templates now render `User=` and `Group=` from `serviceUser` and
 The existing socket-parent assertion is unchanged. Policy checks require exactly
 one matching identity directive on each service and reject root configuration.
 
-Both templates now require the same external `EnvironmentFile=`, parameterized by
-`secretEnvironmentFile`, default `/etc/shu/supervisor.env`. The temporary installer
-renders and validates the reference without reading or generating a host secret.
-README supplies explicit account, state ownership and private 0600 root/coordinator
-file requirements plus a non-overwriting random-secret provisioning example for
-the later host window. No secret value is embedded in a unit.
+The templates require separate external `EnvironmentFile=` bindings:
+`supervisorEnvironmentFile` defaults to `/etc/shu/supervisor.env` (root:root 0600,
+only `SHU_SUPERVISOR_SECRET`); `coordinatorEnvironmentFile` defaults to
+`/srv/shu/coordinator.env` (GitHub / Linear credentials; see host evidence above). Rendering
+and policy validation inspect existing files without emitting values: missing,
+identical, crossed or incomplete bindings fail by named assertions. Neither
+reference is optional, and no secret value is embedded in a unit.
 
-Exact sourcing: systemd loads `SHU_SUPERVISOR_SECRET` from that environment file
-into both processes. The supervisor entry point passes
+Systemd loads each file only into its corresponding process. The supervisor entry point passes
 `process.env.SHU_SUPERVISOR_SECRET` to `startSupervisor`, then `DurableSupervisor`.
 The new service assertion requires a string/Buffer containing at least 32 bytes
 before durable state, recovery, socket creation or readiness. Existing
 `supervisor.mjs` validation still converts strings with `Buffer.from(secret ?? "")`
 and checks 32 bytes; HMAC-SHA256 uses those bytes without trimming/hex decoding.
 The coordinator signer reads `env.SHU_SUPERVISOR_SECRET` in
-`supervisor-dispatch.mjs`. A missing environment file is a systemd startup failure;
+`supervisor-dispatch.mjs`; the separate coordinator credential file does not
+supply that transport secret. Its delivery remains outside this renderer and
+requires the separately reviewed transport provisioning. A missing environment file is a systemd startup failure;
 a missing/short variable gets the named service AssertionError below.
 
 Both full measurements ran from the repo root under `umask 0002` after

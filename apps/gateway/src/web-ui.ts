@@ -10,6 +10,13 @@ import {
   type OwnProfileReader,
   type ProfileField,
 } from "@studenthub/profile";
+import {
+  ORGANIZATION_FIELD_CONTRACT,
+  ORGANIZATION_FIELDS_BY_AUDIENCE,
+  type OrganizationField,
+  type OrganizationFieldName,
+} from "@studenthub/organizations";
+import type { ActiveOrganization } from "./context-navigation.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -95,6 +102,37 @@ const roleNames: Record<WorkspaceContext["role"], string> = {
 
 const workspaceDocument = (title: string, content: string) => document(title, content, true);
 
+const organizationFormatters: Readonly<Partial<Record<OrganizationFieldName, (value: unknown) => string>>> = {
+  status: (value) => ({ active: "Active", under_review: "Under review", inactive: "Inactive" })[String(value)] ?? String(value),
+  statusOverride: (value) => ({ active: "Active", under_review: "Under review", inactive: "Inactive" })[String(value)] ?? String(value),
+  approvedToHire: (value) => value ? "Yes" : "No",
+  bonusCommission: (value) => `${String(value)}%`,
+};
+
+function organizationFieldText(name: OrganizationFieldName, field: OrganizationField<unknown>): string {
+  if (field.state === "unavailable") return '<span class="missing" data-state="unavailable">Unavailable</span>';
+  return escapeHtml((organizationFormatters[name] ?? String)(field.value));
+}
+
+/** Read-only company card for the selected workspace; fields come from the role's closed projection. */
+function renderOrganization(organization: ActiveOrganization | undefined): string {
+  if (!organization || organization.kind === "not_applicable") return "";
+  if (organization.kind === "unavailable") {
+    return `<section class="notice org-notice" role="status"><strong>Company details couldn’t be loaded.</strong><p>Your workspace is still selected. Please try again in a moment.</p></section>`;
+  }
+  const view = organization.view;
+  const fields = view.fields as unknown as Readonly<Record<OrganizationFieldName, OrganizationField<unknown>>>;
+  const legalName = fields.legalName;
+  const heading = legalName.state === "available" ? String(legalName.value) : view.registryName;
+  const rows = ORGANIZATION_FIELDS_BY_AUDIENCE[view.audience].map((name) =>
+    `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${organizationFieldText(name, fields[name])}</dd></div>`).join("");
+  const source = view.snapshot.kind === "imported"
+    ? `StudentHub company snapshot · ${escapeHtml(view.snapshot.observedAt.slice(0, 10))}`
+    : "Company details haven’t been imported yet, so they show as unavailable.";
+  const kind = view.parentOrgId === null ? "ORGANIZATION" : "SUB-ORGANIZATION";
+  return `<section class="profile-card org-card" aria-labelledby="org-title"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(Array.from(heading.trim())[0]?.toUpperCase() ?? "S")}</div><div><h2 id="org-title">${escapeHtml(heading)}</h2><p>${source}</p></div><span class="identity-label">${kind}</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>You see the company details your role allows. Licences, logos, sign-in data and internal notes are never shown here.</p></div></section>`;
+}
+
 /** Native links preserve selections across refresh/back without storing authority. */
 export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication): string {
   if (result.status !== 200) {
@@ -111,7 +149,7 @@ export function renderWorkspace(result: NavigationResult, login: BrowserLoginApp
   const intro = active
     ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
     : "Choose the organization and role you want to use. You can switch without signing in again.";
-  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a></nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a></nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderLanding(login?: BrowserLoginApplication): string {
@@ -184,6 +222,6 @@ export const WEB_CSS = `
 @media(max-width:800px){.entry-grid{gap:2.5rem;grid-template-columns:1fr;padding:2.5rem 0}.intro h1{font-size:3.5rem}.intro-foot{margin-top:1.5rem}.sign-in{max-width:none}.entry-footer{flex-direction:column;gap:.4rem}.workspace{grid-template-columns:1fr}.sidebar{padding:1rem 1.25rem;border-right:0;border-bottom:1px solid var(--border)}.sidebar>.eyebrow,.sidebar-note{display:none}.sidebar nav{margin:0}.nav-item{display:inline-flex}.profile-main{padding-top:2rem}.identity{padding:1.5rem}.identity-label{width:100%;margin-left:4.5rem}.profile-fields{padding:0 1.5rem}.privacy-note{padding:1.25rem 1.5rem}.profile-heading{align-items:flex-start}.badge{margin-top:.5rem}}
 @media(max-width:480px){.entry-header>.eyebrow{display:none}.intro h1{font-size:3rem}.topbar{padding:1rem}.brand{font-size:1.4rem}.profile-fields{grid-template-columns:1fr}.profile-fields>div,.profile-fields>div:nth-child(even){padding-left:0;padding-right:0}.profile-fields>div:nth-last-child(2){border-bottom:1px solid var(--border)}.profile-heading{flex-wrap:wrap}.identity-label{margin-left:0}.sign-out span{display:none}.error-page{margin-top:3rem}}
 .topbar{flex-wrap:wrap}body{overflow-wrap:anywhere}.entry-grid>*{min-width:0}
-.context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
+.context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.org-card,.org-notice{margin-bottom:2rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
 @media(prefers-reduced-motion:no-preference){.button,.sign-out{transition:background-color .15s ease}}
 `;

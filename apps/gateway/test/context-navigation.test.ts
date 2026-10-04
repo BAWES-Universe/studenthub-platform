@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
+import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation } from "../src/context-navigation.js";
 import type { BrowserLoginApplication } from "../src/web-ui.js";
@@ -232,4 +233,55 @@ test("SHU91_HISTORY: cached history hides the old context and revalidates before
   assert.equal((await f.get("/workspace?org_id=org-a&role=staff")).status, 403);
   const profile = await f.get("/profile", { accept: "text/html" });
   assert.doesNotMatch(profile.headers.get("content-security-policy")!, /script-src/, "profile CSP remains unchanged");
+});
+
+test("SHU-159/AC-09 CARD the selected workspace shows only the active role's company projection", async (t) => {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.sessions.put({ id: SESSION, personId: "person-1" });
+  const store = new InMemoryAuthzStore({
+    principals: [{ id: "person-1", pbuuids: [] }],
+    organizations: [
+      { id: "root", name: "StudentHub" },
+      { id: "org-a", name: "Organization A", parentOrgId: "root" },
+      { id: "org-b", name: "Organization B", parentOrgId: "root" },
+    ],
+  });
+  await store.grantMany("person-1", [
+    { orgId: "org-a", role: "org-owner" }, { orgId: "org-a", role: "candidate" }, { orgId: "org-b", role: "staff" },
+  ]);
+  const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
+    ["org-a", SYNTHETIC_ORGANIZATION_FIXTURES.parentA],
+  ])) });
+  const login: BrowserLoginApplication = { ...rig.app, navigation: createContextNavigation(rig.sessions, store, organizations) };
+  const server = createGatewayServer(undefined, undefined, undefined, login);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const get = (path: string, extra = {}) => fetch(`http://127.0.0.1:${address.port}${path}`, { headers: { ...headers, ...extra } });
+
+  const owner = await (await get("/workspace?org_id=org-a&role=org-owner")).json();
+  assert.equal(owner.organization.kind, "found");
+  assert.equal(owner.organization.view.audience, "employer");
+  assert.equal(owner.organization.view.fields.legalName.value, "Synthetic Retail Group");
+  assert.equal(Object.hasOwn(owner.organization.view.fields, "email"), false, "SHU-159/AC-09 employer card has no staff fields");
+  const html = await (await get("/workspace?org_id=org-a&role=org-owner", { accept: "text/html" })).text();
+  assert.match(html, /Synthetic Retail Group/);
+  assert.match(html, /Hourly rate<\/dt><dd>1\.500/);
+  assert.doesNotMatch(html, /SENSITIVE-|hello@synthetic-retail|Company email/);
+
+  // A role without a company projection gets no card; the selection still works.
+  const candidate = await (await get("/workspace?org_id=org-a&role=candidate")).json();
+  assert.deepEqual(candidate.organization, { kind: "not_applicable" });
+  // Staff at an organization with no imported snapshot sees the registry name and unavailable fields.
+  const staff = await (await get("/workspace?org_id=org-b&role=staff")).json();
+  assert.equal(staff.organization.view.audience, "staff");
+  assert.deepEqual(staff.organization.view.snapshot, { kind: "not_imported" });
+  assert.equal(staff.organization.view.fields.email.state, "unavailable");
+  const staffHtml = await (await get("/workspace?org_id=org-b&role=staff", { accept: "text/html" })).text();
+  assert.match(staffHtml, /Organization B/);
+  assert.match(staffHtml, /haven’t been imported yet/);
+  // No selection means no organization read at all.
+  const none = await (await get("/workspace")).json();
+  assert.equal(Object.hasOwn(none, "organization"), false);
 });

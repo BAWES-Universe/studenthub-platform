@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { DurableSupervisor, signedSupervisorRequest, SUPERVISOR_PROTOCOL_VERSION } from "../supervisor.mjs";
-import { carriedSupervisorOutcome, supervisorOrder } from "../supervisor-dispatch.mjs";
+import { carriedSupervisorOutcome, supervisorAdapter, supervisorOrder } from "../supervisor-dispatch.mjs";
 import { runFixtureDriver, restoreFixture } from "../fixture-driver.mjs";
 import { createEpisodeHarness, SHA_INPUT, SHA_WRITE } from "./fixture/episode-harness.mjs";
 
@@ -96,6 +96,70 @@ test("SHU-250: completion with no worker evidence HOLDs", async t => {
   const f = setup(t); await f.tick(); await f.drain(); f.complete(null);
   await f.tick();
   assert.equal(f.h.receipts()[0].stage, "HOLD", "SHU250_NO_EVIDENCE: completion without worker callback must HOLD");
+});
+
+test("role stage: an adapter's own refusal code reaches the receipt note through the supervisor", async t => {
+  const f = setup(t); await f.tick(); await f.drain();
+  f.complete({ stage: "HOLD", reason_code: "CALLBACK_ROLE_MISMATCH", reason: "CALLBACK_ROLE_MISMATCH: revision writer returned BUILD_READY", evidence_links: ["notes.md"] }, 1);
+  await f.tick();
+  const held = f.h.receipts()[0];
+  assert.equal(held.stage, "HOLD");
+  assert.ok(held.notes.includes("adapter reason code: CALLBACK_ROLE_MISMATCH"), held.notes.join("\n"));
+  assert.ok(held.notes.some(n => n.includes("HOLD (CALLBACK_ROLE_MISMATCH)")), "the HOLD note names the refusal, not missing evidence");
+});
+
+test("role stage: a carried result can never supply the coordinator's live-head codes", () => {
+  const receipt = { attempt_id: "a", target_sha: SHA_INPUT, requested_worker: "codex-builder", receipt_version: "1.1.0", role: "build", runtime: "codex-cli" };
+  const response = (reason_code) => ({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, attempt_id: "a", target_sha: SHA_INPUT, durable: true,
+    stage: "FAILED", result: { stage: "HOLD", reason_code } });
+  assert.equal(carriedSupervisorOutcome(response("CALLBACK_ROLE_MISMATCH"), receipt).reason_code, "CALLBACK_ROLE_MISMATCH");
+  for (const code of ["LIVE_HEAD_STALE", "LIVE_HEAD_UNREADABLE", "lower case", 7]) {
+    assert.equal(carriedSupervisorOutcome(response(code), receipt).reason_code, undefined, String(code));
+  }
+  const bound = { ...response("lower case"), stage: "COMPLETED",
+    result: { stage: "HOLD", reason_code: "lower case", callback: { attempt_id: "a", target_sha: SHA_INPUT, result_sha: SHA_INPUT, stage: "BLOCKED", links: ["x"] } } };
+  const blocked = carriedSupervisorOutcome(bound, { ...receipt, role: "review" }, { current_head: SHA_INPUT, headVerified: true });
+  assert.equal(blocked.callback.stage, "BLOCKED");
+  assert.equal(blocked.reason_code, undefined, "a bound verdict carries only a validated code");
+});
+
+test("SHU-71 hold cause: a supervisor hold names its cause on the receipt", async t => {
+  const f = setup(t, { maxOutputBytes: 5 }); await f.tick(); await f.drain();
+  f.children[0].stdout.emit("data", "more than five bytes");
+  await f.tick();
+  const held = f.h.receipts()[0];
+  assert.equal(held.stage, "HOLD");
+  assert.ok(held.notes.some(n => n.includes("HOLD (SUPERVISOR_OUTPUT_LIMIT)")), JSON.stringify(held.notes));
+});
+
+test("SHU-71 hold cause: a run that ended without a result carries a code, never free text", () => {
+  const receipt = { attempt_id: "a", target_sha: SHA_INPUT, requested_worker: "claude-builder", receipt_version: "1.1.0", role: "build", runtime: "claude-code" };
+  const response = (stage, extra) => ({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, attempt_id: "a", target_sha: SHA_INPUT, durable: true, stage, ...extra });
+  const code = (stage, extra) => carriedSupervisorOutcome(response(stage, extra), receipt).reason_code;
+  assert.equal(code("HOLD", { detail_code: "DEADLINE" }), "SUPERVISOR_DEADLINE");
+  assert.equal(code("FAILED", { result: null, detail_code: "WORKER_EXIT" }), "SUPERVISOR_WORKER_EXIT");
+  assert.equal(code("FAILED", { result: { stage: "FAILED", error_code: "CLAUDE_PROCESS_FAILED" } }), "CLAUDE_PROCESS_FAILED");
+  assert.equal(code("FAILED", { result: { stage: "LAUNCH_UNKNOWN", reason: "Claude process ended without a trustworthy terminal result" } }), "ADAPTER_LAUNCH_UNKNOWN");
+  assert.equal(code("FAILED", { result: { stage: "HOLD", reason_code: "NO_STRUCTURED_OUTPUT", error_code: "OTHER" } }), "NO_STRUCTURED_OUTPUT", "the adapter's own refusal code wins");
+  for (const detail_code of ["LIVE_HEAD_STALE", "lower case", "free text with spaces", 7]) {
+    assert.equal(code("HOLD", { detail_code }), undefined, String(detail_code));
+    assert.equal(code("FAILED", { result: null, detail_code }), undefined, String(detail_code));
+  }
+  assert.equal(code("HOLD", {}), undefined);
+});
+
+test("SHU-71 hold cause: the supervisor reports its own hold code in status", async t => {
+  const f = setup(t);
+  let order = null;
+  await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
+  await f.drain();
+  f.children[0].emit("exit", 1);
+  const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
+  assert.equal(status.stage, "FAILED");
+  assert.equal(status.detail_code, "WORKER_EXIT");
+  const outcome = carriedSupervisorOutcome(status, f.h.receipts()[0]);
+  assert.equal(outcome.stage, "HOLD");
+  assert.equal(outcome.reason_code, "SUPERVISOR_WORKER_EXIT");
 });
 
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
@@ -262,6 +326,28 @@ test("SHU-250: child wrapper transports adapter artifact verbatim and rechecks a
   }), /authorization refused/);
 });
 
+// SHU-71 run 5: a publish refused by the host check reached the receipt unnamed.
+test("SHU71_WORKER_DENIAL_NAMED: the child hands the host check's denial name to the adapter", async t => {
+  const { executeSupervisedOrder } = await import("../supervisor-worker.mjs");
+  const f = setup(t); await f.tick(); await f.drain();
+  const policy = join(f.h.dir, "named.mjs");
+  fs.writeFileSync(policy, 'let checks = 0; export const authorizeWorkOrder = () => { throw new Error("the named policy decides"); };\n' +
+    'export const workOrderAuthorization = () => ++checks === 1 ? { ok: true, code: null } : { ok: false, code: "HOST_AUTH_TARGET_NOT_ALLOWED" };');
+  const result = f.callback();
+  await executeSupervisedOrder({ order: f.supervisor.store.readOrder(f.contracts[0].attempt_id), contract: f.contracts[0],
+    stateDir: join(f.h.dir, "supervisor"), authorizationModule: policy }, {
+    loadAdapter: async () => ({ launchBuilder: async options => {
+      assert.deepEqual(options.io.resultStillAuthorized(), { code: "HOST_AUTH_TARGET_NOT_ALLOWED" }, "SHU71_WORKER_PUBLISH_DENIAL_NAMED");
+      return result;
+    } }),
+  });
+  const refused = join(f.h.dir, "refused.mjs");
+  fs.writeFileSync(refused, 'export const workOrderAuthorization = () => ({ ok: false, code: "HOST_AUTH_EVIDENCE_UNAVAILABLE" });');
+  await assert.rejects(executeSupervisedOrder({ order: {}, authorizationModule: refused }, {
+    loadAdapter: async () => { assert.fail("denied order must not load adapter"); },
+  }), /authorization refused supervised order \(HOST_AUTH_EVIDENCE_UNAVAILABLE\)/, "SHU71_WORKER_LAUNCH_DENIAL_NAMED");
+});
+
 test("SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervised child", async t => {
   const f = setup(t);
   f.h.adapters["codex-cli"].launchBuilder = async () => ({ stage: "LAUNCH_UNKNOWN" });
@@ -271,4 +357,52 @@ test("SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervise
   assert.equal(contacts, 0, "legacy ambiguous launch must not contact supervisor");
   assert.equal(f.h.receipts()[0].stage, "LAUNCH_UNKNOWN");
   assert.equal(f.supervisor.store.attempts().length, 0);
+});
+
+// SHU-172: the supervisor transport's catch shields every fault on the way to the
+// socket — an absent socket, a refused connection, a malformed frame, a rejected
+// order. It used to discard the caught error, so all of them landed on the receipt
+// as one indistinguishable label and a tick could not be diagnosed from its
+// receipt. The two proofs below pin both halves of the repair: the cause reaches
+// the reason, and carrying it never upgrades the failure into a submission.
+const TRANSPORT_RECEIPT = Object.freeze({
+  requested_worker: "codex-builder", issue_id: "SHU-140", authorization_ref: "shu172-contract-ref",
+  attempt_id: "11111111-2222-4333-8444-555555555555", target_sha: SHA_INPUT,
+  repo: "BAWES-Universe/studenthub-platform", branch: "fix/shu172-transport-fixture",
+});
+const refusedTransport = error => supervisorAdapter(TRANSPORT_RECEIPT,
+  { SHU_SUPERVISOR_SECRET: SECRET, SHU_SUPERVISOR_SOCKET: join(tmpdir(), "shu172-absent.sock") },
+  { supervisorTransport: () => { throw error; } });
+
+test("SHU-172: the caught transport error's code or message reaches the receipt reason", async () => {
+  const coded = await refusedTransport(Object.assign(new Error("supervisor socket is gone"), { code: "ENOENT" })).launchBuilder({});
+  assert.match(coded.reason ?? "", /ENOENT/,
+    "SHU172_CAUSE: the caught error's code must reach the receipt reason");
+  assert.match(coded.reason, /^supervisor configuration unavailable: /,
+    "SHU172_CAUSE: the existing label must be preserved as the reason's prefix");
+  // A codeless error is the common shape for a protocol/order refusal, so the
+  // message is the fallback. Neither may collapse back to the bare label.
+  const codeless = await refusedTransport(new Error("transport closed mid-frame")).launchBuilder({});
+  assert.match(codeless.reason ?? "", /transport closed mid-frame/,
+    "SHU172_CAUSE: a codeless error's message must reach the receipt reason");
+  assert.notEqual(codeless.reason, coded.reason,
+    "SHU172_CAUSE: two distinct transport faults must not render as one reason");
+});
+
+test("SHU-172: a carried transport cause is never reported as a successful submission", async () => {
+  const adapter = refusedTransport(Object.assign(new Error("supervisor socket is gone"), { code: "ECONNREFUSED" }));
+  const launch = await adapter.launchBuilder({});
+  assert.equal(launch.stage, "LAUNCH_UNKNOWN",
+    "SHU172_NO_FALSE_SUCCESS: a failed contact must never launch; the identical order retries next tick");
+  for (const field of ["external_run_id", "adapter_status"]) {
+    assert.equal(launch[field], undefined,
+      `SHU172_NO_FALSE_SUCCESS: a failed contact must mint no ${field}`);
+  }
+  // Even a verified head cannot turn the failed status contact into an outcome:
+  // `ok` is read before any stage, binding or head comparison.
+  const monitored = await adapter.monitorRun({ current_head: SHA_INPUT, headVerified: true });
+  assert.equal(monitored.stage, "HOLD",
+    "SHU172_NO_FALSE_SUCCESS: a failed status contact must HOLD, never carry an outcome");
+  assert.equal(monitored.external_run_id, undefined,
+    "SHU172_NO_FALSE_SUCCESS: a failed status contact must mint no external_run_id");
 });

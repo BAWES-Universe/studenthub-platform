@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { batchedCommentPage } from './fixture/linear-board.mjs';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { once } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { RUNTIMES, ROLES, RUNTIME_ROLE_SUPPORT, laneForRuntimeRole, resolveReceiptRoleAuthority } from '../launch-vocabulary.mjs';
 import { createReceipt, validateReceipt, foldLaunchOutcome, receiptCommentBody, parseReceiptCommentBody, parseReceiptsFromComments, main } from '../reconcile.mjs';
 import { validWorkOrder, routeSuccessorFromReceipts } from '../review-routing.mjs';
@@ -127,6 +129,13 @@ test('SHU-71 reversal: author family cannot clear its revision', () => {
   assert.equal(routeSuccessorFromReceipts({ terminal: review, issueReceipts: [writer, revision, review], evidenceStage: 'PASS' }).hold, 'author_exclusion', named.author);
 });
 function setup(t, multiple = false, working = false) {
+  // Responsiveness measures coordinator scheduling, not host disk latency.
+  // Keep real files and valid descriptors, but double the durability syscall
+  // for this single-process fixture. The separate process race below retains
+  // real fsync, and the slow-tick/await-child mutants still use real timers.
+  const sync = t.mock.method(fs, 'fsyncSync', fd => { fs.fstatSync(fd); });
+  syncBuiltinESMExports();
+  t.after(() => { sync.mock.restore(); syncBuiltinESMExports(); });
   const h = createEpisodeHarness({ issueId: 'SHU-71', githubToken: 'fake-token' });
   t.after(async () => {
     for (const child of children) if (working && child.exitCode === null) {
@@ -169,6 +178,16 @@ function setup(t, multiple = false, working = false) {
       if (!String(url).includes('api.github.com')) {
         const { query, variables } = JSON.parse(options.body);
         const respond = data => ({ status: 200, ok: true, json: async () => ({ data }) });
+        // The board read carries every card's thread, so the second card's own
+        // store must be substituted there too — not only in its single-card read.
+        if (query.includes('CoordinatorIssues')) {
+          const board = await h.fetchImpl(url, options);
+          const payload = await board.json();
+          for (const node of payload.data.issues.nodes) {
+            if (node.id === second.id) node.comments = batchedCommentPage(secondComments);
+          }
+          return { ...board, json: async () => payload };
+        }
         if (variables?.issueId === second.id || variables?.issueId === second.identifier) {
           if (query.includes('CoordinatorIssueComments')) return respond({ issue: { comments: { nodes: secondComments } } });
           if (query.includes('commentCreate')) {
@@ -300,8 +319,11 @@ test('SHU-71 recovery: child death yields terminal receipt', async t => {
 for (const failing of [false, true]) test(`SHU-71 isolation: ${failing ? 'dead' : 'hanging'} worker permits later unit`, async t => {
   const f = setup(t, true); await f.tick();
   assert.equal(f.h.allReceipts()[0].stage, 'LAUNCH_UNKNOWN', 'SHU86_UNLAUNCHED: acceptance alone must not report RUNNING');
-  await f.drain(); await f.tick(); // Observe the durable launch receipt before testing later-unit isolation.
+  await f.drain();
   assert.equal(f.children[0]?.order.issue_id, 'SHU-71', named.isolation);
+  // The tick that acknowledges a live launch also selects the later unit
+  // (SHU-71 stage 5), so a dead worker dies first: its HOLD is then on the
+  // board when the later unit is selected.
   if (failing) f.children[0].emit('exit', 1, 'SIGKILL');
   const started = performance.now(); await f.tick();
   // A terminal transition consumes this tick; dispatch resumes on the next tick.

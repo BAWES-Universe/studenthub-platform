@@ -1,0 +1,349 @@
+{
+  "base": "6e91a6c135311ffdaf129c10cd8c1d2a9455272f",
+  "tested_revision": "7d3ef7739379dfbb93d30a3d132bbae15bd5df7b",
+  "tested_tree": "8b8a7bcc1e4e7482a406df3fe35d0d3e6f7adbaf",
+  "constraints": {
+    "uid": 1000,
+    "umask": "0022",
+    "target_accounts": "absent",
+    "runtime": "absent",
+    "reviewer": "absent"
+  },
+  "clock_offset_ms": 31536000000,
+  "runs": {
+    "focused-plain": {
+      "tests": 1148,
+      "pass": 1148,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "exit_code": 0,
+      "constraints": "CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent reviewer=absent",
+      "terminal_tap_markers": [
+        "1..1148"
+      ],
+      "tap_sha256": "76ffe7c3764a89e708d82a907ee924ec5b2552cd3e7350fddc615980763a108a"
+    },
+    "focused-clock": {
+      "tests": 1148,
+      "pass": 1148,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "exit_code": 0,
+      "constraints": "CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent reviewer=absent",
+      "terminal_tap_markers": [
+        "1..1148"
+      ],
+      "tap_sha256": "25cf80662e0acac5cda99a2b7980fa0533f3b2c3fceb2bbf96102213e2875edd"
+    },
+    "full-plain": {
+      "tests": 3121,
+      "pass": 3113,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "exit_code": 0,
+      "constraints": "CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent reviewer=absent",
+      "terminal_tap_markers": [
+        "1..3116"
+      ],
+      "tap_sha256": "582583482d10349cdc6e7b9fad1b33359adddfe26752c301331c460748dad753",
+      "terminal_reporter_markers": 1,
+      "outcomes_sha256": "8bd3db40304b4f5facc574960eb7e05b3830fe717c1e5444c946946a2cba6336",
+      "skips": [
+        {
+          "type": "outcome",
+          "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+          "status": "skip",
+          "reason": "requires root or passwordless sudo for distinct-uid proof"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+          "status": "skip",
+          "reason": "host cannot switch to the fixture worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+          "status": "skip",
+          "reason": "host cannot switch worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-71 restricted capability refusal",
+          "status": "skip",
+          "reason": "production vocabulary has no undeclared runtime/role pair"
+        },
+        {
+          "type": "outcome",
+          "name": "READER operator-owned checkout read by non-root account",
+          "status": "skip",
+          "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+        }
+      ]
+    },
+    "full-clock": {
+      "tests": 3121,
+      "pass": 3113,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "exit_code": 0,
+      "constraints": "CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent reviewer=absent",
+      "terminal_tap_markers": [
+        "1..3116"
+      ],
+      "tap_sha256": "361bfa2832925f014502c9c2befc46e5b7d15a464aee5ee80151501568fa6920",
+      "terminal_reporter_markers": 1,
+      "outcomes_sha256": "8bd3db40304b4f5facc574960eb7e05b3830fe717c1e5444c946946a2cba6336",
+      "skips": [
+        {
+          "type": "outcome",
+          "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+          "status": "skip",
+          "reason": "requires root or passwordless sudo for distinct-uid proof"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+          "status": "skip",
+          "reason": "host cannot switch to the fixture worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+          "status": "skip",
+          "reason": "host cannot switch worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-71 restricted capability refusal",
+          "status": "skip",
+          "reason": "production vocabulary has no undeclared runtime/role pair"
+        },
+        {
+          "type": "outcome",
+          "name": "READER operator-owned checkout read by non-root account",
+          "status": "skip",
+          "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+        }
+      ]
+    }
+  },
+  "permitted_skips": {
+    "byte_identical": true,
+    "bytes": 1093,
+    "sha256": "03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e",
+    "entire_source_identical": true,
+    "entire_source_sha256": "2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9"
+  },
+  "inventories": {
+    "suite-inventory.json": {
+      "files": {
+        "before": 110,
+        "after": 111,
+        "additive_only": true
+      },
+      "names": {
+        "before": 3040,
+        "after": 3121,
+        "additive_only": true
+      },
+      "requirements": {
+        "before": 3040,
+        "after": 3121,
+        "additive_only": true
+      }
+    },
+    "a12-evidence/required-files.json": {
+      "rows": {
+        "before": 110,
+        "after": 111,
+        "additive_only": true
+      }
+    },
+    "a12-evidence/file-requirements.json": {
+      "rows": {
+        "before": 110,
+        "after": 111,
+        "additive_only": true
+      }
+    }
+  },
+  "phase_controls": {
+    "total": 81,
+    "pre_fix": [
+      "PHASE_PRE_FIX_DROPIN_COORDINATOR_MISSING_ACCEPTED",
+      "PHASE_PRE_FIX_DROPIN_COORDINATOR_BYTES_ACCEPTED",
+      "PHASE_PRE_FIX_DROPIN_SUPERVISOR_MISSING_ACCEPTED",
+      "PHASE_PRE_FIX_DROPIN_SUPERVISOR_BYTES_ACCEPTED",
+      "PHASE_PRE_FIX_ACTIVATION_MISSING_ACCEPTED",
+      "PHASE_PRE_FIX_ACTIVATION_BYTES_ACCEPTED"
+    ],
+    "named_killing_mutants": [
+      "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
+      "PHASE_KILL_DROPIN_COORDINATOR_BYTES",
+      "PHASE_KILL_DROPIN_COORDINATOR_UID",
+      "PHASE_KILL_DROPIN_COORDINATOR_GID",
+      "PHASE_KILL_DROPIN_COORDINATOR_WIDE_MODE",
+      "PHASE_KILL_DROPIN_COORDINATOR_NARROW_MODE",
+      "PHASE_KILL_DROPIN_COORDINATOR_SPECIAL_MODE",
+      "PHASE_KILL_DROPIN_COORDINATOR_SYMLINK",
+      "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_UID",
+      "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_GID",
+      "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+      "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+      "PHASE_KILL_DROPIN_SUPERVISOR_MISSING",
+      "PHASE_KILL_DROPIN_SUPERVISOR_BYTES",
+      "PHASE_KILL_DROPIN_SUPERVISOR_UID",
+      "PHASE_KILL_DROPIN_SUPERVISOR_GID",
+      "PHASE_KILL_DROPIN_SUPERVISOR_WIDE_MODE",
+      "PHASE_KILL_DROPIN_SUPERVISOR_NARROW_MODE",
+      "PHASE_KILL_DROPIN_SUPERVISOR_SPECIAL_MODE",
+      "PHASE_KILL_DROPIN_SUPERVISOR_SYMLINK",
+      "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_UID",
+      "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_GID",
+      "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+      "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+      "PHASE_KILL_ACTIVATION_MISSING",
+      "PHASE_KILL_ACTIVATION_BYTES",
+      "PHASE_KILL_ACTIVATION_UID",
+      "PHASE_KILL_ACTIVATION_GID",
+      "PHASE_KILL_ACTIVATION_WIDE_MODE",
+      "PHASE_KILL_ACTIVATION_NARROW_MODE",
+      "PHASE_KILL_ACTIVATION_SPECIAL_MODE",
+      "PHASE_KILL_ACTIVATION_SYMLINK",
+      "PHASE_KILL_ACTIVATION_SIGNATURE",
+      "PHASE_KILL_ACTIVATION_LATE_ORDER",
+      "PHASE_KILL_DROPIN_LATE_ORDER",
+      "PHASE_KILL_ACTIVATION_PAST_DISPATCH_GATE",
+      "PHASE_KILL_ACTIVATION_RESUME_SKIP",
+      "PHASE_KILL_DROPIN_RESUME_SKIP"
+    ],
+    "corrected_assertions": [
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_UID",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_GID",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_WIDE_MODE",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_NARROW_MODE",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_SPECIAL_MODE",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_SYMLINK",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_UID",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_GID",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+      "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_MISSING",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_BYTES",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_UID",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_GID",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_WIDE_MODE",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_NARROW_MODE",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_SPECIAL_MODE",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_SYMLINK",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_UID",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_GID",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+      "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+      "PHASE_REQUIRE_ACTIVATION_MISSING",
+      "PHASE_REQUIRE_ACTIVATION_BYTES",
+      "PHASE_REQUIRE_ACTIVATION_UID",
+      "PHASE_REQUIRE_ACTIVATION_GID",
+      "PHASE_REQUIRE_ACTIVATION_WIDE_MODE",
+      "PHASE_REQUIRE_ACTIVATION_NARROW_MODE",
+      "PHASE_REQUIRE_ACTIVATION_SPECIAL_MODE",
+      "PHASE_REQUIRE_ACTIVATION_SYMLINK",
+      "PHASE_REQUIRE_ACTIVATION_SIGNATURE",
+      "PHASE_REQUIRE_ACTIVATION_RESUME_REMEASURES",
+      "PHASE_REQUIRE_DROPIN_RESUME_REMEASURES"
+    ],
+    "other": [
+      "PHASE_GREEN_ORDER_AND_EXACT_BYTES",
+      "PHASE_HISTORICAL_BYTES_PINNED"
+    ]
+  },
+  "historical_source": {
+    "byte_identical": true,
+    "sha256": "1c5150e36a089fd89dbeb577971f214f066b97fc5f313a2b96da1549b7ca69fb"
+  },
+  "initial_full_plain": {
+    "tests": 3116,
+    "pass": 3093,
+    "fail": 15,
+    "skipped": 8,
+    "exit_code": 1,
+    "causes": [
+      "Six additional journal writes required separate exact accounting while preserving the original 132-operation expected value",
+      "A new block duplicated the existing runtime mutation anchor; the new block was given distinct formatting",
+      "Detached checkout inherited group-writable source modes; normalized before final runs"
+    ],
+    "failed_tests": [
+      "B1_SINGLE_LANE: production credential drives coordinator build BLOCK revision re-review",
+      "B1_TWO_LANES: B completes while A revision remains running, then A completes",
+      "V10_JOURNALLED_ORDER",
+      "V4_RESUME_DISCARDS_PRIOR_MEASUREMENT",
+      "A12 committed inventory requirements match real outcomes",
+      "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+      "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+      "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+      "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+      "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+      "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+      "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+      "SHU-261 mutation: wrapper environment canary placement removed",
+      "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
+      "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
+    ],
+    "tap_sha256": "6d9b1ab2fb65945b78be7fa97bde92577d12e45d92961ed25fc08db682403f4e",
+    "initial_clock": "Interrupted after plain failures to correct their causes; no completion claim",
+    "correction_controls": {
+      "tests": 142,
+      "pass": 142,
+      "fail": 0,
+      "skipped": 0,
+      "tap_sha256": "5d6b0159e2638227c5c7502909eec83079f6b2922b810934ea73c12342a57b52"
+    }
+  }
+}

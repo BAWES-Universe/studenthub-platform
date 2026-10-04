@@ -13,6 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -21,6 +22,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ACTIVATION_ID_RE,
   MAX_ACTIVATION_WINDOW_MS,
+  MIN_TMP_FREE_BYTES,
+  tmpFloorRefusal,
   SINGLE_RUN_ACTIVATION_KEYS,
   parseActivationArgs,
   renderActivationLine,
@@ -211,6 +214,16 @@ test("SHU-63 activation ARMED: arms one run, and still requires the runtime swit
   // disk cannot arm anything by itself.
   assert.equal(dispatchEnabledFor(NO_SWITCH, COMMITTED, status), false, "the runtime switch is still required");
   assert.match(renderActivationLine(status), /^activation=ARMED /);
+});
+
+test("SHU71_TMP_FLOOR: a launch needs room to publish, and an armed activation never depends on it", () => {
+  const withFree = (bytes) => tmpFloorRefusal({ tmpFreeBytes: () => bytes });
+  assert.equal(withFree(MIN_TMP_FREE_BYTES), null, "exactly the floor launches");
+  assert.match(withFree(943_656 * 1024), /^only 921 MiB free in .+; a launch needs at least 1024 MiB$/);
+  assert.match(withFree(null), /could not be read \(fail closed\)$/);
+  // The status is re-read before a finished result is published; a short /tmp
+  // must not turn that check into a refusal (reconcile.mjs checks the floor).
+  assert.equal(statusOf({}, { io: { tmpFreeBytes: () => 0 } }).state, "armed");
 });
 
 // ---------------------------------------------------------------------------
@@ -679,7 +692,7 @@ function episodeStore(issueNodes, commentBodies, now) {
   return async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: issueNodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(issueNodes, () => commentBodies) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const known = issueNodes.some((n) => n.id === issueId || n.identifier === issueId);

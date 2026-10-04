@@ -1,6 +1,9 @@
-## Linear
+## Related work
 
-Fixes SHU-___
+[Acceptance policy and operating record](docs/acceptance-record.md)
+
+<!-- Neutral issue references are allowed; avoid closing-keyword issue references.
+     Merge is code delivery only. Live acceptance needs a separate owner receipt. -->
 
 ## Outcome
 

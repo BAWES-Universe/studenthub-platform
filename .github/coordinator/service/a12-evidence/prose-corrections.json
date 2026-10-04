@@ -1,0 +1,27 @@
+[
+  {
+    "location_at_baseline": "DEPENDENCY-AUDIT.md:19",
+    "before": "| env, true (incidental) | removed from codex/lock fixtures; historical shell-toolchain positive/fault controls retained | codex-contract executable fixture now pins process.execPath; service.test lock-release uses child Node. Existing infrastructure still invokes /bin/true. The inherited env/true capability control remains unchanged in scope. |",
+    "after": "| env, true | `shell_toolchain`; env node restored at d09f50d | codex-contract:505 retains #!/usr/bin/env node. Probe executes /usr/bin/env node --version on the child PATH as service identity. env /usr/bin/true remains probed; service.test lock-release alone uses child Node. |"
+  },
+  {
+    "location_at_baseline": "DEPENDENCY-AUDIT.md:24",
+    "before": "| touch, cat (incidental) | removed; Node appendFileSync and stdin.pipe(stdout) | service.test second writer; push-broker-gitconfig marker and clean-filter scripts; workspace-result malicious filter and pre-commit marker. Original expected results/assertions unchanged. |",
+    "after": "| touch, cat | retained fixtures, declared `shell_toolchain` | push-broker-gitconfig:164,432 and workspace-result:67,70 retain shell marker/filter/hook scripts restored at d09f50d. Probe checks /usr/bin/touch --version and /usr/bin/cat --version. Only service.test second writer uses Node appendFileSync. |"
+  },
+  {
+    "location_at_baseline": "DEPENDENCY-AUDIT.md:1583",
+    "before": "Incidental chmod/rm/grep/touch calls are removed.",
+    "after": "Incidental cleanup chmod/rm and scan grep calls remain removed. The service lock touch replacement remains; push-broker/workspace touch and cat fixtures were restored at d09f50d and are declared shell_toolchain."
+  },
+  {
+    "location_at_baseline": "DERIVATION.md:21 and disposition rows 30\u201331",
+    "before": "The 85-file re-audit found no remaining incidental external chmod/rm/touch/grep/cp call. touch / cat replaced with appendFileSync and stdin.pipe(stdout); env node pins process.execPath.",
+    "after": "All 85 files re-audited. Restored touch/cat and env-node fixtures retained and declared. Only the earlier cp, cleanup chmod/rm, grep and service-lock touch/true replacements remain."
+  },
+  {
+    "location_at_baseline": "file-requirements.json codex-contract justification",
+    "before": "real orphan-process lifecycle exercises adapters/codex-cli.mjs proc identity; generated executable pins process.execPath",
+    "after": "real orphan-process lifecycle and procfs; restored executable uses #!/usr/bin/env node and requires node resolution on the child PATH"
+  }
+]

@@ -13,6 +13,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseReceiptsFromComments } from "../../reconcile.mjs";
+import { withBatchedComments } from "./linear-board.mjs";
 
 // The head the WRITE binds to, and the head a revision moves the branch to.
 export const SHA_INPUT = "a".repeat(40);
@@ -29,6 +30,8 @@ export function createEpisodeHarness({
   expiresInMs = 60 * 60 * 1000,
   reviewerLane = "claude-verifier",
   withReviewerLane = true,
+  // SHU-71: the record's optional first-build lane (role reversal).
+  writerLane = null,
   // SHU-231: the episode identity is the record's activation_id, and
   // `supersedes_attempt_ids` names the retained evidence this approval retires.
   activationId = "shu225fixtureactivation",
@@ -69,7 +72,7 @@ export function createEpisodeHarness({
   const linearFetch = async (url, opts) => {
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
     const { query, variables } = JSON.parse(opts.body);
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(nodes, () => comments) } });
     if (query.includes("CoordinatorIncidentComments")) {
       return respond({ issue: { comments: { nodes: [...comments] } } });
     }
@@ -248,6 +251,7 @@ export function createEpisodeHarness({
     expires_at: new Date(now.getTime() + expiresInMs).toISOString(),
   };
   if (withReviewerLane) record.reviewer_lane = reviewerLane;
+  if (writerLane) record.writer_lane = writerLane;
   if (supersedesAttemptIds) record.supersedes_attempt_ids = supersedesAttemptIds;
   const activationPath = join(dir, "activation.json");
   writeFileSync(activationPath, JSON.stringify(record, null, 1));

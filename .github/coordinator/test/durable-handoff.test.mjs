@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { withBatchedComments } from './fixture/linear-board.mjs';
+import { cpSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -35,7 +36,7 @@ function harness(verdict = 'PASS', ready = false) {
   const fetchImpl = async (url, opts) => {
     const { query, variables } = JSON.parse(opts.body);
     let data;
-    if (query.includes('CoordinatorIssues')) data = { issues: { nodes: [{ id: 'uuid-900', identifier: 'SHU-900', title: 'Handoff', state: { name: ready ? 'Todo' : 'In Progress' }, labels: { nodes: [{ name: 'repo:example/repo' }] }, relations: { nodes: [] } }] } };
+    if (query.includes('CoordinatorIssues')) data = { issues: { nodes: withBatchedComments([{ id: 'uuid-900', identifier: 'SHU-900', title: 'Handoff', state: { name: ready ? 'Todo' : 'In Progress' }, labels: { nodes: [{ name: 'repo:example/repo' }] }, relations: { nodes: [] } }], () => structuredClone(comments)) } };
     else if (query.includes('CoordinatorIssueComments')) data = { issue: { comments: { nodes: structuredClone(comments) } } };
     else if (query.includes('commentCreate')) {
       comments.push({ body: variables.body, createdAt: `2026-09-15T00:00:${String(++writes).padStart(2, '0')}Z`, user: { id: TRUSTED_RECEIPT_ACTOR } });
@@ -193,7 +194,10 @@ if (!process.env.HANDOFF_MUTANT_CHILD) test('durable-handoff named mutation cont
   // Isolated copy: never mutate the production module while other tests run.
   const dir = mkdtempSync(join(tmpdir(), 'handoff-mutants-'));
   try {
-    const result = spawnSync('cp', ['-R', new URL('..', import.meta.url).pathname, join(dir, 'coordinator')]);
+    const result = (() => {
+      cpSync(new URL('..', import.meta.url).pathname, join(dir, 'coordinator'), { recursive: true, verbatimSymlinks: true });
+      return { status: 0 }; // cpSync throws on failure; preserve the existing success assertion.
+    })();
     assert.equal(result.status, 0);
     for (const [name, from, to, pattern] of mutations) {
       assert.ok(original.includes(from), `mutation anchor ${name}`);

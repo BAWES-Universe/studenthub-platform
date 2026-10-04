@@ -1,0 +1,10 @@
+{
+  "revision": "ca77fc8a251b5e62594393c5eb0f974e195e9271",
+  "exit_code": 0,
+  "counts": {
+    "pass": 2754,
+    "skip": 8
+  },
+  "outcomes": 2762,
+  "complete_markers": 1
+}

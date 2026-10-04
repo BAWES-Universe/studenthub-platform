@@ -1,0 +1,87 @@
+import { ORGANIZATION_PARITY_REVISION } from "./types.js";
+
+const metadata = Object.freeze({
+  source_revision: ORGANIZATION_PARITY_REVISION,
+  imported_at: "2026-10-04T09:00:00.000Z",
+});
+
+/**
+ * Synthetic `company` snapshots for two unrelated organizations A and B and
+ * A's sub-organization A1. No real company or person appears here.
+ */
+export const SYNTHETIC_ORGANIZATION_FIXTURES = Object.freeze({
+  parentA: Object.freeze({
+    ...metadata,
+    org_id: "org-a",
+    parent_org_id: null,
+    company_name: "Synthetic Retail Group",
+    company_common_name_en: "Synthetic Retail",
+    company_common_name_ar: "التجزئة التجريبية",
+    company_description_en: "A synthetic parent organization.",
+    company_description_ar: "شركة تجريبية.",
+    company_website: "synthetic-retail.example.invalid",
+    company_email: "hello@synthetic-retail.example.invalid",
+    currency_code: "KWD",
+    company_approved_to_hire: 1,
+    company_hourly_rate: "1.500",
+    company_bonus_commission: "20.00",
+    company_status_override: null,
+    total_candidate: 4,
+    is_request_updates_in_30_days: 0,
+    no_of_active_requests: 0,
+    // OR-F2 disagreement: the stored column says active while the inputs say otherwise for A1.
+    company_status: 10,
+    // Canary-only excluded inputs prove every projection is closed.
+    company_auth_key: "SENSITIVE-AUTH-KEY-SENTINEL",
+    company_password_hash: "SENSITIVE-PASSWORD-HASH-SENTINEL",
+    company_password_reset_token: "SENSITIVE-RESET-TOKEN-SENTINEL",
+    commercial_licence: "SENSITIVE-LICENCE-KEY-SENTINEL",
+    company_logo: "SENSITIVE-LOGO-KEY-SENTINEL",
+    staff_id: 77,
+    company_followup: 1,
+    company_next_followup_datetime: "2026-10-10 09:00:00",
+  }),
+  childA1: Object.freeze({
+    ...metadata,
+    org_id: "org-a1",
+    parent_org_id: "org-a",
+    company_name: "Synthetic Retail Kuwait City",
+    company_common_name_en: "Synthetic Retail KC",
+    company_common_name_ar: null,
+    company_description_en: null,
+    company_description_ar: null,
+    company_website: null,
+    company_email: "kc@synthetic-retail.example.invalid",
+    currency_code: "KWD",
+    company_approved_to_hire: 0,
+    company_hourly_rate: null,
+    company_bonus_commission: null,
+    company_status_override: 0,
+    total_candidate: 0,
+    is_request_updates_in_30_days: 0,
+    no_of_active_requests: 0,
+    company_status: 10,
+    company_auth_key: "SENSITIVE-AUTH-KEY-SENTINEL",
+  }),
+  unrelatedB: Object.freeze({
+    ...metadata,
+    org_id: "org-b",
+    parent_org_id: null,
+    company_name: "Synthetic Cafe Company",
+    company_common_name_en: "Synthetic Cafe",
+    company_common_name_ar: null,
+    company_description_en: null,
+    company_description_ar: null,
+    company_website: "https://cafe.example.invalid",
+    company_email: "cafe@example.invalid",
+    currency_code: "KWD",
+    company_approved_to_hire: 1,
+    company_hourly_rate: "2.000",
+    company_bonus_commission: "10.00",
+    company_status_override: 9,
+    total_candidate: 12,
+    is_request_updates_in_30_days: 1,
+    no_of_active_requests: 3,
+    company_status: 10,
+  }),
+});
