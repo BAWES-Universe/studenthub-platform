@@ -20,6 +20,7 @@ import {
   type AuthzMiddleware,
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
+import { handleLanguagePreference } from "./language-preference.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory,
@@ -155,6 +156,7 @@ export function createGatewayServer(
     void inSpan(webSpan ?? span, async () => {
     try {
     if (await handleCandidateDocuments(request, response, documents)) return;
+    if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;
