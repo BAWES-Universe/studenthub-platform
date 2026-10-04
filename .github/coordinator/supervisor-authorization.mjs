@@ -18,6 +18,9 @@ export const AUTH_EVIDENCE_WAIT_MS = 3000;
 
 const denied = code => ({ ok: false, code: `HOST_AUTH_${code}` });
 
+// The issues whose threads two-fixture-evidence.mjs reads.
+const BROKER_FIXTURE_IDS = Object.freeze(["SHU-140", "SHU-254"]);
+
 function evaluate(order, io) {
   try {
     const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -27,11 +30,13 @@ function evaluate(order, io) {
     if (!scope.valid || (scope.issueIds && !scope.issueIds.has(order.issue_id))) return denied("DISPATCH_SCOPE");
     if (config.adapter_pause_map?.[order.runtime]) return denied("ADAPTER_PAUSED");
     const filePath = env.SHU_SUPERVISOR_ACTIVATION_FILE;
-    // The broker serves the SHU-71 pair's threads only. A single-card scope never
-    // needs them, so a failed read of a card it has nothing to do with must not
-    // deny it (Hermes, PR #213 A1).
-    const pairScoped = scope.issueIds?.size === 2;
-    const evidence = env.SHU71_EVIDENCE_BROKER === "true" && pairScoped ? readTwoFixtureEvidence(config, env, io.evidenceRun) : null;
+    // The broker serves the SHU-71 fixtures' threads only. A scope that can admit
+    // either fixture (the pair, one fixture alone, or no scope) still reads them,
+    // because their receipts decide spent and retry; a scope without a fixture,
+    // such as a single card, never needs them, so a failed read of threads it has
+    // nothing to do with must not deny it (Hermes, PR #213 A1; GPT, PR #214 1).
+    const fixtureScoped = !scope.issueIds || BROKER_FIXTURE_IDS.some(id => scope.issueIds.has(id));
+    const evidence = env.SHU71_EVIDENCE_BROKER === "true" && fixtureScoped ? readTwoFixtureEvidence(config, env, io.evidenceRun) : null;
     // An unread thread is not an empty one: no receipts would read as an unspent
     // seed, and the pair would refuse as a rewind under the wrong name.
     if (evidence && (evidence.unavailable === true || !Array.isArray(evidence.comments))) return denied("EVIDENCE_UNAVAILABLE");
