@@ -2179,6 +2179,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   // run (a card whose durable state cannot be read must never be launched at).
   let receipts = [...(io.receipts ?? [])];
   let durableReadFailed = false;
+  const unreadIssueIds = new Set(); // cards whose thread could not be read this tick
   const commentsByIssue = new Map(); // issue id/identifier -> raw comment nodes (evidence source)
   if (linearToken && io.fetchDurable !== false) {
     const pausedAdapters = new Set(Object.keys(config.adapter_pause_map).filter((k) => config.adapter_pause_map[k]));
@@ -2189,6 +2190,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       const read = boardComments.get(issue.linearId ?? issue.id) ?? boardComments.get(issue.id);
       if (!read || read.error) {
         durableReadFailed = true;
+        unreadIssueIds.add(issue.id);
         if (io.stdout) io.stdout(`durable read failed for ${issue.id}: ${read?.error ?? "the board read carried no comment thread for this card"} — DISPATCH PREVENTED (fail closed)`);
         continue;
       }
@@ -2236,6 +2238,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         filePath: activationArg.path,
         env, issues, config,
         receipts,
+        unreadIssueIds,
         now: io.now ? io.now() : new Date(),
         dir: __dirname,
         gitHead: io.gitHead,

@@ -3934,7 +3934,8 @@
     "SHU71_BROKER_CONCURRENT: one slow read does not hold another caller past its timeout",
     "SHU71_HEAD_RACE: a push landing between the head read and the journal read is read again, a real rewind still refuses",
     "SHU71_PUBLISH_AUTH: the worker's host check names the clause that refuses and reads failed evidence again",
-    "SHU71_FINAL_CHECK: the check before a worker launches reads failed evidence again and names its refusal"
+    "SHU71_FINAL_CHECK: the check before a worker launches reads failed evidence again and names its refusal",
+    "SHU71_UNREAD_CARD: a card thread the tick could not read is a read to retry, never a stale seed head"
   ],
   "requirements": [
     {
@@ -29872,6 +29873,17 @@
     },
     {
       "name": "SHU71_FINAL_CHECK: the check before a worker launches reads failed evidence again and names its refusal",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU71_UNREAD_CARD: a card thread the tick could not read is a read to retry, never a stale seed head",
       "capabilities": [
         {
           "name": "git"

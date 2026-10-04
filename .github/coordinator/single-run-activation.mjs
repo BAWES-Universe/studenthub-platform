@@ -598,6 +598,7 @@ export function singleRunActivationStatus({
   io = {},
   env = {},
   issues = [],
+  unreadIssueIds = new Set(),
 } = {}) {
   if (!filePath) return { requested: false, state: "absent", valid: true, reason: null, target_issue_id: null, activation_id: null, expires_at: null };
 
@@ -633,6 +634,13 @@ export function singleRunActivationStatus({
       revision, mainRevision, heads: evidence.heads, issues: evidence.issues, env, now: at,
       receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
       isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
+    // SHU-71 run 7: a card whose thread the tick could not read contributes no
+    // receipts, so its lane's progression falls back to the seed and the live
+    // head reads as stale. That is a read to retry next tick, never a stale seed.
+    const unreadFixture = pairRecord.fixtures?.find?.(fixture => unreadIssueIds.has(fixture?.issue_id));
+    if (unreadFixture) {
+      return { ...refused(`ACT_EVIDENCE_UNAVAILABLE: the receipts on ${unreadFixture.issue_id} could not be read; refused this tick`), code: "ACT_EVIDENCE_UNAVAILABLE", kind: "two-fixture-v1" };
+    }
     const started = Date.now();
     let evidence = readEvidence();
     let status = validatePair(evidence);

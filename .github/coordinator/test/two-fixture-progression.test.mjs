@@ -503,6 +503,40 @@ test('SHU71_FINAL_CHECK: the check before a worker launches reads failed evidenc
   } finally { w.cleanup(); }
 });
 
+test('SHU71_UNREAD_CARD: a card thread the tick could not read is a read to retry, never a stale seed head', async () => {
+  // Stage 5 run 7 stopped on "ACT_STALE_SEED_HEAD: branch head differs from
+  // bound seed" with both lanes where their receipts put them. A card whose
+  // thread the tick cannot read adds no receipts, so that lane's progression
+  // falls back to its seed and the moved head looked stale; re-reading the
+  // heads could never fix it.
+  const w = tickWorld(); try {
+    const before = w.f.comments.length;
+    const build = w.f.reserve(); const built = await w.f.push(build); w.f.finish(build, 'BUILD_READY', built);
+    w.h.comments.push(...w.f.comments.slice(before)); w.h.branchHead.value = built;
+    const original = w.h.runTick;
+    let unread = true;
+    w.h.runTick = options => original({ ...options, io: { ...options.io, staleHeadWait: () => assert.fail('an unread card is not read again this tick'),
+      fetchImpl: async (...args) => {
+        const response = await options.io.fetchImpl(...args);
+        if (!unread || !JSON.parse(args[1]?.body ?? '{}').query?.includes('CoordinatorIssues')) return response;
+        const payload = await response.json();
+        for (const node of payload.data.issues.nodes) if (node.identifier === 'SHU-140') delete node.comments;
+        return { ...response, json: async () => payload };
+      } } });
+    await assert.rejects(w.tick(), /single-run activation REFUSED \(ACT_EVIDENCE_UNAVAILABLE: the receipts on SHU-140 could not be read; refused this tick\)/);
+    assert.equal(w.h.receipts().some(r => r.issue_id === 'SHU-140' && r.role === 'review'), false, 'SHU71_UNREAD_CARD_NO_WRITES');
+    unread = false;
+    await w.tick();
+    assert.equal(w.h.receipts().filter(r => r.issue_id === 'SHU-140').at(-1)?.target_sha, built, 'SHU71_UNREAD_CARD_NEXT_TICK_PROCEEDS');
+
+    // A head that really differs still refuses, and now says which lane and both heads.
+    w.f.git(w.f.remote, 'update-ref', 'refs/heads/coordinator/SHU-254', built);
+    const refused = w.f.status();
+    assert.equal(refused.code, 'ACT_STALE_SEED_HEAD', refused.reason);
+    assert.match(refused.reason, new RegExp(`coordinator/SHU-254: head ${built.slice(0, 12)}, progression ${w.f.seed.slice(0, 12)}`), 'SHU71_STALE_SEED_NAMES_LANE');
+  } finally { w.cleanup(); }
+});
+
 test('B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review', async () => {
   const { f, h, tick, cleanup } = tickWorld();
   try {
