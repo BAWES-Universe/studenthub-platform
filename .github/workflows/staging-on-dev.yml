@@ -121,6 +121,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The smoke script below is branch code, so it must not hold the registry write token.
+      - name: Pull the pushed digest and log out of the registry
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker pull "${REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}@${DIGEST}"
+          docker logout ghcr.io
+          rm -f "${HOME}/.docker/config.json"
+
       - name: Smoke-test the exact pushed digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

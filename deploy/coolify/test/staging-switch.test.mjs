@@ -60,6 +60,12 @@ test('the switch promotes only an image that main\'s smoke test passed in the sa
   // A failed smoke test fails its step, so the steps after it (confirm, switch) never run.
   assert.doesNotMatch(step('switch', 'Smoke-test the wanted image'), /continue-on-error/);
 });
+test('the branch smoke script runs only after the registry write token is gone', () => {
+  const logout = jobs.build.indexOf('docker logout ghcr.io'), smoke = jobs.build.indexOf('image-smoke.sh');
+  assert.ok(jobs.build.indexOf('uses: docker/build-push-action') < logout && logout < smoke);
+  assert.match(step('build', 'Pull the pushed digest and log out of the registry'), /docker pull "\$\{REGISTRY\}\/\$\{IMAGE_PREFIX\}\/\$\{IMAGE_NAME\}@\$\{DIGEST\}"\n\s+docker logout ghcr\.io\n\s+rm -f "\$\{HOME\}\/\.docker\/config\.json"/);
+  assert.equal(jobs.build.match(/image-smoke\.sh/g).length, 1);
+});
 test('branch code never runs with the Coolify secrets', () => {
   for (const [name, text] of Object.entries(jobs)) if (name !== 'switch') assert.doesNotMatch(text, /COOLIFY_/, name);
   assert.equal(jobs.switch.match(/ref: /g).length, 1);
