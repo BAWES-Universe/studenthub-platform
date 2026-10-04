@@ -84,7 +84,9 @@ test('a switch reconciles even when its own build failed or was superseded', () 
   assert.match(jobs.switch, /if: always\(\) && needs\.decide\.result == 'success' && needs\.decide\.outputs\.branch != ''/);
   assert.doesNotMatch(jobs.switch, /needs\.build\.outputs/);
 });
-test('the main deploy shares the staging queue with the on-dev switch', () => {
+test('the on-dev switch is the only job anywhere that can move staging', () => {
   const build = readFileSync(new URL('../../../.github/workflows/build.yml', import.meta.url), 'utf8');
-  assert.match(build, /\n  deploy:\n[\s\S]*?concurrency:\n\s+group: staging-switch\n\s+cancel-in-progress: false\n[\s\S]*?\n    steps:/);
+  assert.doesNotMatch(build, /COOLIFY_TOKEN|staging-switch|automatic-staging/);
+  assert.equal(workflow.match(/secrets\.COOLIFY_TOKEN/g).length, 1);
+  assert.match(step('switch', 'Switch staging and verify'), /COOLIFY_TOKEN/);
 });

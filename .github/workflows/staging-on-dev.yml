@@ -134,7 +134,7 @@ jobs:
     if: always() && needs.decide.result == 'success' && needs.decide.outputs.branch != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # One switch at a time, shared with the main deploy in build.yml. Never cancel one half-way.
+    # The only job that moves staging's `latest` tag. One switch at a time; never cancel one half-way.
     concurrency:
       group: staging-switch
       cancel-in-progress: false

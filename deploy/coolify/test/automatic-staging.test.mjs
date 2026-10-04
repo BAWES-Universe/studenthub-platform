@@ -69,14 +69,13 @@ test('automatic HTTP compatibility retains typed missing settings and exact runn
   assert.equal(post, 1); assert.equal(features, 1);
   await assert.rejects(triggerSelected(selected, { ...env, COOLIFY_BASE: '' }, request, opts), { code: 'PRECONDITION_NOT_MET' }); assert.equal(post, 1);
 });
-test('workflow never exposes latest before image smoke and serializes deploy through rollback', () => {
+test('the build workflow publishes smoke-tested main images but never deploys or moves latest', () => {
   const workflow = readFileSync(new URL('../../../.github/workflows/build.yml', import.meta.url), 'utf8');
-  assert.doesNotMatch(workflow, /value=latest|workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /value=latest|:latest|workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /COOLIFY_TOKEN|automatic-staging\.mjs|report-staging-stop|\n  deploy:|\n  staging-stop:|issues: write/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /needs.runtime-scope.outputs.changed == 'true'/);
-  assert.match(workflow, /needs: build-push/);
   assert.match(workflow, /image-smoke.sh.*DIGEST/);
-  assert.match(workflow, /issues: write/);
 });
 
 test('runtime fingerprint ignores unrelated workspace source but detects the actual deployed closure', async (t) => {

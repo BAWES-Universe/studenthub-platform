@@ -1,4 +1,4 @@
-name: Build, push and deploy gateway
+name: Build and push gateway
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: build-gateway-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.ref) }}
-  # Serialize publication, tag promotion, verification and rollback.
+  # Serialize publication of each ref. Staging deploys run in staging-on-dev.yml.
   cancel-in-progress: false
 
 env:
@@ -194,91 +194,3 @@ jobs:
           path: published-artifact.json
           if-no-files-found: error
 
-  deploy:
-    # Only runtime main pushes whose exact published digest passed image smoke.
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    needs: build-push
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Shares one queue with the on-dev switch (staging-on-dev.yml): both move staging's latest tag.
-    concurrency:
-      group: staging-switch
-      cancel-in-progress: false
-    outputs:
-      outcome: ${{ steps.rollout.outputs.outcome }}
-    permissions:
-      contents: read
-      packages: write
-      issues: write
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
-          POSTGRES_DB: studenthub_authz
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Record smoke-tested artifact
-        env:
-          DIGEST: ${{ needs.build-push.outputs.digest }}
-        run: |
-          node --input-type=module <<'JS'
-          import { writeFileSync } from 'node:fs';
-          import { selectArtifact } from './deploy/coolify/select-artifact.mjs';
-          const selection = selectArtifact(process.env.GITHUB_SHA);
-          if (selection.digest !== process.env.DIGEST) throw new Error('artifact differs from smoke-tested digest');
-          writeFileSync('selected-artifact.json', JSON.stringify(selection) + '\n');
-          JS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: selected-artifact-${{ github.run_id }}-${{ github.run_attempt }}
-          path: selected-artifact.json
-          if-no-files-found: error
-      - name: Automatically deploy and verify staging with rollback and freeze
-        id: rollout
-        env:
-          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
-          GH_TOKEN: ${{ github.token }}
-          DATABASE_URL: postgres://postgres@localhost:55432/studenthub_authz
-        run: node deploy/coolify/automatic-staging.mjs
-      - uses: actions/upload-artifact@v4
-        if: ${{ always() }}
-        with:
-          name: deployment-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: deployment-receipt.json
-          if-no-files-found: warn
-
-  staging-stop:
-    needs: [runtime-scope, env-manifest, build-push, deploy]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(needs.*.result, 'failure') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Retain staging freeze and notify through GitHub
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OUTCOME: ${{ needs.env-manifest.result == 'failure' && 'PRECONDITION_NOT_MET' || needs.deploy.outputs.outcome }}
-        run: node deploy/coolify/report-staging-stop.mjs
