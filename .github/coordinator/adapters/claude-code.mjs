@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
+import { cardBrief } from "../card-contracts.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
@@ -103,6 +104,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `You are the authorized ${role} worker for ${issue_id}; contract ${authorization_ref}.`,
     `Attempt: ${attempt_id}. Bound target: ${target_sha}. Local head: ${scoped_base_sha ?? target_sha}.`,
     task_context,
+    cardBrief(issue_id) && `Card brief, what to build:\n${cardBrief(issue_id)}`,
     `Implement only the authorized paths: ${allowed_paths.length ? allowed_paths.join(", ") : "the bound full workspace"}.`,
     "Leave changes in the workspace. Do not commit, push, merge, access the network, or alter .git. The host broker validates and publishes the result.",
     // SHU-71: the Claude writer has file tools only. Say so plainly, and why,
@@ -111,6 +113,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
   ].filter(Boolean).join("\n");
   const reviewScope = fixtureReviewScope(issue_id);
+  const brief = cardBrief(issue_id);
   return [
     "You are the independent verifier for an authorized StudentHub change.",
     `Issue: ${issue_id}`,
@@ -118,7 +121,8 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `Bound head: ${target_sha}`,
     `Attempt: ${attempt_id}`,
     task_context,
-    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against the contract the files and their folders document, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
+    brief && `Card brief, the contract this change is held to:\n${brief}`,
+    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against ${brief ? "the card brief above" : "the contract the files and their folders document"}, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
     "Review and test the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
     "You are read-only. Do not edit, commit, or push.",

@@ -1,5 +1,6 @@
 import { resolveReceiptRoleAuthority, roleForLane } from "./launch-vocabulary.mjs";
 import path from "node:path";
+import { cardContract, CARD_CONTRACTS } from "./card-contracts.mjs";
 
 export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full"]);
 export const SCOPE_PHASES = Object.freeze(["initial", "revision", "review"]);
@@ -28,17 +29,26 @@ const FIXTURE_CONTRACTS = Object.freeze({
   "SHU-254": { initial_build_paths: SHU254_INITIAL_BUILD_PATHS, revision_paths: SHU254_REVISION_PATHS, seeded_defect_path: SHU254_TRAP_PATH },
 });
 
+// Fixture and card lanes share one exact-path contract shape; a card simply has
+// no seeded defect (card-contracts.mjs). An id is never both.
+for (const id of Object.keys(CARD_CONTRACTS)) {
+  if (Object.hasOwn(FIXTURE_CONTRACTS, id)) throw new Error(`${id} cannot be both a fixture and a card lane`);
+}
+function laneContract(issueId) {
+  if (typeof issueId !== "string") return null;
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId] : cardContract(issueId);
+}
+
 // A reviewer is told the lane's whole declared scope, not only the last diff:
 // the acceptance oracle is in scope although node --test never loads it.
 export function fixtureReviewScope(issueId) {
-  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId].revision_paths : null;
+  return laneContract(issueId)?.revision_paths ?? null;
 }
 
 // The node tests a fixture lane's reviewer runs: the test files of that lane's
 // own declared scope, so each lane's review runs its own tests (SHU-71).
 export function fixtureReviewTests(issueId) {
-  return Object.hasOwn(FIXTURE_CONTRACTS, issueId)
-    ? FIXTURE_CONTRACTS[issueId].revision_paths.filter((file) => /\.test\.(?:m?js|cjs)$/.test(file)) : null;
+  return laneContract(issueId)?.revision_paths.filter((file) => /\.test\.(?:m?js|cjs)$/.test(file)) ?? null;
 }
 
 // A fixture card's acceptance check. Its reviewer holds the lane to it whatever
@@ -46,14 +56,21 @@ export function fixtureReviewTests(issueId) {
 // (review-change.mjs).
 export const FIXTURE_ACCEPTANCE = "every test and every acceptance-oracle row in the declared scope agrees with the contract the lane's files document.";
 export function fixtureAcceptance(issueId) {
-  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_ACCEPTANCE : null;
+  if (typeof issueId === "string" && Object.hasOwn(FIXTURE_CONTRACTS, issueId)) return FIXTURE_ACCEPTANCE;
+  return cardContract(issueId)?.acceptance ?? null;
 }
 
 // The legacy object remains supported; additional lanes must have unique IDs.
+// card_lanes name real cards; each must match its reviewed card contract.
 export function resolveFixtureLane(config = {}, issueId) {
   const extra = config.fixture_lanes ?? [];
   if (!Array.isArray(extra)) throw new Error("fixture_lanes must be an array");
-  const lanes = [...(config.fixture_lane ? [config.fixture_lane] : []), ...extra];
+  const cards = config.card_lanes ?? [];
+  if (!Array.isArray(cards)) throw new Error("card_lanes must be an array");
+  for (const card of cards) {
+    if (!cardContract(card?.id)) throw new Error("card_lanes may name only a reviewed card contract");
+  }
+  const lanes = [...(config.fixture_lane ? [config.fixture_lane] : []), ...extra, ...cards];
   const ids = new Set();
   for (const lane of lanes) {
     if (!lane || typeof lane.id !== "string" || !lane.id || ids.has(lane.id)) {
@@ -66,7 +83,7 @@ export function resolveFixtureLane(config = {}, issueId) {
 
 // Check issue binding again on durable receipts, including recovery, before I/O.
 export function validateFixtureAttemptScope(receipt = {}) {
-  const contract = FIXTURE_CONTRACTS[receipt.issue_id];
+  const contract = laneContract(receipt.issue_id);
   if (!contract || receipt.workspace_scope !== "scoped") return { ok: true };
   const expected = receipt.scope_phase === "revision" ? contract.revision_paths : contract.initial_build_paths;
   if (JSON.stringify(receipt.allowed_paths) !== JSON.stringify(expected)) {
@@ -98,12 +115,21 @@ export function validateAllowedPaths(value, { name = "allowed_paths", allowEmpty
 }
 
 export function validateFixtureScopePolicy(fixture = {}) {
-  const contract = FIXTURE_CONTRACTS[fixture.id];
+  const contract = laneContract(fixture.id);
   if (!contract) return { ok: false, reason: "unknown fixture scope issue id" };
   const initial = validateAllowedPaths(fixture.initial_build_paths, { name: "fixture_lane.initial_build_paths" });
   if (!initial.ok) return initial;
   const revision = validateAllowedPaths(fixture.revision_paths, { name: "fixture_lane.revision_paths" });
   if (!revision.ok) return revision;
+  if (!Object.hasOwn(contract, "seeded_defect_path")) {
+    // A card lane: no trap to reach, so its paths are exactly its contract's.
+    if (Object.hasOwn(fixture, "seeded_defect_path")) return { ok: false, reason: `card lane ${fixture.id} has no seeded defect` };
+    if (JSON.stringify(initial.paths) !== JSON.stringify(contract.initial_build_paths) ||
+        JSON.stringify(revision.paths) !== JSON.stringify(contract.revision_paths)) {
+      return { ok: false, reason: `card scope paths differ from the reviewed exact ${fixture.id} contract` };
+    }
+    return { ok: true, initial_build_paths: initial.paths, revision_paths: revision.paths, seeded_defect_path: null };
+  }
   if (fixture.seeded_defect_path !== contract.seeded_defect_path) {
     return { ok: false, reason: `fixture_lane.seeded_defect_path must pin the reviewed ${fixture.id} trap` };
   }
