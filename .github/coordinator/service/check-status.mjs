@@ -1,3 +1,4 @@
+import { supervisorTransportSecret } from "./credential-delivery.mjs";
 // Read-only acceptance client for a later approved window. Never construct a
 // SupervisorStore here: its constructor changes directory permissions.
 import assert from 'node:assert/strict';
@@ -24,5 +25,5 @@ export async function checkStatus({ stateDir, socketPath, secret, order }) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const order = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
   console.log(JSON.stringify(await checkStatus({ stateDir: process.env.SHU_SUPERVISOR_STATE_DIR,
-    socketPath: process.env.SHU_SUPERVISOR_SOCKET, secret: process.env.SHU_SUPERVISOR_SECRET, order }), null, 2));
+    socketPath: process.env.SHU_SUPERVISOR_SOCKET, secret: supervisorTransportSecret(process.env), order }), null, 2));
 }

@@ -1,0 +1,1249 @@
+[
+  {
+    "file": ".github/coordinator/service/test/activation-window-reconciliation.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/capability-requirements.test.mjs",
+    "capabilities": [
+      "shell_toolchain",
+      "linux_proc",
+      "loopback_socket"
+    ],
+    "justification": "dependencyControl executes each real fixed-argv probe; all other capabilities use injected boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/capability-requirements.test.mjs:83",
+      ".github/coordinator/service/test/capability-requirements.test.mjs:110",
+      ".github/coordinator/service/test/capability-requirements.test.mjs:164"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/cli-amendments.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/service/test/cli-amendments.test.mjs:24",
+      ".github/coordinator/service/test/cli-amendments.test.mjs:55"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/closure-approval.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Real local Git seed/revision/reseed composition exercises compose, seal and validate; no remote commands or host IO",
+    "call_sites": [
+      ".github/coordinator/service/test/closure-approval.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/closure-environment.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem, crypto and syntax-check subprocess only; production syscall, Git, systemd and API boundaries are modeled, not executed",
+    "call_sites": [
+      ".github/coordinator/service/test/closure-environment.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/environment-content-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/service/test/environment-content-mutations.test.mjs:31"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/environment-content.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/host-lifecycle.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/service/test/host-lifecycle.test.mjs:218",
+      ".github/coordinator/service/test/host-lifecycle.test.mjs:229"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/host-suite-contract.test.mjs",
+    "capabilities": [
+      "cvtsudoers",
+      "linux_proc"
+    ],
+    "justification": "real installed provider control calls resolveCvtsudoers, which executes pinned /proc/self/fd/3; other parser controls inject IO",
+    "call_sites": [
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:150",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:159",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:161",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:164",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:181",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:186",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:222",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:271",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:272",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:328",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:335",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:364",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:375",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:377",
+      ".github/coordinator/service/test/host-suite-contract.test.mjs:386"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/host-window-bindings.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "direct spawnSync(wrapper): operational wrapper /bin/sh shebang and dirname calls; provider commands intercepted by preload",
+    "call_sites": [
+      ".github/coordinator/service/test/host-window-bindings.test.mjs:49",
+      ".github/coordinator/service/test/host-window-bindings.test.mjs:143",
+      ".github/coordinator/service/test/host-window-bindings.test.mjs:162",
+      ".github/coordinator/service/test/host-window-bindings.test.mjs:169",
+      ".github/coordinator/service/test/host-window-bindings.test.mjs:176",
+      ".github/coordinator/service/test/host-window-bindings.test.mjs:179"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/mint-shu71.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Actual checkout objects, tree and reseed derivation use Git; remote observation is doubled. Other mint controls use Node core only.",
+    "call_sites": [
+      ".github/coordinator/service/test/mint-shu71-controls.mjs:repositoryControls"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/phase-a-driver.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/service/test/phase-a-driver.test.mjs:220",
+      ".github/coordinator/service/test/phase-a-driver.test.mjs:287",
+      ".github/coordinator/service/test/phase-a-driver.test.mjs:295",
+      ".github/coordinator/service/test/phase-a-driver.test.mjs:344",
+      ".github/coordinator/service/test/phase-a-driver.test.mjs:348"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/production-lifecycle.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/service/test/production-lifecycle.test.mjs:459",
+      ".github/coordinator/service/test/production-lifecycle.test.mjs:467",
+      ".github/coordinator/service/test/production-lifecycle.test.mjs:469"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-host-reality.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",
+    "call_sites": [
+      ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-review-regressions.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem, VM and child process assertions; host paths mapped to temporary fixtures and all host executable boundaries doubled",
+    "call_sites": [
+      ".github/coordinator/service/test/provision-review-regressions.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-runtime-state.test.mjs",
+    "capabilities": [],
+    "justification": "Node core temporary filesystem with stored ownership state and injected command boundaries; no host service or external successful tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",
+    "call_sites": [
+      ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-target-host.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and VM APIs; target shadow, NSS and find boundaries doubled; mutants import shipped source",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/reporter-amendments.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/service/test/reporter-amendments.test.mjs:23",
+      ".github/coordinator/service/test/reporter-amendments.test.mjs:45",
+      ".github/coordinator/service/test/reporter-amendments.test.mjs:85",
+      ".github/coordinator/service/test/reporter-amendments.test.mjs:100"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/residual.test.mjs",
+    "capabilities": [
+      "unix_socket",
+      "linux_proc"
+    ],
+    "justification": "fork fixture/residual-process.mjs; live supervisor socket and probeProcess stat identity",
+    "call_sites": [
+      ".github/coordinator/service/test/residual.test.mjs:50"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/service-plane.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem, crypto and syntax-check subprocess only; production syscall, Git, systemd and API boundaries are modeled, not executed",
+    "call_sites": [
+      ".github/coordinator/service/test/service-plane.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/service.test.mjs",
+    "capabilities": [
+      "systemd_analyze",
+      "flock"
+    ],
+    "justification": "verify/install syntax uses units.verifySyntax; common flock test executes /usr/bin/flock",
+    "call_sites": [
+      ".github/coordinator/service/test/service.test.mjs:38",
+      ".github/coordinator/service/test/service.test.mjs:86",
+      ".github/coordinator/service/test/service.test.mjs:90",
+      ".github/coordinator/service/test/service.test.mjs:96"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-arming-order.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-arming-order.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries; the one spawned child is this repository's own module under the running Node binary",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-arming-robustness-checks.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-branch-restore.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-branch-restore-checks.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-composition.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects commands and fetch; episode harness injects revision, workspace and launch boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-composition.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-delivery.test.mjs",
+    "capabilities": [],
+    "justification": "credential and broker APIs inject read/run/fork; rendered executable strings are assertions only",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-delivery.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-delta-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-evidence-paging.test.mjs",
+    "capabilities": [],
+    "justification": "evidence reader child runs unchanged with fetch replaced in-process; broker client runs against a temporary local socket",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-evidence-paging.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-final-measurement-checks.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-final-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-history.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "historicalSource executes git cat-file/show; synthetic repository uses git init/add/commit/rev-parse",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-history.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-host-contract.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Real Git object write after modeled POSIX identity and shared-group access; host commands otherwise injected",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-host-contract.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
+    "capabilities": [],
+    "justification": "Node core crypto/filesystem controls; production command and NSS boundaries doubled; Unix DAC connection behaviour model, no host identity or socket access claimed",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; historical and mutation modules execute in-process with disposable filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-phase-readback.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-post-completion.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-post-completion-checks.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-postpush-readback.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-prearm-measurement.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-prearm-measurement-checks.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-production-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-production.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-production.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "executes the constructed re-exec command's environment-carrying portion through /usr/bin/env -i and requires it to succeed; every other boundary is doubled or recorded",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs:92"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and VM DAC model; commands, identities and services are doubled; kernel connect is host-only",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-runtime-window.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-state-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
+    "capabilities": [],
+    "justification": "render and policy checks; productionFixture injects commands; review refusal occurs before execution",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-trust-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-trust.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "counterDifferential and r5Differential call historicalSource, executing git cat-file/show",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-trust.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
+    "capabilities": [],
+    "justification": "Node-only repository fixtures; static production boundaries and schema mutation controls; no host commands or network",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-verdict-closures.test.mjs"
+    ],
+    "resources": [
+      ".github/coordinator/service/shu71-runtime-row.schema.json",
+      ".github/coordinator/service/shu71-runtime-schema.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/suite-runner-spec.test.mjs",
+    "capabilities": [
+      "git",
+      "bash",
+      "shell_toolchain",
+      "linux_proc",
+      "loopback_socket",
+      "cvtsudoers",
+      "systemd_analyze",
+      "flock",
+      "unix_socket"
+    ],
+    "justification": "Real committed-inventory guard executes all other suite proofs: union of their non-identity dependencies; authorized identity absences remain exact child outcomes.",
+    "call_sites": [
+      ".github/coordinator/service/test/suite-runner-spec.test.mjs:131",
+      ".github/coordinator/service/test/suite-runner-spec.test.mjs:142",
+      ".github/coordinator/service/test/suite-runner-spec.test.mjs:167",
+      ".github/coordinator/service/test/suite-runner-spec.test.mjs:218",
+      ".github/coordinator/service/test/suite-runner-spec.test.mjs:238"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/supervisor-service.test.mjs",
+    "capabilities": [
+      "systemd_analyze",
+      "unix_socket",
+      "linux_proc"
+    ],
+    "justification": "verifySyntax; live supervisor fixture; process identity reads /proc/self/stat",
+    "call_sites": [
+      ".github/coordinator/service/test/supervisor-service.test.mjs:133",
+      ".github/coordinator/service/test/supervisor-service.test.mjs:179"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/activation.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/adapter.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/attempt-workspace.test.mjs",
+    "capabilities": [
+      "git",
+      "bash",
+      "shell_toolchain",
+      "flock"
+    ],
+    "justification": "real git helper, host-tick.sh execution (dirname/flock), production attempt-workspace workerRun chmod; identity-dependent tests separately bound",
+    "call_sites": [
+      ".github/coordinator/test/attempt-workspace.test.mjs:18",
+      ".github/coordinator/test/attempt-workspace.test.mjs:24",
+      ".github/coordinator/test/attempt-workspace.test.mjs:59",
+      ".github/coordinator/test/attempt-workspace.test.mjs:137",
+      ".github/coordinator/test/attempt-workspace.test.mjs:164",
+      ".github/coordinator/test/attempt-workspace.test.mjs:172",
+      ".github/coordinator/test/attempt-workspace.test.mjs:235",
+      ".github/coordinator/test/attempt-workspace.test.mjs:376",
+      ".github/coordinator/test/attempt-workspace.test.mjs:378",
+      ".github/coordinator/test/attempt-workspace.test.mjs:380",
+      ".github/coordinator/test/attempt-workspace.test.mjs:405",
+      ".github/coordinator/test/attempt-workspace.test.mjs:417"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/capacity-scheduler.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/capacity-scheduler.test.mjs:365"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/claude-contract.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/codex-contract.test.mjs",
+    "capabilities": [
+      "linux_proc",
+      "shell_toolchain"
+    ],
+    "justification": "real orphan-process lifecycle and procfs; restored executable uses #!/usr/bin/env node and requires node resolution on the child PATH",
+    "call_sites": [
+      ".github/coordinator/test/codex-contract.test.mjs:505",
+      ".github/coordinator/test/codex-contract.test.mjs:518"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/dispatch-durability.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/durable-handoff.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/durable-handoff.test.mjs:204"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/eligibility.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/episode-boundary.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/episode-boundary.test.mjs:532"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/episode-stale-head.regression.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/episode-successor-dispatch.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "execFileSync(\"node\", ...) resolves child node on PATH; shell_toolchain establishes this resolution via /usr/bin/env node --version; no shell interpreter used by this call",
+    "call_sites": [
+      ".github/coordinator/test/episode-successor-dispatch.test.mjs:629"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/future-clock.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/future-clock.test.mjs:29",
+      ".github/coordinator/test/future-clock.test.mjs:33",
+      ".github/coordinator/test/future-clock.test.mjs:48"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/hermes-adversarial.test.mjs",
+    "capabilities": [
+      "git",
+      "bash",
+      "shell_toolchain"
+    ],
+    "justification": "runPolicyIn executes extracted repository-policy.yml unchanged: Git, Bash, mktemp and rm",
+    "call_sites": [
+      ".github/coordinator/test/hermes-adversarial.test.mjs:32",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:108",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:206",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:210",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:211",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:221",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:231",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:243",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:273",
+      ".github/coordinator/test/hermes-adversarial.test.mjs:319"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/hermes-pool.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/launch-refusal-visibility.test.mjs",
+    "capabilities": [],
+    "justification": "Pure in-process assertions: the real coordinator tick is driven through an injected supervisor transport and a fake Linear fetch; no external command, privileged operation or host facility is required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/lifecycle.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/linear-issues.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/merge-readiness.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/merge-readiness.test.mjs:265"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/push-broker-gitconfig.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain"
+    ],
+    "justification": "real Git broker/filter controls; restored /bin/sh marker and clean-filter scripts execute touch and cat",
+    "call_sites": [
+      ".github/coordinator/test/push-broker-gitconfig.test.mjs:43",
+      ".github/coordinator/test/push-broker-gitconfig.test.mjs:164",
+      ".github/coordinator/test/push-broker-gitconfig.test.mjs:432"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/push-broker.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/receipt-clock.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/receipt-clock.test.mjs:98"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/receipt-state.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/reseed-append-contract.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "real spawnSync git helper and local signed fixture repository",
+    "call_sites": [
+      ".github/coordinator/test/reseed-append-contract.test.mjs:35"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/reseed-append-mutations.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "selected reseed-append-contract subprocess controls execute real Git fixtures",
+    "call_sites": [
+      ".github/coordinator/test/reseed-append-mutations.test.mjs:27",
+      ".github/coordinator/test/reseed-append-mutations.test.mjs:35"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/review-routing.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/reviewer-evidence.test.mjs",
+    "capabilities": [
+      "shell_toolchain",
+      "linux_proc"
+    ],
+    "justification": "unconfined /bin/sh fixture directly executes reviewer child; descriptor/environment/process canary reads; TCP and process-canary launch doubled",
+    "call_sites": [
+      ".github/coordinator/test/reviewer-evidence.test.mjs:240",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:252",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:313",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:363",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:418",
+      ".github/coordinator/test/reviewer-evidence.test.mjs:445"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/schema.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu219-rule6-mutation.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu219-rule6-mutation.test.mjs:48"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu224-dispatch-scope.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu224-dispatch-scope.test.mjs:287"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu226-incident-reporting.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu226-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu226-mutations.test.mjs:110"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu232-mutations.test.mjs",
+    "capabilities": [
+      "shell_toolchain",
+      "linux_proc"
+    ],
+    "justification": "selected reviewer-evidence subprocess controls inherit wrapper and procfs dependencies",
+    "call_sites": [
+      ".github/coordinator/test/shu232-mutations.test.mjs:92"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu237-mutations.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "F6: selected reviewer-evidence mutation children execute the generated #!/bin/sh unconfined-wrapper. Mutation-child union: shell_toolchain.",
+    "call_sites": [
+      ".github/coordinator/test/shu237-mutations.test.mjs:166"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu237-portability.test.mjs",
+    "capabilities": [],
+    "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu237-portability.test.mjs:126",
+      ".github/coordinator/test/shu237-portability.test.mjs:219"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu239-mutations.test.mjs",
+    "capabilities": [
+      "bash",
+      "git"
+    ],
+    "justification": "F4: M13 executes the attempt-workspace mutation child, whose disposable repository setup requires real Git. Other selected children execute Bash. Mutation-child union: bash, git.",
+    "call_sites": [
+      ".github/coordinator/test/shu239-mutations.test.mjs:62"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu239-reviewer-launch.test.mjs",
+    "capabilities": [
+      "bash"
+    ],
+    "justification": "spawnSync bash -n and invalid reviewer-sandbox invocation before privileged commands",
+    "call_sites": [
+      ".github/coordinator/test/shu239-reviewer-launch.test.mjs:116",
+      ".github/coordinator/test/shu239-reviewer-launch.test.mjs:127",
+      ".github/coordinator/test/shu239-reviewer-launch.test.mjs:135",
+      ".github/coordinator/test/shu239-reviewer-launch.test.mjs:148",
+      ".github/coordinator/test/shu239-reviewer-launch.test.mjs:162",
+      ".github/coordinator/test/shu239-reviewer-launch.test.mjs:164"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu240-evidence-binding.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu240-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu240-mutations.test.mjs:34"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu241-mutations.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain",
+      "linux_proc"
+    ],
+    "justification": "selected scoped-build subprocesses inherit real Git and workspace snapshot dependencies",
+    "call_sites": [
+      ".github/coordinator/test/shu241-mutations.test.mjs:48"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu241-scoped-build.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain",
+      "linux_proc"
+    ],
+    "justification": "real Git scoped bundles and broker workspace snapshot /proc/self/fd; production worker chmod; identity requirements separately bound",
+    "call_sites": [
+      ".github/coordinator/test/shu241-scoped-build.test.mjs:27",
+      ".github/coordinator/test/shu241-scoped-build.test.mjs:31",
+      ".github/coordinator/test/shu241-scoped-build.test.mjs:99",
+      ".github/coordinator/test/shu241-scoped-build.test.mjs:101",
+      ".github/coordinator/test/shu241-scoped-build.test.mjs:114",
+      ".github/coordinator/test/shu241-scoped-build.test.mjs:117"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu245-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu245-mutations.test.mjs:58"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu245-reviewer-citations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu246-episode-backfill.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu246-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu246-mutations.test.mjs:50"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu247-callback-notes.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu247-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu247-mutations.test.mjs:46"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu249-mutations.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain"
+    ],
+    "justification": "selected role-authority subprocesses inherit real Git/workspace wrapper dependencies",
+    "call_sites": [
+      ".github/coordinator/test/shu249-mutations.test.mjs:27"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu249-role-authority.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain"
+    ],
+    "justification": "real Git helper, generated /bin/sh worker wrapper, production workspace chmod",
+    "call_sites": [
+      ".github/coordinator/test/shu249-role-authority.test.mjs:58"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu260-incident-triage.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu260-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu260-mutations.test.mjs:80"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu261-cleanup-network.test.mjs",
+    "capabilities": [
+      "bash",
+      "shell_toolchain"
+    ],
+    "justification": "F1: the shipped reviewer-sandbox Bash slice executes PATH basename at reviewer-sandbox.sh:184; tool subtraction fails the exact shipped-profile network assertion. File union: bash, shell_toolchain.",
+    "call_sites": [
+      ".github/coordinator/test/shu261-cleanup-network.test.mjs:15",
+      ".github/coordinator/test/shu261-cleanup-network.test.mjs:82"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu261-mutations.test.mjs",
+    "capabilities": [
+      "bash",
+      "cvtsudoers",
+      "linux_proc"
+    ],
+    "justification": "selected isolation/findings subprocesses; direct privileged Bash startup, real parser, process canaries",
+    "call_sites": [
+      ".github/coordinator/test/shu261-mutations.test.mjs:106"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu261-review-findings.test.mjs",
+    "capabilities": [
+      "cvtsudoers",
+      "linux_proc"
+    ],
+    "justification": "Real sudoers parsing and live descriptor/process canaries. Historical Git branch is only opt-in SHU261_BASELINE, not executed by the required command. TCP listener doubled.",
+    "call_sites": [
+      ".github/coordinator/test/shu261-review-findings.test.mjs:20",
+      ".github/coordinator/test/shu261-review-findings.test.mjs:58",
+      ".github/coordinator/test/shu261-review-findings.test.mjs:122",
+      ".github/coordinator/test/shu261-review-findings.test.mjs:153"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu261-reviewer-isolation.test.mjs",
+    "capabilities": [
+      "bash",
+      "linux_proc"
+    ],
+    "justification": "direct reviewer-sandbox startup; real child process inspection; TCP probe doubled",
+    "call_sites": [
+      ".github/coordinator/test/shu261-reviewer-isolation.test.mjs:102",
+      ".github/coordinator/test/shu261-reviewer-isolation.test.mjs:152",
+      ".github/coordinator/test/shu261-reviewer-isolation.test.mjs:317"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu68-wiring.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu71-activation-package.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "real revision Git read and mutation execution binding controls",
+    "call_sites": [
+      ".github/coordinator/test/shu71-activation-package.test.mjs:256",
+      ".github/coordinator/test/shu71-activation-package.test.mjs:284"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-battery.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-battery.test.mjs:141",
+      ".github/coordinator/test/shu71-battery.test.mjs:253",
+      ".github/coordinator/test/shu71-battery.test.mjs:334"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-claude-writer.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and process APIs; the Claude CLI, push broker, supervisor adapter and Linear/GitHub are doubled, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-claude-writer.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-codex-reviewer.test.mjs",
+    "capabilities": [
+      "bash",
+      "shell_toolchain"
+    ],
+    "justification": "The shipped reviewer-sandbox mask block and Codex model branch run in Bash; the model branch calls realpath and dirname from the shell toolchain. Privileged tools (stat, systemd-run) are doubled.",
+    "call_sites": [
+      ".github/coordinator/test/shu71-codex-reviewer.test.mjs:249",
+      ".github/coordinator/test/shu71-codex-reviewer.test.mjs:274"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-journal-directory.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem and a forked Node child of the supervisor worker; coordinator.env is served from memory and the adapter is a stub, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-journal-directory.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-public-key.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-public-key.test.mjs:90",
+      ".github/coordinator/test/shu71-public-key.test.mjs:111"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-receipt-order.test.mjs",
+    "capabilities": [],
+    "justification": "Pure comment parsing, receipt folding and routing over in-memory receipts; no filesystem, process or external tool operation is required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-receipt-order.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-reversed-gates.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem APIs; the adapters, Linear and GitHub are doubled in the episode harness and host stat/realpath/hostname are injected, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-reversed-gates.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-review-change.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Real local Git lanes (seed plus broker-subject commits) exercise the review change reader and both reviewer launches; the model processes are doubled and nothing reaches a remote",
+    "call_sites": [
+      ".github/coordinator/test/shu71-review-change.test.mjs:40",
+      ".github/coordinator/test/shu71-review-change.test.mjs:197"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-reviewed-lineage.test.mjs",
+    "capabilities": [],
+    "justification": "Pure receipt folding and routing over in-memory receipts; no filesystem, process or external tool operation is required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-reviewed-lineage.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-stranded-reservation.test.mjs",
+    "capabilities": [],
+    "justification": "Pure in-process assertions: the real coordinator tick is driven through the episode harness with a fake Linear fetch and frozen clock, and the production tick entry with a stubbed tick; no external command, privileged operation or host facility is required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/shu71-unchanged-build.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem only; both writer adapters run with doubled CLI output and a doubled push broker, and the episode runs through the in-memory harness, no external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-unchanged-build.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu71-writer-edit-permission.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem only; the Claude CLI is doubled, so the tests read the arguments a writer would launch with and no external tool operation is required",
+    "call_sites": [
+      ".github/coordinator/test/shu71-writer-edit-permission.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu73-enforcement.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu73-enforcement.test.mjs:183"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/shu86-durable-intent.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu86-durable-intent.test.mjs:161"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/single-run-activation.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "F3: the RUNNING revision end-to-end proof at :602 leaves revision resolution uninjected and executes real git rev-parse HEAD. File union: git.",
+    "call_sites": [
+      ".github/coordinator/test/single-run-activation.test.mjs:1126"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/supervisor-dispatch.test.mjs",
+    "capabilities": [],
+    "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
+    "call_sites": [
+      ".github/coordinator/test/supervisor-dispatch.test.mjs:234"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/supervisor.test.mjs",
+    "capabilities": [
+      "unix_socket"
+    ],
+    "justification": "startSupervisorServer and submitToSupervisor real socket round trip",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/two-fixture-activation.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "real revision and isolated ancestry Git repository controls",
+    "call_sites": [
+      ".github/coordinator/test/two-fixture-activation.test.mjs:136",
+      ".github/coordinator/test/two-fixture-activation.test.mjs:158",
+      ".github/coordinator/test/two-fixture-activation.test.mjs:185",
+      ".github/coordinator/test/two-fixture-activation.test.mjs:209"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/two-fixture-lanes.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/two-fixture-lanes.test.mjs:146"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/two-fixture-progression.test.mjs",
+    "capabilities": [
+      "git",
+      "linux_proc"
+    ],
+    "justification": "real Git fixture/broker workspace snapshots and recovery subprocess controls",
+    "call_sites": [
+      ".github/coordinator/test/two-fixture-progression.test.mjs:19",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:51",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:167",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:207",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:282",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:588",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:699",
+      ".github/coordinator/test/two-fixture-progression.test.mjs:702"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/two-fixture-revision-reader.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "real local Git repository ownership and revision controls; distinct identity requirement separately bound",
+    "call_sites": [
+      ".github/coordinator/test/two-fixture-revision-reader.test.mjs:98",
+      ".github/coordinator/test/two-fixture-revision-reader.test.mjs:99",
+      ".github/coordinator/test/two-fixture-revision-reader.test.mjs:141",
+      ".github/coordinator/test/two-fixture-revision-reader.test.mjs:147"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/workspace-contract.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/test/workspace-result-mutations.test.mjs",
+    "capabilities": [
+      "git",
+      "linux_proc",
+      "shell_toolchain"
+    ],
+    "justification": "selected workspace-result mutation children inherit Git, procfs and the restored shell filter/hook controls (M2/M3)",
+    "call_sites": [
+      ".github/coordinator/test/workspace-result-mutations.test.mjs:12",
+      ".github/coordinator/test/workspace-result-mutations.test.mjs:13",
+      ".github/coordinator/test/workspace-result-mutations.test.mjs:35"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/workspace-result.test.mjs",
+    "capabilities": [
+      "git",
+      "linux_proc",
+      "shell_toolchain"
+    ],
+    "justification": "real Git and /proc/self/fd snapshot reads; restored shell clean filter and pre-commit hook use touch, including negative security controls",
+    "call_sites": [
+      ".github/coordinator/test/workspace-result.test.mjs:22",
+      ".github/coordinator/test/workspace-result.test.mjs:67",
+      ".github/coordinator/test/workspace-result.test.mjs:70"
+    ]
+  }
+]

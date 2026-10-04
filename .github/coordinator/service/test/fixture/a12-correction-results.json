@@ -1,0 +1,92 @@
+{
+  "base-focused": {
+    "counts": {
+      "tests": 77,
+      "pass": 77,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "skips": [],
+    "sha256": "01991c600c69006a34eadcfd67a0e59287cb53054589548d5f97983f15236988"
+  },
+  "focused": {
+    "counts": {
+      "tests": 93,
+      "pass": 93,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "skips": [],
+    "sha256": "5685dbb68f8095668a99aeae8948b19bccb96c165024c20cd931a50779ec6fe6"
+  },
+  "phase-a": {
+    "counts": {
+      "tests": 35,
+      "pass": 35,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "skips": [],
+    "sha256": "1c1b43fc31df89e83e775476789e45141888294ebd079e20db5095c91d9d0e49"
+  },
+  "base-full": {
+    "counts": {
+      "tests": 1352,
+      "pass": 1231,
+      "fail": 119,
+      "cancelled": 0,
+      "skipped": 2,
+      "todo": 0
+    },
+    "skips": [
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    ],
+    "sha256": "035efab47ca35054fcad03e248abc0937dc123b55e85a5311e424ba69cf75450"
+  },
+  "final-full": {
+    "counts": {
+      "tests": 1368,
+      "pass": 1252,
+      "fail": 114,
+      "cancelled": 0,
+      "skipped": 2,
+      "todo": 0
+    },
+    "skips": [
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    ],
+    "sha256": "81678eb19707176944f533151528eef2aea253ba681968a1cbf998b2780003e4"
+  },
+  "base-service": {
+    "counts": {
+      "tests": 247,
+      "pass": 224,
+      "fail": 23,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "skips": [],
+    "sha256": "3bfa1842d33395ac8c5b3b4c54a7f4b1d1dac154d44f7f46248bc76d304676f9"
+  },
+  "final-service": {
+    "counts": {
+      "tests": 263,
+      "pass": 240,
+      "fail": 23,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "skips": [],
+    "sha256": "e0e4d7857da161118d08e0eb97aebcff0c0721cb914354e5ea31fb18e8dd07b0"
+  }
+}

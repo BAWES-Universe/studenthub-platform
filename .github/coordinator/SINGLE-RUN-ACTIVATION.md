@@ -53,7 +53,7 @@ of separately reviewed deployment. They are not exposed by the validator.
 | `ACT_LANE_CROSS` | Wrong pair, crossed paths, changed lane definition, wrong lane ID or branch |
 | `ACT_DUPLICATE_LANE` | Repeated issue or lane in the record, or duplicate configured lane |
 | `ACT_CAPACITY_DRIFT` | Record concurrency is not two, or committed capacity disagrees |
-| `ACT_STALE_SEED_HEAD` | Either lane head is unresolved or differs from its seed SHA |
+| `ACT_STALE_SEED_HEAD` | Either lane head is unresolved, differs from its seed without valid receipt-bound broker ancestry, or rewinds from authorized progress |
 | `ACT_MALFORMED` | Missing/extra/invalid fields, invalid SHA, missing/expired/overlong expiry, false stop-before-merge, or coordinator/main revision mismatch |
 | `ACT_PARTIAL_ARMING` | Only one signed gate is set, either fixture lacks a resolvable Linear identity, or either configured lane is missing |
 | `ACT_MANUAL_GATE_BYPASS` | Missing/invalid signature or trusted key, changed signed payload, manually enabled committed gate, or runtime gate differs from the signed review |
@@ -285,6 +285,27 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   Install the host `acl` package: the wrapper grants `shu-reviewer` `r-x` on only
   the bound attempt for the lifetime of the sandbox and removes that ACL in its
   exit trap. A pre-existing reviewer ACL is refused rather than silently reused.
+* `SHU_REVIEW_MODEL_WRAPPER_JSON`: the same canonical sandbox behind the exact
+  noninteractive model form
+  `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
+  Command-specific sudoers `env_keep` preserves that one reviewer subscription
+  value, while `NOSETENV` rejects caller-selected startup environment values.
+  The actual Claude process, not only its test child, then runs as
+  `shu-reviewer` with a transient private home, a serialized reviewer identity,
+  no process view of other service identities, no view of
+  coordinator/worker/session/SSH/state/log paths, and a read-only non-executable
+  assigned checkout. Missing model isolation HOLDs before Claude starts.
+* Codex as the reviewer (SHU-71, `codex-verifier` lane): the same model wrapper
+  launches `codex exec --sandbox read-only` with the committed verdict schema
+  `adapters/codex-review-callback.schema.json`, after the same confined test
+  phase. Codex reads its subscription login from its own home, so the host needs
+  `/var/lib/shu-reviewer-codex`: owned by `shu-reviewer`, mode 0700, under the
+  root-owned `/var/lib`, logged in once as `shu-reviewer` with
+  `CODEX_HOME=/var/lib/shu-reviewer-codex codex login` (device code).
+  It is the only writable host path the sandbox grants, and only to the Codex
+  model launch; builder tests and the Claude reviewer find it masked. `codex`
+  must resolve on the sandbox `PATH` to a root-owned, non-writable executable.
+  A missing or wrongly owned home refuses the launch before Codex starts.
 * `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
   For SHU-140 this is
   `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is
@@ -421,8 +442,11 @@ options and report the expected model on the host; contract tests inspect the
 arguments but do not spend subscription usage or establish account availability.
 Model aliases/worker labels are not evidence of the model actually used.
 
-The builder edits and tests files, then returns `result_sha: null` with
-`BUILD_READY` or `REVISION_READY`. It must stop writing before returning. The
+The builder edits and tests files, then returns `result_sha: null` with the one
+success stage its phase allows: `BUILD_READY` for the initial build,
+`REVISION_READY` for a revision. The schema and prompt offer only that stage, and
+the host holds any other success stage as `CALLBACK_ROLE_MISMATCH` without
+pushing. It must stop writing before returning. The
 host validates the attempt/head callback before invoking the existing broker.
 The broker reads ordinary tracked and non-ignored untracked files without
 following symlinks, stages raw bytes in its own index, and creates a commit with

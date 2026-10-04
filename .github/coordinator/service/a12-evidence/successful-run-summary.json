@@ -1,0 +1,27 @@
+{
+  "command": "node --test --test-reporter=./.github/coordinator/service/host-suite-contract.mjs .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs",
+  "exit_code": 0,
+  "node_version": "v22.22.3",
+  "outcomes": 1744,
+  "distinct_names": 1742,
+  "pass": 1736,
+  "fail": 0,
+  "skip": 8,
+  "complete_markers": 1,
+  "terminal_complete": true,
+  "stderr_bytes": 0,
+  "baseline": {
+    "revision": "d26db39e4bed664827633caf912950bbbff2e2ce",
+    "outcomes": 1744,
+    "pass": 1732,
+    "fail": 4,
+    "skip": 8
+  },
+  "focused": {
+    "command": "node --test .github/coordinator/service/test/capability-requirements.test.mjs .github/coordinator/service/test/production-lifecycle.test.mjs",
+    "pass": 134,
+    "fail": 0,
+    "skip": 0
+  },
+  "name_multiset_unchanged": true
+}

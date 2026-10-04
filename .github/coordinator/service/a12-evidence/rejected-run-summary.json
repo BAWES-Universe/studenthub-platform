@@ -1,0 +1,21 @@
+{
+  "revision": "d26db39e4bed664827633caf912950bbbff2e2ce",
+  "exit_code": 1,
+  "outcomes": 1744,
+  "distinct_names": 1742,
+  "counts": {
+    "pass": 1732,
+    "fail": 4,
+    "skip": 8
+  },
+  "complete_markers": 1,
+  "terminal_complete": true,
+  "failed_names": [
+    "J1 prerequisite scratch permits a clean gate-off receipt",
+    "J1 prerequisite scratch preserves all 18 H1 interleavings",
+    "PROVIDER named mutation J1 scratch restored to watched root",
+    "CLOSURE split ownership and fresh service readiness require no acceptance worker"
+  ],
+  "capture_sha256": "be8dd08d821182276182f9c5b1826e8947d365dcf2806668514e693a8b73a705",
+  "inventory_created": false
+}

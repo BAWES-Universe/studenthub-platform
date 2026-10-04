@@ -1,0 +1,8 @@
+A12_CURRENT_PROBE_POSITIVE: pass
+F1 absolute basename invocation removed: killed by A12_DEPENDENCY_PROBE: shell_toolchain /usr/bin/basename
+F1 PATH basename invocation removed: killed by A12_DEPENDENCY_PROBE: shell_toolchain env basename
+F1 PATH basename replaced by absolute form: killed by A12_DEPENDENCY_PROBE: shell_toolchain env basename
+F1 PATH detection removed: killed by A12_SHELL_DETECTION: /usr/bin/env basename --version (child PATH resolution)
+F5 absolute node invocation removed: killed by A12_DEPENDENCY_PROBE: shell_toolchain /usr/bin/node
+F5 absolute node detection removed: killed by A12_SHELL_DETECTION: /usr/bin/node --version
+M16 no filesystem mutation detection removed: killed by A12_SHELL_DETECTION: ; no filesystem mutation

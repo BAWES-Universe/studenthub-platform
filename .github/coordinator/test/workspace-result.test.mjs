@@ -130,6 +130,44 @@ test("SHU-228: expiry during snapshot refuses publication",async()=>{
   }finally{f.cleanup();}
 });
 
+// SHU-71 run 5: the host check refused a correct revision at publication and the
+// receipt could not say which check it was. Its name now rides on the held result.
+test("SHU71_PUBLISH_DENIAL_NAMED: a named host denial reaches the held result",async()=>{
+  const f=fixture();try{
+    f.edit();
+    const snapshot=await pushExactSha({...f.options,beforePublish:()=>({code:"HOST_AUTH_EVIDENCE_UNAVAILABLE"})});
+    assert.equal(snapshot.ok,false);assert.match(snapshot.reason,/authorization expired/);
+    assert.equal(snapshot.reason_code,"HOST_AUTH_EVIDENCE_UNAVAILABLE","SHU71_DENIAL_NAMED_AT_SNAPSHOT");
+    let checks=0;
+    const push=await pushExactSha({...f.options,beforePublish:()=>++checks===1||{code:"HOST_AUTH_TARGET_NOT_ALLOWED"}});
+    assert.equal(checks,2);assert.equal(push.reason_code,"HOST_AUTH_TARGET_NOT_ALLOWED","SHU71_DENIAL_NAMED_AT_PUSH");
+    assert.equal(f.remoteHead(),f.options.target_sha,"SHU71_NAMED_DENIAL_NEVER_PUBLISHES");
+    // Only a host check's own name is carried; anything else is held unnamed.
+    for(const verdict of [false,{code:"LIVE_HEAD_STALE"},{code:"HOST_AUTH_x; rm"},{}]){
+      const held=await pushExactSha({...f.options,beforePublish:()=>verdict});
+      assert.equal(held.ok,false);assert.equal(held.reason_code,undefined,`SHU71_UNNAMED_DENIAL: ${JSON.stringify(verdict)}`);
+    }
+  }finally{f.cleanup();}
+});
+
+test("SHU71_PUBLISH_DENIAL_CARRIED: the Codex writer carries a host denial's name, nothing else",async()=>{
+  const f=fixture();try{
+    const input={issue_id:"SHU-228",authorization_ref:"SHU-228",attempt_id:f.options.attempt_id,target_sha:f.options.target_sha};
+    const run=async reason_code=>{
+      input.attempt_id=randomUUID();
+      const cb={...input,result_sha:null,stage:"REVISION_READY",links:["file.txt tests"]};
+      return codex.launchBuilder({...input,role:"revise",scope_phase:"revision",cwd:f.wt,readHeadImpl:async()=>input.target_sha,env:{...process.env,SHU_WORKER_LAUNCH_WRAPPER:"test-wrapper"},
+        io:{codexStateDir:f.state,worktreeRoot:f.root,pushRemoteUrl:f.options.remoteUrl},
+        execFileImpl:(_f,_a,_o,done)=>done(null,[{type:"thread.started",thread_id:randomUUID()},
+        {type:"item.completed",item:{type:"agent_message",text:JSON.stringify(cb)}}].map(x=>JSON.stringify(x)).join("\n"),""),
+        pushBrokerImpl:async()=>({ok:false,stage:"HOLD",reason:"result authorization expired or revoked",reason_code})});
+    };
+    const named=await run("HOST_AUTH_ACT_STALE_SEED_HEAD");
+    assert.equal(named.stage,"HOLD");assert.equal(named.reason_code,"HOST_AUTH_ACT_STALE_SEED_HEAD","SHU71_CODEX_CARRIES_DENIAL");
+    assert.equal((await run("B3_RECOVERY_AUTHORIZATION")).reason_code,undefined,"SHU71_CODEX_CARRIES_ONLY_HOST_DENIAL");
+  }finally{f.cleanup();}
+});
+
 test("SHU-228: workspace-ready callback is bound and host refusal never publishes a result",async()=>{
   const f=fixture();try{
     const input={issue_id:"SHU-228",authorization_ref:"SHU-228",attempt_id:f.options.attempt_id,target_sha:f.options.target_sha};
@@ -163,4 +201,59 @@ test("SHU-228: new and resumed model choices and worker network are explicit",()
     assert.equal(args[args.indexOf("--config")+1],"sandbox_workspace_write.network_access=false");
     const review=buildClaudeArgs(input,{resume});assert.equal(review[review.indexOf("--model")+1],"opus");
   }
+});
+
+test("SHU71_UNCHANGED_BUILD_NAMED: a workspace with no changes is refused by name and publishes nothing", async () => {
+  const f = fixture(); try {
+    const result = await pushExactSha(f.options);
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.reason_code, "RESULT_EMPTY", "the refusal says the writer changed nothing");
+    assert.match(result.reason, /contains no changes/);
+    assert.equal(f.remoteHead(), f.options.target_sha, "the lane keeps the bound head");
+  } finally { f.cleanup(); }
+});
+
+test("SHU71_UNCHANGED_BUILD_AFTER_BINDING: an attempt that already bound a result is never reported unchanged", async () => {
+  const f = fixture(); try {
+    f.edit();
+    const first = await pushExactSha(f.options);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    fs.writeFileSync(path.join(f.wt, "file.txt"), "old\n");
+    const again = await pushExactSha(f.options);
+    assert.equal(again.ok, false, JSON.stringify(again));
+    assert.equal(again.reason_code, undefined, "not RESULT_EMPTY, so no adapter can treat it as an unchanged build");
+    assert.match(again.reason, /binding conflict/);
+    assert.equal(f.remoteHead(), first.remote_head, "the published result stays");
+  } finally { f.cleanup(); }
+});
+
+test("SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line", async () => {
+  const failing = (stderr) => (file, args, options, callback) => {
+    if (args.includes("--work-tree") && args.includes("read-tree")) return callback(Object.assign(new Error("exit 128"), { code: 128 }), "", stderr);
+    return execFile(file, args, options, callback);
+  };
+  const f = fixture(); try {
+    f.edit();
+    const held = await pushExactSha({ ...f.options, gitImpl: failing("warning: noise\nfatal: simulated snapshot failure\n") });
+    assert.equal(held.ok, false, JSON.stringify(held));
+    assert.equal(held.reason_code, "SNAPSHOT_READ_TREE_FAILED");
+    assert.match(held.reason, /failed at read-tree: fatal: simulated snapshot failure$/);
+    const secret = await pushExactSha({ ...f.options, attempt_id: randomUUID(), gitImpl: failing("fatal: could not read https://user:hunter2@example.invalid/repo\n") });
+    assert.equal(secret.reason_code, "SNAPSHOT_READ_TREE_FAILED");
+    assert.doesNotMatch(secret.reason, /hunter2/);
+    assert.match(secret.reason, /failed at read-tree$/);
+    assert.equal(f.remoteHead(), f.options.target_sha, "a held snapshot publishes nothing");
+    const commitTree = await pushExactSha({ ...f.options, attempt_id: randomUUID(), gitImpl: (file, args, options, callback) =>
+      args.includes("commit-tree") ? callback(Object.assign(new Error("exit 128"), { code: 128 }), "", "fatal: simulated commit-tree failure\n")
+        : execFile(file, args, options, callback) });
+    assert.equal(commitTree.reason_code, "SNAPSHOT_COMMIT_TREE_FAILED", "a step behind -c options is named by its subcommand");
+    assert.match(commitTree.reason, /failed at commit-tree: fatal: simulated commit-tree failure$/);
+    let snapshots = 0;
+    const verification = await pushExactSha({ ...f.options, attempt_id: randomUUID(), snapshotImpl: async (options) => {
+      if (++snapshots === 1) return snapshotWorkspaceResult(options);
+      throw Object.assign(new Error("workspace snapshot Git operation failed at write-tree"), { workspaceCode: "SNAPSHOT_WRITE_TREE_FAILED" });
+    } });
+    assert.equal(verification.reason_code, "SNAPSHOT_WRITE_TREE_FAILED", "the verification snapshot carries its code too");
+    assert.equal(f.remoteHead(), f.options.target_sha, "a held snapshot publishes nothing");
+  } finally { f.cleanup(); }
 });

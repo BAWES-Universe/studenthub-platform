@@ -1,0 +1,1428 @@
+{
+  "input_base_revision": "d09f50d6c597ca1d27ea237f2fb342981816b993",
+  "scope": "All 85 required files; source candidates reviewed with injected boundaries, selected mutation children and generated shebangs. Hashes identify reviewed working bytes. Not a runtime syscall trace.",
+  "files": [
+    {
+      "file": ".github/coordinator/service/test/activation-window-reconciliation.test.mjs",
+      "sha256": "efea65d3c01779d40320714e3fd1596acb210ff8888a0a5c6f98fba81ae219a6",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/service/test/capability-requirements.test.mjs",
+      "sha256": "4e100e5527345838f470ce61d75588c2de69460cd1bf596de8531bb96297bbd2",
+      "capabilities": [
+        "shell_toolchain",
+        "linux_proc",
+        "loopback_socket"
+      ],
+      "disposition": "dependencyControl executes each real fixed-argv probe; all other capabilities use injected boundaries",
+      "command_and_fixture_candidates": [
+        {
+          "line": 83,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0, 'syntax clean');"
+        },
+        {
+          "line": 106,
+          "source": "'/usr/bin/touch':['--version'],'/usr/bin/cat':['--version']};"
+        },
+        {
+          "line": 113,
+          "source": "return spawnSync(file, [...args.slice(0, -1), source], { encoding: 'utf8' });"
+        },
+        {
+          "line": 121,
+          "source": "for (const tool of ['/usr/bin/touch', '/usr/bin/cat', 'env node'])"
+        },
+        {
+          "line": 127,
+          "source": "for (const claim of ['touch,cat', '/usr/bin/env node --version (child PATH resolution)', 'as service identity'])"
+        },
+        {
+          "line": 176,
+          "source": "return spawnSync(file, [...args.slice(0, -1), args.at(-1).replace(from, to)], { encoding: 'utf8' });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/cli-amendments.test.mjs",
+      "sha256": "21b9e5ecbc00a057f2523bd62d52222a3e35586e7f5692f1c147b3f0f4aec891",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 24,
+          "source": "return spawnSync(process.execPath, ['--import', preload, file, action, spec], { env, encoding: 'utf8', timeout: 10000 });"
+        },
+        {
+          "line": 55,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', mutant]).status, 0, 'syntax clean');"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/environment-content-mutations.test.mjs",
+      "sha256": "6de21e98ea39e14e942ce02a19cfac7414168591460dc4a6f4adc777dfec2431",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 31,
+          "source": "const run = args => spawnSync(process.execPath, args, { cwd: root, encoding: 'utf8', env });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/environment-content.test.mjs",
+      "sha256": "3e1edb31112e29b912fe48b6e9b833126afcdf3c0d298e856984588a8cb83227",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/service/test/host-lifecycle.test.mjs",
+      "sha256": "32ab2241af470cd8309d5fece8a7eefaae9b22fc64181fd5711ed8f8052b05f9",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 218,
+          "source": "const run = () => spawnSync(process.execPath, ['--test', `--test-name-pattern=^LIFECYCLE guard ${code}$`, path.join(root, 'test/host-lifecycle.test.mjs')],"
+        },
+        {
+          "line": 229,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' }).status, 0, 'syntax-clean mutation');"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/host-suite-contract.test.mjs",
+      "sha256": "03de4a03639f1c2b9ec6c31d78a009b94cfc53583f3975bd7f125595c87ae358",
+      "capabilities": [
+        "cvtsudoers",
+        "linux_proc"
+      ],
+      "disposition": "real installed provider control calls resolveCvtsudoers, which executes pinned /proc/self/fd/3; other parser controls inject IO",
+      "command_and_fixture_candidates": [
+        {
+          "line": 328,
+          "source": "const run = () => spawnSync(process.execPath, ['--test', `--test-name-pattern=^SHU251 parser ${controlName}$`, path.join(root, 'test/host-suite-contract.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 335,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', target]).status, 0, 'syntax clean mutant');"
+        },
+        {
+          "line": 377,
+          "source": "const mutant = code.replace(from, \"spawnSync('/usr/bin/cvtsudoers', ['-f', 'json', file], { encoding: 'utf8' })\");"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/host-window-bindings.test.mjs",
+      "sha256": "f7acb710d1a218c621c283fcff8ccf9dae8a8cf865ff53d553ec512a985bf2ca",
+      "capabilities": [
+        "shell_toolchain"
+      ],
+      "disposition": "direct spawnSync(wrapper): operational wrapper /bin/sh shebang and dirname calls; provider commands intercepted by preload",
+      "command_and_fixture_candidates": [
+        {
+          "line": 49,
+          "source": "const rejected = spawnSync(wrapper, ['sh -c anything', '/tmp/spec.json'], { encoding: 'utf8' });"
+        },
+        {
+          "line": 143,
+          "source": "const run = spawnSync(process.execPath, [new URL('../host-window-bindings.mjs', import.meta.url).pathname,"
+        },
+        {
+          "line": 162,
+          "source": "const result = spawnSync(wrapper, [action, driverFile, '--approved-host-mutation', SHA], {"
+        },
+        {
+          "line": 169,
+          "source": "const denied = spawnSync(wrapper, [action, driverFile, '--execute'], {"
+        },
+        {
+          "line": 176,
+          "source": "const unknown = spawnSync(wrapper, ['untested-new-action', driverFile], { encoding: 'utf8' });"
+        },
+        {
+          "line": 179,
+          "source": "const override = spawnSync(wrapper, ['install', driverFile, '--provider', '/attacker.mjs'], { encoding: 'utf8' });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/phase-a-driver.test.mjs",
+      "sha256": "cef5f66e2978a5769f85844d0c589a91501995794a5534e18525cd412b4ec617",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 220,
+          "source": "return spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });"
+        },
+        {
+          "line": 287,
+          "source": "const run = () => spawnSync(process.execPath, args, { cwd: root, env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 295,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', target], { encoding: 'utf8' }).status, 0, 'mutant must be syntax clean');"
+        },
+        {
+          "line": 344,
+          "source": "const run = () => spawnSync(process.execPath, ['--test', '--test-name-pattern=^ROUTING complete', path.join(root, 'test/phase-a-driver.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 348,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', target]).status, 0);"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/production-lifecycle.test.mjs",
+      "sha256": "bbd216912434fd5d684700be44d0263983b03b0a977a850f27f81ac08e4133c3",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 459,
+          "source": "const run = () => spawnSync(process.execPath, ['--test', `--test-name-pattern=^${mutation.pattern}`, path.join(root, 'test/production-lifecycle.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 467,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', extraFile]).status, 0);"
+        },
+        {
+          "line": 469,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0);"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/reporter-amendments.test.mjs",
+      "sha256": "cc5c4418d1af6d866a5c3451462508f6942242a92ce07ffe698128d47d7b1349",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 23,
+          "source": "const result = spawnSync(process.execPath, ['--test', `--test-reporter=${reporterFile}`, file], { env, encoding: 'utf8' });"
+        },
+        {
+          "line": 45,
+          "source": "const result = spawnSync(process.execPath, ['--test', `--test-reporter=${reporterFile}`, file], { env, encoding: 'utf8', timeout: 10000 });"
+        },
+        {
+          "line": 85,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0, 'syntax clean');"
+        },
+        {
+          "line": 100,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0);"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/residual.test.mjs",
+      "sha256": "6daa6cc387d78a44da99393896c3c3b1d6fa86ed390a9ed106a58fea09b5ec1c",
+      "capabilities": [
+        "unix_socket",
+        "linux_proc"
+      ],
+      "disposition": "fork fixture/residual-process.mjs; live supervisor socket and probeProcess stat identity",
+      "command_and_fixture_candidates": [
+        {
+          "line": 50,
+          "source": "const daemon = fork(new URL('./fixture/residual-process.mjs', import.meta.url), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: {} });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/service.test.mjs",
+      "sha256": "3839eb9e3413e5b57c0d18bfcc60ad06353241a85876476fd6f88271713ce6ce",
+      "capabilities": [
+        "systemd_analyze",
+        "flock"
+      ],
+      "disposition": "verify/install syntax uses units.verifySyntax; common flock test executes /usr/bin/flock",
+      "command_and_fixture_candidates": [
+        {
+          "line": 86,
+          "source": "const holder = spawn('/usr/bin/flock', ['--nonblock', '--conflict-exit-code', '2', lock, process.execPath,"
+        },
+        {
+          "line": 90,
+          "source": "const rejected = spawnSync('/usr/bin/flock', ['--nonblock', '--conflict-exit-code', '2', lock, process.execPath, '-e', \"require('node:fs').appendFileSync(process.argv[1], '');\", join(root, 'second-writer')]);"
+        },
+        {
+          "line": 96,
+          "source": "assert.equal(spawnSync('/usr/bin/flock', ['--nonblock', lock, process.execPath, '-e', '']).status, 0, 'SHU251_LOCK_RELEASE: writer exit must release the lock');"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/suite-runner-spec.test.mjs",
+      "sha256": "371ed7069eb7fdb336806ad560b807176191bb78a3a94684e311cc78d012f5fe",
+      "capabilities": [
+        "git"
+      ],
+      "disposition": "disposableFixture creates, commits and clones real local Git repositories; lifecycle tools are doubled",
+      "command_and_fixture_candidates": [
+        {
+          "line": 131,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0);"
+        },
+        {
+          "line": 142,
+          "source": "const out = spawnSync('/usr/bin/git', ['-C', source, ...args], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });"
+        },
+        {
+          "line": 167,
+          "source": "return spawnSync(file, args, { encoding: 'utf8', ...options });"
+        },
+        {
+          "line": 218,
+          "source": "assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0);"
+        },
+        {
+          "line": 238,
+          "source": "\"\\nchild.spawnSync('/usr/bin/systemctl', ['start', 'fixture']);\", context);"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/service/test/supervisor-service.test.mjs",
+      "sha256": "5d4a6831bbb11435e96de23f68283d53e89c7ce9762481b5f8ad0acdc7787a9d",
+      "capabilities": [
+        "systemd_analyze",
+        "unix_socket",
+        "linux_proc"
+      ],
+      "disposition": "verifySyntax; live supervisor fixture; process identity reads /proc/self/stat",
+      "command_and_fixture_candidates": [
+        {
+          "line": 179,
+          "source": "const result = spawnSync(process.execPath, [new URL('../supervisor-service.mjs', import.meta.url).pathname], {"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/activation.test.mjs",
+      "sha256": "90a305a35248d1517b1c4e6ab2cbe9be6cc4342a66eeb2a3164159fb59768be1",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/adapter.test.mjs",
+      "sha256": "fb254d7fcc284ff04aa0a273c8c01b303b83a452e43cb1ca34bc44c2d4fa760b",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/attempt-workspace.test.mjs",
+      "sha256": "2b3f1f84a1ce15749e55c1d013d17ac2517226b0c9f036135cb9cdcd6b88bc44",
+      "capabilities": [
+        "git",
+        "bash",
+        "shell_toolchain",
+        "flock"
+      ],
+      "disposition": "real git helper, host-tick.sh execution (dirname/flock), production attempt-workspace workerRun chmod; identity-dependent tests separately bound",
+      "command_and_fixture_candidates": [
+        {
+          "line": 18,
+          "source": "const git = (cwd, ...args) => execFileSync(\"git\", [\"-c\", `safe.directory=${cwd}`, ...args], {"
+        },
+        {
+          "line": 24,
+          "source": "const canSwitch = spawnSync(switchCommand[0], [...switchCommand.slice(1), \"id\", \"-u\"], { timeout: 2000 }).status === 0;"
+        },
+        {
+          "line": 59,
+          "source": "execFileSync(switchCommand[0], [...switchCommand.slice(1), nodeBin, \"-e\","
+        },
+        {
+          "line": 137,
+          "source": "execFileSync(args[0], [...args.slice(1), \"git\", \"-C\", cwd, \"commit\", \"--allow-empty\", \"-m\", \"worker result\"], { env: f.env });"
+        },
+        {
+          "line": 164,
+          "source": "const result = execFileSync(args[0], [...args.slice(1), nodeBin, \"--input-type=module\", \"-e\", code], {"
+        },
+        {
+          "line": 172,
+          "source": "const common = `const fs=require('fs'),cp=require('child_process');const args=process.argv.slice(2); const prompt=args.at(-1); const attempt=/Attempt: ([0-9a-f-]+)/.exec(prompt)[1]; const target=/Bound head: ([0-9a-f]+)/.exec(prompt)[1]; const git=(...a)=>cp.execFileSync('git',a,{encoding:'utf8'}).trim(); if(git('rev-parse','HEAD')!==target)throw Error('wrong input head'); if(process.env.GITHUB_TOKEN||process.env.LINEAR_API_TOKEN||process.env.SHU_PUSH_SSH_COMMAND)throw Error('credential leak');`;"
+        },
+        {
+          "line": 235,
+          "source": "else execFileSync(switchCommand[0],[...switchCommand.slice(1),nodeBin,\"-e\","
+        },
+        {
+          "line": 357,
+          "source": "if (file === \"git\") return execFile(file, args, options, cb);"
+        },
+        {
+          "line": 376,
+          "source": "assert.equal(spawnSync(\"bash\",[script,...args],{env:f.env}).status,2);"
+        },
+        {
+          "line": 378,
+          "source": "assert.equal(spawnSync(\"bash\",[script,\"/tmp/activation.json\",f.sha],{env:{...f.env,ENABLE_DISPATCH:\"false\"}}).status,2);"
+        },
+        {
+          "line": 379,
+          "source": "fs.writeFileSync(path.join(f.bin,\"node\"),`#!/bin/sh\\nprintf '%s\\\\n' \"$DISPATCH_TARGET_SHA\" \"$@\"\\n`,{mode:0o755});"
+        },
+        {
+          "line": 380,
+          "source": "const result=spawnSync(\"bash\",[script,\"/tmp/activation.json\",f.sha],{env:{...f.env,ENABLE_DISPATCH:\"true\"},encoding:\"utf8\"});"
+        },
+        {
+          "line": 405,
+          "source": "if (execFileSync(\"git\",[\"--version\"],{encoding:\"utf8\"}).trim()===\"git version 2.43.0\" && canSwitch) {"
+        },
+        {
+          "line": 417,
+          "source": "const child=spawnSync(nodeBin,[\"--test\",\"--test-name-pattern\",m.test,path.join(dir,\"test/attempt-workspace.test.mjs\")],{encoding:\"utf8\",timeout:20000,env:testEnv});"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/capacity-scheduler.test.mjs",
+      "sha256": "9f1c3b98213f9ca7dcb2acf19b0cfb671ff3480e7e5c697cf7c2a7cf327bbcd5",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 365,
+          "source": "const child = spawn(process.execPath, [\"--input-type=module\", \"-e\", script], {"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/claude-contract.test.mjs",
+      "sha256": "625dbb04c2a7dcf3478c7651adae9a126abaaaddaaa5e13afb081132e6f3e349",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/codex-contract.test.mjs",
+      "sha256": "a0ac21be65b90ef76c9e9dcc61f90a0052255d2fc667f3d896d4315688331a39",
+      "capabilities": [
+        "linux_proc",
+        "shell_toolchain"
+      ],
+      "disposition": "real orphan-process lifecycle and procfs; restored executable uses #!/usr/bin/env node and requires node resolution on the child PATH",
+      "command_and_fixture_candidates": [
+        {
+          "line": 505,
+          "source": "writeFileSync(fakeCodex, `#!/usr/bin/env node\\nconst fs = require(\"node:fs\"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, \"alive\"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: \"thread.started\", thread_id: THREAD })}\\n`)}); setTimeout(() => { fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); }, 1000);\\n`);"
+        },
+        {
+          "line": 518,
+          "source": "const coordinator = spawn(process.execPath, [runner], { stdio: \"ignore\" });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/dispatch-durability.test.mjs",
+      "sha256": "76516a045dbfa014e335646fc7caae839b068822fcc4121c65fb75dd19cbbe57",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/durable-handoff.test.mjs",
+      "sha256": "298a37e98b03e40770344518bc5b411a1b34c496d51e5f3270d80947b6c9bc98",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 204,
+          "source": "const child = spawnSync(process.execPath, ['--test', `--test-name-pattern=^${pattern}$`, join(dir, 'coordinator/test/durable-handoff.test.mjs')],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/eligibility.test.mjs",
+      "sha256": "b653610dee74d65e63301894c3f5f5131e9dd1a5f07b7dd942e13903444c8dee",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/episode-boundary.test.mjs",
+      "sha256": "d21a9cef401b20bab2f6ecec63f0e1c8a3e87a7b036c994ca45f0ef0c8593856",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 532,
+          "source": "const child = spawnSync(process.execPath, [probe], { encoding: \"utf8\", timeout: 120000, cwd: tmp });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/episode-stale-head.regression.test.mjs",
+      "sha256": "59101000ceff602e24c92a004b0d3a0c6d3e272cad987857b888cdb6a9348ba0",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/episode-successor-dispatch.test.mjs",
+      "sha256": "fb12e6ee9a666162b08d392e4f490728b245c41ee183438de685e4073b6f1dfa",
+      "capabilities": [
+        "shell_toolchain"
+      ],
+      "disposition": "execFileSync(\"node\", ...) resolves child node on PATH; shell_toolchain establishes this resolution via /usr/bin/env node --version; no shell interpreter used by this call",
+      "command_and_fixture_candidates": [
+        {
+          "line": 610,
+          "source": "execFileSync(\"node\", [probe], { cwd: dir, stdio: \"pipe\" });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/future-clock.test.mjs",
+      "sha256": "93d35b9b2dcb567ee59f0f48f1119d7e299b8e1ae2f19ec4248993c2ff421d2f",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 29,
+          "source": "const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(Date.now()))'], { encoding: 'utf8' });"
+        },
+        {
+          "line": 33,
+          "source": "const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: shiftedEnv(), encoding: 'utf8', timeout: 20000 });"
+        },
+        {
+          "line": 48,
+          "source": "const result = spawnSync(process.execPath, ['--test', `--test-name-pattern=${pattern}`, path], { env: shiftedEnv(), encoding: 'utf8', timeout: 20000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/hermes-adversarial.test.mjs",
+      "sha256": "ef86b24809d3077f96c7e816cda95c84ecc49785ddc4ef97cf46b9f617042f4a",
+      "capabilities": [
+        "git",
+        "bash",
+        "shell_toolchain"
+      ],
+      "disposition": "runPolicyIn executes extracted repository-policy.yml unchanged: Git, Bash, mktemp and rm",
+      "command_and_fixture_candidates": [
+        {
+          "line": 32,
+          "source": "execFileSync(process.execPath, ['--input-type=module', '-e', `"
+        },
+        {
+          "line": 108,
+          "source": "const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });"
+        },
+        {
+          "line": 206,
+          "source": "return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', repositoryPolicyScript()], { cwd, encoding: 'utf8' });"
+        },
+        {
+          "line": 210,
+          "source": "execFileSync('git', ['init', '-q', dir]);"
+        },
+        {
+          "line": 211,
+          "source": "return () => execFileSync('git', ['-C', dir, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'fixture']);"
+        },
+        {
+          "line": 221,
+          "source": "execFileSync('git', ['-C', f.poolDir, 'add', '.']);"
+        },
+        {
+          "line": 231,
+          "source": "execFileSync('git', ['-C', f.poolDir, 'add', '.']);"
+        },
+        {
+          "line": 243,
+          "source": "execFileSync('git', ['-C', f.poolDir, 'add', '.']);"
+        },
+        {
+          "line": 273,
+          "source": "spawnSync(process.execPath, ['--input-type=module', '-e', `"
+        },
+        {
+          "line": 319,
+          "source": "spawnSync(process.execPath, ['--input-type=module', '-e', `"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/hermes-pool.test.mjs",
+      "sha256": "7e6f7259c56cb6e2a8fcd14dfc388d2c9bd190c379dee777ddbdf2eea997bb34",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/lifecycle.test.mjs",
+      "sha256": "b09d2aece14d784c01ed1b97d271aea09e6d60e07d9db20c6cdcd298ee4af650",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/linear-issues.test.mjs",
+      "sha256": "23564c50f541b58b7788481f9f010399031a8e81d72634eb43f5e72bf4e4569d",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/merge-readiness.test.mjs",
+      "sha256": "1dfec43646fd8d94421dac61c78aa77e8a32d628fa19870386fab2fb2c1518de",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 265,
+          "source": "const child = spawnSync(process.execPath, ['--test', `--test-name-pattern=^${pattern}$`, join(dir, 'coordinator/test/merge-readiness.test.mjs')],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/push-broker-gitconfig.test.mjs",
+      "sha256": "fafb65f9797489f8410a5ed4914b15449c87e6d95cb35ce0e7bf7194faf97f56",
+      "capabilities": [
+        "git",
+        "shell_toolchain"
+      ],
+      "disposition": "real Git broker/filter controls; restored /bin/sh marker and clean-filter scripts execute touch and cat",
+      "command_and_fixture_candidates": [
+        {
+          "line": 106,
+          "source": "await git([\"cat-file\", \"-e\", `${sha}^{commit}`], bare);"
+        },
+        {
+          "line": 164,
+          "source": "writeFileSync(script, `#!/bin/sh\\ntouch ${JSON.stringify(marker)}\\nexit 1\\n`, { mode: 0o755 });"
+        },
+        {
+          "line": 432,
+          "source": "writeFileSync(script, `#!/bin/sh\\ntouch ${JSON.stringify(marker)}\\ncat\\n`, { mode: 0o755 });"
+        },
+        {
+          "line": 445,
+          "source": "// filter runs. (Nothing in this setup may itself touch worker content under"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/push-broker.test.mjs",
+      "sha256": "53e62a373f12302bbaea64a543877810c6ec6bf0eacea09ccedbf5cc114bf6ac",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/receipt-clock.test.mjs",
+      "sha256": "67c0bae1af66cc66e0169eaaa2619c9f6dbfd66c8740b36f680e6a86d8793c58",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 98,
+          "source": "const result = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${pattern}`, join(dir, \"test\", file)],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/receipt-state.test.mjs",
+      "sha256": "2bcf8c5e86316a79ea33a255dee9c7cba52cf9bec346ca06a8b02911bdf8fc93",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/reseed-append-contract.test.mjs",
+      "sha256": "df09af413b6f5558c82bda6a5dc72d6355d763cdec16354c476eef968aef351d",
+      "capabilities": [
+        "git"
+      ],
+      "disposition": "real spawnSync git helper and local signed fixture repository",
+      "command_and_fixture_candidates": [
+        {
+          "line": 35,
+          "source": "const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: repo, input, env: { ...process.env,"
+        },
+        {
+          "line": 73,
+          "source": "return { refs: txt(f.git(['show-ref'])), objects: txt(f.git(['cat-file', '--batch-all-objects', '--batch-check=%(objectname)'])),"
+        },
+        {
+          "line": 113,
+          "source": "const historical = f.git(['cat-file', 'commit', f.parent]);"
+        },
+        {
+          "line": 124,
+          "source": "const raw = f.git(['cat-file', 'commit', binding.expected_seed_head]);"
+        },
+        {
+          "line": 127,
+          "source": "assert.deepEqual(f.git(['cat-file', 'commit', f.parent]), historical, 'RESEED prior history verbatim');"
+        },
+        {
+          "line": 185,
+          "source": "assert.equal(txt(f.git(['cat-file', '-t', f.binding.expected_seed_head])), 'commit', 'RESEED pre-CAS crash leaves installed object only');"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/reseed-append-mutations.test.mjs",
+      "sha256": "e7520eacca3391b7b2118d33bb2f84a7f65400c9ae8e02e9d80b8266422c4919",
+      "capabilities": [
+        "git"
+      ],
+      "disposition": "selected reseed-append-contract subprocess controls execute real Git fixtures",
+      "command_and_fixture_candidates": [
+        {
+          "line": 27,
+          "source": "const run = () => spawnSync(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^${pattern}$`, path.join(root, 'test/reseed-append-contract.test.mjs')],"
+        },
+        {
+          "line": 35,
+          "source": "const syntax = spawnSync(process.execPath, ['--check', target], { env, encoding: 'utf8' });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/review-routing.test.mjs",
+      "sha256": "1e4c7b9e6771705f3933c3587e1d32839717136c8e4ccf307728fe7ad270b301",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/reviewer-evidence.test.mjs",
+      "sha256": "8fb573991462ce1111a973954cfadcccfe18b453f205d8bfae50c32427654657",
+      "capabilities": [
+        "shell_toolchain",
+        "linux_proc"
+      ],
+      "disposition": "unconfined /bin/sh fixture directly executes reviewer child; descriptor/environment/process canary reads; TCP and process-canary launch doubled",
+      "command_and_fixture_candidates": [
+        {
+          "line": 239,
+          "source": "const actual = spawnSync(process.execPath, [\"--test\", ...files], {"
+        },
+        {
+          "line": 308,
+          "source": "fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\\nprintf ran > ${JSON.stringify(wrapperMarker)}\\nshift 7\\nexec \"$@\"\\n`, { mode: 0o700 });"
+        },
+        {
+          "line": 362,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", \"tools/fixture/test/scan-vacuous.test.mjs\"], { cwd: root, encoding: \"utf8\" });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/schema.test.mjs",
+      "sha256": "507f05c1c00d457e7e022a1f4abc6f70fc87252c539b42b4cdf21952a123877f",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu219-rule6-mutation.test.mjs",
+      "sha256": "4d8abac433568928d4f5e7b6c9c608706140104063d74676cec72d82269e7a0d",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 48,
+          "source": "const child = spawnSync(process.execPath, [\"--input-type=module\", \"-e\", scenario], { encoding: \"utf8\", timeout: 30000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu224-dispatch-scope.test.mjs",
+      "sha256": "23c7380a349e421c99000135571863c8753aa556391a1c695989a4faf1f7230a",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 288,
+          "source": "const child = spawnSync(process.execPath, [probePath], { encoding: \"utf8\", timeout: 30000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu226-incident-reporting.test.mjs",
+      "sha256": "ed3194329d95f78f51cd6a7bd2f0f017f6e54dcf6de90fefb8162f43b84586c0",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu226-mutations.test.mjs",
+      "sha256": "2d62c8440331e45443eac7274ced7227d73c59bcc8e6e45a0ee4b20a4c64093a",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 110,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu232-mutations.test.mjs",
+      "sha256": "8206e76af1fc90f7c028d8ad747d008906548c7a9590dbae934a850b57fa78dd",
+      "capabilities": [
+        "shell_toolchain",
+        "linux_proc"
+      ],
+      "disposition": "selected reviewer-evidence subprocess controls inherit wrapper and procfs dependencies",
+      "command_and_fixture_candidates": [
+        {
+          "line": 92,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu237-mutations.test.mjs",
+      "sha256": "04da6a59e0aa22f883adf6ea623a9b00457da14a391deaa481a86156886ce24f",
+      "capabilities": [],
+      "disposition": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 166,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu237-portability.test.mjs",
+      "sha256": "d3aac00aadd6a2f4f918f6ef17259468bbfc8662a169c5b18ff95dfd42f38f89",
+      "capabilities": [],
+      "disposition": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 97,
+          "source": "fs.writeFileSync(sudoTarget, \"#!/bin/sh\\nexit 0\\n\", { mode: 0o755 });"
+        },
+        {
+          "line": 98,
+          "source": "fs.writeFileSync(sandboxTarget, \"#!/bin/sh\\nexec \\\"$@\\\"\\n\", { mode: 0o755 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu239-mutations.test.mjs",
+      "sha256": "44f0feb26d8bfff3a9ebde23694aa6533d367e9c3e3561e6ebe2c001fddcf3a9",
+      "capabilities": [
+        "bash"
+      ],
+      "disposition": "selected reviewer-launch controls execute shipped Bash wrapper",
+      "command_and_fixture_candidates": [
+        {
+          "line": 60,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${mutation.pattern}`,"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu239-reviewer-launch.test.mjs",
+      "sha256": "4a33d52285dce6a4ce74ad256f9abb1974d07ad41b4330e96cb6d13032d17678",
+      "capabilities": [
+        "bash"
+      ],
+      "disposition": "spawnSync bash -n and invalid reviewer-sandbox invocation before privileged commands",
+      "command_and_fixture_candidates": [
+        {
+          "line": 162,
+          "source": "const syntax = spawnSync(\"bash\", [\"-n\", script.pathname], { encoding: \"utf8\" });"
+        },
+        {
+          "line": 164,
+          "source": "const refused = spawnSync(\"bash\", [script.pathname, \"node\", \"--test\"], { encoding: \"utf8\" });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu240-evidence-binding.test.mjs",
+      "sha256": "70d3cf7eb1e655e67bd322272dc060b3946b3ca2bb45aa22b6684f1cc5206329",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu240-mutations.test.mjs",
+      "sha256": "3660c4185b3b98f439292e174cceacd71fce9e0114098e7fd51c2ca70c6c73f2",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 34,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu241-mutations.test.mjs",
+      "sha256": "b34c5ad42ed6c0af2ea5ddde332db0f3fdf8d84d8b4a775d1e32a06b27590942",
+      "capabilities": [
+        "git",
+        "shell_toolchain",
+        "linux_proc"
+      ],
+      "disposition": "selected scoped-build subprocesses inherit real Git and workspace snapshot dependencies",
+      "command_and_fixture_candidates": [
+        {
+          "line": 48,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${pattern}`, path.join(dir, \"test/shu241-scoped-build.test.mjs\")],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu241-scoped-build.test.mjs",
+      "sha256": "09f3c0ca6081c98ad2a75a084c67a5acb7d017ec4e1ee8c4d74a57395698f977",
+      "capabilities": [
+        "git",
+        "shell_toolchain",
+        "linux_proc"
+      ],
+      "disposition": "real Git scoped bundles and broker workspace snapshot /proc/self/fd; production worker chmod; identity requirements separately bound",
+      "command_and_fixture_candidates": [
+        {
+          "line": 27,
+          "source": "const worker = (cwd, ...args) => spawnSync(wrapper.split(\" \")[0], [...wrapper.split(\" \").slice(1), ...args], {"
+        },
+        {
+          "line": 31,
+          "source": "const git = (cwd, ...args) => execFileSync(\"git\", [\"-c\", `safe.directory=${cwd}`, ...args], {"
+        },
+        {
+          "line": 99,
+          "source": "const read = spawnSync(\"git\", [\"-C\", cwd, \"cat-file\", \"-p\", f.hiddenBlob], { encoding: \"utf8\" });"
+        },
+        {
+          "line": 101,
+          "source": "assert.notEqual(spawnSync(\"git\", [\"-C\", cwd, \"cat-file\", \"-e\", `${f.sha}^{commit}`]).status, 0, \"full target commit must not reach the worker object store\");"
+        },
+        {
+          "line": 114,
+          "source": "const result = spawnSync(\"git\", [\"-C\", cwd, ...args], { encoding: \"utf8\" }); assert.equal(result.status, 0, result.stderr);"
+        },
+        {
+          "line": 117,
+          "source": "const stage = spawnSync(\"git\", [\"-C\", cwd, \"add\", \"--\", SHU140_INITIAL_BUILD_PATHS[0]], { encoding: \"utf8\" });"
+        },
+        {
+          "line": 126,
+          "source": "assert.equal(worker(cwd, \"git\", \"-C\", cwd, \"cat-file\", \"-p\", f.hiddenBlob).status === 0, false, \"worker cannot recover a hidden blob\");"
+        },
+        {
+          "line": 127,
+          "source": "assert.equal(worker(cwd, \"git\", \"-C\", cwd, \"cat-file\", \"-e\", `${f.sha}^{commit}`).status === 0, false, \"worker cannot recover the full target commit\");"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu245-mutations.test.mjs",
+      "sha256": "667e1b04138899ed36d9397e61e164cf57e2f8706c26987dbed2992539e8dd12",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 58,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu245-reviewer-citations.test.mjs",
+      "sha256": "8842d0f82b4b4fd62d21eaaebd337e9584930e48771fe4ae256d2b2b14f2ae61",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu246-episode-backfill.test.mjs",
+      "sha256": "ce0fb72f704a39dfd460a67a7fe8c822d2c4ae61bb8570f6354450bc9644f4b0",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu246-mutations.test.mjs",
+      "sha256": "e132c854d2fa65f94ef3b93952f5066f3e5d00a8d87b5def0eb6e9aca0a03a46",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 50,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu247-callback-notes.test.mjs",
+      "sha256": "7165d62716cc0548076c55db0c217560484f4d2fe5e79959392a54de166a8a40",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu247-mutations.test.mjs",
+      "sha256": "d6fb712c9a5cbbbd3bb99009843e65834bae2c4cbb0f6a2da0c9c0b530f8e1fd",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 46,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu249-mutations.test.mjs",
+      "sha256": "8c1f5f2624bd4b236e9b7dbb1810cc1113ecf697ba65b8f393dac95240964c5f",
+      "capabilities": [
+        "git",
+        "shell_toolchain"
+      ],
+      "disposition": "selected role-authority subprocesses inherit real Git/workspace wrapper dependencies",
+      "command_and_fixture_candidates": [
+        {
+          "line": 27,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${pattern}`, path.join(dir, \"test/shu249-role-authority.test.mjs\")], { encoding: \"utf8\", timeout: 30000, env });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu249-role-authority.test.mjs",
+      "sha256": "b2877f45bf1f6cac08d6b608428edac0555745f24db977dc2a3bf7b035174dde",
+      "capabilities": [
+        "git",
+        "shell_toolchain"
+      ],
+      "disposition": "real Git helper, generated /bin/sh worker wrapper, production workspace chmod",
+      "command_and_fixture_candidates": [
+        {
+          "line": 58,
+          "source": "const dir = temp(t), git = (cwd, ...args) => execFileSync(\"git\", [\"-c\", `safe.directory=${cwd}`, ...args], { cwd, encoding: \"utf8\", stdio: [\"ignore\", \"pipe\", \"pipe\"] }).trim();"
+        },
+        {
+          "line": 64,
+          "source": "const wrapper = path.join(dir, \"wrapper\"); fs.writeFileSync(wrapper, '#!/bin/sh\\nexec \"$@\"\\n', { mode: 0o700 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu260-incident-triage.test.mjs",
+      "sha256": "f268623bce343f0c444394fd773fde6638ffe87d509bc78c8cf7e6adfe854dfd",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/shu260-mutations.test.mjs",
+      "sha256": "6cb257ca18c1b4afeab5910f6fb7811c8b8b03974c6861f8edd93246a0c30fc1",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 80,
+          "source": "const run = spawnSync(process.execPath, ["
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu261-cleanup-network.test.mjs",
+      "sha256": "503da03b11687139204bacd7e5da1bcb15d894fbcea0731eb4eafb3a75dd986e",
+      "capabilities": [
+        "bash"
+      ],
+      "disposition": "shipped Bash functions executed; setfacl/flock/systemd-run are Bash function doubles",
+      "command_and_fixture_candidates": [
+        {
+          "line": 15,
+          "source": "return spawnSync(\"/bin/bash\", [\"-p\", \"-c\", `"
+        },
+        {
+          "line": 82,
+          "source": "const run = spawnSync(\"/bin/bash\", [\"-p\", \"-c\", `"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu261-mutations.test.mjs",
+      "sha256": "eaacc5a5687715baf644b37661b5cb355dc5fbdf3a858905ac382dfe47bfb198",
+      "capabilities": [
+        "bash",
+        "cvtsudoers",
+        "linux_proc"
+      ],
+      "disposition": "selected isolation/findings subprocesses; direct privileged Bash startup, real parser, process canaries",
+      "command_and_fixture_candidates": [
+        {
+          "line": 87,
+          "source": "from: \"#!/bin/bash -p\", to: \"#!/bin/bash\","
+        },
+        {
+          "line": 91,
+          "source": "from: \"#!/bin/bash -p\", to: \"#!/usr/bin/env bash\", pattern: \"SHU261 wrapper contract\" },"
+        },
+        {
+          "line": 106,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${mutation.pattern}`,"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu261-review-findings.test.mjs",
+      "sha256": "91bfec142c8384c57dd0fef5ba1573761496e98b394148140fba15fa2ee1cdf6",
+      "capabilities": [
+        "cvtsudoers",
+        "linux_proc"
+      ],
+      "disposition": "Real sudoers parsing and live descriptor/process canaries. Historical Git branch is only opt-in SHU261_BASELINE, not executed by the required command. TCP listener doubled.",
+      "command_and_fixture_candidates": [
+        {
+          "line": 20,
+          "source": "const run = spawnSync('git', ['show', `f3f89f5f50954eec8190ce69c46ba384fd603dae:${relativePath}`], { encoding: 'utf8' });"
+        },
+        {
+          "line": 58,
+          "source": "spawnSync: () => { calls++; const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; return spawnSync(process.execPath, ['--test', builderTest], { env, encoding: 'utf8' }); },"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu261-reviewer-isolation.test.mjs",
+      "sha256": "03e9aaaeadea98c340a257d7324f1f152dbd639c31cab257ec97ede426eb7f85",
+      "capabilities": [
+        "bash",
+        "linux_proc"
+      ],
+      "disposition": "direct reviewer-sandbox startup; real child process inspection; TCP probe doubled",
+      "command_and_fixture_candidates": [
+        {
+          "line": 99,
+          "source": "fs.writeFileSync(fakeBash, `#!/bin/sh\\nprintf PATH > ${JSON.stringify(marker)}\\n`, { mode: 0o755 });"
+        },
+        {
+          "line": 102,
+          "source": "const run = spawnSync(script.pathname, [\"invalid\"], {"
+        },
+        {
+          "line": 317,
+          "source": "const child = spawn(process.execPath, [\"-e\", \"setInterval(()=>{},1000)\", processCanary], { stdio: \"ignore\" });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu68-wiring.test.mjs",
+      "sha256": "f289b4ee13723b01e7c68759b763eb9aad996d522f1b057a2366312090b1676d",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 584,
+          "source": "fetchImpl: async () => { writes += 1; throw new Error(\"dispatch-disabled must not touch a network\"); },"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu71-activation-package.test.mjs",
+      "sha256": "ee3cf5cf58542d0a809379603e8f47b8eb407338e1fcab5bd4215cb273e99bef",
+      "capabilities": [
+        "git"
+      ],
+      "disposition": "real revision Git read and mutation execution binding controls",
+      "command_and_fixture_candidates": [
+        {
+          "line": 256,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=^${pattern}:`, path.join(root, \"test/shu71-activation-package.test.mjs\")],"
+        },
+        {
+          "line": 284,
+          "source": "const observed = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu71-battery.test.mjs",
+      "sha256": "1d34e00526e02e8c0d5f12d1067549323b2e2ac7ccc5a186066cda28c59f8c0c",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 141,
+          "source": "const child = working ? spawn(process.execPath, ['-e', `"
+        },
+        {
+          "line": 253,
+          "source": "const child = spawn(process.execPath, [worker, dir, JSON.stringify(order)],"
+        },
+        {
+          "line": 331,
+          "source": "const result = spawnSync(process.execPath, ['--test', `--test-name-pattern=${pattern}`, join(dir, 'test/shu71-battery.test.mjs')],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu71-public-key.test.mjs",
+      "sha256": "35ed56f46623feeaf51f1b4c6d9ac96153c8c2f6942b234fbfd3fa926885dcec",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 90,
+          "source": "const run = spawnSync(process.execPath, ['--input-type=module', '-e',"
+        },
+        {
+          "line": 111,
+          "source": "const run = spawnSync(process.execPath, ['--test', `--test-name-pattern=^${pattern}:`, path.join(root, 'test/shu71-public-key.test.mjs')],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu73-enforcement.test.mjs",
+      "sha256": "24e9b33b9c787991b9523e2ac8132054f04a99ebbaf4d8e393a746bfc0f47714",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 183,
+          "source": "const child = spawnSync(process.execPath, [\"--input-type=module\", \"-e\", scenario], { encoding: \"utf8\", timeout: 30_000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/shu86-durable-intent.test.mjs",
+      "sha256": "29158de85f570c82922b86f7c9a7db82e0c9808f4b6d85db43c43fa3c596388b",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 161,
+          "source": "const result = spawnSync(process.execPath, ['--test', `--test-name-pattern=${pattern}`, join(dir, 'test/shu86-durable-intent.test.mjs')],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/single-run-activation.test.mjs",
+      "sha256": "56cb1fe460e7643015ae6a204557c5da62d2fe92d83c722709a7dc90852f628b",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 1114,
+          "source": "const child = spawnSync(process.execPath, [probePath], { encoding: \"utf8\", timeout: 30000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/supervisor-dispatch.test.mjs",
+      "sha256": "1ecbe2985ed30f898357b6609f488ece76f003ee13c41cbd55ad135127fd04c0",
+      "capabilities": [],
+      "disposition": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 195,
+          "source": "const result = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${pattern}`, join(dir, \"test/supervisor-dispatch.test.mjs\")], { env, encoding: \"utf8\", timeout: 15000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/supervisor.test.mjs",
+      "sha256": "693e7871e0bfbfe11e080e35e77179f6d4e07204eb01d7c3896586e7fd281ae4",
+      "capabilities": [
+        "unix_socket"
+      ],
+      "disposition": "startSupervisorServer and submitToSupervisor real socket round trip",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/two-fixture-activation.test.mjs",
+      "sha256": "9bd5366014ae636cc423274d248eab9c864ed839db162af85ce74049f5aa6a28",
+      "capabilities": [
+        "git"
+      ],
+      "disposition": "real revision and isolated ancestry Git repository controls",
+      "command_and_fixture_candidates": [
+        {
+          "line": 136,
+          "source": "const run = spawnSync(process.execPath, ['--test', `--test-name-pattern=^${code}:`, path.join(dir, 'test/two-fixture-activation.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 158,
+          "source": "const result = spawnSync(exe, [args[0], args[1], prelude + args[2]], options);"
+        },
+        {
+          "line": 182,
+          "source": "const observed = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });"
+        },
+        {
+          "line": 206,
+          "source": "const git = (...args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/two-fixture-lanes.test.mjs",
+      "sha256": "a9961b28406959057613f5ad602cc68276f6890057a0e4f8e46bc0ee4fa6a614",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": [
+        {
+          "line": 145,
+          "source": "const run = spawnSync(process.execPath, [\"--test\", `--test-name-pattern=${pattern}`, path.join(dir, \"test/two-fixture-lanes.test.mjs\")], { env, encoding: \"utf8\", timeout: 30000 });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/two-fixture-progression.test.mjs",
+      "sha256": "9ae1cde560b07bf4efbe4ce3d8c93bde866e4cf5412f1640773346ba2f55afd5",
+      "capabilities": [
+        "git",
+        "linux_proc"
+      ],
+      "disposition": "real Git fixture/broker workspace snapshots and recovery subprocess controls",
+      "command_and_fixture_candidates": [
+        {
+          "line": 18,
+          "source": "const git = (cwd, ...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {"
+        },
+        {
+          "line": 50,
+          "source": "fixtureAncestryResolver: (base, head) => spawnSync('git', ['-C', remote, 'merge-base', '--is-ancestor', base, head]).status === 0,"
+        },
+        {
+          "line": 72,
+          "source": "return execFile(exe, args, options, callback);"
+        },
+        {
+          "line": 166,
+          "source": "const run = spawnSync(process.execPath, ['--test', `--test-name-pattern=^${pattern}:`, path.join(dir, 'test/two-fixture-progression.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 206,
+          "source": "return execFileSync(exe, [args[0], args[1], prelude + args[2]], opts);"
+        },
+        {
+          "line": 259,
+          "source": "fixtureAncestryResolver: (base, head) => spawnSync('git', ['-C', f.remote, 'merge-base', '--is-ancestor', base, head]).status === 0,"
+        },
+        {
+          "line": 337,
+          "source": "isAncestor: (base, head) => spawnSync('git', ['-C', h.remote, 'merge-base', '--is-ancestor', base, head]).status === 0 };"
+        },
+        {
+          "line": 340,
+          "source": "if (!args.includes('push')) return execFile(exe, args, opts, cb);"
+        },
+        {
+          "line": 343,
+          "source": "return execFile(exe, args, opts, () => cb(new Error('lost response'), '', ''));"
+        },
+        {
+          "line": 378,
+          "source": "return execFile(exe, args, options, cb);"
+        },
+        {
+          "line": 446,
+          "source": "${phase === 'before' ? `options.persistImpl = args => { persistPrePush(args); process.kill(process.pid, 'SIGKILL'); };` : `options.gitImpl = (exe,args,opts,cb) => execFile(exe,args,opts,(err,out,stderr) => { if(args.includes('push') && !err) process.kill(process.pid,'SIGKILL'); cb(err,out,stderr); });`}"
+        },
+        {
+          "line": 448,
+          "source": "const killed = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 451,
+          "source": "const restarted = spawnSync(process.execPath, ['--input-type=module', '-e', `import { recoverExactSha } from ${JSON.stringify(module)};"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/two-fixture-revision-reader.test.mjs",
+      "sha256": "e9d13fcf5a8ff39e7943a5edf89c636233c2a185bba3ebb843970596d564007a",
+      "capabilities": [
+        "git"
+      ],
+      "disposition": "real local Git repository ownership and revision controls; distinct identity requirement separately bound",
+      "command_and_fixture_candidates": [
+        {
+          "line": 98,
+          "source": "assert.notEqual(cp.spawnSync('git', args, options).status, 0, 'READER_REAL_OWNER_CONTROL');"
+        },
+        {
+          "line": 99,
+          "source": "const out = cp.spawnSync('git', ['-c', `safe.directory=${r.dir}`, ...args], options);"
+        },
+        {
+          "line": 141,
+          "source": "const run = () => cp.spawnSync(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^${pattern}`, path.join(root, 'test/two-fixture-revision-reader.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });"
+        },
+        {
+          "line": 147,
+          "source": "const syntax = cp.spawnSync(process.execPath, ['--check', target], { env, encoding: 'utf8' });"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/workspace-contract.test.mjs",
+      "sha256": "fc5dacbc1681558aeaed40c4fd9d900a1a0f5794881db9d4ea5a1d1d3b8887b8",
+      "capabilities": [],
+      "disposition": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+      "command_and_fixture_candidates": []
+    },
+    {
+      "file": ".github/coordinator/test/workspace-result-mutations.test.mjs",
+      "sha256": "a6b2da0df85848dbc21056ae39843cdb24018ded16afc4a2139854a134ae09e4",
+      "capabilities": [
+        "git",
+        "linux_proc",
+        "shell_toolchain"
+      ],
+      "disposition": "selected workspace-result mutation children inherit Git, procfs and the restored shell filter/hook controls (M2/M3)",
+      "command_and_fixture_candidates": [
+        {
+          "line": 35,
+          "source": "const result=spawnSync(process.execPath,[\"--test\",`--test-name-pattern=${pattern}`,path.join(root,\"test/workspace-result.test.mjs\")],"
+        }
+      ]
+    },
+    {
+      "file": ".github/coordinator/test/workspace-result.test.mjs",
+      "sha256": "2c5ec51ed2d9a5f7583b31f12e876bc8ed3b80f2cda9661287e75b99ac2f033b",
+      "capabilities": [
+        "git",
+        "linux_proc",
+        "shell_toolchain"
+      ],
+      "disposition": "real Git and /proc/self/fd snapshot reads; restored shell clean filter and pre-commit hook use touch, including negative security controls",
+      "command_and_fixture_candidates": [
+        {
+          "line": 22,
+          "source": "const git = (cwd, ...args) => execFileSync(\"git\", [\"-c\", \"core.hooksPath=/dev/null\", ...args], {"
+        },
+        {
+          "line": 67,
+          "source": "f.git(f.wt,\"config\",\"filter.evil.clean\",`touch ${sentinel}`);"
+        },
+        {
+          "line": 70,
+          "source": "fs.writeFileSync(path.join(f.root,\"hooks/pre-commit\"),`#!/bin/sh\\ntouch ${sentinel}\\n`,{mode:0o755});"
+        }
+      ]
+    }
+  ]
+}

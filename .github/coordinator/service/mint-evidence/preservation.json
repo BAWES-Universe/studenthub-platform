@@ -1,0 +1,11 @@
+{
+  "unchanged": {
+    ".github/workflows/ci.yml": "138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46",
+    ".github/coordinator/service/host-suite-contract.mjs": "1ef14175b91071c095cddea074f51aa5b25cb6aa29099cc329e5480c866df731"
+  },
+  "permitted_skips_count": 8,
+  "existing_inventory_names_and_requirements_unchanged": true,
+  "existing_test_files_unchanged": true,
+  "old_count": 2800,
+  "new_count": 2803
+}

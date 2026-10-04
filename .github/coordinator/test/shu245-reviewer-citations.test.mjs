@@ -80,6 +80,7 @@ test("SHU-245 A1: Run #5 file evidence plus exact path@sha citations produces th
     readHeadImpl: async () => SHA,
     reviewEvidenceImpl: async () => ({
       executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+      isolation_wrapper: ["/test/reviewer-model-wrapper"],
       evidence_link: pathToFileURL(f.reportPath).href, report: f.report,
     }),
     persistEnvelopeImpl: () => ({ link: pathToFileURL(path.join(f.evidence, "envelope.stdout")).href }),
@@ -148,6 +149,32 @@ test("SHU-245 A4: malformed, unsafe, missing, and foreign-head source citations 
     const links = [fileEvidence, citation];
     assert.equal(links[0].startsWith("file:"), true, `${label}: control includes mandatory file evidence`);
     const checked = validateCallback(runFiveCallback(f, { links }), context(f));
+    assert.equal(checked.valid, false, `${label} must fail closed`);
+    assert.equal(checked.field, "links[1]", `${label} must identify the hostile citation`);
+  }
+});
+
+test("SHU-245 A5: a line or range anchor on an exact-head citation keeps the verdict", (t) => {
+  const f = fixture(t);
+  const fileEvidence = pathToFileURL(f.reportPath).href;
+  // The 2026-09-29 21:00Z run lost a real BLOCKED verdict to links[1] in this form.
+  for (const citation of [`${SOURCE_PATHS[0]}@${SHA}:19`, `${SOURCE_PATHS[2]}@${SHA}:45-49`, `${SOURCE_PATHS[1]}@${SHA}:7-7`]) {
+    const checked = validateCallback(runFiveCallback(f, { stage: "BLOCKED", links: [fileEvidence, citation] }), context(f));
+    assert.equal(checked.valid, true, `${citation}: ${checked.detail}`);
+  }
+  const cases = [
+    [`${SOURCE_PATHS[0]}@${"b".repeat(40)}:19`, "foreign head with an anchor"],
+    [`${SOURCE_PATHS[0]}@${SHA}:0`, "line zero"],
+    [`${SOURCE_PATHS[0]}@${SHA}:19-`, "open range"],
+    [`${SOURCE_PATHS[0]}@${SHA}:27-19`, "reversed range"],
+    [`${SOURCE_PATHS[0]}@${SHA}:19:20`, "two anchors"],
+    [`${SOURCE_PATHS[0]}@${SHA}:L19`, "non-numeric anchor"],
+    [`${SOURCE_PATHS[0]}@${SHA}#L19`, "fragment instead of an anchor"],
+    [`missing.mjs@${SHA}:19`, "missing source with an anchor"],
+    [`../outside.mjs@${SHA}:19`, "parent traversal with an anchor"],
+  ];
+  for (const [citation, label] of cases) {
+    const checked = validateCallback(runFiveCallback(f, { stage: "BLOCKED", links: [fileEvidence, citation] }), context(f));
     assert.equal(checked.valid, false, `${label} must fail closed`);
     assert.equal(checked.field, "links[1]", `${label} must identify the hostile citation`);
   }

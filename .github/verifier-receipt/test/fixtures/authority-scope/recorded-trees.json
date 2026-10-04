@@ -1,0 +1,574 @@
+{
+  "_comment": [
+    "WRITTEN-DOWN ANSWERS FROM api.github.com'S GIT TREES ENDPOINT, for the three refs this defect is about.",
+    "",
+    "WHY THE TREES ENDPOINT AND NOT A CONTENTS LISTING. Round 2 of the independent review measured two bypasses",
+    "of the contents form: a listing reports a blob's object id, which does not move when only the file MODE does",
+    "(so `chmod +x .github/workflows/verifier-receipt.yml` is admitted), and it carries no statement of whether",
+    "the page was truncated, so a short page is indistinguishable from a directory that does not hold the entry.",
+    "A trees response carries per-entry `mode` and an explicit `truncated` boolean. Nothing here is inferred from",
+    "a length.",
+    "",
+    "EVERY VALUE IS CROSS-CHECKABLE OFFLINE: each entry's `sha` and `mode` are what `git ls-tree <ref> <path>`",
+    "reports in the repository's own object store, so a reviewer with no network can confirm the recording is",
+    "observed rather than composed. The merge bases likewise equal `git merge-base` for each pair.",
+    "",
+    "SHAPE. Each tree route is the response body with the fields this module does not read (`url` per entry and",
+    "per response, `size` on blobs) dropped; the array is named `tree` and the flag `truncated`, which is what",
+    "the endpoint names them. A recording that named the array something else would be a recording of an",
+    "endpoint that does not exist - the module reads `tree`, and so does api.github.com.",
+    "",
+    "TAKEN: 2026-09-23, BAWES-Universe/studenthub-platform, at",
+    "  authority 9f0131a5df8687deccd1ac0c0b0dc08f9a3a689b  (the commit the receipt authority landed in)",
+    "  base      a51c8490dfb8572917049b3ab73dcf94409365c4  (authority's parent; the merge base for both pairs)",
+    "  candidate 6feac016e3a0796d0c7b21d86426af0f1491a9c1  (the candidate run 35852850002 refused, wrongly)"
+  ],
+  "routes": {
+    "/repos/BAWES-Universe/studenthub-platform/compare/9f0131a5df8687deccd1ac0c0b0dc08f9a3a689b...6feac016e3a0796d0c7b21d86426af0f1491a9c1": {
+      "status": "diverged",
+      "merge_base_commit": {
+        "sha": "a51c8490dfb8572917049b3ab73dcf94409365c4"
+      }
+    },
+    "/repos/BAWES-Universe/studenthub-platform/compare/a51c8490dfb8572917049b3ab73dcf94409365c4...9f0131a5df8687deccd1ac0c0b0dc08f9a3a689b": {
+      "status": "ahead",
+      "merge_base_commit": {
+        "sha": "a51c8490dfb8572917049b3ab73dcf94409365c4"
+      }
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/9f0131a5df8687deccd1ac0c0b0dc08f9a3a689b": {
+      "sha": "9f0131a5df8687deccd1ac0c0b0dc08f9a3a689b",
+      "truncated": false,
+      "tree": [
+        {
+          "path": ".claude",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2dc419f6c0bf695e75839e42031b18cbf060b3f5"
+        },
+        {
+          "path": ".dockerignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "40e99fbf9773933551bd896980a64538a4e1fe03"
+        },
+        {
+          "path": ".github",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "3b24ab9436ccb8199cc99d782aa2586ba588956d"
+        },
+        {
+          "path": ".gitignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "c0be295d61d8f5d667b5279982010fd90d015a80"
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "985410df11b76be2a6ead8ef65bad6c5933ca091"
+        },
+        {
+          "path": "README.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "dbfa8368f67e8b400c03bfc7baf6eb45c718959e"
+        },
+        {
+          "path": "apps",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "b34b682a0a97d48fbdc0082aea302fad11187197"
+        },
+        {
+          "path": "deploy",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "5224cf2482653d63580f25c5f3308c8a164a08b7"
+        },
+        {
+          "path": "docs",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2d1e8ea0f23c8a340d68f151eab42687dbff2afc"
+        },
+        {
+          "path": "package-lock.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "28222e3417516aa5495ec037f486699b14349fee"
+        },
+        {
+          "path": "package.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "4fe4719dc60f907f76622825a17a33193bfec700"
+        },
+        {
+          "path": "packages",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "112b50b82392e50729c5a40faf88ee5e6418483c"
+        },
+        {
+          "path": "tools",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2f36c1a28be82e44fbc9e6a7bfacdbc224c06deb"
+        },
+        {
+          "path": "tsconfig.build.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ff6f09dbd9e76a899c1563f536f4eb7ef99ef367"
+        },
+        {
+          "path": "tsconfig.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a40c7a8223a8dd501ed49d3882dc53437ed5cf22"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/3b24ab9436ccb8199cc99d782aa2586ba588956d": {
+      "sha": "3b24ab9436ccb8199cc99d782aa2586ba588956d",
+      "truncated": false,
+      "tree": [
+        {
+          "path": "CODEOWNERS",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "e60f6f43867a5f836d7ead82ca900a9269a80e76"
+        },
+        {
+          "path": "coordinator",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "b0c72b92d3f3f81fcea5ed016a9aefe193994c35"
+        },
+        {
+          "path": "policy",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "87f07048d009175d7919b7bf3a35d75dfea8b1cd"
+        },
+        {
+          "path": "pull_request_template.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "6bd81aa0613d609637a01a4cd269126d80d5f9d6"
+        },
+        {
+          "path": "verifier-receipt",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "03fe40baf7cb5ca86c3e28299a5eeae2f46bb270"
+        },
+        {
+          "path": "workflows",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "5a763a93bbe0ec56b3b8f797e2be7e74da3b8969"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/5a763a93bbe0ec56b3b8f797e2be7e74da3b8969": {
+      "sha": "5a763a93bbe0ec56b3b8f797e2be7e74da3b8969",
+      "truncated": false,
+      "tree": [
+        {
+          "path": "build.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "08dc38a54b6dd20d37cfab22cc6e1a77d5883e8d"
+        },
+        {
+          "path": "ci.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "995a8375198bb92bad0c7a37135ccc452b04e64e"
+        },
+        {
+          "path": "coordinator.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d9d9b6144e8667a7a890e1bbcd7a84c96e8fecce"
+        },
+        {
+          "path": "repository-policy.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ef3e6450d50517e1096be7280b3b85648b13dd4d"
+        },
+        {
+          "path": "search-adapter.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a73a6cd82b96f378f6c3197d3aa9bc5d50fa676e"
+        },
+        {
+          "path": "search-bakeoff.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "12e0b0ee042c1e734b64d76b82a65a60155220f3"
+        },
+        {
+          "path": "verifier-receipt.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "3615f6582e692f2c6042b2f807c393c32dee413e"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/a51c8490dfb8572917049b3ab73dcf94409365c4": {
+      "sha": "a51c8490dfb8572917049b3ab73dcf94409365c4",
+      "truncated": false,
+      "tree": [
+        {
+          "path": ".claude",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2dc419f6c0bf695e75839e42031b18cbf060b3f5"
+        },
+        {
+          "path": ".dockerignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "40e99fbf9773933551bd896980a64538a4e1fe03"
+        },
+        {
+          "path": ".github",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "3aaa90f426c22b9ee86997da44a00a62af8a2ad4"
+        },
+        {
+          "path": ".gitignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "c0be295d61d8f5d667b5279982010fd90d015a80"
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "985410df11b76be2a6ead8ef65bad6c5933ca091"
+        },
+        {
+          "path": "README.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "dbfa8368f67e8b400c03bfc7baf6eb45c718959e"
+        },
+        {
+          "path": "apps",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "b34b682a0a97d48fbdc0082aea302fad11187197"
+        },
+        {
+          "path": "deploy",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "5224cf2482653d63580f25c5f3308c8a164a08b7"
+        },
+        {
+          "path": "docs",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2d1e8ea0f23c8a340d68f151eab42687dbff2afc"
+        },
+        {
+          "path": "package-lock.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "28222e3417516aa5495ec037f486699b14349fee"
+        },
+        {
+          "path": "package.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "4fe4719dc60f907f76622825a17a33193bfec700"
+        },
+        {
+          "path": "packages",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "112b50b82392e50729c5a40faf88ee5e6418483c"
+        },
+        {
+          "path": "tools",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2f36c1a28be82e44fbc9e6a7bfacdbc224c06deb"
+        },
+        {
+          "path": "tsconfig.build.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ff6f09dbd9e76a899c1563f536f4eb7ef99ef367"
+        },
+        {
+          "path": "tsconfig.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a40c7a8223a8dd501ed49d3882dc53437ed5cf22"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/3aaa90f426c22b9ee86997da44a00a62af8a2ad4": {
+      "sha": "3aaa90f426c22b9ee86997da44a00a62af8a2ad4",
+      "truncated": false,
+      "tree": [
+        {
+          "path": "CODEOWNERS",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "e60f6f43867a5f836d7ead82ca900a9269a80e76"
+        },
+        {
+          "path": "coordinator",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "b0c72b92d3f3f81fcea5ed016a9aefe193994c35"
+        },
+        {
+          "path": "policy",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "87f07048d009175d7919b7bf3a35d75dfea8b1cd"
+        },
+        {
+          "path": "pull_request_template.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "6bd81aa0613d609637a01a4cd269126d80d5f9d6"
+        },
+        {
+          "path": "workflows",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "93806de7f0f1eed51660ab4bca1e3ffee2bb74e8"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/93806de7f0f1eed51660ab4bca1e3ffee2bb74e8": {
+      "sha": "93806de7f0f1eed51660ab4bca1e3ffee2bb74e8",
+      "truncated": false,
+      "tree": [
+        {
+          "path": "build.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "08dc38a54b6dd20d37cfab22cc6e1a77d5883e8d"
+        },
+        {
+          "path": "ci.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "995a8375198bb92bad0c7a37135ccc452b04e64e"
+        },
+        {
+          "path": "coordinator.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d9d9b6144e8667a7a890e1bbcd7a84c96e8fecce"
+        },
+        {
+          "path": "repository-policy.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "b5b6a74b452b511bd79624b9b1579ff9c691b919"
+        },
+        {
+          "path": "search-adapter.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a73a6cd82b96f378f6c3197d3aa9bc5d50fa676e"
+        },
+        {
+          "path": "search-bakeoff.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "12e0b0ee042c1e734b64d76b82a65a60155220f3"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/6feac016e3a0796d0c7b21d86426af0f1491a9c1": {
+      "sha": "6feac016e3a0796d0c7b21d86426af0f1491a9c1",
+      "truncated": false,
+      "tree": [
+        {
+          "path": ".claude",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2dc419f6c0bf695e75839e42031b18cbf060b3f5"
+        },
+        {
+          "path": ".dockerignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "40e99fbf9773933551bd896980a64538a4e1fe03"
+        },
+        {
+          "path": ".github",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "193ec45d8d10bae8487e8362a9e40e69a7c4454a"
+        },
+        {
+          "path": ".gitignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "c0be295d61d8f5d667b5279982010fd90d015a80"
+        },
+        {
+          "path": "Dockerfile",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "985410df11b76be2a6ead8ef65bad6c5933ca091"
+        },
+        {
+          "path": "README.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "dbfa8368f67e8b400c03bfc7baf6eb45c718959e"
+        },
+        {
+          "path": "apps",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "b34b682a0a97d48fbdc0082aea302fad11187197"
+        },
+        {
+          "path": "deploy",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "5224cf2482653d63580f25c5f3308c8a164a08b7"
+        },
+        {
+          "path": "docs",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2d1e8ea0f23c8a340d68f151eab42687dbff2afc"
+        },
+        {
+          "path": "package-lock.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "28222e3417516aa5495ec037f486699b14349fee"
+        },
+        {
+          "path": "package.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "4fe4719dc60f907f76622825a17a33193bfec700"
+        },
+        {
+          "path": "packages",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "112b50b82392e50729c5a40faf88ee5e6418483c"
+        },
+        {
+          "path": "tools",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "2f36c1a28be82e44fbc9e6a7bfacdbc224c06deb"
+        },
+        {
+          "path": "tsconfig.build.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ff6f09dbd9e76a899c1563f536f4eb7ef99ef367"
+        },
+        {
+          "path": "tsconfig.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a40c7a8223a8dd501ed49d3882dc53437ed5cf22"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/193ec45d8d10bae8487e8362a9e40e69a7c4454a": {
+      "sha": "193ec45d8d10bae8487e8362a9e40e69a7c4454a",
+      "truncated": false,
+      "tree": [
+        {
+          "path": "CODEOWNERS",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "e60f6f43867a5f836d7ead82ca900a9269a80e76"
+        },
+        {
+          "path": "coordinator",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "452873440d0d6621e944e5709db35edc59858a62"
+        },
+        {
+          "path": "policy",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "87f07048d009175d7919b7bf3a35d75dfea8b1cd"
+        },
+        {
+          "path": "pull_request_template.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "6bd81aa0613d609637a01a4cd269126d80d5f9d6"
+        },
+        {
+          "path": "workflows",
+          "mode": "040000",
+          "type": "tree",
+          "sha": "993f84221903e3aaf537477ff08babd9dbb22d55"
+        }
+      ]
+    },
+    "/repos/BAWES-Universe/studenthub-platform/git/trees/993f84221903e3aaf537477ff08babd9dbb22d55": {
+      "sha": "993f84221903e3aaf537477ff08babd9dbb22d55",
+      "truncated": false,
+      "tree": [
+        {
+          "path": "build.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "08dc38a54b6dd20d37cfab22cc6e1a77d5883e8d"
+        },
+        {
+          "path": "ci.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d48e2326d904ac87ac85e6d004ed49517f891c81"
+        },
+        {
+          "path": "coordinator.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d9d9b6144e8667a7a890e1bbcd7a84c96e8fecce"
+        },
+        {
+          "path": "repository-policy.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "b5b6a74b452b511bd79624b9b1579ff9c691b919"
+        },
+        {
+          "path": "search-adapter.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a73a6cd82b96f378f6c3197d3aa9bc5d50fa676e"
+        },
+        {
+          "path": "search-bakeoff.yml",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "12e0b0ee042c1e734b64d76b82a65a60155220f3"
+        }
+      ]
+    }
+  }
+}

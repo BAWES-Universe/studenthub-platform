@@ -76,6 +76,12 @@ function macFor(order, secret, operation = "submit") {
     .digest("base64url");
 }
 
+// The supervisor's own reason a run ended without a result (OUTPUT_LIMIT,
+// DEADLINE, WORKER_EXIT, …), as a code only. It never makes a verdict.
+function holdDetail(run, stage) {
+  return ["HOLD", "FAILED"].includes(stage) && /^[A-Z][A-Z0-9_]{2,47}$/.test(run?.error_code ?? "") ? { detail_code: run.error_code } : {};
+}
+
 export function signedSupervisorRequest(order, secret, operation = "submit") {
   const valid = validateBoundOrder(order);
   if (!valid.ok) throw new Error(valid.reason);
@@ -493,7 +499,7 @@ export class DurableSupervisor {
         attempt_id: order.attempt_id, target_sha: order.target_sha, stage,
         ...((execution || hasLaunchReceipt(report.launch_receipt, order)) ? { launch_receipt: report.launch_receipt }
           : { hold_code: requireHoldCode(run.hold_code ?? report.hold_code ?? 'AWAITING_LAUNCH') }),
-        result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
+        result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null, ...holdDetail(run, stage) };
     } catch (error) {
       if (error.code === 'ERR_ASSERTION') throw error;
       return { ok: false, stage: "HOLD", hold_code: requireHoldCode('MISSING_CLAIM'), reason: "supervisor attempt unavailable" };
@@ -520,6 +526,7 @@ export class DurableSupervisor {
       durable: true,
       duplicate: accepted.duplicate,
       ...this.store.announce(request.order),
+      ...holdDetail(run, run.status.toUpperCase()),
     };
   }
 

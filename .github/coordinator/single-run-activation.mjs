@@ -82,17 +82,21 @@
 // Failing that way round is the cheaper mistake.
 
 import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
+import { readProgressionPush } from './two-fixture-progression.mjs';
+import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
 import { resolveFixtureLane } from "./workspace-scope.mjs";
+import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
 import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 // SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
 // the activation record's accepted lanes and the routing module's review
 // capability can never drift apart.
-import { REVIEW_LANES } from "./launch-vocabulary.mjs";
+import { ACTIVATION_REVIEWER_LANES, ACTIVATION_WRITER_LANES, adapterForLane, familyForLane } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -117,7 +121,11 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
 // SHU-231: `supersedes_attempt_ids` names the specific retained evidence this
 // approval retires. It is optional like `reviewer_lane` — but nothing else about
 // the exact-key-set rule relaxes: an unreviewed extra key still refuses.
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids"]);
+// SHU-71: `writer_lane` names the lane of the episode's first build, so a run
+// can reverse the roles (a Claude build reviewed by Codex) without relabelling
+// the card. It is read only for the first build: every revision returns to the
+// runtime of the build receipt, so the writer is fixed for the whole episode.
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane"]);
 
 export const ACTIVATION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -129,6 +137,50 @@ export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
 
 // An expiry that reaches further than a day is not an expiry, it is a permanence.
 export const MAX_ACTIVATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+// SHU-71 try 8: /tmp (a 3.8G tmpfs on the host) was full, so the broker's
+// fetch into its temporary repository died with ENOSPC after a fifteen-minute
+// build and spent the episode. The coordinator starts no launch while the temp
+// filesystem holds less than this (reconcile.mjs, before each reservation).
+export const MIN_TMP_FREE_BYTES = 1024 * 1024 * 1024;
+
+// Free bytes where the broker and attempt workspaces put their temporary
+// repositories. null when it cannot be read.
+function tmpFreeBytes(io = {}) {
+  if (typeof io.tmpFreeBytes === "function") return io.tmpFreeBytes();
+  try {
+    const stat = fs.statfsSync(tmpdir());
+    return Number(stat.bavail) * Number(stat.bsize);
+  } catch {
+    return null;
+  }
+}
+
+// Room to publish. null when the temp filesystem can hold a launch's workspace
+// and its result. Deliberately not part of the activation status: that status
+// is re-read before a finished result is published, and the result's own
+// snapshot must never be what refuses it.
+export function tmpFloorRefusal(io = {}) {
+  const free = tmpFreeBytes(io);
+  if (!Number.isFinite(free)) return `free space in ${tmpdir()} could not be read (fail closed)`;
+  if (free < MIN_TMP_FREE_BYTES) {
+    return `only ${Math.floor(free / 1048576)} MiB free in ${tmpdir()}; a launch needs at least ${MIN_TMP_FREE_BYTES / 1048576} MiB`;
+  }
+  return null;
+}
+
+// SHU-71: a named writer must be a writer lane the supervisor can start beside
+// a named reviewer, and the two may share neither a family nor an adapter, so a
+// lane never reviews its own work. null when the pair is acceptable.
+function writerPairError(writerLane, reviewerLane) {
+  if (typeof writerLane !== "string" || !ACTIVATION_WRITER_LANES.includes(writerLane)) {
+    return `writer_lane must be one of ${ACTIVATION_WRITER_LANES.join(", ")} (got ${JSON.stringify(writerLane)})`;
+  }
+  if (typeof reviewerLane !== "string") return "writer_lane requires reviewer_lane in the same record";
+  if (familyForLane(writerLane) === familyForLane(reviewerLane) || adapterForLane(writerLane) === adapterForLane(reviewerLane)) {
+    return `writer_lane ${writerLane} and reviewer_lane ${reviewerLane} are the same family — a lane never reviews its own work`;
+  }
+  return null;
+}
 
 // The durable stages a receipt can rest in (mirrors reconcile.mjs TERMINAL_STAGES).
 export const TERMINAL_RECEIPT_STAGES = Object.freeze(["COMPLETED", "FAILED", "HOLD"]);
@@ -281,7 +333,12 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   }
 
   if (routed.ok && routed.order) {
-    return { ended: false, reason: `mid-episode: ${routed.order.role} successor is routable`, successor: routed.order };
+    // V1 contract step 3: the revision is dispatched with the review's findings.
+    // They come from the BLOCKED review receipt at the very head being revised.
+    const findings = routed.order.scope_phase === "revision" && validReviewFindings(terminal.review_findings)
+      && terminal.review_findings.target_sha === routed.order.target_sha ? terminal.review_findings : null;
+    const successor = findings ? { ...routed.order, review_findings: findings } : routed.order;
+    return { ended: false, reason: `mid-episode: ${routed.order.role} successor is routable`, successor };
   }
   if (routed.ok && routed.terminal) return { ended: true, reason: "review PASS — the episode is complete" };
 
@@ -383,8 +440,36 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
 // The record
 // ---------------------------------------------------------------------------
 
-function refused(reason) {
-  return { requested: true, state: "refused", valid: false, reason, target_issue_id: null, activation_id: null, expires_at: null };
+function refused(reason, reporting = null) {
+  const safe = reporting &&
+    typeof reporting.activation_id === "string" && ACTIVATION_ID_RE.test(reporting.activation_id) &&
+    typeof reporting.target_issue_id === "string" && LINEAR_ISSUE_ID_RE.test(reporting.target_issue_id) &&
+    typeof reporting.coordinator_revision === "string" && REVISION_RE.test(reporting.coordinator_revision) &&
+    typeof reporting.expires_at === "string" && Number.isFinite(Date.parse(reporting.expires_at)) &&
+    ["expired", "spent"].includes(reporting.reporting_exception)
+      ? reporting
+      : null;
+  return {
+    requested: true,
+    state: "refused",
+    valid: false,
+    reason,
+    target_issue_id: safe?.target_issue_id ?? null,
+    activation_id: safe?.activation_id ?? null,
+    coordinator_revision: safe?.coordinator_revision ?? null,
+    expires_at: safe?.expires_at ?? null,
+    reporting_exception: safe?.reporting_exception ?? null,
+  };
+}
+
+function reportingRefusal(record, reporting_exception) {
+  return {
+    activation_id: record.activation_id,
+    target_issue_id: record.target_issue_id,
+    coordinator_revision: record.coordinator_revision,
+    expires_at: record.expires_at,
+    reporting_exception,
+  };
 }
 
 function readActivationText(filePath, io = {}) {
@@ -450,13 +535,22 @@ export function validateActivationRecord(record) {
   }
   // SHU-225: the optional first-review bootstrap lane. Absent is valid (no
   // bootstrap — the routing then holds visibly, exactly as before this change).
-  // Present must be a KNOWN reviewer-capable lane; an unrecognised value refuses
+  // Present must be a KNOWN reviewer-capable lane on a runtime the supervisor can
+  // start (SHU-71: a Hermes reviewer can only hold); an unrecognised value refuses
   // rather than being ignored, because a silently-dropped reviewer declaration
   // would leave an operator believing a review was configured when it was not.
   if ("reviewer_lane" in record) {
-    if (typeof record.reviewer_lane !== "string" || !REVIEW_LANES.includes(record.reviewer_lane)) {
-      return { ok: false, reason: `reviewer_lane must be one of ${REVIEW_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
+    if (typeof record.reviewer_lane !== "string" || !ACTIVATION_REVIEWER_LANES.includes(record.reviewer_lane)) {
+      return { ok: false, reason: `reviewer_lane must be one of ${ACTIVATION_REVIEWER_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
     }
+  }
+  // SHU-71: a named writer must be a writer lane the supervisor can start, and
+  // the record must name its reviewer too, so the approved pair is the record's
+  // and never resolved later from mutable config. Independence is read from the
+  // lane registry: the two lanes may share neither a family nor an adapter.
+  if ("writer_lane" in record) {
+    const pairError = writerPairError(record.writer_lane, record.reviewer_lane);
+    if (pairError) return { ok: false, reason: pairError };
   }
   // SHU-231: the episode boundary. Optional; when present it must be a
   // non-empty, duplicate-free list of canonical attempt UUIDs. An EMPTY list is
@@ -481,6 +575,11 @@ export function validateActivationRecord(record) {
 // Status
 // ---------------------------------------------------------------------------
 
+// SHU-71 run 4: how many times, and how far apart, the pair's branch heads are
+// read again before a head behind the receipt-bound progression refuses.
+export const STALE_HEAD_RETRIES = 2;
+export const STALE_HEAD_WAIT_MS = 3000;
+
 // Returns the single decision the caller needs. `state` is one of:
 //   "absent"  — no --activation was given; the committed gates decide alone
 //   "armed"   — a valid, unspent, unexpired, correctly-bound authorization
@@ -499,6 +598,7 @@ export function singleRunActivationStatus({
   io = {},
   env = {},
   issues = [],
+  unreadIssueIds = new Set(),
 } = {}) {
   if (!filePath) return { requested: false, state: "absent", valid: true, reason: null, target_issue_id: null, activation_id: null, expires_at: null };
 
@@ -512,25 +612,75 @@ export function singleRunActivationStatus({
   if (pairRecord?.kind === "two-fixture-v1") {
     const readRef = (ref) => {
       try {
-        return execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-C", dir, "rev-parse", "--verify", ref], {
+        // Match resolveCoordinatorRevision: trust only the real checkout root
+        // containing dir; unresolved roots refuse before invoking Git.
+        let checkoutRoot = fs.realpathSync(dir);
+        while (!fs.existsSync(path.join(checkoutRoot, ".git"))) {
+          const parent = path.dirname(checkoutRoot);
+          if (parent === checkoutRoot) return null;
+          checkoutRoot = parent;
+        }
+        return execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${checkoutRoot}`, "-C", dir, "rev-parse", "--verify", ref], {
           env: brokerGitEnv(process.env), encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"],
         }).trim();
       } catch { return null; }
     };
-    const evidence = io.fixtureHeadResolver
+    const readEvidence = () => io.fixtureHeadResolver
       ? { heads: Object.fromEntries(["SHU-140", "SHU-254"].map(id => [`coordinator/${id}`, io.fixtureHeadResolver(`coordinator/${id}`)])), issues }
-      : readTwoFixtureEvidence(config, env);
-    const status = validateTwoFixtureActivation({ record: pairRecord, config,
-      revision: resolveCoordinatorRevision({ dir, gitHead, io }),
-      mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now });
+      : readTwoFixtureEvidence(config, env, io.evidenceRun);
+    const revision = resolveCoordinatorRevision({ dir, gitHead, io });
+    const mainRevision = io.mainRevision ?? readRef("refs/heads/main");
+    const validatePair = (evidence, at = now) => validateTwoFixtureActivation({ record: pairRecord, config,
+      revision, mainRevision, heads: evidence.heads, issues: evidence.issues, env, now: at,
+      receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
+      isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
+    // SHU-71 run 7: a card whose thread the tick could not read contributes no
+    // receipts, so its lane's progression falls back to the seed and the live
+    // head reads as stale. That is a read to retry next tick, never a stale seed.
+    const unreadFixture = pairRecord.fixtures?.find?.(fixture => unreadIssueIds.has(fixture?.issue_id));
+    if (unreadFixture) {
+      return { ...refused(`ACT_EVIDENCE_UNAVAILABLE: the receipts on ${unreadFixture.issue_id} could not be read; refused this tick`), code: "ACT_EVIDENCE_UNAVAILABLE", kind: "two-fixture-v1" };
+    }
+    const started = Date.now();
+    let evidence = readEvidence();
+    let status = validatePair(evidence);
+    // SHU-71 run 4: the broker journals a push (PENDING) before sending it, and
+    // the branch heads are read before that journal. A push landing in between
+    // leaves the heads one push behind the receipt-bound progression, which
+    // reads as a rewind (run 4 refused in the very second its push landed).
+    // Read the heads again, a bounded number of times, before refusing; a real
+    // rewind or a lost push still refuses.
+    for (let retry = 0; status.code === "ACT_STALE_SEED_HEAD" && !io.fixtureHeadResolver && retry < STALE_HEAD_RETRIES; retry++) {
+      (io.staleHeadWait ?? (delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }))(STALE_HEAD_WAIT_MS);
+      evidence = readEvidence();
+      // Each read is judged at its own time: a retry that runs past expires_at refuses.
+      status = validatePair(evidence, io.staleHeadClock?.() ?? new Date(new Date(now).getTime() + Date.now() - started));
+    }
+    // SHU-71 run 3: an evidence read that failed reaches the validator as no
+    // cards at all. Still refused, but named for what it is: a read to retry,
+    // not a record that cannot arm.
+    if (status.code === "ACT_PARTIAL_ARMING" && evidence.unavailable === true) {
+      return { ...status, code: "ACT_EVIDENCE_UNAVAILABLE", reason: "ACT_EVIDENCE_UNAVAILABLE: fixture evidence could not be read; refused this tick" };
+    }
     if (!status.valid || status.state !== "armed") return status;
+    // SHU-71 stage 5: a lane may name its writer beside its reviewer. Both sit
+    // in the signed lane definition, which must equal the committed lane, so
+    // the pair is reviewed config and never read from card labels.
+    const writerLanes = {};
+    for (const fixture of status.fixtures) {
+      if (fixture.lane.writer_lane === undefined) continue;
+      const pairError = writerPairError(fixture.lane.writer_lane, fixture.lane.reviewer_lane);
+      if (pairError) return { ...refused(`ACT_LANE_CROSS: ${fixture.issue_id} ${pairError}`), code: "ACT_LANE_CROSS", kind: "two-fixture-v1" };
+      writerLanes[fixture.issue_id] = fixture.lane.writer_lane;
+    }
     const episodes = status.fixtures.map(fixture => ({ fixture, episode: episodeVerdict({ receipts,
-      targetIssueId: fixture.issue_id, config, episodeScope: episodeScopeFor(status) }) }));
+      targetIssueId: fixture.issue_id, config, bootstrapReviewer: fixture.lane.reviewer_lane ? { lane: fixture.lane.reviewer_lane } : null, episodeScope: episodeScopeFor(status) }) }));
     const ongoing = episodes.filter(entry => !entry.episode.ended);
     if (!ongoing.length) return refused("activation is spent: both fixture episodes ended");
     const selected = ongoing.find(entry => !receipts.some(r => r.issue_id === entry.fixture.issue_id && !TERMINAL_RECEIPT_STAGES.includes(r.stage))) ?? ongoing[0];
     return { ...status, target_issue_id: selected.fixture.issue_id,
-      authorization_ref: selected.fixture.lane.authorization_ref, initial_target_sha: selected.fixture.seed_head,
+      authorization_ref: selected.fixture.lane.authorization_ref, reviewer_lane: selected.fixture.lane.reviewer_lane, initial_target_sha: selected.fixture.seed_head,
+      writer_lane: writerLanes[selected.fixture.issue_id] ?? null, writer_lanes: writerLanes,
       successor: selected.episode.successor ?? null, episode: selected.episode.reason,
       target_issue_ids: ongoing.map(entry => entry.fixture.issue_id) };
   }
@@ -590,7 +740,7 @@ export function singleRunActivationStatus({
   const expiry = new Date(record.expires_at).getTime();
   const at = now instanceof Date ? now.getTime() : Date.parse(now);
   if (!Number.isFinite(at)) return refused("current time could not be resolved (fail closed)");
-  if (expiry <= at) return refused(`activation expired at ${record.expires_at}`);
+  if (expiry <= at) return refused(`activation expired at ${record.expires_at}`, reportingRefusal(record, "expired"));
   if (expiry - at > MAX_ACTIVATION_WINDOW_MS) {
     return refused(`activation expiry is more than ${MAX_ACTIVATION_WINDOW_MS / 3600000}h away — the window is not bounded`);
   }
@@ -610,7 +760,10 @@ export function singleRunActivationStatus({
     bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
   });
   if (episode.ended) {
-    return refused(`activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`);
+    return refused(
+      `activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`,
+      reportingRefusal(record, "spent"),
+    );
   }
 
   return {
@@ -625,6 +778,7 @@ export function singleRunActivationStatus({
     slots: record.slots,
     expires_at: record.expires_at,
     reviewer_lane: record.reviewer_lane ?? null,
+    writer_lane: record.writer_lane ?? null,
     supersedes_attempt_ids: record.supersedes_attempt_ids ?? [],
     initial_target_sha: record.initial_target_sha ?? null,
     episode: episode.reason,
@@ -638,6 +792,31 @@ export function singleRunActivationStatus({
 // the activated target. The committed scope already guarantees this; this exists so
 // that a future change to selection logic cannot quietly dispatch something else
 // under a live activation.
+// The name an operator needs for an activation that is not armed: its own
+// ACT_* code when it has one, else what the refusal says about its lifetime.
+export function activationRefusalCode(activation) {
+  if (/^ACT_[A-Z0-9_]{2,32}$/.test(activation?.code ?? "")) return activation.code;
+  if (["expired", "spent"].includes(activation?.reporting_exception)) return `ACTIVATION_${activation.reporting_exception.toUpperCase()}`;
+  if (/^activation is spent/.test(activation?.reason ?? "")) return "ACTIVATION_SPENT";
+  return "ACTIVATION_REFUSED";
+}
+
+// SHU-71 run 6: the check made just before a worker crosses the adapter
+// boundary. A failed evidence read is read again, a bounded number of times,
+// as the tick and the worker's own check do; any refusal comes back named.
+export const FINAL_CHECK_RETRIES = 2;
+export const FINAL_CHECK_WAIT_MS = 3000;
+export function finalLaunchActivation(check, issueId, wait = delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }) {
+  let activation = check();
+  for (let retry = 0; activation?.code === "ACT_EVIDENCE_UNAVAILABLE" && retry < FINAL_CHECK_RETRIES; retry++) {
+    wait(FINAL_CHECK_WAIT_MS);
+    activation = check();
+  }
+  if (activation?.state !== "armed") return { ok: false, code: activationRefusalCode(activation) };
+  if (!activationAllowsTarget(activation, issueId)) return { ok: false, code: "ACTIVATION_TARGET_NOT_ALLOWED" };
+  return { ok: true, code: null };
+}
+
 export function activationAllowsTarget(activation, issueId) {
   if (!activation || activation.state !== "armed") return true;
   if (activation.kind === "two-fixture-v1") return activation.target_issue_ids.includes(issueId);
@@ -651,7 +830,8 @@ export function activationAllowsTarget(activation, issueId) {
 export function renderActivationLine(activation) {
   if (!activation || activation.state === "absent") return "activation=absent (committed gates only)";
   if (activation.state === "armed") {
-    return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}`;
+    const pair = activation.writer_lane ? ` writer=${activation.writer_lane} reviewer=${activation.reviewer_lane}` : "";
+    return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}${pair}`;
   }
   return `activation=REFUSED (${activation.reason})`;
 }

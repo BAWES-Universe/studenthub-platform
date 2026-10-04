@@ -1,0 +1,52 @@
+TAP version 13
+# Subtest: the first point this run reports
+ok 1 - the first point this run reports
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/a.test.mjs:5:1'
+  ...
+# Error: ENOENT: no such file or directory, mkdir '/src/.scratch'
+# Node.js v22.22.3
+# Subtest: /src/b.test.mjs
+not ok 7 - /src/b.test.mjs
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/b.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: a point from the third file
+ok 3 - a point from the third file
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/c.test.mjs:5:1'
+  ...
+# Error: ENOENT: no such file or directory, mkdir '/src/.scratch'
+# Node.js v22.22.3
+# Subtest: /src/d.test.mjs
+not ok 9 - /src/d.test.mjs
+  ---
+  duration_ms: 1.5
+  type: 'test'
+  location: '/src/d.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 2
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.8

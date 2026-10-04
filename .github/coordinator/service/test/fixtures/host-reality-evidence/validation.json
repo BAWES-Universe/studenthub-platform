@@ -1,0 +1,196 @@
+{
+  "tested_revision": "ddb53c24dbdf0a3cb0e514099907f69ad291d7bb",
+  "tested_tree": "c49a02fbe73565f74993b44b967a83da35dab8ed",
+  "constraints": {
+    "uid": 1000,
+    "umask": "0022",
+    "target_accounts": "absent",
+    "runtime": "absent",
+    "reviewer": "absent"
+  },
+  "clock_offset_ms": 31536000000,
+  "runs": {
+    "focused-plain": {
+      "tests": 1056,
+      "pass": 1056,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..1056"
+      ],
+      "tap_sha256": "48e641934534b818e63004fe1debb8c48f09667ac8e6068370ec05cf16dc546b"
+    },
+    "focused-clock": {
+      "tests": 1056,
+      "pass": 1056,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..1056"
+      ],
+      "tap_sha256": "441da5f2ac26aefaea7f67f1d0ab968983900fe0f71f650d73ef3b63f18edbbb"
+    },
+    "full-plain": {
+      "tests": 3040,
+      "pass": 3032,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..3035"
+      ],
+      "tap_sha256": "44d182cdc054985153ca32d8749aa2a527e78a58e53d8b6e53f3e7e439556b8c",
+      "terminal_reporter_markers": 1,
+      "outcomes_sha256": "f8ace217bd12f997033a3f305f525492f2b5d7aaa2225f18c1d0eaf2d7e14ba8",
+      "skips": [
+        {
+          "type": "outcome",
+          "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+          "status": "skip",
+          "reason": "requires root or passwordless sudo for distinct-uid proof"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+          "status": "skip",
+          "reason": "host cannot switch to the fixture worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+          "status": "skip",
+          "reason": "host cannot switch worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-71 restricted capability refusal",
+          "status": "skip",
+          "reason": "production vocabulary has no undeclared runtime/role pair"
+        },
+        {
+          "type": "outcome",
+          "name": "READER operator-owned checkout read by non-root account",
+          "status": "skip",
+          "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+        }
+      ]
+    },
+    "full-clock": {
+      "tests": 3040,
+      "pass": 3032,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "terminal_tap_markers": [
+        "1..3035"
+      ],
+      "tap_sha256": "5dd9f8aa4ce2d3f52b6b34513caada25d0477fd38c084d065e581c7ba5d46a41",
+      "terminal_reporter_markers": 1,
+      "outcomes_sha256": "f8ace217bd12f997033a3f305f525492f2b5d7aaa2225f18c1d0eaf2d7e14ba8",
+      "skips": [
+        {
+          "type": "outcome",
+          "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+          "status": "skip",
+          "reason": "requires root or passwordless sudo for distinct-uid proof"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+          "status": "skip",
+          "reason": "requires distinct-uid execution"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+          "status": "skip",
+          "reason": "host cannot switch to the fixture worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+          "status": "skip",
+          "reason": "host cannot switch worker uid"
+        },
+        {
+          "type": "outcome",
+          "name": "SHU-71 restricted capability refusal",
+          "status": "skip",
+          "reason": "production vocabulary has no undeclared runtime/role pair"
+        },
+        {
+          "type": "outcome",
+          "name": "READER operator-owned checkout read by non-root account",
+          "status": "skip",
+          "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+        }
+      ]
+    }
+  },
+  "permitted_skips": {
+    "byte_identical_to": "3761fc4ed83429d56a43592b125fa52564b94cc0",
+    "bytes": 1093,
+    "sha256": "03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e"
+  },
+  "inventory": {
+    "files": {
+      "before": 109,
+      "after": 110,
+      "additive": true
+    },
+    "names": {
+      "before": 2991,
+      "after": 3040,
+      "additive": true
+    },
+    "requirements": {
+      "before": 2991,
+      "after": 3040,
+      "additive": true
+    }
+  },
+  "historical_source_sha256": "50df5ff4e62f651260f9f19e2e818cf4322755ec22b26883aa1303045ed9854b",
+  "initial_full_failure": {
+    "tests": 3040,
+    "pass": 3030,
+    "fail": 2,
+    "skipped": 8,
+    "cause": "V8_DOCUMENTATION_LINK_TARGETS and its recursive inventory child; corrected both shifted links without changing assertions"
+  }
+}

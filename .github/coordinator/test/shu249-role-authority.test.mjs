@@ -113,7 +113,7 @@ test("SHU-249 A8: Claude writer launches with role-bound scope and broker-owned 
   for (const role of ["build", "revise"]) {
     let launched = false, brokered = false, reviewed = false;
     const result = await claude.launchBuilder({ ...base, role, workspace_scope: "scoped", scope_phase: role === "revise" ? "revision" : "initial", allowed_paths: ["allowed.txt"], scoped_base_sha: RESULT,
-      oauth_token: "fixture-token", cwd: root, env: { SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper", SHU_WORKER_UID: String(process.getuid() + 1) },
+      oauth_token: "fixture-token", cwd: root, env: { HOME: root, SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper", SHU_WORKER_UID: String(process.getuid() + 1) },
       readHeadImpl: async () => RESULT, reviewEvidenceImpl: async () => { reviewed = true; }, persistEnvelopeImpl: () => ({ link: "file:///fixture-envelope" }),
       execFileImpl: (bin, args, options, cb) => { launched = true; assert.equal(bin, "fixture-wrapper"); assert.ok(args.includes("claude")); assert.ok(args.includes("Read,Glob,Grep,Write,Edit")); cb(null, JSON.stringify({ type: "result", session_id: ID, structured_output: { attempt_id: ID, target_sha: SHA, result_sha: null, stage: role === "revise" ? "REVISION_READY" : "BUILD_READY", links: ["allowed.txt"] } }), ""); },
       io: { pushBrokerImpl: async (input) => { brokered = true; assert.equal(input.workspaceReady, true); assert.deepEqual(input.allowed_paths, ["allowed.txt"]); return { ok: true, remote_head: RESULT }; } },

@@ -28,6 +28,27 @@ const FIXTURE_CONTRACTS = Object.freeze({
   "SHU-254": { initial_build_paths: SHU254_INITIAL_BUILD_PATHS, revision_paths: SHU254_REVISION_PATHS, seeded_defect_path: SHU254_TRAP_PATH },
 });
 
+// A reviewer is told the lane's whole declared scope, not only the last diff:
+// the acceptance oracle is in scope although node --test never loads it.
+export function fixtureReviewScope(issueId) {
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId].revision_paths : null;
+}
+
+// The node tests a fixture lane's reviewer runs: the test files of that lane's
+// own declared scope, so each lane's review runs its own tests (SHU-71).
+export function fixtureReviewTests(issueId) {
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId)
+    ? FIXTURE_CONTRACTS[issueId].revision_paths.filter((file) => /\.test\.(?:m?js|cjs)$/.test(file)) : null;
+}
+
+// A fixture card's acceptance check. Its reviewer holds the lane to it whatever
+// the change touched, because the seeded defect predates every writer
+// (review-change.mjs).
+export const FIXTURE_ACCEPTANCE = "every test and every acceptance-oracle row in the declared scope agrees with the contract the lane's files document.";
+export function fixtureAcceptance(issueId) {
+  return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_ACCEPTANCE : null;
+}
+
 // The legacy object remains supported; additional lanes must have unique IDs.
 export function resolveFixtureLane(config = {}, issueId) {
   const extra = config.fixture_lanes ?? [];

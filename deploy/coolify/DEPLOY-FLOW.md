@@ -24,9 +24,12 @@ promotion, verification and rollback without cancelling a running deployment.
 
 `automatic-staging.mjs` reads the existing app metadata and restricts it to the
 gateway image, Docker Image mode, `latest`, and `https://staging.studenthub.co`.
-It does not PATCH Coolify. It captures the previous tag digest, reads its baked
-revision, checks that revision against healthy staging, and smoke-tests that
-rollback image before proceeding. It creates a durable GitHub issue with title
+It does not PATCH Coolify. Rollback discovery reads the selected running container
+on the host, binds its image ID to its gateway repository digest, and reads its
+`/image-source-revision`. It resolves the full immutable revision tag to that same
+digest, checks the pulled image revision against the host and healthy staging,
+and smoke-tests that rollback image before proceeding. It never discovers the
+running artifact through `latest`. See [the rollback contract](ROLLBACK-CONTRACT.md). It creates a durable GitHub issue with title
 `[staging-deploy] frozen: owner review required` before moving `latest`. An existing
 open issue with that title blocks subsequent staging triggers. The new, already
 smoke-tested digest is promoted to the existing tag and re-resolved before POST.

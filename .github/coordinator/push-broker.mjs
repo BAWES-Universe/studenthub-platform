@@ -29,7 +29,7 @@
 //     push is already done and must not run again).
 
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, mkdtempSync, rmSync, lstatSync, renameSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { snapshotWorkspaceResult } from "./workspace-result.mjs";
@@ -377,16 +377,44 @@ export async function brokerRepoHasCommit({ dir, sha, gitImpl, env = {} }) {
   return !r.error;
 }
 
+// coordinatorJournalDirectory — the coordinator's ONE push journal, used by
+// every writer runtime and consulted by every reader: CODEX_HOME (else
+// $HOME/.codex) + /coordinator-runs. The Codex writer has always journaled here,
+// so the name keeps `.codex` for every runtime; CODEX_HOME is only an override.
+// It is resolved from the adapter process's own environment (the service user,
+// shu-coordinator), never from a stepped-down child whose HOME differs. A value
+// that is not an absolute path resolves to null, and callers refuse on null
+// rather than reading "no journal" as "nothing was pushed". The journals from
+// episodes before this directory was shared stay where they are.
+export function coordinatorJournalDirectory(env = {}) {
+  const home = env.CODEX_HOME || (env.HOME ? `${env.HOME}/.codex` : null);
+  return typeof home === "string" && home.startsWith("/") ? `${home}/coordinator-runs` : null;
+}
+
+// SHU-71: an INITIAL build that changed nothing is the writer's claim that the
+// bound head already meets the card. The broker publishes nothing for it, and
+// the writer's adapter reports the bound head itself as the result, so the
+// independent reviewer judges that claim like any other build output: a
+// missed defect gets a BLOCK with findings and a revision, as the loop
+// intends. A revision that changes nothing answers no finding, so it stays
+// refused, as does every other broker refusal.
+export const UNCHANGED_BUILD_NOTE = "unchanged build: the writer changed nothing, so nothing was published and the bound head goes to review as the result";
+export function unchangedInitialBuild(push, { role, scope_phase } = {}) {
+  return push?.ok !== true && push?.reason_code === "RESULT_EMPTY" && role === "build" && scope_phase === "initial";
+}
+
 // loadPrePushRecord — durable record distinguishing crash-after-start from
 // crash-after-pushed. Written by persistPrePush BEFORE the push.
 export function prePushRecordPath(stateDir, attempt_id) {
   return `${stateDir}/push-${attempt_id}.json`;
 }
 
-export function persistPrePush({ stateDir, attempt_id, result_sha, branch, repo, worktree, writeImpl = writeFileSync, mkdirImpl = mkdirSync }) {
+export function persistPrePush({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree, writeImpl = writeFileSync, mkdirImpl = mkdirSync }) {
   const path = prePushRecordPath(stateDir, attempt_id);
   const record = JSON.stringify({
     version: 1,
+    target_sha,
+    update_mode: "fast-forward",
     stage: PUSH_STAGES[0], // "PENDING"
     attempt_id,
     result_sha,
@@ -433,6 +461,29 @@ export async function remoteBranchHead({ repo, branch, gitImpl = execFile, remot
   return { ok: true, head };
 }
 
+// Explicit recovery is separate from the ordinary push API: existing HOLD
+// semantics remain unchanged. The trusted caller must re-check current attempt
+// authorization, even when only confirming an already landed result.
+const RECOVERY = Symbol("reviewed exact-attempt recovery");
+export async function recoverExactSha(options) {
+  if (typeof options.beforePublish !== "function") return {
+    ok: false, stage: "HOLD", pause_adapter: true, reason_code: "B3_RECOVERY_AUTHORIZATION",
+    reason: "recovery requires current attempt authorization",
+  };
+  return pushExactSha({ ...options, [RECOVERY]: true });
+}
+
+function durableRecoveryMark(stateDir, attempt_id, record) {
+  const file = prePushRecordPath(stateDir, attempt_id);
+  const temp = `${file}.recovery-${process.pid}`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: "wx", flush: true });
+    renameSync(temp, file);
+    const fd = openSync(stateDir, "r");
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+  } finally { rmSync(temp, { force: true }); }
+}
+
 // pushExactSha — the authoritative, validated push. Returns:
 //   { ok:true, stage:"PUSHED", remote_head } on success
 //   { ok:true, stage:"ALREADY_PUSHED", remote_head } if the remote already has it (idempotent)
@@ -468,6 +519,7 @@ export async function pushExactSha({
   scoped_base_sha = null,
   snapshotImpl = snapshotWorkspaceResult,
   beforePublish = null,
+  [RECOVERY]: recovering = false,
 }) {
   // --- identity / shape -----------------------------------------------------
   if (!workspaceReady && !SHA_RE.test(String(result_sha ?? ""))) {
@@ -519,17 +571,23 @@ export async function pushExactSha({
     cleanupBrokerRepo();
     return { stage: "HOLD", reason, pause_adapter: true, ok: false };
   };
+  // A host policy may name why it said no (supervisor-authorization.mjs). The
+  // name rides on the held result, so the receipt says which check refused.
+  const revoked = (verdict) => ({ ...held("result authorization expired or revoked"),
+    ...(/^HOST_AUTH_[A-Z0-9_]{2,40}$/.test(verdict?.code ?? "") ? { reason_code: verdict.code } : {}) });
 
   // SHU-228: the broker owns the index and result objects. The sandboxed
   // builder supplies files, never authority to write repository metadata.
   if (workspaceReady) {
     try {
-      if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
+      const verdict = beforePublish ? await beforePublish() : true;
+      if (verdict !== true) return revoked(verdict);
       result_sha = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
         attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
     } catch (error) {
       return { ...held(`workspace result refused: ${error.message}`),
-        ...(error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE" ? { reason_code: error.workspaceCode } : {}) };
+        ...(["BASE_BUNDLE_UNAVAILABLE", "RESULT_EMPTY"].includes(error.workspaceCode) ? { reason_code: error.workspaceCode } : {}),
+        ...(/^SNAPSHOT_[A-Z_]{2,32}_FAILED$/.test(error.workspaceCode ?? "") ? { reason_code: error.workspaceCode } : {}) };
     }
   }
 
@@ -591,6 +649,9 @@ export async function pushExactSha({
       if (error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE") {
         return { ...held(error.message), reason_code: error.workspaceCode };
       }
+      if (/^SNAPSHOT_[A-Z_]{2,32}_FAILED$/.test(error.workspaceCode ?? "")) {
+        return { ...held(error.message), reason_code: error.workspaceCode };
+      }
       cleanOk = false; cleanDetail = error.message;
     }
   } else {
@@ -627,7 +688,42 @@ export async function pushExactSha({
     return held(`remote check failed: ${remote.reason}`);
   }
 
-  if (existingRecord) {
+  if (recovering) {
+    const refuseRecovery = (code, reason) => ({ ...held(reason), reason_code: code });
+    try {
+      if (await beforePublish() !== true) return refuseRecovery("B3_RECOVERY_AUTHORIZATION", "recovery authorization expired or revoked");
+    } catch { return refuseRecovery("B3_RECOVERY_AUTHORIZATION", "recovery authorization unavailable"); }
+    try {
+      for (const file of [stateDir, prePushRecordPath(stateDir, attempt_id)]) {
+        const st = lstatSync(file);
+        if (st.isSymbolicLink() || st.uid !== process.getuid() || (st.mode & 0o077)) throw new Error("unsafe custody");
+      }
+      if (!lstatSync(prePushRecordPath(stateDir, attempt_id)).isFile()) throw new Error("not a file");
+    } catch { return refuseRecovery("B3_RECOVERY_JOURNAL", "recovery requires a private broker journal"); }
+    if (!existingRecord || existingRecord.version !== 1 ||
+        !["PENDING", "PUSHED"].includes(existingRecord.stage) ||
+        existingRecord.attempt_id !== attempt_id || existingRecord.target_sha !== target_sha ||
+        existingRecord.result_sha !== result_sha || existingRecord.branch !== branch ||
+        existingRecord.repo !== repo || existingRecord.worktree !== cwd ||
+        existingRecord.update_mode !== "fast-forward") {
+      return refuseRecovery("B3_RECOVERY_BINDING", "recovery journal does not bind this exact attempt");
+    }
+    if (remote.ok === true && remote.head === result_sha) {
+      try {
+        durableRecoveryMark(stateDir, attempt_id, { ...existingRecord, stage: "PUSHED",
+          remote_head: result_sha, pushed_at: existingRecord.pushed_at ?? new Date().toISOString() });
+      } catch { return refuseRecovery("B3_RECOVERY_DURABILITY", "could not durably confirm recovery"); }
+      cleanupBrokerRepo();
+      return { ok: true, stage: "ALREADY_PUSHED", remote_head: result_sha, recovered: true };
+    }
+    if (existingRecord.stage !== "PENDING" || remote.ok !== true || remote.head !== target_sha) {
+      return refuseRecovery("B3_RECOVERY_REMOTE", "recovery refuses an absent, rewritten or cross-lane remote head");
+    }
+    // Only this exact PENDING edge may resume from its exact bound parent.
+    // It remains an edge throughout; no journal is deleted or ignored.
+  }
+
+  if (existingRecord && !recovering) {
     // Recovery path: a pre-push record exists for this attempt. The remote is
     // authoritative for whether the push landed.
     if (remote.ok === true && remote.head === result_sha) {
@@ -666,9 +762,11 @@ export async function pushExactSha({
 
   // --- durable pre-push record (BEFORE the push, distinguished from after) ----
   try {
-    if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
+    const verdict = beforePublish ? await beforePublish() : true;
+    if (verdict !== true) return revoked(verdict);
   } catch { return held("result authorization unavailable"); }
-  const pre = persistImpl({ stateDir, attempt_id, result_sha, branch, repo, worktree: cwd });
+  const pre = recovering ? { ok: true, path: prePushRecordPath(stateDir, attempt_id) }
+    : persistImpl({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree: cwd });
   if (!pre.ok) {
     // A concurrent broker won the reservation (EEXIST) — HOLD, the winner pushes.
     return held(pre.reason);
@@ -711,8 +809,10 @@ export async function pushExactSha({
   try {
     const rec = readPreImpl(stateDir, attempt_id);
     const mark = { ...(rec ?? {}), stage: PUSH_STAGES[1], result_sha, branch, remote_head, pushed_at: new Date().toISOString() };
-    writeFileSync(pre.path ?? prePushRecordPath(stateDir, attempt_id), `${JSON.stringify(mark)}\n`, { mode: 0o600 });
+    if (recovering) durableRecoveryMark(stateDir, attempt_id, mark);
+    else writeFileSync(pre.path ?? prePushRecordPath(stateDir, attempt_id), `${JSON.stringify(mark)}\n`, { mode: 0o600 });
   } catch (e) {
+    if (recovering) return { ...held("could not durably confirm recovery"), reason_code: "B3_RECOVERY_DURABILITY" };
     // Best-effort: the push succeeded and remote is confirmed; a mark failure is
     // not ambiguity about whether the push happened (remote is authoritative).
   }

@@ -15,9 +15,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
-import { validateWorkspaceScope } from "../workspace-scope.mjs";
-import { pushExactSha } from "../push-broker.mjs";
+import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
+import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
+import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 
 export const ADAPTER_NAME = "claude-code";
 export const CLAUDE_MODEL = "opus";
@@ -44,7 +45,7 @@ export const CALLBACK_SCHEMA = Object.freeze({
 const QUOTA_RE = /(?:rate|usage|spending|plan|subscription|credit)[-_ ]?limit|quota|capacity/i;
 // Authentication-expiry shapes (401, expired, invalid token, auth failures):
 // these map to a visible re-authentication HOLD, never a silent retry.
-const REAUTH_RE = /(?:401|expired|invalid(?: oauth)? token|authentication|re-?auth|sign ?in|login required)/i;
+const REAUTH_RE = /(?:401|expired|invalid(?: oauth)? token|authentication|re-?auth|sign ?in|login required|not logged in)/i;
 // Non-auth access shapes (403, forbidden) stay FAILED + access.
 const ACCESS_RE = /(?:forbidden|403|unauthori[sz]ed)/i;
 
@@ -59,24 +60,57 @@ export function workerIdentity(attemptId) {
 // Build an explicit child environment. API credentials and alternate API
 // endpoints are removed so a stale host setting cannot silently switch this
 // subscription lane to metered billing.
-export function buildClaudeEnvironment(parentEnv = {}, oauthToken = "") {
+export function buildClaudeEnvironment(parentEnv = {}, oauthToken = "", { reviewer = false } = {}) {
   const childEnv = {};
   for (const key of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "SHELL", "CI"]) {
     if (typeof parentEnv[key] === "string") childEnv[key] = parentEnv[key];
+  }
+  if (reviewer) {
+    childEnv.HOME = "/nonexistent";
+    delete childEnv.TMPDIR;
+    delete childEnv.TMP;
+    delete childEnv.TEMP;
+    delete childEnv.USER;
+    delete childEnv.LOGNAME;
+    delete childEnv.SHELL;
   }
   if (oauthToken) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
   return childEnv;
 }
 
-export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, role = "review", allowed_paths = [], scoped_base_sha = null }) {
+export function isolatedReviewerModelCommand({ isolationWrapper, cwd, args }) {
+  if (!Array.isArray(isolationWrapper) || isolationWrapper.length === 0
+    || isolationWrapper.some((part) => typeof part !== "string" || part.length === 0)) {
+    throw new Error("reviewer model launch requires the wrapper validated by the confined test phase");
+  }
+  const root = path.dirname(cwd);
+  return {
+    file: isolationWrapper[0],
+    args: [
+      ...isolationWrapper.slice(1),
+      "--profile", "model",
+      "--workspace-root", root,
+      "--workspace", cwd,
+      "--",
+      "claude",
+      ...args,
+    ],
+  };
+}
+
+export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, role = "review", allowed_paths = [], scoped_base_sha = null, review_rule = STRICT_REVIEW_RULE }) {
   if (isWriterRole(role)) return [
     `You are the authorized ${role} worker for ${issue_id}; contract ${authorization_ref}.`,
     `Attempt: ${attempt_id}. Bound target: ${target_sha}. Local head: ${scoped_base_sha ?? target_sha}.`,
     task_context,
     `Implement only the authorized paths: ${allowed_paths.length ? allowed_paths.join(", ") : "the bound full workspace"}.`,
     "Leave changes in the workspace. Do not commit, push, merge, access the network, or alter .git. The host broker validates and publishes the result.",
+    // SHU-71: the Claude writer has file tools only. Say so plainly, and why,
+    // because the quoted review findings ask the reviser to run the tests.
+    "You have no shell here, so you cannot run tests or any other command, whatever the task text says: your launch has no network sandbox, so it is given file tools only. Read the code and its tests and make the change correct by reading them. The independent reviewer runs the lane's tests in a confined sandbox before it reviews your result.",
     `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
   ].filter(Boolean).join("\n");
+  const reviewScope = fixtureReviewScope(issue_id);
   return [
     "You are the independent verifier for an authorized StudentHub change.",
     `Issue: ${issue_id}`,
@@ -84,12 +118,27 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `Bound head: ${target_sha}`,
     `Attempt: ${attempt_id}`,
     task_context,
+    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against the contract the files and their folders document, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
     "Review and test the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
-    "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",
-    "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha; never cite another head or an unsafe path.",
+    "You are read-only. Do not edit, commit, or push.",
+    review_rule,
+    "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha, optionally followed by :line or :start-end (for example path@bound-head-sha:19); never cite another head or an unsafe path.",
     "Return the required structured callback. PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
   ].filter(Boolean).join("\n");
+}
+
+// A scoped writer may edit only its authorized paths; a full-workspace writer
+// may edit inside its workspace (--restricted already confines file tools to
+// the cwd). Rules are anchored to the cwd with "./". The CLI splits a rule list
+// on commas and spaces, so a path that could break a rule apart is refused.
+const RULE_SAFE_PATH_RE = /^[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*$/;
+export function writerEditRules({ workspace_scope, allowed_paths = [] } = {}) {
+  if (workspace_scope === "full") return ["Edit(./**)"];
+  if (workspace_scope !== "scoped" || !Array.isArray(allowed_paths) || allowed_paths.length === 0 || allowed_paths.some((p) => !RULE_SAFE_PATH_RE.test(p))) {
+    throw new Error("authorized writer paths cannot be expressed as edit permission rules");
+  }
+  return allowed_paths.map((p) => `Edit(./${p})`);
 }
 
 export function buildClaudeArgs(input, { resume = false } = {}) {
@@ -111,6 +160,12 @@ export function buildClaudeArgs(input, { resume = false } = {}) {
     // therefore need both an empty strict config and an explicit deny pattern.
     "--strict-mcp-config",
     "--disallowedTools", "mcp__*",
+    // SHU-71 try 4: dontAsk denies every tool call no rule allows, and Edit and
+    // Write need one, so the writer could read the card but change nothing. It
+    // may edit exactly its authorized paths (one Edit rule covers Edit and
+    // Write on that file); everything else stays denied. Both tool flags take a
+    // variable list, so each must be followed by another flag, never the prompt.
+    ...(isWriterRole(input.role) ? ["--allowedTools", ...writerEditRules(input)] : []),
     "--permission-mode", "dontAsk",
     sessionFlag, input.attempt_id,
     buildClaudePrompt(input),
@@ -176,6 +231,21 @@ async function readHead({ cwd, execFileImpl, env }) {
   });
   if (result.error) throw result.error;
   return result.stdout.trim();
+}
+
+// Read-only git in the coordinator's own review checkout, for review-change.mjs,
+// behind the broker's hardened config. GIT_DIR pins the checkout's own
+// repository, so git never searches above it.
+async function gitInCheckout({ cwd, execFileImpl, env }, args) {
+  const result = await runExecFile(execFileImpl, "git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], {
+    cwd,
+    env: { ...brokerGitEnv(buildClaudeEnvironment(env)), GIT_DIR: `${cwd}/.git` },
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result.stdout;
 }
 
 function parseJson(text) {
@@ -250,7 +320,12 @@ function allowedSourceCitation(rawLink, { target_sha, cwd, fsImpl = fs }) {
   const separator = rawLink.lastIndexOf("@");
   if (separator <= 0) return false;
   const sourcePath = rawLink.slice(0, separator);
-  const citedSha = rawLink.slice(separator + 1);
+  // Reviewers cite a line as path@sha:19 or a range as path@sha:19-27. The
+  // anchor only points into the file at the bound head; the head itself stays
+  // exact, and anything else after it still fails closed.
+  const anchored = /^([^:]*):([1-9]\d{0,6})(?:-([1-9]\d{0,6}))?$/.exec(rawLink.slice(separator + 1));
+  if (anchored && anchored[3] !== undefined && Number(anchored[3]) < Number(anchored[2])) return false;
+  const citedSha = anchored ? anchored[1] : rawLink.slice(separator + 1);
   if (!SHA_RE.test(citedSha) || citedSha !== target_sha) return false;
   if (
     path.posix.isAbsolute(sourcePath)
@@ -282,6 +357,9 @@ export function validateCallback(callback, { attempt_id, target_sha, cwd, eviden
     if (![role === "revise" ? "REVISION_READY" : "BUILD_READY", "BLOCKED", "FAILED"].includes(callback.stage) || callback.result_sha !== null) return { valid: false, field: "stage", detail: "writer callback does not match its role or host-owned result" };
     return { valid: Array.isArray(callback.links) && callback.links.length > 0 && callback.links.every((link) => typeof link === "string" && link.length > 0), field: "links", detail: "writer requires evidence" };
   }
+  const reviewerKeys = new Set(["attempt_id", "target_sha", "stage", "links", "summary"]);
+  const extraReviewerKey = Object.keys(callback).find((key) => !reviewerKeys.has(key));
+  if (extraReviewerKey) return { valid: false, field: extraReviewerKey, detail: "is outside the closed reviewer callback schema" };
   if (!CALLBACK_STAGES.includes(callback.stage)) return { valid: false, field: "stage", detail: "is not an allowed reviewer stage" };
   if (!Array.isArray(callback.links) || callback.links.length === 0) return { valid: false, field: "links", detail: "must be a non-empty array" };
   let hasFileEvidence = false;
@@ -335,21 +413,36 @@ function inlineEvidencePayload(reviewEvidence) {
   return payload;
 }
 
-function failureFrom(error, stdout, stderr) {
-  // Do not classify arbitrary model stdout as an account failure: reviewed code
-  // can legitimately contain words like "quota" or "capacity".
-  const detail = `${stderr}\n${error?.message ?? ""}`;
+// The CLI's own error envelope (`is_error: true`) carries the CLI's message, not
+// model output, so it may classify an account failure. The CLI reports a missing
+// login there ("Not logged in · Please run /login") and nowhere else.
+function cliErrorDetail(stdout) {
+  const envelope = parseJson(String(stdout ?? "").trim());
+  return envelope?.is_error === true && typeof envelope.result === "string" ? envelope.result : "";
+}
+
+function accountFailure(detail) {
   if (QUOTA_RE.test(detail)) {
     return { stage: "FAILED", error_code: "CLAUDE_QUOTA", error_kind: "quota", pause_adapter: true, ok: false };
   }
   if (REAUTH_RE.test(detail)) {
     // GPT 2026-09-05: authentication expiry must surface a VISIBLE
     // re-authentication HOLD — never a silent retry or a fabricated failure.
-    return { stage: "HOLD", reason: "Claude authentication expired or invalid — re-run `claude setup-token` on the worker host", pause_adapter: true, ok: false };
+    return { stage: "HOLD", reason: "Claude authentication missing, expired or invalid — log the launching identity in (`claude /login`) or re-run `claude setup-token` on the worker host", pause_adapter: true, ok: false };
   }
   if (ACCESS_RE.test(detail)) {
     return { stage: "FAILED", error_code: "CLAUDE_ACCESS", error_kind: "access", pause_adapter: true, ok: false };
   }
+  return null;
+}
+
+function failureFrom(error, stdout, stderr) {
+  // Do not classify arbitrary model stdout as an account failure: reviewed code
+  // can legitimately contain words like "quota" or "capacity". Nor the error
+  // message: execFile echoes every argument into it, prompt included, and it
+  // repeats stderr, which is classified directly.
+  const account = accountFailure(`${stderr}\n${cliErrorDetail(stdout)}`);
+  if (account) return account;
   if (error?.killed || error?.signal) {
     return { stage: "LAUNCH_UNKNOWN", reason: "Claude process ended without a trustworthy terminal result; session is held for resume", ok: false };
   }
@@ -380,6 +473,8 @@ export async function launchBuilder({
   execFileImpl = nodeExecFile,
   readHeadImpl = readHead,
   reviewEvidenceImpl = runReviewEvidence,
+  reviewRuleImpl = reviewRule,
+  reviewGitExecImpl = nodeExecFile,
   persistEnvelopeImpl = persistClaudeEnvelope,
   io = {},
   timeout_ms = 30 * 60 * 1000,
@@ -395,7 +490,11 @@ export async function launchBuilder({
   } else {
     const scope = validateWorkspaceScope({ workspace_scope, scope_phase, allowed_paths, scoped_base_sha }, { requireScopedBase: true });
     if (!scope.ok || scope_phase === "review") return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: scope.reason ?? "writer cannot use review scope", ok: false };
+    try { writerEditRules({ workspace_scope, allowed_paths }); } catch (error) { return { stage: "HOLD", reason: error.message, ok: false }; }
     if (!env.SHU_WORKER_LAUNCH_WRAPPER || !/^\d+$/.test(env.SHU_WORKER_UID ?? "") || Number(env.SHU_WORKER_UID) === 0 || Number(env.SHU_WORKER_UID) === process.getuid()) return { stage: "HOLD", reason: "Claude writer requires the configured distinct worker identity", ok: false };
+    // The push journal is resolved before any model time is spent: a writer
+    // whose push could land nowhere a reader looks would look like no push.
+    if (!coordinatorJournalDirectory(env)) return { stage: "HOLD", reason: "Claude writer requires an absolute coordinator push journal directory (CODEX_HOME or HOME)", ok: false };
   }
   if (!oauth_token) {
     if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {
@@ -418,7 +517,7 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const reviewEvidence = role === "review" ? await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env }) : null;
+  const reviewEvidence = role === "review" ? await reviewEvidenceImpl({ attempt_id, issue_id, target_sha, cwd, env }) : null;
   const auditEvidenceLinks = reviewEvidence?.evidence_link ? [reviewEvidence.evidence_link] : [];
   let inlineEvidence;
   try { inlineEvidence = inlineEvidencePayload(reviewEvidence); } catch { inlineEvidence = null; }
@@ -434,11 +533,22 @@ export async function launchBuilder({
       ok: false,
     };
   }
+  if (!Array.isArray(reviewEvidence.isolation_wrapper) || reviewEvidence.isolation_wrapper.length === 0) {
+    return {
+      stage: "HOLD",
+      pause_adapter: true,
+      reason_code: "REVIEW_EXECUTION_UNAVAILABLE",
+      reason: "REVIEW_EXECUTION_UNAVAILABLE — the validated reviewer model wrapper is unavailable; no reviewer launched",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: ["review model isolation: REVIEW_EXECUTION_UNAVAILABLE"],
+      ok: false,
+    };
+  }
 
   }
 
   const input = {
-    role, allowed_paths, scoped_base_sha,
+    role, workspace_scope, allowed_paths, scoped_base_sha,
     issue_id,
     authorization_ref,
     attempt_id,
@@ -451,14 +561,18 @@ export async function launchBuilder({
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
       ] : []),
     ].filter(Boolean).join("\n"),
+    ...(role === "review" ? { review_rule: await reviewRuleImpl({ issue_id, target_sha, git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) }) } : {}),
   };
   const args = buildClaudeArgs(input, { resume });
   let result;
   try {
-    const wrapper = isWriterRole(role) ? env.SHU_WORKER_LAUNCH_WRAPPER.trim().split(/\s+/) : [];
-    result = await runExecFile(execFileImpl, wrapper[0] ?? "claude", wrapper.length ? [...wrapper.slice(1), "claude", ...args] : args, {
+    const writerWrapper = isWriterRole(role) ? env.SHU_WORKER_LAUNCH_WRAPPER.trim().split(/\s+/) : [];
+    const command = role === "review"
+      ? isolatedReviewerModelCommand({ isolationWrapper: reviewEvidence.isolation_wrapper, cwd, args })
+      : { file: writerWrapper[0] ?? "claude", args: writerWrapper.length ? [...writerWrapper.slice(1), "claude", ...args] : args };
+    result = await runExecFile(execFileImpl, command.file, command.args, {
       cwd,
-      env: buildClaudeEnvironment(env, oauth_token),
+      env: buildClaudeEnvironment(env, oauth_token, { reviewer: role === "review" }),
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
       timeout: timeout_ms,
@@ -492,6 +606,10 @@ export async function launchBuilder({
   const parsed = parseClaudeCallback(result.stdout);
   const identity = workerIdentity(attempt_id);
   const runId = externalRunId(attempt_id);
+  const account = parsed.envelope?.is_error === true ? accountFailure(cliErrorDetail(result.stdout)) : null;
+  if (account) {
+    return { ...account, external_run_id: runId, worker_identity: identity, audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes };
+  }
   if (parsed.envelope?.is_error === true || parsed.reason_code === "INVALID_ENVELOPE_JSON") {
     return {
       stage: "FAILED",
@@ -561,18 +679,20 @@ export async function launchBuilder({
   }
   if (isWriterRole(role)) {
     const push = await (io.pushBrokerImpl ?? pushExactSha)({
-      stateDir: env.SHU_WORKSPACE_STATE_DIR, attempt_id, target_sha, result_sha: null,
+      stateDir: coordinatorJournalDirectory(env), attempt_id, target_sha, result_sha: null,
       workspaceReady: true, beforePublish: io.resultStillAuthorized, repo, branch,
       worktree: cwd, allowedRoot: env.SHU_WORKTREE_ROOT, remoteUrl: env.SHU_PUSH_REMOTE_URL,
       branchPrefix: env.SHU_LANE_BRANCH_PREFIX ?? "coordinator/",
       workspace_scope, scope_phase, allowed_paths, scoped_base_sha, env,
     });
-    if (!push.ok || !SHA_RE.test(push.remote_head ?? "")) return {
+    const unchanged = unchangedInitialBuild(push, { role, scope_phase });
+    if (!unchanged && (!push.ok || !SHA_RE.test(push.remote_head ?? ""))) return {
       stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
       reason: `writer result broker refused: ${push.reason ?? "missing exact result head"}`,
       reason_code: push.reason_code, audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes, ok: false,
     };
-    selected.callback.result_sha = push.remote_head;
+    selected.callback.result_sha = unchanged ? target_sha : push.remote_head;
+    if (unchanged) auditNotes.push(UNCHANGED_BUILD_NOTE);
   }
   return {
     stage: "COMPLETED",
