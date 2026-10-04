@@ -533,6 +533,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/card-lanes.test.mjs",
+    "capabilities": [],
+    "justification": "Pure in-process assertions over the committed config, the card contract and the prompt builders, plus one private temporary activation file per case; no external command, privileged operation or host facility is required",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/test/claude-contract.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

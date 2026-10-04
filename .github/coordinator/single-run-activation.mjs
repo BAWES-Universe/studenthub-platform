@@ -86,6 +86,7 @@ import { readProgressionPush } from './two-fixture-progression.mjs';
 import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
 import { resolveFixtureLane } from "./workspace-scope.mjs";
+import { cardContract } from "./card-contracts.mjs";
 import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -720,6 +721,16 @@ export function singleRunActivationStatus({
   }
   if (fixtureLane.authorization_ref && record.authorization_ref !== fixtureLane.authorization_ref) {
     return refused(`activation authorization_ref ${record.authorization_ref} is not the lane contract ${fixtureLane.authorization_ref}`);
+  }
+  // A real card runs only with the writer and reviewer its committed lane names,
+  // so an activation can never pick who builds or who judges a card.
+  if (cardContract(scopeIssue)) {
+    if (!fixtureLane.writer_lane || record.writer_lane !== fixtureLane.writer_lane) {
+      return refused(`activation writer_lane ${record.writer_lane ?? "(none)"} is not the card lane's ${fixtureLane.writer_lane ?? "(none)"}`);
+    }
+    if (!fixtureLane.reviewer_lane || record.reviewer_lane !== fixtureLane.reviewer_lane) {
+      return refused(`activation reviewer_lane ${record.reviewer_lane ?? "(none)"} is not the card lane's ${fixtureLane.reviewer_lane ?? "(none)"}`);
+    }
   }
 
   // (4) Revision binding — resolved from the running checkout, never self-declared.
