@@ -104,6 +104,13 @@ back is the same operation with main.
 
 The branch is built and smoke-tested in a job without Coolify secrets. The switch
 runs in a separate job that checks out `main` and runs main's `staging-switch.mjs`,
-so branch code never runs with the Coolify token. That job rechecks who holds the
-label right before switching, and it shares the `staging-switch` queue with the
-main deploy in `build.yml` so the two never move `latest` at the same time.
+so branch code never runs with the Coolify token. It shares the `staging-switch`
+queue with the main deploy in `build.yml` so the two never move `latest` at the
+same time.
+
+`staging-ownership.mjs` (run from main) decides who holds staging. Label decisions
+run one at a time and read the live label holders, so a late event for a PR that
+already lost the label changes nothing. Right before switching, the guard requires
+the run's PR to be the only holder (or no holder, for main and manual runs) and
+the built commit to still be the branch head, so an older build of the same PR never
+replaces a newer one. A manual run is refused while a PR holds the label.

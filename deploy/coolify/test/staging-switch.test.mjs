@@ -55,9 +55,15 @@ test('the switch runs only the smoke-tested digest', () => {
 });
 test('branch code never runs with the Coolify secrets', () => {
   for (const [name, text] of Object.entries(jobs)) if (name !== 'switch') assert.doesNotMatch(text, /COOLIFY_/, name);
-  assert.doesNotMatch(jobs.switch, /needs\.decide\.outputs\.branch \}\}|ref: \$\{\{ needs/);
+  assert.equal(jobs.switch.match(/ref: /g).length, 1);
   assert.match(jobs.switch, /ref: \$\{\{ env\.DEFAULT_BRANCH \}\}/);
   assert.match(workflow, /DEFAULT_BRANCH: main\n/);
+});
+test('label decisions are serialized and ownership code comes from main', () => {
+  assert.match(jobs.decide, /concurrency:\n\s+group: staging-label\n\s+cancel-in-progress: false/);
+  for (const name of ['decide', 'switch']) assert.match(jobs[name], /ref: \$\{\{ env\.DEFAULT_BRANCH \}\}/, name);
+  assert.match(jobs.decide, /run: node deploy\/coolify\/staging-ownership\.mjs decide/);
+  assert.match(jobs.switch, /SHA: \$\{\{ needs\.build\.outputs\.sha \}\}\n\s+run: node deploy\/coolify\/staging-ownership\.mjs guard/);
 });
 test('staging ownership is rechecked right before the switch', () => {
   const check = jobs.switch.indexOf("Check staging is still this run's to change"), run = jobs.switch.indexOf('node deploy/coolify/staging-switch.mjs');

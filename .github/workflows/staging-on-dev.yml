@@ -6,7 +6,8 @@ name: Staging on-dev
 #   Staging has one slot, so labelling a PR takes the label off any other open PR.
 # - Push to a labelled PR: it is rebuilt and staging follows.
 # - Remove the label, merge or close the PR: staging returns to the latest main.
-# - Run it by hand (Actions > Staging on-dev > Run workflow) to put any branch on staging.
+# - Run it by hand (Actions > Staging on-dev > Run workflow) to put any branch on staging
+#   while no PR holds the label.
 #
 # Staging is a test site. Production has no path here. PRs from forks are ignored.
 
@@ -34,6 +35,10 @@ jobs:
   decide:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    # Label decisions run one at a time, so two PRs taking the label can't remove each other's.
+    concurrency:
+      group: staging-label
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -42,48 +47,22 @@ jobs:
       pr: ${{ steps.decide.outputs.pr }}
       mode: ${{ steps.decide.outputs.mode }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEFAULT_BRANCH }}
+          persist-credentials: false
+
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           EVENT_LABEL: ${{ github.event.label.name }}
-          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'on-dev') }}
+          HAD_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'on-dev') }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           INPUT_BRANCH: ${{ inputs.branch }}
-        run: |
-          set -euo pipefail
-          branch=""; pr=""; mode=""
-          # A failed GitHub read fails this step instead of reading as "no PR holds the label".
-          holders=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "$LABEL" --json number --jq ".[].number")
-
-          if [ "$EVENT" = workflow_dispatch ]; then
-            branch="$INPUT_BRANCH"; mode=manual
-          elif [ "$ACTION" = labeled ] && [ "$EVENT_LABEL" = "$LABEL" ]; then
-            branch="$HEAD_REF"; pr="$PR"; mode=pr
-            # One slot: take the label off every other open PR.
-            for other in $holders; do
-              [ "$other" = "$PR" ] && continue
-              gh pr edit "$other" --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL"
-              gh pr comment "$other" --repo "$GITHUB_REPOSITORY" --body "Staging was taken over by #$PR, so this PR is no longer on staging. Add \`$LABEL\` again to put it back."
-            done
-          elif [ "$ACTION" = synchronize ] && [ "$HAS_LABEL" = true ]; then
-            branch="$HEAD_REF"; pr="$PR"; mode=pr
-          elif { [ "$ACTION" = unlabeled ] && [ "$EVENT_LABEL" = "$LABEL" ]; } || \
-               { [ "$ACTION" = closed ] && [ "$HAS_LABEL" = true ]; }; then
-            # Another open PR still holding the label keeps staging.
-            others=$(printf '%s\n' $holders | grep -vx "${PR:-0}" || true)
-            if [ -n "$others" ]; then
-              echo "Another PR holds $LABEL; leaving staging on it."
-            else
-              branch="$DEFAULT_BRANCH"; mode=free
-            fi
-          fi
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "Decision: branch='${branch:-none}' pr='${pr:-none}' mode='${mode:-none}'"
+        run: node deploy/coolify/staging-ownership.mjs decide
 
   build:
     # Builds and smoke-tests the selected branch. It runs branch code, so it gets no Coolify secrets.
@@ -184,15 +163,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MODE: ${{ needs.decide.outputs.mode }}
           PR: ${{ needs.decide.outputs.pr }}
-        run: |
-          set -euo pipefail
-          holders=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "$LABEL" --json number --jq ".[].number")
-          if [ "$MODE" = pr ] && ! printf '%s\n' $holders | grep -qx "$PR"; then
-            echo "::error::#$PR no longer holds $LABEL; staging was not changed"; exit 1
-          fi
-          if [ "$MODE" = free ] && [ -n "$holders" ]; then
-            echo "::error::An open PR holds $LABEL again; staging was not changed"; exit 1
-          fi
+          BRANCH: ${{ needs.decide.outputs.branch }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: node deploy/coolify/staging-ownership.mjs guard
 
       - name: Switch staging and verify it serves this revision
         id: switch
