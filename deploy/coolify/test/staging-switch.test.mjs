@@ -40,14 +40,31 @@ for (const failure of ['promote', 'digest', 'trigger']) test(`a ${failure} failu
 const workflow = readFileSync(new URL('../../../.github/workflows/staging-on-dev.yml', import.meta.url), 'utf8');
 test('on-dev workflow ignores pull requests from forks and serializes switches', () => {
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
-  assert.match(workflow, /group: staging-switch\n\s+cancel-in-progress: false/);
+  assert.match(jobs.switch, /group: staging-switch\n\s+cancel-in-progress: false/);
 });
 test('on-dev builds never write the main- or latest tags directly', () => {
   assert.match(workflow, /tags: \$\{\{ env\.REGISTRY \}\}\/\$\{\{ env\.IMAGE_PREFIX \}\}\/\$\{\{ env\.IMAGE_NAME \}\}:dev-\$\{\{ steps\.target\.outputs\.sha \}\}/);
   assert.doesNotMatch(workflow, /:main-|:latest/);
 });
+const jobs = Object.fromEntries(workflow.split(/\n(?=  [a-z-]+:\n)/).slice(1).map((text) => [text.match(/^  ([a-z-]+):/)[1], text]));
 test('the switch runs only the smoke-tested digest', () => {
-  const smoke = workflow.indexOf('image-smoke.sh'), run = workflow.indexOf('node deploy/coolify/staging-switch.mjs');
-  assert.ok(smoke > 0 && run > smoke);
-  assert.match(workflow, /DIGEST: \$\{\{ steps\.build\.outputs\.digest \}\}\n\s+REVISION: \$\{\{ steps\.target\.outputs\.sha \}\}/);
+  assert.match(jobs.build, /image-smoke\.sh/);
+  assert.match(jobs.switch, /needs: \[decide, build\]/);
+  assert.match(jobs.switch, /DIGEST: \$\{\{ needs\.build\.outputs\.digest \}\}\n\s+REVISION: \$\{\{ needs\.build\.outputs\.sha \}\}/);
+  assert.match(jobs.switch, /id: switch\n\s+if: needs\.build\.result == 'success'/);
+});
+test('branch code never runs with the Coolify secrets', () => {
+  for (const [name, text] of Object.entries(jobs)) if (name !== 'switch') assert.doesNotMatch(text, /COOLIFY_/, name);
+  assert.doesNotMatch(jobs.switch, /needs\.decide\.outputs\.branch \}\}|ref: \$\{\{ needs/);
+  assert.match(jobs.switch, /ref: \$\{\{ env\.DEFAULT_BRANCH \}\}/);
+  assert.match(workflow, /DEFAULT_BRANCH: main\n/);
+});
+test('staging ownership is rechecked right before the switch', () => {
+  const check = jobs.switch.indexOf("Check staging is still this run's to change"), run = jobs.switch.indexOf('node deploy/coolify/staging-switch.mjs');
+  assert.ok(check > 0 && run > check);
+  assert.equal(jobs.switch.slice(check, run).match(/- name:/g).length, 1);
+});
+test('the main deploy shares the staging queue with the on-dev switch', () => {
+  const build = readFileSync(new URL('../../../.github/workflows/build.yml', import.meta.url), 'utf8');
+  assert.match(build, /\n  deploy:\n[\s\S]*?concurrency:\n\s+group: staging-switch\n\s+cancel-in-progress: false\n[\s\S]*?\n    steps:/);
 });

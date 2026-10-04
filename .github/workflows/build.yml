@@ -200,6 +200,10 @@ jobs:
     needs: build-push
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Shares one queue with the on-dev switch (staging-on-dev.yml): both move staging's latest tag.
+    concurrency:
+      group: staging-switch
+      cancel-in-progress: false
     outputs:
       outcome: ${{ steps.rollout.outputs.outcome }}
     permissions:

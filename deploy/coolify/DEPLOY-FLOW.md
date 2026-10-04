@@ -101,3 +101,9 @@ follow; removing the label, merging or closing returns staging to main. One PR
 holds staging at a time. Running the workflow by hand puts any branch on staging.
 There is no rollback or freeze on this path: staging is a test site, and switching
 back is the same operation with main.
+
+The branch is built and smoke-tested in a job without Coolify secrets. The switch
+runs in a separate job that checks out `main` and runs main's `staging-switch.mjs`,
+so branch code never runs with the Coolify token. That job rechecks who holds the
+label right before switching, and it shares the `staging-switch` queue with the
+main deploy in `build.yml` so the two never move `latest` at the same time.
