@@ -535,7 +535,7 @@
   {
     "file": ".github/coordinator/test/card-lanes.test.mjs",
     "capabilities": [],
-    "justification": "Pure in-process assertions over the committed config, the card contract and the prompt builders, plus one private temporary activation file per case; no external command, privileged operation or host facility is required",
+    "justification": "Pure in-process assertions over the committed config, the card contract and the prompt builders, plus private temporary activation files and the episode harness (fake Linear and GitHub fetch, stubbed scoped-base derivation); no external command, privileged operation or host facility is required",
     "call_sites": []
   },
   {
