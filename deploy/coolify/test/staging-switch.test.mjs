@@ -38,20 +38,27 @@ for (const failure of ['promote', 'digest', 'trigger']) test(`a ${failure} failu
 });
 
 const workflow = readFileSync(new URL('../../../.github/workflows/staging-on-dev.yml', import.meta.url), 'utf8');
+const jobs = Object.fromEntries(workflow.split(/\n(?=  [a-z-]+:\n)/).slice(1).map((text) => [text.match(/^  ([a-z-]+):/)[1], text]));
+const step = (job, name) => jobs[job].slice(jobs[job].indexOf(`- name: ${name}`)).split(/\n      - /)[0];
+
 test('on-dev workflow ignores pull requests from forks and serializes switches', () => {
-  assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+  assert.match(jobs.decide, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(jobs.switch, /group: staging-switch\n\s+cancel-in-progress: false/);
 });
 test('on-dev builds never write the main- or latest tags directly', () => {
-  assert.match(workflow, /tags: \$\{\{ env\.REGISTRY \}\}\/\$\{\{ env\.IMAGE_PREFIX \}\}\/\$\{\{ env\.IMAGE_NAME \}\}:dev-\$\{\{ steps\.target\.outputs\.sha \}\}/);
+  assert.match(jobs.build, /tags: \$\{\{ env\.REGISTRY \}\}\/\$\{\{ env\.IMAGE_PREFIX \}\}\/\$\{\{ env\.IMAGE_NAME \}\}:dev-\$\{\{ steps\.target\.outputs\.sha \}\}/);
   assert.doesNotMatch(workflow, /:main-|:latest/);
 });
-const jobs = Object.fromEntries(workflow.split(/\n(?=  [a-z-]+:\n)/).slice(1).map((text) => [text.match(/^  ([a-z-]+):/)[1], text]));
-test('the switch runs only the smoke-tested digest', () => {
-  assert.match(jobs.build, /image-smoke\.sh/);
-  assert.match(jobs.switch, /needs: \[decide, build\]/);
-  assert.match(jobs.switch, /DIGEST: \$\{\{ needs\.build\.outputs\.digest \}\}\n\s+REVISION: \$\{\{ needs\.build\.outputs\.sha \}\}/);
-  assert.match(jobs.switch, /id: switch\n\s+if: needs\.build\.result == 'success'/);
+test('the switch promotes only an image that main\'s smoke test passed in the same job, and only if still wanted', () => {
+  const order = ['Work out what staging should run now', 'Smoke-test the wanted image', 'Check it is still wanted', 'Switch staging and verify'].map((n) => jobs.switch.indexOf(`- name: ${n}`));
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), String(order));
+  assert.match(step('switch', 'Smoke-test the wanted image'), /if: steps\.want\.outputs\.digest != ''[\s\S]*DIGEST: \$\{\{ steps\.want\.outputs\.digest \}\}[\s\S]*image-smoke\.sh/);
+  assert.match(step('switch', 'Check it is still wanted'), /SHA: \$\{\{ steps\.want\.outputs\.sha \}\}\n\s+run: node deploy\/coolify\/staging-ownership\.mjs confirm/);
+  const run = step('switch', 'Switch staging and verify');
+  assert.match(run, /if: steps\.confirm\.outputs\.current == 'true'/);
+  assert.match(run, /DIGEST: \$\{\{ steps\.want\.outputs\.digest \}\}\n\s+REVISION: \$\{\{ steps\.want\.outputs\.sha \}\}/);
+  // A failed smoke test fails its step, so the steps after it (confirm, switch) never run.
+  assert.doesNotMatch(step('switch', 'Smoke-test the wanted image'), /continue-on-error/);
 });
 test('branch code never runs with the Coolify secrets', () => {
   for (const [name, text] of Object.entries(jobs)) if (name !== 'switch') assert.doesNotMatch(text, /COOLIFY_/, name);
@@ -64,18 +71,18 @@ test('label decisions are serialized and ownership code comes from main', () => 
   for (const name of ['decide', 'switch']) assert.match(jobs[name], /ref: \$\{\{ env\.DEFAULT_BRANCH \}\}/, name);
   assert.match(jobs.decide, /\n\s+node deploy\/coolify\/staging-ownership\.mjs decide\n/);
   // Before main carries the scripts, the bootstrap path selects nothing rather than failing every PR.
-  assert.match(jobs.decide, /if \[ ! -f deploy\/coolify\/staging-ownership\.mjs \]; then[\s\S]*?printf 'branch=\\npr=\\nmode=\\n'[\s\S]*?exit 0\n\s+fi/);
-  assert.match(jobs.switch, /SHA: \$\{\{ needs\.build\.outputs\.sha \}\}\n\s+run: node deploy\/coolify\/staging-ownership\.mjs guard/);
+  assert.match(jobs.decide, /if \[ ! -f deploy\/coolify\/staging-ownership\.mjs \]; then[\s\S]*?printf 'branch=\\npr=\\n'[\s\S]*?exit 0\n\s+fi/);
 });
-test('only on-dev events start a label decision, so unrelated PR activity never queues one', () => {
+test('only on-dev events start a run, and no step reads the event\'s PR, branch or label', () => {
+  assert.match(jobs.decide, /github\.event_name == 'workflow_dispatch' \|\| github\.event_name == 'push' \|\|/);
+  assert.match(workflow, /push:\n\s+branches: \[main\]/);
   assert.match(jobs.decide, /github\.event\.label\.name == 'on-dev' \|\|\n\s+\(\(github\.event\.action == 'synchronize' \|\| github\.event\.action == 'closed'\) &&\n\s+contains\(github\.event\.pull_request\.labels\.\*\.name, 'on-dev'\)\)/);
-  // The decision reads only live state, never the event's PR, label or branch.
-  assert.doesNotMatch(jobs.decide, /HEAD_REF|EVENT_LABEL|HAD_LABEL|\bPR:/);
+  for (const name of ['decide', 'build', 'switch']) assert.doesNotMatch(jobs[name].replace(/^[\s\S]*?\n    steps:/, ''), /github\.event\./, name);
+  assert.doesNotMatch(workflow, /inputs\./);
 });
-test('staging ownership is rechecked right before the switch', () => {
-  const check = jobs.switch.indexOf("Check staging is still this run's to change"), run = jobs.switch.indexOf('node deploy/coolify/staging-switch.mjs');
-  assert.ok(check > 0 && run > check);
-  assert.equal(jobs.switch.slice(check, run).match(/- name:/g).length, 1);
+test('a switch reconciles even when its own build failed or was superseded', () => {
+  assert.match(jobs.switch, /if: always\(\) && needs\.decide\.result == 'success' && needs\.decide\.outputs\.branch != ''/);
+  assert.doesNotMatch(jobs.switch, /needs\.build\.outputs/);
 });
 test('the main deploy shares the staging queue with the on-dev switch', () => {
   const build = readFileSync(new URL('../../../.github/workflows/build.yml', import.meta.url), 'utf8');

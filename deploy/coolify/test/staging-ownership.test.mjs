@@ -4,102 +4,114 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decide, guard, runDecide, runGuard } from '../staging-ownership.mjs';
+import { desired, runConfirm, runDecide, runResolve } from '../staging-ownership.mjs';
 
-const S1 = '1'.repeat(40), S2 = '2'.repeat(40);
-// A tiny model of GitHub: open PRs carrying the label (with when each was labelled), and branch heads.
-function world(labels, heads = {}) {
-  const state = { labels: { ...labels }, heads, released: [] };
+const S1 = '1'.repeat(40), S2 = '2'.repeat(40), M = 'a'.repeat(40);
+const D1 = `sha256:${'d'.repeat(63)}1`, D2 = `sha256:${'d'.repeat(63)}2`, DM = `sha256:${'d'.repeat(63)}a`;
+const T1 = '2026-10-04T10:00:00Z', T2 = '2026-10-04T11:00:00Z', T3 = '2026-10-04T12:00:00Z';
+
+// A tiny model of GitHub and the registry: open PRs with the label (when each was labelled,
+// whether it is a fork), branch heads, and which dev-<sha> images have been pushed.
+function world(labels, heads = { main: M }, images = {}) {
+  const state = { labels: structuredClone(labels), heads: { ...heads }, images: { ...images }, released: [] };
   return { state, api: {
     holders: () => Object.keys(state.labels).map(Number),
-    holder: (number) => ({ number, labeledAt: state.labels[number], headRef: `branch-${number}`, crossRepository: number >= 900 }),
+    holder: (number) => ({ number, labeledAt: state.labels[number].at, headRef: `branch-${number}`, crossRepository: !!state.labels[number].fork }),
     prHead: (pr) => state.heads[pr],
     branchHead: (branch) => state.heads[branch],
-    release: (other) => { state.released.push(other); delete state.labels[other]; },
+    release: ({ number, fork }) => { state.released.push({ number, fork }); delete state.labels[number]; },
+    devDigest: (sha) => state.images[sha] ?? '',
   } };
 }
-const T1 = '2026-10-04T10:00:00Z', T2 = '2026-10-04T11:00:00Z', T3 = '2026-10-04T12:00:00Z';
-const pr = { EVENT: 'pull_request' };
+const holds = (w) => Object.keys(w.state.labels).map(Number);
 
-test('the most recently labelled PR owns staging and every other holder is released', () => {
-  const w = world({ 208: T1, 209: T2 });
-  assert.deepEqual(runDecide(pr, w.api), { branch: 'branch-209', pr: '209', mode: 'pr', remove: [208], owner: 209, reason: '#209 holds on-dev' });
-  assert.deepEqual(w.state.labels, { 209: T2 });
+test('the same-repository PR labelled most recently owns staging and every other holder is released', () => {
+  const w = world({ 208: { at: T1 }, 209: { at: T2 } });
+  assert.deepEqual(runDecide(w.api), { mode: 'pr', pr: '209', branch: 'branch-209', release: [{ number: 208, fork: false }] });
+  assert.deepEqual(holds(w), [209]);
+  // Ties go to the higher PR number, so two decisions always agree.
+  assert.equal(desired([{ number: 208, labeledAt: T2 }, { number: 209, labeledAt: T2 }]).pr, '209');
 });
-test('a late event for a PR that lost the label changes nothing about who owns staging', () => {
-  const w = world({ 209: T2 });
-  assert.equal(runDecide(pr, w.api).pr, '209');
-  assert.deepEqual(w.state.released, []);
+test('with no holder staging follows main', () => {
+  assert.deepEqual(runDecide(world({}).api), { mode: 'free', pr: '', branch: 'main', release: [] });
 });
-test('whichever decisions GitHub drops, the newest one restores the intended state', () => {
-  // A runs with a stale view [A]; B is labelled (its decision may be dropped); then a push to
-  // A, another label on C, or B's own event arrives last. Each survivor converges on the newest label.
-  for (const last of ['A-push', 'B-label', 'C-label']) {
-    const w = world({ 208: T1, 209: T2 });
-    if (last === 'C-label') w.state.labels[210] = T3;
-    const result = runDecide(pr, w.api);
-    const expected = last === 'C-label' ? 210 : 209;
-    assert.equal(result.pr, String(expected), last);
-    assert.deepEqual(Object.keys(w.state.labels).map(Number), [expected], last);
-    assert.doesNotThrow(() => guard({ mode: 'pr', pr: result.pr, holders: w.api.holders(), head: S1, sha: S1 }), last);
-  }
+test('the decision depends only on live state, so any surviving run restores it', () => {
+  // GPT review 3, finding 1: A runs with an old view, B is labelled and its queued decision
+  // is replaced by a manual run, a main push or C's push. Decide takes no event input at all,
+  // so the survivor settles on B exactly as B's own decision would have.
+  const w = world({ 208: { at: T1 }, 209: { at: T2 } });
+  assert.equal(runDecide.length, 1);
+  assert.equal(runDecide(w.api).pr, '209');
+  assert.deepEqual(holds(w), [209]);
+  assert.equal(runDecide(w.api).pr, '209');
 });
-test('two PRs labelled together end with exactly one holder whichever decision runs first', () => {
-  const w = world({ 208: T2, 209: T2 });
-  const first = runDecide(pr, w.api), second = runDecide(pr, w.api);
-  assert.equal(first.pr, '209'); assert.equal(second.pr, '209');
-  assert.deepEqual(w.state.labels, { 209: T2 });
+test('a fork PR never owns staging and never displaces the same-repository holder', () => {
+  // GPT review 3, finding 2: same-repo A at T1, fork F at T2.
+  const w = world({ 208: { at: T1 }, 901: { at: T2, fork: true } });
+  const want = runDecide(w.api);
+  assert.equal(want.pr, '208');
+  assert.deepEqual(w.state.released, [{ number: 901, fork: true }]);
+  assert.deepEqual(holds(w), [208]);
+  assert.equal(runDecide(world({ 901: { at: T2, fork: true } }).api).branch, 'main');
 });
-test('with no holder staging returns to main', () => {
-  assert.deepEqual(runDecide(pr, world({}).api).branch, 'main');
-  assert.equal(decide({ name: 'pull_request' }, []).mode, 'free');
+test('a stale run that survives the switch queue puts the newest wanted build on staging', () => {
+  // GPT review 3, finding 3: S2's switch was queued, then the slower S1 build's switch replaced it.
+  const w = world({ 208: { at: T1 } }, { main: M, 208: S2 }, { [S1]: D1, [S2]: D2 });
+  assert.deepEqual(runResolve(w.api), { mode: 'pr', pr: '208', branch: 'branch-208', release: [], sha: S2, digest: D2 });
 });
-test('a fork PR that holds the label is never built, but still releases older holders', () => {
-  const w = world({ 208: T1, 901: T2 });
-  const result = runDecide(pr, w.api);
-  assert.equal(result.branch, ''); assert.deepEqual(w.state.released, [208]);
+test('a run whose wanted commit has no image yet changes nothing; that commit\'s own run follows', () => {
+  const w = world({ 208: { at: T1 } }, { main: M, 208: S2 }, { [S1]: D1 });
+  assert.equal(runResolve(w.api).digest, '');
 });
-test('a manual run never takes staging from a labelled PR', () => {
-  assert.equal(decide({ name: 'workflow_dispatch', inputBranch: 'x' }, [{ number: 208, labeledAt: T1 }]).branch, '');
-  assert.deepEqual(decide({ name: 'workflow_dispatch', inputBranch: 'x' }, []).mode, 'manual');
+test('staging follows main when nobody holds the label', () => {
+  assert.deepEqual(runResolve(world({}, { main: M }, { [M]: DM }).api), { mode: 'free', pr: '', branch: 'main', release: [], sha: M, digest: DM });
 });
-
-test('the switch guard requires the run to be the only holder', () => {
-  assert.doesNotThrow(() => guard({ mode: 'pr', pr: '208', holders: [208], head: S1, sha: S1 }));
-  for (const holders of [[], [209], [208, 209], [209, 208]]) {
-    assert.throws(() => guard({ mode: 'pr', pr: '208', holders, head: S1, sha: S1 }), { code: 'PRECONDITION_NOT_MET' });
-  }
-  assert.doesNotThrow(() => guard({ mode: 'free', holders: [], head: S1, sha: S1 }));
-  assert.throws(() => guard({ mode: 'free', holders: [208], head: S1, sha: S1 }), { code: 'PRECONDITION_NOT_MET' });
-  assert.throws(() => guard({ mode: 'manual', holders: [208], head: S1, sha: S1 }), { code: 'PRECONDITION_NOT_MET' });
-  assert.throws(() => guard({ mode: '', holders: [], head: S1, sha: S1 }), { code: 'PRECONDITION_NOT_MET' });
+test('the switch is confirmed only while its commit is still the wanted one', () => {
+  const w = world({ 208: { at: T1 } }, { main: M, 208: S2 });
+  assert.equal(runConfirm(w.api, S2), true);
+  w.state.heads[208] = S1; // a newer push
+  assert.equal(runConfirm(w.api, S2), false);
+  w.state.heads[208] = S2; w.state.labels[209] = { at: T3 }; w.state.heads[209] = S1; // another PR took the label
+  assert.equal(runConfirm(w.api, S2), false);
+  delete w.state.labels[208]; delete w.state.labels[209]; // label removed: main is wanted
+  assert.equal(runConfirm(w.api, M), true);
 });
-test('an older build finishing after a newer one never replaces it', () => {
-  // R1 built S1; a push started R2 for S2, which switched first. R1 then reaches the guard.
-  const w = world({ 208: T1 }, { 208: S2 });
-  assert.doesNotThrow(() => runGuard({ MODE: 'pr', PR: '208', SHA: S2 }, w.api));
-  assert.throws(() => runGuard({ MODE: 'pr', PR: '208', SHA: S1 }, w.api), { code: 'PRECONDITION_NOT_MET' });
-  const main = world({}, { main: S2 });
-  assert.throws(() => runGuard({ MODE: 'free', BRANCH: 'main', SHA: S1 }, main.api), { code: 'PRECONDITION_NOT_MET' });
-  assert.throws(() => runGuard({ MODE: 'manual', BRANCH: '../pulls', SHA: S2 }, main.api), { code: 'PRECONDITION_NOT_MET' });
+test('resolve refuses an unreadable head instead of guessing', () => {
+  assert.throws(() => runResolve(world({ 208: { at: T1 } }, { main: M }).api), /could not read the head/);
 });
 
-test('the command line reads live holders through gh and exits nonzero without releasing anyone on a stale event', (t) => {
+test('the command line reconciles through gh and docker and writes its outputs', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ownership-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const log = join(dir, 'calls');
-  writeFileSync(join(dir, 'gh'), `#!/bin/sh\necho "$*" >> "${log}"\ncase "$1 $2" in\n  "pr list") echo 209 ;;\n  "pr view") case "$*" in *headRefOid*) echo ${S1} ;; *) echo '{"headRefName":"b","isCrossRepository":false}' ;; esac ;;\n  "api --paginate") echo ${T2} ;;\nesac\n`);
-  chmodSync(join(dir, 'gh'), 0o755);
-  const run = (args, extra) => {
-    try { return { code: 0, out: execFileSync('node', ['deploy/coolify/staging-ownership.mjs', ...args], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: join(dir, 'out'), ...extra } }) }; }
-    catch (error) { return { code: error.status, out: `${error.stdout}${error.stderr}` }; }
+  const log = join(dir, 'calls'), out = join(dir, 'out');
+  writeFileSync(join(dir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${log}"
+case "$1 $2" in
+  "pr list") printf '208\\n209\\n' ;;
+  "pr view") case "$*" in
+    *headRefOid*) echo ${S2} ;;
+    "pr view 208"*) echo '{"headRefName":"a","isCrossRepository":false}' ;;
+    *) echo '{"headRefName":"b","isCrossRepository":false}' ;;
+  esac ;;
+  "api --paginate") case "$*" in *issues/208*) echo ${T1} ;; *) echo ${T2} ;; esac ;;
+esac
+`);
+  writeFileSync(join(dir, 'docker'), `#!/bin/sh\necho "docker $*" >> "${log}"\ncase "$*" in *dev-${S2}*) echo '{"digest":"${D2}"}' ;; *) exit 1 ;; esac\n`);
+  for (const f of ['gh', 'docker']) chmodSync(join(dir, f), 0o755);
+  const run = (args, extra = {}) => {
+    writeFileSync(out, '');
+    try { execFileSync('node', ['deploy/coolify/staging-ownership.mjs', ...args], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: out, ...extra } }); return 0; }
+    catch (error) { return error.status; }
   };
   writeFileSync(log, '');
-  assert.equal(run(['decide'], { EVENT: 'pull_request' }).code, 0);
-  assert.match(readFileSync(join(dir, 'out'), 'utf8'), /^branch=b\npr=209\nmode=pr\n$/);
-  assert.doesNotMatch(readFileSync(log, 'utf8'), /edit|comment/);
-  const stale = run(['guard'], { MODE: 'pr', PR: '208', SHA: S1 });
-  assert.equal(stale.code, 1); assert.match(stale.out, /expected only #208/);
-  assert.equal(run(['guard'], { MODE: 'pr', PR: '209', SHA: S1 }).code, 0);
-  assert.equal(run(['guard'], { MODE: 'pr', PR: '209', SHA: S2 }).code, 1);
+  assert.equal(run(['decide']), 0);
+  assert.equal(readFileSync(out, 'utf8'), 'branch=b\npr=209\nmode=pr\n');
+  assert.match(readFileSync(log, 'utf8'), /gh pr edit 208 --repo o\/r --remove-label on-dev/);
+  assert.equal(run(['resolve']), 0);
+  assert.equal(readFileSync(out, 'utf8'), `sha=${S2}\ndigest=${D2}\npr=209\n`);
+  assert.equal(run(['confirm'], { SHA: S2 }), 0);
+  assert.equal(readFileSync(out, 'utf8'), 'current=true\n');
+  assert.equal(run(['confirm'], { SHA: S1 }), 0);
+  assert.equal(readFileSync(out, 'utf8'), 'current=false\n');
+  assert.equal(run(['nonsense']), 1);
 });

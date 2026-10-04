@@ -93,27 +93,29 @@ this change does not install or claim that consumer is live.
 ## Putting a branch on staging (`on-dev`)
 
 `.github/workflows/staging-on-dev.yml` mirrors Universe's dev-server label. Adding
-the `on-dev` label to a same-repository pull request builds its branch as
-`dev-<sha>`, runs `image-smoke.sh` on that exact digest, and `staging-switch.mjs`
-moves `latest` to it, triggers the staging app and waits until staging `/health`
-reports that revision and the public feature smoke passes. Pushes to a labelled PR
-follow; removing the label, merging or closing returns staging to main. One PR
-holds staging at a time. Running the workflow by hand puts any branch on staging.
-There is no rollback or freeze on this path: staging is a test site, and switching
-back is the same operation with main.
+the `on-dev` label to a same-repository pull request puts its branch on staging.
+Pushes to the labelled PR follow. Removing the label, merging or closing the PR
+returns staging to main, and while no PR holds the label staging follows main.
+The PR labelled most recently holds staging; other PRs lose the label, and fork
+PRs are never built. A manual run brings staging back in line.
 
-The branch is built and smoke-tested in a job without Coolify secrets. The switch
-runs in a separate job that checks out `main` and runs main's `staging-switch.mjs`,
-so branch code never runs with the Coolify token. It shares the `staging-switch`
-queue with the main deploy in `build.yml` so the two never move `latest` at the
-same time.
+GitHub keeps only the newest queued run in a concurrency group, so any run can be
+dropped. No step acts on the event that started its run. Each one reconciles live
+state through `staging-ownership.mjs` (always run from main), so whichever run
+survives restores the intended state:
 
-`staging-ownership.mjs` (run from main) decides who holds staging. Only on-dev events
-start a decision, and decisions run one at a time. GitHub keeps only the newest
-queued decision, so each one reconciles the live label state instead of acting on
-its own event: the PR labelled most recently owns staging, every other holder loses
-the label, and with no holder staging returns to main. Right before switching, the
-guard requires the run's PR to be the only holder (or no holder, for main and manual
-runs) and the built commit to still be the branch head, so an older build of the
-same PR never replaces a newer one. A manual run is refused while a PR holds the
-label, and a fork PR is never built.
+1. `decide` (one at a time) settles the label and names the branch to build.
+2. The build job builds that branch as `dev-<sha>` and runs `image-smoke.sh` on the
+   exact digest. It runs branch code, so it gets no Coolify secrets.
+3. The switch job checks out main and works out again which commit staging should
+   run now. That may be newer than its own build. If that commit's `dev-<sha>` image
+   exists, main's `image-smoke.sh` runs on it. The job then confirms the commit is
+   still wanted, and `staging-switch.mjs` moves `latest` to that digest, triggers
+   the staging app and waits until `/health` reports the revision and the feature
+   smoke passes. If the image doesn't exist yet, the job changes nothing, because
+   that commit's own run is still to come.
+
+The switch job shares the `staging-switch` queue with the main deploy in
+`build.yml`, so the two never move `latest` at the same time. There is no rollback
+or freeze on this path: staging is a test site, and the next run puts back whatever
+is wanted.
