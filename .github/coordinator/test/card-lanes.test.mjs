@@ -151,3 +151,42 @@ test("CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a
     assert.notEqual(refused.state, "armed", "a card with no committed lane never arms");
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude", async () => {
+  const { createEpisodeHarness, SHA_INPUT, SHA_WRITE } = await import("./fixture/episode-harness.mjs");
+  const h = createEpisodeHarness({
+    issueId: "SHU-197",
+    authorizationRef: "SHU-197",
+    writerLane: "codex-builder",
+    reviewerLane: "claude-verifier",
+    githubToken: "fake-token",
+    configOverrides: { fixture_lane: CONFIG.fixture_lane, fixture_lanes: CONFIG.fixture_lanes, card_lanes: CONFIG.card_lanes },
+  });
+  try {
+    const scoped = { deriveScopedBaseSha: async ({ allowed_paths }) => { assert.deepEqual(allowed_paths, [...SHU197_PATHS]); return "e".repeat(40); } };
+    const tick = await h.runTick({ io: scoped });
+    assert.equal(tick.code, 0, tick.text);
+    assert.equal(h.launched.length, 1, tick.text);
+    const [build] = h.launched;
+    assert.equal(build.lane, "codex-cli");
+    assert.equal(build.target_sha, SHA_INPUT);
+    assert.equal(build.workspace_scope, "scoped");
+    assert.deepEqual(build.allowed_paths, [...SHU197_PATHS]);
+    const receipt = h.receiptFor(build.attempt_id);
+    assert.equal(receipt.authorization_ref, "SHU-197");
+    assert.equal(receipt.requested_worker, "codex-builder");
+
+    h.branchHead.value = SHA_WRITE;
+    h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+    h.completeRun(build.run_id);
+    for (let i = 0; i < 4 && h.launched.length < 2; i++) {
+      const next = await h.runTick({ now: new Date(Date.parse("2026-09-10T12:00:00.000Z") + (i + 1) * 60_000), io: scoped });
+      assert.notEqual(next.code, 1, next.text);
+    }
+    assert.equal(h.launched.length, 2, JSON.stringify(h.receipts().map((r) => [r.requested_worker, r.stage, r.verdict_stage])));
+    const review = h.launched[1];
+    assert.equal(review.lane, "claude-code");
+    assert.equal(review.target_sha, SHA_WRITE);
+    assert.equal(h.receiptFor(review.attempt_id).requested_worker, "claude-verifier");
+  } finally { h.cleanup(); }
+});

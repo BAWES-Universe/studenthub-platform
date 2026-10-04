@@ -19,7 +19,10 @@ import {
 } from "../review-routing.mjs";
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 
-const config = JSON.parse(readFileSync(new URL("../config.json", import.meta.url), "utf8"));
+// These cases replay SHU-71 stage-5 history, so they run under that stage's pair
+// scope whatever card the committed config is scoped to now.
+const config = { ...JSON.parse(readFileSync(new URL("../config.json", import.meta.url), "utf8")),
+  dispatch_scope: { issue_ids: ["SHU-140", "SHU-254"] }, max_dispatch: 2 };
 const ISSUE = config.fixture_lane.id;
 const REPO = config.pilot_repo;
 const BRANCH = `coordinator/${ISSUE}`;
