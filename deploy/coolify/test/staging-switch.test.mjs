@@ -62,7 +62,9 @@ test('branch code never runs with the Coolify secrets', () => {
 test('label decisions are serialized and ownership code comes from main', () => {
   assert.match(jobs.decide, /concurrency:\n\s+group: staging-label\n\s+cancel-in-progress: false/);
   for (const name of ['decide', 'switch']) assert.match(jobs[name], /ref: \$\{\{ env\.DEFAULT_BRANCH \}\}/, name);
-  assert.match(jobs.decide, /run: node deploy\/coolify\/staging-ownership\.mjs decide/);
+  assert.match(jobs.decide, /\n\s+node deploy\/coolify\/staging-ownership\.mjs decide\n/);
+  // Before main carries the scripts, the bootstrap path selects nothing rather than failing every PR.
+  assert.match(jobs.decide, /if \[ ! -f deploy\/coolify\/staging-ownership\.mjs \]; then[\s\S]*?printf 'branch=\\npr=\\nmode=\\n'[\s\S]*?exit 0\n\s+fi/);
   assert.match(jobs.switch, /SHA: \$\{\{ needs\.build\.outputs\.sha \}\}\n\s+run: node deploy\/coolify\/staging-ownership\.mjs guard/);
 });
 test('staging ownership is rechecked right before the switch', () => {

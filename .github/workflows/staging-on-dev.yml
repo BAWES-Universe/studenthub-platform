@@ -62,7 +62,13 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           INPUT_BRANCH: ${{ inputs.branch }}
-        run: node deploy/coolify/staging-ownership.mjs decide
+        run: |
+          # Until this workflow's scripts reach main, on-dev does nothing (no branch is selected).
+          if [ ! -f deploy/coolify/staging-ownership.mjs ]; then
+            echo "on-dev is not on $DEFAULT_BRANCH yet; staging was not changed"
+            printf 'branch=\npr=\nmode=\n' >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          node deploy/coolify/staging-ownership.mjs decide
 
   build:
     # Builds and smoke-tests the selected branch. It runs branch code, so it gets no Coolify secrets.
