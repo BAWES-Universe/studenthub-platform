@@ -3,6 +3,7 @@
 import { createServer } from "node:http";
 import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createContextNavigation } from "../../../dist/apps/gateway/src/context-navigation.js";
+import { createCompanyDirectory } from "../../../dist/apps/gateway/src/company-directory.js";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
 import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES } from "@studenthub/organizations";
@@ -39,7 +40,8 @@ const profiles = new OwnProfileRepository({
   }),
   today: () => "2026-09-13",
 });
-const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, navigationStore, organizations), web: {
+const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, navigationStore, organizations),
+  companies: createCompanyDirectory(rig.sessions, navigationStore, organizations), web: {
   origin: "http://terminal.local:4173",
   returnTo: rig.config.allowedReturnUrls[1],
   profiles,
