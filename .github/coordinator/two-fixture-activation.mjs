@@ -55,10 +55,13 @@ export function validateTwoFixtureActivation({ record, config, revision, mainRev
     try { lane = resolveFixtureLane(config, fixture.issue_id); } catch { return refusal('ACT_PARTIAL_ARMING', 'fixtures cannot be resolved'); }
     if (!lane) return refusal('ACT_PARTIAL_ARMING', 'fixtures cannot be resolved');
     if (fixture.branch !== `coordinator/${fixture.issue_id}` || fixture.lane.id !== fixture.issue_id || !isDeepStrictEqual(fixture.lane, lane) || !validateFixtureScopePolicy(lane).ok) return refusal('ACT_LANE_CROSS', 'issue must retain its exact reviewed lane definition and branch');
+    // SHU-71 run 7: name the branch and both heads, so a refusal says which lane
+    // disagreed and whether the live head or the receipt-bound progression was behind.
+    const which = `${fixture.branch}: head ${String(heads[fixture.branch] ?? 'unread').slice(0, 12)}, progression ${String(progressed[fixture.branch]).slice(0, 12)}`;
     if (heads[fixture.branch] !== fixture.seed_head) {
-      if (progressed[fixture.branch] !== heads[fixture.branch]) return refusal('ACT_STALE_SEED_HEAD', 'branch head differs from bound seed');
+      if (progressed[fixture.branch] !== heads[fixture.branch]) return refusal('ACT_STALE_SEED_HEAD', `branch head differs from bound seed (${which})`);
     }
-    if (heads[fixture.branch] === fixture.seed_head && progressed[fixture.branch] !== fixture.seed_head) return refusal('ACT_STALE_SEED_HEAD', 'branch rewound after authorized progression');
+    if (heads[fixture.branch] === fixture.seed_head && progressed[fixture.branch] !== fixture.seed_head) return refusal('ACT_STALE_SEED_HEAD', `branch rewound after authorized progression (${which})`);
   }
   let publicKeyPem;
   try { publicKeyPem = loadShu71PublicKey(publicKeyPath, config.two_fixture_activation_public_key); }
