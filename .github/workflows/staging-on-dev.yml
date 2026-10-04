@@ -1,0 +1,190 @@
+name: Staging on-dev
+
+# Puts a pull request's code on staging (https://staging.studenthub.co) for hands-on testing.
+#
+# - Add the `on-dev` label to a PR: its branch is built, smoke-tested and staging switches to it.
+#   Staging has one slot, so labelling a PR takes the label off any other open PR.
+# - Push to a labelled PR: it is rebuilt and staging follows.
+# - Remove the label, merge or close the PR: staging returns to the latest main.
+# - Run it by hand (Actions > Staging on-dev > Run workflow) to put any branch on staging.
+#
+# Staging is a test site. Production has no path here. PRs from forks are ignored.
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, synchronize, closed]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to put on staging (main returns staging to the default)
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+env:
+  LABEL: on-dev
+  DEFAULT_BRANCH: main
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: bawes-universe
+  IMAGE_NAME: studenthub-gateway
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      branch: ${{ steps.decide.outputs.branch }}
+      pr: ${{ steps.decide.outputs.pr }}
+      mode: ${{ steps.decide.outputs.mode }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'on-dev') }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          INPUT_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          branch=""; pr=""; mode=""
+          # A failed GitHub read fails this step instead of reading as "no PR holds the label".
+          holders=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "$LABEL" --json number --jq ".[].number")
+
+          if [ "$EVENT" = workflow_dispatch ]; then
+            branch="$INPUT_BRANCH"; mode=manual
+          elif [ "$ACTION" = labeled ] && [ "$EVENT_LABEL" = "$LABEL" ]; then
+            branch="$HEAD_REF"; pr="$PR"; mode=pr
+            # One slot: take the label off every other open PR.
+            for other in $holders; do
+              [ "$other" = "$PR" ] && continue
+              gh pr edit "$other" --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL"
+              gh pr comment "$other" --repo "$GITHUB_REPOSITORY" --body "Staging was taken over by #$PR, so this PR is no longer on staging. Add \`$LABEL\` again to put it back."
+            done
+          elif [ "$ACTION" = synchronize ] && [ "$HAS_LABEL" = true ]; then
+            branch="$HEAD_REF"; pr="$PR"; mode=pr
+          elif { [ "$ACTION" = unlabeled ] && [ "$EVENT_LABEL" = "$LABEL" ]; } || \
+               { [ "$ACTION" = closed ] && [ "$HAS_LABEL" = true ]; }; then
+            # Another open PR still holding the label keeps staging.
+            others=$(printf '%s\n' $holders | grep -vx "${PR:-0}" || true)
+            if [ -n "$others" ]; then
+              echo "Another PR holds $LABEL; leaving staging on it."
+            else
+              branch="$DEFAULT_BRANCH"; mode=free
+            fi
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Decision: branch='${branch:-none}' pr='${pr:-none}' mode='${mode:-none}'"
+
+  switch:
+    needs: decide
+    if: needs.decide.outputs.branch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # One switch at a time, whichever event started it. Never cancel one half-way.
+    concurrency:
+      group: staging-switch
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check staging is still this run's to change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ needs.decide.outputs.mode }}
+          PR: ${{ needs.decide.outputs.pr }}
+        run: |
+          set -euo pipefail
+          holders=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "$LABEL" --json number --jq ".[].number")
+          if [ "$MODE" = pr ] && ! printf '%s\n' $holders | grep -qx "$PR"; then
+            echo "::error::#$PR no longer holds $LABEL; staging was not changed"; exit 1
+          fi
+          if [ "$MODE" = free ] && [ -n "$holders" ]; then
+            echo "::error::An open PR holds $LABEL again; staging was not changed"; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.decide.outputs.branch }}
+          persist-credentials: false
+
+      - id: target
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            SOURCE_REVISION=${{ steps.target.outputs.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}:dev-${{ steps.target.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the exact pushed digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          DATABASE_URL: postgres://postgres@localhost:55432/studenthub_authz
+        run: bash deploy/coolify/image-smoke.sh "${REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Switch staging and verify it serves this revision
+        id: switch
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REVISION: ${{ steps.target.outputs.sha }}
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
+        run: node deploy/coolify/staging-switch.mjs
+
+      - name: Tell the pull request
+        if: always() && needs.decide.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.decide.outputs.pr }}
+          SHA: ${{ steps.target.outputs.sha }}
+          OUTCOME: ${{ steps.switch.outcome }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = success ]; then
+            body="Staging now runs this PR at ${SHA::7}: https://staging.studenthub.co"
+          else
+            body="Putting this PR on staging failed; staging may still run the previous build. Run: $RUN"
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$body"

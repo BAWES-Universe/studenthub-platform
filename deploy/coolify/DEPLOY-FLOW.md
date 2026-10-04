@@ -89,3 +89,15 @@ Do not claim those checks or automatic cancellation recovery were proven by mock
 The separate read-only `deployment-watch.mjs` interface and its tests remain
 available. It emits durable orchestration incident files for an external consumer;
 this change does not install or claim that consumer is live.
+
+## Putting a branch on staging (`on-dev`)
+
+`.github/workflows/staging-on-dev.yml` mirrors Universe's dev-server label. Adding
+the `on-dev` label to a same-repository pull request builds its branch as
+`dev-<sha>`, runs `image-smoke.sh` on that exact digest, and `staging-switch.mjs`
+moves `latest` to it, triggers the staging app and waits until staging `/health`
+reports that revision and the public feature smoke passes. Pushes to a labelled PR
+follow; removing the label, merging or closing returns staging to main. One PR
+holds staging at a time. Running the workflow by hand puts any branch on staging.
+There is no rollback or freeze on this path: staging is a test site, and switching
+back is the same operation with main.
