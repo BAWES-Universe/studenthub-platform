@@ -67,6 +67,18 @@ test("SHU166_STABLE_PAGE keyset pagination is deterministic across inserts and t
     error instanceof CatalogueError && error.code === "invalid_cursor");
 });
 
+test("a name whose lowercase form outgrows the cursor is refused, so every page stays reachable", async () => {
+  const catalogue = service();
+  await assert.rejects(() => catalogue.create(staff, "brand", { name: "\u0130".repeat(101) }), (error: unknown) =>
+    error instanceof CatalogueError && error.code === "invalid_catalogue_name");
+  await catalogue.create(staff, "brand", { name: "A" });
+  await catalogue.create(staff, "brand", { name: "\u0130".repeat(100) });
+  await catalogue.create(staff, "brand", { name: "zz" });
+  const first = await catalogue.list("brand", { pageSize: 2 });
+  const second = await catalogue.list("brand", { pageSize: 2, cursor: first.nextCursor });
+  assert.deepEqual([...first.items, ...second.items].map((item) => item.name), ["A", "\u0130".repeat(100), "zz"]);
+});
+
 test("closed input rejects extra fields, unsafe text, bad codes, bad ids and duplicate active names", async () => {
   const catalogue = service();
   await assert.rejects(() => catalogue.create(admin, "tag", { name: "Safe", hidden: true }), CatalogueError);

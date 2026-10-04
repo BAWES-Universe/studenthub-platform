@@ -8,6 +8,7 @@ import {
 } from "./types.js";
 
 const MAX_PAGE_SIZE = 100;
+const MAX_SORT_KEY_LENGTH = 200;
 const WRITE_ROLES = new Set<Role>(["staff", "admin"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -24,6 +25,8 @@ export function normalizeCatalogueInput(value: unknown): CatalogueItemInput {
   if (typeof raw.name !== "string") throw new CatalogueError("invalid_catalogue_input", 400);
   const name = raw.name.trim().replace(/\s+/gu, " ").normalize("NFKC");
   if (name.length < 1 || name.length > 160 || /[\p{Cc}\p{Cf}]/u.test(name)) throw new CatalogueError("invalid_catalogue_name", 400);
+  // Lowercasing can lengthen a name (İ becomes i + U+0307), and the cursor caps its sort key at 200.
+  if (catalogueSortKey(name).length > MAX_SORT_KEY_LENGTH) throw new CatalogueError("invalid_catalogue_name", 400);
   if (raw.code === undefined) return Object.freeze({ name });
   if (typeof raw.code !== "string") throw new CatalogueError("invalid_catalogue_code", 400);
   const code = raw.code.trim().toUpperCase();
@@ -57,7 +60,7 @@ function decodeCursor(raw: unknown, type: string): CatalogueSortKey | undefined 
     const parsed = JSON.parse(decoded.toString("utf8")) as Record<string, unknown>;
     if (Object.keys(parsed).sort().join(",") !== "id,sortKey,type,v" || parsed.v !== 1 || parsed.type !== type
       || typeof parsed.sortKey !== "string" || typeof parsed.id !== "string"
-      || parsed.sortKey.length > 200 || !UUID_PATTERN.test(parsed.id)) throw new Error();
+      || parsed.sortKey.length > MAX_SORT_KEY_LENGTH || !UUID_PATTERN.test(parsed.id)) throw new Error();
     // Submission cursors sort by submittedAt, which the store compares as a timestamp.
     if (type.startsWith("submission:") && !isIsoInstant(parsed.sortKey)) throw new Error();
     return { sortKey: parsed.sortKey, id: parsed.id };
