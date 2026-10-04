@@ -24,7 +24,10 @@ export async function coordinatorEntry(argv, env, io = {}) {
   const args = coordinatorTickArgs(argv, env);
   const recovery = await (io.recovery ?? runRecoveryRequest)({ env, io: io.recoveryIo ?? {}, ...(io.stdout ? { out: io.stdout } : {}) });
   if (recovery.present) return recovery.exitCode;
-  return (io.tick ?? main)(args, env);
+  // SHU-71 run 9: the tick's own decision lines go to the journal. Without a
+  // writer an armed tick logged nothing, so a reservation that never launched
+  // left no line saying why.
+  return (io.tick ?? main)(args, env, { stdout: io.stdout ?? ((line) => console.log(line)) });
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await coordinatorEntry(process.argv.slice(2), process.env); }
