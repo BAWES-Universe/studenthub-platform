@@ -27,7 +27,11 @@ function evaluate(order, io) {
     if (!scope.valid || (scope.issueIds && !scope.issueIds.has(order.issue_id))) return denied("DISPATCH_SCOPE");
     if (config.adapter_pause_map?.[order.runtime]) return denied("ADAPTER_PAUSED");
     const filePath = env.SHU_SUPERVISOR_ACTIVATION_FILE;
-    const evidence = env.SHU71_EVIDENCE_BROKER === "true" ? readTwoFixtureEvidence(config, env, io.evidenceRun) : null;
+    // The broker serves the SHU-71 pair's threads only. A single-card scope never
+    // needs them, so a failed read of a card it has nothing to do with must not
+    // deny it (Hermes, PR #213 A1).
+    const pairScoped = scope.issueIds?.size === 2;
+    const evidence = env.SHU71_EVIDENCE_BROKER === "true" && pairScoped ? readTwoFixtureEvidence(config, env, io.evidenceRun) : null;
     // An unread thread is not an empty one: no receipts would read as an unspent
     // seed, and the pair would refuse as a rewind under the wrong name.
     if (evidence && (evidence.unavailable === true || !Array.isArray(evidence.comments))) return denied("EVIDENCE_UNAVAILABLE");
