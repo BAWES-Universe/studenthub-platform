@@ -55,6 +55,28 @@ export const REQUESTED_WORKERS = LANE_NAMES;
 export const ADAPTER_STATUSES = Object.freeze(["queued", "in_progress", "suspended", "completed", "failed"]);
 export const TERMINAL_STAGES = Object.freeze(["COMPLETED", "FAILED", "HOLD"]);
 
+// SHU-71 run 9: a tick that stops between writing RESERVED and writing the
+// launch intent (LAUNCH_UNKNOWN) leaves a reservation no tick ever launched, and
+// it held max_dispatch until the coordinator could start nothing at all. Ticks
+// are serialized, so a RESERVED receipt older than one tick is stranded. Inside
+// the armed episode it is launched again under the same attempt for a bounded
+// window; anything else, or anything older, is released to HOLD.
+export const RESERVATION_UNLAUNCHED = "RESERVATION_UNLAUNCHED";
+export const STRANDED_RESERVATION_MS = 60_000;
+export const RESERVATION_RESUME_WINDOW_MS = 15 * 60_000;
+
+// strandedReservationAction — "resume", "release" or null (not stranded).
+export function strandedReservationAction(receipt, { now = new Date(), episodeId = null } = {}) {
+  if (!receipt || receipt.stage !== "RESERVED") return null;
+  const reservedAt = Date.parse(receipt.timestamps?.reserved ?? "");
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  if (!Number.isFinite(reservedAt) || !Number.isFinite(nowMs)) return null;
+  const age = nowMs - reservedAt;
+  if (age < STRANDED_RESERVATION_MS) return null;
+  const ownEpisode = typeof episodeId === "string" && episodeId.length > 0 && receipt.episode_id === episodeId;
+  return ownEpisode && age < RESERVATION_RESUME_WINDOW_MS ? "resume" : "release";
+}
+
 // Free text is never an acceptable authorization: only real Linear issue refs or
 // seeded FIXTURE refs (fixture lane contract is defined separately by the Opus
 // acceptance contract — see config.json fixture_lane).
@@ -1059,6 +1081,19 @@ export function nextReceiptState(receipt, event, ctx = {}) {
       const next = note(
         `conflicting manual claim by ${event.actor ?? "unknown"}${event.detail ? ` (${event.detail})` : ""} — HOLD for resolution`,
       );
+      next.stage = "HOLD";
+      next.timestamps.terminal = at();
+      return { receipt: next, accepted: true };
+    }
+    case "release_unlaunched": {
+      // SHU-71 run 9: a reservation whose tick stopped before the launch intent
+      // was written. LAUNCH_UNKNOWN is persisted before any adapter is reached,
+      // so a receipt still at RESERVED provably started no worker; releasing it
+      // frees the capacity it would otherwise hold forever.
+      if (receipt.stage !== "RESERVED") {
+        return unchanged(`release_unlaunched applies only to RESERVED, not ${receipt.stage}`);
+      }
+      const next = note(`released: ${event.reason ?? "reservation was never launched"}; no worker was launched (reason code: ${RESERVATION_UNLAUNCHED})`);
       next.stage = "HOLD";
       next.timestamps.terminal = at();
       return { receipt: next, accepted: true };
@@ -2467,6 +2502,21 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // recover the documented run id without double-launching. Leaving these
     // receipts untouched forever would permanently consume max_dispatch.
     const lifecycleStartReceipts = receiptsForLifecycle(receipts, config);
+    const armedEpisodeId = singleRunActivation.state === "armed" ? singleRunActivation.activation_id ?? null : null;
+    for (const receipt of lifecycleStartReceipts.filter((r) =>
+      strandedReservationAction(r, { now: io.now?.() ?? new Date(), episodeId: armedEpisodeId }) === "release")) {
+      const linearIssueId = resolveLinearIssueId(receipt, "stranded reservation release");
+      if (!linearIssueId) continue;
+      const released = nextReceiptState(receipt, { type: "release_unlaunched",
+        reason: `reserved at ${receipt.timestamps.reserved} and never launched` }, { now: io.now });
+      if (!released.accepted) continue;
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+      lifecyclePersisted = true;
+      lifecycleSlotReleased = true;
+      const idx = receipts.indexOf(receipt);
+      if (idx >= 0) receipts[idx] = released.receipt;
+      if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} RESERVED -> HOLD (${RESERVATION_UNLAUNCHED}, attempt ${receipt.attempt_id}) — never launched; slot released`);
+    }
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
       const adapter = adapterNameFor(receipt.requested_worker);
       // A paused adapter must not be re-entered through RECOVERY either — the
@@ -2846,6 +2896,14 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     episodeScope,
   });
   if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
+  // SHU-71 run 9: a reservation of this episode that an earlier tick wrote but
+  // never launched is launched now, under its own attempt, before any new work.
+  // It already holds its slot, so it needs no new reservation and no capacity.
+  const resumable = singleRunActivation.state === "armed"
+    ? receipts.find((r) => strandedReservationAction(r, { now: io.now?.() ?? new Date(), episodeId: singleRunActivation.activation_id ?? null }) === "resume"
+      && dispatchScopeAllows(dispatchScope, r.issue_id) && activationAllowsTarget(singleRunActivation, r.issue_id))
+    : null;
+  if (resumable) return resumeReservation(resumable);
   let { candidate } = selection;
   const { skipped } = selection;
   if (!candidate) {
@@ -3037,163 +3095,212 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     }
   }
 
-  // GPT review #3: RE-READ and validate the authoritative reservation before
-  // launching. A missing, failed, or colliding reservation must never authorize
-  // a worker — launch only when this attempt's RESERVED receipt is durably
-  // present AND no other active receipt owns the issue.
-  const verifyComments = await fetchIssueComments({ issueId: linearIssueId, token: linearToken, fetchImpl });
-  const durable = parseReceiptsFromComments(verifyComments);
-  const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
-  if (!singleRunActivation.requested && successor && !durable.some(r =>
-    validHandoff(r) && r.handoff.order?.attempt_id === receipt.attempt_id && r.handoff.claim_attempt_id === receipt.attempt_id)) {
-    io.stdout?.(`handoff: ${receipt.issue_id} UNKNOWN HOLD=MISSING_CLAIM — claim acknowledgement not durably visible`);
-    return 2;
-  }
-  const otherActive = durable.find((r) => r.attempt_id !== receipt.attempt_id && !TERMINAL_STAGES.includes(r.stage));
-  // Same immutable-field rule as the initial read: a record wearing THIS
-  // attempt_id but disagreeing on repo/branch/target_sha was not written by this
-  // run. A check that only the initial read applies is a TOCTOU hole — the
-  // forgery window is exactly between that read and this one.
-  const impostor = durable.find(
-    (r) => r.attempt_id === receipt.attempt_id && RECEIPT_IMMUTABLE_FIELDS.some((f) => !immutableFieldEqual(r, receipt, f)),
-  );
-  if (impostor) {
-    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — durable receipt conflict for attempt ${receipt.attempt_id}, immutable fields disagree; slot held`);
-    return 2;
-  }
-  if (!ownReservation) {
-    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — reservation ${receipt.attempt_id} not durably present after write; slot held`);
-    return 2;
-  }
-  if (otherActive) {
-    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — conflicting active receipt ${otherActive.attempt_id} (${otherActive.stage}) owns ${candidate.id}; slot held`);
-    return 2;
+  return continueReservedLaunch({ receipt, candidate, successor, adapter, linearIssueId });
+
+  // A stranded reservation passes the same pre-launch gates a fresh one passed
+  // before it was written, then continues exactly where its tick stopped.
+  async function resumeReservation(receipt) {
+    const issue = issues.find((i) => i.id === receipt.issue_id);
+    const linearIssueId = resolveLinearIssueId(receipt, "reservation resume");
+    if (!issue || !linearIssueId) return 2;
+    const adapter = adapterNameFor(receipt.requested_worker);
+    const role = roleForReceipt(receipt);
+    const held = (why) => {
+      if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} not resumed — ${why}; slot held`);
+      return 2;
+    };
+    if (config.adapter_pause_map[adapter]) return held(`adapter ${adapter} is paused`);
+    if (role === ROLE_REVIEW && receipts.some((r) => r !== receipt && !TERMINAL_STAGES.includes(r.stage) && roleForReceipt(r) === ROLE_REVIEW)) {
+      if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active`);
+      return 0;
+    }
+    const tmpRefusal = tmpFloorRefusal(io);
+    if (tmpRefusal) return held(tmpRefusal);
+    const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined, role });
+    if (activation && !activation.ok) return held(`SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
+    const activationTarget = activation
+      ? await verifyActivationTarget(adapter, { repo: receipt.repo, target_sha: receipt.target_sha, githubToken, fetchImpl, role })
+      : { ok: true };
+    if (!activationTarget.ok) return held(`activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
+    if (githubToken) {
+      const live = await resolveLiveHead(receipt, { githubToken, fetchImpl });
+      if (!live.verified) return held("live branch head could not be verified");
+      if (live.head !== receipt.target_sha) {
+        // The bound head moved: this reservation can never launch, so it stops
+        // holding its slot now rather than at the end of the resume window.
+        const released = nextReceiptState(receipt, { type: "release_unlaunched",
+          reason: `bound head ${receipt.target_sha} is no longer the live head ${live.head}` }, { now: io.now });
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+        if (io.stdout) io.stdout(`dispatch: ${receipt.issue_id} RESERVED -> HOLD (${RESERVATION_UNLAUNCHED}, attempt ${receipt.attempt_id}) — bound head moved`);
+        return 2;
+      }
+    }
+    if (io.stdout) io.stdout(`dispatch: resuming reservation ${receipt.attempt_id} on ${receipt.issue_id} (${receipt.requested_worker}, head ${receipt.target_sha}) — reserved at ${receipt.timestamps.reserved}, never launched`);
+    return continueReservedLaunch({ receipt, candidate: { ...issue, requested_worker: receipt.requested_worker },
+      successor: null, adapter, linearIssueId });
   }
 
-  // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
-  // known-good and before crossing the adapter boundary. A refused preflight did
-  // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
-  if (!io.adapterModules?.[adapter] || io.supervisorTransport) {
-    receipt.notes = [...receipt.notes, SUPERVISOR_DISPATCH_NOTE];
-  }
-  const launchIntent = nextReceiptState(receipt, { type: "launch" }, { now: io.now });
-  if (!launchIntent.accepted) {
-    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
-    return 2;
-  }
-  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
+  // Everything from the durable re-read on is shared by a fresh reservation
+  // and a stranded one launched again on a later tick (resumeReservation).
+  async function continueReservedLaunch({ receipt, candidate, successor, adapter, linearIssueId }) {
+    // GPT review #3: RE-READ and validate the authoritative reservation before
+    // launching. A missing, failed, or colliding reservation must never authorize
+    // a worker — launch only when this attempt's RESERVED receipt is durably
+    // present AND no other active receipt owns the issue.
+    const verifyComments = await fetchIssueComments({ issueId: linearIssueId, token: linearToken, fetchImpl });
+    const durable = parseReceiptsFromComments(verifyComments);
+    const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
+    if (!singleRunActivation.requested && successor && !durable.some(r =>
+      validHandoff(r) && r.handoff.order?.attempt_id === receipt.attempt_id && r.handoff.claim_attempt_id === receipt.attempt_id)) {
+      io.stdout?.(`handoff: ${receipt.issue_id} UNKNOWN HOLD=MISSING_CLAIM — claim acknowledgement not durably visible`);
+      return 2;
+    }
+    const otherActive = durable.find((r) => r.attempt_id !== receipt.attempt_id && !TERMINAL_STAGES.includes(r.stage));
+    // Same immutable-field rule as the initial read: a record wearing THIS
+    // attempt_id but disagreeing on repo/branch/target_sha was not written by this
+    // run. A check that only the initial read applies is a TOCTOU hole — the
+    // forgery window is exactly between that read and this one.
+    const impostor = durable.find(
+      (r) => r.attempt_id === receipt.attempt_id && RECEIPT_IMMUTABLE_FIELDS.some((f) => !immutableFieldEqual(r, receipt, f)),
+    );
+    if (impostor) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before launch — durable receipt conflict for attempt ${receipt.attempt_id}, immutable fields disagree; slot held`);
+      return 2;
+    }
+    if (!ownReservation) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before launch — reservation ${receipt.attempt_id} not durably present after write; slot held`);
+      return 2;
+    }
+    if (otherActive) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before launch — conflicting active receipt ${otherActive.attempt_id} (${otherActive.stage}) owns ${candidate.id}; slot held`);
+      return 2;
+    }
 
-  const dispatchAdapterModule = await dispatchModuleFor(adapter, receipt, env, io);
-  let launch;
-  let options;
-  try {
-    options = await preparedLaunchOptions(adapter, receipt, env, io);
-    // Fetching/cloning can outlast the approval. Recheck before crossing into
-    // the worker; preparation does not extend an activation's lifetime.
-    if (singleRunActivation.requested) {
-      const final = finalLaunchActivation(() => singleRunActivationStatus({ filePath: activationArg.path, env, issues, config,
-        receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io }),
-        receipt.issue_id, io.finalCheckWait);
-      // SHU-71 run 6: this refusal used to read as a failed git command (COMMAND_FAILED).
-      if (!final.ok) throw Object.assign(new Error("activation no longer allows this launch"), { activationCode: final.code });
+    // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
+    // known-good and before crossing the adapter boundary. A refused preflight did
+    // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
+    if (!io.adapterModules?.[adapter] || io.supervisorTransport) {
+      receipt.notes = [...receipt.notes, SUPERVISOR_DISPATCH_NOTE];
     }
-  } catch (error) {
-    const diagnosis = error?.activationCode ? `FINAL_CHECK_${error.activationCode}` : workspaceFailureCode(error);
-    const bundleDetail = diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? `; ${error.message}` : "";
-    const step = error?.activationCode ? "final activation check" : "attempt workspace preparation";
-    const held = nextReceiptState(launchIntent.receipt, { type: "hold",
-      reason: `${step} refused (${diagnosis})${bundleDetail}; no worker launched`,
-      ...(diagnosis === "BASE_BUNDLE_UNAVAILABLE" || error?.activationCode ? { reason_code: diagnosis } : {}) }, { now: io.now });
-    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
-    if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — ${step} refused (${diagnosis})`);
-    return 2;
-  }
-  if (!launch) {
-    launch = await dispatchAdapterModule.launchBuilder({
-    // Reservation binding (PR #24): the host-local lease records repo/branch so
-    // recovery can prove a Linear receipt matches a reservation this coordinator
-    // actually made. Without these the lease is created unbound and strict
-    // binding can never be satisfied afterwards.
-    repo: receipt.repo,
-    branch: receipt.branch,
-    issue_id: receipt.issue_id,
-    authorization_ref: receipt.authorization_ref,
-    attempt_id: receipt.attempt_id,
-    target_sha: receipt.target_sha,
-    workspace_scope: receipt.workspace_scope,
-    scope_phase: receipt.scope_phase,
-    allowed_paths: [...receipt.allowed_paths],
-    scoped_base_sha: receipt.scoped_base_sha,
-    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt) + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
-    ...options,
-    fetchImpl,
-    io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },
-    env,
-    });
-  }
-  // Drive the state machine IN ORDER: the launch event first (RESERVED ->
-  // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
-  // (ack -> RUNNING / stays LAUNCH_UNKNOWN / upstream failure). A worker ack
-  // straight from RESERVED is out of order by design — launch always precedes it.
-  // STALE-HEAD GUARD on the synchronous path. A `claude -p` verification can run
-  // for half an hour and returns its terminal result straight from launchBuilder,
-  // bypassing the lifecycle poll where the live head is normally resolved. Apply
-  // the SAME tri-state rule here, or a verdict describing a superseded tree would
-  // satisfy a receipt bound to target_sha.
-  let launchCtx = {};
-  if (launch.stage === "COMPLETED") {
-    const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
-    if (!resolved.verified) {
-      launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD", reason_code: "LIVE_HEAD_UNREADABLE" };
-    } else {
-      const expectedHead = (receipt.receipt_version === "1.1.0" ? isWriterRole(roleForReceipt(receipt)) : receipt.requested_worker === "codex-builder")
-        ? launch.callback?.result_sha
-        : receipt.target_sha;
-      launchCtx = {
-        current_head: resolved.head,
-        expected_head: expectedHead,
-        // Fold-time author exclusion (SHU-73): lineage receipts for this issue.
-        lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
-      };
-      if (
-        launch.callback?.attempt_id === receipt.attempt_id &&
-        launch.callback?.target_sha === receipt.target_sha &&
-        TARGET_SHA_RE.test(expectedHead ?? "") &&
-        resolved.head !== expectedHead
-      ) launch = { ...launch, reason_code: "LIVE_HEAD_STALE" };
+    const launchIntent = nextReceiptState(receipt, { type: "launch" }, { now: io.now });
+    if (!launchIntent.accepted) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
+      return 2;
     }
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
+
+    const dispatchAdapterModule = await dispatchModuleFor(adapter, receipt, env, io);
+    let launch;
+    let options;
+    try {
+      options = await preparedLaunchOptions(adapter, receipt, env, io);
+      // Fetching/cloning can outlast the approval. Recheck before crossing into
+      // the worker; preparation does not extend an activation's lifetime.
+      if (singleRunActivation.requested) {
+        const final = finalLaunchActivation(() => singleRunActivationStatus({ filePath: activationArg.path, env, issues, config,
+          receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io }),
+          receipt.issue_id, io.finalCheckWait);
+        // SHU-71 run 6: this refusal used to read as a failed git command (COMMAND_FAILED).
+        if (!final.ok) throw Object.assign(new Error("activation no longer allows this launch"), { activationCode: final.code });
+      }
+    } catch (error) {
+      const diagnosis = error?.activationCode ? `FINAL_CHECK_${error.activationCode}` : workspaceFailureCode(error);
+      const bundleDetail = diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? `; ${error.message}` : "";
+      const step = error?.activationCode ? "final activation check" : "attempt workspace preparation";
+      const held = nextReceiptState(launchIntent.receipt, { type: "hold",
+        reason: `${step} refused (${diagnosis})${bundleDetail}; no worker launched`,
+        ...(diagnosis === "BASE_BUNDLE_UNAVAILABLE" || error?.activationCode ? { reason_code: diagnosis } : {}) }, { now: io.now });
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
+      if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — ${step} refused (${diagnosis})`);
+      return 2;
+    }
+    if (!launch) {
+      launch = await dispatchAdapterModule.launchBuilder({
+      // Reservation binding (PR #24): the host-local lease records repo/branch so
+      // recovery can prove a Linear receipt matches a reservation this coordinator
+      // actually made. Without these the lease is created unbound and strict
+      // binding can never be satisfied afterwards.
+      repo: receipt.repo,
+      branch: receipt.branch,
+      issue_id: receipt.issue_id,
+      authorization_ref: receipt.authorization_ref,
+      attempt_id: receipt.attempt_id,
+      target_sha: receipt.target_sha,
+      workspace_scope: receipt.workspace_scope,
+      scope_phase: receipt.scope_phase,
+      allowed_paths: [...receipt.allowed_paths],
+      scoped_base_sha: receipt.scoped_base_sha,
+      task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt) + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
+      ...options,
+      fetchImpl,
+      io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },
+      env,
+      });
+    }
+    // Drive the state machine IN ORDER: the launch event first (RESERVED ->
+    // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
+    // (ack -> RUNNING / stays LAUNCH_UNKNOWN / upstream failure). A worker ack
+    // straight from RESERVED is out of order by design — launch always precedes it.
+    // STALE-HEAD GUARD on the synchronous path. A `claude -p` verification can run
+    // for half an hour and returns its terminal result straight from launchBuilder,
+    // bypassing the lifecycle poll where the live head is normally resolved. Apply
+    // the SAME tri-state rule here, or a verdict describing a superseded tree would
+    // satisfy a receipt bound to target_sha.
+    let launchCtx = {};
+    if (launch.stage === "COMPLETED") {
+      const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
+      if (!resolved.verified) {
+        launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD", reason_code: "LIVE_HEAD_UNREADABLE" };
+      } else {
+        const expectedHead = (receipt.receipt_version === "1.1.0" ? isWriterRole(roleForReceipt(receipt)) : receipt.requested_worker === "codex-builder")
+          ? launch.callback?.result_sha
+          : receipt.target_sha;
+        launchCtx = {
+          current_head: resolved.head,
+          expected_head: expectedHead,
+          // Fold-time author exclusion (SHU-73): lineage receipts for this issue.
+          lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+        };
+        if (
+          launch.callback?.attempt_id === receipt.attempt_id &&
+          launch.callback?.target_sha === receipt.target_sha &&
+          TARGET_SHA_RE.test(expectedHead ?? "") &&
+          resolved.head !== expectedHead
+        ) launch = { ...launch, reason_code: "LIVE_HEAD_STALE" };
+      }
+    }
+    const transition = foldLaunchOutcome(launchIntent.receipt, launch, { ...launchCtx, now: io.now });
+    if (!transition.accepted) {
+      if (io.stdout) io.stdout(`dispatch: ${candidate.id} transition REJECTED (${transition.reason ?? "unknown reason"}) — state unchanged, slot held`);
+      return 2;
+    }
+    const next = transition.receipt;
+    if (launch.conversation_url && typeof launch.conversation_url === "string") {
+      next.notes = [...next.notes, `conversation_url: ${launch.conversation_url}`]; // documented 202 field — evidence link for the run
+    }
+    // DURABLE RECEIPT: the transitioned state (RUNNING/LAUNCH_UNKNOWN/FAILED) is
+    // persisted to Linear IMMEDIATELY — the durable receipt must never sit at
+    // RESERVED after the API accepted the run (CodeRabbit).
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(next) }, linearToken, fetchImpl);
+    // DURABLE PAUSE: quota/access failures persist an adapter-pause marker so a
+    // workflow restart cannot auto-launch a doomed attempt (in-memory pause dies
+    // with the process — CodeRabbit). Safe default when the map key is absent.
+    if (launch.pause_adapter) {
+      const adapter = adapterNameFor(candidate.requested_worker);
+      config.adapter_pause_map[adapter] = true;
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    }
+    // Synchronous adapters can cross a breaker in the same tick that creates the
+    // launch receipt. Include that just-persisted terminal state so reporting does
+    // not depend on a later wakeup. The reporter remains read-only with respect to
+    // coordinator state and absorbs every delivery failure.
+    await reportCurrentIncident([...receipts, next]);
+    // A refused launch names itself on the dispatch line too, not only in the
+    // receipt: an operator watching the tick must see WHY the slot stayed held.
+    const notAcknowledged = launchNotAcknowledgedNote(launch);
+    if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})${notAcknowledged ? ` — ${notAcknowledged}` : ""}`);
+    return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;
   }
-  const transition = foldLaunchOutcome(launchIntent.receipt, launch, { ...launchCtx, now: io.now });
-  if (!transition.accepted) {
-    if (io.stdout) io.stdout(`dispatch: ${candidate.id} transition REJECTED (${transition.reason ?? "unknown reason"}) — state unchanged, slot held`);
-    return 2;
-  }
-  const next = transition.receipt;
-  if (launch.conversation_url && typeof launch.conversation_url === "string") {
-    next.notes = [...next.notes, `conversation_url: ${launch.conversation_url}`]; // documented 202 field — evidence link for the run
-  }
-  // DURABLE RECEIPT: the transitioned state (RUNNING/LAUNCH_UNKNOWN/FAILED) is
-  // persisted to Linear IMMEDIATELY — the durable receipt must never sit at
-  // RESERVED after the API accepted the run (CodeRabbit).
-  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(next) }, linearToken, fetchImpl);
-  // DURABLE PAUSE: quota/access failures persist an adapter-pause marker so a
-  // workflow restart cannot auto-launch a doomed attempt (in-memory pause dies
-  // with the process — CodeRabbit). Safe default when the map key is absent.
-  if (launch.pause_adapter) {
-    const adapter = adapterNameFor(candidate.requested_worker);
-    config.adapter_pause_map[adapter] = true;
-    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
-  }
-  // Synchronous adapters can cross a breaker in the same tick that creates the
-  // launch receipt. Include that just-persisted terminal state so reporting does
-  // not depend on a later wakeup. The reporter remains read-only with respect to
-  // coordinator state and absorbs every delivery failure.
-  await reportCurrentIncident([...receipts, next]);
-  // A refused launch names itself on the dispatch line too, not only in the
-  // receipt: an operator watching the tick must see WHY the slot stayed held.
-  const notAcknowledged = launchNotAcknowledgedNote(launch);
-  if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})${notAcknowledged ? ` — ${notAcknowledged}` : ""}`);
-  return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;
 }
 
 // CLI entry: `node .github/coordinator/reconcile.mjs`
