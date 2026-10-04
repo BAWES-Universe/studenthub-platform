@@ -30,6 +30,7 @@ import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalD
 import { runReviewEvidence } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
+import { cardBrief } from "../card-contracts.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
 const path = nodePath;
 
@@ -139,6 +140,7 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Bound head: ${target_sha}`,
     `Attempt: ${attempt_id}`,
     task_context,
+    cardBrief(issue_id) && `Card brief, what to build:\n${cardBrief(issue_id)}`,
     `Workspace authority: ${workspace_scope} (${scope_phase}).`,
     `Local checkout head: ${scoped_base_sha ?? target_sha}. The authoritative full target remains ${target_sha}.`,
     ...(workspace_scope === "scoped" ? [`You may create, modify, or delete only these exact paths: ${allowed_paths.join(", ")}. Files outside this set are deliberately unavailable and the host broker refuses any outside result.`] : []),
@@ -152,6 +154,7 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
 
 export function buildCodexReviewPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, review_rule = STRICT_REVIEW_RULE }) {
   const reviewScope = fixtureReviewScope(issue_id);
+  const brief = cardBrief(issue_id);
   return [
     "You are the independent verifier for an authorized StudentHub change. You did not write it.",
     `Issue: ${issue_id}`,
@@ -159,7 +162,8 @@ export function buildCodexReviewPrompt({ issue_id, authorization_ref, attempt_id
     `Bound head: ${target_sha}`,
     `Attempt: ${attempt_id}`,
     task_context,
-    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against the contract the files and their folders document, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
+    brief && `Card brief, the contract this change is held to:\n${brief}`,
+    reviewScope && `Declared scope of ${issue_id}: ${reviewScope.join(", ")}. Review every file in this scope at the bound head against ${brief ? "the card brief above" : "the contract the files and their folders document"}, not only the files the last change touched. A file that node --test never loads is still in scope, and a passing test run is no evidence that it is correct.`,
     "Review the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner; the trusted evidence payload is included above. The private file URI is machine provenance only and is not readable from your sandbox.",
     "You are read-only. Inspect files only with read-only commands such as ls, cat, sed -n, grep and rg. Do not run the tests, node, npm or any builder-authored code, and do not edit, commit or push.",

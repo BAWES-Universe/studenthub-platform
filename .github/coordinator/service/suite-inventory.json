@@ -57,6 +57,7 @@
     ".github/coordinator/test/adapter.test.mjs",
     ".github/coordinator/test/attempt-workspace.test.mjs",
     ".github/coordinator/test/capacity-scheduler.test.mjs",
+    ".github/coordinator/test/card-lanes.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
@@ -3944,7 +3945,14 @@
     "SHU71_STRANDED_OTHER_EPISODE: a new episode releases the reservation an earlier one left behind",
     "SHU71_STRANDED_HEAD_MOVED: a stranded reservation whose bound head moved is released, not launched"
 ,
-    "SHU71_TICK_LOGS: the production tick writes its decision lines to the journal"
+    "SHU71_TICK_LOGS: the production tick writes its decision lines to the journal",
+    "CARD_LANE_CONFIG: the committed SHU-197 lane is exactly its reviewed contract",
+    "CARD_LANE_NOT_WIDENED: config cannot widen, trap or invent a card lane",
+    "CARD_LANE_SCOPE: writer, reviser and reviewer scopes follow the card contract",
+    "CARD_LANE_REVIEW: the reviewer sees the whole scope, runs the card's tests and holds it to its acceptance",
+    "CARD_LANE_PROMPTS: the writer and the reviewer of a card both get its brief; a fixture gets none",
+    "CARD_LANE_BRIEF: the pinned register has the 27 inventory rows with known states",
+    "CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a card"
   ],
   "requirements": [
     {
@@ -29928,6 +29936,34 @@
     },
     {
       "name": "SHU71_TICK_LOGS: the production tick writes its decision lines to the journal",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_CONFIG: the committed SHU-197 lane is exactly its reviewed contract",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_NOT_WIDENED: config cannot widen, trap or invent a card lane",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_SCOPE: writer, reviser and reviewer scopes follow the card contract",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_REVIEW: the reviewer sees the whole scope, runs the card's tests and holds it to its acceptance",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_PROMPTS: the writer and the reviewer of a card both get its brief; a fixture gets none",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_BRIEF: the pinned register has the 27 inventory rows with known states",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a card",
       "capabilities": []
     }
   ],
