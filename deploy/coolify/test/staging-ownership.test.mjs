@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { desired, runConfirm, runDecide, runResolve } from '../staging-ownership.mjs';
+import { desired, isMissingTag, runConfirm, runDecide, runResolve, validDigest } from '../staging-ownership.mjs';
 
 const S1 = '1'.repeat(40), S2 = '2'.repeat(40), M = 'a'.repeat(40);
 const D1 = `sha256:${'d'.repeat(63)}1`, D2 = `sha256:${'d'.repeat(63)}2`, DM = `sha256:${'d'.repeat(63)}a`;
@@ -114,4 +114,34 @@ esac
   assert.equal(run(['confirm'], { SHA: S1 }), 0);
   assert.equal(readFileSync(out, 'utf8'), 'current=false\n');
   assert.equal(run(['nonsense']), 1);
+});
+
+test('only a registry answer that the tag is missing counts as "not built yet"', () => {
+  const ref = `ghcr.io/bawes-universe/studenthub-gateway:dev-${S1}`;
+  assert.equal(isMissingTag(`ERROR: ${ref}: not found\n`, ref), true); // real buildx output for a missing tag
+  assert.equal(isMissingTag('MANIFEST_UNKNOWN: manifest unknown', ref), true);
+  for (const stderr of ['ERROR: failed to authorize: failed to fetch anonymous token: 403 Forbidden', 'unauthorized: authentication required',
+    'dial tcp: i/o timeout', `ERROR: ${ref}-other: not found`, '']) assert.equal(isMissingTag(stderr, ref), false, stderr);
+  assert.equal(validDigest(D1), D1);
+  for (const bad of [undefined, '', 'sha256:short', `sha512:${'a'.repeat(64)}`]) assert.throws(() => validDigest(bad), /invalid digest/);
+});
+
+test('a registry failure fails the switch job instead of passing as "no image yet"', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'gh'), `#!/bin/sh\ncase "$1 $2" in\n  "pr list") echo 208 ;;\n  "pr view") case "$*" in *headRefOid*) echo ${S2} ;; *) echo '{"headRefName":"a","isCrossRepository":false}' ;; esac ;;\n  "api --paginate") echo ${T1} ;;\nesac\n`);
+  const resolve = (docker) => {
+    writeFileSync(join(dir, 'docker'), `#!/bin/sh\n${docker}\n`);
+    for (const f of ['gh', 'docker']) chmodSync(join(dir, f), 0o755);
+    writeFileSync(join(dir, 'out'), '');
+    let code = 0;
+    try { execFileSync('node', ['deploy/coolify/staging-ownership.mjs', 'resolve'], { stdio: 'pipe', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: join(dir, 'out') } }); }
+    catch (error) { code = error.status; }
+    return { code, out: readFileSync(join(dir, 'out'), 'utf8') };
+  };
+  assert.deepEqual(resolve(`echo "ERROR: ghcr.io/bawes-universe/studenthub-gateway:dev-${S2}: not found" >&2; exit 1`), { code: 0, out: `sha=${S2}\ndigest=\npr=208\n` });
+  assert.deepEqual(resolve(`echo '{"digest":"${D2}"}'`), { code: 0, out: `sha=${S2}\ndigest=${D2}\npr=208\n` });
+  for (const failure of ['echo "unauthorized: authentication required" >&2; exit 1', 'echo "dial tcp: i/o timeout" >&2; exit 1', "echo 'not json'", `echo '{"digest":"sha256:short"}'`]) {
+    assert.deepEqual(resolve(failure), { code: 1, out: '' }, failure);
+  }
 });

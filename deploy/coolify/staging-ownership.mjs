@@ -49,14 +49,27 @@ function github(env) {
         ? `Pull requests from forks can't go on staging, so \`${LABEL}\` was removed.`
         : `Staging was taken over by #${owner}, so this PR is no longer on staging. Add \`${LABEL}\` again to put it back.`);
     },
-    // The build pushes `dev-<sha>`; a missing tag means that build has not pushed yet.
+    // The build pushes `dev-<sha>`. Only a registry answer that the tag does not exist means
+    // that build has not pushed yet; any other failure (auth, network, parsing) is an error.
     devDigest: (sha) => {
+      let stdout;
       try {
-        return JSON.parse(execFileSync('docker', ['buildx', 'imagetools', 'inspect', `${IMAGE}:dev-${sha}`, '--format', '{{json .Manifest}}'],
-          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 })).digest;
-      } catch { return ''; }
+        stdout = execFileSync('docker', ['buildx', 'imagetools', 'inspect', `${IMAGE}:dev-${sha}`, '--format', '{{json .Manifest}}'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
+      } catch (error) {
+        if (isMissingTag(`${error.stderr ?? ''}`, `${IMAGE}:dev-${sha}`)) return '';
+        throw new Error(`could not read ${IMAGE}:dev-${sha}: ${`${error.stderr ?? error.message}`.trim().split('\n').at(-1)}`);
+      }
+      return validDigest(JSON.parse(stdout).digest);
     },
   };
+}
+
+// buildx reports a missing tag as "ERROR: <ref>: not found" (OCI MANIFEST_UNKNOWN); nothing else counts.
+export const isMissingTag = (stderr, ref) => stderr.trim().endsWith(`${ref}: not found`) || /\bMANIFEST_UNKNOWN\b/.test(stderr);
+export function validDigest(digest) {
+  if (!/^sha256:[a-f0-9]{64}$/.test(digest ?? '')) throw new Error(`registry returned an invalid digest '${digest}'`);
+  return digest;
 }
 
 const live = (api) => desired(api.holders().map((number) => api.holder(number)));
