@@ -1,5 +1,7 @@
 import {
   ancestorOrgIdsIncludingSelf,
+  descendantOrgIdsIncludingSelf,
+  listEffectiveContexts,
   resolveActiveContext,
   type AuthzStore,
   type Organization,
@@ -7,11 +9,18 @@ import {
 } from "@studenthub/contracts";
 
 import {
+  ORGANIZATION_DIRECTORY_PAGE_SIZE,
+  ORGANIZATION_DIRECTORY_VERSION,
   ORGANIZATION_PARITY_REVISION,
   ORGANIZATION_VIEW_VERSION,
   type ApprovedOrganizationAdapter,
   type ApprovedOrganizationSnapshot,
   type OrganizationAudience,
+  type OrganizationDirectory,
+  type OrganizationDirectoryEntry,
+  type OrganizationDirectoryFilters,
+  type OrganizationDirectoryRequest,
+  type OrganizationDirectoryResult,
   type OrganizationField,
   type OrganizationFieldContract,
   type OrganizationFieldName,
@@ -227,6 +236,58 @@ export function projectOrganizationFields(
   return Object.freeze(fields);
 }
 
+/** Roles that list companies across their grant coverage (OR-05). Employers use sub-organization listing. */
+export const ORGANIZATION_DIRECTORY_ROLES: ReadonlySet<string> = new Set<Role>(["staff", "admin"]);
+
+const DIRECTORY_STATUSES: ReadonlySet<unknown> = new Set<OrganizationStatus>(["active", "under_review", "inactive"]);
+
+function validDirectoryFilters(filters: OrganizationDirectoryFilters): boolean {
+  const { query, status, approvedToHire, currencyCode, ...rest } = filters;
+  if (Object.keys(rest).length > 0) return false;
+  if (query !== undefined && (typeof query !== "string" || query.trim() !== query || query.length === 0
+    || query.length > 100)) return false;
+  if (status !== undefined && !DIRECTORY_STATUSES.has(status)) return false;
+  if (approvedToHire !== undefined && typeof approvedToHire !== "boolean") return false;
+  return currencyCode === undefined || (typeof currencyCode === "string" && /^[A-Z]{3}$/.test(currencyCode));
+}
+
+function searchable(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("en");
+}
+
+function availableValue<T>(field: OrganizationField<T>): T | undefined {
+  return field.state === "available" ? field.value : undefined;
+}
+
+/** A filter on a field that is unavailable for a company never matches it. */
+function matchesDirectoryFilters(entry: OrganizationDirectoryEntry, filters: OrganizationDirectoryFilters): boolean {
+  if (filters.query !== undefined) {
+    const needle = searchable(filters.query);
+    const names = [entry.registryName, availableValue(entry.legalName), availableValue(entry.commonNameEn),
+      availableValue(entry.commonNameAr)].filter((name): name is string => name !== undefined);
+    if (!names.some((name) => searchable(name).includes(needle))) return false;
+  }
+  if (filters.status !== undefined && availableValue(entry.status) !== filters.status) return false;
+  if (filters.approvedToHire !== undefined && availableValue(entry.approvedToHire) !== filters.approvedToHire) return false;
+  return filters.currencyCode === undefined || availableValue(entry.currencyCode) === filters.currencyCode;
+}
+
+function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number): OrganizationDirectoryEntry {
+  const field = <T>(name: "legalName" | "commonNameEn" | "commonNameAr" | "currencyCode" | "approvedToHire") =>
+    (row === undefined ? unavailable(name, "not_imported") : plainField(name, row)) as OrganizationField<T>;
+  return Object.freeze({
+    orgId: org.id,
+    registryName: org.name,
+    subOrganizationCount,
+    legalName: field<string>("legalName"),
+    commonNameEn: field<string>("commonNameEn"),
+    commonNameAr: field<string>("commonNameAr"),
+    currencyCode: field<string>("currencyCode"),
+    approvedToHire: field<boolean>("approvedToHire"),
+    status: row === undefined ? unavailable("status", "not_imported") : deriveOrganizationStatus(row),
+  });
+}
+
 export class HierarchyViolation extends Error {}
 
 /**
@@ -256,7 +317,7 @@ export function companyParentOf(
   return chain[1] ?? null;
 }
 
-export class OrganizationRepository implements OrganizationReader {
+export class OrganizationRepository implements OrganizationReader, OrganizationDirectory {
   readonly #store: AuthzStore;
   readonly #source: ApprovedOrganizationAdapter;
   readonly #operators: ReadonlySet<string>;
@@ -340,6 +401,54 @@ export class OrganizationRepository implements OrganizationReader {
       }
       summaries.sort((a, b) => a.registryName.localeCompare(b.registryName) || a.orgId.localeCompare(b.orgId));
       return { kind: "found", subOrganizations: Object.freeze(summaries) };
+    } catch {
+      return { kind: "unavailable" };
+    }
+  }
+
+  /**
+   * Staff and admin company list. The active context is re-resolved, then the
+   * caller's current grants decide which companies appear: coverage comes from
+   * the same expansion that builds workspace contexts, never from the snapshot.
+   */
+  async listOrganizations(request: OrganizationDirectoryRequest): Promise<OrganizationDirectoryResult> {
+    try {
+      if (!ORGANIZATION_DIRECTORY_ROLES.has(request.role)) return { kind: "not_found" };
+      const filters = request.filters ?? {};
+      const page = request.page ?? 1;
+      if (!validDirectoryFilters(filters) || !Number.isSafeInteger(page) || page < 1) return { kind: "invalid" };
+      const identity = { kind: "principal" as const, principalId: request.principalId };
+      const resolution = await resolveActiveContext(identity, { orgId: request.orgId, role: request.role }, this.#store);
+      if (resolution.kind !== "authorized" || resolution.context.orgId !== request.orgId
+        || resolution.context.role !== request.role) return { kind: "not_found" };
+      const [contexts, organizations] = await Promise.all([
+        listEffectiveContexts(identity, this.#store), this.#store.listOrganizations(),
+      ]);
+      const within = new Set(descendantOrgIdsIncludingSelf(organizations, request.orgId));
+      const covered = new Set(contexts
+        .filter((context) => context.role === request.role && within.has(context.orgId)
+          && !this.#operators.has(context.orgId))
+        .map((context) => context.orgId));
+      const entries: OrganizationDirectoryEntry[] = [];
+      for (const org of organizations) {
+        if (!covered.has(org.id)) continue;
+        // Every covered organization is checked, so a nested sub-organization refuses the whole list.
+        if (companyParentOf(organizations, org.id, this.#operators) !== null) continue;
+        // As in legacy (`filterParent`), the list holds top-level companies; sub-organizations open from their parent.
+        const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);
+        const children = organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length;
+        const entry = directoryEntry(org, row, children);
+        if (matchesDirectoryFilters(entry, filters)) entries.push(entry);
+      }
+      entries.sort((a, b) => a.registryName.localeCompare(b.registryName) || a.orgId.localeCompare(b.orgId));
+      const start = (page - 1) * ORGANIZATION_DIRECTORY_PAGE_SIZE;
+      return { kind: "found", directory: Object.freeze({
+        version: ORGANIZATION_DIRECTORY_VERSION,
+        entries: Object.freeze(entries.slice(start, start + ORGANIZATION_DIRECTORY_PAGE_SIZE)),
+        page,
+        pageSize: ORGANIZATION_DIRECTORY_PAGE_SIZE,
+        total: entries.length,
+      }) };
     } catch {
       return { kind: "unavailable" };
     }

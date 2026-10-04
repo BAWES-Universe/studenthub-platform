@@ -114,3 +114,58 @@ export interface OrganizationReader {
   read(request: OrganizationReadRequest): Promise<OrganizationReadResult>;
   listSubOrganizations(request: OrganizationReadRequest): Promise<SubOrganizationListResult>;
 }
+
+export const ORGANIZATION_DIRECTORY_VERSION = "studenthub.organization-directory.v1" as const;
+export const ORGANIZATION_DIRECTORY_PAGE_SIZE = 20;
+
+/**
+ * Staff and admin company list (SHU-163, OR-05). Every filter is optional; a
+ * filter on a field that is unavailable for a company never matches it.
+ */
+export interface OrganizationDirectoryFilters {
+  /** Case-insensitive substring of the legal, English common, Arabic common or registry name. */
+  readonly query?: string;
+  readonly status?: OrganizationStatus;
+  readonly approvedToHire?: boolean;
+  readonly currencyCode?: string;
+}
+
+export interface OrganizationDirectoryRequest {
+  readonly principalId: string;
+  /** The active workspace organization, usually the operator root. */
+  readonly orgId: string;
+  readonly role: Role | string;
+  readonly filters?: OrganizationDirectoryFilters;
+  /** 1-based. */
+  readonly page?: number;
+}
+
+export interface OrganizationDirectoryEntry {
+  readonly orgId: string;
+  readonly registryName: string;
+  /** Registry count of direct sub-organizations; never inferred from the snapshot. */
+  readonly subOrganizationCount: number;
+  readonly legalName: OrganizationField<string>;
+  readonly commonNameEn: OrganizationField<string>;
+  readonly commonNameAr: OrganizationField<string>;
+  readonly currencyCode: OrganizationField<string>;
+  readonly approvedToHire: OrganizationField<boolean>;
+  readonly status: OrganizationField<OrganizationStatus>;
+}
+
+export type OrganizationDirectoryResult =
+  | { readonly kind: "found"; readonly directory: {
+    readonly version: typeof ORGANIZATION_DIRECTORY_VERSION;
+    readonly entries: readonly OrganizationDirectoryEntry[];
+    readonly page: number;
+    readonly pageSize: number;
+    readonly total: number;
+  } }
+  /** A filter or page the caller sent is outside the closed vocabulary. */
+  | { readonly kind: "invalid" }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "unavailable" };
+
+export interface OrganizationDirectory {
+  listOrganizations(request: OrganizationDirectoryRequest): Promise<OrganizationDirectoryResult>;
+}
