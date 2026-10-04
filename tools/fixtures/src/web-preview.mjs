@@ -5,6 +5,7 @@ import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createContextNavigation } from "../../../dist/apps/gateway/src/context-navigation.js";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
+import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES } from "@studenthub/organizations";
 import { createLoginApplication } from "../../../dist/apps/gateway/src/login-application.js";
 import { createGatewayServer } from "../../../dist/apps/gateway/src/index.js";
 import { profileDocument, renderLanding } from "../../../dist/apps/gateway/src/web-ui.js";
@@ -22,8 +23,14 @@ const navigationStore = new InMemoryAuthzStore({
 });
 await navigationStore.grantMany("person-preview", [
   { orgId: "preview-company", role: "candidate" }, { orgId: "preview-company", role: "staff" },
-  { orgId: "preview-campus", role: "recruiter" },
+  { orgId: "preview-company", role: "org-owner" }, { orgId: "preview-campus", role: "recruiter" },
 ]);
+const organizations = new OrganizationRepository({
+  store: navigationStore,
+  source: new InMemoryApprovedOrganizationAdapter(new Map([
+    ["preview-company", { ...SYNTHETIC_ORGANIZATION_FIXTURES.parentA, org_id: "preview-company" }],
+  ])),
+});
 const profiles = new OwnProfileRepository({
   principals: { async getPrincipal(id) { return id === "person-preview" ? { id, pbuuids: [] } : undefined; } },
   source: new InMemoryApprovedProfileAdapter({
@@ -32,7 +39,7 @@ const profiles = new OwnProfileRepository({
   }),
   today: () => "2026-09-13",
 });
-const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, navigationStore), web: {
+const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, navigationStore, organizations), web: {
   origin: "http://terminal.local:4173",
   returnTo: rig.config.allowedReturnUrls[1],
   profiles,
