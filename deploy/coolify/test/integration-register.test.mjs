@@ -40,6 +40,22 @@ test("register contains no value-like string", () => {
   assert.deepEqual(validateRegister(register).errors.filter((error) => error.includes("secret value or location")), []);
 });
 
+test("entries reject undeclared fields and wrongly typed fields", () => {
+  const cases = [
+    ["extra", { token: "https://example.com/secret" }, "INT-01 extra is not a register field"],
+    ["credential_names", "SOME_SECRET", "INT-01 credential_names has the wrong type"],
+    ["owner_cards", ["SHU-1", { card: "SHU-2" }], "INT-01 owner_cards has the wrong type"],
+    ["notes", { text: "note" }, "INT-01 notes has the wrong type"],
+  ];
+  for (const [field, value, error] of cases) {
+    const copy = structuredClone(register);
+    copy.integrations[0][field] = value;
+    const result = validateRegister(copy);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.includes(error), `${field}: ${result.errors.join("; ")}`);
+  }
+});
+
 test("integration documentation lists every id", async () => {
   const docs = await readFile(docsUrl, "utf8");
   for (const [id] of expected) assert.match(docs, new RegExp(`\\| ${id} \\|`));
