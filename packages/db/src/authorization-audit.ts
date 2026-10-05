@@ -6,6 +6,8 @@ export const AUTHORIZATION_MUTATION_OPERATIONS = [
   "grants.grant",
   "grants.revoke",
   "grants.clear",
+  // SHU-84: a safe-write receipt. Written only by PostgresSafeWriteStore.
+  "profile.safe_write",
 ] as const;
 
 export type AuthorizationMutationOperation =
