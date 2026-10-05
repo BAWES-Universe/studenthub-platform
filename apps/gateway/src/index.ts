@@ -25,7 +25,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -185,6 +185,26 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
+      return;
+    }
+
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/companies") {
+      let result: import("./company-directory.js").CompanyDirectoryResult;
+      try {
+        result = login?.companies
+          ? await login.companies.open(
+            cookieValue(request.headers.cookie, "__Host-studenthub_session"),
+            new URL(request.url, "http://gateway.invalid").searchParams,
+          )
+          : { status: 503, body: { error: "directory_unavailable" } };
+      } catch {
+        result = { status: 503, body: { error: "directory_unavailable" } };
+      }
+      if (html) {
+        writeHtml(response, result.status, login ? renderCompanyDirectory(result, login) : renderError(503), {}, true);
+      } else {
+        writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
+      }
       return;
     }
 

@@ -2,6 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
+import type { OrganizationReader, OrganizationView } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -10,10 +11,17 @@ export interface WorkspaceContext {
   readonly organizationName: string;
 }
 
+/** The selected organization as the active role may see it. */
+export type ActiveOrganization =
+  | { readonly kind: "found"; readonly view: OrganizationView }
+  | { readonly kind: "not_applicable" }
+  | { readonly kind: "unavailable" };
+
 export type NavigationResult =
   | { readonly status: 200; readonly body: {
     readonly contexts: readonly WorkspaceContext[];
     readonly active: WorkspaceContext | null;
+    readonly organization?: ActiveOrganization;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
 
@@ -22,7 +30,11 @@ export interface ContextNavigation {
 }
 
 /** URL selections are preferences, never authority or a persistent role claim. */
-export function createContextNavigation(sessions: Pick<SessionStore, "get">, store: AuthzStore): ContextNavigation {
+export function createContextNavigation(
+  sessions: Pick<SessionStore, "get">,
+  store: AuthzStore,
+  organizationReader?: OrganizationReader,
+): ContextNavigation {
   return {
     async open(sessionId, selection) {
       try {
@@ -66,7 +78,13 @@ export function createContextNavigation(sessions: Pick<SessionStore, "get">, sto
         }
         contexts.sort((a, b) => a.organizationName.localeCompare(b.organizationName)
           || a.orgId.localeCompare(b.orgId) || a.role.localeCompare(b.role));
-        return { status: 200, body: { contexts, active } };
+        if (!organizationReader || !active) return { status: 200, body: { contexts, active } };
+        // The read model re-resolves the grant itself; the selection is never its authority.
+        const read = await organizationReader.read({ principalId: session.personId, orgId: active.orgId, role: active.role });
+        const organization: ActiveOrganization = read.kind === "found"
+          ? { kind: "found", view: read.organization }
+          : read.kind === "not_found" ? { kind: "not_applicable" } : { kind: "unavailable" };
+        return { status: 200, body: { contexts, active, organization } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }

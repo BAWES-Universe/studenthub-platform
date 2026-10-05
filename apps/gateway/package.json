@@ -9,6 +9,7 @@
     "@studenthub/login-contract": "1.0.0",
     "@studenthub/profile": "1.0.0",
     "@studenthub/reference-catalogue": "1.0.0",
+    "@studenthub/organizations": "1.0.0",
     "@bawes/actor-assertion": "*"
   }
 }
