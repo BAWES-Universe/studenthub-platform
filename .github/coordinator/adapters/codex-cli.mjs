@@ -436,7 +436,40 @@ export function callbackValid(callback, { attempt_id, target_sha }) {
   });
 }
 
-function failureFrom(error, stdout, stderr, { threadId }) {
+// SHU-197 card run 2b: codex exited 1 eight seconds after launch with no output,
+// and the completion record said only CODEX_1 because stderr never left this
+// file. Keep a short tail of it on every failure. The tail stays in the host's
+// private completion record; receipts copy named fields only, so Linear still
+// sees the code and never this text. Redaction runs before truncation, so a cut
+// can never leave half a secret behind.
+export const STDERR_TAIL_BYTES = 2048;
+const SECRET_SHAPES = [
+  // A credential header loses its whole value, whatever the scheme (Basic too).
+  [/((?:proxy-)?authorization|(?:set-)?cookie)(["']?\s*[:=]\s*)[^\r\n]+/gi, "$1$2[redacted]"],
+  [/\bBearer\s+\S+/gi, "Bearer [redacted]"],
+  [/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]*/g, "[redacted]"],
+  [/\b(?:sk|rk|pk|sess)-[A-Za-z0-9_-]{8,}/g, "[redacted]"],
+  [/((?:token|key|secret|password)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi, "$1[redacted]"],
+  [/[A-Za-z0-9+_=]{32,}/g, "[redacted]"],
+];
+export function stderrTail(stderr) {
+  let text = String(stderr ?? "")
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  for (const [shape, replacement] of SECRET_SHAPES) text = text.replace(shape, replacement);
+  text = text.trim();
+  if (!text) return null;
+  const bytes = Buffer.from(text, "utf8");
+  return bytes.length <= STDERR_TAIL_BYTES ? text : `…${bytes.subarray(bytes.length - STDERR_TAIL_BYTES).toString("utf8")}`;
+}
+
+function failureFrom(error, stdout, stderr, context) {
+  const failure = classifyFailure(error, stderr, context);
+  const tail = stderrTail(stderr);
+  return tail ? { ...failure, stderr_tail: tail } : failure;
+}
+
+function classifyFailure(error, stderr, { threadId }) {
   // Only stderr + process metadata classify failures — model stdout (reviewed
   // code can contain "quota"/"capacity") never manufactures an account failure.
   const detail = `${stderr}\n${error?.message ?? ""}`;
