@@ -38,3 +38,44 @@ does not contain a PostgreSQL issuer-key registry or issuer-key tables. They
 currently exist only in the in-memory contracts reference. Their audit records
 must land with the persistent issuer-key registry so the key mutation and audit
 fact can share one PostgreSQL transaction.
+
+## First safe write (SHU-84)
+
+`PostgresSafeWriteStore` binds SHU-82's `SafeWriteStore` port to the one field
+SHU-83 permits: a person's language preference (`en` or `ar`), stored in
+`person_preferences` (migration 0147). The platform owns this field. It is not
+imported from, mirrored to, or read by legacy, and a missing row is the
+contract's absent value.
+
+`forPrincipal(principalId)` returns the port for one signed-in person. Every
+reference the contract passes back is compared with that binding, so the port
+cannot read or write another person's record. One transaction does all of
+this:
+
+- It takes the same per-principal advisory lock `PostgresAuthzStore` takes for
+  every grant change. A revocation therefore lands before the ownership check
+  or after the commit, never in between.
+- It refuses a token whose reference already sits on a receipt row. A unique
+  index on that reference backs the check, so single use holds across
+  processes and restarts.
+- It re-derives write authority from current grants: the principal must still
+  exist and still hold at least one grant.
+- It compare-and-writes the field against the value the preview showed. An
+  insert never overwrites an existing value.
+- It inserts the receipt into `authorization_mutation_audit` as operation
+  `profile.safe_write`. This is not a second audit surface: the receipt shares
+  SHU-59's append-only ledger and its transaction, so a receipt failure undoes
+  the field.
+
+Receipt rows hold references and closed vocabulary only. The before half is a
+presence flag. The after half holds the contract version, person reference,
+change-set digest, `["language"]`, the commit instant and a hashed token
+reference. The database's summary check rejects any other key or shape.
+The receipt's author must be its owner and may not be NULL.
+`readReceipt(principalId, receiptRef)` returns only the caller's own receipt.
+Another person's reference reads exactly like a missing one. A stored row that
+is not a well-formed receipt is never served: the read fails closed.
+
+The gateway mounts the path only when `SAFE_WRITE_SIGNING_KEY` (base64, at
+least 32 bytes) is set. The deployment does not pass that variable, so no
+deployed gateway accepts a write until a separate deployment change enables it.

@@ -25,6 +25,7 @@ import {
   type AuthzMiddleware,
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
+import { handleLanguagePreference } from "./language-preference.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
@@ -163,6 +164,7 @@ export function createGatewayServer(
     try {
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
+    if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {

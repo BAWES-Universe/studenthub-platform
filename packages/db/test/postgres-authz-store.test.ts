@@ -1569,7 +1569,8 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0004_create_authorization_mutation_audit",
           "0145_candidate_private_documents",
           "0146_reference_catalogue",
-          "0147_candidate_profile_records",
+          "0147_person_language_safe_write",
+          "0148_candidate_profile_records",
         ],
         "each migration is recorded exactly once",
       );
@@ -1619,7 +1620,8 @@ test(
             "0004_create_authorization_mutation_audit",
             "0145_candidate_private_documents",
             "0146_reference_catalogue",
-            "0147_candidate_profile_records",
+            "0147_person_language_safe_write",
+            "0148_candidate_profile_records",
           ],
         );
       } finally {

@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
 import type { ContextNavigation, NavigationResult, WorkspaceContext } from "./context-navigation.js";
+import type { LanguagePreference } from "./language-preference.js";
 import {
   OWN_PROFILE_FIELD_CONTRACT,
   OWN_PROFILE_FIELD_NAMES,
@@ -23,6 +24,8 @@ import type { CompanyDirectoryPage, CompanyDirectoryResult } from "./company-dir
 export interface BrowserLoginApplication extends LoginApplication {
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
+  /** SHU-84 safe write; absent unless a signing key is configured. */
+  readonly preferences?: LanguagePreference;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;

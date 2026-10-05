@@ -21,19 +21,20 @@ CREATE INDEX candidate_profile_records_owner_idx
 ALTER TABLE authorization_mutation_audit
   DROP CONSTRAINT authorization_mutation_audit_operation_check,
   ADD CONSTRAINT authorization_mutation_audit_operation_check CHECK (
-    operation IN ('principal.register', 'grants.grant', 'grants.revoke', 'grants.clear',
+    operation IN ('principal.register', 'grants.grant', 'grants.revoke', 'grants.clear', 'profile.safe_write',
       'profile_record.create', 'profile_record.update', 'profile_record.remove',
       'profile_record.restore', 'profile_record.replace')
   ),
   DROP CONSTRAINT auth_audit_target_org_cardinality,
   ADD CONSTRAINT auth_audit_target_org_cardinality CHECK (
-    (operation IN ('principal.register', 'grants.clear') AND cardinality(target_org_refs) = 0)
+    (operation IN ('principal.register', 'grants.clear', 'profile.safe_write',
+      'profile_record.create', 'profile_record.update', 'profile_record.remove',
+      'profile_record.restore', 'profile_record.replace') AND cardinality(target_org_refs) = 0)
     OR
     (operation IN ('grants.grant', 'grants.revoke') AND cardinality(target_org_refs) > 0)
-    OR
-    (operation LIKE 'profile_record.%' AND cardinality(target_org_refs) = 0)
   );
 
+-- Extends 0147's receipt shapes with the profile_record branch; every earlier branch is unchanged.
 CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(
   audit_operation TEXT,
   summary JSONB
@@ -60,7 +61,31 @@ AS $$
       AND summary ->> 'grantCount' ~ '^(0|[1-9][0-9]{0,17})$'
       AND summary ->> 'selfCount' ~ '^(0|[1-9][0-9]{0,17})$'
       AND summary ->> 'subtreeCount' ~ '^(0|[1-9][0-9]{0,17})$'
-    WHEN audit_operation LIKE 'profile_record.%' THEN
+    WHEN audit_operation = 'profile.safe_write' THEN
+      jsonb_typeof(summary) = 'object'
+      AND (
+        (
+          summary ?& ARRAY['valuePresent']
+          AND summary - ARRAY['valuePresent'] = '{}'::jsonb
+          AND jsonb_typeof(summary -> 'valuePresent') = 'boolean'
+        ) OR (
+          summary ?& ARRAY['contractVersion', 'personRef', 'changeSetDigest', 'fields', 'committedAt', 'tokenRef']
+          AND summary - ARRAY['contractVersion', 'personRef', 'changeSetDigest', 'fields', 'committedAt', 'tokenRef'] = '{}'::jsonb
+          AND jsonb_typeof(summary -> 'contractVersion') = 'string'
+          AND summary ->> 'contractVersion' ~ '^[0-9]+\.[0-9]+\.[0-9]+$'
+          AND jsonb_typeof(summary -> 'personRef') = 'string'
+          AND summary ->> 'personRef' ~ '^[0-9a-f]{64}$'
+          AND jsonb_typeof(summary -> 'changeSetDigest') = 'string'
+          AND summary ->> 'changeSetDigest' ~ '^[0-9a-f]{64}$'
+          AND jsonb_typeof(summary -> 'tokenRef') = 'string'
+          AND summary ->> 'tokenRef' ~ '^[0-9a-f]{64}$'
+          AND summary -> 'fields' = '["language"]'::jsonb
+          AND jsonb_typeof(summary -> 'committedAt') = 'string'
+          AND summary ->> 'committedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
+        )
+      )
+    WHEN audit_operation IN ('profile_record.create', 'profile_record.update', 'profile_record.remove',
+                             'profile_record.restore', 'profile_record.replace') THEN
       jsonb_typeof(summary) = 'object'
       AND summary ?& ARRAY['kind', 'activeCount']
       AND summary - ARRAY['kind', 'activeCount'] = '{}'::jsonb
