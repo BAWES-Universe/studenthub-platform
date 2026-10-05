@@ -436,12 +436,13 @@ export function callbackValid(callback, { attempt_id, target_sha }) {
   });
 }
 
-// SHU-197 card run 2b: codex exited 1 eight seconds after launch with no output,
-// and the completion record said only CODEX_1 because stderr never left this
-// file. Keep a short tail of it on every failure. The tail stays in the host's
-// private completion record; receipts copy named fields only, so Linear still
-// sees the code and never this text. Redaction runs before truncation, so a cut
-// can never leave half a secret behind.
+// First real-card run (2b): codex exited 1 eight seconds after launch with no
+// output, and the completion record said only CODEX_1 because stderr never left
+// this file. Keep a short tail of it on every failure. The tail stays on the
+// host: the completion record, a recovered run record, and the authenticated
+// supervisor status and its CLI all carry the whole result. Receipts copy named
+// fields only, so Linear still sees the code and never this text. Redaction runs
+// before truncation, so a cut can never leave half a secret behind.
 export const STDERR_TAIL_BYTES = 2048;
 const SECRET_SHAPES = [
   // A credential header loses its whole value, whatever the scheme (Basic too).
@@ -450,7 +451,8 @@ const SECRET_SHAPES = [
   [/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]*/g, "[redacted]"],
   [/\b(?:sk|rk|pk|sess)-[A-Za-z0-9_-]{8,}/g, "[redacted]"],
   [/((?:token|key|secret|password)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi, "$1[redacted]"],
-  [/[A-Za-z0-9+_=]{32,}/g, "[redacted]"],
+  // Any long base64 or base64url run, slashes and hyphens included (GPT, #217 1).
+  [/[A-Za-z0-9+/_=-]{32,}/g, "[redacted]"],
 ];
 export function stderrTail(stderr) {
   let text = String(stderr ?? "")
@@ -460,7 +462,12 @@ export function stderrTail(stderr) {
   text = text.trim();
   if (!text) return null;
   const bytes = Buffer.from(text, "utf8");
-  return bytes.length <= STDERR_TAIL_BYTES ? text : `…${bytes.subarray(bytes.length - STDERR_TAIL_BYTES).toString("utf8")}`;
+  if (bytes.length <= STDERR_TAIL_BYTES) return text;
+  // The ellipsis counts toward the bound, and the cut moves forward past UTF-8
+  // continuation bytes so the tail never starts inside a character.
+  let start = bytes.length - (STDERR_TAIL_BYTES - Buffer.byteLength("…"));
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start += 1;
+  return `…${bytes.subarray(start).toString("utf8")}`;
 }
 
 function failureFrom(error, stdout, stderr, context) {

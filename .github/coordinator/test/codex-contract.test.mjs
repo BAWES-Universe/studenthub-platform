@@ -494,8 +494,25 @@ test("CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, 
   for (const leaked of [secret, "abc.def", "Z".repeat(40), "Basic", "dXNlcjpwYXNz", "s3cr3tcookie"]) assert.equal(failed.stderr_tail.includes(leaked), false, `${leaked} is redacted`);
 
   const long = await run(`${"early line\n".repeat(400)}the real cause is last`);
-  assert.ok(Buffer.byteLength(long.stderr_tail) <= STDERR_TAIL_BYTES + Buffer.byteLength("…"), "the tail is bounded");
+  assert.ok(Buffer.byteLength(long.stderr_tail) <= STDERR_TAIL_BYTES, "the tail is bounded, ellipsis included");
   assert.match(long.stderr_tail, /^…[\s\S]*the real cause is last$/, "the end of stderr is kept, not the start");
+
+  // Opaque base64url and base64 values with no 32-character run of the old
+  // alphabet, alone, after a prefix, and across the truncation boundary.
+  const url = "AbCdEfGhIjKlMnOp-QrStUvWxYz012345";
+  const std = "AbCdEfGhIjKlMnOp/QrStUvWxYz012345";
+  const opaque = await run(`refresh failed ${url}\nrt-${url}\n${std}\n`);
+  for (const leaked of [url, std, "QrStUvWxYz012345", "AbCdEfGhIjKlMnOp"]) assert.equal(opaque.stderr_tail.includes(leaked), false, `${leaked} is redacted`);
+  const crossing = await run(`${"x ".repeat(1100)}${url}${"y ".repeat(1014)}`);
+  assert.equal(/QrStUv|CdEfGh/.test(crossing.stderr_tail), false, "a token at the cut is redacted before the cut");
+
+  // Multibyte stderr: the bound holds and the tail never opens inside a character.
+  for (const char of ["界", "😀"]) {
+    const wide = await run(char.repeat(1000));
+    assert.ok(Buffer.byteLength(wide.stderr_tail) <= STDERR_TAIL_BYTES, `${char}: bounded`);
+    assert.equal(wide.stderr_tail.includes("\ufffd"), false, `${char}: no replacement character`);
+    assert.match(wide.stderr_tail, new RegExp(`^…(?:${char})+$`, "u"), `${char}: whole characters only`);
+  }
 
   const silent = await run("");
   assert.equal(silent.stage, "FAILED");
