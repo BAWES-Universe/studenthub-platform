@@ -1,6 +1,8 @@
 import { handleCandidateDocuments } from './candidate-documents-http.js';
 import { handleCatalogue } from './catalogue-http.js';
 import { createRuntimeCatalogueFromEnv } from './catalogue-runtime.js';
+import { handleProfileRecords, PROFILE_RECORDS_CSS, type ProfileRecordsRuntime } from './profile-records-http.js';
+import { createRuntimeProfileRecordsFromEnv } from './profile-records-runtime.js';
 import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
@@ -25,7 +27,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -131,6 +133,7 @@ export function createGatewayServer(
   telemetry: Telemetry = disabledTelemetry,
   documents?: CandidateDocuments,
   catalogue?: ReferenceCatalogue,
+  profileRecords?: ProfileRecordsRuntime,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -160,6 +163,8 @@ export function createGatewayServer(
     try {
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
+    if (await handleProfileRecords(request, response, profileRecords,
+      (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;
@@ -169,7 +174,7 @@ export function createGatewayServer(
         "content-type": "text/css; charset=utf-8", "cache-control": "no-cache",
         "x-content-type-options": "nosniff",
       });
-      response.end(WEB_CSS);
+      response.end(WEB_CSS + PROFILE_RECORDS_CSS);
       return;
     }
     if (request.method === "GET" && request.url === "/assets/workspace-history.js") {
@@ -488,6 +493,7 @@ if (entrypoint === import.meta.url) {
   const runtimeLogin = createRuntimeLoginFromEnv();
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
+  const runtimeProfileRecords = createRuntimeProfileRecordsFromEnv();
   const telemetry = new Telemetry(telemetryMode(process.env));
   const server = createGatewayServer(
     new UnconfiguredMcpAdapter(),
@@ -498,8 +504,9 @@ if (entrypoint === import.meta.url) {
     telemetry,
     runtimeDocuments?.service,
     runtimeCatalogue?.service,
+    runtimeProfileRecords,
   );
-  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeCatalogue?.close(); void telemetry.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });

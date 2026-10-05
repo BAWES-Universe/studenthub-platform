@@ -10,6 +10,8 @@
     "@studenthub/profile": "1.0.0",
     "@studenthub/reference-catalogue": "1.0.0",
     "@studenthub/organizations": "1.0.0",
-    "@bawes/actor-assertion": "*"
+    "@bawes/actor-assertion": "*",
+    "@studenthub/profile-records": "1.0.0",
+    "pg": "^8.16.0"
   }
 }
