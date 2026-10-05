@@ -25,7 +25,7 @@ import {
   validateFixtureAttemptScope,
   validateFixtureScopePolicy,
 } from "../workspace-scope.mjs";
-import { resolveAuthorizationRef } from "../reconcile.mjs";
+import { createReceipt, receiptCommentBody, resolveAuthorizationRef } from "../reconcile.mjs";
 import { singleRunActivationStatus } from "../single-run-activation.mjs";
 import { buildCodexPrompt, buildCodexReviewPrompt } from "../adapters/codex-cli.mjs";
 import { buildClaudePrompt } from "../adapters/claude-code.mjs";
@@ -189,4 +189,54 @@ test("CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the 
     assert.equal(review.target_sha, SHA_WRITE);
     assert.equal(h.receiptFor(review.attempt_id).requested_worker, "claude-verifier");
   } finally { h.cleanup(); }
+});
+
+test("CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order", async () => {
+  const { workOrderAuthorization } = await import("../supervisor-authorization.mjs");
+  const config = { ...CONFIG, max_dispatch: 1, dispatch_scope: { issue_ids: ["SHU-197"] } };
+  const now = new Date("2026-10-04T12:00:00.000Z");
+  const record = { activation_id: "card-lane-run-0003", target_issue_id: "SHU-197", authorization_ref: "SHU-197",
+    coordinator_revision: SHA, slots: 1, expires_at: new Date(now.getTime() + 3600_000).toISOString(),
+    writer_lane: "codex-builder", reviewer_lane: "claude-verifier" };
+  const order = { issue_id: "SHU-197", runtime: "codex-cli", authorization_ref: "SHU-197",
+    workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU197_PATHS], scoped_base_sha: "e".repeat(40) };
+  let reads = 0;
+  const check = (over = {}, cfg = config) => workOrderAuthorization({ ...order, ...over }, {
+    config: cfg, wait: () => {},
+    evidenceRun: () => { reads += 1; throw new Error("pair thread unreadable"); },
+    env: { ENABLE_DISPATCH: "true", SHU71_EVIDENCE_BROKER: "true", SHU_SUPERVISOR_ACTIVATION_FILE: "/isolated/activation" },
+    activation: { now, gitHead: SHA, io: { lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => JSON.stringify(record) } },
+  });
+  assert.deepEqual(check(), { ok: true, code: null }, "an unreadable pair thread does not deny a card order");
+  assert.equal(reads, 0, "the pair's threads are never read for a single-card scope");
+  assert.equal(check({ authorization_ref: "SHU-1" }).code, "HOST_AUTH_LANE_REF");
+  assert.equal(check({ allowed_paths: [...SHU197_PATHS, "Dockerfile"] }).code, "HOST_AUTH_ATTEMPT_SCOPE");
+  // Under the pair scope the read still happens and a failed read still denies.
+  const pair = { ...CONFIG, max_dispatch: 2, dispatch_scope: { issue_ids: ["SHU-140", "SHU-254"] } };
+  assert.equal(check({ issue_id: "SHU-140", authorization_ref: CONFIG.fixture_lane.authorization_ref, allowed_paths: [] }, pair).code, "HOST_AUTH_EVIDENCE_UNAVAILABLE");
+  assert.ok(reads > 0);
+  // One fixture scoped alone still reads its thread: its receipts decide spent
+  // and retry. Three FAILED attempts exhaust SHU-140, so the gate refuses
+  // (GPT, PR #214 finding 1).
+  const fixture = CONFIG.fixture_lane;
+  const failed = [1, 2, 3].map((n) => {
+    const made = createReceipt({ issue_id: fixture.id, authorization_ref: fixture.authorization_ref, requested_worker: fixture.writer_lane,
+      repo: CONFIG.pilot_repo, branch: `coordinator/${fixture.id}`, target_sha: SHA, reserved_at: `2026-10-04T11:0${n}:00.000Z` });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    return { body: receiptCommentBody({ ...made.receipt, stage: "FAILED" }), createdAt: `2026-10-04T11:0${n}:30.000Z`, user: { id: CONFIG.linear_receipt_actor_ids[0] } };
+  });
+  const single = { ...CONFIG, max_dispatch: 1, dispatch_scope: { issue_ids: [fixture.id] } };
+  const spent = (evidenceRun) => workOrderAuthorization({ issue_id: fixture.id, runtime: "codex-cli", authorization_ref: fixture.authorization_ref,
+    workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...fixture.initial_build_paths], scoped_base_sha: "e".repeat(40) }, {
+    config: single, wait: () => {}, evidenceRun,
+    env: { ENABLE_DISPATCH: "true", SHU71_EVIDENCE_BROKER: "true", SHU_SUPERVISOR_ACTIVATION_FILE: "/isolated/activation" },
+    activation: { now, gitHead: SHA, io: { lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }),
+      readFile: () => JSON.stringify({ ...record, target_issue_id: fixture.id, authorization_ref: fixture.authorization_ref,
+        writer_lane: fixture.writer_lane, reviewer_lane: fixture.reviewer_lane }) } },
+  });
+  reads = 0;
+  const answer = () => { reads += 1; return JSON.stringify({ heads: {}, issues: [{ id: fixture.id, linearId: "uuid-SHU-140" }], comments: failed }); };
+  assert.equal(spent(answer).code, "HOST_AUTH_ACTIVATION_SPENT", "a spent single fixture is refused");
+  assert.ok(reads > 0, "a single-fixture scope reads its thread");
+  assert.equal(spent(() => { throw new Error("thread unreadable"); }).code, "HOST_AUTH_EVIDENCE_UNAVAILABLE", "and an unread thread still denies it");
 });

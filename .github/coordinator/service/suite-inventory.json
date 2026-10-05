@@ -3953,7 +3953,8 @@
     "CARD_LANE_PROMPTS: the writer and the reviewer of a card both get its brief; a fixture gets none",
     "CARD_LANE_BRIEF: the pinned register has the 27 inventory rows with known states",
     "CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a card",
-    "CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude"
+    "CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude",
+    "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order"
   ],
   "requirements": [
     {
@@ -29969,6 +29970,10 @@
     },
     {
       "name": "CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order",
       "capabilities": []
     }
   ],
