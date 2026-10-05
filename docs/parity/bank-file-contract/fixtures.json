@@ -1,0 +1,1498 @@
+{
+  "synthetic_only": true,
+  "source_data_copied": false,
+  "bank_formats_invented": false,
+  "fixture_version": 1,
+  "clock": "2028-02-29T00:00:00Z",
+  "text_construction": "UTF-8 no BOM LF; synthetic choice, provider encoding unknown",
+  "account_replacements": {
+    "source_debit_account": "0000000000000",
+    "source_origin_account": "00000000"
+  },
+  "input_lines": [
+    {
+      "tc_id": "910001",
+      "transfer_id": "920001",
+      "candidate_id": "930001",
+      "amount": "10.125",
+      "currency": "KWD",
+      "parent_currency": "KWD",
+      "snapshot_name": "SYNTHETIC Alpha",
+      "current_name": "SYNTHETIC Current Alpha",
+      "snapshot_iban": "XX00ABKK0000000000000000000001",
+      "current_iban": "XX00ABKK0000000000000000000011",
+      "bank_iban_code": "ABKK",
+      "swift": "TESTKW00",
+      "bank_name": "SYNTHETIC Bank A",
+      "bank_address": "SYNTHETIC Address A",
+      "bank_transfer_type": "LCL",
+      "bank_code_abk": "001",
+      "email": "alpha@example.invalid",
+      "hours": "2"
+    },
+    {
+      "tc_id": "910002",
+      "transfer_id": "920001",
+      "candidate_id": "930002",
+      "amount": "20.005",
+      "currency": "KWD",
+      "parent_currency": "KWD",
+      "snapshot_name": "تجريبي Beta",
+      "current_name": "SYNTHETIC Current Beta",
+      "snapshot_iban": "XX00TEST0000000000000000000002",
+      "current_iban": "XX00TEST0000000000000000000012",
+      "bank_iban_code": "TEST",
+      "swift": "FAKEKW00",
+      "bank_name": "SYNTHETIC Bank B",
+      "bank_address": "SYNTHETIC Address B",
+      "bank_transfer_type": "TRF",
+      "bank_code_abk": "002",
+      "email": "beta@example.invalid",
+      "hours": "3"
+    }
+  ],
+  "formats": [
+    {
+      "id": "legacy-s123",
+      "kind": "text",
+      "evidence": [
+        "E04",
+        "E06"
+      ],
+      "fields": [
+        "transfer",
+        "bank_transfer_type",
+        "amount",
+        "currency",
+        "emptyField1",
+        "emptyField2",
+        "emptyField3",
+        "Field1",
+        "iban",
+        "transfer_id",
+        "tc_id",
+        "description",
+        "emptyField4",
+        "emptyField5",
+        "emptyField6",
+        "bank_account_name",
+        "bank_name",
+        "emptyField7",
+        "bank_name_repeat",
+        "bank_address",
+        "emptyField8",
+        "emptyField9",
+        "bank_swift_code",
+        "emptyField10",
+        "emptyField11",
+        "emptyField12",
+        "emptyField13",
+        "emptyField14",
+        "emptyField15",
+        "Field2",
+        "emptyField16",
+        "emptyField17",
+        "candidate_iban"
+      ],
+      "rows": [
+        [
+          "S2",
+          "LCL",
+          "10.125",
+          "KWD",
+          "",
+          "",
+          "",
+          "00000000",
+          "XX00ABKK0000000000000000000011",
+          "920001",
+          "910001",
+          "Internship 2 Hours",
+          "",
+          "",
+          "",
+          "SYNTHETIC Current Alpha",
+          "SYNTHETIC Bank A",
+          "",
+          "SYNTHETIC Bank A",
+          "SYNTHETIC Address A",
+          "",
+          "",
+          "TESTKW00",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "B",
+          "",
+          "",
+          "XX00ABKK0000000000000000000011"
+        ],
+        [
+          "S2",
+          "TRF",
+          "20.005",
+          "KWD",
+          "",
+          "",
+          "",
+          "00000000",
+          "XX00TEST0000000000000000000012",
+          "920001",
+          "910002",
+          "Internship 3 Hours",
+          "",
+          "",
+          "",
+          "SYNTHETIC Current Beta",
+          "SYNTHETIC Bank B",
+          "",
+          "SYNTHETIC Bank B",
+          "SYNTHETIC Address B",
+          "",
+          "",
+          "FAKEKW00",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "B",
+          "",
+          "",
+          "XX00TEST0000000000000000000012"
+        ]
+      ],
+      "file": "synthetic-legacy-s123.txt",
+      "sha256": "b484102e83c022008d972dd4af874357992f1f044c3cfee0ad99f2fe2a0d59aa",
+      "output": "S1,00000000,,MXD,M,,29/02/2028,29022028-01\nS2,LCL,10.125,KWD,,,,00000000,XX00ABKK0000000000000000000011,920001,910001,Internship 2 Hours,,,,SYNTHETIC Current Alpha,SYNTHETIC Bank A,,SYNTHETIC Bank A,SYNTHETIC Address A,,,TESTKW00,,,,,,,B,,,XX00ABKK0000000000000000000011,\nS2,TRF,20.005,KWD,,,,00000000,XX00TEST0000000000000000000012,920001,910002,Internship 3 Hours,,,,SYNTHETIC Current Beta,SYNTHETIC Bank B,,SYNTHETIC Bank B,SYNTHETIC Address B,,,FAKEKW00,,,,,,,B,,,XX00TEST0000000000000000000012,\nS3,2,30.130",
+      "record_count": 2,
+      "total": "30.130",
+      "currency": "KWD",
+      "encoding": "UTF-8",
+      "bom": false,
+      "eol": "LF",
+      "bank_acceptance": "UNKNOWN",
+      "partial_rejection": {
+        "provider_format": null,
+        "proposal": "HOLD_UNKNOWN_PROVIDER_OUTCOME",
+        "paid_updates": []
+      }
+    },
+    {
+      "id": "legacy-hdt-advice",
+      "kind": "text",
+      "evidence": [
+        "E05",
+        "E07"
+      ],
+      "fields": [
+        "Section Index",
+        "Reference Number",
+        "Email ID",
+        "Invoice Date",
+        "Invoice Info",
+        "Invoice Currency",
+        "Invoice Amount"
+      ],
+      "rows": [
+        [
+          "D",
+          "920001",
+          "alpha@example.invalid",
+          "29022028",
+          "910001",
+          "KWD",
+          "10.125"
+        ],
+        [
+          "D",
+          "920001",
+          "beta@example.invalid",
+          "29022028",
+          "910002",
+          "KWD",
+          "20.005"
+        ]
+      ],
+      "file": "synthetic-legacy-hdt-advice.txt",
+      "sha256": "2f94b95764172b92da743833d6a2d9ddb62568f65ae280f2392e7c24262538e6",
+      "output": "H,T900001V1,1835395200\nD,920001,alpha@example.invalid,29022028,910001,KWD,10.125,\nD,920001,beta@example.invalid,29022028,910002,KWD,20.005,\nT,2,30.130",
+      "record_count": 2,
+      "total": "30.130",
+      "currency": "KWD",
+      "encoding": "UTF-8",
+      "bom": false,
+      "eol": "LF",
+      "bank_acceptance": "UNKNOWN",
+      "partial_rejection": {
+        "provider_format": null,
+        "proposal": "HOLD_UNKNOWN_PROVIDER_OUTCOME",
+        "paid_updates": []
+      }
+    },
+    {
+      "id": "legacy-abk-fhr-apo",
+      "kind": "text",
+      "evidence": [
+        "E03",
+        "E08"
+      ],
+      "fields": [
+        "record",
+        "synthetic_debit_account",
+        "origin_code",
+        "beneficiary",
+        "account",
+        "country_1",
+        "bank_code",
+        "country_2",
+        "country_3",
+        "country_4",
+        "country_5",
+        "country_6",
+        "currency",
+        "amount",
+        "payment_type",
+        "swift",
+        "purpose",
+        "reference",
+        "charges",
+        "empty_1",
+        "empty_2",
+        "empty_3",
+        "empty_4",
+        "empty_5",
+        "empty_6",
+        "empty_7"
+      ],
+      "rows": [
+        [
+          "APO",
+          "0000000000000",
+          "603",
+          "SYNTHETIC Alpha",
+          "0001",
+          "KW",
+          "ABKK",
+          "KW",
+          "KW",
+          "KW",
+          "KW",
+          "KW",
+          "KWD",
+          "10.125",
+          "WIB",
+          "TESTKW00XXX",
+          "OBS",
+          "S 910001",
+          "O",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "APO",
+          "0000000000000",
+          "603",
+          "تجريبي Beta",
+          "XX00TEST0000000000000000000002",
+          "KW",
+          "TEST",
+          "KW",
+          "KW",
+          "KW",
+          "KW",
+          "KW",
+          "KWD",
+          "20.005",
+          "KASIP",
+          "FAKEKW00XXX",
+          "OBS",
+          "S 910002",
+          "O",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ]
+      ],
+      "file": "synthetic-legacy-abk-fhr-apo.txt",
+      "sha256": "a07a83d6d9642159765b6e80e2160c22131d5b4869e3034a238508389783242e",
+      "output": "FHR,T900001V1,02/29/2028,2,30.130;\nAPO,0000000000000,603,SYNTHETIC Alpha,0001,KW,ABKK,KW,KW,KW,KW,KW,KWD,10.125,WIB,TESTKW00XXX,OBS,S 910001,O,,,,,,,;\nAPO,0000000000000,603,تجريبي Beta,XX00TEST0000000000000000000002,KW,TEST,KW,KW,KW,KW,KW,KWD,20.005,KASIP,FAKEKW00XXX,OBS,S 910002,O,,,,,,,;\n",
+      "record_count": 2,
+      "total": "30.130",
+      "currency": "KWD",
+      "encoding": "UTF-8",
+      "bom": false,
+      "eol": "LF",
+      "bank_acceptance": "UNKNOWN",
+      "partial_rejection": {
+        "provider_format": null,
+        "proposal": "HOLD_UNKNOWN_PROVIDER_OUTCOME",
+        "paid_updates": []
+      }
+    },
+    {
+      "id": "legacy-abk-workbook",
+      "kind": "decoded-export-cells",
+      "evidence": [
+        "E02",
+        "E35",
+        "E36",
+        "E37"
+      ],
+      "column_attributes": [
+        "DEBIT ACCOUNT",
+        "Name",
+        "candidate.candidate_iban",
+        "BENEFICIARY BANK ADDRESS",
+        "BENEFICIARY BANK NAME",
+        "BENEFICIARY BANK BRANCH ID",
+        "BENEFICIARY CITY",
+        "BENEFICIARY COUNTRY",
+        "BENEFICIARY ADDRESS 1",
+        "BENEFICIARY ADDRESS 2",
+        "TXN CURRENCY",
+        "Amount",
+        "Type",
+        "BENEFICIARY BANK IDENTIFIER",
+        "PURPOSE OF TRANSFER",
+        "PAYMENT DETAILS",
+        "Charge"
+      ],
+      "header_values": null,
+      "header_note": "Runtime getAttributeLabel(attribute); label ignored. Do not invent provider headers.",
+      "rows": [
+        [
+          "0000000000000",
+          "SYNTHETIC Current Alpha",
+          "0001",
+          "KW",
+          "001",
+          "KW",
+          "KW",
+          "Kuwait",
+          "KW",
+          "KW",
+          "KWD",
+          "10.125",
+          "Within Bank",
+          "TESTKW00XXX",
+          "Bill Settlement",
+          "S 910001",
+          "OUR"
+        ],
+        [
+          "0000000000000",
+          "SYNTHETIC Current Beta",
+          "XX00TEST0000000000000000000002",
+          "KW",
+          "002",
+          "KW",
+          "KW",
+          "Kuwait",
+          "KW",
+          "KW",
+          "KWD",
+          "20.005",
+          "Local Transfers",
+          "FAKEKW00XXX",
+          "Bill Settlement",
+          "S 910002",
+          "OUR"
+        ]
+      ],
+      "record_count": 2,
+      "total": "30.130",
+      "currency": "KWD",
+      "dates": "no date column",
+      "native_workbook_fidelity": "NOT_ESTABLISHED",
+      "bank_acceptance": "UNKNOWN",
+      "partial_rejection": {
+        "provider_format": null,
+        "proposal": "HOLD_UNKNOWN_PROVIDER_OUTCOME",
+        "paid_updates": []
+      }
+    },
+    {
+      "id": "aub-results",
+      "kind": "decoded-import-cells",
+      "evidence": [
+        "E15",
+        "E16"
+      ],
+      "header_row": 2,
+      "rows": [
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          "Credit Narrative",
+          "Status Description",
+          "Debit Narrative",
+          "Status",
+          "Section Index",
+          "Transfer Method",
+          "Credit Amount",
+          "Credit Currency",
+          "Exchange Rate",
+          "DealRefNo",
+          "Value Date",
+          "Debit Account No",
+          "Credit Account No",
+          "Payment Details 1",
+          "Payment Details 2",
+          "Payment Details 3",
+          "Payment Details 4",
+          "Beneficiary Name",
+          "Beneficiary Address Line 1",
+          "Beneficiary Address Line 2",
+          "Beneficiary Bank Name",
+          "Beneficiary Bank Address 1",
+          "Beneficiary Bank Address 2",
+          "Beneficiary Bank Address 3",
+          "Swift",
+          "Intermediary Account",
+          "Intermediary Swift",
+          "Intrmediary Name",
+          "Intermediary Address 1",
+          "Intermediary Address 2",
+          "Intermediary Address 3",
+          "Charges Type",
+          "Sort Code",
+          "BIC Code",
+          "IBAN",
+          "ABA Routing Code"
+        ],
+        [
+          "910001",
+          "SYNTHETIC-REF-1",
+          "920001",
+          "SUCCESS",
+          "S2",
+          "",
+          "10.125",
+          "KWD",
+          "1.000",
+          "",
+          "2028-02-29",
+          "0000000000000",
+          "XX00ABKK0000000000000000000001",
+          "",
+          "",
+          "",
+          "",
+          "SYNTHETIC Alpha",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "XX00ABKK0000000000000000000001",
+          ""
+        ],
+        [
+          "910002",
+          "SYNTHETIC-REF-2",
+          "920001",
+          "FAIL",
+          "S2",
+          "",
+          "20.005",
+          "KWD",
+          "1.000",
+          "",
+          "2028-02-29",
+          "0000000000000",
+          "XX00TEST0000000000000000000002",
+          "",
+          "",
+          "",
+          "",
+          "تجريبي Beta",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "XX00TEST0000000000000000000002",
+          ""
+        ]
+      ],
+      "record_count": 2,
+      "native_workbook_fidelity": "NOT_ESTABLISHED",
+      "observed_source_only": {
+        "preview_candidates": [
+          "910001"
+        ],
+        "preview_total": "10.125",
+        "preview_failed_line": "910002",
+        "preview_side_effect": "clears failed line and profile bank fields; unpaid notification possible",
+        "background_candidates_if_both_records_resolve": [
+          "910001",
+          "910002"
+        ],
+        "background_total_from_db": "30.130",
+        "execution": "NOT_RUN"
+      },
+      "proposed": {
+        "accepted": [
+          "910001"
+        ],
+        "rejected": [
+          "910002"
+        ],
+        "accepted_total": "10.125",
+        "rejected_total": "20.005",
+        "requires_authenticated_status_contract": true,
+        "paid_updates_without_provider_evidence": []
+      }
+    },
+    {
+      "id": "kfh-results",
+      "kind": "decoded-import-cells",
+      "evidence": [
+        "E16",
+        "E17"
+      ],
+      "header_row": 9,
+      "rows": [
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          "Refrence Number",
+          "Beneficiary Account",
+          "Amount",
+          "Transfer Currency",
+          "Exchange Rates",
+          "Beneficiary Name",
+          "Bank",
+          "Amount Deducted"
+        ],
+        [
+          "SYNTHETIC-REF-1",
+          "XX00ABKK0000000000000000000001",
+          "10.125",
+          "KWD",
+          "1.000",
+          "SYNTHETIC Alpha",
+          "SYNTHETIC Bank A",
+          "10.125"
+        ],
+        [
+          "SYNTHETIC-REF-2",
+          "XX00TEST0000000000000000000002",
+          "20.005",
+          "KWD",
+          "1.000",
+          "تجريبي Beta",
+          "SYNTHETIC Bank B",
+          "20.005"
+        ]
+      ],
+      "record_count": 2,
+      "native_workbook_fidelity": "NOT_ESTABLISHED",
+      "observed_source_only": {
+        "assumption": "each referenced row is success; latest matching unpaid line",
+        "total": "30.130",
+        "execution": "NOT_RUN"
+      },
+      "proposed": {
+        "partial_rejection": "UNKNOWN_NO_STATUS_GRAMMAR",
+        "ambiguous_match": "HOLD",
+        "duplicate_reference_with_another_unpaid_match": "HOLD",
+        "paid_updates_without_provider_evidence": []
+      }
+    },
+    {
+      "id": "bank-statement",
+      "kind": "decoded-import-cells",
+      "evidence": [
+        "E18",
+        "E39"
+      ],
+      "header_row": 8,
+      "rows": [
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          "Description",
+          "Debit",
+          "Credit"
+        ],
+        [
+          "IB/LOCAL/SYNTHETIC-REF-1/SYNTHETIC Alpha/SALARY 910001",
+          "10.125",
+          ""
+        ],
+        [
+          "IB/LOCAL/SYNTHETIC-REF-2/SYNTHETIC Beta/S 910002",
+          "19.005",
+          ""
+        ],
+        [
+          "SYNTHETIC service fee",
+          "1.000",
+          ""
+        ]
+      ],
+      "record_count": 3,
+      "native_workbook_fidelity": "NOT_ESTABLISHED",
+      "observed_source_only": {
+        "candidates": [
+          "910001",
+          "910002"
+        ],
+        "candidate_total": "30.130",
+        "matched_debit_total": "29.130",
+        "ignored_row": 3,
+        "execution": "NOT_RUN"
+      },
+      "proposed": {
+        "mismatch_line": "910002",
+        "discrepancy": "1.000",
+        "disposition": "HOLD_FINANCIAL_AGGREGATE",
+        "paid_updates": []
+      }
+    },
+    {
+      "id": "manual-results",
+      "kind": "decoded-import-cells",
+      "evidence": [
+        "E19",
+        "E21"
+      ],
+      "header_row": 1,
+      "rows": [
+        [
+          "Reference Number",
+          "Paid",
+          "Candidate ID",
+          "Candidate Total",
+          "Currency Code",
+          "Beneficiary Name"
+        ],
+        [
+          "SYNTHETIC-REF-1",
+          "Yes",
+          "930001",
+          "10.125",
+          "KWD",
+          "SYNTHETIC Alpha"
+        ],
+        [
+          "",
+          "Yes",
+          "930002",
+          "20.005",
+          "KWD",
+          "SYNTHETIC Beta"
+        ]
+      ],
+      "record_count": 2,
+      "native_workbook_fidelity": "NOT_ESTABLISHED",
+      "observed_source_only": {
+        "candidates": [
+          "910001"
+        ],
+        "total": "10.125",
+        "ignored_row": 2,
+        "execution": "NOT_RUN"
+      },
+      "proposed": {
+        "missing_reference": "EXPLICIT_REJECT",
+        "operator_assertion_not_bank_receipt": true,
+        "paid_updates_without_provider_evidence": []
+      }
+    }
+  ],
+  "malformed_cases": [
+    {
+      "id": "legacy-s123-comma",
+      "format": "legacy-s123",
+      "input_field": "SYNTHETIC,Broken",
+      "output": "S1,00000000,,MXD,M,,29/02/2028,29022028-01\nS2,LCL,10.125,KWD,,,,00000000,XX00ABKK0000000000000000000011,920001,910001,Internship 2 Hours,,,,SYNTHETIC,Broken,SYNTHETIC Bank A,,SYNTHETIC Bank A,SYNTHETIC Address A,,,TESTKW00,,,,,,,B,,,XX00ABKK0000000000000000000011,\nS2,TRF,20.005,KWD,,,,00000000,XX00TEST0000000000000000000012,920001,910002,Internship 3 Hours,,,,SYNTHETIC Current Beta,SYNTHETIC Bank B,,SYNTHETIC Bank B,SYNTHETIC Address B,,,FAKEKW00,,,,,,,B,,,XX00TEST0000000000000000000012,\nS3,2,30.130",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "legacy-s123-newline",
+      "format": "legacy-s123",
+      "input_field": "SYNTHETIC\nBroken",
+      "output": "S1,00000000,,MXD,M,,29/02/2028,29022028-01\nS2,LCL,10.125,KWD,,,,00000000,XX00ABKK0000000000000000000011,920001,910001,Internship 2 Hours,,,,SYNTHETIC\nBroken,SYNTHETIC Bank A,,SYNTHETIC Bank A,SYNTHETIC Address A,,,TESTKW00,,,,,,,B,,,XX00ABKK0000000000000000000011,\nS2,TRF,20.005,KWD,,,,00000000,XX00TEST0000000000000000000012,920001,910002,Internship 3 Hours,,,,SYNTHETIC Current Beta,SYNTHETIC Bank B,,SYNTHETIC Bank B,SYNTHETIC Address B,,,FAKEKW00,,,,,,,B,,,XX00TEST0000000000000000000012,\nS3,2,30.130",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "legacy-hdt-advice-comma",
+      "format": "legacy-hdt-advice",
+      "input_field": "SYNTHETIC,Broken",
+      "output": "H,T900001V1,1835395200\nD,920001,SYNTHETIC,Broken,29022028,910001,KWD,10.125,\nD,920001,beta@example.invalid,29022028,910002,KWD,20.005,\nT,2,30.130",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "legacy-hdt-advice-newline",
+      "format": "legacy-hdt-advice",
+      "input_field": "SYNTHETIC\nBroken",
+      "output": "H,T900001V1,1835395200\nD,920001,SYNTHETIC\nBroken,29022028,910001,KWD,10.125,\nD,920001,beta@example.invalid,29022028,910002,KWD,20.005,\nT,2,30.130",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "legacy-abk-fhr-apo-comma",
+      "format": "legacy-abk-fhr-apo",
+      "input_field": "SYNTHETIC,Broken",
+      "output": "FHR,T900001V1,02/29/2028,2,30.130;\nAPO,0000000000000,603,SYNTHETIC,Broken,0001,KW,ABKK,KW,KW,KW,KW,KW,KWD,10.125,WIB,TESTKW00XXX,OBS,S 910001,O,,,,,,,;\nAPO,0000000000000,603,تجريبي Beta,XX00TEST0000000000000000000002,KW,TEST,KW,KW,KW,KW,KW,KWD,20.005,KASIP,FAKEKW00XXX,OBS,S 910002,O,,,,,,,;\n",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "legacy-abk-fhr-apo-newline",
+      "format": "legacy-abk-fhr-apo",
+      "input_field": "SYNTHETIC\nBroken",
+      "output": "FHR,T900001V1,02/29/2028,2,30.130;\nAPO,0000000000000,603,SYNTHETIC\nBroken,0001,KW,ABKK,KW,KW,KW,KW,KW,KWD,10.125,WIB,TESTKW00XXX,OBS,S 910001,O,,,,,,,;\nAPO,0000000000000,603,تجريبي Beta,XX00TEST0000000000000000000002,KW,TEST,KW,KW,KW,KW,KW,KWD,20.005,KASIP,FAKEKW00XXX,OBS,S 910002,O,,,,,,,;\n",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "legacy-abk-fhr-apo-semicolon",
+      "format": "legacy-abk-fhr-apo",
+      "input_field": "SYNTHETIC;Broken",
+      "output": "FHR,T900001V1,02/29/2028,2,30.130;\nAPO,0000000000000,603,SYNTHETIC;Broken,0001,KW,ABKK,KW,KW,KW,KW,KW,KWD,10.125,WIB,TESTKW00XXX,OBS,S 910001,O,,,,,,,;\nAPO,0000000000000,603,تجريبي Beta,XX00TEST0000000000000000000002,KW,TEST,KW,KW,KW,KW,KW,KWD,20.005,KASIP,FAKEKW00XXX,OBS,S 910002,O,,,,,,,;\n",
+      "proposed": "HOLD_UNESCAPED_DELIMITER",
+      "bank_rejection": "UNKNOWN"
+    },
+    {
+      "id": "aub-results-missing-header",
+      "format": "aub-results",
+      "rows": [
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          "Credit Narrative",
+          "Status Description",
+          "Debit Narrative",
+          "Status",
+          "Section Index",
+          "Transfer Method",
+          "Credit Amount",
+          "Credit Currency",
+          "Exchange Rate",
+          "DealRefNo",
+          "Value Date",
+          "Debit Account No",
+          "Credit Account No",
+          "Payment Details 1",
+          "Payment Details 2",
+          "Payment Details 3",
+          "Payment Details 4",
+          "Beneficiary Name",
+          "Beneficiary Address Line 1",
+          "Beneficiary Address Line 2",
+          "Beneficiary Bank Name",
+          "Beneficiary Bank Address 1",
+          "Beneficiary Bank Address 2",
+          "Beneficiary Bank Address 3",
+          "Swift",
+          "Intermediary Account",
+          "Intermediary Swift",
+          "Intrmediary Name",
+          "Intermediary Address 1",
+          "Intermediary Address 2",
+          "Intermediary Address 3",
+          "Charges Type",
+          "Sort Code",
+          "BIC Code",
+          "IBAN"
+        ],
+        [
+          "910001",
+          "SYNTHETIC-REF-1",
+          "920001",
+          "SUCCESS",
+          "S2",
+          "",
+          "10.125",
+          "KWD",
+          "1.000",
+          "",
+          "2028-02-29",
+          "0000000000000",
+          "XX00ABKK0000000000000000000001",
+          "",
+          "",
+          "",
+          "",
+          "SYNTHETIC Alpha",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "XX00ABKK0000000000000000000001",
+          ""
+        ],
+        [
+          "910002",
+          "SYNTHETIC-REF-2",
+          "920001",
+          "FAIL",
+          "S2",
+          "",
+          "20.005",
+          "KWD",
+          "1.000",
+          "",
+          "2028-02-29",
+          "0000000000000",
+          "XX00TEST0000000000000000000002",
+          "",
+          "",
+          "",
+          "",
+          "تجريبي Beta",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "XX00TEST0000000000000000000002",
+          ""
+        ]
+      ],
+      "proposed": "HOLD_HEADER_ROW_WIDTH",
+      "observed": "array_combine/header validation not a safe schema contract"
+    },
+    {
+      "id": "kfh-results-missing-header",
+      "format": "kfh-results",
+      "rows": [
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          "Refrence Number",
+          "Beneficiary Account",
+          "Amount",
+          "Transfer Currency",
+          "Exchange Rates",
+          "Beneficiary Name",
+          "Bank"
+        ],
+        [
+          "SYNTHETIC-REF-1",
+          "XX00ABKK0000000000000000000001",
+          "10.125",
+          "KWD",
+          "1.000",
+          "SYNTHETIC Alpha",
+          "SYNTHETIC Bank A",
+          "10.125"
+        ],
+        [
+          "SYNTHETIC-REF-2",
+          "XX00TEST0000000000000000000002",
+          "20.005",
+          "KWD",
+          "1.000",
+          "تجريبي Beta",
+          "SYNTHETIC Bank B",
+          "20.005"
+        ]
+      ],
+      "proposed": "HOLD_HEADER_ROW_WIDTH",
+      "observed": "array_combine/header validation not a safe schema contract"
+    },
+    {
+      "id": "bank-statement-missing-header",
+      "format": "bank-statement",
+      "rows": [
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null
+        ],
+        [
+          "Description",
+          "Debit"
+        ],
+        [
+          "IB/LOCAL/SYNTHETIC-REF-1/SYNTHETIC Alpha/SALARY 910001",
+          "10.125",
+          ""
+        ],
+        [
+          "IB/LOCAL/SYNTHETIC-REF-2/SYNTHETIC Beta/S 910002",
+          "19.005",
+          ""
+        ],
+        [
+          "SYNTHETIC service fee",
+          "1.000",
+          ""
+        ]
+      ],
+      "proposed": "HOLD_HEADER_ROW_WIDTH",
+      "observed": "array_combine/header validation not a safe schema contract"
+    },
+    {
+      "id": "manual-results-missing-header",
+      "format": "manual-results",
+      "rows": [
+        [
+          "Reference Number",
+          "Paid",
+          "Candidate ID",
+          "Candidate Total",
+          "Currency Code"
+        ],
+        [
+          "SYNTHETIC-REF-1",
+          "Yes",
+          "930001",
+          "10.125",
+          "KWD",
+          "SYNTHETIC Alpha"
+        ],
+        [
+          "",
+          "Yes",
+          "930002",
+          "20.005",
+          "KWD",
+          "SYNTHETIC Beta"
+        ]
+      ],
+      "proposed": "HOLD_HEADER_ROW_WIDTH",
+      "observed": "array_combine/header validation not a safe schema contract"
+    }
+  ],
+  "money_cases": [
+    {
+      "id": "zero",
+      "value": "0.000",
+      "proposed": "ACCEPT_SYNTHETIC_DECIMAL",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    },
+    {
+      "id": "minimum",
+      "value": "0.001",
+      "proposed": "ACCEPT_SYNTHETIC_DECIMAL",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    },
+    {
+      "id": "maximum",
+      "value": "9999999.999",
+      "proposed": "ACCEPT_SYNTHETIC_DECIMAL",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    },
+    {
+      "id": "overflow",
+      "value": "10000000.000",
+      "proposed": "HOLD_RANGE",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    },
+    {
+      "id": "negative",
+      "value": "-0.001",
+      "proposed": "HOLD_PAYMENT_POLICY",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    },
+    {
+      "id": "extra-scale",
+      "value": "10.1254",
+      "proposed": "HOLD_SCALE",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    },
+    {
+      "id": "not-number",
+      "value": "10x",
+      "proposed": "HOLD_DECIMAL",
+      "evidence": [
+        "E40",
+        "E52"
+      ]
+    }
+  ],
+  "date_cases": [
+    {
+      "value": "2028-02-29",
+      "valid": true
+    },
+    {
+      "value": "2027-02-29",
+      "valid": false
+    },
+    {
+      "value": "2028-12-31",
+      "valid": true
+    },
+    {
+      "value": "2029-01-01",
+      "valid": true
+    },
+    {
+      "value": "2028-13-01",
+      "valid": false
+    }
+  ],
+  "semantic_cases": [
+    {
+      "id": "aub-unknown-status",
+      "format": "aub-results",
+      "change": {
+        "Status": "PENDING_SYNTHETIC"
+      },
+      "legacy_background": "nonempty status admitted",
+      "proposed": "HOLD_UNKNOWN_STATUS"
+    },
+    {
+      "id": "kfh-duplicate-with-unpaid-match",
+      "format": "kfh-results",
+      "repeat_reference": "SYNTHETIC-REF-1",
+      "matching_unpaid_ids": [
+        "910001",
+        "910003"
+      ],
+      "legacy": "latest unpaid match wins before duplicate lookup",
+      "proposed": "HOLD_AMBIGUOUS_MATCH"
+    },
+    {
+      "id": "statement-credit",
+      "format": "bank-statement",
+      "change": {
+        "Description": "IB/LOCAL/SYNTHETIC-REF-3/SYNTHETIC/S 910001",
+        "Debit": "",
+        "Credit": "10.125"
+      },
+      "legacy": "tc_id can resolve without direction check",
+      "proposed": "HOLD_DIRECTION"
+    },
+    {
+      "id": "manual-header-typo",
+      "format": "manual-results",
+      "exported_attribute": "Refrence Number",
+      "required_import_header": "Reference Number",
+      "proposed": "HOLD_HEADER"
+    },
+    {
+      "id": "abk-workbook-currency",
+      "format": "legacy-abk-workbook",
+      "input_currency": "USD",
+      "output_currency": "KWD",
+      "proposed": "HOLD_CURRENCY"
+    },
+    {
+      "id": "s123-parent-currency",
+      "format": "legacy-s123",
+      "input_line_currency": "KWD",
+      "input_parent_currency": "USD",
+      "output_currency": "USD",
+      "proposed": "HOLD_CURRENCY"
+    },
+    {
+      "id": "selected-subset",
+      "format": "aub-results",
+      "selected_ids": [
+        "910001"
+      ],
+      "whole_file_ids": [
+        "910001",
+        "910002"
+      ],
+      "initial_file_total": "10.125",
+      "background_potential_total": "30.130",
+      "proposed": "HOLD_SELECTION_MISMATCH"
+    },
+    {
+      "id": "abk-workbook-formula-name",
+      "format": "legacy-abk-workbook",
+      "input_name": "=1+1",
+      "cell_value_input": "=1+1",
+      "legacy": "setCellValue automatic binding; not executed",
+      "proposed": "HOLD_FORMULA"
+    },
+    {
+      "id": "same-artifact-retry",
+      "key": "SYNTHETIC-BATCH-1",
+      "same_digest": true,
+      "proposed": "RETURN_EXISTING_RECEIPT"
+    },
+    {
+      "id": "same-key-changed-body",
+      "key": "SYNTHETIC-BATCH-1",
+      "same_digest": false,
+      "proposed": "HOLD_CONFLICT"
+    },
+    {
+      "id": "unknown-delivery-outcome",
+      "key": "SYNTHETIC-BATCH-1",
+      "provider_response": null,
+      "proposed": "HOLD_NO_RESUBMISSION",
+      "paid_updates": []
+    }
+  ]
+}
