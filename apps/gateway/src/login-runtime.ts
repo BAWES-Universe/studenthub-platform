@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
-import { PostgresAuthzStore, PostgresLoginStore } from "@studenthub/db";
+import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -20,6 +20,7 @@ import { createLoginApplication } from "./login-application.js";
 import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
+import { createLanguagePreference } from "./language-preference.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -195,9 +196,13 @@ export function createRuntimeLoginFromEnv(
   const allowedReturnUrls = value("LOGIN_ALLOWED_RETURN_URLS").split(",").map((item) =>
     exactHttpsUrl(item.trim(), "LOGIN_ALLOWED_RETURN_URLS"));
 
+  // SHU-84: the first safe write is off unless its own signing key is set. The
+  // deployment does not pass this variable, so no deployed gateway writes.
+  const safeWriteKey = safeWriteSigningKey(env.SAFE_WRITE_SIGNING_KEY);
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles });
+  const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -233,6 +238,9 @@ export function createRuntimeLoginFromEnv(
       ...application,
       navigation: createContextNavigation(loginStore.sessions, authzStore, organizations),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations),
+      ...(safeWrites && safeWriteKey
+        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
+        : {}),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
@@ -245,9 +253,19 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close()]);
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close()]);
     },
   };
+}
+
+/** Base64 of at least 32 random bytes, exactly as encoded; anything else refuses to start. */
+function safeWriteSigningKey(raw: string | undefined): Buffer | undefined {
+  if (raw === undefined) return undefined;
+  const key = Buffer.from(raw, "base64");
+  if (key.toString("base64") !== raw || key.length < 32) {
+    throw new Error("SAFE_WRITE_SIGNING_KEY must be base64 of at least 32 bytes");
+  }
+  return key;
 }
 
 function exactHttpsUrl(raw: string, name: string): string {
