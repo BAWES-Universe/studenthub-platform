@@ -12,15 +12,16 @@ const mutations = [
   ["M2 worker Git directory", "workspace-result.mjs", '"--git-dir", dir, "--work-tree", worktree', '"--git-dir", path.join(worktree,".git"), "--work-tree", worktree', "filters, hooks"],
   ["M3 worker index", "workspace-result.mjs", 'const indexFile = path.join(dir, "snapshot-index");', 'const indexFile = path.join(worktree, ".git/index");', "filters, hooks"],
   ["M4 wrong parent", "workspace-result.mjs", 'tree, "-p", target_sha,', 'tree,', "host commits raw files"],
-  ["M5 empty result", "workspace-result.mjs", 'if (tree === original) throw', 'if (false) throw', "refuses empty"],
+  ["M5 empty result", "workspace-result.mjs", 'if (tree === original) {', 'if (false) {', "refuses empty"],
   ["M6 dirty race", "push-broker.mjs", '} else if (workspaceReady) {', '} else if (workspaceReady) { cleanOk = true; } else if (workspaceReady) {', "refuses raced"],
-  ["M7 broker HOLD promotion", "adapters/codex-cli.mjs", 'if (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? ""))) {', 'if (false) {', "callback is bound"],
+  ["M7 broker HOLD promotion", "adapters/codex-cli.mjs", 'if (!unchanged && (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? "")))) {', 'if (false) {', "callback is bound"],
   ["M8 network enabled", "adapters/codex-cli.mjs", 'sandbox_workspace_write.network_access=false', 'sandbox_workspace_write.network_access=true', "model choices"],
   ["M9 nondeterministic retry", "workspace-result.mjs", '`StudentHub worker result ${attempt_id}`', '`StudentHub worker result ${attempt_id} ${randomUUID()}`', "host commits raw files"],
   ["M10 wrong tree", "workspace-result.mjs", 'const tree = (await git("write-tree")).trim();', 'const tree = (await git("rev-parse", `${target_sha}^{tree}`)).trim();', "host commits raw files"],
   ["M11 premium builder", "adapters/codex-cli.mjs", 'CODEX_MODEL = "gpt-5.6-sol"', 'CODEX_MODEL = "gpt-6"', "model choices"],
   ["M12 premium reviewer", "adapters/claude-code.mjs", 'CLAUDE_MODEL = "opus"', 'CLAUDE_MODEL = "fable"', "model choices"],
-  ["M13 expiry at publication", "push-broker.mjs", 'if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");\n  } catch', 'if (false) return held("result authorization expired or revoked");\n  } catch', "expiry during snapshot"],
+  ["M13 expiry at publication", "push-broker.mjs", 'if (verdict !== true) return revoked(verdict);\n  } catch', 'if (false) return revoked(verdict);\n  } catch', "expiry during snapshot"],
+  ["M14 empty after binding", "workspace-result.mjs", 'if (fs.lstatSync(path.join(stateDir, `workspace-result-${attempt_id}.json`), { throwIfNoEntry: false })) {', 'if (false) {', "AFTER_BINDING"],
 ];
 
 for (const [name, file, before, after, pattern] of mutations) {

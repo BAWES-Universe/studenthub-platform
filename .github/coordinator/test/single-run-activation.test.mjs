@@ -7,12 +7,13 @@
 // observable behaviour is "sometimes allows dispatch" is indistinguishable from a
 // hole.
 //
-// The target and contract values are READ FROM the committed config rather than
-// hardcoded, so this suite follows the configuration instead of pinning a second,
-// silently-diverging copy of it.
+// The single-run fixture retains one issue and one slot while committed selection
+// supports two lanes. All other config, including the disabled gate and the lane
+// contract, is read from disk. two-fixture-lanes.test.mjs covers the actual config.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -21,6 +22,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ACTIVATION_ID_RE,
   MAX_ACTIVATION_WINDOW_MS,
+  MIN_TMP_FREE_BYTES,
+  tmpFloorRefusal,
   SINGLE_RUN_ACTIVATION_KEYS,
   parseActivationArgs,
   renderActivationLine,
@@ -42,7 +45,8 @@ import {
 
 const COORDINATOR_DIR = fileURLToPath(new URL("..", import.meta.url));
 const CONFIG_PATH = join(COORDINATOR_DIR, "config.json");
-const COMMITTED = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+const COMMITTED = { ...JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")),
+  max_dispatch: 1, dispatch_scope: { issue_ids: ["SHU-140"] } };
 const TARGET = COMMITTED.dispatch_scope.issue_ids[0];
 const CONTRACT = COMMITTED.fixture_lane.authorization_ref;
 const OTHER_ISSUE = "SHU-999";
@@ -210,6 +214,16 @@ test("SHU-63 activation ARMED: arms one run, and still requires the runtime swit
   // disk cannot arm anything by itself.
   assert.equal(dispatchEnabledFor(NO_SWITCH, COMMITTED, status), false, "the runtime switch is still required");
   assert.match(renderActivationLine(status), /^activation=ARMED /);
+});
+
+test("SHU71_TMP_FLOOR: a launch needs room to publish, and an armed activation never depends on it", () => {
+  const withFree = (bytes) => tmpFloorRefusal({ tmpFreeBytes: () => bytes });
+  assert.equal(withFree(MIN_TMP_FREE_BYTES), null, "exactly the floor launches");
+  assert.match(withFree(943_656 * 1024), /^only 921 MiB free in .+; a launch needs at least 1024 MiB$/);
+  assert.match(withFree(null), /could not be read \(fail closed\)$/);
+  // The status is re-read before a finished result is published; a short /tmp
+  // must not turn that check into a refusal (reconcile.mjs checks the floor).
+  assert.equal(statusOf({}, { io: { tmpFreeBytes: () => 0 } }).state, "armed");
 });
 
 // ---------------------------------------------------------------------------
@@ -605,7 +619,10 @@ test("SHU-63 activation: the RUNNING revision is what bounds an activation, end 
   const { dir, file } = makeFile(record());
   const out = [];
   try {
+    const configPath = join(dir, "config.json");
+    fs.writeFileSync(configPath, JSON.stringify(COMMITTED));
     const code = await main(["--activation", file], SWITCH_ON, {
+      configPath,
       skipActivationPreflight: true,
       openPRsOverride: [],
       stdout: (s) => out.push(s),
@@ -626,7 +643,10 @@ test("SHU-63 activation: a REFUSED activation exits 2, says why, and writes noth
   const { dir, file } = makeFile(record({ slots: 2 }));
   const out = [];
   try {
+    const configPath = join(dir, "config.json");
+    fs.writeFileSync(configPath, JSON.stringify(COMMITTED));
     const code = await main(["--activation", file], SWITCH_ON, {
+      configPath,
       skipActivationPreflight: true,
       openPRsOverride: [],
       stdout: (s) => out.push(s),
@@ -672,7 +692,7 @@ function episodeStore(issueNodes, commentBodies, now) {
   return async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: issueNodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(issueNodes, () => commentBodies) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const known = issueNodes.some((n) => n.id === issueId || n.identifier === issueId);
@@ -890,7 +910,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as mod from MODULE_URL;
-const COMMITTED = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+const COMMITTED = { ...JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")),
+  max_dispatch: 1, dispatch_scope: { issue_ids: ["SHU-140"] } };
 const TARGET = COMMITTED.dispatch_scope.issue_ids[0];
 const CONTRACT = COMMITTED.fixture_lane.authorization_ref;
 const REV = ${JSON.stringify(REVISION)};

@@ -1,0 +1,83 @@
+{
+  "base": "b14174c5d6dd57982e71f69469bd2583d72b0713",
+  "tested_source_commit": "d44caea101d482ad7c6036649b9a12be8a5861fd",
+  "branch": "fix/execution-closure",
+  "scope": "Repository-only; no production host acceptance or actual owner signature claimed",
+  "checks": [
+    {
+      "log": "focused.tap",
+      "tests": 424,
+      "pass": 424,
+      "fail": 0,
+      "skipped": 0,
+      "sha256": "ebaff260525840c6c8487e54a67e2b8e3b3da82271a6e8c90127e537144a98f1"
+    },
+    {
+      "log": "approval-final.tap",
+      "tests": 6,
+      "pass": 6,
+      "fail": 0,
+      "skipped": 0,
+      "sha256": "8017beb55e168f1297c9005ce4f257bb488190f0d0a9610d71b8106dcf25a7de"
+    },
+    {
+      "log": "service-final.tap",
+      "tests": 10,
+      "pass": 10,
+      "fail": 0,
+      "skipped": 0,
+      "sha256": "d85121eb163c6afd5367d701c05bee777ecd8864f07f83373c84282410afb11b"
+    },
+    {
+      "log": "env-final.tap",
+      "tests": 19,
+      "pass": 19,
+      "fail": 0,
+      "skipped": 0,
+      "sha256": "29c98bebc34e6b68d6875f5a8667843ae439e32bf3ac5956683e0a8e2fa2446d"
+    },
+    {
+      "log": "default-tmp-controls.tap",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0,
+      "sha256": "014ccebbe899c12687c4051b347c7ae2abb61c76fcbf4c2e22f1a151da5e7a5a"
+    },
+    {
+      "log": "inventory-d44caea.tap",
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0,
+      "sha256": "4f3657aa358386ae26f46f9359a14c59157cab336c5d6e8447e984b77b989d30"
+    }
+  ],
+  "inventory": {
+    "files": 101,
+    "outcomes_including_guard": 2785,
+    "zero_unpermitted_skips": true,
+    "all_prior_test_names_retained": true,
+    "namespace_requirement_rows": 0
+  },
+  "permitted_skips": {
+    "entries": 8,
+    "byte_identical_to_base": true,
+    "declaration_sha256": "9d6eebfd832d8e76650aefd725c11059af1b0ab5a05c1d2adfee3269c456607f"
+  },
+  "ci_untouched": true,
+  "synthetic_canonical_sha256": "75f655a743573fd324bd811ee85680bd27e60776aa69875e5ca4c04da870687b",
+  "owner_items": {
+    "1": "OPEN",
+    "2": "PROVEN (repository scope)",
+    "3": "PROVEN (repository scope)",
+    "4": "PROVEN (repository scope)",
+    "5": "PARTIAL",
+    "6": "OPEN"
+  },
+  "remaining": [
+    "Actual settled activation package, activation ID/time bounds and final driver/window specs not supplied",
+    "Actual per-activation SHU71 owner approval and separate lifecycle approval/signatures/key bindings not validated",
+    "Live prerequisite provisioning, network credentials and systemd acceptance unverified; no host contact permitted"
+  ]
+}

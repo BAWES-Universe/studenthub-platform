@@ -1,0 +1,304 @@
+{
+  "scope": "Repeat audit of existing ce564a2 merge; no new merge performed",
+  "merge": "ce564a29ca5cdf71ce6c0eee3be5ea0bde3753cf",
+  "branch_parent": "746976a6afd9834f231feeec22c9329a6a6e4682",
+  "main_parent": "8a613c42d166fcab5497060ead168d7941542b60",
+  "base": "2348c026e44240ebf1622781a8bd0d6b56394790",
+  "paths": [
+    {
+      "path": ".github/coordinator/attempt-workspace.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/ACTIVATION-WINDOW-RECONCILIATION.md",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/README.md",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/SHU71-B1-COMPOSITION.md",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/SHU71-L3-CLOSURE.md",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/SHU71-L3-TESTS.json",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/SHU71-R8-STATE-MODEL.md",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/SHU71-R8-VALIDATION.json",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/check-status.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/coordinator-tick.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/credential-delivery.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/fixture-evidence-broker.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/fixture-evidence-client.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/shu-coordinator.service.in",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/shu-supervisor.service.in",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/shu71-journal.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/shu71-production.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/environment-content-mutations.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/0eeadd5f05abc8cd82968a855b2bff8cc137c65a/shu71-journal.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/0eeadd5f05abc8cd82968a855b2bff8cc137c65a/shu71-production.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/5e25c651254a72adbb46fa8f950df95248b640e9/shu71-journal.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/5e25c651254a72adbb46fa8f950df95248b640e9/shu71-production.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/README.md",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/e9a68c156a0b8631b314d8d14c626ba31014a882/shu71-journal.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/e9a68c156a0b8631b314d8d14c626ba31014a882/shu71-production.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/fixtures/shu71-history/sha256.json",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/service.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-composition.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-delivery.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-history.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-history.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-production-fixture.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-production.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r4-differential.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r4-mutants.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r5-checks.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r5-mutants.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r6-checks.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r7-checks.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r8-differential.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r8-mutants.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-r8-state-model.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-recovery-checks.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-supervisor-environment-fixture.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-trust-checks.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/test/shu71-trust.test.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/service/units.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/shu71-activation-package.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/supervisor-authorization.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/supervisor-dispatch.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/supervisor-worker.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/test/fixture/shu71-package.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    },
+    {
+      "path": ".github/coordinator/two-fixture-evidence.mjs",
+      "disposition": "lane retained",
+      "reverted_to_base": false
+    }
+  ]
+}

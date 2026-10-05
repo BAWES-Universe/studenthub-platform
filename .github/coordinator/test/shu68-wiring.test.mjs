@@ -15,6 +15,7 @@
 //     assert a terminal verdict under disabled dispatch still posts nothing).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { writeFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,6 +69,7 @@ function tempConfig() {
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
     linear_callback_actor_ids: [TRUSTED_CALLBACK_ACTOR],
+    linear_receipt_actor_ids: [TRUSTED_CALLBACK_ACTOR],
     max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   };
@@ -87,7 +89,7 @@ function persistentStore(issueNodes, commentBodies) {
     assert.equal(url, "https://api.linear.app/graphql");
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: issueNodes } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments(issueNodes, () => commentBodies) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const nodes = issueNodes.some((n) => n.id === issueId || n.identifier === issueId) ? [...commentBodies] : [];
@@ -98,7 +100,7 @@ function persistentStore(issueNodes, commentBodies) {
       if (issueId !== issueNodes[0].id && !issueNodes.some((n) => n.id === issueId)) {
         throw new Error(`NON-UUID comment write attempted (${issueId}) — real Linear mutations require the issue UUID`);
       }
-      commentBodies.push({ body, createdAt: tick() });
+      commentBodies.push({ body, createdAt: tick(), user: { id: TRUSTED_CALLBACK_ACTOR } });
       return respond({ commentCreate: { success: true, comment: { id: "c-" + commentBodies.length } } });
     }
     throw new Error(`unexpected query: ${query.slice(0, 80)}`);
@@ -603,7 +605,8 @@ test("wiring: a polled COMPLETED build with an eligible reviewer posts the revie
     external_run_id: "apirun_wire_review",
     last_activity: "2026-09-05T09:30:00.000Z",
   });
-  comments.push({ body: receiptCommentBody(reviewerReceipt), createdAt: "2026-09-05T09:31:00.000Z" });
+  comments.push({ body: receiptCommentBody(reviewerReceipt), createdAt: "2026-09-05T09:31:00.000Z",
+    user: { id: TRUSTED_CALLBACK_ACTOR } });
   const builderRunning = seededReceipt({
     stage: "RUNNING",
     requested_worker: "codex-builder",
@@ -612,7 +615,8 @@ test("wiring: a polled COMPLETED build with an eligible reviewer posts the revie
     external_run_id: "apirun_wire_1",
     last_activity: "2026-09-05T09:40:00.000Z",
   });
-  comments.push({ body: receiptCommentBody(builderRunning), createdAt: "2026-09-05T09:41:00.000Z" });
+  comments.push({ body: receiptCommentBody(builderRunning), createdAt: "2026-09-05T09:41:00.000Z",
+    user: { id: TRUSTED_CALLBACK_ACTOR } });
 
   // Worker posts BUILD_READY + result_sha; poll completes. On THIS reconcile the
   // lifecycle pass transitions RUNNING -> COMPLETED and persists the DURABLE
@@ -671,7 +675,8 @@ test("wiring: no eligible reviewer -> visible hold, ZERO directives posted", asy
     external_run_id: "apirun_wire_1",
     last_activity: "2026-09-05T09:40:00.000Z",
   });
-  comments.push({ body: receiptCommentBody(builderRunning), createdAt: "2026-09-05T09:41:00.000Z" });
+  comments.push({ body: receiptCommentBody(builderRunning), createdAt: "2026-09-05T09:41:00.000Z",
+    user: { id: TRUSTED_CALLBACK_ACTOR } });
   comments.push(callbackComment(builderRunning.attempt_id, { result_sha: SHA2 }));
   wa.setPoll({ status: "completed", agent_id: "codex:s1" });
   const runReconcile = async (out) =>

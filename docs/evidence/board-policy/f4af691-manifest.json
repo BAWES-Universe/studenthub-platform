@@ -1,0 +1,22 @@
+{
+  "base": "00eb979800b5ef6dfb918b57002d167802238612",
+  "measurement": "repository-reference-ban-v1; not Linear integration behavior",
+  "command": "umask 0002; node --test .github/policy/test/*.test.mjs",
+  "tests": 30,
+  "pass": 30,
+  "fail": 0,
+  "skipped": 0,
+  "cli_probes": 25,
+  "refused": 19,
+  "accepted": 6,
+  "mutations_killed": 2,
+  "linear_completion_guard": "UNRESOLVED",
+  "sha256": {
+    ".github/policy/acceptance-metadata.mjs": "f4a584bff53c6ae1d27d51f8d4b3d7c7c7807944ab188e30cd285f65897233f9",
+    ".github/policy/probes.mjs": "7e2654d204c28cfa6d1ea386106702b7eaf79f5c6e87e6e6f16f52552fd0f581",
+    ".github/policy/test/acceptance-metadata.test.mjs": "ebffbf81fb799e66833ae4bcdf7d0ec6cb6bc3c567fa39fa0182f2b9102542b4",
+    ".github/workflows/repository-policy.yml": "2271722aa08186cb9b5737ea232a522dffdd598158eaa88b0c342438e3136f49",
+    ".github/pull_request_template.md": "e11c2b2ee59a6ff68bdd49b40dddf702530422515e3c824e0d7c2ea83a027fa4",
+    "docs/evidence/board-policy/focused.tap": "da205bdb40d24e45c39a014659aee60ebee744eb15e2c9dd9bf5262634055427"
+  }
+}

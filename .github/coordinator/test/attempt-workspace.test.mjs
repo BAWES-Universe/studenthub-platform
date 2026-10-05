@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { prepareAttemptWorkspace, workspaceFailureCode } from "../attempt-workspace.mjs";
@@ -43,7 +44,7 @@ function setup() {
   git(seed, "push", remote, "HEAD:refs/heads/coordinator/SHU-140");
   const root = path.join(dir, "workspaces"), state = path.join(dir, "state"), bin = path.join(dir, "bin");
   fs.mkdirSync(root); fs.chmodSync(root, 0o3770); fs.mkdirSync(state, { mode: 0o700 }); fs.mkdirSync(bin);
-  const env = { ...process.env, SHU_WORKTREE_ROOT: root, SHU_WORKSPACE_STATE_DIR: state,
+  const env = { ...process.env, SHU_WORKTREE_ROOT: root, SHU_WORKSPACE_STATE_DIR: state, SHU_REVIEW_EVIDENCE_DIR: state,
     SHU_PUSH_REMOTE_URL: `file://${remote}`, SHU_WORKER_UID: "65534", SHU_WORKER_LAUNCH_WRAPPER: wrapper,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir, SHU_PUSH_BROKER_ENABLED: "true" };
   const receipt = (over = {}) => ({ attempt_id: randomUUID(), issue_id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
@@ -55,8 +56,8 @@ function setup() {
         for (const name of fs.readdirSync(root)) {
           const target = path.join(root, name);
           if (!fs.lstatSync(target).isSymbolicLink() && fs.statSync(target).uid === 65534) {
-            execFileSync(switchCommand[0], [...switchCommand.slice(1), "chmod", "-R", "u+w", target]);
-            execFileSync(switchCommand[0], [...switchCommand.slice(1), "rm", "-rf", "--", target]);
+            execFileSync(switchCommand[0], [...switchCommand.slice(1), nodeBin, "-e",
+              "const fs=require('node:fs'),path=require('node:path');function writable(p){const s=fs.lstatSync(p);if(s.isSymbolicLink())return;fs.chmodSync(p,s.mode|0o200);if(s.isDirectory())for(const n of fs.readdirSync(p))writable(path.join(p,n));}writable(process.argv[1]);fs.rmSync(process.argv[1],{recursive:true,force:true});", target]);
           }
         }
       }
@@ -185,7 +186,8 @@ function installCliDoubles(f, workspaceReady = false) {
     console.log(JSON.stringify({type:'turn.completed'}));
     `;
   const reviewer = common + `
-    const round=Number(fs.readFileSync('round','utf8'));console.log(JSON.stringify({type:'result',subtype:'success',session_id:attempt,structured_output:{attempt_id:attempt,target_sha:target,stage:round===1?'BLOCKED':'PASS',links:['https://example.invalid/fixture-evidence']}}));`;
+    const evidence=/Confined exact-head test evidence URI \\(machine provenance only; do not Read\\): (file:\\/\\/\\/[^\\s]+)/.exec(prompt)[1];
+    const round=Number(fs.readFileSync('round','utf8'));console.log(JSON.stringify({type:'result',subtype:'success',session_id:attempt,structured_output:{attempt_id:attempt,target_sha:target,stage:round===1?'BLOCKED':'PASS',links:[evidence,'https://example.invalid/fixture-evidence']}}));`;
   for (const [name, body] of [["codex", writer], ["claude", reviewer]]) {
     fs.writeFileSync(path.join(f.bin, name), `#!${nodeBin}\n${body}\n`, { mode: 0o755 });
   }
@@ -202,17 +204,22 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
     const observedAdapter = (mod, additions = {}) => ({ ...mod, async launchBuilder(options) {
       const result=await mod.launchBuilder({ ...options, ...additions }); adapterResults.push(result); return result;
     } });
-    const reviewEvidenceImpl = async ({ target_sha }) => ({
-      executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
-      evidence_link: `file:///coordinator-private/${target_sha}.review-test.json`,
-      report: {
+    const reviewEvidenceImpl = async ({ target_sha }) => {
+      const evidencePath = path.join(f.state, `${target_sha}.review-test.json`);
+      fs.writeFileSync(evidencePath, "{}", { mode: 0o600 });
+      return {
+        executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+        isolation_wrapper: [path.join(f.bin, "claude")],
+        evidence_link: pathToFileURL(evidencePath).href,
+        report: {
         version: "1.0.0", target_sha, test_files: ["fixture.test.mjs"],
         expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
         sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED",
         network_probe: "DENIED", forbidden_env_keys: [],
         tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
-      },
-    });
+        },
+      };
+    };
     const io = { adapterModules: { "codex-cli": observedAdapter(codex), "claude-code": observedAdapter(claude, { reviewEvidenceImpl }) }, codexStateDir: f.state,
       prepareWorkspace: (options) => {
         assert.ok(h.receipts().some(r => r.attempt_id === options.receipt.attempt_id && r.stage === "LAUNCH_UNKNOWN"), "reservation and launch intent precede preparation");
@@ -225,7 +232,8 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
             const p=path.join(dir,name); if(fs.lstatSync(p).isDirectory())protect(p); else fs.chmodSync(p,0o444);
           } fs.chmodSync(dir,0o555); };
           if (process.getuid() === 0) protect(metadata);
-          else execFileSync(switchCommand[0],[...switchCommand.slice(1),"chmod","-R","a-w",metadata]);
+          else execFileSync(switchCommand[0],[...switchCommand.slice(1),nodeBin,"-e",
+            "const fs=require('node:fs'),path=require('node:path');function protect(p){const s=fs.lstatSync(p);if(s.isSymbolicLink())return;if(s.isDirectory())for(const n of fs.readdirSync(p))protect(path.join(p,n));fs.chmodSync(p,s.mode&~0o222);}protect(process.argv[1]);",metadata]);
         }
         snapshots.push({ ...options.receipt, cwd: workspace.cwd }); return workspace;
       },
@@ -356,7 +364,7 @@ test("SHU-227: generated schema is worker-readable while session authority remai
     await codex.launchBuilder({ ...r, cwd: f.seed, env: f.env, execFileImpl, io: { codexStateDir:f.state, pushBrokerEnabled:false } });
     assert.ok(schemaPath, "real checkout check reached schema/CLI boundary");
     assert.equal(path.dirname(path.dirname(schemaPath)),"/tmp","schema must not inherit a private TMPDIR");
-    assert.deepEqual(observed,[0o755,0o644,0o700,codex.CALLBACK_SCHEMA],"schema is readable by worker; session state is private");
+    assert.deepEqual(observed,[0o755,0o644,0o700,JSON.parse(JSON.stringify(codex.callbackSchemaFor(r.scope_phase)))],"schema is readable by worker; session state is private");
     assert.equal(fs.existsSync(schemaPath), false, "public schema cleaned after invocation");
   } finally { if(previousTmp===undefined)delete process.env.TMPDIR;else process.env.TMPDIR=previousTmp;f.cleanup(); }
 });
@@ -384,13 +392,13 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
     { file:"adapters/codex-cli.mjs", from:'fs.mkdtempSync("/tmp/shu-codex-schema-")', to:'fs.mkdtempSync(path.join(tmpdir(), "shu-codex-schema-"))', test:"generated schema is worker-readable", reason:/AssertionError/ },
     { file:"reconcile.mjs", from:'if (launch.stage === "HOLD" && launch.pause_adapter === true)', to:'if (false)', test:"broker refusal cannot promote", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:'receipt.attempt_id + ".workspace.json"', to:'receipt.attempt_id + ".json"', test:"empty root provisions an independent exact-head reviewer", reason:/AssertionError/ },
-    { file:"attempt-workspace.mjs", from:"if (record && BINDINGS.some(k => record[k] !== binding[k]))", to:"if (false)", test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
+    { file:"attempt-workspace.mjs", from:"if (record && workspaceBindingConflicts(record, binding))", to:"if (false)", test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"attempt-workspace.mjs", from:'if (!s.isDirectory() || s.isSymbolicLink() || fs.realpathSync(p) !== path.resolve(p))', to:'if (!s.isDirectory() || s.isSymbolicLink())', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"attempt-workspace.mjs", from:'if (!resume || !writer) throw new Error("workspace HEAD does not match the bound commit");', to:'if (false) throw new Error("workspace HEAD does not match the bound commit");', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"reconcile.mjs", from:'const prepare = io.prepareWorkspace ?? (io.adapterModules?.[adapter] ? null : prepareAttemptWorkspace);', to:'const prepare = null;', test:"both real adapters require preparation", reason:/Missing expected rejection/ },
     { file:"single-run-activation.mjs", from:'let root = fs.realpathSync(dir);', to:'let root = fs.realpathSync(process.cwd());', test:"coordinator revision binds the executing root", reason:/AssertionError/ },
     { file:"adapters/codex-cli.mjs", from:'fs.chmodSync(schemaDir, 0o755);', to:'fs.chmodSync(schemaDir, 0o700);', test:"generated schema is worker-readable", reason:/AssertionError|schema directory is traversable/ },
-    { file:"reconcile.mjs", from:'currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)', to:'false', test:"activation expiring during preparation", reason:/AssertionError/ },
+    { file:"reconcile.mjs", from:'if (!final.ok) throw', to:'if (false) throw', test:"activation expiring during preparation", reason:/AssertionError/ },
   ];
   // This guard MUST be killed on the compatibility host where the original
   // directory transfer fails. Newer Git accepting inherited trust is not proof.
@@ -412,4 +420,28 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
       assert.equal(child.signal,null,"a crash or timeout is not a mutation kill");
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   }
+});
+
+test("SHU-239: a reviewer checkout under the service umask stays readable below its 0750 gate", () => {
+  const f = setup(); try {
+    fs.mkdirSync(path.join(f.seed, "tools", "fixture", "test"), { recursive: true });
+    fs.writeFileSync(path.join(f.seed, "tools", "fixture", "test", "scan.test.mjs"), "export {};\n");
+    fs.writeFileSync(path.join(f.seed, "tools", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    fs.symlinkSync("fixture", path.join(f.seed, "tools", "alias"));
+    git(f.seed, "add", "."); git(f.seed, "commit", "-m", "nested fixture");
+    const sha = git(f.seed, "rev-parse", "HEAD");
+    git(f.seed, "push", f.remote, "HEAD:refs/heads/coordinator/SHU-140");
+    const previous = process.umask(0o077);
+    let cwd;
+    try { ({ cwd } = f.prepare(f.receipt({ target_sha: sha }))); } finally { process.umask(previous); }
+    const mode = (...p) => fs.lstatSync(path.join(cwd, ...p)).mode & 0o777;
+    assert.equal(mode(), 0o750, "SHU-239: the attempt root remains the only gate");
+    for (const dir of [["tools"], ["tools", "fixture"], ["tools", "fixture", "test"], [".git"], [".git", "objects"]]) {
+      assert.equal(mode(...dir), 0o755, `SHU-239: ${dir.join("/")} must be traversable by the reviewer`);
+    }
+    assert.equal(mode("tools", "fixture", "test", "scan.test.mjs"), 0o644, "SHU-239: builder tests must be readable by the reviewer");
+    assert.equal(mode("tools", "run.sh"), 0o755, "SHU-239: executable bits survive normalization");
+    assert.equal(mode("round"), 0o644);
+    assert.ok(fs.lstatSync(path.join(cwd, "tools", "alias")).isSymbolicLink(), "symlinks are left untouched");
+  } finally { f.cleanup(); }
 });

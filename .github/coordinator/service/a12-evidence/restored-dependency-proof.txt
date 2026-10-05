@@ -1,0 +1,26 @@
+A12_RESTORED_POSITIVE: pass
+capability entry omitted: killed by A12_DEPENDENCY_ENTRY (ERR_ASSERTION)
+service detection omitted: killed by A12_SHELL_DETECTION (ERR_ASSERTION)
+touch omitted: killed by A12_DEPENDENCY_PROBE: shell_toolchain /usr/bin/touch (ERR_ASSERTION)
+cat omitted: killed by A12_DEPENDENCY_PROBE: shell_toolchain /usr/bin/cat (ERR_ASSERTION)
+env node omitted: killed by A12_DEPENDENCY_PROBE: shell_toolchain env node (ERR_ASSERTION)
+env node replaced by absolute node: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)
+touch writes a file: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)
+cat reads a file: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)
+detection omits tools: killed by A12_SHELL_DETECTION (ERR_ASSERTION)
+detection omits PATH claim: killed by A12_SHELL_DETECTION (ERR_ASSERTION)
+remove shell_toolchain from push-broker-gitconfig: killed by A12_RESTORED_SHELL_REQUIREMENT: push-broker-gitconfig (ERR_ASSERTION)
+remove shell_toolchain from workspace-result: killed by A12_RESTORED_SHELL_REQUIREMENT: workspace-result (ERR_ASSERTION)
+remove shell_toolchain from codex-contract: killed by A12_RESTORED_SHELL_REQUIREMENT: codex-contract (ERR_ASSERTION)
+remove shell_toolchain from workspace-result-mutations: killed by A12_RESTORED_SHELL_REQUIREMENT: workspace-result-mutations (ERR_ASSERTION)
+remove shell_toolchain from episode-successor-dispatch: killed by A12_RESTORED_SHELL_REQUIREMENT: episode-successor-dispatch (ERR_ASSERTION)
+A12_REAL_TOOL: {"uid":1000,"file":"/bin/sh","args":["-c","exit 0"],"status":0,"stdout":""}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/dirname","args":["/suite/wrapper"],"status":0,"stdout":"/suite"}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/env","args":["/usr/bin/true"],"status":0,"stdout":""}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/chmod","args":["--version"],"status":0,"stdout":"chmod (GNU coreutils) 9.4\nCopyright (C) 2023 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by David MacKenzie and Jim Meyering."}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/mktemp","args":["--version"],"status":0,"stdout":"mktemp (GNU coreutils) 9.4\nCopyright (C) 2023 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Jim Meyering and Eric Blake."}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/rm","args":["--version"],"status":0,"stdout":"rm (GNU coreutils) 9.4\nCopyright (C) 2023 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Paul Rubin, David MacKenzie, Richard M. Stallman,\nand Jim Meyering."}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/touch","args":["--version"],"status":0,"stdout":"touch (GNU coreutils) 9.4\nCopyright (C) 2023 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Paul Rubin, Arnold Robbins, Jim Kingdon,\nDavid MacKenzie, and Randy Smith."}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/cat","args":["--version"],"status":0,"stdout":"cat (GNU coreutils) 9.4\nCopyright (C) 2023 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Torbjörn Granlund and Richard M. Stallman."}
+A12_REAL_TOOL: {"uid":1000,"file":"/usr/bin/env","args":["node","--version"],"status":0,"stdout":"v22.22.3"}
+A12_REAL_SHELL_TOOLCHAIN: pass

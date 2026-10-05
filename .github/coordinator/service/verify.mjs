@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { createHash, randomBytes } from 'node:crypto';
+import { createEpisodeHarness } from '../test/fixture/episode-harness.mjs';
+import { createReceipt, nextReceiptState } from '../reconcile.mjs';
+import { WORKSPACE_STATE_DIR } from './units.mjs';
+import { install, rollback, snapshot } from './install.mjs';
+
+export function tree(root) {
+  return fs.readdirSync(root).sort().flatMap(name => {
+    const file = join(root, name), stat = fs.lstatSync(file);
+    assert.ok(!stat.isSymbolicLink(), 'SHU251_STATE: fixture state must not contain symlinks');
+    return [{ name, mode: stat.mode & 0o777, ...(stat.isDirectory() ? { entries: tree(file) } :
+      { sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'), mtime: stat.mtimeMs, ctime: stat.ctimeMs }) }];
+  });
+}
+export function assertQuiet(before, after, launches, writes) {
+  assert.equal(launches, 0, 'SHU251_ZERO_LAUNCH: disabled tick must make zero adapter calls');
+  assert.equal(writes, 0, 'SHU251_ZERO_WRITE: disabled tick must make zero remote mutations');
+  assert.deepEqual(after, before, 'SHU251_STATE_DIFF: disabled tick must preserve all fixture state');
+}
+export async function verifyKillSwitch({ enabled = false, configEnabled = enabled } = {}) {
+  const h = createEpisodeHarness({ configOverrides: { enable_dispatch: configEnabled } });
+  try {
+    // Seed durable RUNNING state without ever enabling dispatch or spawning.
+    const made = createReceipt({ issue_id: h.issueId, authorization_ref: 'FIXTURE-OPUS-CONTRACT-20260905',
+      requested_worker: 'codex-builder', repo: h.config.pilot_repo, branch: 'fixture/test', target_sha: 'a'.repeat(40),
+      reserved_at: '2026-09-10T11:00:00.000Z' });
+    assert.equal(made.ok, true);
+    const launched = nextReceiptState(made.receipt, { type: 'launch', at: '2026-09-10T11:01:00.000Z' });
+    const running = nextReceiptState(launched.receipt, { type: 'worker_ack', external_run_id: 'fixture_run', worker_identity: 'fixture:worker', at: '2026-09-10T11:02:00.000Z' });
+    assert.equal(running.accepted, true);
+    h.comments.push({ body: `coordinator-receipt\n\`\`\`json\n${JSON.stringify(running.receipt)}\n\`\`\`` });
+    assert.equal(h.receipts().length, 1, 'SHU251_FIXTURE: running receipt must be readable');
+    let launches = 0, writes = 0;
+    for (const adapter of Object.values(h.adapters)) {
+      adapter.launchBuilder = async () => { launches++; return { stage: 'HOLD' }; };
+      adapter.monitorRun = async () => { launches++; return { stage: 'RUNNING' }; };
+    }
+    const capture = () => structuredClone({ files: tree(h.dir), comments: h.comments, pauses: h.pauses, triggers: h.triggers, launched: h.launched });
+    const before = capture();
+    assert.equal(h.config.enable_dispatch, configEnabled, 'SHU251_GATE: fixture config must match requested control');
+    for (let i = 0; i < (enabled ? 1 : 2); i++) {
+      const result = await h.runTick({ env: { ENABLE_DISPATCH: enabled ? 'true' : 'false' }, io: {
+        fetchImpl: async (url, options) => {
+          const body = JSON.parse(options.body);
+          if (/\bmutation\b/.test(body.query)) writes++;
+          return h.fetchImpl(url, options);
+        },
+      } });
+      assert.equal(result.code, 0, 'SHU251_TICK: reviewed disabled tick must finish successfully');
+    }
+    assertQuiet(before, capture(), launches, writes);
+    return { ticks: 2, launches, writes, stateDiff: [] };
+  } finally { h.cleanup(); }
+}
+const fixtureEnvironments = new Map();
+export function assertFixtureEnvironmentUnchanged(root) {
+  assert.ok(fixtureEnvironments.has(root), 'SHU251_FIXTURE_ENVIRONMENT: credential fixture baseline required');
+  assert.deepEqual(tree(join(root, '.environment')), fixtureEnvironments.get(root), 'SHU251_FIXTURE_ENVIRONMENT: credential fixture bytes, modes and timestamps must remain unchanged');
+}
+export function fixtureEnvironmentFiles(root) {
+  const directory = join(root, '.environment');
+  fs.mkdirSync(directory, { mode: 0o700, recursive: true });
+  const supervisorEnvironmentFile = join(directory, 'supervisor.env');
+  const coordinatorEnvironmentFile = join(directory, 'coordinator.env');
+  for (const [file, keys] of [[supervisorEnvironmentFile, ['SHU_SUPERVISOR_SECRET']], [coordinatorEnvironmentFile, ['GITHUB_TOKEN', 'LINEAR_API_TOKEN']]]) {
+    if (!fs.existsSync(file)) fs.writeFileSync(file, keys.map(key => `${key}=${randomBytes(32).toString('hex')}\n`).join(''), { mode: 0o600 });
+  }
+  if (!fixtureEnvironments.has(root)) fixtureEnvironments.set(root, tree(directory));
+  return { supervisorEnvironmentFile, coordinatorEnvironmentFile };
+}
+export function fixtureParameters(root) {
+  // Syntax-only executables. These are not supervisor interface implementations.
+  return { ...fixtureEnvironmentFiles(root), workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], workspaceStateDir: WORKSPACE_STATE_DIR, writerLock: join(WORKSPACE_STATE_DIR, 'host-tick.lock') };
+}
+export async function verify() {
+  const root = fs.mkdtempSync(join(tmpdir(), 'shu251-verify-'));
+  try {
+    fs.writeFileSync(join(root, 'shu-supervisor.service'), 'prior fixture bytes\n', { mode: 0o600 });
+    const prior = snapshot(root);
+    install(root, fixtureParameters(root));
+    assert.equal(install(root, fixtureParameters(root)).changed, false, 'SHU251_IDEMPOTENT: repeated staging must be a no-op');
+    const quiet = await verifyKillSwitch();
+    rollback(root);
+    assert.deepEqual(snapshot(root), prior, 'SHU251_ROLLBACK: prior bytes, modes and absence must be restored');
+    assert.deepEqual(fs.readdirSync(root), ['.environment', 'shu-supervisor.service'], 'SHU251_CLEANUP: rollback must remove transaction artifacts');
+    assertFixtureEnvironmentUnchanged(root);
+    return { syntax: 'passed', rollback: 'exact bytes/modes/absence restored', ...quiet, scope: 'local fixtures only; no running-system proof' };
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) console.log(JSON.stringify(await verify(), null, 2));

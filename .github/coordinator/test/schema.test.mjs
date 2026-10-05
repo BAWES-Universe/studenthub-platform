@@ -160,6 +160,15 @@ test("rejects: external_run_id without an approved provider prefix", () => {
   assertInvalid(r, /fails pattern/, "bad run id prefix");
 });
 
+test("SHU71_SUPERVISOR_RUN_ID: accepts the supervisor run named after its own attempt, and only that one", () => {
+  const r = validRunning();
+  r.external_run_id = `supervisor_${r.attempt_id}`;
+  r.worker_identity = null;
+  assert.equal(validateReceipt(r).valid, true, JSON.stringify(validateReceipt(r).errors));
+  r.external_run_id = "supervisor_99999999-2222-4333-8444-555555555555";
+  assertInvalid(r, /supervisor run other than this attempt/, "another attempt's supervisor run");
+});
+
 test("accepts provider-neutral Claude Code run identifiers", () => {
   const r = validRunning();
   r.requested_worker = "claude-verifier";
@@ -299,6 +308,10 @@ test("machine never emits an invalid receipt across the happy path", () => {
 
 test("receipt comments round-trip (durable receipt on the Linear thread)", () => {
   const { receipt } = createReceipt({
+    // SHU-249: explicitly opt into 1.1.0; retain the exact-shape assertion below.
+    receipt_version: "1.1.0",
+    role: "build",
+    runtime: "hermes-pool",
     issue_id: "SHU-11",
     authorization_ref: "SHU-11",
     requested_worker: "hermes-box",

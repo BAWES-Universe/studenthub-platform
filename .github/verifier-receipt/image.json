@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "THE IMAGE THE MEASUREMENT RUNS IN, PINNED BY DIGEST AND NOT BY TAG.",
+    "",
+    "A tag is a POINTER and the person who can move it is not this repository. Every other input to this",
+    "authority is named by content - the authority is checked out by SHA, the candidate is checked out by SHA",
+    "and re-read with git rev-parse, the runner command comes from a protected enum, the mutation matrix is a",
+    "committed file - and the image is the filesystem the measurement's interpreter, its libc and its git come",
+    "out of. An image named `node:22.22.3-bookworm` is a sentence about whatever Docker Hub serves under that",
+    "name at the moment the run starts, which is exactly the floating input the interpreter pin exists to",
+    "deny. So the digest is the pin; the tag beside it is a human label and nothing checks it.",
+    "",
+    "WHY THIS IMAGE AND NOT THE SLIM ONE. The measured suite shells out to `git` - this repository's own",
+    "fixtures build ephemeral repositories to measure against - so an image without git turns a whole class of",
+    "tests red for a reason that has nothing to do with what they test. node:<v>-bookworm derives from",
+    "buildpack-deps:bookworm-scm and carries git; node:<v>-bookworm-slim does not. The preflight probe in",
+    "measure-terms.mjs checks BOTH the interpreter version and git inside the pinned image before any",
+    "measurement runs, and refuses the run rather than reporting a suite that failed for want of a binary.",
+    "",
+    "UPDATING THIS PIN is a commit on this repository, reviewed like any other change to what this authority",
+    "runs. Resolve the new digest, read what changed, and update the tag label in the same commit."
+  ],
+  "tag": "node:22.22.3-bookworm",
+  "digest": "sha256:2d178f2785b96dfbf62a416ca2e40f50e30150b4ff3320d706f0d96e90600eb3",
+  "reference": "node@sha256:2d178f2785b96dfbf62a416ca2e40f50e30150b4ff3320d706f0d96e90600eb3",
+  "resolved_at": "2026-09-23",
+  "requires": {
+    "node": "22.22.3",
+    "binaries": ["git"]
+  }
+}

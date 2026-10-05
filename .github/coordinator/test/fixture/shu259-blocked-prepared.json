@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "attempt_id": "3f71090b-b795-53bb-a05f-9e1203d6671b",
+  "source_attempt_id": "00000000-0000-4000-8000-000000000002",
+  "issue_id": "SHU-900",
+  "repo": "example/repo",
+  "branch": "feat/routine",
+  "pr_number": 7,
+  "approved_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "approved_tree_sha": "dddddddddddddddddddddddddddddddddddddddd",
+  "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "merge_method": "squash",
+  "authority_ref": "SHU-259",
+  "state": "PREPARED",
+  "hold_code": null,
+  "reason": null,
+  "merge_commit_sha": null,
+  "landed_tree_sha": null,
+  "updated_at": "2026-09-14T00:30:00.000Z"
+}

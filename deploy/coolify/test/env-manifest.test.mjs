@@ -175,7 +175,12 @@ test("SHU-243 workflow gates image build and push on the env-store check", () =>
   assert.match(workflow, /application\/vnd\.github\.raw\+json/);
   assert.match(workflow, /if: \$\{\{ github\.event_name != 'pull_request_target' \}\}/);
   assert.match(workflow, /build-push:\n    if:.*\n    needs: env-manifest/);
-  assert.match(workflow, /deploy:\n    if: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' \}\}/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:|inputs\.revision|inputs\.digest/,
+    "NO_OPERATOR_DISPATCH: selection must come from this publication");
+  assert.match(workflow, /Smoke-test the exact published digest/);
+  assert.ok(workflow.indexOf('Smoke-test the exact published digest') < workflow.indexOf('Record published artifact'));
+  // Staging deploys moved to staging-on-dev.yml; this workflow only publishes.
+  assert.doesNotMatch(workflow, /\n  deploy:|automatic-staging\.mjs|COOLIFY_TOKEN/);
   assert.doesNotMatch(workflow, /DEPLOYMENT_ENV_MANIFEST_PATH:/);
   assert.match(workflow, /Validate proposed manifest as untrusted data/);
   assert.match(workflow, /Verify trusted Coolify deployment environment/);

@@ -1,0 +1,45 @@
+{
+  "file": ".github/coordinator/service/test/provision-host-reality.test.mjs",
+  "harness": "Each mutant runs the passing named control first, asserts its exact source anchors are unique, applies the mutation, and requires the mutant to fail by the named assertion. An import, syntax or unrelated runtime error does not count as a kill.",
+  "controls": [
+    { "name": "HOST_CHECKOUT_CENSUS", "proves": "the prepared deployment shape (19 in-tree node_modules symlinks) is accepted, the row reports symlinks: 19, and the whole report is ok:true" },
+    { "name": "HOST_CHECKOUT_ESCAPE", "proves": "a symlink whose text resolves outside the checkout root refuses with ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE before the target is reached" },
+    { "name": "HOST_CHECKOUT_ESCAPE_EXISTING", "proves": "a symlink to an existing file outside the checkout root refuses with the same named code" },
+    { "name": "HOST_CHECKOUT_ESCAPE_REALPATH", "proves": "in-tree link text whose resolved real path leaves the checkout refuses with the same named code" },
+    { "name": "HOST_CHECKOUT_DANGLING", "proves": "an in-tree dangling symlink refuses with ACT_PREREQUISITE_CHECKOUT_SYMLINK_UNRESOLVED" },
+    { "name": "HOST_CHECKOUT_LOOP", "proves": "an in-tree symlink cycle refuses with ACT_PREREQUISITE_CHECKOUT_SYMLINK_UNRESOLVED" },
+    { "name": "HOST_CHECKOUT_WRITABLE_TARGET", "proves": "a group/world-writable symlink target refuses with ACT_PREREQUISITE_CHECKOUT_SYMLINK_WRITABLE" },
+    { "name": "HOST_CHECKOUT_UNREADABLE_TARGET", "proves": "an entry the service identity cannot read refuses with ACT_PREREQUISITE_CHECKOUT_ACCESS" },
+    { "name": "HOST_CHECKOUT_ANCESTOR", "proves": "a symlinked ancestor of the checkout path refuses with ACT_PREREQUISITE_CHECKOUT_ANCESTOR" },
+    { "name": "HOST_ENV_MULTILINK", "proves": "the measured /usr/bin/env chain with nlink = 115 is accepted and the report is green" },
+    { "name": "HOST_INSTALLED_SINGLE_LINK", "proves": "an installed file with a second hard link still refuses with ACT_PREREQUISITE_CUSTODY" },
+    { "name": "HOST_MULTILINK_WRITABLE_TARGET", "proves": "a group/world-writable multicall target still refuses with ACT_PRODUCTION_EXECUTABLE" },
+    { "name": "HOST_MULTILINK_FOREIGN_OWNER", "proves": "a foreign-owned multicall target still refuses with ACT_PRODUCTION_EXECUTABLE" },
+    { "name": "HOST_MIRRORED_REFUSAL", "proves": "a mirrored runtime refusal carries mirrored_code and mirrored_from; a direct runtime refusal carries neither" }
+  ],
+  "mutants": [
+    { "name": "HOST_KILL_CHECKOUT_SYMLINK_BAN", "killed_by": "HOST_CHECKOUT_CENSUS", "mutation": "reinstate the blanket symlink rejection in the probe" },
+    { "name": "HOST_KILL_CHECKOUT_CENSUS", "killed_by": "HOST_CHECKOUT_CENSUS", "mutation": "drop the symlink census from the row" },
+    { "name": "HOST_KILL_CHECKOUT_ESCAPE", "killed_by": "HOST_CHECKOUT_ESCAPE", "mutation": "delete the per-hop escape refusal" },
+    { "name": "HOST_KILL_CHECKOUT_ESCAPE_RESOLVED", "killed_by": "HOST_CHECKOUT_ESCAPE_EXISTING", "mutation": "delete both escape refusals" },
+    { "name": "HOST_KILL_CHECKOUT_ESCAPE_REALPATH", "killed_by": "HOST_CHECKOUT_ESCAPE_REALPATH", "mutation": "delete the resolved-real-path escape refusal" },
+    { "name": "HOST_KILL_CHECKOUT_DANGLING", "killed_by": "HOST_CHECKOUT_DANGLING", "mutation": "accept an unresolvable chain element instead of refusing" },
+    { "name": "HOST_KILL_CHECKOUT_LOOP", "killed_by": "HOST_CHECKOUT_LOOP", "mutation": "replace the cycle refusal with a bounded hop counter" },
+    { "name": "HOST_KILL_CHECKOUT_WRITABLE_TARGET", "killed_by": "HOST_CHECKOUT_WRITABLE_TARGET", "mutation": "delete the group/world-writable target refusal" },
+    { "name": "HOST_KILL_CHECKOUT_READ_PROOF", "killed_by": "HOST_CHECKOUT_UNREADABLE_TARGET", "mutation": "delete both read/traverse proofs (entry and resolved target)" },
+    { "name": "HOST_KILL_CHECKOUT_ANCESTOR", "killed_by": "HOST_CHECKOUT_ANCESTOR", "mutation": "delete the checkout ancestor custody requirement" },
+    { "name": "HOST_KILL_ENV_MULTILINK", "killed_by": "HOST_ENV_MULTILINK", "mutation": "apply the installed-file single-link rule to the measured executable again" },
+    { "name": "HOST_KILL_INSTALLED_SINGLE_LINK", "killed_by": "HOST_INSTALLED_SINGLE_LINK", "mutation": "drop the single-link rule for installed files" },
+    { "name": "HOST_KILL_MULTILINK_WRITABLE_TARGET", "killed_by": "HOST_MULTILINK_WRITABLE_TARGET", "mutation": "drop the exact 0755 mode requirement" },
+    { "name": "HOST_KILL_MULTILINK_FOREIGN_OWNER", "killed_by": "HOST_MULTILINK_FOREIGN_OWNER", "mutation": "drop the root-owner requirement" },
+    { "name": "HOST_KILL_MIRRORED_REFUSAL", "killed_by": "HOST_MIRRORED_REFUSAL", "mutation": "drop the mirrored fields" },
+    { "name": "HOST_KILL_MIRRORED_INDISCRIMINATE", "killed_by": "HOST_MIRRORED_REFUSAL", "mutation": "mark every refusal as mirrored" }
+  ],
+  "retained_assertions": {
+    "SHU71_CHECKOUT_NO_SYMLINK": "retained; expected code corrected in place to ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE because the link points outside the checkout root",
+    "SHU71_CHECKOUT_READABILITY": "retained; its mutant anchor moved to the probe read/traverse call",
+    "SHU71_CUSTODY_hardlink": "retained; installed-file single-link custody",
+    "H1_ABSENT_STATIC_*": "retained; each now pins the exact mirrored or direct runtime row shape"
+  },
+  "known_limit": "The resolved-target readability call cannot be falsified alone in this model, because the whole-tree walk already reads every in-tree path; HOST_KILL_CHECKOUT_READ_PROOF removes both read/traverse calls together."
+}

@@ -2,6 +2,10 @@
 
 This Compose application packages the StudentHub gateway with a dedicated PostgreSQL 17 service. The gateway refuses to start with a partial login configuration, applies every checked-in migration before serving traffic, binds explicitly to the container network, and is healthy only while both PostgreSQL and the gateway respond.
 
+For the registry-backed staging gateway, use [Automatic staging deployment](DEPLOY-FLOW.md).
+The Compose instructions below describe the separate source-build package.
+See also the [unexecuted environment label remediation](ENVIRONMENT-LABEL-REMEDIATION.md).
+
 ## Deploy
 
 1. In Coolify, create a Docker Compose resource from this repository and select `deploy/coolify/compose.yaml`.

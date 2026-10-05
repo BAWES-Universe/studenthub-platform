@@ -10,8 +10,16 @@ import type {
   TokenRequest,
   TokenResponse,
 } from "@studenthub/login-contract";
+import {
+  OwnProfileRepository,
+  UnconfiguredApprovedProfileAdapter,
+  type ApprovedProfileAdapter,
+} from "@studenthub/profile";
 
 import { createLoginApplication } from "./login-application.js";
+import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter } from "@studenthub/organizations";
+import { createContextNavigation } from "./context-navigation.js";
+import { createCompanyDirectory } from "./company-directory.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -148,7 +156,10 @@ export interface RuntimeLogin {
 }
 
 /** Build the real login stack only when the complete explicit env contract is present. */
-export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeLogin | undefined {
+export function createRuntimeLoginFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  approvedProfiles: ApprovedProfileAdapter = new UnconfiguredApprovedProfileAdapter(),
+): RuntimeLogin | undefined {
   const names = [
     "DATABASE_URL",
     "OIDC_ISSUER",
@@ -186,6 +197,7 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
 
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
+  const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles });
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -211,17 +223,25 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
     clockSkewSeconds: 60,
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
   });
+  // Organization snapshots stay unconfigured until an approved import exists:
+  // the card and the company list show registry names and visibly unavailable fields.
+  const organizations = new OrganizationRepository({
+    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(),
+  });
   return {
     application: {
       ...application,
+      navigation: createContextNavigation(loginStore.sessions, authzStore, organizations),
+      companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
         // new IdP configuration, or implicit expansion of approved targets.
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
           ? new URL("/profile", callbackUrl).href : undefined,
-        // Called only after application.profile establishes session ownership.
-        readProfile: (personId) => authzStore.getPrincipal(personId),
+        // Called only after application.profile establishes session ownership;
+        // the repository independently re-enforces the same owner boundary.
+        profiles,
       },
     },
     async close() {

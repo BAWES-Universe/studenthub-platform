@@ -1,10 +1,16 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   CALLBACK_SCHEMA,
   CLAUDE_MODEL,
   buildClaudeArgs,
   buildClaudeEnvironment,
+  buildClaudePrompt,
   externalRunId,
   launchBuilder,
   monitorRun,
@@ -16,10 +22,19 @@ import {
   foldLaunchOutcome,
   validateReceipt,
 } from "../reconcile.mjs";
+import { SHU140_REVISION_PATHS, fixtureReviewScope } from "../workspace-scope.mjs";
 
 const ATTEMPT = "11111111-2222-4333-8444-555555555555";
 const SHA = "d".repeat(40);
 const TOKEN = "oauth-test-fixture";
+const CONTRACT_ROOT = mkdtempSync(join(tmpdir(), "claude-contract-"));
+const CONTRACT_WORKSPACE = join(CONTRACT_ROOT, "workspace");
+const CONTRACT_EVIDENCE = join(CONTRACT_WORKSPACE, ".review-evidence");
+const CONTRACT_REPORT = join(CONTRACT_EVIDENCE, `${ATTEMPT}.review-test.1.json`);
+mkdirSync(CONTRACT_WORKSPACE, { mode: 0o700 });
+mkdirSync(CONTRACT_EVIDENCE, { mode: 0o700 });
+writeFileSync(CONTRACT_REPORT, "{}", { mode: 0o600 });
+after(() => rmSync(CONTRACT_ROOT, { recursive: true, force: true }));
 
 function execResult({ stdout = "", stderr = "", error = null } = {}) {
   const calls = [];
@@ -42,7 +57,7 @@ function successOutput(stage = "PASS", overrides = {}) {
       attempt_id: ATTEMPT,
       target_sha: SHA,
       stage,
-      links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"],
+      links: [pathToFileURL(CONTRACT_REPORT).href, "https://github.com/BAWES-Universe/studenthub-platform/pull/99"],
       ...overrides,
     },
   });
@@ -55,13 +70,14 @@ const launchInput = {
   target_sha: SHA,
   task_context: "Verify the exact-head change.",
   oauth_token: TOKEN,
-  cwd: "/tmp/repo",
+  cwd: CONTRACT_WORKSPACE,
   readHeadImpl: async () => SHA,
   reviewEvidenceImpl: async () => ({
     executed: true,
     passed: true,
     reason_code: "REVIEW_TESTS_PASSED",
-    evidence_link: "file:///srv/shu/review-evidence/test.json",
+    evidence_link: pathToFileURL(CONTRACT_REPORT).href,
+    isolation_wrapper: ["/test/reviewer-model-wrapper"],
     report: {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
       expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
@@ -70,7 +86,7 @@ const launchInput = {
       tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
     },
   }),
-  persistEnvelopeImpl: () => ({ link: "file:///srv/shu/review-evidence/envelope.stdout" }),
+  persistEnvelopeImpl: () => ({ link: pathToFileURL(join(CONTRACT_EVIDENCE, "envelope.stdout")).href }),
 };
 
 test("official headless contract: execFile claude -p with JSON schema and bound UUID/SHA", async () => {
@@ -80,11 +96,13 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.equal(out.external_run_id, externalRunId(ATTEMPT));
   assert.equal(execFileImpl.calls.length, 1);
   const call = execFileImpl.calls[0];
-  assert.equal(call.file, "claude");
+  assert.equal(call.file, "/test/reviewer-model-wrapper", "the model phase crosses the same reviewed OS boundary as tests");
   assert.equal(call.options.shell, undefined, "execFile arg arrays must not opt into a shell");
-  assert.deepEqual(call.args.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
-  assert.equal(call.args[5], "--json-schema");
-  assert.deepEqual(JSON.parse(call.args[6]), CALLBACK_SCHEMA);
+  assert.deepEqual(call.args.slice(0, 9), ["--profile", "model", "--workspace-root", CONTRACT_ROOT, "--workspace", CONTRACT_WORKSPACE, "--", "claude", "-p"]);
+  const claudeArgs = call.args.slice(8);
+  assert.deepEqual(claudeArgs.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
+  assert.equal(claudeArgs[5], "--json-schema");
+  assert.deepEqual(JSON.parse(claudeArgs[6]), CALLBACK_SCHEMA);
   assert.ok(call.args.includes("--restricted"), "review ignores builder-controlled project settings and hooks without disabling subscription auth");
   assert.equal(call.args.includes("--bare"), false, "bare mode must not disable the subscription login");
   assert.deepEqual(call.args.slice(call.args.indexOf("--tools"), call.args.indexOf("--tools") + 2), ["--tools", "Read,Glob,Grep"]);
@@ -96,6 +114,30 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.ok(call.args.includes(ATTEMPT));
   assert.match(call.args.at(-1), new RegExp(`Bound head: ${SHA}`));
   assert.match(call.args.at(-1), new RegExp(`Attempt: ${ATTEMPT}`));
+  assert.match(call.args.at(-1), /repo-relative path@bound-head-sha/);
+});
+
+test("review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff", async () => {
+  const execFileImpl = execResult({ stdout: successOutput() });
+  await launchBuilder({ ...launchInput, issue_id: "SHU-140", execFileImpl, env: { PATH: "/bin" } });
+  const prompt = execFileImpl.calls[0].args.at(-1);
+  assert.ok(prompt.includes(`Declared scope of SHU-140: ${SHU140_REVISION_PATHS.join(", ")}.`), prompt);
+  assert.match(prompt, /not only the files the last change touched/);
+  assert.match(prompt, /never loads is still in scope/);
+  assert.doesNotMatch(prompt, /seeded|trap|defect_path/i, "the scope names the files, never which one is seeded");
+});
+
+test("review scope: no scope line for a non-fixture issue, a writer, or an inherited key", () => {
+  const base = { authorization_ref: "SHU-61", attempt_id: ATTEMPT, target_sha: SHA, task_context: "ctx" };
+  assert.doesNotMatch(buildClaudePrompt({ ...base, issue_id: "SHU-61" }), /Declared scope/);
+  assert.doesNotMatch(buildClaudePrompt({ ...base, issue_id: "SHU-140", role: "build", allowed_paths: ["tools/fixture/scan-vacuous.mjs"] }), /Declared scope/);
+  assert.equal(fixtureReviewScope("constructor"), null);
+  assert.equal(fixtureReviewScope("__proto__"), null);
+  assert.deepEqual(fixtureReviewScope("SHU-254"), [
+    "tools/fixture-2/scan-unawaited.mjs",
+    "tools/fixture-2/test/scan-unawaited.test.mjs",
+    "tools/fixture-2-conformance/scan-unawaited.expectations.mjs",
+  ]);
 });
 
 test("subscription OAuth is the only Claude credential passed to the child", async () => {
@@ -145,7 +187,7 @@ test("default checkout verifier calls git rev-parse HEAD before claude", async (
   const { readHeadImpl: _ignored, ...withoutInjectedHead } = launchInput;
   const out = await launchBuilder({ ...withoutInjectedHead, execFileImpl });
   assert.equal(out.stage, "COMPLETED");
-  assert.deepEqual(calls.map(({ file }) => file), ["git", "claude"]);
+  assert.deepEqual(calls.map(({ file }) => file), ["git", "/test/reviewer-model-wrapper"]);
   assert.deepEqual(calls[0].args, ["-c", `safe.directory=${launchInput.cwd}`, "rev-parse", "HEAD"]);
   assert.equal(calls[0].options.cwd, launchInput.cwd);
 });
@@ -190,7 +232,8 @@ test("BLOCKED and FAILED verifier callbacks park on HOLD with evidence", async (
     const out = await launchBuilder({ ...launchInput, execFileImpl: execResult({ stdout: successOutput(stage) }) });
     assert.equal(out.stage, "HOLD");
     assert.equal(out.callback.stage, stage);
-    assert.equal(out.evidence_links.length, 1);
+    assert.equal(out.evidence_links.length, 2);
+    assert.equal(out.evidence_links[0], pathToFileURL(CONTRACT_REPORT).href);
   }
 });
 
@@ -291,10 +334,6 @@ test("environment builder removes every metered/alternate API route", () => {
 // Found by Opus during exact-head verification of 4157bce.
 // ---------------------------------------------------------------------------
 import { main, parseReceiptsFromComments } from "../reconcile.mjs";
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 const MOVED_HEAD = "e".repeat(40);
 const VERIFIER_NODE = {
   id: "11111111-aaaa-4bbb-8ccc-000000000001",
@@ -336,7 +375,7 @@ async function runVerifierDispatch({ liveHead, headStatus = 200 }) {
   const linear = async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [VERIFIER_NODE] } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([VERIFIER_NODE], () => comments) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const nodes = issueId === VERIFIER_NODE.id || issueId === VERIFIER_NODE.identifier ? [...comments] : [];
@@ -417,4 +456,44 @@ test("a synchronous PASS whose live head cannot be read must HOLD (fail closed)"
   const terminal = r.receipts.find((x) => x.stage === "COMPLETED" || x.stage === "HOLD");
   assert.ok(terminal, "expected a terminal receipt");
   assert.equal(terminal.stage, "HOLD", "an unverifiable head must never silently become 'head matches'");
+});
+
+test("SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry", async () => {
+  // The exact envelope the stage-4 writer produced on a host with no worker login.
+  const notLoggedIn = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", terminal_reason: "api_error", duration_ms: 112 });
+  const exited = Object.assign(new Error("Command failed: claude -p"), { code: 1 });
+  const review = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: notLoggedIn }) });
+  assert.equal(review.stage, "HOLD", "exit 1 with the CLI's error envelope");
+  assert.equal(review.pause_adapter, true);
+  assert.match(review.reason, /claude \/login/);
+  const zeroExit = await launchBuilder({ ...launchInput, execFileImpl: execResult({ stdout: notLoggedIn }) });
+  assert.equal(zeroExit.stage, "HOLD", "exit 0 with the CLI's error envelope");
+  assert.equal(zeroExit.external_run_id, externalRunId(ATTEMPT));
+
+  const home = mkdtempSync(join(tmpdir(), "claude-writer-auth-"));
+  try {
+    const writer = await launchBuilder({ ...launchInput, role: "build", workspace_scope: "scoped", scope_phase: "initial", allowed_paths: ["allowed.txt"],
+      scoped_base_sha: SHA, repo: "BAWES-Universe/studenthub-platform", branch: "coordinator/SHU-140", cwd: home,
+      env: { HOME: home, SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper", SHU_WORKER_UID: String(process.getuid() + 1) },
+      execFileImpl: execResult({ error: exited, stdout: notLoggedIn }) });
+    assert.equal(writer.stage, "HOLD", "the Claude writer holds the same way");
+    assert.match(writer.reason, /claude \/login/, writer.reason);
+    assert.equal(writer.pause_adapter, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+
+  // Only the CLI's own error envelope classifies: model text that says the same
+  // words in a successful envelope, or in stdout that is not an envelope, does not.
+  const modelSays = JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: ATTEMPT, result: "Not logged in · Please run /login" });
+  const spoken = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: modelSays }) });
+  assert.equal(spoken.stage, "FAILED");
+  const raw = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: "Not logged in · Please run /login" }) });
+  assert.equal(raw.stage, "FAILED");
+  // execFile echoes the arguments, prompt included, into the error message.
+  const context = "The user is not logged in; quota and 403 forbidden appear in this task.";
+  const echoed = Object.assign(new Error(`Command failed: claude -p ${context}`), { code: 1 });
+  const prompted = await launchBuilder({ ...launchInput, task_context: context, execFileImpl: execResult({ error: echoed }) });
+  assert.equal(prompted.stage, "FAILED", "prompt text echoed into the error message never classifies");
+  assert.equal(prompted.error_code, "CLAUDE_1");
 });

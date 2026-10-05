@@ -33,8 +33,8 @@ const CASES = [
   {
     name: "M2b pass sudo the unresolved sandbox alias",
     file: "review-execution.mjs",
-    from: "    normalized[2] = trustedRootPath(wrapper[2], fsImpl);",
-    to: "    normalized[2] = wrapper[2];",
+    from: "    normalized[sandboxIndex] = trustedRootPath(wrapper[sandboxIndex], fsImpl);",
+    to: "    normalized[sandboxIndex] = wrapper[sandboxIndex];",
     testFile: "shu237-portability.test.mjs",
     pattern: "SHU-237 A1/A2/A5|SHU-237 A3/A4",
   },
@@ -137,7 +137,7 @@ const CASES = [
   {
     name: "M11 stop the B7 wrapper before the active child probe",
     file: "test/reviewer-evidence.test.mjs",
-    from: "shift 5\\nexec \"$@\"\\n`, { mode: 0o700 });",
+    from: "shift 7\\nexec \"$@\"\\n`, { mode: 0o700 });",
     to: "exit 70\\n`, { mode: 0o700 });",
     testFile: "reviewer-evidence.test.mjs",
     pattern: "SHU-232 B7: an actual",

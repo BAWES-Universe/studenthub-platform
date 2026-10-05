@@ -1,0 +1,353 @@
+{
+  "scope": "Repository-only F1 recovery amendment; applies to the commit containing this artifact. FINAL_HEAD is reported after commit.",
+  "verdict_head": "ef34d837b098652d51bac46eac6972c713709318",
+  "verdict_files": [
+    "/home/bawes/work/verdict-138.md",
+    "/home/bawes/work/verdict-138.json"
+  ],
+  "hygiene": {
+    "SHU251_NO_SYSTEMD": "1",
+    "umask": "0002",
+    "coordinator_group_other_write_removed": true,
+    "host_access": false,
+    "external_push": false,
+    "pr_or_comment_operation": false,
+    "existing_assertions_guards_codes_or_skip_allowances_weakened": false
+  },
+  "runs": {
+    "focused": {
+      "tests": 124,
+      "pass": 124,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "command": "SHU251_NO_SYSTEMD=1 node --test --test-concurrency=1 .github/coordinator/test/two-fixture-activation.test.mjs .github/coordinator/test/two-fixture-progression.test.mjs .github/coordinator/test/push-broker.test.mjs .github/coordinator/test/workspace-result.test.mjs",
+      "log": "/tmp/b3-recovery-focused-complete.tap",
+      "sha256": "256ba2f95b3eb7abc3ba05c25a9dcfa1547f8ed8b1531df3dbc048356442c4ba",
+      "files": [
+        ".github/coordinator/test/two-fixture-activation.test.mjs",
+        ".github/coordinator/test/two-fixture-progression.test.mjs",
+        ".github/coordinator/test/push-broker.test.mjs",
+        ".github/coordinator/test/workspace-result.test.mjs"
+      ]
+    },
+    "coordinator_service": {
+      "tests": 1448,
+      "pass": 1429,
+      "fail": 0,
+      "skipped": 19,
+      "cancelled": 0,
+      "command": "SHU251_NO_SYSTEMD=1 node --test --test-concurrency=2 .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs",
+      "log": "/tmp/b3-recovery-full.tap",
+      "sha256": "f75caa1f77c736589aa0082e853d108442b5edf6b99e383b4468fe456e3e41f6"
+    },
+    "platform": {
+      "tests": 486,
+      "pass": 486,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "tap_tests": 459,
+      "vitest_tests": 27,
+      "command": "SHU251_NO_SYSTEMD=1 npm test",
+      "log": "/tmp/b3-recovery-platform.tap",
+      "sha256": "49fe22e2199ab82f0428ed4f2aae7eeca3ffd0edfcdff11ec605b60f55d8c1a7",
+      "standalone_mutations_killed": 85
+    }
+  },
+  "mutations": {
+    "b3": [
+      {
+        "name": "B3_MUTATION_RECOVERY_ANCESTRY",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_ANCESTRY",
+        "killing_assertion": "B3_RECOVERY_REAL_ANCESTRY_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_ANCESTRY_REVERSED",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_SEQUENCE",
+        "killing_assertion": "B3_PUSH_BEFORE_TERMINAL",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_JOURNAL_PERMS",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_PUSH_CUSTODY",
+        "killing_assertion": "B3_PUBLIC_JOURNAL_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_DIGEST_IMMUTABILITY",
+        "file": "reconcile.mjs",
+        "killing_test": "B3_RECEIPT_PROVENANCE",
+        "killing_assertion": "B3_DIGEST_IMMUTABLE",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_ACTIVATION",
+        "file": "two-fixture-recovery.mjs",
+        "killing_test": "B3_RECOVERY_ACTIVATION",
+        "killing_assertion": "B3_RECOVERY_ACTIVATION_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_INTERRUPTED",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_INTERRUPTED",
+        "killing_assertion": "B3_RECOVERY_INTERRUPTED_RESUMED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_AMBIGUOUS",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_AMBIGUOUS",
+        "killing_assertion": "B3_RECOVERY_AMBIGUOUS_RESUMED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_REWRITE",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_REWRITE",
+        "killing_assertion": "B3_RECOVERY_REWRITE_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_IDEMPOTENT",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_IDEMPOTENT",
+        "killing_assertion": "B3_RECOVERY_STABLE_JOURNAL",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_DEATH",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_DEATH_BEFORE",
+        "killing_assertion": "B3_RECOVERY_PROCESS_DEATH_RESUMED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_BINDING",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_BINDINGS",
+        "killing_assertion": "B3_RECOVERY_BINDING_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_CUSTODY",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_BINDINGS",
+        "killing_assertion": "B3_RECOVERY_CUSTODY_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_AUTH",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_BINDINGS",
+        "killing_assertion": "B3_RECOVERY_AUTH_REQUIRED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_DURABILITY",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_INTERRUPTED",
+        "killing_assertion": "B3_RECOVERY_DURABLE",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_RECOVERY_MARK_FAILURE",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_RECOVERY_DURABILITY",
+        "killing_assertion": "B3_RECOVERY_MARK_FAILURE_HELD",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_DANGLING_IGNORED",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_DANGLING",
+        "killing_assertion": "B3_DANGLING_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_ATTEMPT_UNBOUND",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_FORK",
+        "killing_assertion": "B3_ATTEMPT_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_BROKER_FORCE",
+        "file": "push-broker.mjs",
+        "killing_test": "B3_SEQUENCE",
+        "killing_assertion": "B3_BROKER_NO_FORCE",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_DISPATCH_STAMP",
+        "file": "reconcile.mjs",
+        "killing_test": "B3_DISPATCH_STAMP",
+        "killing_assertion": "B3_DISPATCH_DIGEST",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_TRANSPORT_ACTOR",
+        "file": "reconcile.mjs",
+        "killing_test": "B3_RECEIPT_PROVENANCE",
+        "killing_assertion": "B3_TRANSITION_ACTOR",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_EQUALITY_ONLY",
+        "file": "two-fixture-activation.mjs",
+        "killing_test": "B3_SEQUENCE",
+        "killing_assertion": "B3_PUSH_BEFORE_TERMINAL",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_MISSING_ANCESTRY",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_MISSING_ANCESTRY",
+        "killing_assertion": "B3_MISSING_ANCESTRY_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_FORGED_RECEIPT",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_FORGED_RECEIPT",
+        "killing_assertion": "B3_FORGED_RECEIPT_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_WRONG_ACTOR",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_WRONG_ACTOR",
+        "killing_assertion": "B3_WRONG_ACTOR_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_WRONG_LANE",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_WRONG_LANE",
+        "killing_assertion": "B3_WRONG_LANE_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_FORCE_UPDATE",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_FORCE_UPDATE",
+        "killing_assertion": "B3_FORCE_UPDATE_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_STALE_EPISODE",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_STALE_EPISODE",
+        "killing_assertion": "B3_STALE_EPISODE_REFUSED",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_ONE_LANE",
+        "file": "two-fixture-progression.mjs",
+        "killing_test": "B3_SEQUENCE",
+        "killing_assertion": "B3_PUSH_BEFORE_TERMINAL",
+        "result": "KILLED"
+      },
+      {
+        "name": "B3_MUTATION_REWIND",
+        "file": "two-fixture-activation.mjs",
+        "killing_test": "B3_REWIND",
+        "killing_assertion": "B3_REWIND_REFUSED",
+        "result": "KILLED"
+      }
+    ],
+    "b3_killed": 29,
+    "activation_killed": 14,
+    "platform_standalone_killed": 85,
+    "other_suite_mutations": "All runnable embedded mutations ran in the full suites; systemd-gated cases remain skipped by the existing contract.",
+    "verifier": {
+      "M1": "KILLED separately by B3_PUSH_BEFORE_TERMINAL; log /tmp/b3-recovery-m1.tap",
+      "M2": "KILLED: B3_MUTATION_ANCESTRY_REVERSED",
+      "M3": "SURVIVED: 3/3 fork, dangling and attack tests pass; residual-edge guard still refuses forks; log /tmp/b3-recovery-m3.tap",
+      "M4": "KILLED: B3_MUTATION_JOURNAL_PERMS",
+      "M5": "KILLED: B3_MUTATION_ATTEMPT_UNBOUND",
+      "M6": "KILLED: B3_MUTATION_DIGEST_IMMUTABILITY",
+      "M7": "KILLED: B3_MUTATION_DANGLING_IGNORED"
+    }
+  },
+  "skips": {
+    "total": 19,
+    "systemd_contract": 11,
+    "other_pre_existing": 8,
+    "non_systemd_names_equal_verdict": true,
+    "new_allowances": 0,
+    "names_and_reasons": [
+      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    ]
+  },
+  "new_reason_codes": {
+    "B3_RECOVERY_AUTHORIZATION": "B3_MUTATION_RECOVERY_AUTH",
+    "B3_RECOVERY_JOURNAL": "B3_MUTATION_RECOVERY_CUSTODY",
+    "B3_RECOVERY_BINDING": "B3_MUTATION_RECOVERY_BINDING",
+    "B3_RECOVERY_REMOTE": "B3_MUTATION_RECOVERY_REWRITE",
+    "B3_RECOVERY_DURABILITY": "B3_MUTATION_RECOVERY_MARK_FAILURE"
+  },
+  "preserved_verifier_refusals": [
+    "A1 unreceipted advance",
+    "A2 forged receipt without broker journal",
+    "A4 cross-activation replay",
+    "A5 review-role push",
+    "A6 missing chain edge",
+    "A7 rewind to seed",
+    "A8 unauthorized sibling head",
+    "A9 JSON actor spoofing",
+    "A10 fork"
+  ],
+  "design_document": "B3-RECOVERY.md",
+  "development_runs": {
+    "initial_focused": {
+      "tests": 116,
+      "pass": 115,
+      "fail": 1,
+      "reason": "RECOVERY_DURABILITY mutation harness observed the intermediate authorizer failure rather than its required durable-mark assertion while implementation was still being completed; no assertion relaxed. Superseded by final 124/124 and full suites."
+    },
+    "intermediate_focused": {
+      "tests": 121,
+      "pass": 121,
+      "fail": 0
+    },
+    "final_added_test_subset": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0
+    }
+  },
+  "unproven_or_unchanged": [
+    "No independent verifier rerun at this new head.",
+    "Recovery is an explicit trusted API, not automatic polling from a refused dispatch tick. Both lanes remain refused until exact-edge recovery completes.",
+    "F2 untrusted-comment denial of service remains; no existing actor guard relaxed.",
+    "F6 same-UID journal compromise is outside custody protection.",
+    "No unobserved remote ref ABA/force-update event detection; observed unauthorized heads and PUSHED rewinds refuse.",
+    "F7 ancestry API outages on other edges still refuse transiently.",
+    "No live GitHub, production state-path, adapter orchestration, power-loss or simultaneous recovery-caller proof.",
+    "Existing systemd and distinct-UID tests skipped; no external Postgres/Typesense integration run."
+  ]
+}

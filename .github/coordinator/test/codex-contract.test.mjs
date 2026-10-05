@@ -32,6 +32,8 @@ import {
   CALLBACK_SCHEMA,
   CODEX_MODEL,
   SUCCESS_CALLBACK_STAGES,
+  callbackSchemaFor,
+  writerSuccessStage,
 } from "../adapters/codex-cli.mjs";
 import { adapterNameFor, adapterLaunchOptions, createReceipt, foldLaunchOutcome, nextReceiptState } from "../reconcile.mjs";
 
@@ -338,7 +340,7 @@ test("resume accepts builder commits descended from the bound input and rejects 
       ...launchInput(), resume: true, external_run_id: `codexrun_${THREAD}`,
       readHeadImpl: async () => RESULT_SHA,
       verifyDescendantImpl: async ({ target_sha }) => { checks += 1; assert.equal(target_sha, SHA); return descends; },
-      execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
+      execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
       io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
     });
     assert.equal(checks, 1);
@@ -497,12 +499,20 @@ test("authentication expiry -> visible re-auth HOLD + pause; quota stays FAILED;
 });
 
 test("thread.started is persisted atomically before process exit, and crash recovery never spawns before receipt persistence", async () => {
+  const waitFor = async (condition, description) => {
+    const deadline = performance.now() + 30_000;
+    while (!condition()) {
+      assert.ok(performance.now() < deadline, `Timed out after 30 seconds waiting for ${description}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
   const stateDir = mkdtempSync(join(tmpdir(), "codex-stream-"));
   const worktree = mkdtempSync(join(tmpdir(), "codex-worktree-"));
   const fakeBin = mkdtempSync(join(tmpdir(), "codex-bin-"));
   const fakeCodex = join(fakeBin, "codex");
   const aliveMarker = join(worktree, "codex-child-alive");
-  writeFileSync(fakeCodex, `#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); setTimeout(() => { fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); }, 1000);\n`);
+  const exitMarker = join(worktree, "codex-child-may-exit");
+  writeFileSync(fakeCodex, `#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); const deadline = performance.now() + 30_000; const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(exitMarker)})) { clearInterval(poll); fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); } else if (performance.now() >= deadline) { console.error("Timed out after 30 seconds waiting for recovery checks to release the Codex child"); process.exit(1); } }, 20);\n`);
   chmodSync(fakeCodex, 0o755);
   const adapterUrl = new URL("../adapters/codex-cli.mjs", import.meta.url).href;
   const runner = join(worktree, "runner.mjs");
@@ -517,13 +527,13 @@ test("thread.started is persisted atomically before process exit, and crash reco
   })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100", pushBrokerEnabled: false }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
   const coordinator = spawn(process.execPath, [runner], { stdio: "ignore" });
   const sidecar = join(stateDir, `${ATTEMPT}.json`);
-  const deadline = Date.now() + 5000;
-  while (!existsSync(sidecar) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitFor(() => existsSync(sidecar), "the durable thread sidecar");
+  assert.ok(existsSync(aliveMarker), "the Codex child is still running when its sidecar becomes durable");
   assert.ok(existsSync(sidecar), "thread identity is durable while the Codex child is still running");
   assert.equal(JSON.parse(readFileSync(sidecar, "utf8")).thread_id, THREAD);
   coordinator.kill("SIGKILL");
   coordinator.unref();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await waitFor(() => coordinator.signalCode !== null || coordinator.exitCode !== null, "the killed coordinator to exit");
 
   let spawns = 0;
   const recovered = await launchBuilder({
@@ -548,13 +558,15 @@ test("thread.started is persisted atomically before process exit, and crash reco
   assert.match(stillRunning.reason, /still alive/);
   assert.equal(spawns, 0, "the exact session is not resumed concurrently with its orphaned process");
 
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  // Release the orphan only after both recovery positions prove they cannot spawn.
+  writeFileSync(exitMarker, "exit");
+  await waitFor(() => !existsSync(aliveMarker), "the original Codex child to finish");
   const afterExit = await launchBuilder({
     ...launchInput(),
     resume: true,
     external_run_id: recovered.external_run_id,
     io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
-    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
   });
   assert.equal(afterExit.stage, "COMPLETED", "only a definitely exited original process permits exact-id resume");
 });
@@ -771,7 +783,7 @@ test("resume requires a definitely exited bound process; live, foreign-host, and
     ...launchInput(),
     resume: true,
     external_run_id: `codexrun_${THREAD}`,
-    execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), ""); },
+    execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, jsonl({ finalText: callbackJson("BUILD_READY") }), ""); },
   };
   const live = await launchBuilder({ ...base, io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "100" } });
   assert.equal(live.stage, "LAUNCH_UNKNOWN");
@@ -854,7 +866,7 @@ test("two recoveries can never resume the same exact Codex session concurrently"
     assert.match(second.reason, /resumed Codex process is still alive|resume ownership/);
     assert.equal(spawns, 1, "the exclusive recovery claim blocks a second resume while the first child is open");
   } finally {
-    children[0].stdout.emit("data", `${jsonl({ finalText: callbackJson("REVISION_READY") })}\n`);
+    children[0].stdout.emit("data", `${jsonl({ finalText: callbackJson("BUILD_READY") })}\n`);
     children[0].emit("close", 0, null);
   }
   assert.equal((await first).stage, "COMPLETED");
@@ -878,7 +890,7 @@ test("a completed resume retains its claim until the terminal receipt is durably
     external_run_id: `codexrun_${THREAD}`,
     execFileImpl: (...args) => {
       spawns += 1;
-      args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), "");
+      args.at(-1)(null, jsonl({ finalText: callbackJson("BUILD_READY") }), "");
     },
     io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
   };
@@ -1040,7 +1052,7 @@ test("a structurally valid matching or reused PID proc record is classified corr
       external_run_id: `codexrun_${THREAD}`,
       execFileImpl: (...args) => {
         spawns += 1;
-        args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), "");
+        args.at(-1)(null, jsonl({ finalText: callbackJson("BUILD_READY") }), "");
       },
       io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => procStat(111, currentStart) },
     });
@@ -1147,8 +1159,45 @@ test("prompt carries the bound head, the attempt echo, and the schema contract; 
   const prompt = buildCodexPrompt(launchInput());
   assert.ok(prompt.includes(`Bound head: ${SHA}`));
   assert.ok(prompt.includes(`Attempt: ${ATTEMPT}`));
-  assert.ok(prompt.includes("coordinator-callback") === false && prompt.includes("BUILD_READY|REVISION_READY|BLOCKED|FAILED"));
+  assert.ok(prompt.includes("coordinator-callback") === false && prompt.includes('"stage":"BUILD_READY|BLOCKED|FAILED"'));
   assert.ok(!prompt.includes("sk-") && !prompt.includes("token"));
+});
+
+test("role stage: the schema and prompt allow only the phase's own success stage", async () => {
+  assert.equal(writerSuccessStage("initial"), "BUILD_READY");
+  assert.equal(writerSuccessStage("revision"), "REVISION_READY");
+  assert.deepEqual(callbackSchemaFor("initial").properties.stage.enum, ["BUILD_READY", "BLOCKED", "FAILED"]);
+  assert.deepEqual(callbackSchemaFor("revision").properties.stage.enum, ["REVISION_READY", "BLOCKED", "FAILED"]);
+  const revisionPrompt = buildCodexPrompt(launchInput({ scope_phase: "revision" }));
+  assert.ok(revisionPrompt.includes('"stage":"REVISION_READY|BLOCKED|FAILED"'));
+  assert.ok(!revisionPrompt.includes("BUILD_READY"), "a revision prompt never offers the build stage");
+  assert.ok(!buildCodexPrompt(launchInput()).includes("REVISION_READY"), "an initial prompt never offers the revision stage");
+  const schemaFile = join(mkdtempSync(join(tmpdir(), "codex-")), "cb.json");
+  await launchBuilder({ ...launchInput({ scope_phase: "revision" }), execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }), schemaFile });
+  assert.deepEqual(JSON.parse(readFileSync(schemaFile, "utf8")).properties.stage.enum, ["REVISION_READY", "BLOCKED", "FAILED"]);
+});
+
+test("role stage: a writer answering the other phase's stage is held before the broker", async () => {
+  const WRAPPED_ENV = { PATH: "/usr/bin", HOME: "/root", SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper" };
+  for (const [scope_phase, stage] of [["revision", "BUILD_READY"], ["initial", "REVISION_READY"]]) {
+    let brokered = 0;
+    const out = await launchBuilder({ ...launchInput({ scope_phase, env: WRAPPED_ENV,
+      io: { pushBrokerEnabled: true, worktreeRoot: "/repo", pushRemoteUrl: "https://example.invalid/r.git",
+        pushBrokerImpl: async () => { brokered += 1; return { ok: true, remote_head: RESULT_SHA }; } } }),
+      execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson(stage, { result_sha: null }) }) }) });
+    assert.equal(out.stage, "HOLD", `${scope_phase}/${stage}`);
+    assert.equal(out.reason_code, "CALLBACK_ROLE_MISMATCH");
+    assert.equal(brokered, 0, "nothing is pushed for a stage the receipt would refuse");
+    assert.equal(out.callback, undefined, "a refused callback is never offered as routable evidence");
+  }
+  let brokered = 0;
+  const accepted = await launchBuilder({ ...launchInput({ scope_phase: "revision", env: WRAPPED_ENV,
+    io: { pushBrokerEnabled: true, worktreeRoot: "/repo", pushRemoteUrl: "https://example.invalid/r.git",
+      pushBrokerImpl: async () => { brokered += 1; return { ok: true, remote_head: RESULT_SHA }; } } }),
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY", { result_sha: null }) }) }) });
+  assert.equal(accepted.stage, "COMPLETED", accepted.reason);
+  assert.equal(accepted.callback.result_sha, RESULT_SHA);
+  assert.equal(brokered, 1);
 });
 
 // ---------------------------------------------------------------------------

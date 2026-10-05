@@ -1,0 +1,82 @@
+{
+  "baseline_revision": "d09f50d6c597ca1d27ea237f2fb342981816b993",
+  "whole_inventory": {
+    "before": 1744,
+    "after": 1744,
+    "multiset_equal": true,
+    "ordered_equal": true
+  },
+  "files": [
+    {
+      "file": ".github/coordinator/test/codex-contract.test.mjs",
+      "before": [
+        "linux_proc"
+      ],
+      "after": [
+        "linux_proc",
+        "shell_toolchain"
+      ],
+      "names_before": 59,
+      "names_after": 59,
+      "multiset_equal": true,
+      "ordered_equal": true
+    },
+    {
+      "file": ".github/coordinator/test/episode-successor-dispatch.test.mjs",
+      "before": [],
+      "after": [
+        "shell_toolchain"
+      ],
+      "names_before": 22,
+      "names_after": 22,
+      "multiset_equal": true,
+      "ordered_equal": true
+    },
+    {
+      "file": ".github/coordinator/test/push-broker-gitconfig.test.mjs",
+      "before": [
+        "git"
+      ],
+      "after": [
+        "git",
+        "shell_toolchain"
+      ],
+      "names_before": 19,
+      "names_after": 19,
+      "multiset_equal": true,
+      "ordered_equal": true
+    },
+    {
+      "file": ".github/coordinator/test/workspace-result-mutations.test.mjs",
+      "before": [
+        "git",
+        "linux_proc"
+      ],
+      "after": [
+        "git",
+        "linux_proc",
+        "shell_toolchain"
+      ],
+      "names_before": 13,
+      "names_after": 13,
+      "multiset_equal": true,
+      "ordered_equal": true
+    },
+    {
+      "file": ".github/coordinator/test/workspace-result.test.mjs",
+      "before": [
+        "git",
+        "linux_proc"
+      ],
+      "after": [
+        "git",
+        "linux_proc",
+        "shell_toolchain"
+      ],
+      "names_before": 15,
+      "names_after": 15,
+      "multiset_equal": true,
+      "ordered_equal": true
+    }
+  ]
+}

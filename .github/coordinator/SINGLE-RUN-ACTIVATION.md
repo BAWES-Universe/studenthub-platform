@@ -1,5 +1,93 @@
 # Single-run host activation (SHU-63)
 
+
+## Reviewed two-fixture extension (dispatch remains disabled)
+
+The versioned `two-fixture-v1` envelope is the only accepted two-fixture
+activation shape. Legacy records below retain their one-issue, one-slot
+semantics; a legacy record still refuses a two-issue configuration.
+
+No command in this change arms, installs or launches anything. The verifier is
+read-only: it cannot create a record, change a gate, modify a card, or merge.
+Arming is permitted only through the reviewed path, with **both gates bound
+and set through that reviewed operation**, never by hand-editing the record,
+card state, committed flag or environment. There is no arming command in this
+patch. The committed flag remains false. A signed reviewed gate substitutes
+for that flag for this pair only; the separate runtime gate is still required.
+The ordinary two-boolean committed path cannot bypass review for a pair scope.
+
+The exact required top-level keys are:
+
+| Field | Required binding |
+| --- | --- |
+| `kind` | Literal `two-fixture-v1` |
+| `activation_id` | Unique reviewed episode identity, 8–64 ASCII letters, digits, underscore or hyphen |
+| `coordinator_revision` | Exact 40-character lowercase SHA of both the executing checkout and its `refs/heads/main` |
+| `slots` | Integer 2, equal to committed `max_dispatch` |
+| `expires_at` | UTC ISO timestamp, future and at most 24 hours away |
+| `stop_before_merge` | Literal `true`; no merge authority is granted |
+| `fixtures` | Exactly two entries, one SHU-140 and one SHU-254 |
+| `gates` | Exactly boolean `reviewed` and `runtime`, with equal values |
+| `signature` | Base64 Ed25519 signature of the complete canonical envelope excluding this field |
+
+Each fixture entry contains exactly `issue_id`, `branch`, `seed_head`, and
+`lane`. The branch must be `coordinator/<issue_id>`. `seed_head` is that lane's
+own exact 40-character lowercase SHA. `lane` is the **complete committed lane
+object**, including ID, authorization reference, note, initial paths, revision
+paths and seeded defect path. Both lane objects must also satisfy the existing
+hard-coded fixture scope policy. The signature binds all of these fields,
+including both gate values. Object keys are recursively sorted; array ordering
+is preserved, as implemented by `reviewedActivationBytes()`.
+
+Review authentication uses the Ed25519 SPKI PEM public key in reviewed
+configuration field `two_fixture_activation_public_key`. This patch supplies
+no operational key or record. Missing or invalid trust configuration refuses;
+a signature or boolean inside a record cannot appoint its own trusted key.
+Private-key custody and the operation that sets the runtime gate remain part
+of separately reviewed deployment. They are not exposed by the validator.
+
+| Named refusal | Condition |
+| --- | --- |
+| `ACT_MISSING_FIXTURE` | Record binds fewer than two fixtures |
+| `ACT_EXTRA_FIXTURE` | Record binds more than two fixtures |
+| `ACT_LANE_CROSS` | Wrong pair, crossed paths, changed lane definition, wrong lane ID or branch |
+| `ACT_DUPLICATE_LANE` | Repeated issue or lane in the record, or duplicate configured lane |
+| `ACT_CAPACITY_DRIFT` | Record concurrency is not two, or committed capacity disagrees |
+| `ACT_STALE_SEED_HEAD` | Either lane head is unresolved, differs from its seed without valid receipt-bound broker ancestry, or rewinds from authorized progress |
+| `ACT_MALFORMED` | Missing/extra/invalid fields, invalid SHA, missing/expired/overlong expiry, false stop-before-merge, or coordinator/main revision mismatch |
+| `ACT_PARTIAL_ARMING` | Only one signed gate is set, either fixture lacks a resolvable Linear identity, or either configured lane is missing |
+| `ACT_MANUAL_GATE_BYPASS` | Missing/invalid signature or trusted key, changed signed payload, manually enabled committed gate, or runtime gate differs from the signed review |
+
+Checks are ordered; multiple faults report the first refusal. All refusals stop
+dispatch. Both signed gates false with runtime off is a valid **disabled**
+review, not an armed status. Both signed gates true require matching runtime
+state and every other binding. This evaluation does not set either gate.
+
+The existing `--activation` status path recognizes this schema and projects one
+unfinished fixture at a time into the existing episode machinery. A running
+fixture leaves the next idle fixture selectable; each tick still reserves at
+most once. Both issue IDs remain claim boundaries. Each first build uses its
+own bound seed head. Episode spending, author exclusion, per-card writer locks,
+receipt persistence and successor routing retain their existing implementations.
+
+Head verification reads both GitHub branch heads and resolves both Linear
+identities with bounded read-only API requests on every validation, including
+supervisor child authorization. Missing credentials, API errors and unresolved
+heads or identities fail closed. Tests inject evidence without network access.
+The coordinator/main revision comes from the executing checkout. Strict seed
+equality is checked on every validation: advancing either fixture branch
+refuses the authorization. No reseeding or manual ref repair is authorized.
+This strict rule is intentionally narrower than the legacy single-fixture
+same-branch continuation: a later changed head requires a separately reviewed
+authorization. No live two-fixture proof is claimed by these offline tests.
+
+`test/two-fixture-activation.test.mjs` exercises each named refusal with positive
+controls, nine removed-check mutations killed by their named AssertionErrors,
+required-field coverage, signature tampering, in-memory status integration, and
+an actual gates-off coordinator tick. No activation file is created by these tests.
+
+## Legacy single-fixture mechanism
+
 Dispatch has always required two gates in different layers:
 
 1. the **committed** flag — `config.json` → `enable_dispatch` (false by default, and
@@ -197,6 +285,27 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   Install the host `acl` package: the wrapper grants `shu-reviewer` `r-x` on only
   the bound attempt for the lifetime of the sandbox and removes that ACL in its
   exit trap. A pre-existing reviewer ACL is refused rather than silently reused.
+* `SHU_REVIEW_MODEL_WRAPPER_JSON`: the same canonical sandbox behind the exact
+  noninteractive model form
+  `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
+  Command-specific sudoers `env_keep` preserves that one reviewer subscription
+  value, while `NOSETENV` rejects caller-selected startup environment values.
+  The actual Claude process, not only its test child, then runs as
+  `shu-reviewer` with a transient private home, a serialized reviewer identity,
+  no process view of other service identities, no view of
+  coordinator/worker/session/SSH/state/log paths, and a read-only non-executable
+  assigned checkout. Missing model isolation HOLDs before Claude starts.
+* Codex as the reviewer (SHU-71, `codex-verifier` lane): the same model wrapper
+  launches `codex exec --sandbox read-only` with the committed verdict schema
+  `adapters/codex-review-callback.schema.json`, after the same confined test
+  phase. Codex reads its subscription login from its own home, so the host needs
+  `/var/lib/shu-reviewer-codex`: owned by `shu-reviewer`, mode 0700, under the
+  root-owned `/var/lib`, logged in once as `shu-reviewer` with
+  `CODEX_HOME=/var/lib/shu-reviewer-codex codex login` (device code).
+  It is the only writable host path the sandbox grants, and only to the Codex
+  model launch; builder tests and the Claude reviewer find it masked. `codex`
+  must resolve on the sandbox `PATH` to a root-owned, non-writable executable.
+  A missing or wrongly owned home refuses the launch before Codex starts.
 * `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
   For SHU-140 this is
   `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is
@@ -242,6 +351,65 @@ and any future expansion of reviewer capabilities.
 The temporary source contains repository objects (no credentials), is made
 readable for the local copy, and is removed after preparation.
 
+### SHU-241: scoped builder source and base-preserving publication
+
+Each fixture builder's initial checkout excludes its review trap's blob. The
+legacy `fixture_lane` object continues to define SHU-140 with unchanged paths.
+The optional `fixture_lanes` array adds lane definitions with the same fields;
+it currently contains SHU-254. IDs must be unique across both surfaces, and the
+coordinator resolves the lane by the issue it is acting on, never by list order.
+
+| Issue | Initial build paths | Additional revision path / seeded defect |
+| --- | --- | --- |
+| SHU-140 | `tools/fixture/scan-vacuous.mjs`, `tools/fixture/test/scan-vacuous.test.mjs` | `tools/fixture-conformance/scan-vacuous.expectations.mjs` |
+| SHU-254 | `tools/fixture-2/scan-unawaited.mjs`, `tools/fixture-2/test/scan-unawaited.test.mjs` | `tools/fixture-2-conformance/scan-unawaited.expectations.mjs` |
+
+Each definition pins `initial_build_paths`, `revision_paths` (the initial paths
+plus that lane's trap), and `seeded_defect_path`. SHU-140 retains its existing
+`authorization_ref`; SHU-254 uses its canonical card reference `SHU-254`.
+Neither reference is an activation approval. Scoped receipt recovery and
+workspace preparation reject another lane's manifest with `LANE_MISMATCH`.
+
+The committed dispatch scope is exactly `["SHU-140", "SHU-254"]` with
+`max_dispatch: 2` and `enable_dispatch: false`. Live arming still requires
+explicit approval and both dispatch gates. The single-run record documented
+above remains constrained to one issue and one slot and therefore refuses the
+committed two-lane configuration; this change does not extend activation.
+
+Trusted lane configuration pins the initial build paths and a predeclared
+revision superset. The seeded defect path is
+required to be outside the initial set and inside the revision set; otherwise
+dispatch refuses before reservation. Globs, directories, traversal, `.git`,
+duplicates and non-normalized paths are not scope authority.
+
+For a scoped build, the coordinator first saves the complete exact target as a
+private 0600 base bundle. It then deterministically writes a parentless scoped
+base commit whose tree contains only the authorized ordinary files. The commit
+message binds the authoritative full `target_sha` and the exact ordered path
+manifest, and fixed coordinator identity and timestamps make its
+`scoped_base_sha` independently recomputable. The worker receives only that
+commit through the existing local bundle transport. The bundle origin and
+temporary source are removed before launch, so neither hidden blobs, the full
+target commit, nor hidden path names reach the worker object store.
+
+Publication starts the host-owned index at the complete bound base tree, imports
+that base only from the private bundle, and overlays or deletes only authorized
+paths. Thus hidden paths remain byte-identical base entries instead of
+becoming deletions. Before result binding, pre-push recording or any remote
+operation, the broker recursively inspects the real worktree and refuses any
+materialized path outside the exact allowance with `RESULT_SCOPE_REFUSED`.
+
+The revision superset is unlocked only by an independently validated `BLOCK`
+against the exact builder result on the same branch and routes back to the same
+Codex writer. Failure, stale or wrong-head review, another writer, or another
+branch cannot widen it. The authoritative `target_sha`, derived
+`scoped_base_sha`, scope phase and exact paths are immutable receipt and
+attempt-authority fields; directives carry the full target and exact manifest,
+then the coordinator derives the scoped SHA before reservation. The scoped SHA
+never replaces the full target in routing, review or broker authority. Reviewers
+always receive a complete reconstructed exact-head repository, and scoped
+reviewer launch is refused.
+
 Each successor gets its own checkout at the routed output head. Both adapters
 receive the actual prepared `cwd`; legacy `CODEX_WORKTREE_PATH` and
 `CLAUDE_WORKTREE_PATH` do not select production launch directories anymore.
@@ -274,8 +442,11 @@ options and report the expected model on the host; contract tests inspect the
 arguments but do not spend subscription usage or establish account availability.
 Model aliases/worker labels are not evidence of the model actually used.
 
-The builder edits and tests files, then returns `result_sha: null` with
-`BUILD_READY` or `REVISION_READY`. It must stop writing before returning. The
+The builder edits and tests files, then returns `result_sha: null` with the one
+success stage its phase allows: `BUILD_READY` for the initial build,
+`REVISION_READY` for a revision. The schema and prompt offer only that stage, and
+the host holds any other success stage as `CALLBACK_ROLE_MISMATCH` without
+pushing. It must stop writing before returning. The
 host validates the attempt/head callback before invoking the existing broker.
 The broker reads ordinary tracked and non-ignored untracked files without
 following symlinks, stages raw bytes in its own index, and creates a commit with
@@ -314,7 +485,9 @@ live SHU-63 PASS.
 Before the next live fixture, run `node --test
 .github/coordinator/test/attempt-workspace.test.mjs
 .github/coordinator/test/workspace-result.test.mjs
-.github/coordinator/test/workspace-result-mutations.test.mjs` on the reviewed host. The
+.github/coordinator/test/workspace-result-mutations.test.mjs
+.github/coordinator/test/shu241-scoped-build.test.mjs
+.github/coordinator/test/shu241-mutations.test.mjs` on the reviewed host. The
 distinct-uid tests must execute there (not skip). The full-loop test uses real Git,
 real adapters and the real broker with local bare repositories and CLI doubles;
 it makes no paid model calls. It is an integration regression, not the live SHU-63

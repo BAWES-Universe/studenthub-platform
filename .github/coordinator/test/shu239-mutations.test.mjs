@@ -31,14 +31,16 @@ const CASES = [
   { name: "M12 weaken exact-head binding", file: "adapters/claude-code.mjs",
     from: "  if (checkoutHead !== target_sha) {", to: "  if (false) {", testFile: "claude-contract.test.mjs", pattern: "checkout must resolve" },
   { name: "M13 restore world-readable attempt directories", file: "attempt-workspace.mjs",
-    from: "      else fs.chmodSync(cwd, 0o750);", to: "      else fs.chmodSync(cwd, 0o755);",
+    from: "  fs.chmodSync(cwd, 0o750);", to: "  fs.chmodSync(cwd, 0o755);",
     alsoFrom: '  if ((stat.mode & 0o777) !== 0o750) throw new Error("attempt workspace must remain mode 0750");',
     alsoTo: '  if (false) throw new Error("attempt workspace must remain mode 0750");',
     testFile: "attempt-workspace.test.mjs", pattern: "empty root provisions" },
   { name: "M14 stop masking sibling workspaces", file: "reviewer-sandbox.sh",
     from: '  systemd_args+=("--property=InaccessiblePaths=$sibling")', to: '  systemd_args+=("--property=ReadOnlyPaths=$sibling")', testFile: "shu239-reviewer-launch.test.mjs", pattern: "SHU-239 A7: shipped" },
   { name: "M15 retain reviewer ACL after execution", file: "reviewer-sandbox.sh",
-    from: 'cleanup() { /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace" || true; }', to: "cleanup() { true; }", testFile: "shu239-reviewer-launch.test.mjs", pattern: "SHU-239 A7: shipped" },
+    from: '  cleanup_step "revoke reviewer workspace ACL" /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace"', to: "  true", testFile: "shu239-reviewer-launch.test.mjs", pattern: "SHU-239 A7: shipped" },
+  { name: "M16 leave the reviewer checkout owner-only", file: "attempt-workspace.mjs",
+    from: "  walk(cwd);", to: "  void walk;", testFile: "attempt-workspace.test.mjs", pattern: "readable below its 0750 gate" },
 ];
 
 for (const mutation of CASES) {

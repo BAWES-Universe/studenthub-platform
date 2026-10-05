@@ -10,6 +10,8 @@ const SUDO_ALIAS = "/usr/bin/sudo";
 const SUDO_TARGET = "/usr/lib/cargo/bin/sudo";
 const SANDBOX_ALIAS = "/usr/local/libexec/shu-reviewer-sandbox";
 const SANDBOX_TARGET = "/usr/local/libexec/shu-reviewer-sandbox.real";
+const startProcessCanaryImpl = async () => ({ kill: () => true });
+const listenProbeImpl = async () => ({ address: () => ({ port: 26123 }), close: (done) => done() });
 
 function fakeStat(kind, { uid = 0, mode = 0o755, symlink = false } = {}) {
   return {
@@ -73,6 +75,12 @@ function successfulReport(expectedUid, files = ["bound.test.mjs"]) {
     workspace_write_probe: "DENIED",
     network_probe: "DENIED",
     forbidden_env_keys: [],
+    protected_class_probes: { coordinator_evidence: "DENIED" },
+    symlink_probe: "DENIED",
+    traversal_probe: "DENIED",
+    inherited_descriptor_probe: "DENIED",
+    environment_value_probe: "DENIED",
+    process_inspection_probe: "DENIED",
     tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
   };
 }
@@ -123,6 +131,7 @@ test("SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validate
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify([SUDO_ALIAS, "-n", SANDBOX_ALIAS]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify([SUDO_ALIAS, "-n", SANDBOX_ALIAS]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
@@ -130,6 +139,8 @@ test("SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validate
       calls.push({ file, args });
       queueMicrotask(() => callback(null, JSON.stringify(successfulReport(expectedUid)), ""));
     },
+    startProcessCanaryImpl,
+    listenProbeImpl,
   });
   assert.equal(result.executed, true, result.detail);
   assert.equal(calls.length, 1);
@@ -212,10 +223,13 @@ async function ownershipRun({ attempt, childUid, childMode = 0o644, workspaceUid
     childPath: child,
     ownUid,
     fsImpl,
+    startProcessCanaryImpl,
+    listenProbeImpl,
     validateWrapperImpl: (wrapper) => wrapper,
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },

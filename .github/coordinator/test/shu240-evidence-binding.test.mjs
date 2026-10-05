@@ -65,6 +65,7 @@ function launch(f, stdout) {
       readHeadImpl: async () => SHA,
       reviewEvidenceImpl: async () => ({
         executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+        isolation_wrapper: ["/test/reviewer-model-wrapper"],
         evidence_link: pathToFileURL(f.reportPath).href, report: f.report,
       }),
       persistEnvelopeImpl: () => ({ link: pathToFileURL(path.join(f.evidence, "envelope.stdout")).href }),
@@ -130,11 +131,15 @@ test("SHU-240 A2: outside, symlinked, and traversal file evidence is refused by 
   }
 });
 
-test("SHU-240 A3: existing HTTPS GitHub and Linear evidence still binds", () => {
-  assert.equal(callbackValid(callback("PASS", [
+test("SHU-240 A3: HTTPS links remain supplemental to mandatory local machine evidence", (t) => {
+  const f = fixture(t);
+  const httpsLinks = [
     "https://github.com/BAWES-Universe/studenthub-platform/pull/82",
     "https://linear.app/bawes/issue/SHU-240/example",
-  ]), { attempt_id: ATTEMPT, target_sha: SHA }), true);
+  ];
+  const context = { attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, evidence_dir: f.evidence };
+  assert.equal(callbackValid(callback("PASS", httpsLinks), context), false, "web links cannot replace the confined test report");
+  assert.equal(callbackValid(callback("PASS", [pathToFileURL(f.reportPath).href, ...httpsLinks]), context), true);
 });
 
 test("SHU-240 A6: either valid envelope field binds; invalid fields are named", async (t) => {

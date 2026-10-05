@@ -95,13 +95,18 @@ export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker 
 # systemd sandbox as a distinct uid with no network, secrets or writable host tree.
 export SHU_REVIEW_EXEC_UID="$(id -u shu-reviewer)"
 export SHU_REVIEW_EXEC_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'
+export SHU_REVIEW_MODEL_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'
 export SHU_REVIEW_TEST_FILES_JSON='["tools/fixture/test/scan-vacuous.test.mjs"]'
 export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 ```
 
 Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
 above, install the host `acl` package, and grant only that fixed command to
-`shu-coordinator`. The adapter does
+`shu-coordinator`. Command-specific sudoers `env_keep` preserves exactly
+`CLAUDE_CODE_OAUTH_TOKEN`, while `NOSETENV` rejects caller-controlled startup
+environment values. Both the
+confined test child and the actual Claude verifier cross this wrapper and run as
+`shu-reviewer`. The adapter does
 not trust the declaration: symlinked system entrypoints are resolved to a
 root-owned, non-writable executable behind a root-owned, non-writable canonical
 directory chain, and only the validated canonical target executes. The child and
@@ -117,9 +122,15 @@ Each attempt directory is mode 0750. The wrapper grants the locked reviewer uid
 the systemd mount namespace, and removes the ACL on exit. A fresh sibling canary
 must be unreadable in the same report that proves the other confinement probes.
 This keeps the root's traverse-only ACL without exposing retained attempts.
+The wrapper rejects working-tree hardlinks, makes the checkout read-only and
+non-executable, serializes the shared reviewer identity, hides other service
+identities through `ProtectProc=invisible`/`ProcSubset=pid`, and masks the
+deployed authority roots: `/srv/shu/state`, `/etc/shu`, `/srv/shu/service.env`,
+`/srv/shu/coordinator.env`, `/srv/shu/.gitkeys`, `/srv/codex`,
+`/srv/shu/.claude`, `/home/shu-coordinator`, `/srv/shu/logs`, `/var/log` and `/run/log`.
 
-Claude runs separately under the subscription identity because it needs provider
-network access, but its tool surface is restricted to `Read`, `Glob`, and `Grep`
+Claude's `model` profile permits only the AF_UNIX, AF_INET and AF_INET6 address
+families, with no destination allowlist. The test profile remains networkless. Its tool surface is restricted to `Read`, `Glob`, and `Grep`
 in restricted evaluation mode. This preserves subscription authentication while
 disabling ambient settings, CLAUDE.md, hooks, skills, commands, plugins and
 subagents; file tools remain inside the exact cwd. Strict MCP configuration and
@@ -150,6 +161,28 @@ test("does not stop a body at a closing brace inside a string literal", () => {
 This stays green while ignoring `report`. A competent first review must BLOCK
 it; the author then binds the assertion to `report`, fixes the revealed
 string-literal brace parsing defect, and the independent re-review may PASS.
+
+The initial builder is additionally constrained by the exact trusted
+`fixture_lane.initial_build_paths` list. The trap path is pinned outside that
+list by a non-vacuity guard. From the authoritative full `target_sha`, the
+coordinator deterministically creates a parentless `scoped_base_sha` containing
+only the exact allowed files and delivers it through a local bundle. Hidden
+blobs, the full target commit and hidden path names are absent from the worker's
+repository. Receipts bind both SHAs and the exact ordered manifest so a verifier
+can recompute the scoped input. The coordinator separately retains a private
+full base bundle so the host snapshot begins with the complete target tree and
+overlays only authorized files. It rejects any real out-of-scope worktree path
+before result binding or network publication; hidden base paths can never be
+translated into deletions.
+
+Only a validated independent `BLOCK` bound to that exact builder result, writer
+and branch unlocks the predeclared `revision_paths` superset containing the trap.
+The reviewer always receives the complete reconstructed exact-head repository.
+The scoped SHA never substitutes for the full target in review, routing or broker
+authority. Workspace scope, phase, exact paths and both SHA bindings are
+immutable in receipts and local attempt authority; work-order directives carry
+the full target and manifest for host derivation. No worker or reviewer prose can
+widen them.
 
 `ENABLE_DISPATCH` stays unset. Nothing here enables dispatch; the contract only
 governs what happens once someone does.

@@ -1,0 +1,23 @@
+{
+  "synthetic_host_observations": true,
+  "composer": {
+    "exit_code": 0,
+    "ok": true,
+    "signed": false,
+    "canonical_sha256": "a5c38e253a3de9f33c99e0c94bea03ffc7b4edac0138aca2a0ce67209b353c8b",
+    "activation_id": "shu71-mint-00000015",
+    "revision": "962908c9f7ca6926123b7718d5ce7b62f05c2ae2"
+  },
+  "driver": {
+    "exit_code": 0,
+    "version": "shu251-phase-a-plan-v1",
+    "step": "preflight",
+    "approved_sha": "962908c9f7ca6926123b7718d5ce7b62f05c2ae2",
+    "dry_run": true
+  },
+  "live_input_refusal": {
+    "exit_code": 2,
+    "ok": false,
+    "code": "MINT_OBSERVATIONS_REQUIRED"
+  }
+}

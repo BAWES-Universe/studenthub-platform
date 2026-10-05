@@ -1,0 +1,26 @@
+TAP version 13
+# Subtest: A12 committed inventory requirements match real outcomes
+ok 1 - A12 committed inventory requirements match real outcomes
+  ---
+  duration_ms: 333035.908056
+  type: 'test'
+  ...
+# A12_INVENTORY_REAL_SKIPS: 8-skip shape passes
+# A12_INVENTORY_REAL_SKIPS: 4-skip shape passes
+# skip control killed by A12_INVENTORY_REAL_SKIPS: A12 unauthorized skip control
+# skip control killed by A12_INVENTORY_REAL_SKIPS: SHU-227: worker owns its checkout and recovery preserves descendant commits
+# drop F1 shell toolchain: killed by A12_INVENTORY_REQUIREMENTS: SHU261 shipped profile branches pass exact network properties to systemd-run
+# drop F4 git: killed by A12_INVENTORY_REQUIREMENTS: SHU-239 mutation M13 restore world-readable attempt directories
+# drop F6 shell toolchain: killed by A12_INVENTORY_REQUIREMENTS: SHU-237 mutation M1 bypass canonicalization
+# drop required git: killed by A12_INVENTORY_REQUIREMENTS: SHU-63 activation: the RUNNING revision is what bounds an activation, end to end
+# grant unused git: killed by A12_INVENTORY_REQUIREMENTS: B2 credential: transport consumes only fixed systemd credential and never exports it
+# A12_INVENTORY_REAL_RUN: d44caea101d482ad7c6036649b9a12be8a5861fd; 101 files; 2784 child outcomes plus this guard
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 333087.274944
