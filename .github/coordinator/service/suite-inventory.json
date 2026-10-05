@@ -3954,7 +3954,8 @@
     "CARD_LANE_BRIEF: the pinned register has the 27 inventory rows with known states",
     "CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a card",
     "CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude",
-    "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order"
+    "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order",
+    "CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it"
   ],
   "requirements": [
     {
@@ -29975,6 +29976,17 @@
     {
       "name": "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order",
       "capabilities": []
+    },
+    {
+      "name": "CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

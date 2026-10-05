@@ -34,6 +34,7 @@ import {
   SUCCESS_CALLBACK_STAGES,
   callbackSchemaFor,
   writerSuccessStage,
+  STDERR_TAIL_BYTES,
 } from "../adapters/codex-cli.mjs";
 import { adapterNameFor, adapterLaunchOptions, createReceipt, foldLaunchOutcome, nextReceiptState } from "../reconcile.mjs";
 
@@ -474,6 +475,61 @@ test("credential isolation: child env is an allowlist; OPENAI_API_KEY/BASE_URL n
   assert.equal(env.OPENAI_BASE_URL, undefined, "alternate endpoints stripped");
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined, "other lanes' secrets stripped");
   assert.equal(env.RANDOM_SECRET, undefined);
+});
+
+test("CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it", async () => {
+  // SHU-197 card run 2b: codex exited 1 with no output and the completion record
+  // said only CODEX_1. The next failure must say why on the host.
+  const schemaDir = mkdtempSync(join(tmpdir(), "codex-tail-"));
+  const run = async (stderr) => launchBuilder({
+    ...launchInput(),
+    execFileImpl: execResult({ error: Object.assign(new Error("codex exited with code 1"), { code: 1 }), stderr }),
+    schemaFile: join(schemaDir, "s.json"),
+  });
+  const secret = `sk-${"q".repeat(24)}`;
+  const failed = await run(`\x1b[31mError:\x1b[0m unsupported model gpt-5.6-sol\nOPENAI_API_KEY=${secret} Bearer abc.def ${"Z".repeat(40)}\nAuthorization: Basic dXNlcjpwYXNz\ncookie=sid=s3cr3tcookie; other=1\n`);
+  assert.equal(failed.stage, "FAILED");
+  assert.equal(failed.error_code, "CODEX_1", "the code is unchanged");
+  assert.match(failed.stderr_tail, /^Error: unsupported model gpt-5\.6-sol\n/, "the cause survives, without terminal colour codes");
+  for (const leaked of [secret, "abc.def", "Z".repeat(40), "Basic", "dXNlcjpwYXNz", "s3cr3tcookie"]) assert.equal(failed.stderr_tail.includes(leaked), false, `${leaked} is redacted`);
+
+  const long = await run(`${"early line\n".repeat(400)}the real cause is last`);
+  assert.ok(Buffer.byteLength(long.stderr_tail) <= STDERR_TAIL_BYTES, "the tail is bounded, ellipsis included");
+  assert.match(long.stderr_tail, /^…[\s\S]*the real cause is last$/, "the end of stderr is kept, not the start");
+
+  // Opaque base64url and base64 values with no 32-character run of the old
+  // alphabet, alone, after a prefix, and across the truncation boundary.
+  const url = "AbCdEfGhIjKlMnOp-QrStUvWxYz012345";
+  const std = "AbCdEfGhIjKlMnOp/QrStUvWxYz012345";
+  const opaque = await run(`refresh failed ${url}\nrt-${url}\n${std}\n`);
+  for (const leaked of [url, std, "QrStUvWxYz012345", "AbCdEfGhIjKlMnOp"]) assert.equal(opaque.stderr_tail.includes(leaked), false, `${leaked} is redacted`);
+  const crossing = await run(`${"x ".repeat(1100)}${url}${"y ".repeat(1014)}`);
+  assert.equal(/QrStUv|CdEfGh/.test(crossing.stderr_tail), false, "a token at the cut is redacted before the cut");
+
+  // Multibyte stderr: the bound holds and the tail never opens inside a character.
+  for (const char of ["界", "😀"]) {
+    const wide = await run(char.repeat(1000));
+    assert.ok(Buffer.byteLength(wide.stderr_tail) <= STDERR_TAIL_BYTES, `${char}: bounded`);
+    assert.equal(wide.stderr_tail.includes("\ufffd"), false, `${char}: no replacement character`);
+    assert.match(wide.stderr_tail, new RegExp(`^…(?:${char})+$`, "u"), `${char}: whole characters only`);
+  }
+
+  const silent = await run("");
+  assert.equal(silent.stage, "FAILED");
+  assert.equal("stderr_tail" in silent, false, "no stderr, no field");
+
+  const made = createReceipt({
+    issue_id: "SHU-63",
+    authorization_ref: "SHU-63",
+    requested_worker: "codex-builder",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "coordinator/SHU-63",
+    target_sha: SHA,
+  });
+  assert.equal(made.ok, true);
+  const folded = foldLaunchOutcome(nextReceiptState(made.receipt, { type: "launch" }).receipt, failed, { current_head: SHA, expected_head: SHA });
+  assert.equal(folded.receipt.stage, "FAILED");
+  assert.equal(JSON.stringify(folded.receipt).includes("unsupported model"), false, "the receipt that goes to Linear carries the code only");
 });
 
 test("authentication expiry -> visible re-auth HOLD + pause; quota stays FAILED; 403 stays access", async () => {
