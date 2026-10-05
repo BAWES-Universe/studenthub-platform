@@ -1,0 +1,11 @@
+A12_COMMITTED_INVENTORY_ADMITTED: ca77fc8a251b5e62594393c5eb0f974e195e9271; 98 files; 2762 outcomes
+missing inventory: SHU251_SUITE_INVENTORY
+missing files: SHU251_SUITE_INVENTORY
+partial files: SHU251_SUITE_INVENTORY
+extra files: SHU251_SUITE_INVENTORY
+version mismatch: SHU251_SUITE_INVENTORY
+missing name requirement: SHU251_PREFLIGHT_REQUIREMENTS
+capability outside vocabulary: SHU251_PREFLIGHT_REQUIREMENTS
+name drift: SHU251_SUITE_NAMES
+unpermitted reason: SHU251_PREFLIGHT_SKIP_BINDING
+real hidden byte tampering: SHU251_SUITE_FILE_DIGEST

@@ -17,7 +17,9 @@ import {
 } from "@studenthub/profile";
 
 import { createLoginApplication } from "./login-application.js";
+import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
+import { createCompanyDirectory } from "./company-directory.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -221,10 +223,16 @@ export function createRuntimeLoginFromEnv(
     clockSkewSeconds: 60,
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
   });
+  // Organization snapshots stay unconfigured until an approved import exists:
+  // the card and the company list show registry names and visibly unavailable fields.
+  const organizations = new OrganizationRepository({
+    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(),
+  });
   return {
     application: {
       ...application,
-      navigation: createContextNavigation(loginStore.sessions, authzStore),
+      navigation: createContextNavigation(loginStore.sessions, authzStore, organizations),
+      companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,

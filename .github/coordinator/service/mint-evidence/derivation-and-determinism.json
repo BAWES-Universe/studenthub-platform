@@ -1,0 +1,24 @@
+{
+  "synthetic_host_observations": true,
+  "repeat_byte_identical": {
+    "pkg": true,
+    "spec": true,
+    "window": true
+  },
+  "activation_id": "shu71-mint-00000015",
+  "tree": "d5ad5ba215bbbf40dca73f005986759ee9dafa65",
+  "reseed": {
+    "issue_id": "SHU-140",
+    "branch": "coordinator/SHU-140",
+    "expected_parent": "6e5ad86cc0a993097d2e642132077b665ad49481",
+    "expected_seed_head": "9195f082f041102540d88e994c7126c9dfb3d8e6",
+    "patch_sha256": "e0943e4f149fb23a078027315a25a2f7c877fae0f55b7a22add05110ecabd298",
+    "append_only": true,
+    "force": false
+  },
+  "hashes": {
+    "pkg": "83bd7dd3f35b4ea5895d8d3e9905c074aa9376fb5498cc787607b941e63818f9",
+    "spec": "cf44b9089e46b2d732b22dc07a2f43f04f2363e4edb1570c3c5fdd9030440ceb",
+    "window": "382eccc1584f28bd0cc39b0ad66612340bb0fde8a0664dba6dcdf7a4cbe60f76"
+  }
+}

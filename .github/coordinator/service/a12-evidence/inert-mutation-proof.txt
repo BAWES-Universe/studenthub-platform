@@ -1,0 +1,5 @@
+A12_INERT_POSITIVE: pass
+scratch directory restored: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)
+file write restored: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)
+file removal restored: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)
+mutating child argv restored: killed by A12_DEPENDENCY_PROBE: shell_toolchain positive (ERR_ASSERTION)

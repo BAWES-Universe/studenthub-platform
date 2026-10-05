@@ -13,6 +13,12 @@ import { pathToFileURL } from "node:url";
 export const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_PROCESS_OUTPUT_BYTES = 2 * 1024 * 1024;
 const FORBIDDEN_ENV = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|SSH|GITHUB|LINEAR|ANTHROPIC|CLAUDE)/i;
+const CANARY = Object.freeze({
+  fd: /^SHU261_FD_[0-9a-f]{32}$/,
+  environment: /^SHU261_ENV_[0-9a-f]{32}$/,
+  process: /^SHU261_PROCESS_[0-9a-f]{32}$/,
+});
+const KNOWN_PROTECTED_CLASSES = new Set([...PROTECTED_CLASSES, "deployed_supervisor_environment", "coordinator_evidence"]);
 
 function parseArgs(argv) {
   const split = argv.indexOf("--");
@@ -40,13 +46,14 @@ export function protectedFileDenied(file) {
 }
 
 export function inheritedDescriptorDenied(canary, { fsImpl = fs, pid = process.pid } = {}) {
-  if (typeof canary !== "string" || !/^SHU261_FD_[0-9a-f]{32}$/.test(canary)) return false;
+  if (!CANARY.fd.test(canary ?? "")) return false;
   let descriptors = [];
   try { descriptors = fsImpl.readdirSync(`/proc/${pid}/fd`); } catch { return false; }
   for (const descriptor of descriptors) {
     if (!/^\d+$/.test(descriptor) || Number(descriptor) <= 2) continue;
     try {
-      // Reading a pipe can block forever. The sentinel is a regular file.
+      // The source canary is a regular file. Never risk blocking on a pipe or
+      // socket while enumerating inherited descriptors.
       if (!fsImpl.statSync(`/proc/${pid}/fd/${descriptor}`).isFile()) continue;
       if (fsImpl.readFileSync(`/proc/${pid}/fd/${descriptor}`, "utf8").includes(canary)) return false;
     } catch { /* unreadable/non-regular descriptors do not expose the canary */ }
@@ -55,11 +62,12 @@ export function inheritedDescriptorDenied(canary, { fsImpl = fs, pid = process.p
 }
 
 export function environmentValueDenied(canary, env = process.env) {
-  return typeof canary === "string" && /^SHU261_ENV_[0-9a-f]{32}$/.test(canary) && !Object.values(env).some((value) => String(value).includes(canary));
+  return CANARY.environment.test(canary ?? "")
+    && !Object.values(env).some((value) => String(value).includes(canary));
 }
 
 export function processInspectionDenied(canary, { fsImpl = fs, pid = process.pid } = {}) {
-  if (typeof canary !== "string" || !/^SHU261_PROCESS_[0-9a-f]{32}$/.test(canary)) return false;
+  if (!CANARY.process.test(canary ?? "")) return false;
   let entries = [];
   try { entries = fsImpl.readdirSync("/proc"); } catch { return false; }
   for (const entry of entries) {
@@ -84,14 +92,17 @@ export function protectedProbes(raw) {
   let symlink = true;
   let traversal = true;
   for (const probe of probes) {
-    if (!probe || typeof probe !== "object" || ![...PROTECTED_CLASSES, "deployed_supervisor_environment"].includes(probe.class)
-      || typeof probe.path !== "string" || !probe.path.startsWith("/") || Object.hasOwn(classes, probe.class)) {
+    if (!probe || typeof probe !== "object" || !KNOWN_PROTECTED_CLASSES.has(probe.class)
+      || typeof probe.path !== "string" || !probe.path.startsWith("/")
+      || typeof probe.symlink_path !== "string" || probe.symlink_path.length === 0
+      || typeof probe.traversal_path !== "string" || probe.traversal_path.length === 0
+      || Object.hasOwn(classes, probe.class)) {
       return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" };
     }
     const denied = protectedFileDenied(probe.path);
     classes[probe.class] = denied ? "DENIED" : "REACHABLE";
-    if (probe.symlink_path) symlink &&= protectedFileDenied(probe.symlink_path);
-    if (probe.traversal_path) traversal &&= protectedFileDenied(probe.traversal_path);
+    symlink &&= protectedFileDenied(probe.symlink_path);
+    traversal &&= protectedFileDenied(probe.traversal_path);
   }
   return {
     ok: Object.values(classes).every((value) => value === "DENIED") && symlink && traversal,

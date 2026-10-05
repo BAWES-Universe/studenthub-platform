@@ -20,7 +20,16 @@ jobs:
         with:
           node-version: 22
       - name: Assert service verification prerequisites
-        run: systemd-analyze --version && test -x /usr/bin/flock
+        run: |
+          # Host artifacts require /usr/bin/node; setup-node supplies a tool-cache binary.
+          runner_node="$(command -v node)"
+          test -x "$runner_node"
+          if [ "$(readlink -f /usr/bin/node)" != "$(readlink -f "$runner_node")" ]; then
+            sudo ln -sfn "$runner_node" /usr/bin/node
+          fi
+          test -x /usr/bin/node
+          test "$(/usr/bin/node -p 'process.execPath')" = "$(node -p 'process.execPath')"
+          systemd-analyze --version && test -x /usr/bin/flock
       - name: Entire coordinator suite with wall clock advanced 365 days
         env:
           SHU_TEST_CLOCK_OFFSET_MS: '31536000000'
@@ -85,7 +94,16 @@ jobs:
       # Deterministic coordinator dry-run package (dispatch disabled): pure JS,
       # no build step — runs directly via node --test.
       - name: Assert service verification prerequisites
-        run: systemd-analyze --version && test -x /usr/bin/flock
+        run: |
+          # Host artifacts require /usr/bin/node; setup-node supplies a tool-cache binary.
+          runner_node="$(command -v node)"
+          test -x "$runner_node"
+          if [ "$(readlink -f /usr/bin/node)" != "$(readlink -f "$runner_node")" ]; then
+            sudo ln -sfn "$runner_node" /usr/bin/node
+          fi
+          test -x /usr/bin/node
+          test "$(/usr/bin/node -p 'process.execPath')" = "$(node -p 'process.execPath')"
+          systemd-analyze --version && test -x /usr/bin/flock
       - run: npm run test:coordinator
       # npm test is the no-external-dependencies suite; the db suite needs the
       # postgres service above, so it runs as its own explicit step (test:db).

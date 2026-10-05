@@ -520,6 +520,38 @@ export function verdictMatchesLane(requestedWorker, evidenceStage) {
 //                      cannot be evaluated and the gate falls back to the
 //                      session-presence requirement only — never to "independent
 //                      by default" from self-declared labels.
+// The receipts whose work the review's head contains. A review tagged with an
+// episode reviews that episode's work plus whatever it was built on: an earlier
+// episode's write counts only when its result is an ancestor of this episode's
+// heads through the receipt chain, and a write that recorded no result counts
+// when it started from one of those heads (it may have pushed before ending).
+// Every other receipt for the issue belongs to a lane state this head does not
+// contain, so it is not an author (SHU-71 try 5: the v1 runs' Codex builds of
+// SHU-140 made a Codex review of Claude's build look like self-review). An
+// untagged review keeps the whole issue as its lineage.
+const LINEAGE_SHA_RE = /^[0-9a-f]{40}$/;
+export function reviewedLineage(receipt, lineageReceipts = []) {
+  const episode = receipt?.episode_id;
+  if (typeof episode !== "string" || episode.length === 0) return lineageReceipts;
+  const lineage = lineageReceipts.filter((r) => r?.episode_id === episode);
+  const heads = new Set([receipt.target_sha, ...lineage.flatMap((r) => [r.target_sha, r.result_sha])]
+    .filter((sha) => typeof sha === "string" && LINEAGE_SHA_RE.test(sha)));
+  const others = lineageReceipts.filter((r) => r && typeof r === "object" && r.episode_id !== episode && r !== receipt);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const r of others) {
+      if (lineage.includes(r)) continue;
+      const authority = resolveReceiptRoleAuthority(r);
+      if (!authority.ok || (authority.role !== "build" && authority.role !== "revise")) continue;
+      const produced = typeof r.result_sha === "string" && LINEAGE_SHA_RE.test(r.result_sha) ? r.result_sha : null;
+      if (produced ? !heads.has(produced) : !heads.has(r.target_sha)) continue;
+      lineage.push(r);
+      if (!heads.has(r.target_sha) && LINEAGE_SHA_RE.test(r.target_sha ?? "")) { heads.add(r.target_sha); grew = true; }
+    }
+  }
+  return lineage;
+}
+
 export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
   if (!receipt || typeof receipt !== "object") return { ok: false, reason: "no receipt to evaluate" };
   // Writer (build/revise) verdicts are not independence claims — the rule only
@@ -541,7 +573,7 @@ export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
   if (typeof receipt.worker_identity !== "string" || receipt.worker_identity.length === 0) {
     return { ok: false, reason: "review verdict without an observed verifier session (worker_identity) — ambiguous provenance" };
   }
-  const supplied = lineageReceipts ?? [];
+  const supplied = reviewedLineage(receipt, lineageReceipts ?? []);
   const entries = supplied.map((r) => provenanceFromReceipt(r)).filter(Boolean);
   if (supplied.length > 0 && entries.length === 0) {
     return { ok: false, reason: "reviewed lineage carries no readable provenance — authorship ambiguous" };

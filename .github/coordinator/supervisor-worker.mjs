@@ -1,3 +1,5 @@
+import { applyAdapterLaunchEnvironment, readAdapterLaunchEnvironment } from "./service/units.mjs";
+import { supervisorChildEnvironment } from "./service/credential-delivery.mjs";
 // Adapter execution runs in a separate process owned by the supervisor. Service
 // installation and credential delivery belong to SHU-251.
 import { fork } from "node:child_process";
@@ -11,7 +13,7 @@ import { recordSupervisorCompletion, SUPERVISOR_PROTOCOL_VERSION } from "./super
 export function createSupervisorSpawner({ stateDir, authorizationModule = fileURLToPath(new URL("./supervisor-authorization.mjs", import.meta.url)), env = process.env, forkImpl = fork }) {
   if (!authorizationModule?.startsWith("/")) throw new Error("absolute host authorization module required");
   return (order, contract) => {
-    const child = forkImpl(fileURLToPath(import.meta.url), [], { env,
+    const child = forkImpl(fileURLToPath(import.meta.url), [], { env: supervisorChildEnvironment(env),
       stdio: ["ignore", "pipe", "pipe", "ipc"], detached: true });
     try {
       const stat = readFileSync(`/proc/${child.pid}/stat`, "utf8");
@@ -25,9 +27,17 @@ export function createSupervisorSpawner({ stateDir, authorizationModule = fileUR
 }
 
 export async function executeSupervisedOrder({ order, contract, stateDir, authorizationModule }, { env = process.env, send = () => {}, loadAdapter = name => import(`./adapters/${name}.mjs`) } = {}) {
-  const { authorizeWorkOrder } = await import(authorizationModule);
-  const authorized = () => authorizeWorkOrder(order) === true;
-  if (!authorized()) throw new Error("host authorization refused supervised order");
+  const policy = await import(authorizationModule);
+  // A policy that names its denial (supervisor-authorization.mjs) hands the name
+  // to the push broker, which puts it on the held result; a plain boolean policy
+  // still decides alone.
+  const authorized = () => {
+    if (typeof policy.workOrderAuthorization !== "function") return policy.authorizeWorkOrder(order) === true;
+    const verdict = policy.workOrderAuthorization(order);
+    return verdict?.ok === true ? true : { code: verdict?.code ?? null };
+  };
+  const launch = authorized();
+  if (launch !== true) throw new Error(`host authorization refused supervised order${launch?.code ? ` (${launch.code})` : ""}`);
   const adapters = { "codex-cli": "codex-cli", "claude-code": "claude-code", "hermes-pool": "hermes-pool", "workspace-agents": "workspace-agents" };
   const name = adapters[order.runtime];
   if (!name) throw new Error("unsupported supervised runtime");
@@ -60,7 +70,14 @@ export async function executeSupervisedOrder({ order, contract, stateDir, author
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.send) {
   process.once("message", async message => {
-    try { await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
-    catch { process.exit(1); }
+    try {
+      if (process.env.SHU71_EVIDENCE_BROKER === 'true') {
+        applyAdapterLaunchEnvironment(process.env, readAdapterLaunchEnvironment());
+      }
+      await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
+    catch (error) {
+      const code = /SHU251_ENV_CUSTODY|SHU251_ENV_CROSSED|SHU71_SUPERVISOR_ENV_REQUIRED/.exec(error.message)?.[0] ?? 'SHU251_CHILD_FAILED';
+      process.stderr.write(`${code}\n`); process.exit(1);
+    }
   });
 }

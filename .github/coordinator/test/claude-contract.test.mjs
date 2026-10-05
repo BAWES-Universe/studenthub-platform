@@ -1,5 +1,6 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import {
   CLAUDE_MODEL,
   buildClaudeArgs,
   buildClaudeEnvironment,
+  buildClaudePrompt,
   externalRunId,
   launchBuilder,
   monitorRun,
@@ -20,6 +22,7 @@ import {
   foldLaunchOutcome,
   validateReceipt,
 } from "../reconcile.mjs";
+import { SHU140_REVISION_PATHS, fixtureReviewScope } from "../workspace-scope.mjs";
 
 const ATTEMPT = "11111111-2222-4333-8444-555555555555";
 const SHA = "d".repeat(40);
@@ -112,6 +115,29 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.match(call.args.at(-1), new RegExp(`Bound head: ${SHA}`));
   assert.match(call.args.at(-1), new RegExp(`Attempt: ${ATTEMPT}`));
   assert.match(call.args.at(-1), /repo-relative path@bound-head-sha/);
+});
+
+test("review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff", async () => {
+  const execFileImpl = execResult({ stdout: successOutput() });
+  await launchBuilder({ ...launchInput, issue_id: "SHU-140", execFileImpl, env: { PATH: "/bin" } });
+  const prompt = execFileImpl.calls[0].args.at(-1);
+  assert.ok(prompt.includes(`Declared scope of SHU-140: ${SHU140_REVISION_PATHS.join(", ")}.`), prompt);
+  assert.match(prompt, /not only the files the last change touched/);
+  assert.match(prompt, /never loads is still in scope/);
+  assert.doesNotMatch(prompt, /seeded|trap|defect_path/i, "the scope names the files, never which one is seeded");
+});
+
+test("review scope: no scope line for a non-fixture issue, a writer, or an inherited key", () => {
+  const base = { authorization_ref: "SHU-61", attempt_id: ATTEMPT, target_sha: SHA, task_context: "ctx" };
+  assert.doesNotMatch(buildClaudePrompt({ ...base, issue_id: "SHU-61" }), /Declared scope/);
+  assert.doesNotMatch(buildClaudePrompt({ ...base, issue_id: "SHU-140", role: "build", allowed_paths: ["tools/fixture/scan-vacuous.mjs"] }), /Declared scope/);
+  assert.equal(fixtureReviewScope("constructor"), null);
+  assert.equal(fixtureReviewScope("__proto__"), null);
+  assert.deepEqual(fixtureReviewScope("SHU-254"), [
+    "tools/fixture-2/scan-unawaited.mjs",
+    "tools/fixture-2/test/scan-unawaited.test.mjs",
+    "tools/fixture-2-conformance/scan-unawaited.expectations.mjs",
+  ]);
 });
 
 test("subscription OAuth is the only Claude credential passed to the child", async () => {
@@ -349,7 +375,7 @@ async function runVerifierDispatch({ liveHead, headStatus = 200 }) {
   const linear = async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
-    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [VERIFIER_NODE] } });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: withBatchedComments([VERIFIER_NODE], () => comments) } });
     if (query.includes("CoordinatorIssueComments")) {
       const issueId = JSON.parse(opts.body).variables.issueId;
       const nodes = issueId === VERIFIER_NODE.id || issueId === VERIFIER_NODE.identifier ? [...comments] : [];
@@ -430,4 +456,44 @@ test("a synchronous PASS whose live head cannot be read must HOLD (fail closed)"
   const terminal = r.receipts.find((x) => x.stage === "COMPLETED" || x.stage === "HOLD");
   assert.ok(terminal, "expected a terminal receipt");
   assert.equal(terminal.stage, "HOLD", "an unverifiable head must never silently become 'head matches'");
+});
+
+test("SHU71_CLAUDE_NOT_LOGGED_IN: the CLI's missing-login envelope is a visible re-auth HOLD, not a spent retry", async () => {
+  // The exact envelope the stage-4 writer produced on a host with no worker login.
+  const notLoggedIn = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", terminal_reason: "api_error", duration_ms: 112 });
+  const exited = Object.assign(new Error("Command failed: claude -p"), { code: 1 });
+  const review = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: notLoggedIn }) });
+  assert.equal(review.stage, "HOLD", "exit 1 with the CLI's error envelope");
+  assert.equal(review.pause_adapter, true);
+  assert.match(review.reason, /claude \/login/);
+  const zeroExit = await launchBuilder({ ...launchInput, execFileImpl: execResult({ stdout: notLoggedIn }) });
+  assert.equal(zeroExit.stage, "HOLD", "exit 0 with the CLI's error envelope");
+  assert.equal(zeroExit.external_run_id, externalRunId(ATTEMPT));
+
+  const home = mkdtempSync(join(tmpdir(), "claude-writer-auth-"));
+  try {
+    const writer = await launchBuilder({ ...launchInput, role: "build", workspace_scope: "scoped", scope_phase: "initial", allowed_paths: ["allowed.txt"],
+      scoped_base_sha: SHA, repo: "BAWES-Universe/studenthub-platform", branch: "coordinator/SHU-140", cwd: home,
+      env: { HOME: home, SHU_WORKER_LAUNCH_WRAPPER: "fixture-wrapper", SHU_WORKER_UID: String(process.getuid() + 1) },
+      execFileImpl: execResult({ error: exited, stdout: notLoggedIn }) });
+    assert.equal(writer.stage, "HOLD", "the Claude writer holds the same way");
+    assert.match(writer.reason, /claude \/login/, writer.reason);
+    assert.equal(writer.pause_adapter, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+
+  // Only the CLI's own error envelope classifies: model text that says the same
+  // words in a successful envelope, or in stdout that is not an envelope, does not.
+  const modelSays = JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: ATTEMPT, result: "Not logged in · Please run /login" });
+  const spoken = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: modelSays }) });
+  assert.equal(spoken.stage, "FAILED");
+  const raw = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: exited, stdout: "Not logged in · Please run /login" }) });
+  assert.equal(raw.stage, "FAILED");
+  // execFile echoes the arguments, prompt included, into the error message.
+  const context = "The user is not logged in; quota and 403 forbidden appear in this task.";
+  const echoed = Object.assign(new Error(`Command failed: claude -p ${context}`), { code: 1 });
+  const prompted = await launchBuilder({ ...launchInput, task_context: context, execFileImpl: execResult({ error: echoed }) });
+  assert.equal(prompted.stage, "FAILED", "prompt text echoed into the error message never classifies");
+  assert.equal(prompted.error_code, "CLAUDE_1");
 });

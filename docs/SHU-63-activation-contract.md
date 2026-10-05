@@ -102,9 +102,9 @@ export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 
 Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
 above, install the host `acl` package, and grant only that fixed command to
-`shu-coordinator`. The command-specific sudoers `env_keep` entry preserves
-`CLAUDE_CODE_OAUTH_TOKEN` with `NOPASSWD:NOSETENV:`; arbitrary caller
-environment overrides are refused. Both the
+`shu-coordinator`. Command-specific sudoers `env_keep` preserves exactly
+`CLAUDE_CODE_OAUTH_TOKEN`, while `NOSETENV` rejects caller-controlled startup
+environment values. Both the
 confined test child and the actual Claude verifier cross this wrapper and run as
 `shu-reviewer`. The adapter does
 not trust the declaration: symlinked system entrypoints are resolved to a
@@ -129,8 +129,8 @@ deployed authority roots: `/srv/shu/state`, `/etc/shu`, `/srv/shu/service.env`,
 `/srv/shu/coordinator.env`, `/srv/shu/.gitkeys`, `/srv/codex`,
 `/srv/shu/.claude`, `/home/shu-coordinator`, `/srv/shu/logs`, `/var/log` and `/run/log`.
 
-Claude's `model` profile keeps ordinary provider network families while the
-test profile remains networkless. Its tool surface is restricted to `Read`, `Glob`, and `Grep`
+Claude's `model` profile permits only the AF_UNIX, AF_INET and AF_INET6 address
+families, with no destination allowlist. The test profile remains networkless. Its tool surface is restricted to `Read`, `Glob`, and `Grep`
 in restricted evaluation mode. This preserves subscription authentication while
 disabling ambient settings, CLAUDE.md, hooks, skills, commands, plugins and
 subagents; file tools remain inside the exact cwd. Strict MCP configuration and

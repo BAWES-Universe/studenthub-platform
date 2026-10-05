@@ -5,6 +5,7 @@
 // (LINEAR_ISSUE_COMMENTS_QUERY) — GPT/Codex review #2 bar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { withBatchedComments } from "./fixture/linear-board.mjs";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,7 +78,11 @@ function fakeLinearStore(issueNodes, commentBodies, { failComments = false } = {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
     if (query.includes("CoordinatorIssues")) {
-      return respond({ issues: { nodes: issueNodes } });
+      // The board read carries each card's durable thread. `failComments` is the
+      // outage: Linear answers the board but no thread, so no card is readable.
+      return respond({ issues: { nodes: failComments
+        ? issueNodes.map((node) => ({ ...node, comments: null }))
+        : withBatchedComments(issueNodes, () => commentBodies) } });
     }
     if (query.includes("CoordinatorIssueComments")) {
       if (failComments) throw new Error("simulated comment-read outage");
@@ -486,8 +491,10 @@ test("SHU-222: authoritative recheck catches a new active receipt before reserva
   const racingStore = async (url, opts) => {
     const body = JSON.parse(opts.body);
     if (body.query.includes("CoordinatorIssueComments")) {
+      // The batched board read no longer spends a per-card comments request, so
+      // the FIRST of these is the pre-claim recheck — the boundary under test.
       commentReads += 1;
-      if (commentReads === 2) {
+      if (commentReads === 1) {
         comments.push({ body: receiptCommentBody(made.receipt), createdAt: made.receipt.last_activity });
       }
     }
@@ -500,4 +507,33 @@ test("SHU-222: authoritative recheck catches a new active receipt before reserva
   assert.equal(wa.calls(), 0);
   assert.equal(parseReceiptsFromComments(comments).length, 1, "only the competing reservation exists");
   assert.match(result.out.join("\n"), /ABORTED before claim.*already has active receipt/);
+});
+
+test("a rate-limited tick dispatches NOTHING and exits cleanly instead of failing the service", async () => {
+  // Control: this exact fixture launches a worker, so the refusal below is the
+  // rate limit and nothing else.
+  const control = await runMain({ configPath: tempConfig(), wa: fakeWorkspaceAgents({ mode: "accept" }), linear: fakeLinearStore(makeIssueNodes(), []) });
+  assert.equal(control.code, 0, control.out.join("\n"));
+
+  const comments = [];
+  const backing = fakeLinearStore(makeIssueNodes(), comments);
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const rateLimited = async (url, opts) => {
+    if (JSON.parse(opts.body).query.includes("CoordinatorIssues")) {
+      return {
+        ok: false,
+        status: 429,
+        headers: new Headers({ "Retry-After": "42" }),
+        json: async () => ({ errors: [{ message: "Rate limit exceeded. Only 2500 requests are allowed per 1 hour." }] }),
+      };
+    }
+    return backing(url, opts);
+  };
+
+  const result = await runMain({ configPath: tempConfig(), wa, linear: rateLimited });
+
+  assert.equal(result.code, 0, "the tick must exit cleanly — a failed tick is a tick that never reconciles");
+  assert.deepEqual(result.out, ["HOLD=LINEAR_RATE_LIMITED retry_after=42"]);
+  assert.equal(wa.calls(), 0, "a rate-limited tick must never reach an adapter");
+  assert.equal(comments.length, 0, "and must never write to Linear");
 });

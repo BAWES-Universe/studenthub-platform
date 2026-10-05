@@ -10,10 +10,19 @@ import {
   type OwnProfileReader,
   type ProfileField,
 } from "@studenthub/profile";
+import {
+  ORGANIZATION_FIELD_CONTRACT,
+  ORGANIZATION_FIELDS_BY_AUDIENCE,
+  type OrganizationField,
+  type OrganizationFieldName,
+} from "@studenthub/organizations";
+import type { ActiveOrganization } from "./context-navigation.js";
+import type { CompanyDirectoryPage, CompanyDirectoryResult } from "./company-directory.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
   readonly navigation?: ContextNavigation;
+  readonly companies?: CompanyDirectoryPage;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
@@ -95,7 +104,92 @@ const roleNames: Record<WorkspaceContext["role"], string> = {
 
 const workspaceDocument = (title: string, content: string) => document(title, content, true);
 
+const organizationFormatters: Readonly<Partial<Record<OrganizationFieldName, (value: unknown) => string>>> = {
+  status: (value) => ({ active: "Active", under_review: "Under review", inactive: "Inactive" })[String(value)] ?? String(value),
+  statusOverride: (value) => ({ active: "Active", under_review: "Under review", inactive: "Inactive" })[String(value)] ?? String(value),
+  approvedToHire: (value) => value ? "Yes" : "No",
+  bonusCommission: (value) => `${String(value)}%`,
+};
+
+function organizationFieldText(name: OrganizationFieldName, field: OrganizationField<unknown>): string {
+  if (field.state === "unavailable") return '<span class="missing" data-state="unavailable">Unavailable</span>';
+  return escapeHtml((organizationFormatters[name] ?? String)(field.value));
+}
+
+/** Read-only company card for the selected workspace; fields come from the role's closed projection. */
+function renderOrganization(organization: ActiveOrganization | undefined): string {
+  if (!organization || organization.kind === "not_applicable") return "";
+  if (organization.kind === "unavailable") {
+    return `<section class="notice org-notice" role="status"><strong>Company details couldn’t be loaded.</strong><p>Your workspace is still selected. Please try again in a moment.</p></section>`;
+  }
+  const view = organization.view;
+  const fields = view.fields as unknown as Readonly<Record<OrganizationFieldName, OrganizationField<unknown>>>;
+  const legalName = fields.legalName;
+  const heading = legalName.state === "available" ? String(legalName.value) : view.registryName;
+  const rows = ORGANIZATION_FIELDS_BY_AUDIENCE[view.audience].map((name) =>
+    `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${organizationFieldText(name, fields[name])}</dd></div>`).join("");
+  const source = view.snapshot.kind === "imported"
+    ? `StudentHub company snapshot · ${escapeHtml(view.snapshot.observedAt.slice(0, 10))}`
+    : "Company details haven’t been imported yet, so they show as unavailable.";
+  const kind = view.parentOrgId === null ? "ORGANIZATION" : "SUB-ORGANIZATION";
+  return `<section class="profile-card org-card" aria-labelledby="org-title"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(Array.from(heading.trim())[0]?.toUpperCase() ?? "S")}</div><div><h2 id="org-title">${escapeHtml(heading)}</h2><p>${source}</p></div><span class="identity-label">${kind}</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>You see the company details your role allows. Licences, logos, sign-in data and internal notes are never shown here.</p></div></section>`;
+}
+
 /** Native links preserve selections across refresh/back without storing authority. */
+const DIRECTORY_ROLES: ReadonlySet<WorkspaceContext["role"]> = new Set(["staff", "admin"]);
+
+/** Shown for a staff or admin context; the directory still re-resolves the grant on every request. */
+function companiesLink(active: WorkspaceContext | null, login: BrowserLoginApplication, current = false): string {
+  if (!active || !login.companies || !DIRECTORY_ROLES.has(active.role)) return "";
+  const href = `/workspace/companies?${new URLSearchParams({ org_id: active.orgId, role: active.role })}`;
+  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>Companies</a>`;
+}
+
+const statusNames: Readonly<Record<string, string>> = { active: "Active", under_review: "Under review", inactive: "Inactive" };
+
+/** Staff and admin company list. Every value comes from the directory's closed entry. */
+export function renderCompanyDirectory(result: CompanyDirectoryResult, login: BrowserLoginApplication): string {
+  if (result.status !== 200) {
+    if (result.status === 401 || result.status === 503) return renderError(result.status, login);
+    const message = result.status === 400
+      ? "That search isn’t valid. Clear the filters and try again."
+      : "Your access may have changed. Choose one of your current workspaces to continue.";
+    return workspaceDocument("Companies unavailable", `<header class="topbar">${brand}<a href="/workspace">Workspaces</a></header><main id="main" class="error-page"><h1>This company list isn’t available.</h1><p>${message}</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
+  }
+  const { active, filters, directory } = result.body;
+  const context = { org_id: active.orgId, role: active.role };
+  const query: Record<string, string> = { ...context,
+    ...(filters.query ? { q: filters.query } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.approvedToHire === undefined ? {} : { approved: filters.approvedToHire ? "yes" : "no" }),
+    ...(filters.currencyCode ? { currency: filters.currencyCode } : {}) };
+  const cell = (field: { readonly state: string; readonly value?: unknown }, format: (value: unknown) => string = String) =>
+    field.state === "available" ? escapeHtml(format(field.value)) : '<span class="missing" data-state="unavailable">Unavailable</span>';
+  const rows = directory.entries.map((entry) => {
+    const name = entry.legalName.state === "available" ? entry.legalName.value : entry.registryName;
+    const common = entry.commonNameEn.state === "available" && entry.commonNameEn.value !== name
+      ? `<span class="field-meta">${escapeHtml(entry.commonNameEn.value)}</span>` : "";
+    const href = `/workspace?${new URLSearchParams({ org_id: entry.orgId, role: active.role })}`;
+    return `<tr><th scope="row"><a href="${escapeHtml(href)}">${escapeHtml(name)}</a>${common}</th><td>${cell(entry.status, (value) => statusNames[String(value)] ?? String(value))}</td><td>${cell(entry.approvedToHire, (value) => value ? "Yes" : "No")}</td><td>${cell(entry.currencyCode)}</td><td>${entry.subOrganizationCount}</td></tr>`;
+  }).join("");
+  const first = directory.total === 0 ? 0 : (directory.page - 1) * directory.pageSize + 1;
+  const last = (directory.page - 1) * directory.pageSize + directory.entries.length;
+  const pageLink = (page: number, label: string, rel: string) =>
+    `<a class="text-link" rel="${rel}" href="/workspace/companies?${escapeHtml(String(new URLSearchParams({ ...query, page: String(page) })))}">${label}</a>`;
+  const pager = [
+    directory.page > 1 ? pageLink(directory.page - 1, "← Previous", "prev") : "",
+    last < directory.total ? pageLink(directory.page + 1, "Next →", "next") : "",
+  ].join("");
+  const option = (value: string, label: string, selected: string | undefined) =>
+    `<option value="${value}"${selected === value ? " selected" : ""}>${label}</option>`;
+  const approved = filters.approvedToHire === undefined ? undefined : filters.approvedToHire ? "yes" : "no";
+  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><button class="sign-out" type="submit">Search</button></form>`;
+  const table = directory.entries.length
+    ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="empty-contexts" role="status">${directory.total === 0 ? "No companies match these filters." : "There are no more companies on this page."}</p>`;
+  return workspaceDocument("Companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(String(new URLSearchParams(context)))}">Workspaces</a>${companiesLink(active, login, true)}</nav><p class="sidebar-note">Read-only for now.<br>Changes still happen in the current StudentHub.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">${escapeHtml(active.organizationName)} · ${roleNames[active.role].toUpperCase()}</div><h1>Companies<span class="accent">.</span></h1><p>Top-level companies your role covers. Open one to see its details and sub-companies.</p></div><span class="badge">Read-only</span></div>${form}${table}${pager ? `<nav class="pager" aria-label="Pages">${pager}</nav>` : ""}<section class="next-note"><div class="eyebrow">ABOUT THIS LIST</div><h2>Unavailable means we don’t have an approved value.</h2><p>Filters only match approved values. A company whose status or currency hasn’t been imported never matches a status or currency filter.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+}
+
 export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication): string {
   if (result.status !== 200) {
     if (result.status !== 403 && result.status !== 400) return renderError(result.status, login);
@@ -111,7 +205,7 @@ export function renderWorkspace(result: NavigationResult, login: BrowserLoginApp
   const intro = active
     ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
     : "Choose the organization and role you want to use. You can switch without signing in again.";
-  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a></nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a>${companiesLink(active, login)}</nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderLanding(login?: BrowserLoginApplication): string {
@@ -181,9 +275,9 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
 export const WEB_CSS = `
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172433;background:#f7f9fc;font-synthesis:none;line-height:1.5;font-size:16px;--blue:#2256e8;--muted:#566579;--border:#dfe5ef}
 *{box-sizing:border-box}body{margin:0}a{color:inherit}button{font:inherit}a,button{-webkit-tap-highlight-color:transparent}a:focus-visible,button:focus-visible{outline:3px solid #a74400;outline-offset:5px}p,h1,h2{margin:0}p{color:var(--muted)}button,a{touch-action:manipulation}.skip{position:absolute;left:1rem;top:-8rem;background:white;padding:1rem;z-index:5}.skip:focus{top:1rem}.brand{display:inline-flex;align-items:center;text-decoration:none;font-weight:800;font-size:1.6rem;letter-spacing:-.07em;white-space:nowrap}.brand-mark{display:grid;place-items:center;width:2.25rem;height:2.25rem;background:var(--blue);color:white;border-radius:.65rem;margin-right:.65rem;font-size:1.8rem;line-height:1;letter-spacing:0}.brand-dot,.accent{color:var(--blue)}.eyebrow{font-size:.75rem;letter-spacing:.12em;font-weight:750;color:#4e6075}.entry{max-width:1440px;margin:auto;padding:0 5.5vw;min-height:100svh;display:flex;flex-direction:column}.entry-header{display:flex;align-items:center;justify-content:space-between;padding:2rem 0;border-bottom:1px solid var(--border);gap:1rem}.entry-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:7vw;align-items:center;flex:1;padding:4rem 0}.intro h1{font-size:clamp(3rem,5.7vw,5.5rem);line-height:1.05;letter-spacing:-.065em;margin:1.5rem 0 1.75rem;font-weight:750}.intro-copy{font-size:1.25rem;line-height:1.7}.intro-foot{display:flex;align-items:center;gap:1rem;margin-top:3rem;font-size:.875rem;color:var(--muted)}.line{height:2px;width:2rem;background:var(--blue)}.sign-in{background:white;border:1px solid var(--border);border-radius:1.5rem;padding:clamp(1.5rem,4vw,3.5rem);box-shadow:0 18px 60px #182b4b08;max-width:33rem;width:100%}.section-number{font-family:ui-monospace,monospace;font-size:.75rem;letter-spacing:.12em;color:var(--blue);margin-bottom:2rem}.sign-in h2{font-size:2.25rem;line-height:1.15;letter-spacing:-.045em;margin-bottom:1rem}.sign-in>p{margin-bottom:1.5rem}.button{min-height:3.4rem;display:flex;justify-content:space-between;align-items:center;gap:1.5rem;padding:.95rem 1.25rem;border-radius:.65rem;text-decoration:none;font-weight:650}.primary{background:var(--blue);color:white}.primary:hover{background:#1641be}.button span{font-size:1.4rem}.sign-in .small{font-size:.875rem;margin:1.5rem 0 .2rem}.text-link{font-weight:650;font-size:.9375rem;text-underline-offset:4px}.sign-in-note{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.875rem}.sign-in-note p{margin-top:.3rem}.entry-footer{display:flex;justify-content:space-between;gap:1rem;padding:1.5rem 0;border-top:1px solid var(--border);font-size:.8125rem;color:var(--muted)}.notice{padding:1rem;border:1px solid #ccd7ea;border-radius:.65rem;background:#f7f9ff}.notice p{margin-top:.35rem}.topbar{background:white;border-bottom:1px solid var(--border);min-height:5.5rem;padding:1.4rem 4vw;display:flex;align-items:center;justify-content:space-between;gap:1.5rem}.sign-out{border:1px solid var(--border);border-radius:.6rem;background:white;padding:.65rem 1rem;min-height:2.75rem;cursor:pointer;color:#253e5a;font-size:.9375rem}.sign-out:hover{background:#f0f4fc}.workspace{max-width:1440px;margin:auto;display:grid;grid-template-columns:15rem minmax(0,1fr);min-height:calc(100svh - 5.5rem)}.sidebar{padding:2.5rem 1.75rem;border-right:1px solid var(--border);display:flex;flex-direction:column}.sidebar nav{margin-top:1.5rem}.nav-item{display:flex;align-items:center;gap:.75rem;text-decoration:none;font-weight:650;font-size:.9375rem;padding:.85rem 1rem;border-radius:.65rem}.active{background:#e8eeff;color:#1d46b8}.sidebar-note{font-size:.8125rem;line-height:1.7;margin-top:auto;padding-top:3rem}.profile-main{max-width:1050px;width:100%;padding:3rem clamp(1.25rem,5vw,5rem)}.profile-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:2.25rem}.profile-heading h1{font-size:clamp(2.5rem,4vw,3.5rem);letter-spacing:-.065em;line-height:1.2;margin:.4rem 0 .6rem}.badge{font-size:.8125rem;border:1px solid #cbd5e4;border-radius:2rem;padding:.4rem .8rem;color:#475a72;white-space:nowrap;background:white}.profile-card{background:white;border:1px solid var(--border);border-radius:1rem;overflow:hidden}.identity{display:flex;gap:1rem;align-items:center;padding:2rem;border-bottom:1px solid var(--border);flex-wrap:wrap}.avatar{width:3.5rem;height:3.5rem;border-radius:1rem;display:grid;place-items:center;flex-shrink:0;background:#e9efff;color:#234ebd;font-size:1.5rem;font-weight:750}.identity h2{font-size:1.3rem;letter-spacing:-.025em;overflow-wrap:anywhere}.identity p{font-size:.875rem;margin-top:.25rem}.identity-label{font-size:.75rem;letter-spacing:.07em;color:#57677b;margin-left:auto}.profile-fields{display:grid;grid-template-columns:1fr 1fr;margin:0;padding:0 2rem}.profile-fields>div{padding:1.25rem 1rem 1.25rem 0;border-bottom:1px solid var(--border);min-width:0}.profile-fields>div:nth-child(even){padding-left:1rem;padding-right:0}.profile-fields>div:nth-last-child(-n+2){border-bottom:0}dt{font-size:.875rem;color:var(--muted);margin-bottom:.35rem}dd{margin:0;font-size:1rem;font-weight:550;overflow-wrap:anywhere}.field-meta{display:block;color:#718096;font-size:.72rem;margin-top:.4rem}.missing{font-weight:550;color:#5d6c80}.privacy-note{display:flex;align-items:flex-start;gap:1rem;padding:1.25rem 2rem;background:#f5f8ff;font-size:.875rem}.privacy-symbol{color:var(--blue);font-size:1.4rem;line-height:1}.next-note{margin-top:2rem;padding:1.5rem 0}.next-note h2{font-size:1.125rem;letter-spacing:-.015em;margin:.65rem 0}.next-note p{font-size:.9375rem;margin-top:.5rem;max-width:42rem;line-height:1.7}.profile-footer{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.8125rem;color:var(--muted)}.error-page{max-width:44rem;margin:6rem auto;padding:0 1.5rem}.error-page h1{font-size:clamp(2rem,5vw,3.5rem);letter-spacing:-.05em;line-height:1.15;margin:1rem 0}.error-page p{line-height:1.7}.error-page .button,.error-page .notice{margin-top:2rem;max-width:26rem}
-@media(max-width:800px){.entry-grid{gap:2.5rem;grid-template-columns:1fr;padding:2.5rem 0}.intro h1{font-size:3.5rem}.intro-foot{margin-top:1.5rem}.sign-in{max-width:none}.entry-footer{flex-direction:column;gap:.4rem}.workspace{grid-template-columns:1fr}.sidebar{padding:1rem 1.25rem;border-right:0;border-bottom:1px solid var(--border)}.sidebar>.eyebrow,.sidebar-note{display:none}.sidebar nav{margin:0}.nav-item{display:inline-flex}.profile-main{padding-top:2rem}.identity{padding:1.5rem}.identity-label{width:100%;margin-left:4.5rem}.profile-fields{padding:0 1.5rem}.privacy-note{padding:1.25rem 1.5rem}.profile-heading{align-items:flex-start}.badge{margin-top:.5rem}}
+@media(max-width:800px){.entry-grid{gap:2.5rem;grid-template-columns:1fr;padding:2.5rem 0}.intro h1{font-size:3.5rem}.intro-foot{margin-top:1.5rem}.sign-in{max-width:none}.entry-footer{flex-direction:column;gap:.4rem}.workspace{grid-template-columns:minmax(0,1fr)}.sidebar{padding:1rem 1.25rem;border-right:0;border-bottom:1px solid var(--border)}.sidebar>.eyebrow,.sidebar-note{display:none}.sidebar nav{margin:0}.nav-item{display:inline-flex}.profile-main{padding-top:2rem}.identity{padding:1.5rem}.identity-label{width:100%;margin-left:4.5rem}.profile-fields{padding:0 1.5rem}.privacy-note{padding:1.25rem 1.5rem}.profile-heading{align-items:flex-start}.badge{margin-top:.5rem}}
 @media(max-width:480px){.entry-header>.eyebrow{display:none}.intro h1{font-size:3rem}.topbar{padding:1rem}.brand{font-size:1.4rem}.profile-fields{grid-template-columns:1fr}.profile-fields>div,.profile-fields>div:nth-child(even){padding-left:0;padding-right:0}.profile-fields>div:nth-last-child(2){border-bottom:1px solid var(--border)}.profile-heading{flex-wrap:wrap}.identity-label{margin-left:0}.sign-out span{display:none}.error-page{margin-top:3rem}}
 .topbar{flex-wrap:wrap}body{overflow-wrap:anywhere}.entry-grid>*{min-width:0}
-.context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
+.context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.org-card,.org-notice{margin-bottom:2rem}.directory-filters{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-end;margin-bottom:1.5rem}.directory-filters label{display:flex;flex-direction:column;gap:.35rem;font-size:.875rem;color:var(--muted)}.directory-filters input,.directory-filters select{font:inherit;min-height:2.75rem;padding:.5rem .75rem;border:1px solid var(--border);border-radius:.6rem;background:white;color:inherit}.directory-table{overflow-x:auto;background:white;border:1px solid var(--border);border-radius:1rem}.directory-table table{width:100%;min-width:40rem;border-collapse:collapse}.directory-filters label:first-of-type{flex:1 1 18rem}.directory-table td,.directory-table thead th{white-space:nowrap}.directory-table caption{text-align:left;padding:1rem 1.25rem;font-size:.875rem;color:var(--muted)}.directory-table th,.directory-table td{text-align:left;padding:.85rem 1.25rem;border-top:1px solid var(--border);font-size:.9375rem}.directory-table thead th{font-size:.8125rem;color:var(--muted);font-weight:650}.pager{display:flex;gap:1.5rem;margin-top:1.25rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
 @media(prefers-reduced-motion:no-preference){.button,.sign-out{transition:background-color .15s ease}}
 `;

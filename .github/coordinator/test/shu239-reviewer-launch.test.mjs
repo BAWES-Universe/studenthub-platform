@@ -9,6 +9,10 @@ import { runReviewEvidence } from "../review-execution.mjs";
 
 const ATTEMPT = "23923923-9239-4239-8239-239239239239";
 const SHA = "9".repeat(40);
+const safeProbes = {
+  startProcessCanaryImpl: async () => ({ kill: () => true }),
+  listenProbeImpl: async () => ({ address: () => ({ port: 26123 }), close: (done) => done() }),
+};
 
 function input(over = {}) {
   return {
@@ -27,6 +31,8 @@ function successfulReport(expectedUid, over = {}) {
     expected_uid: expectedUid, actual_uid: expectedUid,
     filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED",
     workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
+    protected_class_probes: { coordinator_evidence: "DENIED" }, symlink_probe: "DENIED", traversal_probe: "DENIED",
+    inherited_descriptor_probe: "DENIED", environment_value_probe: "DENIED", process_inspection_probe: "DENIED",
     tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
     ...over,
   };
@@ -107,7 +113,7 @@ test("SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and s
   const f = fixture();
   try {
     const calls = [];
-    const result = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env,
+    const result = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env, ...safeProbes,
       validateWrapperImpl: (wrapper) => wrapper,
       execFileImpl: (file, args, options, callback) => {
         calls.push({ file, args, options });
@@ -118,7 +124,7 @@ test("SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and s
     assert.deepEqual(prelude, ["--profile", "test", "--workspace-root", f.root, "--workspace", f.workspace, "--"], "wrapper is bound to one exact direct-child attempt and test profile");
     assert.equal(calls[0].options.cwd, f.workspace, "process cwd is the same canonical attempt");
 
-    const refused = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env,
+    const refused = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env, ...safeProbes,
       validateWrapperImpl: (wrapper) => wrapper,
       execFileImpl: (_file, _args, _options, callback) => queueMicrotask(() => callback(null,
         JSON.stringify(successfulReport(f.expectedUid, { sibling_workspace_probe: "REACHABLE" })), "")) });
@@ -126,7 +132,7 @@ test("SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and s
     assert.equal(refused.reason_code, "REVIEW_EXECUTION_UNAVAILABLE");
     assert.equal(refused.report.sibling_workspace_probe, "REACHABLE", "the concrete failed boundary is retained");
 
-    const writable = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env,
+    const writable = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env, ...safeProbes,
       validateWrapperImpl: (wrapper) => wrapper,
       execFileImpl: (_file, _args, _options, callback) => queueMicrotask(() => callback(null,
         JSON.stringify(successfulReport(f.expectedUid, { workspace_write_probe: "WRITABLE" })), "")) });

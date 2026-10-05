@@ -1,5 +1,17 @@
 # SHU-251 service staging and supervisor integration
 
+## Coordinator environment evidence
+
+Read-only host evidence supplied by the orchestration lane establishes
+`/srv/shu/coordinator.env` as the authoritative coordinator file. Both it and
+`/srv/shu/service.env` are owned by `shu-coordinator:shu-coordinator`, mode 0600,
+and carry the coordinator credential key names, including `GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`. Only the legacy combined `/srv/shu/service.env` also carries
+`SHU_SUPERVISOR_SECRET`, so the enforced crossed-file guard refuses it as a
+coordinator file. The supervisor remains `/etc/shu/supervisor.env`, root:root
+0600. This default correction follows that evidence; the crossed-file guard
+remains enforced. No environment values were read for this correction.
+
 This package supplies systemd templates, a temporary-directory staging installer,
 exact file rollback, and lifecycle composition of the merged SHU-250 supervisor.
 Nothing installs, enables or starts host services. All executed verification uses
@@ -22,21 +34,26 @@ Before the coordinator-controlled host re-run, the operator must provide:
   parent must be a real, non-symlink directory owned by the running UID with no
   group/other permission bits; preserve the existing assertion. Supervisor state
   must also be accessible to that user. Ownership changes are a host operation.
-- A separately provisioned **0600 regular environment file**, owned by root or
-  the coordinator, in a private directory owned by root or the coordinator.
-  Both units require `EnvironmentFile=/etc/shu/supervisor.env`; customize the
-  absolute path with `secretEnvironmentFile`. There is no optional `-` prefix:
-  systemd refuses startup when the file is missing. Do not put secret values in
-  parameters.json, units, drop-ins, argv, version control, or staging backups.
-  The installer stages only the reference and does not create or read secrets.
-- One shared, random `SHU_SUPERVISOR_SECRET` value of at least 32 bytes in that
-  file. Systemd loads it into both processes. Do not include dispatch gates or
-  other settings in this secret-only file. Retain the reviewed activation and
-  adapter configuration separately; provisioning a secret does not enable work.
+- Supervisor `EnvironmentFile=/etc/shu/supervisor.env`, parameter
+  `supervisorEnvironmentFile`: root:root **0600**, containing
+  `SHU_SUPERVISOR_SECRET` of at least 32 bytes. Gate-off staging permits this
+  secret alone; SHU-71 arming additionally requires all nine adapter settings
+  listed in [the B1 content contract](SHU71-B1-COMPOSITION.md).
+- Coordinator `EnvironmentFile=/srv/shu/coordinator.env`, parameter
+  `coordinatorEnvironmentFile`: as provisioned, containing nonempty
+  `GITHUB_TOKEN` and `LINEAR_API_TOKEN`. These are distinct required absolute
+  paths. Missing files, identical paths/inodes, crossed paths or contents,
+  symlinks, duplicate assignments and incomplete credentials fail closed.
+  Each file uses single-line `NAME=value` assignments (optional matching quotes,
+  no escapes), blank lines and comments. Values are inspected in memory and
+  never included in diagnostics or units. Offline staging requires temporary
+  fixture files; it does not read host credentials. Systemd also refuses startup
+  if either required file disappears. Do not put credential values in parameters,
+  units, drop-ins, argv, version control or staging backups.
 
 For the **later authorized host window only**, the following root-run example
 creates a new private file without printing its secret or overwriting an existing
-one (adapt the location to `secretEnvironmentFile`). These commands are not part
+one (adapt the location to `supervisorEnvironmentFile`). These commands are not part
 of local staging or verification:
 
 ```sh
@@ -44,7 +61,7 @@ sudo python3 - <<'PY_SECRET'
 import os, secrets
 os.umask(0o077)
 os.makedirs('/etc/shu', mode=0o700, exist_ok=True)
-# For an existing directory, verify root/coordinator ownership and 0700 first.
+# For an existing directory, verify root:root ownership and 0700 first.
 with open('/etc/shu/supervisor.env', 'x', encoding='ascii') as output:
     output.write('SHU_SUPERVISOR_SECRET=' + secrets.token_hex(32) + '\n')
 PY_SECRET
@@ -62,7 +79,9 @@ listening or readiness with `AssertionError`:
 `SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes`.
 The underlying supervisor validation remains intact. Rotate only under a
 coordinator-controlled quiescent window and restart both processes with the same
-file value. Never use the test fixture secret on a host.
+transport value through the separately reviewed transport provisioning. The
+coordinator credential file does not inherit the supervisor file. Never use
+test fixture credentials on a host.
 
 ## Local verification and required CI
 
@@ -94,7 +113,7 @@ clone: Node runs `service/supervisor-service.mjs` and `reconcile.mjs` directly.
 Inputs are `workdir`, optional `workspaceStateDir` (defaults to the exported
 `WORKSPACE_STATE_DIR`), and optional `supervisorStateDir`,
 `supervisorSocket`, absolute Node executable `node`, `serviceUser`, `serviceGroup`,
-and `secretEnvironmentFile` (defaults and requirements above). Defaults place supervisor
+and `supervisorEnvironmentFile` / `coordinatorEnvironmentFile` (defaults and requirements above). Defaults place supervisor
 state in `workspaceStateDir/supervisor` and its socket in
 `workspaceStateDir/supervisor.sock`. Serialize the returned object to parameters.json:
 
@@ -240,13 +259,16 @@ and remain unexecuted by design. No SHU-250 interface work remains deferred here
 SHU-261 adds a second separately gated host window for reviewer isolation. The
 reviewed wrapper must be installed at `/usr/local/libexec/shu-reviewer-sandbox`,
 and the coordinator's command-specific sudo policy must allow the test form plus
-the model form that preserves only `CLAUDE_CODE_OAUTH_TOKEN`. Do not grant a
-general shell, arbitrary environment preservation, or another sudo target. The
+the model form. Command-specific `env_keep` preserves only
+`CLAUDE_CODE_OAUTH_TOKEN`; `NOSETENV` forbids caller-selected startup variables.
+Do not grant a general shell, arbitrary environment preservation, or another sudo target. The
 prepared `reviewer-host-validation.mjs` refuses unless it is run as root from a
 clean exact approved revision with `SHU261_HOST_MUTATION_APPROVED=true` and
 `--approved-host-mutation <full-sha>`. It creates only unique harmless sentinels
 and temporary detached exact-head worktrees, cleans them on every exit, prints sanitized
 uid/gid/mode/result evidence, and never starts or enables coordinator services.
+Cleanup attempts every registered callback and the final worktree inventory
+check, then reports any failures as one aggregate result.
 The wrapper is compatible with the planned systemd 255 host: it combines a
 root-held same-reviewer serialization lock with `ProtectProc=invisible` and
 `ProcSubset=pid`; the active harness proves a coordinator-process canary is not
@@ -270,3 +292,12 @@ These are sandbox proofs; installed-service acceptance remains host-pending.
 For a window that prohibits all systemd interaction, export `SHU251_NO_SYSTEMD=1`
 before the full coordinator test command. Eleven existing syntax/staging tests
 then report explicit skips; do not count those as successful validations.
+
+## Typed lifecycle executor
+
+[HOST-LIFECYCLE.md](HOST-LIFECYCLE.md) documents the Phase-A driver actions for
+preflight, install, start/readiness, driver-issued restart, host rollback and pin
+disposition. The reviewed `phase-a-driver.mjs` CLI selects
+`production-lifecycle.mjs` by default. Its syscall and command boundaries are
+replaced in tests; no test invokes the host provider against the real machine. The offline installer above is unchanged, and
+no real-host acceptance is claimed.

@@ -1,0 +1,677 @@
+{
+  "date": "2026-09-17",
+  "scope": "Local repository-only FINAL option 1 response; tests and documentation after base merge. Source hashes identify the tested implementation; no new-head CI, host or independent-verdict claim.",
+  "starting_head": "746976a6afd9834f231feeec22c9329a6a6e4682",
+  "base": "8a613c42d166fcab5497060ead168d7941542b60",
+  "base_merge": "ce564a29ca5cdf71ce6c0eee3be5ea0bde3753cf",
+  "conflicts": [],
+  "base_update_per_file": {
+    ".github/coordinator/service/A12-CLOSURE.md": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/SHU-261-REVIEW-FIXES.md": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/disposable-suite.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/host-suite-contract.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/suite-runner-spec.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/test/capability-requirements.test.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/test/fixture/option-a-results.json": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/test/suite-runner-spec.test.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/userns-profile/AMEND2.md": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/userns-profile/DESIGN.md": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/userns-profile/README.md": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/userns-profile/VERIFICATION.md": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/userns-profile/amend-outcome.json": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/service/userns-profile/amend2-outcome.json": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/test/shu261-mutations.test.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    ".github/coordinator/test/shu261-review-findings.test.mjs": "Main-only change incorporated without conflict; byte-identical to origin/main.",
+    "docs/evidence/linear-completion-guard-proof.md": "Main-only change incorporated without conflict; byte-identical to origin/main."
+  },
+  "production_change_after_merge": false,
+  "suites": [
+    {
+      "suite": "trust plus FINAL named mutation witnesses",
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-trust.test.mjs .github/coordinator/service/test/shu71-final-mutations.test.mjs",
+      "counts": {
+        "tests": 834,
+        "pass": 834,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "log_sha256": "b1dfd4ffca259ae9eaa2da491757812438af66d6d3547934a6dcd1604a9a57ae"
+    },
+    {
+      "suite": "coordinator",
+      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
+      "counts": {
+        "tests": 2686,
+        "pass": 2668,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 18
+      },
+      "log_sha256": "a7e003aa1b49eca215487f6441844b74d3377b01bc279e807b24f7517e5793c9"
+    },
+    {
+      "suite": "coordinator +365 days",
+      "command": "SHU251_NO_SYSTEMD=1 SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS=\"--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs\" npm run test:coordinator",
+      "counts": {
+        "tests": 2686,
+        "pass": 2668,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 18
+      },
+      "log_sha256": "718c5f5da679261a5fe6b863ea392620e3bb8cbbf03c8b672f5c805fa580cb55"
+    },
+    {
+      "suite": "policy",
+      "command": "node --test .github/policy/test/*.test.mjs",
+      "counts": {
+        "tests": 78,
+        "pass": 78,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "log_sha256": "a2eafed1b4c48711de9101b69944b878120a189e05dbffbfbc02c9a823b165a1"
+    }
+  ],
+  "differential_command": "SHU251_NO_SYSTEMD=1 node .github/coordinator/service/test/shu71-final-differential.mjs",
+  "differential": [
+    {
+      "id": "CONTROL",
+      "status": 0,
+      "counts": {
+        "tests": 830,
+        "pass": 830,
+        "fail": 0,
+        "skipped": 0
+      },
+      "assertion": null,
+      "killed": false,
+      "snapshots": [
+        {
+          "variant": "HALTED",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "FIXTURE_REMOVE_INTENT",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "extra fields",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "+365 days",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "N1",
+      "status": 1,
+      "counts": {
+        "tests": 830,
+        "pass": 829,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true,
+      "snapshots": [
+        {
+          "variant": "HALTED",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          }
+        },
+        {
+          "variant": "FIXTURE_REMOVE_INTENT",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "extra fields",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "+365 days",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "N2",
+      "status": 1,
+      "counts": {
+        "tests": 830,
+        "pass": 829,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_CLOCK_PAST_EXPIRY",
+      "killed": true,
+      "snapshots": [
+        {
+          "variant": "HALTED",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "FIXTURE_REMOVE_INTENT",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "extra fields",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "+365 days",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "N3",
+      "status": 1,
+      "counts": {
+        "tests": 830,
+        "pass": 829,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_EXTRA_COUNTER_FIELDS",
+      "killed": true,
+      "snapshots": [
+        {
+          "variant": "HALTED",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "FIXTURE_REMOVE_INTENT",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "extra fields",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          }
+        },
+        {
+          "variant": "+365 days",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "N6",
+      "status": 1,
+      "counts": {
+        "tests": 830,
+        "pass": 829,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true,
+      "snapshots": [
+        {
+          "variant": "HALTED",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "FIXTURE_REMOVE_INTENT",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          }
+        },
+        {
+          "variant": "extra fields",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        },
+        {
+          "variant": "+365 days",
+          "baseline": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "changed": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          }
+        }
+      ]
+    }
+  ],
+  "tested_sources_sha256": {
+    ".github/coordinator/service/test/shu71-final-mutations.test.mjs": "f0fcad1f729661a6c4463c6a5dd8d9205f054da2b7dcac1cdf10798a61d6499d",
+    ".github/coordinator/service/test/shu71-final-differential.mjs": "efa6013d5883440bf657f93024389e0d4c69b12899578a0d84db6c7595e71ac4",
+    ".github/coordinator/service/test/shu71-r8-state-model.mjs": "9ed097f431f7cea5c471133c9bfb8e191c8988b96384783e1513b5edaaa414b2",
+    ".github/coordinator/service/test/shu71-final-mutants.mjs": "8d0ba6a97b06df77a339b14ca3552a6c9e5571cd89069f9327d92db00b251bdf",
+    ".github/coordinator/service/test/shu71-exhausted-invariants.mjs": "8595785d59eb39fd33c0f004c18e63f2d3d080695be5865027465670317ee79f",
+    ".github/coordinator/service/test/shu71-trust.test.mjs": "34a4e2ecdf0cd3f7917ce5a7c786064f4e9f6ff1bb34b2d6fdb7c9e3e49936fd",
+    ".github/coordinator/service/shu71-production.mjs": "b3d9182489eb56be276af744240713805ab9605df8ef30f1f76808263b3e2591",
+    ".github/coordinator/service/units.mjs": "09e2aa98442ece40d766a28ac54080203b72269322d8fd809d1f7d800144164a",
+    ".github/coordinator/service/host-suite-contract.mjs": "c66cc3c8f199ca249fcdca8c3e4c47c87fc9dbec16c0cef4eb47f7f47500f099",
+    ".github/workflows/ci.yml": "138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46"
+  },
+  "documentation_corrections": {
+    "D1": "production_modules_unchanged=false; B1 production edits acknowledged.",
+    "D2": "Current complete host-suite-contract hash refreshed in both JSON files; starting hashes retained as historical.",
+    "D3": "Unchanged-source and no-#138 statements scoped to historical R9 pass; B1, #138 and main merge stated.",
+    "D4": "Untracked r8 evidence citations removed; executable enumeration and shipped FINAL measurements cited."
+  },
+  "limits": [
+    "B1 remains BLOCKED for host/live remainder; B2/B4 source-level only.",
+    "Finite representatives do not prove arbitrary event classes, extra fields, clock offsets or their combinations. Every demonstrated shape dies by name; imagined shapes are disclosed.",
+    "R5-A containment, unkeyed chain, FORGED-ordered and ordered-zero-effects residuals unchanged.",
+    "Composition range/depth limits and skipActivationPreflight: true unchanged.",
+    "Existing 18 local skips retained; no new skip or name filter.",
+    "No application-suite rerun; no new-head CI claim."
+  ]
+}

@@ -1,28 +1,51 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Install this reviewed file root-owned and non-writable at
 # /usr/local/libexec/shu-reviewer-sandbox. The coordinator invokes it through a
 # narrowly-scoped sudo rule. It executes both phases of review as shu-reviewer:
-# builder-authored tests use the no-network `test` profile and Claude uses the
-# provider-network-only `model` profile. Both profiles share the same filesystem,
-# process and identity boundary.
+# builder-authored tests use the no-network `test` profile and the reviewer model
+# (Claude, or Codex since SHU-71) uses the address-family-restricted `model`
+# profile (AF_UNIX, AF_INET, AF_INET6), with no destination allowlist. Both profiles share the same filesystem,
+# process and identity boundary. Privileged bash mode prevents startup files,
+# imported functions, BASH_ENV and caller shell options from running as root.
+#
+# SHU-71: the Codex reviewer runs each of its own commands inside a bubblewrap
+# sandbox (--unshare-user/pid/ipc/net), so ONLY the Codex model branch loosens
+# what would otherwise block that sandbox: ProcSubset=all (bwrap must read
+# /proc/sys/kernel/overflowuid to name its unmapped ids), RestrictNamespaces=user
+# mnt pid ipc net (the namespaces it creates), and AF_NETLINK (it brings up
+# loopback inside its new netns over a NETLINK_ROUTE socket). The test profile
+# and the Claude model branch keep ProcSubset=pid, RestrictNamespaces=yes and
+# their current address families, and every other property is unchanged for all
+# three launches — the filesystem, identity, capability and process boundary is
+# the same for the Codex reviewer as for every other reviewer launch.
+while IFS= read -r environment_name; do
+  case "$environment_name" in
+    CLAUDE_CODE_OAUTH_TOKEN|SUDO_UID) ;;
+    *) unset "$environment_name" 2>/dev/null || true ;;
+  esac
+done < <(compgen -e)
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
+unset BASH_ENV ENV CDPATH GLOBIGNORE
 set -euo pipefail
 
 trusted_executable() {
   local configured="$1" canonical mode directory parent
-  canonical="$(realpath -e -- "$configured")"
-  mode="$(stat -c '%a' -- "$canonical")"
+  canonical="$(/usr/bin/realpath -e -- "$configured")"
+  mode="$(/usr/bin/stat -c '%a' -- "$canonical")"
   if [[ ! -f "$canonical" || -L "$canonical" || ! -x "$canonical" ||
-        "$(stat -c '%u' -- "$canonical")" != "0" || $(( 8#$mode & 8#022 )) -ne 0 ]]; then
+        "$(/usr/bin/stat -c '%u' -- "$canonical")" != "0" || $(( 8#$mode & 8#022 )) -ne 0 ]]; then
     return 1
   fi
-  directory="$(dirname -- "$canonical")"
+  directory="$(/usr/bin/dirname -- "$canonical")"
   while :; do
-    mode="$(stat -c '%a' -- "$directory")"
-    if [[ ! -d "$directory" || -L "$directory" || "$(stat -c '%u' -- "$directory")" != "0" ||
+    mode="$(/usr/bin/stat -c '%a' -- "$directory")"
+    if [[ ! -d "$directory" || -L "$directory" || "$(/usr/bin/stat -c '%u' -- "$directory")" != "0" ||
           $(( 8#$mode & 8#022 )) -ne 0 ]]; then
       return 1
     fi
-    parent="$(dirname -- "$directory")"
+    parent="$(/usr/bin/dirname -- "$directory")"
     [[ "$parent" == "$directory" ]] && break
     directory="$parent"
   done
@@ -32,6 +55,11 @@ trusted_executable() {
 if [[ "$#" -lt 8 || "$1" != "--profile" || ( "$2" != "test" && "$2" != "model" ) ||
       "$3" != "--workspace-root" || "$5" != "--workspace" || "$7" != "--" ]]; then
   echo "reviewer sandbox requires an exact workspace binding and argv" >&2
+  exit 64
+fi
+
+if [[ "$EUID" -ne 0 || ! "${SUDO_UID:-}" =~ ^[0-9]+$ || "${SUDO_UID:-0}" == "0" ]]; then
+  echo "reviewer sandbox requires root execution from the deployed non-root coordinator" >&2
   exit 64
 fi
 
@@ -53,26 +81,26 @@ if [[ "$workspace_root" != /* || "$workspace" != /* || -L "$workspace_root" || -
   echo "reviewer sandbox paths must be absolute real directories" >&2
   exit 64
 fi
-canonical_root="$(realpath -e -- "$workspace_root")"
-canonical_workspace="$(realpath -e -- "$workspace")"
+canonical_root="$(/usr/bin/realpath -e -- "$workspace_root")"
+canonical_workspace="$(/usr/bin/realpath -e -- "$workspace")"
 if [[ ! -d "$canonical_root" || ! -d "$canonical_workspace" ||
-      "$(dirname -- "$canonical_workspace")" != "$canonical_root" ||
-      ! "$(basename -- "$canonical_workspace")" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+      "$(/usr/bin/dirname -- "$canonical_workspace")" != "$canonical_root" ||
+      ! "$(/usr/bin/basename -- "$canonical_workspace")" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
   echo "reviewer sandbox workspace is not a direct attempt child" >&2
   exit 64
 fi
-if [[ "$(stat -c '%a' -- "$canonical_workspace")" != "750" ]]; then
+if [[ "$(/usr/bin/stat -c '%a' -- "$canonical_workspace")" != "750" ]]; then
   echo "reviewer sandbox workspace must have mode 0750" >&2
   exit 64
 fi
-workspace_uid="$(stat -c '%u' -- "$canonical_workspace")"
+workspace_uid="$(/usr/bin/stat -c '%u' -- "$canonical_workspace")"
 if [[ "$workspace_uid" != "0" && "$workspace_uid" != "${SUDO_UID:-}" ]]; then
   echo "reviewer sandbox workspace must be root/coordinator-owned" >&2
   exit 64
 fi
 
-reviewer_uid="$(id -u shu-reviewer)"
-reviewer_gid="$(id -g shu-reviewer)"
+reviewer_uid="$(/usr/bin/id -u shu-reviewer)"
+reviewer_gid="$(/usr/bin/id -g shu-reviewer)"
 if [[ "$reviewer_uid" == "0" || "$reviewer_uid" == "${SUDO_UID:-}" ]]; then
   echo "reviewer sandbox requires a distinct non-root deployed reviewer identity" >&2
   exit 64
@@ -82,12 +110,42 @@ if /usr/bin/getfacl -cpn -- "$canonical_workspace" | /usr/bin/grep -q "^user:${r
   exit 64
 fi
 
-# Access exists only for this invocation. The trap removes it on success,
-# refusal, signal, or systemd failure; sibling paths are additionally masked in
-# the transient mount namespace, including siblings that predate mode 0750.
+# Revoke invocation access on exit and report failures without hiding the primary
+# status or tool diagnostics. Keep the serialization lock until revocation ends.
+cleanup_step() {
+  local step="$1" status
+  shift
+  if "$@"; then
+    return 0
+  else
+    status=$?
+    cleanup_failures+=("$step (exit $status)")
+  fi
+}
+
+cleanup() {
+  local primary_status=$? failure
+  local -a cleanup_failures=()
+  trap - EXIT HUP INT TERM
+  cleanup_step "revoke reviewer workspace ACL" /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace"
+  cleanup_step "release reviewer lock" /usr/bin/flock -u 9
+  if (( ${#cleanup_failures[@]} > 0 )); then
+    for failure in "${cleanup_failures[@]}"; do
+      printf 'reviewer sandbox cleanup failed: %s\n' "$failure" >&2
+    done
+    if (( primary_status == 0 )); then
+      printf 'reviewer sandbox failed: cleanup failed after an otherwise successful run\n' >&2
+      exit 1
+    fi
+    printf 'reviewer sandbox primary failure retained (exit %s); cleanup also failed\n' "$primary_status" >&2
+  fi
+  exit "$primary_status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 /usr/bin/setfacl -m "u:${reviewer_uid}:r-x" -- "$canonical_workspace"
-cleanup() { /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace" || true; }
-trap cleanup EXIT HUP INT TERM
 
 # A checkout hardlink can bypass path-only masking: a protected inode linked
 # under the allowed checkout remains the same readable object. Independent Git
@@ -101,8 +159,8 @@ fi
 systemd_args=()
 while IFS= read -r -d '' sibling; do
   [[ "$sibling" == "$canonical_workspace" ]] && continue
-  sibling_name="$(basename -- "$sibling")"
-  if [[ -L "$sibling" || ! -d "$sibling" || "$(dirname -- "$(realpath -e -- "$sibling")")" != "$canonical_root" ||
+  sibling_name="$(/usr/bin/basename -- "$sibling")"
+  if [[ -L "$sibling" || ! -d "$sibling" || "$(/usr/bin/dirname -- "$(/usr/bin/realpath -e -- "$sibling")")" != "$canonical_root" ||
         ! "$sibling_name" =~ ^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\.shu-review-sibling-probe-[A-Za-z0-9]+)$ ]]; then
     echo "reviewer sandbox refuses an unsafe sibling workspace entry" >&2
     exit 64
@@ -133,6 +191,14 @@ for protected in \
   systemd_args+=("--property=InaccessiblePaths=-$protected")
 done
 
+# The Codex reviewer's own subscription login lives in a reviewer-owned home.
+# Only the Codex model launch may see it; builder-authored tests and the Claude
+# reviewer run as the same uid, so they must find it masked.
+reviewer_codex_home=/var/lib/shu-reviewer-codex
+if [[ "$profile" != "model" || "$1" != "codex" ]]; then
+  systemd_args+=("--property=InaccessiblePaths=-$reviewer_codex_home")
+fi
+
 if [[ "$profile" == "test" ]]; then
   if [[ "$1" != /* || "$(basename -- "$1")" != "node" ||
         "${2:-}" != "/srv/shu/studenthub-platform/.github/coordinator/review-execution-child.mjs" ]]; then
@@ -149,25 +215,111 @@ if [[ "$profile" == "test" ]]; then
     "--property=PrivateNetwork=yes"
     "--property=RestrictAddressFamilies=AF_UNIX"
   )
+  # The test profile runs only the reviewed exact-head Node evidence child,
+  # which starts no nested sandbox, so it keeps the strict proc and namespace
+  # restrictions and gets no namespace relaxation at all.
+  namespace_args=(
+    "--property=ProcSubset=pid"
+    "--property=RestrictNamespaces=yes"
+  )
+  runtime_args=(
+    "--property=InaccessiblePaths=/run"
+    "--property=InaccessiblePaths=/var/run"
+  )
   environment_args=()
 else
-  if [[ "$1" != "claude" || -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-    echo "reviewer model profile accepts only subscription-authenticated Claude" >&2
-    exit 64
+  model_runtime="$1"
+  if [[ "$model_runtime" == "codex" ]]; then
+    # Codex authenticates from its own home, not from an environment value, and
+    # must write there to refresh the login and keep resumable sessions. That
+    # home is a fixed reviewer-owned 0700 directory under a root-owned parent.
+    if [[ -L "$reviewer_codex_home" || ! -d "$reviewer_codex_home" ||
+          "$(/usr/bin/realpath -e -- "$reviewer_codex_home")" != "$reviewer_codex_home" ||
+          "$(/usr/bin/stat -c '%u:%a' -- "$reviewer_codex_home")" != "${reviewer_uid}:700" ||
+          "$(/usr/bin/stat -c '%u' -- "$(/usr/bin/dirname -- "$reviewer_codex_home")")" != "0" ]]; then
+      echo "reviewer model profile requires the reviewer-owned 0700 Codex home" >&2
+      exit 64
+    fi
+    codex_path="$(command -v -- codex)"
+    canonical_codex="$(trusted_executable "$codex_path")" || {
+      echo "reviewer model profile requires a root-owned non-writable Codex executable" >&2
+      exit 64
+    }
+    shift
+    set -- "$canonical_codex" "$@"
+    unset CLAUDE_CODE_OAUTH_TOKEN
+    # bwrap — Codex's own per-command read-only sandbox — creates user, mount,
+    # pid, ipc and net namespaces, reads /proc/sys/kernel/overflowuid to name
+    # its unmapped ids, and brings up loopback inside its new network namespace
+    # over a NETLINK_ROUTE socket. So the Codex reviewer is the only launch
+    # permitted to create those namespaces, the only one that can see
+    # /proc/sys, and the only one allowed AF_NETLINK; ProtectKernelTunables=yes
+    # still keeps /proc/sys read-only, and uts and cgroup namespaces stay
+    # forbidden. Every other property is identical to the Claude reviewer's:
+    # Codex's own sandbox grants no writable host path and no network
+    # destination beyond the address families above.
+    network_args=(
+      "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK"
+    )
+    namespace_args=(
+      "--property=ProcSubset=all"
+      "--property=RestrictNamespaces=user mnt pid ipc net"
+    )
+  else
+    if [[ "$1" != "claude" || -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+      echo "reviewer model profile accepts only subscription-authenticated Claude" >&2
+      exit 64
+    fi
+    claude_path="$(command -v -- claude)"
+    canonical_claude="$(trusted_executable "$claude_path")" || {
+      echo "reviewer model profile requires a root-owned non-writable Claude executable" >&2
+      exit 64
+    }
+    shift
+    set -- "$canonical_claude" "$@"
+    # Claude runs no nested sandbox, so its launch keeps the strict proc and
+    # namespace restrictions.
+    network_args=(
+      "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"
+    )
+    namespace_args=(
+      "--property=ProcSubset=pid"
+      "--property=RestrictNamespaces=yes"
+    )
   fi
-  claude_path="$(command -v -- claude)"
-  canonical_claude="$(trusted_executable "$claude_path")" || {
-    echo "reviewer model profile requires a root-owned non-writable Claude executable" >&2
+  # Claude must resolve its API host. /etc/resolv.conf usually points into /run,
+  # which an inaccessible mask would hide, so the model profile replaces /run
+  # with an empty read-only tmpfs and binds back only that resolver file.
+  # Everything else under /run stays hidden, as in the test profile.
+  runtime_args=("--property=TemporaryFileSystem=/run:ro")
+  if [[ "$(/usr/bin/realpath -m -- /var/run)" != "/run" ]]; then
+    runtime_args+=("--property=InaccessiblePaths=/var/run")
+  fi
+  resolver="$(/usr/bin/realpath -e -- /etc/resolv.conf)" || {
+    echo "reviewer model profile requires a host resolver configuration" >&2
     exit 64
   }
-  shift
-  set -- "$canonical_claude" "$@"
-  network_args=("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
+  if [[ "$resolver" == /run/* ]]; then
+    resolver_mode="$(/usr/bin/stat -c '%F:%a' -- "$resolver")"
+    if [[ ! "$resolver" =~ ^/run/[A-Za-z0-9._/-]+$ || "${resolver_mode%%:*}" != "regular file" ||
+          $(( 8#${resolver_mode##*:} & 8#022 )) -ne 0 ]]; then
+      echo "reviewer model profile refuses an unsafe resolver configuration" >&2
+      exit 64
+    fi
+    runtime_args+=("--property=BindReadOnlyPaths=$resolver")
+  fi
   # The reviewer necessarily receives its own bounded subscription credential.
   # It receives no coordinator, GitHub, Linear, SSH or supervisor credential.
   # Copy the one permitted value from this process environment without placing
   # the credential in systemd-run's inspectable command line.
-  environment_args=("--setenv=CLAUDE_CODE_OAUTH_TOKEN")
+  if [[ "$model_runtime" == "codex" ]]; then
+    # Codex reads its login from its reviewer-owned home: the only writable
+    # host path the sandbox ever grants, and only to this launch.
+    runtime_args+=("--property=ReadWritePaths=$reviewer_codex_home")
+    environment_args=("--setenv=CODEX_HOME=$reviewer_codex_home")
+  else
+    environment_args=("--setenv=CLAUDE_CODE_OAUTH_TOKEN")
+  fi
 fi
 
 /usr/bin/systemd-run \
@@ -185,17 +337,15 @@ fi
   --property=PrivateDevices=yes \
   --property=NoNewPrivileges=yes \
   --property=CapabilityBoundingSet= \
-  --property=InaccessiblePaths=/run \
-  --property=InaccessiblePaths=/var/run \
+  "${runtime_args[@]}" \
   --property=ProtectProc=invisible \
-  --property=ProcSubset=pid \
+  "${namespace_args[@]}" \
   --property=ProtectKernelTunables=yes \
   --property=ProtectKernelModules=yes \
   --property=ProtectKernelLogs=yes \
   --property=ProtectControlGroups=yes \
   --property=ProtectClock=yes \
   --property=LockPersonality=yes \
-  --property=RestrictNamespaces=yes \
   --property=RestrictRealtime=yes \
   --property=RestrictSUIDSGID=yes \
   --property=UMask=0077 \

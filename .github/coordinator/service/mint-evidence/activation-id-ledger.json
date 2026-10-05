@@ -1,0 +1,23 @@
+{
+  "version": "shu71-activation-id-ledger-v1",
+  "captured_at": "2026-09-17T20:32:40Z",
+  "source": "host /srv/shu/state/shu71-evidence + /srv/shu/state/*activation*.json (read-only) and repository docs",
+  "ids": [
+    "shu63fixture0002",
+    "shu63fixture0004",
+    "shu63fixture0005",
+    "shu63fixture0006",
+    "shu63fixture0007",
+    "shu63fixture0008",
+    "shu63fixture0009",
+    "shu63fixture0010",
+    "shu63fixture0011",
+    "shu63fixture0012",
+    "shu63live01",
+    "shu71abproof0002",
+    "shu71abproof0007",
+    "shu71m4proof0001"
+  ],
+  "count": 14,
+  "sha256": "53e9928e9dd7bd15a50c698bca1b46385fd2fcc6bd9d252f8e8ae9e1bdb200e3"
+}

@@ -1,0 +1,23 @@
+ .github/coordinator/service/SHU71-MINT-REPORT.md   | 192 +++++++++++++++++
+ .github/coordinator/service/SHU71-MINT.md          |  90 ++++++++
+ .../service/a12-evidence/file-requirements.json    |  10 +
+ .../service/a12-evidence/required-files.json       |   1 +
+ .../mint-evidence/activation-id-ledger.json        |  23 ++
+ .../service/mint-evidence/clock-outcomes.jsonl.gz  | Bin 0 -> 41764 bytes
+ .../service/mint-evidence/clock-summary.json       |  67 ++++++
+ .../service/mint-evidence/composer-and-driver.json |  23 ++
+ .../mint-evidence/derivation-and-determinism.json  |  24 +++
+ .../service/mint-evidence/diff-stat.txt            |  23 ++
+ .../service/mint-evidence/plain-outcomes.jsonl.gz  | Bin 0 -> 41764 bytes
+ .../service/mint-evidence/plain-summary.json       |  64 ++++++
+ .../service/mint-evidence/preservation.json        |  11 +
+ .../service/mint-evidence/synthetic/complete.json  |   1 +
+ .../mint-evidence/synthetic/observations.json      |   1 +
+ .../service/mint-evidence/synthetic/package.json   |   1 +
+ .../service/mint-evidence/synthetic/spec.json      |   1 +
+ .../service/mint-evidence/synthetic/window.json    |   1 +
+ .github/coordinator/service/mint-shu71-package.mjs | 237 +++++++++++++++++++++
+ .github/coordinator/service/suite-inventory.json   |  30 ++-
+ .../service/test/mint-shu71-controls.mjs           | 150 +++++++++++++
+ .../coordinator/service/test/mint-shu71.test.mjs   |  61 ++++++
+ 22 files changed, 1010 insertions(+), 1 deletion(-)

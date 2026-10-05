@@ -1,0 +1,21 @@
+{
+  "revision": "ca77fc8a251b5e62594393c5eb0f974e195e9271",
+  "files": 98,
+  "names": 2762,
+  "requirements": 2762,
+  "expected_tests": 2762,
+  "runs": {
+    "plain": {
+      "tests": 2762,
+      "pass": 2754,
+      "fail": 0,
+      "skipped": 8,
+      "outcomes": 2762,
+      "complete_markers": 1,
+      "exit_code": 0,
+      "name_multiset_equal": true,
+      "ordered_names_equal": true,
+      "skip_reasons_byte_identical": true
+    }
+  }
+}

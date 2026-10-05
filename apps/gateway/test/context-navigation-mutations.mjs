@@ -35,8 +35,8 @@ try {
     {
       name: "grants must be read again after revocation",
       pattern: "revocation denies the very next bookmarked request",
-      from: "export function createContextNavigation(sessions, store) {",
-      to: `export function createContextNavigation(sessions, store) {
+      from: "export function createContextNavigation(sessions, store, organizationReader) {",
+      to: `export function createContextNavigation(sessions, store, organizationReader) {
         const readGrants = store.listGrantsForPrincipal.bind(store);
         const cached = new Map();
         store.listGrantsForPrincipal = (id) => {

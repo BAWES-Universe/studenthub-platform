@@ -8,12 +8,17 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { validateTwoFixtureActivation, reviewedActivationBytes } from '../two-fixture-activation.mjs';
 import { readTwoFixtureEvidence } from '../two-fixture-evidence.mjs';
 import { singleRunActivationStatus } from '../single-run-activation.mjs';
-import { dispatchEnabledFor, main } from '../reconcile.mjs';
+import { createReceipt, dispatchEnabledFor, main } from '../reconcile.mjs';
 const committed = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
-const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
+import { twoFixtureConfig } from './fixture/two-fixture-config.mjs';
+const { privateKey, publicKey } = ephemeralPublicSource();
 const revision = 'a'.repeat(40);
 function fixture() {
-  const config = structuredClone(committed);
+  // Two-fixture world stated explicitly: the committed config is now the
+  // one-fixture demonstration scope. `committed` is still read below, where a
+  // case is genuinely about the committed file (enable_dispatch, credentials).
+  const config = twoFixtureConfig();
   config.two_fixture_activation_public_key = publicKey.export({ type: 'spki', format: 'pem' });
   const record = { kind: 'two-fixture-v1', activation_id: 'two-fixture-test', coordinator_revision: revision,
     slots: 2, expires_at: '2026-09-14T12:00:00.000Z', stop_before_merge: true,
@@ -71,8 +76,14 @@ test('ACT_BOUND_FIELDS: every required field, SHA, expiry, lane and capacity is 
 });
 
 test('ACT_REVIEW_SIGNATURE: unsigned, altered, wrong-key and manual committed gates refuse', () => {
+  for (const pem of [null, '', generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' })]) {
+    const x = signed(fixture()); x.config.two_fixture_activation_public_key = pem;
+    assert.equal(validateTwoFixtureActivation(x).code, 'ACT_TRUST_ANCHOR_MISMATCH', 'ACT_SOURCE_DIVERGENCE: config cannot appoint a key');
+  }
+  const implicit = signed(fixture()); delete implicit.config.two_fixture_activation_public_key;
+  assert.equal(validateTwoFixtureActivation(implicit).state, 'disabled', 'ACT_COMMITTED_DEFAULT: absent legacy config selects the committed source');
   for (const change of [x => { x.record.activation_id = 'altered-approval'; }, x => { x.record.signature = ''; },
-    x => { delete x.config.two_fixture_activation_public_key; }, x => { x.config.two_fixture_activation_public_key = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }); }, x => { x.config.enable_dispatch = true; }]) {
+    x => { x.config.enable_dispatch = true; }]) {
     const x = signed(fixture()); change(x);
     assert.equal(validateTwoFixtureActivation(x).code, 'ACT_MANUAL_GATE_BYPASS');
   }
@@ -111,7 +122,14 @@ test('ACT_GATES_OFF: actual tick has zero launches and writes; manual pair gates
   assert.equal(result, 0); assert.equal(writes, 0, 'ACT_GATES_OFF: zero writes'); assert.equal(launches, 0, 'ACT_GATES_OFF: zero launches');
   assert.deepEqual(x, snapshot, 'ACT_GATES_OFF: verifier cannot set a gate');
   assert.equal(committed.enable_dispatch, false);
-  assert.equal(dispatchEnabledFor({ ENABLE_DISPATCH: 'true' }, { ...committed, enable_dispatch: true }), false);
+  // Premise corrected: "the two manual gates cannot bypass review" is a property
+  // of the TWO-FIXTURE scope, not of whatever is committed — dispatchEnabledFor
+  // only demands an armed two-fixture activation when dispatch_scope holds the
+  // pair. The committed file is now the one-fixture scope, where flipping the
+  // committed flag is the ordinary committed path, so the guarantee is asserted
+  // against the two-fixture config that actually carries it.
+  assert.equal(dispatchEnabledFor({ ENABLE_DISPATCH: 'true' }, { ...x.config, enable_dispatch: true }), false,
+    'ACT_GATES_OFF: two-fixture scope still demands a reviewed activation');
 });
 
 for (const [code, , condition] of cases) test(`ACT_MUTATION ${code}: removed guard dies by named AssertionError`, () => {
@@ -157,5 +175,136 @@ test('ACT_REMOTE_EVIDENCE: real helper resolves both heads and identities throug
 
 test('ACT_REMOTE_FAILURE: absent credentials and failed API reads cannot supply evidence', () => {
   assert.deepEqual(readTwoFixtureEvidence(committed, {}, () => { throw new Error('must not execute'); }), { heads: {}, issues: [] });
-  assert.deepEqual(readTwoFixtureEvidence(committed, { GITHUB_TOKEN: 'fake', LINEAR_API_TOKEN: 'fake' }, () => { throw new Error('API failure'); }), { heads: {}, issues: [] });
+  assert.deepEqual(readTwoFixtureEvidence(committed, { GITHUB_TOKEN: 'fake', LINEAR_API_TOKEN: 'fake' }, () => { throw new Error('API failure'); }), { heads: {}, issues: [], unavailable: true });
+  assert.deepEqual(readTwoFixtureEvidence(committed, { SHU71_EVIDENCE_BROKER: 'true' }, () => { throw new Error('broker timeout'); }), { heads: {}, issues: [], unavailable: true });
+  // The broker reached, but its own read failed: the answer is well formed and still unavailable.
+  assert.deepEqual(readTwoFixtureEvidence(committed, { SHU71_EVIDENCE_BROKER: 'true' }, () => JSON.stringify({ heads: {}, issues: [], unavailable: true })), { heads: {}, issues: [], unavailable: true });
+});
+
+import { killExecutionMutant } from './fixture/execution-mutants.mjs';
+const executionCases = ['MISSING_BINDING', 'WRONG_REVISION', 'FOREIGN_KEY', 'EXPIRED_AUTHORIZATION', 'CHECKOUT_DRIFT'];
+
+test('EXEC_RUNTIME_POSITIVE: correctly signed current execution proceeds', () => {
+  assert.equal(validateTwoFixtureActivation(signed(fixture())).valid, true, 'EXEC_RUNTIME_POSITIVE: signed, current, matching execution proceeds');
+});
+for (const kind of executionCases) test(`EXEC_RUNTIME_${kind}: signed execution refusal`, () => {
+  const x = signed(fixture());
+  assert.equal(validateTwoFixtureActivation(x).valid, true, `EXEC_RUNTIME_${kind}: positive control`);
+  if (kind === 'MISSING_BINDING') x.record.coordinator_revision = null;
+  if (kind === 'WRONG_REVISION') x.mainRevision = 'b'.repeat(40);
+  if (kind === 'CHECKOUT_DRIFT') {
+    const observed = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+    assert.equal(observed.status, 0, 'EXEC_CHECKOUT_EVIDENCE: read actual working clone HEAD');
+    x.revision = observed.stdout.trim();
+    assert.match(x.revision, /^[0-9a-f]{40}$/, 'EXEC_CHECKOUT_EVIDENCE: actual SHA');
+  }
+  if (kind === 'FOREIGN_KEY') x.config.two_fixture_activation_public_key = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA' + Buffer.alloc(32, 1).toString('base64') + '\n-----END PUBLIC KEY-----\n';
+  if (kind === 'EXPIRED_AUTHORIZATION') x.record.expires_at = '2026-09-14T10:59:59.000Z';
+  signed(x);
+  assert.equal(validateTwoFixtureActivation(x).valid, false, `EXEC_RUNTIME_${kind}: authorization must refuse`);
+});
+
+for (const kind of executionCases) test(`EXEC_RUNTIME_MUTANT_${kind}: valid mutant dies by named assertion`, () => {
+  killExecutionMutant(kind, 'RUNTIME', `EXEC_RUNTIME_${kind}`, 'two-fixture-activation.test.mjs');
+});
+
+test('EXEC_RUNTIME_PROVENANCE_ONLY: signed provenance SHA cannot substitute for approved execution', () => {
+  const x = fixture();
+  x.record.coordinator_revision = JSON.parse(fs.readFileSync(new URL('../shu71-trust-anchor.json', import.meta.url), 'utf8')).provenance_revision;
+  signed(x);
+  assert.equal(validateTwoFixtureActivation(x).valid, false, 'EXEC_RUNTIME_PROVENANCE_ONLY: anchor cannot supply execution authority');
+});
+
+test('B3_REPRO_CURRENT_MAIN: real descendant invalidates armed activation', () => {
+  const dir = fs.mkdtempSync(path.join(tmpdir(), 'b3-repro-'));
+  const git = (...args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  try {
+    git('init'); git('config', 'user.name', 'B3 isolated test'); git('config', 'user.email', 'b3@example.invalid');
+    git('commit', '--allow-empty', '-m', 'signed seed'); const seed = git('rev-parse', 'HEAD');
+    const x = fixture(); x.record.fixtures[0].seed_head = seed; x.heads[x.record.fixtures[0].branch] = seed;
+    x.record.gates = { reviewed: true, runtime: true }; x.env.ENABLE_DISPATCH = 'true'; signed(x);
+    assert.equal(validateTwoFixtureActivation(x).state, 'armed', 'B3_REPRO_SEED_ARMED');
+    git('commit', '--allow-empty', '-m', 'authorized build descendant'); const descendant = git('rev-parse', 'HEAD');
+    git('merge-base', '--is-ancestor', seed, descendant); x.heads[x.record.fixtures[0].branch] = descendant;
+    const result = validateTwoFixtureActivation(x);
+    assert.equal(result.code, 'ACT_STALE_SEED_HEAD', 'B3_REPRO_DESCENDANT_REFUSED');
+    console.log(JSON.stringify({ scope: 'current checkout: unreceipted descendant refusal, not a base reproduction', seed, descendant, ancestry: true, first: 'armed', next: result.code }));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// SHU-71 stage 5: each lane names its own writer beside its reviewer, so one
+// run can prove both directions: Codex builds SHU-140 for a Claude review and
+// Claude builds SHU-254 for a Codex review.
+function armedFixture(change = () => {}) {
+  const x = fixture(); change(x);
+  x.record.gates = { reviewed: true, runtime: true }; x.env.ENABLE_DISPATCH = 'true';
+  return signed(x);
+}
+const armedStatus = (x, extra = {}) => singleRunActivationStatus({ ...x, gitHead: revision, filePath: '/in-memory-only', io: { ...statusIO(x), ...extra.io }, receipts: extra.receipts ?? [] });
+
+test('SHU71_LANE_WRITERS: an armed pair carries each lane writer, and the selected lane names its own', () => {
+  const x = armedFixture();
+  const first = armedStatus(x);
+  assert.equal(first.state, 'armed', 'SHU71_LANE_WRITERS_ARMED');
+  assert.deepEqual(first.writer_lanes, { 'SHU-140': 'codex-builder', 'SHU-254': 'claude-builder' }, 'SHU71_LANE_WRITERS_MAP');
+  assert.equal(first.target_issue_id, 'SHU-140');
+  assert.equal(first.writer_lane, 'codex-builder', 'SHU71_LANE_WRITERS_SHU140');
+  assert.equal(first.reviewer_lane, 'claude-verifier', 'SHU71_LANE_WRITERS_SHU140_REVIEWER');
+  const second = armedStatus(x, { receipts: [{ issue_id: 'SHU-140', stage: 'RUNNING' }] });
+  assert.equal(second.target_issue_id, 'SHU-254');
+  assert.equal(second.writer_lane, 'claude-builder', 'SHU71_LANE_WRITERS_SHU254');
+  assert.equal(second.reviewer_lane, 'codex-verifier', 'SHU71_LANE_WRITERS_SHU254_REVIEWER');
+});
+
+test('SHU71_LANE_WRITERS: a lane whose writer and reviewer share a family refuses before arming', () => {
+  const sameFamily = x => {
+    for (const lanes of [x.config.fixture_lanes, x.record.fixtures.map(f => f.lane)]) {
+      const lane = lanes.find(l => l.id === 'SHU-254');
+      lane.writer_lane = 'codex-builder';
+    }
+  };
+  const status = armedStatus(armedFixture(sameFamily));
+  assert.equal(status.state, 'refused', 'SHU71_LANE_WRITERS_SAME_FAMILY_REFUSED');
+  assert.equal(status.code, 'ACT_LANE_CROSS');
+  assert.match(status.reason, /SHU-254 writer_lane codex-builder and reviewer_lane codex-verifier are the same family/);
+  const unknown = armedStatus(armedFixture(x => { for (const l of [x.config.fixture_lane, x.record.fixtures[0].lane]) l.writer_lane = 'codex-verifier'; }));
+  assert.equal(unknown.code, 'ACT_LANE_CROSS', 'SHU71_LANE_WRITERS_UNKNOWN_WRITER_REFUSED');
+  assert.match(unknown.reason, /SHU-140 writer_lane must be one of/);
+});
+
+test('SHU71_TMP_FLOOR: a two-fixture activation stays armed on a short /tmp; the floor gates launches, not publication', () => {
+  const x = armedFixture();
+  for (const bytes of [0, null]) assert.equal(armedStatus(x, { io: { tmpFreeBytes: () => bytes } }).state, 'armed', 'SHU71_TMP_FLOOR_PUBLICATION_UNAFFECTED');
+});
+
+// SHU-71 stage 5: SHU-140 carries a retained, untagged legacy HOLD (8dd0526b).
+// Untagged and unnamed still spends, so a pair that does not name it runs one
+// lane; the signed record may name it, exactly as a single-run record does.
+const RETAINED = '8dd0526b-8e5b-4505-930a-97d272bfa346';
+function retainedHold() {
+  const made = createReceipt({ issue_id: 'SHU-140', authorization_ref: 'FIXTURE-OPUS-CONTRACT-20260905', requested_worker: 'codex-builder',
+    repo: 'BAWES-Universe/studenthub-platform', branch: 'coordinator/SHU-140', target_sha: '1'.repeat(40),
+    attempt_id: RETAINED, episode_id: null, reserved_at: '2026-09-10T21:18:38.244Z' });
+  assert.equal(made.ok, true, JSON.stringify(made.errors));
+  return { ...made.receipt, stage: 'HOLD', worker_identity: 'codex-cli:session-1', external_run_id: 'codexrun_f', adapter_status: 'completed',
+    timestamps: { reserved: '2026-09-10T21:18:38.244Z', launch: null, heartbeat: null, terminal: '2026-09-10T21:19:52.623Z' },
+    evidence_links: ['https://example.invalid/evidence'], last_activity: '2026-09-10T21:19:52.623Z', notes: [] };
+}
+
+test('SHU71_PAIR_SUPERSEDES: a signed pair may retire a named untagged attempt, and only a named one', () => {
+  const receipts = [retainedHold()];
+  const unnamed = armedStatus(armedFixture(), { receipts });
+  assert.equal(unnamed.state, 'armed');
+  assert.deepEqual(unnamed.target_issue_ids, ['SHU-254'], 'SHU71_PAIR_UNNAMED_SPENDS: the unnamed retained HOLD ends the SHU-140 episode');
+  const named = armedStatus(armedFixture(x => { x.record.supersedes_attempt_ids = [RETAINED]; }), { receipts });
+  assert.equal(named.state, 'armed', named.reason);
+  assert.deepEqual(named.target_issue_ids, ['SHU-140', 'SHU-254'], 'SHU71_PAIR_NAMED_RETIRES: both lanes run');
+  assert.equal(named.target_issue_id, 'SHU-140');
+  for (const ids of [[], ['not-an-attempt'], [RETAINED, RETAINED], 'x']) {
+    const bad = armedFixture(x => { x.record.supersedes_attempt_ids = ids; });
+    assert.equal(validateTwoFixtureActivation(bad).code, 'ACT_MALFORMED', `SHU71_PAIR_SUPERSEDES_SHAPE ${JSON.stringify(ids)}`);
+  }
+  const altered = armedFixture(x => { x.record.supersedes_attempt_ids = [RETAINED]; });
+  altered.record.supersedes_attempt_ids = ['1f1f1f1f-1111-4111-8111-111111111111'];
+  assert.equal(validateTwoFixtureActivation(altered).code, 'ACT_MANUAL_GATE_BYPASS', 'SHU71_PAIR_SUPERSEDES_SIGNED');
 });
