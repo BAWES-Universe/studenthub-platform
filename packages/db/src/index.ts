@@ -25,6 +25,7 @@ export {
   type Language,
 } from "./safe-write-store.js";
 export { PostgresLoginStore } from "./postgres-login-store.js";
+export { PostgresCatalogueStore } from "./postgres-catalogue-store.js";
 export { runMigrations } from "./migrate.js";
 export { bootstrapAdmin, type BootstrapResult } from "./bootstrap-admin.js";
 export { DEFAULT_DATABASE_URL, databaseUrl } from "./connection.js";
