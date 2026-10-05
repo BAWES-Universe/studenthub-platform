@@ -187,7 +187,7 @@ export class ProfileRecords {
     requireOwner(ownerId);
     const kind = requireKind(kindInput);
     const fields = normalizers[kind](input);
-    await this.checkReferences(kind, fields, undefined);
+    assertReferences(kind, fields, undefined, await this.resolveReferences(kind, fields));
     const now = this.now().toISOString();
     return this.store.transaction(async (tx) => {
       const active = (await tx.listOwned(ownerId, kind)).filter((row) => row.status === "active");
@@ -205,10 +205,12 @@ export class ProfileRecords {
     const kind = requireKind(kindInput);
     const id = requireId(idInput);
     const fields = normalizers[kind](input);
+    // Resolve before the transaction: a resolver call inside it would need a second pool connection.
+    const resolved = await this.resolveReferences(kind, fields);
     return this.store.transaction(async (tx) => {
       const current = await tx.findOwned(ownerId, kind, id);
       if (!current || current.status !== "active") throw new ProfileRecordError("not_found", 404);
-      await this.checkReferences(kind, fields, current.fields);
+      assertReferences(kind, fields, current.fields, resolved);
       const active = (await tx.listOwned(ownerId, kind)).filter((row) => row.status === "active");
       if (kind === "skill") {
         assertUniqueSkills([...active.filter((row) => row.id !== id).map((row) => (row.fields as SkillFields).name), (fields as SkillFields).name]);
@@ -285,23 +287,32 @@ export class ProfileRecords {
     });
   }
 
-  /** New or changed references must be active; an unchanged historical one may stay. */
-  private async checkReferences(kind: ProfileRecordKind, fields: unknown, previous: unknown): Promise<void> {
-    if (kind !== "education") return;
-    const next = fields as EducationFields;
-    const before = previous as EducationFields | undefined;
-    const checks: [ReferenceType, string | undefined, string | undefined][] = [
-      ["university", next.universityId, before?.universityId],
-      ["degree", next.degreeId, before?.degreeId],
-      ["major", next.majorId, before?.majorId],
-    ];
-    for (const [type, id, previousId] of checks) {
-      if (id === undefined || id === previousId) continue;
-      let resolved: Awaited<ReturnType<ReferenceResolver["resolve"]>>;
-      try { resolved = await this.references.resolve(type, id); }
+  /** Looks up every catalogue reference in the fields; unknown ids map to undefined. */
+  private async resolveReferences(kind: ProfileRecordKind, fields: unknown): Promise<ResolvedReferences> {
+    const resolved: ResolvedReferences = new Map();
+    for (const [type, id] of educationReferences(kind, fields)) {
+      if (id === undefined) continue;
+      try { resolved.set(`${type}:${id}`, (await this.references.resolve(type, id))?.status); }
       catch { throw new ProfileRecordError("reference_unavailable", 503); }
-      if (resolved?.status !== "active") invalid(`invalid_${type}`);
     }
+    return resolved;
+  }
+}
+
+type ResolvedReferences = Map<string, "active" | "deleted" | undefined>;
+
+function educationReferences(kind: ProfileRecordKind, fields: unknown): [ReferenceType, string | undefined][] {
+  if (kind !== "education") return [];
+  const education = fields as EducationFields;
+  return [["university", education.universityId], ["degree", education.degreeId], ["major", education.majorId]];
+}
+
+/** New or changed references must be active; an unchanged historical one may stay. */
+function assertReferences(kind: ProfileRecordKind, fields: unknown, previous: unknown, resolved: ResolvedReferences): void {
+  const before = new Map(educationReferences(kind, previous ?? {}));
+  for (const [type, id] of educationReferences(kind, fields)) {
+    if (id === undefined || (previous !== undefined && id === before.get(type))) continue;
+    if (resolved.get(`${type}:${id}`) !== "active") invalid(`invalid_${type}`);
   }
 }
 

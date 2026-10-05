@@ -107,6 +107,23 @@ test("SHU144_DELETED_REFERENCE a deleted catalogue entry cannot be newly chosen"
   await rejects(records.create(P, "education", { educationType: "standard", universityId: UNIVERSITY, degreeId: DEGREE, currentlyStudying: false }), "invalid_degree", 400);
 });
 
+test("SHU144_NO_RESOLVE_IN_TRANSACTION catalogue lookups happen before the write transaction opens", async () => {
+  const { store, references } = rig();
+  let open = 0;
+  const watched: ProfileRecordStore = {
+    listAll: (owner) => store.listAll(owner),
+    transaction: async (work) => { open += 1; try { return await store.transaction(work); } finally { open -= 1; } },
+  };
+  const resolver = { resolve: async (...args: Parameters<InMemoryReferenceResolver["resolve"]>) => {
+    assert.equal(open, 0, "SHU144_NO_RESOLVE_IN_TRANSACTION resolver called inside a transaction");
+    return references.resolve(...args);
+  } };
+  const records = new ProfileRecords(watched, resolver, () => FIXED);
+  const created = await records.create(P, "education", { educationType: "standard", universityId: UNIVERSITY, currentlyStudying: false });
+  const updated = await records.update(P, "education", created.id, { educationType: "standard", universityId: UNIVERSITY, degreeId: DEGREE, majorId: MAJOR, currentlyStudying: false });
+  assert.equal((updated.fields as { majorId?: string }).majorId, MAJOR);
+});
+
 test("SHU144_SKILL_REPLACE replaces the whole list in one audited step, keeping old rows restorable", async () => {
   const { store, records } = rig();
   await records.create(P, "skill", { name: "Excel" });

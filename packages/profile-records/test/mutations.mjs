@@ -19,8 +19,8 @@ const mutations = [
     "rows.set(record.id, record);",
     "rows.set(record.id, record); this.#rows.set(record.id, record);", "SHU144_AUDIT_ATOMIC"],
   ["deleted catalogue entries accepted", recordsPath,
-    "if (resolved?.status !== \"active\")",
-    "if (resolved === undefined)", "SHU144_DELETED_REFERENCE"],
+    "resolved.get(`${type}:${id}`) !== \"active\"",
+    "resolved.get(`${type}:${id}`) === undefined", "SHU144_DELETED_REFERENCE"],
 ];
 
 try {
