@@ -2468,7 +2468,7 @@
     "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
     "SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run",
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
-    "SHU-224: committed scope is pinned to the SHU-294 card while dispatch stays disabled",
+    "SHU-224: committed scope is pinned to one card lane while dispatch stays disabled",
     "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
     "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card",
     "SHU-226 A1: a synchronous breaker is reported in the tick that persists it",
@@ -3957,8 +3957,8 @@
     "CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a card",
     "CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude",
     "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order",
-    "CARD_LANE_SECOND_CARD: the committed SHU-294 lane is its own reviewed contract and the scope names it alone",
-    "CARD_LANE_SECOND_CARD_ARMED_TICK: an armed SHU-294 tick launches Codex on exactly the card's paths, and the review goes to Claude",
+    "CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contract, and the scope names exactly one of them",
+    "CARD_LANE_EVERY_CARD_ARMED_TICK: an armed tick of each committed card lane launches its writer on exactly its paths, and its reviewer lane judges the result",
     "CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it",
     "SHU-296 R1: repo is a third scope with a non-empty literal path set, no scoped base and no review phase",
     "SHU-296 R2: repo-mode paths may not reach the lockfile, npm config, node_modules/ or .github/, and package.json stays writable",
@@ -20291,7 +20291,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-224: committed scope is pinned to the SHU-294 card while dispatch stays disabled",
+      "name": "SHU-224: committed scope is pinned to one card lane while dispatch stays disabled",
       "capabilities": []
     },
     {
@@ -30004,11 +30004,11 @@
       "capabilities": []
     },
     {
-      "name": "CARD_LANE_SECOND_CARD: the committed SHU-294 lane is its own reviewed contract and the scope names it alone",
+      "name": "CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contract, and the scope names exactly one of them",
       "capabilities": []
     },
     {
-      "name": "CARD_LANE_SECOND_CARD_ARMED_TICK: an armed SHU-294 tick launches Codex on exactly the card's paths, and the review goes to Claude",
+      "name": "CARD_LANE_EVERY_CARD_ARMED_TICK: an armed tick of each committed card lane launches its writer on exactly its paths, and its reviewer lane judges the result",
       "capabilities": []
     },
     {

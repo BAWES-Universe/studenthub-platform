@@ -13,7 +13,7 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CARD_CONTRACTS, SHU197_PATHS, SHU294_PATHS, cardBrief, cardContract } from "../card-contracts.mjs";
+import { CARD_CONTRACTS, SHU197_PATHS, cardBrief, cardContract } from "../card-contracts.mjs";
 import {
   fixtureAcceptance,
   fixtureReviewScope,
@@ -241,66 +241,82 @@ test("CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads f
   assert.equal(spent(() => { throw new Error("thread unreadable"); }).code, "HOST_AUTH_EVIDENCE_UNAVAILABLE", "and an unread thread still denies it");
 });
 
-// The second card, SHU-294, hardens the validators SHU-197 shipped. It reuses
-// SHU-197's six paths but has its own brief and acceptance, and the committed
-// scope now names it alone.
-test("CARD_LANE_SECOND_CARD: the committed SHU-294 lane is its own reviewed contract and the scope names it alone", () => {
-  const lane = CONFIG.card_lanes.find((entry) => entry.id === "SHU-294");
-  assert.ok(lane, "config.json names the SHU-294 card lane");
-  assert.equal(lane.authorization_ref, "SHU-294");
-  assert.equal(lane.writer_lane, "codex-builder");
-  assert.equal(lane.reviewer_lane, "claude-verifier");
-  assert.deepEqual(resolveFixtureLane(CONFIG, "SHU-294"), lane);
-  assert.equal(validateFixtureScopePolicy(lane).ok, true);
-  assert.deepEqual([...SHU294_PATHS], [...SHU197_PATHS]);
-  assert.deepEqual(fixtureReviewTests("SHU-294"), [
-    "deploy/coolify/test/config-schema.test.mjs",
-    "deploy/coolify/test/integration-register.test.mjs",
-  ]);
-  assert.equal(fixtureAcceptance("SHU-294"), cardContract("SHU-294").acceptance);
-  assert.notEqual(fixtureAcceptance("SHU-294"), fixtureAcceptance("SHU-197"));
-  assert.notEqual(cardBrief("SHU-294"), cardBrief("SHU-197"));
-  assert.match(cardBrief("SHU-294"), /byte-identical/);
-  assert.match(cardBrief("SHU-294"), /OIDC_CALLBACK_URL must use https/);
-  assert.deepEqual(CONFIG.dispatch_scope, { issue_ids: ["SHU-294"] });
-  const widened = { ...lane, revision_paths: [...lane.revision_paths, "deploy/coolify/compose.yaml"] };
-  assert.match(validateFixtureScopePolicy(widened).reason, /differ from the reviewed exact SHU-294 contract/);
+// Every later card has its own lane in config.json and its own reviewed
+// contract in card-contracts.mjs, and the committed scope names exactly one of
+// them. These tests cover each committed card lane in turn, so a new card
+// needs only its contract and its lane, and no test edits.
+const WRITER_RUNTIME = { "codex-builder": "codex-cli", "claude-builder": "claude-code" };
+const REVIEWER_RUNTIME = { "claude-verifier": "claude-code", "codex-verifier": "codex-cli" };
+const LATER_CARDS = CONFIG.card_lanes.filter((entry) => entry.id !== "SHU-197");
+
+test("CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contract, and the scope names exactly one of them", () => {
+  assert.ok(LATER_CARDS.length > 0, "config.json names at least one card after SHU-197");
+  for (const lane of LATER_CARDS) {
+    const contract = cardContract(lane.id);
+    assert.ok(contract, `${lane.id} has a reviewed contract`);
+    assert.equal(lane.authorization_ref, lane.id);
+    assert.ok(Object.hasOwn(WRITER_RUNTIME, lane.writer_lane), `${lane.id} names a known writer lane`);
+    assert.ok(Object.hasOwn(REVIEWER_RUNTIME, lane.reviewer_lane), `${lane.id} names a known reviewer lane`);
+    assert.notEqual(WRITER_RUNTIME[lane.writer_lane], REVIEWER_RUNTIME[lane.reviewer_lane], `${lane.id} is reviewed by another model family`);
+    assert.deepEqual(resolveFixtureLane(CONFIG, lane.id), lane);
+    assert.equal(validateFixtureScopePolicy(lane).ok, true);
+    assert.deepEqual(lane.initial_build_paths, [...contract.initial_build_paths]);
+    assert.deepEqual(lane.revision_paths, [...contract.revision_paths]);
+    assert.deepEqual(fixtureReviewTests(lane.id), contract.revision_paths.filter((path) => path.endsWith(".test.mjs")));
+    assert.ok(fixtureReviewTests(lane.id).length > 0, `${lane.id} has tests for the reviewer to run`);
+    assert.equal(fixtureAcceptance(lane.id), contract.acceptance);
+    for (const other of Object.keys(CARD_CONTRACTS).filter((id) => id !== lane.id)) {
+      assert.notEqual(fixtureAcceptance(lane.id), fixtureAcceptance(other), `${lane.id} and ${other} have their own acceptance`);
+      assert.notEqual(cardBrief(lane.id), cardBrief(other), `${lane.id} and ${other} have their own brief`);
+    }
+    assert.match(cardBrief(lane.id), new RegExp(`^Card ${lane.id}: `));
+    const widened = { ...lane, revision_paths: [...lane.revision_paths, "deploy/coolify/compose.yaml"] };
+    assert.match(validateFixtureScopePolicy(widened).reason, new RegExp(`differ from the reviewed exact ${lane.id} contract`));
+  }
+  assert.deepEqual(CONFIG.card_lanes.map((lane) => lane.id).sort(), Object.keys(CARD_CONTRACTS).sort(),
+    "every reviewed card contract has exactly one committed card lane");
+  assert.equal(CONFIG.dispatch_scope.issue_ids.length, 1, "one card at a time");
+  const [scoped] = CONFIG.dispatch_scope.issue_ids;
+  assert.ok(LATER_CARDS.some((lane) => lane.id === scoped), "the scope names a committed card lane with a contract");
 });
 
-test("CARD_LANE_SECOND_CARD_ARMED_TICK: an armed SHU-294 tick launches Codex on exactly the card's paths, and the review goes to Claude", async () => {
+test("CARD_LANE_EVERY_CARD_ARMED_TICK: an armed tick of each committed card lane launches its writer on exactly its paths, and its reviewer lane judges the result", async () => {
   const { createEpisodeHarness, SHA_INPUT, SHA_WRITE } = await import("./fixture/episode-harness.mjs");
-  const h = createEpisodeHarness({
-    issueId: "SHU-294",
-    authorizationRef: "SHU-294",
-    writerLane: "codex-builder",
-    reviewerLane: "claude-verifier",
-    githubToken: "fake-token",
-    configOverrides: { fixture_lane: CONFIG.fixture_lane, fixture_lanes: CONFIG.fixture_lanes, card_lanes: CONFIG.card_lanes },
-  });
-  try {
-    const scoped = { deriveScopedBaseSha: async ({ allowed_paths }) => { assert.deepEqual(allowed_paths, [...SHU294_PATHS]); return "e".repeat(40); } };
-    const tick = await h.runTick({ io: scoped });
-    assert.equal(tick.code, 0, tick.text);
-    assert.equal(h.launched.length, 1, tick.text);
-    const [build] = h.launched;
-    assert.equal(build.lane, "codex-cli");
-    assert.equal(build.target_sha, SHA_INPUT);
-    assert.deepEqual(build.allowed_paths, [...SHU294_PATHS]);
-    const receipt = h.receiptFor(build.attempt_id);
-    assert.equal(receipt.authorization_ref, "SHU-294");
-    assert.equal(receipt.requested_worker, "codex-builder");
+  for (const lane of LATER_CARDS) {
+    const paths = [...cardContract(lane.id).initial_build_paths];
+    const h = createEpisodeHarness({
+      issueId: lane.id,
+      authorizationRef: lane.id,
+      writerLane: lane.writer_lane,
+      reviewerLane: lane.reviewer_lane,
+      githubToken: "fake-token",
+      configOverrides: { fixture_lane: CONFIG.fixture_lane, fixture_lanes: CONFIG.fixture_lanes, card_lanes: CONFIG.card_lanes },
+    });
+    try {
+      const scoped = { deriveScopedBaseSha: async ({ allowed_paths }) => { assert.deepEqual(allowed_paths, paths); return "e".repeat(40); } };
+      const tick = await h.runTick({ io: scoped });
+      assert.equal(tick.code, 0, `${lane.id}: ${tick.text}`);
+      assert.equal(h.launched.length, 1, `${lane.id}: ${tick.text}`);
+      const [build] = h.launched;
+      assert.equal(build.lane, WRITER_RUNTIME[lane.writer_lane], lane.id);
+      assert.equal(build.target_sha, SHA_INPUT);
+      assert.deepEqual(build.allowed_paths, paths);
+      const receipt = h.receiptFor(build.attempt_id);
+      assert.equal(receipt.authorization_ref, lane.id);
+      assert.equal(receipt.requested_worker, lane.writer_lane);
 
-    h.branchHead.value = SHA_WRITE;
-    h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
-    h.completeRun(build.run_id);
-    for (let i = 0; i < 4 && h.launched.length < 2; i++) {
-      const next = await h.runTick({ now: new Date(Date.parse("2026-09-10T12:00:00.000Z") + (i + 1) * 60_000), io: scoped });
-      assert.notEqual(next.code, 1, next.text);
-    }
-    assert.equal(h.launched.length, 2, JSON.stringify(h.receipts().map((r) => [r.requested_worker, r.stage, r.verdict_stage])));
-    const review = h.launched[1];
-    assert.equal(review.lane, "claude-code");
-    assert.equal(review.target_sha, SHA_WRITE);
-    assert.equal(h.receiptFor(review.attempt_id).requested_worker, "claude-verifier");
-  } finally { h.cleanup(); }
+      h.branchHead.value = SHA_WRITE;
+      h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+      h.completeRun(build.run_id);
+      for (let i = 0; i < 4 && h.launched.length < 2; i++) {
+        const next = await h.runTick({ now: new Date(Date.parse("2026-09-10T12:00:00.000Z") + (i + 1) * 60_000), io: scoped });
+        assert.notEqual(next.code, 1, `${lane.id}: ${next.text}`);
+      }
+      assert.equal(h.launched.length, 2, `${lane.id}: ${JSON.stringify(h.receipts().map((r) => [r.requested_worker, r.stage, r.verdict_stage]))}`);
+      const review = h.launched[1];
+      assert.equal(review.lane, REVIEWER_RUNTIME[lane.reviewer_lane], lane.id);
+      assert.equal(review.target_sha, SHA_WRITE);
+      assert.equal(h.receiptFor(review.attempt_id).requested_worker, lane.reviewer_lane);
+    } finally { h.cleanup(); }
+  }
 });
