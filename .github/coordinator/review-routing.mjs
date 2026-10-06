@@ -639,7 +639,7 @@ export function routeSuccessorFromReceipts(state = {}) {
     const independent = reviewVerdictProvenanceValid(terminal, issueReceipts);
     if (!independent.ok) return { ...independent, hold: "author_exclusion" };
   }
-  const scopedWriter = issueReceipts.filter((r) => r && ["BUILD_READY", "REVISION_READY"].includes(r.verdict_stage) && r.workspace_scope === "scoped").at(-1);
+  const scopedWriter = issueReceipts.filter((r) => r && ["BUILD_READY", "REVISION_READY"].includes(r.verdict_stage) && ["scoped", "repo"].includes(r.workspace_scope)).at(-1);
   const scopedContractReceipt = fixtureLane?.id === terminal.issue_id && fixtureScopeConfigured(fixtureLane) && Boolean(scopedWriter);
   if (scopedContractReceipt) {
     const terminalScope = validateWorkspaceScope(terminal);

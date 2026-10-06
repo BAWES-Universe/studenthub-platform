@@ -77,6 +77,8 @@
     ".github/coordinator/test/push-broker.test.mjs",
     ".github/coordinator/test/receipt-clock.test.mjs",
     ".github/coordinator/test/receipt-state.test.mjs",
+    ".github/coordinator/test/repo-scope-mutations.test.mjs",
+    ".github/coordinator/test/repo-scope.test.mjs",
     ".github/coordinator/test/reseed-append-contract.test.mjs",
     ".github/coordinator/test/reseed-append-mutations.test.mjs",
     ".github/coordinator/test/review-routing.test.mjs",
@@ -3957,7 +3959,29 @@
     "CARD_LANE_HOST_GATE: the host gate never reads the SHU-71 pair's threads for a card order",
     "CARD_LANE_SECOND_CARD: the committed SHU-294 lane is its own reviewed contract and the scope names it alone",
     "CARD_LANE_SECOND_CARD_ARMED_TICK: an armed SHU-294 tick launches Codex on exactly the card's paths, and the review goes to Claude",
-    "CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it"
+    "CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it",
+    "SHU-296 R1: repo is a third scope with a non-empty literal path set, no scoped base and no review phase",
+    "SHU-296 R2: repo-mode paths may not reach the manifest, lockfile, npm config, node_modules/ or .github/",
+    "SHU-296 R3: a contract opts in with workspace_mode repo, and its install-owned paths are refused",
+    "SHU-296 R4: writer scopes follow the contract's mode, reviewers stay full, and receipts are checked against its paths",
+    "SHU-296 R5: an allowed edit publishes with target_sha as parent, and gitignored node_modules/ and dist/ are ignored",
+    "SHU-296 R6: a tracked edit, a deletion or a non-ignored new file outside the paths is refused RESULT_SCOPE_REFUSED",
+    "SHU-296 R7: a repo writer checkout installs dependencies once, as the lane identity, with the long per-call timeout and no coordinator credentials",
+    "SHU-296 R8: a failed install refuses the checkout with one fixed code and never repeats npm's output",
+    "SHU-296 R9: npm runs only for a repo writer whose bound head has a lockfile; scoped writers and reviewers never install",
+    "SHU-296 R10: run keeps its 60s default and takes a per-call timeout",
+    "SHU-296 R11: writer adapters give a repo writer its exact paths",
+    "SHU-296 mutation: M1 repo-mode path refusal removed",
+    "SHU-296 mutation: M2 receipt-level repo path refusal skipped",
+    "SHU-296 mutation: M3 contract-level repo path refusal skipped",
+    "SHU-296 mutation: M4 repo outside-path diff skipped",
+    "SHU-296 mutation: M5 repo snapshot starts empty",
+    "SHU-296 mutation: M6 repo scope carries a scoped base",
+    "SHU-296 mutation: M7 receipt mode not bound to the contract",
+    "SHU-296 mutation: M8 every writer installs",
+    "SHU-296 mutation: M9 install keeps the default timeout",
+    "SHU-296 mutation: M10 install failure loses its fixed code",
+    "SHU-296 mutation: M11 npm inherits the coordinator environment"
   ],
   "requirements": [
     {
@@ -29995,6 +30019,314 @@
         },
         {
           "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R1: repo is a third scope with a non-empty literal path set, no scoped base and no review phase",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R2: repo-mode paths may not reach the manifest, lockfile, npm config, node_modules/ or .github/",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R3: a contract opts in with workspace_mode repo, and its install-owned paths are refused",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R4: writer scopes follow the contract's mode, reviewers stay full, and receipts are checked against its paths",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R5: an allowed edit publishes with target_sha as parent, and gitignored node_modules/ and dist/ are ignored",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R6: a tracked edit, a deletion or a non-ignored new file outside the paths is refused RESULT_SCOPE_REFUSED",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R7: a repo writer checkout installs dependencies once, as the lane identity, with the long per-call timeout and no coordinator credentials",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R8: a failed install refuses the checkout with one fixed code and never repeats npm's output",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R9: npm runs only for a repo writer whose bound head has a lockfile; scoped writers and reviewers never install",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R10: run keeps its 60s default and takes a per-call timeout",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 R11: writer adapters give a repo writer its exact paths",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M1 repo-mode path refusal removed",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M2 receipt-level repo path refusal skipped",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M3 contract-level repo path refusal skipped",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M4 repo outside-path diff skipped",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M5 repo snapshot starts empty",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M6 repo scope carries a scoped base",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M7 receipt mode not bound to the contract",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M8 every writer installs",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M9 install keeps the default timeout",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M10 install failure loses its fixed code",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M11 npm inherits the coordinator environment",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
         }
       ]
     }

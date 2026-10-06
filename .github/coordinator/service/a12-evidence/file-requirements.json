@@ -697,6 +697,31 @@
     "call_sites": []
   },
   {
+    "file": ".github/coordinator/test/repo-scope-mutations.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain",
+      "linux_proc"
+    ],
+    "justification": "repo-scope mutation children inherit Git, procfs and the production git/mktemp/rm/chmod calls of repo-scope.test.mjs",
+    "call_sites": [
+      ".github/coordinator/test/repo-scope-mutations.test.mjs:32"
+    ]
+  },
+  {
+    "file": ".github/coordinator/test/repo-scope.test.mjs",
+    "capabilities": [
+      "git",
+      "shell_toolchain",
+      "linux_proc"
+    ],
+    "justification": "real Git repo-mode bundles and broker workspace snapshot /proc/self/fd; production attempt-workspace runs git, mktemp, rm and chmod for real with npm replaced by an in-process fake; no identity switch",
+    "call_sites": [
+      ".github/coordinator/test/repo-scope.test.mjs:44",
+      ".github/coordinator/test/repo-scope.test.mjs:106"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/reseed-append-contract.test.mjs",
     "capabilities": [
       "git"

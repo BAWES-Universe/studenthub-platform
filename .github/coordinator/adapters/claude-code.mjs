@@ -132,14 +132,14 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
   ].filter(Boolean).join("\n");
 }
 
-// A scoped writer may edit only its authorized paths; a full-workspace writer
+// A scoped or repo writer may edit only its authorized paths; a full-workspace writer
 // may edit inside its workspace (--restricted already confines file tools to
 // the cwd). Rules are anchored to the cwd with "./". The CLI splits a rule list
 // on commas and spaces, so a path that could break a rule apart is refused.
 const RULE_SAFE_PATH_RE = /^[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*$/;
 export function writerEditRules({ workspace_scope, allowed_paths = [] } = {}) {
   if (workspace_scope === "full") return ["Edit(./**)"];
-  if (workspace_scope !== "scoped" || !Array.isArray(allowed_paths) || allowed_paths.length === 0 || allowed_paths.some((p) => !RULE_SAFE_PATH_RE.test(p))) {
+  if (!["scoped", "repo"].includes(workspace_scope) || !Array.isArray(allowed_paths) || allowed_paths.length === 0 || allowed_paths.some((p) => !RULE_SAFE_PATH_RE.test(p))) {
     throw new Error("authorized writer paths cannot be expressed as edit permission rules");
   }
   return allowed_paths.map((p) => `Edit(./${p})`);
