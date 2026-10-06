@@ -52,6 +52,53 @@ test("closed schema rejects undeclared OIDC variables", () => {
   assert.throws(() => validateDeploymentEnv(env), /unknown configuration variable OIDC_UNDECLARED/);
 });
 
+test("closed schema rejects undeclared LOGIN variables", () => {
+  assert.throws(
+    () => validateDeploymentEnv({ ...validEnv(), LOGIN_UNDECLARED: "anything" }),
+    { message: "unknown configuration variable LOGIN_UNDECLARED" },
+  );
+});
+
+test("url variables reject invalid URLs and non-http schemes", () => {
+  for (const value of ["not a url", "javascript:alert(1)", "ftp://identity.example.test", "file:///issuer", "data:text/plain,test"]) {
+    assert.throws(
+      () => validateDeploymentEnv({ ...validEnv(), OIDC_ISSUER: value }),
+      { message: "OIDC_ISSUER must be a valid url" },
+    );
+  }
+});
+
+test("url-list variables reject invalid URLs, non-http schemes, and empty parts", () => {
+  for (const value of [
+    "not a url",
+    "ftp://studenthub.example.test/profile",
+    "https://studenthub.example.test/profile,",
+    "https://studenthub.example.test/profile,,https://other.example.test/profile",
+  ]) {
+    assert.throws(
+      () => validateDeploymentEnv({ ...validEnv(), LOGIN_ALLOWED_RETURN_URLS: value }),
+      { message: "LOGIN_ALLOWED_RETURN_URLS must be a valid url-list" },
+    );
+  }
+});
+
+test("platform database hosts must be hostnames and reject empty parts", () => {
+  const invalidHosts = [
+    "-reporting-db", "reporting-db-", "reporting_db", ".reporting-db", "reporting-db.",
+    `${"a".repeat(64)}.example`, `${"a".repeat(250)}.com`, "reporting-db,", "reporting-db,,isolated-platform-db",
+  ];
+  for (const value of invalidHosts) {
+    assert.throws(
+      () => validateDeploymentEnv({ ...validEnv(), PLATFORM_DATABASE_HOSTS: value }),
+      { message: "PLATFORM_DATABASE_HOSTS must be a valid host-list" },
+    );
+  }
+  assert.doesNotThrow(() => validateDeploymentEnv({
+    ...validEnv(),
+    PLATFORM_DATABASE_HOSTS: "reporting-db, isolated-platform-db",
+  }));
+});
+
 test("errors never disclose secret configuration values", () => {
   const databaseSecret = "database-secret-value";
   const databaseEnv = { ...validEnv(), DATABASE_URL: databaseSecret };

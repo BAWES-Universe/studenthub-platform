@@ -40,6 +40,39 @@ test("register contains no value-like string", () => {
   assert.deepEqual(validateRegister(register).errors.filter((error) => error.includes("secret value or location")), []);
 });
 
+test("string fields reject each kind of value-like string and name the entry and field", () => {
+  const values = [
+    "https://example.test/secret",
+    "operator@example.test",
+    "192.0.2.10",
+    "abcdefghijklmnop1234",
+  ];
+  for (const value of values) {
+    const copy = structuredClone(register);
+    copy.integrations[0].notes = value;
+    assert.ok(
+      validateRegister(copy).errors.includes("INT-01 notes contains a secret value or location"),
+      value,
+    );
+  }
+});
+
+test("duplicate ids are rejected", () => {
+  const copy = structuredClone(register);
+  copy.integrations[1].id = "INT-01";
+  assert.ok(validateRegister(copy).errors.includes("INT-01 id is duplicated"));
+});
+
+test("unknown rotation states and dispositions are rejected", () => {
+  const rotationCopy = structuredClone(register);
+  rotationCopy.integrations[0].rotation_state = "unknown-state";
+  assert.ok(validateRegister(rotationCopy).errors.includes("INT-01 rotation_state has an unknown value"));
+
+  const dispositionCopy = structuredClone(register);
+  dispositionCopy.integrations[0].disposition = "unknown-disposition";
+  assert.ok(validateRegister(dispositionCopy).errors.includes("INT-01 disposition has an unknown value"));
+});
+
 test("entries reject undeclared fields and wrongly typed fields", () => {
   const cases = [
     ["extra", { token: "https://example.com/secret" }, "INT-01 extra is not a register field"],

@@ -100,9 +100,9 @@ for (const [label, index, before, after, code] of [
 // This pin follows those values; the dispatch gate stays off as before.
 function assertDispatch(config) {
   assert.equal(config.enable_dispatch, false, 'RECON_CONFIG_GATE: committed dispatch must remain off');
-  // After SHU-71 stage 5: one real card, SHU-197, through its card lane, one slot.
+  // After SHU-71 stage 5: one real card at a time through its card lane, one slot; now SHU-294.
   assert.equal(config.max_dispatch, 1, 'RECON_CONFIG_CAPACITY: committed capacity must remain one');
-  assert.deepEqual(config.dispatch_scope.issue_ids, ['SHU-197'], 'RECON_CONFIG_SCOPE: committed card scope must remain unchanged');
+  assert.deepEqual(config.dispatch_scope.issue_ids, ['SHU-294'], 'RECON_CONFIG_SCOPE: committed card scope must remain unchanged');
 }
 test('RECON_CONFIG_POSITIVE: committed gates and scope remain fixed', () => {
   assertDispatch(JSON.parse(fs.readFileSync(new URL('../../config.json', import.meta.url))));
