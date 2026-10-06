@@ -8,11 +8,13 @@ export const WORKSPACE_SCOPE_FIELDS = Object.freeze(["workspace_scope", "scope_p
 const SHA = /^[0-9a-f]{40}$/;
 
 // A "repo" writer holds the whole tree at target_sha, with dependencies the
-// host installed from main's lockfile, as the lane uid, before the writer
-// starts (attempt-workspace.mjs). The lockfile stays main's, so its writer may
-// never author what that install read or wrote (the manifest, the lockfile,
-// npm's config, node_modules/), nor the workflows and coordinator in .github/.
-export const REPO_MODE_REFUSED_PATHS = Object.freeze(["package.json", "package-lock.json", ".npmrc", "node_modules", ".github"]);
+// host installed from the bound lockfile, as the lane uid, before the writer
+// starts (attempt-workspace.mjs). The lockfile stays the base's, so its writer
+// may never author the lockfile, npm's config or node_modules/, nor the
+// workflows and coordinator in .github/. package.json stays writable because
+// its scripts list the test files a card adds; a dependency change there no
+// longer matches the lockfile, so npm ci in CI refuses it.
+export const REPO_MODE_REFUSED_PATHS = Object.freeze(["package-lock.json", ".npmrc", "node_modules", ".github"]);
 
 export const SHU140_INITIAL_BUILD_PATHS = Object.freeze([
   "tools/fixture/scan-vacuous.mjs",

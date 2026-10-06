@@ -126,17 +126,17 @@ test("SHU-296 R1: repo is a third scope with a non-empty literal path set, no sc
     "a reviewer never receives a repo scope");
 });
 
-test("SHU-296 R2: repo-mode paths may not reach the manifest, lockfile, npm config, node_modules/ or .github/", () => {
-  assert.deepEqual(REPO_MODE_REFUSED_PATHS, ["package.json", "package-lock.json", ".npmrc", "node_modules", ".github"]);
+test("SHU-296 R2: repo-mode paths may not reach the lockfile, npm config, node_modules/ or .github/, and package.json stays writable", () => {
+  assert.deepEqual(REPO_MODE_REFUSED_PATHS, ["package-lock.json", ".npmrc", "node_modules", ".github"]);
   const scope = { workspace_scope: "repo", scope_phase: "initial", scoped_base_sha: null };
-  for (const owned of ["package.json", "package-lock.json", ".npmrc", "node_modules/x", ".github/x", ".github/coordinator/config.json", "node_modules"]) {
+  for (const owned of ["package-lock.json", ".npmrc", "node_modules/x", ".github/x", ".github/coordinator/config.json", "node_modules"]) {
     const refused = validateWorkspaceScope({ ...scope, allowed_paths: [ALLOWED[0], owned] });
     assert.equal(refused.ok, false, `repo mode must refuse ${owned}`);
     assert.match(refused.reason, new RegExp(`repo-mode allowed_paths may not include ${owned.replace(/[.]/g, "\\.")}`));
     assert.equal(validateWorkspaceScope({ ...scope, workspace_scope: "scoped", allowed_paths: [ALLOWED[0], owned] }).ok, true,
       `scoped mode is unchanged for ${owned}`);
   }
-  for (const near of ["apps/web/package.json", "package.json.bak", "github/x", "src/node_modules.mjs"]) {
+  for (const near of ["package.json", "apps/web/package.json", "package-lock.json.bak", "github/x", "src/node_modules.mjs"]) {
     assert.equal(validateWorkspaceScope({ ...scope, allowed_paths: [near] }).ok, true, `${near} is not install-owned`);
   }
 });
@@ -148,7 +148,7 @@ test("SHU-296 R3: a contract opts in with workspace_mode repo, and its install-o
   assert.deepEqual(validateCardContractMode({ initial_build_paths: ALLOWED, revision_paths: ALLOWED }), { ok: true, workspace_scope: "scoped" });
   assert.deepEqual(validateCardContractMode(REPO_CONTRACT), { ok: true, workspace_scope: "repo" });
   assert.match(validateCardContractMode({ ...REPO_CONTRACT, workspace_mode: "full" }).reason, /workspace_mode must be "repo"/);
-  for (const owned of ["package.json", "package-lock.json", ".npmrc", "node_modules/x", ".github/x"]) {
+  for (const owned of ["package-lock.json", ".npmrc", "node_modules/x", ".github/x"]) {
     for (const key of ["initial_build_paths", "revision_paths"]) {
       const contract = { ...REPO_CONTRACT, [key]: [...REPO_CONTRACT[key], owned] };
       assert.match(validateCardContractMode(contract).reason, /repo-mode .* may not include/, `${key} with ${owned}`);
@@ -204,7 +204,7 @@ test("SHU-296 R6: a tracked edit, a deletion or a non-ignored new file outside t
     ["tracked edit outside", (cwd) => write(cwd, "src/other.mjs", "export const other = 2;\n")],
     ["tracked deletion outside", (cwd) => fs.rmSync(path.join(cwd, "README.md"))],
     ["untracked file outside", (cwd) => write(cwd, "src/new.mjs", "export {};\n")],
-    ["install-owned manifest", (cwd) => write(cwd, "package.json", "{\"name\":\"widened\"}\n")],
+    ["a manifest outside the paths", (cwd) => write(cwd, "package.json", "{\"name\":\"widened\"}\n")],
     ["gitignore widened", (cwd) => write(cwd, ".gitignore", "node_modules/\ndist/\nsrc/\n")],
   ];
   for (const [name, attack] of attacks) {

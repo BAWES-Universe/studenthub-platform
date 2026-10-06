@@ -3961,7 +3961,7 @@
     "CARD_LANE_SECOND_CARD_ARMED_TICK: an armed SHU-294 tick launches Codex on exactly the card's paths, and the review goes to Claude",
     "CODEX_STDERR_TAIL: a failed codex run keeps a short redacted stderr tail, and the receipt never carries it",
     "SHU-296 R1: repo is a third scope with a non-empty literal path set, no scoped base and no review phase",
-    "SHU-296 R2: repo-mode paths may not reach the manifest, lockfile, npm config, node_modules/ or .github/",
+    "SHU-296 R2: repo-mode paths may not reach the lockfile, npm config, node_modules/ or .github/, and package.json stays writable",
     "SHU-296 R3: a contract opts in with workspace_mode repo, and its install-owned paths are refused",
     "SHU-296 R4: writer scopes follow the contract's mode, reviewers stay full, and receipts are checked against its paths",
     "SHU-296 R5: an allowed edit publishes with target_sha as parent, and gitignored node_modules/ and dist/ are ignored",
@@ -30037,7 +30037,7 @@
       ]
     },
     {
-      "name": "SHU-296 R2: repo-mode paths may not reach the manifest, lockfile, npm config, node_modules/ or .github/",
+      "name": "SHU-296 R2: repo-mode paths may not reach the lockfile, npm config, node_modules/ or .github/, and package.json stays writable",
       "capabilities": [
         {
           "name": "git"
