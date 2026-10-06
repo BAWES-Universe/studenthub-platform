@@ -212,13 +212,13 @@ test("SHU-224: invalid trusted scope prevents dispatch before any mutation", asy
   }
 });
 
-// The committed scope is the first real card after SHU-71 stage 5: SHU-197,
+// The committed scope is the second real card after SHU-71 stage 5: SHU-294,
 // one slot. Dispatch stays disabled, as it always has; only a signed
 // single-run activation arms it.
-test("SHU-224: committed scope is pinned to the SHU-197 card while dispatch stays disabled", () => {
+test("SHU-224: committed scope is pinned to the SHU-294 card while dispatch stays disabled", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
-  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-197"] });
+  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-294"] });
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
