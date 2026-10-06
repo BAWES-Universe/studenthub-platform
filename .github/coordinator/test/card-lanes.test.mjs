@@ -273,6 +273,8 @@ test("CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contrac
     const widened = { ...lane, revision_paths: [...lane.revision_paths, "deploy/coolify/compose.yaml"] };
     assert.match(validateFixtureScopePolicy(widened).reason, new RegExp(`differ from the reviewed exact ${lane.id} contract`));
   }
+  assert.deepEqual(CONFIG.card_lanes.map((lane) => lane.id).sort(), Object.keys(CARD_CONTRACTS).sort(),
+    "every reviewed card contract has exactly one committed card lane");
   assert.equal(CONFIG.dispatch_scope.issue_ids.length, 1, "one card at a time");
   const [scoped] = CONFIG.dispatch_scope.issue_ids;
   assert.ok(LATER_CARDS.some((lane) => lane.id === scoped), "the scope names a committed card lane with a contract");
