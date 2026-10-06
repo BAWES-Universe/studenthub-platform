@@ -9,6 +9,7 @@ import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE
 import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES } from "@studenthub/organizations";
 import { createLoginApplication } from "../../../dist/apps/gateway/src/login-application.js";
 import { createGatewayServer } from "../../../dist/apps/gateway/src/index.js";
+import { InMemoryProfileRecordStore, InMemoryReferenceResolver, ProfileRecords } from "@studenthub/profile-records";
 import { profileDocument, renderLanding } from "../../../dist/apps/gateway/src/web-ui.js";
 
 if (process.env.NODE_ENV === "production") throw new Error("Synthetic web preview is forbidden in production");
@@ -46,7 +47,23 @@ const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, na
   returnTo: rig.config.allowedReturnUrls[1],
   profiles,
 } };
-const gateway = createGatewayServer(undefined, undefined, undefined, login);
+const portIndex = process.argv.indexOf("--port");
+const port = Number(portIndex >= 0 ? process.argv[portIndex + 1] : process.env.PORT ?? 4173);
+// Synthetic catalogue entries and an in-memory store for the education and experience page.
+const references = new InMemoryReferenceResolver();
+const previewOptions = {
+  university: [{ id: "8d6c1f0e-7a52-4c1b-9b8e-2f4a6d3c1e01", name: "Example University" }, { id: "8d6c1f0e-7a52-4c1b-9b8e-2f4a6d3c1e02", name: "Example College of Technology" }],
+  degree: [{ id: "8d6c1f0e-7a52-4c1b-9b8e-2f4a6d3c1e03", name: "Bachelor" }, { id: "8d6c1f0e-7a52-4c1b-9b8e-2f4a6d3c1e04", name: "Diploma" }],
+  major: [{ id: "8d6c1f0e-7a52-4c1b-9b8e-2f4a6d3c1e05", name: "Computer Science" }, { id: "8d6c1f0e-7a52-4c1b-9b8e-2f4a6d3c1e06", name: "Business" }],
+};
+for (const [type, items] of Object.entries(previewOptions)) for (const item of items) references.set(type, item.id);
+const profileRecords = {
+  service: new ProfileRecords(new InMemoryProfileRecordStore(), references),
+  sessions: rig.sessions,
+  origin: process.env.PREVIEW_ORIGIN ?? `http://localhost:${port}`,
+  options: async (type) => previewOptions[type] ?? [],
+};
+const gateway = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, undefined, undefined, profileRecords);
 const own = await profiles.readOwn({ requesterPrincipalId: "person-preview", targetPersonId: "person-preview" });
 if (own.kind !== "found") throw new Error("synthetic profile fixture is unavailable");
 const ownPage = await profileDocument({ status: 200, body: own.profile }, login);
@@ -86,6 +103,4 @@ const preview = createServer(async (request, response) => {
   }
   gateway.emit("request", request, response);
 });
-const portIndex = process.argv.indexOf("--port");
-const port = Number(portIndex >= 0 ? process.argv[portIndex + 1] : process.env.PORT ?? 4173);
 preview.listen(port, "0.0.0.0", () => process.stdout.write(`Synthetic web preview listening on ${port}\n`));
