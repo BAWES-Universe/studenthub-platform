@@ -37,6 +37,8 @@ const mutations = [
     "if (row.revision !== request.expectedRevision)", "if (false)"],
 ];
 const dbMutations = [
+  ["DB lookup includes deleted rows", "SHU-146/parity-contract", source("postgres-civil-id-store"),
+    "AND NOT candidate_deleted LIMIT 1", "LIMIT 1"],
   ["DB deleted rows hold the number", "SHU-146/parity-contract", migration,
     "ON candidate_civil_id (country_code, civil_id_number) WHERE NOT candidate_deleted;",
     "ON candidate_civil_id (country_code, civil_id_number);"],
@@ -61,7 +63,7 @@ async function battery(suite, cases) {
       const result = run(suite, title);
       assert.equal(result.error, undefined, `${name}: infrastructure failure`);
       assert.notEqual(result.status, 0, `${name}: survived\n${result.output}`);
-      assert.ok(result.output.includes(`- ${title}`) && result.output.includes("not ok"), `${name}: named test did not fail`);
+      assert.ok(result.output.split("\n").some((line) => /^not ok [0-9]+ - /.test(line) && line.endsWith(`- ${title}`)), `${name}: named test did not fail\n${result.output}`);
       assert.match(result.output, /code: 'ERR_ASSERTION'/, `${name}: must fail by assertion\n${result.output}`);
       assert.doesNotMatch(result.output, /SyntaxError|ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION/, `${name}: import/syntax failure`);
       process.stdout.write(`KILLED ${name} -> ${title}\n`);

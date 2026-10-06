@@ -76,6 +76,26 @@ test("SHU-146/parity-contract", async () => {
   assert.equal(queue[0].civilIdNumber, f.number);
   assert.equal(isCivilIdValidOn(queue[0].expiryDate, new Date("2026-10-05T20:59:59Z"), first.job.timeZone), true);
   assert.equal(isCivilIdValidOn(queue[0].expiryDate, new Date("2026-10-05T21:00:00Z"), first.job.timeZone), false);
+  // Prove the index itself protects bypass writers. Catch the expected violation
+  // inside PostgreSQL so test diagnostics do not print a private number.
+  const probe = await pool.connect();
+  try {
+    await probe.query("BEGIN");
+    await probe.query(`CREATE FUNCTION test_civil_id_unique_guard() RETURNS boolean LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO candidate_civil_id
+          (candidate_ref, civil_id_number, country_code, expiry_date, need_verification, source,
+           candidate_deleted, revision, created_at, updated_at)
+        SELECT 'synthetic-index-probe', civil_id_number, country_code, expiry_date, TRUE, 'manual',
+          FALSE, 1, created_at, updated_at FROM candidate_civil_id LIMIT 1;
+        RETURN FALSE;
+      EXCEPTION WHEN unique_violation THEN RETURN TRUE;
+      END; $$`);
+    const guard = await probe.query("SELECT test_civil_id_unique_guard() AS guarded");
+    assert.equal(guard.rows[0].guarded, true);
+  } finally {
+    try { await probe.query("ROLLBACK"); } finally { probe.release(); }
+  }
   const duplicate = await runCivilIdOcrJob(request("duplicate", f.Q), { ...deps, ocr: ocr() });
   assert.equal(duplicate.job.code, "civil_id_duplicate");
   assert.equal(duplicate.job.status, "failed");
@@ -104,7 +124,7 @@ test("SHU-146 PostgreSQL concurrent dedupe and uniqueness", async () => {
   assert.equal(calls, 1);
   assert.deepEqual(await counts(), { ids: 1, jobs: 1, audits: 1 });
   await refused(runCivilIdOcrJob(request("job-1", f.Q), { ...deps, ocr: port }), "civil_id_request_invalid");
-  // Two different candidates racing for a NEW number must be decided by the DB index.
+  // Two different candidates racing for a NEW number must serialize and refuse one claim.
   const outcomes = await Promise.allSettled([setOwnCivilId(input(f.P, f.otherNumber), deps), setOwnCivilId(input(f.Q, f.otherNumber), deps)]);
   assert.equal(outcomes.filter((r) => r.status === "fulfilled").length, 1);
   const rejected = outcomes.find((r) => r.status === "rejected") as PromiseRejectedResult;

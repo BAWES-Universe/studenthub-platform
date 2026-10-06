@@ -31,6 +31,18 @@ export class PostgresCivilIdStore implements CivilIdStore {
         read: async (candidateRef) => (await db.query<CivilIdRow>(
           `SELECT ${ROW_FIELDS} FROM candidate_civil_id WHERE candidate_ref = $1 FOR UPDATE`, [candidateRef])).rows[0],
         write: async (row) => {
+          // Serialize claims for this number and refuse ordinary conflicts before
+          // PostgreSQL can emit a number-bearing unique-violation diagnostic.
+          // The partial index remains the guard against writers outside this port.
+          if (!row.candidateDeleted) {
+            const numberKey = civilIdRef(`number:${row.countryCode}:${row.civilIdNumber}`);
+            await db.query("SELECT pg_advisory_xact_lock($1::bigint)",
+              [BigInt.asIntN(64, BigInt(`0x${numberKey.slice(0, 16)}`)).toString()]);
+            const conflict = await db.query(`SELECT 1 FROM candidate_civil_id
+              WHERE country_code = $1 AND civil_id_number = $2 AND candidate_ref <> $3
+              AND NOT candidate_deleted LIMIT 1`, [row.countryCode, row.civilIdNumber, row.candidateRef]);
+            if (conflict.rowCount) throw new CivilIdError("civil_id_duplicate");
+          }
           // Recover uniqueness failure without losing the terminal failed-job record.
           await db.query("SAVEPOINT civil_id_write");
           try {
