@@ -115,7 +115,12 @@ export function validateCardContractMode(contract = {}) {
 
 // Check issue binding again on durable receipts, including recovery, before I/O.
 // `contract` is a test seam; production callers never pass it.
+// A card writer always holds its contract's mode: only a reviewer, or a legacy
+// fixture lane without scope config, may hold the full tree.
 export function validateFixtureAttemptScope(receipt = {}, contract = laneContract(receipt.issue_id)) {
+  if (contract && !Object.hasOwn(contract, "seeded_defect_path") && receipt.workspace_scope === "full" && receipt.scope_phase !== "review") {
+    return { ok: false, reason: `LANE_MISMATCH: ${receipt.issue_id} writer may not hold a full workspace` };
+  }
   if (!contract || !["scoped", "repo"].includes(receipt.workspace_scope)) return { ok: true };
   const mode = validateCardContractMode(contract);
   if (!mode.ok || mode.workspace_scope !== receipt.workspace_scope) {
@@ -217,12 +222,14 @@ export function normalizeReceiptWorkspaceScope(receipt = {}) {
   if (!authority.ok) return authority;
   const present = WORKSPACE_SCOPE_FIELDS.filter((field) => Object.hasOwn(receipt, field));
   if (present.length === 0) {
-    return { ok: true, scope: {
+    const scope = {
       workspace_scope: "full",
       scope_phase: authority.role === "review" ? "review" : "initial",
       allowed_paths: [],
       scoped_base_sha: null,
-    } };
+    };
+    const laneCheck = validateFixtureAttemptScope({ issue_id: receipt.issue_id, ...scope });
+    return laneCheck.ok ? { ok: true, scope } : laneCheck;
   }
   if (present.length !== WORKSPACE_SCOPE_FIELDS.length) {
     return { ok: false, reason: "workspace scope metadata is partially present" };

@@ -178,6 +178,20 @@ test("SHU-296 R4: writer scopes follow the contract's mode, reviewers stay full,
   const widened = { issue_id: "SHU-197", workspace_scope: "repo", scope_phase: "initial", allowed_paths: [...SHU197_PATHS], scoped_base_sha: null };
   assert.match(validateFixtureAttemptScope(widened).reason, /^LANE_MISMATCH:/);
   assert.equal(normalizeReceiptWorkspaceScope({ requested_worker: "codex-builder", ...widened }).ok, false);
+  // A card writer never holds the full tree, whether stated or defaulted; reviewers and legacy fixtures may.
+  const full = { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
+  for (const id of ["SHU-197", "SHU-901"]) {
+    const contract = id === "SHU-901" ? REPO_CONTRACT : undefined;
+    assert.match(validateFixtureAttemptScope({ issue_id: id, ...full }, contract).reason, /^LANE_MISMATCH: .* writer may not hold a full workspace/);
+    assert.match(validateFixtureAttemptScope({ issue_id: id, ...full, scope_phase: "revision" }, contract).reason, /^LANE_MISMATCH:/);
+    assert.equal(validateFixtureAttemptScope({ issue_id: id, ...full, scope_phase: "review" }, contract).ok, true);
+  }
+  assert.match(normalizeReceiptWorkspaceScope({ requested_worker: "codex-builder", issue_id: "SHU-197", ...full }).reason, /^LANE_MISMATCH:/);
+  assert.match(normalizeReceiptWorkspaceScope({ requested_worker: "codex-builder", issue_id: "SHU-197" }).reason, /^LANE_MISMATCH:/,
+    "a card writer receipt without scope metadata is refused, not defaulted to full");
+  assert.equal(normalizeReceiptWorkspaceScope({ requested_worker: "claude-verifier", issue_id: "SHU-197" }).ok, true);
+  assert.equal(normalizeReceiptWorkspaceScope({ requested_worker: "codex-builder", issue_id: "SHU-140" }).ok, true, "a legacy fixture keeps its full writer");
+  assert.equal(normalizeReceiptWorkspaceScope({ requested_worker: "codex-builder", issue_id: "SHU-140", ...full }).ok, true);
 });
 
 test("SHU-296 R5: an allowed edit publishes with target_sha as parent, and gitignored node_modules/ and dist/ are ignored", async () => {
