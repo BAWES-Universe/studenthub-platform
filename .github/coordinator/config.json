@@ -11,7 +11,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-197"
+      "SHU-294"
     ]
   },
   "adapter_pause_map": {},
@@ -68,6 +68,29 @@
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "first real StudentHub card through the loop: typed preflight config and the integration register; brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "deploy/coolify/preflight.mjs",
+        "deploy/coolify/integration-register.json",
+        "deploy/coolify/integration-register.mjs",
+        "docs/integrations.md",
+        "deploy/coolify/test/config-schema.test.mjs",
+        "deploy/coolify/test/integration-register.test.mjs"
+      ],
+      "revision_paths": [
+        "deploy/coolify/preflight.mjs",
+        "deploy/coolify/integration-register.json",
+        "deploy/coolify/integration-register.mjs",
+        "docs/integrations.md",
+        "deploy/coolify/test/config-schema.test.mjs",
+        "deploy/coolify/test/integration-register.test.mjs"
+      ]
+    },
+    {
+      "id": "SHU-294",
+      "authorization_ref": "SHU-294",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second real card: hardens the validators SHU-197 shipped; same six paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "deploy/coolify/preflight.mjs",
         "deploy/coolify/integration-register.json",
