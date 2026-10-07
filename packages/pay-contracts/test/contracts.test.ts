@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   BankDetailError, InMemoryFinanceReferenceResolver, InMemoryPayContractStore, PayContractError, PayContracts,
-  RATE_RESOLUTION_VERSION, RateResolutionError, normalizeIban, resolveEffectiveRate, validateBankDetails,
+  RATE_RESOLUTION_VERSION, RateResolutionError, ibanChecksumValid, normalizeIban, resolveEffectiveRate, validateBankDetails,
   type PayContract,
 } from "../src/index.js";
 
@@ -223,6 +223,22 @@ test("SHU182_AMBIGUOUS_REJECTED two matching contracts are refused, not resolved
   assert.equal(resolveEffectiveRate({ ...base, payModel: "hourly" }).contractId, older.id);
 });
 
+test("SHU182_FILTER_NOT_BYPASS an explicit contract id or pay model that leaves nothing is refused, never manual pay", () => {
+  const inForce = legacyRow("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { startDate: "2026-01-01" });
+  const base = { candidateId: C, storeId: S, contracts: [inForce], period: { start: "2026-03-01", end: "2026-03-31" }, today: TODAY,
+    entered: { candidateHourlyRate: "50", companyHourlyRate: "60" } };
+  for (const filter of [{ contractId: "ffffffff-ffff-4fff-8fff-ffffffffffff" }, { payModel: "fixed_price" as const }]) {
+    const error = throwsResolution(() => resolveEffectiveRate({ ...base, ...filter }), "contract_not_applicable");
+    assert.equal(error.status, 409);
+    assert.deepEqual(error.matchedContractIds, [inForce.id]);
+  }
+  // With no contract in force, a named contract is still refused, as is a non-hourly model manual pay cannot honour.
+  const empty = { ...base, contracts: [] };
+  throwsResolution(() => resolveEffectiveRate({ ...empty, contractId: inForce.id }), "contract_not_applicable");
+  throwsResolution(() => resolveEffectiveRate({ ...empty, payModel: "monthly_salary" }), "contract_not_applicable");
+  assert.equal(resolveEffectiveRate({ ...empty, payModel: "hourly" }).source, "manual");
+});
+
 test("SHU182_MANUAL_FALLBACK with no matching contract, entered rates win, then the candidate's, the company's and the parent's", () => {
   const removed = legacyRow("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { status: "deleted", deletedAt: FIXED.toISOString() });
   const base = { candidateId: C, storeId: S, contracts: [removed], today: TODAY };
@@ -257,6 +273,10 @@ test("SHU182_IBAN_MOD97 IBANs pass only with a valid checksum and length; the ba
   assert.equal(normalizeIban("KW81CBKU0000000000001234560110"), undefined, "two digits transposed");
   assert.equal(normalizeIban("KW81CBKU000000000000123456010"), undefined, "Kuwaiti IBANs are 30 characters");
   assert.equal(normalizeIban("not an iban"), undefined);
+  // ZZ is no IBAN country; this value is otherwise well formed and its checksum is valid.
+  const fabricated = `ZZ${String(98n - (BigInt("1234567890123456789012" + "3535" + "00") % 97n)).padStart(2, "0")}1234567890123456789012`;
+  assert.ok(ibanChecksumValid(fabricated), "fixture must pass mod 97 so only the country refuses it");
+  assert.equal(normalizeIban(fabricated), undefined, "unregistered country");
   const details = await validateBankDetails({ bankId: BANK.toUpperCase(), iban: "KW81CBKU0000000000001234560101", beneficiaryName: "  Synthetic   Person " }, references);
   assert.deepEqual(details, { bankId: BANK, iban: "KW81CBKU0000000000001234560101", beneficiaryName: "Synthetic Person" });
   await rejects(validateBankDetails({ bankId: BANK, iban: "KW82CBKU0000000000001234560101", beneficiaryName: "Synthetic Person" }, references), "invalid_iban", 400);

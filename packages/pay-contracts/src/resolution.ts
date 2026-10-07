@@ -69,7 +69,7 @@ export type RateResolution =
 
 export class RateResolutionError extends Error {
   constructor(
-    readonly code: "ambiguous_contract" | "candidate_rate_unavailable" | "company_rate_unavailable" | "company_rate_below_candidate" | "invalid_period",
+    readonly code: "ambiguous_contract" | "contract_not_applicable" | "candidate_rate_unavailable" | "company_rate_unavailable" | "company_rate_below_candidate" | "invalid_period",
     readonly status: 400 | 409,
     readonly matchedContractIds: readonly string[] = [],
   ) {
@@ -84,7 +84,9 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
  * non-deleted contracts for the candidate and store that overlap the period
  * (`start <= period.end AND (end IS NULL OR end >= period.start)`), or, with no
  * period, that have not ended before today. Status is not consulted, as in
- * legacy. More than one match is refused rather than guessed.
+ * legacy. More than one match is refused rather than guessed. An explicit
+ * contract id or pay model that leaves nothing is refused too, so a filter can
+ * never step around a contract in force into manual pay.
  */
 export function matchContracts(input: RateResolutionInput): { readonly contracts: readonly PayContract[]; readonly steps: readonly ResolutionStep[] } {
   const steps: ResolutionStep[] = [];
@@ -101,6 +103,7 @@ export function matchContracts(input: RateResolutionInput): { readonly contracts
     matches = matches.filter((c) => c.endDate === undefined || c.endDate >= input.today);
     steps.push("contracts_matched_active_today");
   }
+  const applicableIds = matches.map((c) => c.id);
   if (input.contractId !== undefined) {
     matches = matches.filter((c) => c.id === input.contractId);
     steps.push("explicit_contract_filter");
@@ -108,6 +111,10 @@ export function matchContracts(input: RateResolutionInput): { readonly contracts
   if (input.payModel !== undefined) {
     matches = matches.filter((c) => c.terms.payModel === input.payModel);
     steps.push("pay_model_filter");
+  }
+  // Manual pay is hourly and only for a period no contract covers.
+  if (matches.length === 0 && (input.contractId !== undefined || applicableIds.length > 0 || (input.payModel ?? "hourly") !== "hourly")) {
+    throw new RateResolutionError("contract_not_applicable", 409, Object.freeze(applicableIds.sort()));
   }
   // Newest start first, as legacy orders before taking one.
   matches.sort((a, b) => b.startDate.localeCompare(a.startDate) || a.id.localeCompare(b.id));

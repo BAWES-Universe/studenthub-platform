@@ -24,6 +24,12 @@ const mutations = [
   ["ambiguity resolved to the newest instead of refused", resolutionPath,
     "if (matches.length > 1)",
     "if (false)", "SHU182_AMBIGUOUS_REJECTED"],
+  ["explicit filter allowed to fall through to manual pay", resolutionPath,
+    "if (matches.length === 0 && (input.contractId !== undefined ||",
+    "if (false && (input.contractId !== undefined ||", "SHU182_FILTER_NOT_BYPASS"],
+  ["unregistered IBAN country accepted", bankPath,
+    "if (iban.length !== IBAN_LENGTHS[iban.slice(0, 2)])",
+    "if (IBAN_LENGTHS[iban.slice(0, 2)] !== undefined && iban.length !== IBAN_LENGTHS[iban.slice(0, 2)])", "SHU182_IBAN_MOD97"],
   ["contract write moved outside the audit's transaction", storePath,
     "if (rows.has(contract.id))",
     "this.#rows.set(contract.id, contract); if (rows.has(contract.id))", "SHU182_AUDIT_ATOMIC"],
@@ -34,7 +40,8 @@ try {
     const original = files.get(path);
     assert.equal(original.split(from).length - 1, 1, `mutation binds exactly once: ${name}`);
     await writeFile(path, original.replace(from, to));
-    const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", `--test-name-pattern=^${assertionName} `, suite], { encoding: "utf8", timeout: 30_000 });
+    // The suite runs in this child process itself, not behind a `--test` file wrapper, so its own test names reach the TAP output.
+    const result = spawnSync(process.execPath, ["--test-reporter=tap", `--test-name-pattern=^${assertionName} `, suite], { encoding: "utf8", timeout: 30_000 });
     const output = result.stdout + result.stderr;
     assert.notEqual(result.status, 0, `${name}: mutation survived`);
     assert.match(output, new RegExp(`not ok \\d+ - ${assertionName} `), `${name}: named assertion did not fail\n${output}`);
