@@ -18032,7 +18032,14 @@
     },
     {
       "name": "CALLBACK_DEFECT_NAMED: a rejected writer callback names the rule it broke and keeps what it said",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "launch intent is durable before the adapter boundary throws",
@@ -29593,7 +29600,14 @@
     },
     {
       "name": "WHOLE_TREE_REVIEW_TESTS: a whole-tree card's confined run proves confinement, runs no tests, and the reviewer is told why",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "SHU71_REVIEWER_LAUNCHABLE: an activation names only a reviewer lane the supervisor can start",
