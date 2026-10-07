@@ -173,6 +173,8 @@ export const SHU160_PATHS = Object.freeze([
   "packages/db/test/postgres-authz-store.test.ts",
   "apps/gateway/src/organization-profile.ts",
   "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/src/organization-documents-runtime.ts",
   "apps/gateway/test/organization-profile-http.test.ts",
   "packages/private-documents/src/organization-documents.ts",
   "package.json",
@@ -219,6 +221,8 @@ Your paths, and what each may hold:
 - packages/db/test/postgres-authz-store.test.ts: only add "0150_organization_profile" after "0148_candidate_profile_records" in both schema_migrations lists
 - apps/gateway/src/organization-profile.ts (new; modelled on language-preference.ts)
 - apps/gateway/src/index.ts (route wiring only)
+- apps/gateway/src/login-runtime.ts (wiring only: construct the profile service next to the language preference, from the same stores and safe-write key)
+- apps/gateway/src/organization-documents-runtime.ts (new, only if the logo and licence need their own storage wiring; model it on apps/gateway/src/candidate-documents-runtime.ts)
 - apps/gateway/test/organization-profile-http.test.ts (new)
 - packages/private-documents/src/organization-documents.ts (new, only if an organization document kind is needed; do not modify existing private-documents files)
 - package.json: only append the new built test files to the existing test and test:db commands, and add a test:organization-profile:mutations script that runs the mutation script, chained into test after test:organizations:mutations. Never change dependencies.

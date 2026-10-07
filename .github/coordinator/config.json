@@ -149,6 +149,8 @@
         "packages/db/test/postgres-authz-store.test.ts",
         "apps/gateway/src/organization-profile.ts",
         "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/src/organization-documents-runtime.ts",
         "apps/gateway/test/organization-profile-http.test.ts",
         "packages/private-documents/src/organization-documents.ts",
         "package.json"
@@ -165,6 +167,8 @@
         "packages/db/test/postgres-authz-store.test.ts",
         "apps/gateway/src/organization-profile.ts",
         "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/src/organization-documents-runtime.ts",
         "apps/gateway/test/organization-profile-http.test.ts",
         "packages/private-documents/src/organization-documents.ts",
         "package.json"
