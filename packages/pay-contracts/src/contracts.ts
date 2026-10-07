@@ -71,7 +71,7 @@ export function normalizeTerms(value: unknown): ContractTerms {
     const candidateTotal = money(raw.candidateTotal, "invalid_candidate_total", { positive: true });
     const companyTotal = money(raw.companyTotal, "invalid_company_total", { positive: true });
     companyCovers(companyTotal, candidateTotal);
-    const completionPercentage = wholeNumber(raw.completionPercentage ?? 0, 0, 100, "invalid_completion_percentage");
+    const completionPercentage = wholeNumber(raw.completionPercentage, 0, 100, "invalid_completion_percentage");
     return Object.freeze({ payModel: "fixed_price", candidateTotal, companyTotal, completionPercentage });
   }
   const raw = closedObject(value, ["payModel", "candidateTotal", "companyTotal", "salaryDay"]);

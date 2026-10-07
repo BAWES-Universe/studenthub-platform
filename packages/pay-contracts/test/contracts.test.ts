@@ -101,6 +101,8 @@ test("SHU182_TERMS_VALIDATION closed fields, exact decimals, and the company sid
   await rejects(contracts.create(STAFF, input({ terms: { ...hourly, companyHourlyRate: "1.499" } })), "company_amount_below_candidate", 400);
   await rejects(contracts.create(STAFF, input({ terms: { ...monthly, salaryDay: 32 } })), "invalid_salary_day", 400);
   await rejects(contracts.create(STAFF, input({ terms: { ...fixedPrice, completionPercentage: 101 } })), "invalid_completion_percentage", 400);
+  const { completionPercentage: _omitted, ...withoutCompletion } = fixedPrice;
+  await rejects(contracts.create(STAFF, input({ terms: withoutCompletion })), "invalid_completion_percentage", 400);
   await rejects(contracts.create(STAFF, input({ terms: { payModel: "weekly" } })), "invalid_pay_model", 400);
   await rejects(contracts.create(STAFF, input({ startDate: "2026-02-30" })), "invalid_start_date", 400);
   await rejects(contracts.create(STAFF, input({ endDate: "2025-12-31" })), "invalid_end_date", 400);
