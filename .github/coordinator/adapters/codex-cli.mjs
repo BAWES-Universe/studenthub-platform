@@ -30,7 +30,7 @@ import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalD
 import { runReviewEvidence } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
-import { cardBrief } from "../card-contracts.mjs";
+import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
 const path = nodePath;
 
@@ -144,11 +144,13 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Workspace authority: ${workspace_scope} (${scope_phase}).`,
     `Local checkout head: ${scoped_base_sha ?? target_sha}. The authoritative full target remains ${target_sha}.`,
     ...(workspace_scope === "scoped" ? [`You may create, modify, or delete only these exact paths: ${allowed_paths.join(", ")}. Files outside this set are deliberately unavailable and the host broker refuses any outside result.`] : []),
+    ...(workspace_scope === "repo" ? [`You may create, modify, or delete only these exact paths: ${allowed_paths.join(", ")}. The rest of the repository is checked out, with its dependencies installed, so you can build and run tests, but the host broker refuses any result that changes a file outside this set. Gitignored output such as node_modules/ and dist/ is never part of the result.`] : []),
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
+    WRITER_FINISH_RULE,
     "Implement the change and run the relevant tests. Leave the tested changes in the workspace; do NOT git add, commit, modify .git, push, open a PR or touch the network. A separate host broker snapshots your files, creates the result commit and pushes it after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
     `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":null,"stage":"${writerSuccessStage(scope_phase)}|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
-    `This is ${scope_phase === "revision" ? "a REVISION addressing review findings" : "the INITIAL build"}, so the only success stage is ${writerSuccessStage(scope_phase)}; the host refuses any other success stage. Use BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. For ${writerSuccessStage(scope_phase)} use result_sha:null to declare that the tested workspace is ready for the host to commit. For BLOCKED or FAILED use the bound head as result_sha. Stop all file writers before returning; the host refuses an unstable workspace.`,
+    `This is ${scope_phase === "revision" ? "a REVISION addressing review findings" : "the INITIAL build"}, so the only success stage is ${writerSuccessStage(scope_phase)}; the host refuses any other success stage. For ${writerSuccessStage(scope_phase)} use result_sha:null to declare that the tested workspace is ready for the host to commit. For BLOCKED or FAILED use the bound head as result_sha. Stop all file writers before returning; the host refuses an unstable workspace.`,
   ].filter(Boolean).join("\n");
 }
 

@@ -24,6 +24,10 @@ const SCOPED_IDENTITY_ENV = Object.freeze({
 });
 export const BUNDLE_CLONE_ARGS = Object.freeze(["clone", "--no-local", "--no-checkout", "--template="]);
 export const REMOTE_RETIRE_ARGS = Object.freeze(["config", "--remove-section", "remote.origin"]);
+export const COMMAND_TIMEOUT_MS = 60_000;
+// A cold npm ci of the whole repository; every other command keeps 60s.
+export const DEPENDENCY_INSTALL_TIMEOUT_MS = 15 * 60_000;
+export const DEPENDENCY_INSTALL_ARGS = Object.freeze(["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
 
 function directory(p) {
   if (!path.isAbsolute(p ?? "")) throw new Error("workspace directory must be absolute");
@@ -35,7 +39,7 @@ function directory(p) {
 }
 
 export function workspaceFailureCode(error) {
-  const known = ["BASE_BUNDLE_UNAVAILABLE", "GIT_OWNERSHIP_REFUSED", "FILESYSTEM_OR_AUTH_DENIED", "SOURCE_REVISION_UNAVAILABLE", "SOURCE_UNREACHABLE", "STORAGE_FULL", "COMMAND_TIMEOUT", "COMMAND_FAILED"];
+  const known = ["BASE_BUNDLE_UNAVAILABLE", "GIT_OWNERSHIP_REFUSED", "FILESYSTEM_OR_AUTH_DENIED", "SOURCE_REVISION_UNAVAILABLE", "SOURCE_UNREACHABLE", "STORAGE_FULL", "COMMAND_TIMEOUT", "COMMAND_FAILED", "DEPENDENCY_INSTALL_FAILED"];
   if (known.includes(error?.workspaceCode)) return error.workspaceCode;
   const stderr = String(error?.stderr ?? "");
   if (/detected dubious ownership/.test(stderr)) return "GIT_OWNERSHIP_REFUSED";
@@ -47,9 +51,10 @@ export function workspaceFailureCode(error) {
   return "COMMAND_FAILED";
 }
 
-function run(file, args, env, cwd) {
+// `execImpl` is a test seam; production always runs execFileSync.
+export function run(file, args, env, cwd, { timeout = COMMAND_TIMEOUT_MS, execImpl = execFileSync } = {}) {
   try {
-    return execFileSync(file, args, { cwd, env, encoding: "utf8", timeout: 60_000,
+    return execImpl(file, args, { cwd, env, encoding: "utf8", timeout,
       maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch (error) {
     // Fixed allowlisted diagnoses, never worker-controlled stderr, paths or URLs.
@@ -141,8 +146,26 @@ function publicReadOnlyTree(dir) {
   fs.chmodSync(dir, 0o755);
 }
 
+function installDependencies({ cwd, root, workerRun, workerEnv }) {
+  let cache;
+  try {
+    // The worker creates and removes its own cache: one the coordinator made
+    // would be unwritable to the lane uid, or writable to everyone.
+    const made = workerRun("mktemp", ["-d", "/tmp/shu-npm-cache-XXXXXXXX"], root);
+    if (!/^\/tmp\/shu-npm-cache-[A-Za-z0-9]{8}$/.test(made)) throw new Error("unexpected dependency cache path");
+    cache = made;
+    const runEnv = { ...workerEnv, npm_config_cache: cache, npm_config_userconfig: "/dev/null", npm_config_update_notifier: "false" };
+    workerRun("npm", [...DEPENDENCY_INSTALL_ARGS, "--cache", cache], cwd, { runEnv, timeout: DEPENDENCY_INSTALL_TIMEOUT_MS });
+  } catch {
+    // One fixed code whatever npm said: its output is worker-influenced.
+    throw Object.assign(new Error("workspace dependency install failed: DEPENDENCY_INSTALL_FAILED"), { workspaceCode: "DEPENDENCY_INSTALL_FAILED" });
+  } finally {
+    if (cache) { try { workerRun("rm", ["-rf", "--", cache], root); } catch { /* /tmp is reaped; the checkout is unaffected */ } }
+  }
+}
+
 export function prepareAttemptWorkspace({ receipt, env = process.env, resume = false,
-  allowedRepo = "BAWES-Universe/studenthub-platform", allowedHost = "github.com" } = {}) {
+  allowedRepo = "BAWES-Universe/studenthub-platform", allowedHost = "github.com", execImpl = execFileSync } = {}) {
   if (!UUID.test(receipt?.attempt_id ?? "") || !SHA.test(receipt?.target_sha ?? "") ||
       receipt?.repo !== allowedRepo || !LANE_NAMES.includes(receipt?.requested_worker)) {
     throw new Error("invalid attempt workspace binding");
@@ -185,10 +208,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       Number(env.SHU_WORKER_UID) === 0 || Number(env.SHU_WORKER_UID) === process.getuid())) {
     throw new Error("writer checkout requires the configured distinct worker identity");
   }
-  const git = (args, at = cwd) => run("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${at}`, ...args], hostEnv, at);
-  const workerRun = (file, args, at = root) => wrapper.length
-    ? run(wrapper[0], [...wrapper.slice(1), file, ...args], workerEnv, at)
-    : run(file, args, workerEnv, at);
+  const git = (args, at = cwd) => run("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${at}`, ...args], hostEnv, at, { execImpl });
+  const workerRun = (file, args, at = root, { runEnv = workerEnv, timeout } = {}) => wrapper.length
+    ? run(wrapper[0], [...wrapper.slice(1), file, ...args], runEnv, at, { timeout, execImpl })
+    : run(file, args, runEnv, at, { timeout, execImpl });
   const workerGit = (args, at = root) => workerRun("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], at);
   let lock;
   try { lock = fs.openSync(lockPath, "wx", 0o600); }
@@ -227,10 +250,12 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       git(["update-ref", "refs/heads/bound", fetched], source);
       git(["symbolic-ref", "HEAD", "refs/heads/bound"], source);
       const scoped = normalizedReceipt.workspace_scope === "scoped";
+      // A repo writer holds the whole tree, but its result is still checked
+      // path by path against the same preserved full base as a scoped one.
+      const repoScope = normalizedReceipt.workspace_scope === "repo";
+      if (repoScope && !writer) throw new Error("repo checkout is writer-only");
       let bundle = null;
-      if (scoped) {
-        // R1: create a parentless commit containing only the exact allowance,
-        // then deliver it through the existing cross-UID-safe bundle transport.
+      if (scoped || repoScope) {
         // Preserve the complete authoritative base before deriving the worker's
         // parentless scoped base. The broker later reconstructs against this
         // full target; the scoped SHA is never publication or review authority.
@@ -238,6 +263,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
         if (fs.existsSync(baseBundle)) throw new Error("unowned scoped base bundle already exists; refusing overwrite");
         git(["bundle", "create", baseBundle, "refs/heads/bound"], source);
         fs.chmodSync(baseBundle, 0o600);
+      }
+      if (scoped) {
+        // R1: create a parentless commit containing only the exact allowance,
+        // then deliver it through the existing cross-UID-safe bundle transport.
         const derived = deriveScopedBaseCommit({ source, target_sha: receipt.target_sha, allowed_paths: scope.paths, env: hostEnv });
         if (derived !== normalizedReceipt.scoped_base_sha) throw new Error("deterministic scoped_base_sha does not match the immutable receipt");
         git(["update-ref", "refs/heads/scoped", derived], source);
@@ -245,8 +274,8 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
         bundle = path.join(source, "scoped.bundle");
         git(["bundle", "create", bundle, "refs/heads/scoped"], source);
       } else {
-        // Full reviewer checkouts retain the proven bundle path and contain no
-        // partial-clone/promisor state.
+        // Full reviewer and repo writer checkouts retain the proven bundle path
+        // and contain no partial-clone/promisor state.
         bundle = path.join(source, "bound.bundle");
         git(["bundle", "create", bundle, "refs/heads/bound"], source);
       }
@@ -258,6 +287,12 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       const checkoutHead = scoped ? normalizedReceipt.scoped_base_sha : receipt.target_sha;
       workerGit(["checkout", "--detach", checkoutHead, "--"], cwd);
       workerGit(REMOTE_RETIRE_ARGS, cwd);
+      // Dependencies come from the bound head's own lockfile, installed as the
+      // lane uid with no lifecycle scripts, a throwaway cache and no user
+      // config, so nothing of the coordinator's reaches npm.
+      if (repoScope && git(["ls-tree", "--name-only", receipt.target_sha, "--", "package-lock.json"], source) === "package-lock.json") {
+        installDependencies({ cwd, root, workerRun, workerEnv });
+      }
       // The root remains traversable only to the reviewed shared identities.
       // Each attempt is its own non-world-readable gate; the sandbox grants its
       // reviewer UID temporary access to only the bound review attempt.

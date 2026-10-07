@@ -34,24 +34,32 @@ function isHostname(value) {
   );
 }
 
-export function validateDeploymentEnv(env = process.env) {
-  const declaredNames = new Set(CONFIG_SCHEMA.map(({ name }) => name));
+function listParts(value, name, kind) {
+  const parts = value.split(",").map((part) => part.trim());
+  if (parts.some((part) => !part)) throw new Error(`${name} must be a valid ${kind}`);
+  return parts;
+}
+
+export function validateDeploymentEnv(env = process.env, schema = CONFIG_SCHEMA) {
+  const declaredNames = new Set(schema.map(({ name }) => name));
   const unknown = Object.keys(env).find(
     (name) => (name.startsWith("OIDC_") || name.startsWith("LOGIN_")) && !declaredNames.has(name),
   );
   if (unknown) throw new Error(`unknown configuration variable ${unknown}`);
 
-  const missing = REQUIRED_DEPLOYMENT_ENV.filter((name) => !env[name]?.trim());
+  const missing = schema.filter(({ required }) => required).map(({ name }) => name).filter((name) => !env[name]?.trim());
   if (missing.length > 0) {
     throw new Error(`missing required deployment variables: ${missing.join(", ")}`);
   }
   if (env.HOST !== "0.0.0.0") {
     throw new Error("HOST must be 0.0.0.0 in the gateway container");
   }
-  for (const { name, kind } of CONFIG_SCHEMA) {
+  for (const { name, kind, required } of schema) {
     if ((kind !== "url" && kind !== "url-list") || name === "DATABASE_URL") continue;
-    const parts = kind === "url-list" ? env[name].split(",").map((part) => part.trim()) : [env[name]];
-    if (parts.some((part) => !part || !isHttpUrl(part))) {
+    const value = env[name];
+    if (!required && !value?.trim()) continue;
+    const parts = kind === "url-list" ? listParts(value, name, kind) : [value];
+    if (parts.filter(Boolean).some((part) => !isHttpUrl(part))) {
       throw new Error(`${name} must be a valid ${kind}`);
     }
   }
@@ -67,8 +75,10 @@ export function validateDeploymentEnv(env = process.env) {
   if (!databaseUrl.hostname || !databaseUrl.pathname.slice(1)) {
     throw new Error("DATABASE_URL must name a database host and database");
   }
-  const configuredPlatformDatabaseHosts = (env.PLATFORM_DATABASE_HOSTS ?? "").split(",").map((host) => host.trim());
-  if (env.PLATFORM_DATABASE_HOSTS?.trim() && configuredPlatformDatabaseHosts.some((host) => !host || !isHostname(host))) {
+  const configuredPlatformDatabaseHosts = env.PLATFORM_DATABASE_HOSTS?.trim()
+    ? listParts(env.PLATFORM_DATABASE_HOSTS, "PLATFORM_DATABASE_HOSTS", "host-list")
+    : [];
+  if (configuredPlatformDatabaseHosts.filter(Boolean).some((host) => !isHostname(host))) {
     throw new Error("PLATFORM_DATABASE_HOSTS must be a valid host-list");
   }
   const platformDatabaseHosts = new Set([
@@ -91,16 +101,6 @@ export function validateDeploymentEnv(env = process.env) {
     profileUrl.username = "";
     profileUrl.password = "";
     throw new Error(`LOGIN_ALLOWED_RETURN_URLS must include ${profileUrl.href}`);
-  }
-
-  for (const { name, kind, required } of CONFIG_SCHEMA) {
-    const value = env[name];
-    if ((!required && !value?.trim()) || value === undefined || kind === "string" || kind === "literal" || name === "DATABASE_URL" || name === "OIDC_CALLBACK_URL") continue;
-    const parts = kind === "url-list" || kind === "host-list" ? value.split(",").map((part) => part.trim()) : [value];
-    if (parts.some((part) => !part)) throw new Error(`${name} must be a valid ${kind}`);
-    if ((kind === "url" || kind === "url-list") && parts.some((part) => !isHttpUrl(part))) {
-      throw new Error(`${name} must be a valid ${kind}`);
-    }
   }
 }
 

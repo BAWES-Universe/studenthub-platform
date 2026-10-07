@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { cardBrief } from "../card-contracts.mjs";
+import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
@@ -110,7 +110,8 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     // SHU-71: the Claude writer has file tools only. Say so plainly, and why,
     // because the quoted review findings ask the reviser to run the tests.
     "You have no shell here, so you cannot run tests or any other command, whatever the task text says: your launch has no network sandbox, so it is given file tools only. Read the code and its tests and make the change correct by reading them. The independent reviewer runs the lane's tests in a confined sandbox before it reviews your result.",
-    `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
+    `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links.`,
+    WRITER_FINISH_RULE,
   ].filter(Boolean).join("\n");
   const reviewScope = fixtureReviewScope(issue_id);
   const brief = cardBrief(issue_id);
@@ -132,14 +133,14 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
   ].filter(Boolean).join("\n");
 }
 
-// A scoped writer may edit only its authorized paths; a full-workspace writer
+// A scoped or repo writer may edit only its authorized paths; a full-workspace writer
 // may edit inside its workspace (--restricted already confines file tools to
 // the cwd). Rules are anchored to the cwd with "./". The CLI splits a rule list
 // on commas and spaces, so a path that could break a rule apart is refused.
 const RULE_SAFE_PATH_RE = /^[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*$/;
 export function writerEditRules({ workspace_scope, allowed_paths = [] } = {}) {
   if (workspace_scope === "full") return ["Edit(./**)"];
-  if (workspace_scope !== "scoped" || !Array.isArray(allowed_paths) || allowed_paths.length === 0 || allowed_paths.some((p) => !RULE_SAFE_PATH_RE.test(p))) {
+  if (!["scoped", "repo"].includes(workspace_scope) || !Array.isArray(allowed_paths) || allowed_paths.length === 0 || allowed_paths.some((p) => !RULE_SAFE_PATH_RE.test(p))) {
     throw new Error("authorized writer paths cannot be expressed as edit permission rules");
   }
   return allowed_paths.map((p) => `Edit(./${p})`);
