@@ -43,7 +43,7 @@ export async function handleOrganizationProfile(req:IncomingMessage,res:ServerRe
   const path=new URL(req.url??"/","http://invalid").pathname, match=RECEIPT.exec(path);if(path!==PREVIEW&&path!==CONFIRM&&!match)return false;
   const send=(r:Result)=>{res.writeHead(r.status,{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});res.end(JSON.stringify(r.body));};
   try {if(!service||!origin){send({status:503,body:{error:"safe_write_unavailable"}});return true;}const session=cookie(req.headers.cookie);
-    if(match){if(req.method!=="GET"){send({status:404,body:{error:"not_found"}});return true;}send(await service.receipt(session,decodeURIComponent(match[1]!),match[2]!));return true;}
+    if(match){if(req.method!=="GET"){send({status:404,body:{error:"not_found"}});return true;}let orgId:string;try{orgId=decodeURIComponent(match[1]!);}catch{send({status:400,body:{error:"invalid_request"}});return true;}send(await service.receipt(session,orgId,match[2]!));return true;}
     if(req.method!=="POST"){send({status:404,body:{error:"not_found"}});return true;}if(req.headers.origin!==origin||req.headers["sec-fetch-site"]==="cross-site"){req.resume();send({status:403,body:{error:"origin_rejected"}});return true;}
     if(req.headers["content-type"]!=="application/json"){req.resume();send({status:400,body:{error:"invalid_request"}});return true;}const body=await json(req);if(!body.ok){send({status:400,body:{error:"invalid_request"}});return true;}send(path===PREVIEW?await service.preview(session,body.value):await service.confirm(session,body.value));
   } catch {if(!res.headersSent)send({status:503,body:{error:"safe_write_unavailable"}});else res.destroy();}return true;

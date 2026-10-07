@@ -78,7 +78,7 @@ export class PostgresOrganizationProfileStore {
   }
   async #commit(principalId: string, orgId: string, input: CommitInput): Promise<CommitOutcome> {
     if (!FIELDS.includes(input.field as Field) || input.receipt.fields.length !== 1 || input.receipt.fields[0] !== input.field) throw new TypeError("inconsistent organization profile commit");
-    const field = input.field as Field; const client = await this.#pool.connect();
+    const field = input.field as Field; const client = await this.#pool.connect(); let destroy = false;
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 300))", [orgId]);
@@ -101,12 +101,13 @@ export class PostgresOrganizationProfileStore {
         })]);
       await client.query("COMMIT"); return { ok: true };
     } catch (error) {
-      try { await client.query("ROLLBACK"); } catch {}
+      // A failed ROLLBACK leaves the connection in an unknown state: drop it.
+      try { await client.query("ROLLBACK"); } catch { destroy = true; }
       if (error instanceof Refusal) return { ok: false, reason: error.reason };
       // Either the token reference or its deterministic receipt may win a
       // racing insert. Both mean this confirm has already been consumed.
       if ((error as { code?: string }).code === "23505") return { ok: false, reason: "token_already_used" };
       throw error;
-    } finally { client.release(); }
+    } finally { client.release(destroy); }
   }
 }
