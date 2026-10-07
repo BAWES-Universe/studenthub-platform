@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { cardBrief } from "../card-contracts.mjs";
+import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
@@ -110,7 +110,8 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     // SHU-71: the Claude writer has file tools only. Say so plainly, and why,
     // because the quoted review findings ask the reviser to run the tests.
     "You have no shell here, so you cannot run tests or any other command, whatever the task text says: your launch has no network sandbox, so it is given file tools only. Read the code and its tests and make the change correct by reading them. The independent reviewer runs the lane's tests in a confined sandbox before it reviews your result.",
-    `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
+    `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links.`,
+    WRITER_FINISH_RULE,
   ].filter(Boolean).join("\n");
   const reviewScope = fixtureReviewScope(issue_id);
   const brief = cardBrief(issue_id);

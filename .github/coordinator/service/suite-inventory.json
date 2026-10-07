@@ -3953,6 +3953,7 @@
     "CARD_LANE_SCOPE: writer, reviser and reviewer scopes follow the card contract",
     "CARD_LANE_REVIEW: the reviewer sees the whole scope, runs the card's tests and holds it to its acceptance",
     "CARD_LANE_PROMPTS: the writer and the reviewer of a card both get its brief; a fixture gets none",
+    "CARD_LANE_FINISH: both writer prompts say to finish the brief and keep FAILED for run failures",
     "CARD_LANE_BRIEF: the pinned register has the 27 inventory rows with known states",
     "CARD_LANE_ACTIVATION: an activation cannot pick who builds or who judges a card",
     "CARD_LANE_ARMED_TICK: an armed SHU-197 tick launches Codex on exactly the card's paths, and the review goes to Claude",
@@ -29987,6 +29988,10 @@
     },
     {
       "name": "CARD_LANE_PROMPTS: the writer and the reviewer of a card both get its brief; a fixture gets none",
+      "capabilities": []
+    },
+    {
+      "name": "CARD_LANE_FINISH: both writer prompts say to finish the brief and keep FAILED for run failures",
       "capabilities": []
     },
     {
