@@ -47,6 +47,24 @@ test("an empty optional platform database host list is accepted", () => {
   assert.doesNotThrow(() => validateDeploymentEnv({ ...validEnv(), PLATFORM_DATABASE_HOSTS: "" }));
 });
 
+test("unset and blank optional url variables are accepted but configured ones are validated", () => {
+  const schema = [
+    ...CONFIG_SCHEMA,
+    { name: "OPTIONAL_URL", required: false, kind: "url", secret: false },
+    { name: "OPTIONAL_URL_LIST", required: false, kind: "url-list", secret: false },
+  ];
+  assert.doesNotThrow(() => validateDeploymentEnv(validEnv(), schema));
+  assert.doesNotThrow(() => validateDeploymentEnv({ ...validEnv(), OPTIONAL_URL: " ", OPTIONAL_URL_LIST: "" }, schema));
+  assert.throws(
+    () => validateDeploymentEnv({ ...validEnv(), OPTIONAL_URL: "ftp://example.test" }, schema),
+    { message: "OPTIONAL_URL must be a valid url" },
+  );
+  assert.throws(
+    () => validateDeploymentEnv({ ...validEnv(), OPTIONAL_URL_LIST: "https://example.test," }, schema),
+    { message: "OPTIONAL_URL_LIST must be a valid url-list" },
+  );
+});
+
 test("closed schema rejects undeclared OIDC variables", () => {
   const env = { ...validEnv(), OIDC_UNDECLARED: "anything" };
   assert.throws(() => validateDeploymentEnv(env), /unknown configuration variable OIDC_UNDECLARED/);
@@ -97,6 +115,15 @@ test("platform database hosts must be hostnames and reject empty parts", () => {
     ...validEnv(),
     PLATFORM_DATABASE_HOSTS: "reporting-db, isolated-platform-db",
   }));
+});
+
+test("platform database hosts reject names longer than 253 characters", () => {
+  const hostname = Array(5).fill("a".repeat(63)).join(".");
+  assert.equal(hostname.length, 319);
+  assert.throws(
+    () => validateDeploymentEnv({ ...validEnv(), PLATFORM_DATABASE_HOSTS: hostname }),
+    { message: "PLATFORM_DATABASE_HOSTS must be a valid host-list" },
+  );
 });
 
 test("errors never disclose secret configuration values", () => {
