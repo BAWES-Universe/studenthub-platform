@@ -183,19 +183,24 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     names = [...scope.paths].sort();
   } else {
     const others = (await git("ls-files", "--others", "--exclude-standard", "-z")).split("\0").filter(Boolean);
-    names = [...new Set([...tracked, ...others])].sort();
+    // A repo writer's own paths are authorized by name, so an ignore rule never
+    // drops one (the repository ignores *.sql, yet a card may add a migration).
+    names = [...new Set([...tracked, ...others, ...(workspace_scope === "repo" ? scope.paths : [])])].sort();
   }
   if (names.length > 20000) throw new Error("workspace snapshot exceeds file limit");
   // Scoped snapshots start from the complete bound base tree, then overlay only
   // authorized paths. Hidden sparse paths therefore survive byte-for-byte;
   // absence is never misread as mass deletion. A repo snapshot starts there too
-  // but lists names like a full one (tracked plus non-ignored untracked), so
-  // gitignored output such as node_modules/ and dist/ is never published.
+  // but lists names like a full one (tracked plus non-ignored untracked, plus
+  // its own paths), so gitignored output such as node_modules/ and dist/ is
+  // never published.
   await git("read-tree", boundBase ? target_sha : "--empty");
   let total = 0;
   for (const name of names) {
     const file = readWorkspaceFile(worktree, name);
     if (!file) {
+      // An allowed path the repo writer never created is simply absent.
+      if (!tracked.includes(name) && workspace_scope === "repo" && scope.paths.includes(name)) continue;
       if (!tracked.includes(name)) throw new Error("untracked file disappeared during snapshot");
       if (boundBase) await git("update-index", "--remove", "--", name);
       continue;

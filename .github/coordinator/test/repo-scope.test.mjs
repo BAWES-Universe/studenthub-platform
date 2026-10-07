@@ -51,7 +51,7 @@ function fixture({ lockfile = true } = {}) {
   const remote = path.join(dir, "BAWES-Universe", "studenthub-platform.git"); fs.mkdirSync(path.dirname(remote)); git(dir, "init", "--bare", remote);
   const seed = path.join(dir, "seed"); git(dir, "init", seed); git(seed, "config", "user.name", "Fixture"); git(seed, "config", "user.email", "fixture@example.invalid");
   for (const [name, body] of [
-    [".gitignore", "node_modules/\ndist/\n"],
+    [".gitignore", "node_modules/\ndist/\n*.sql\n"],
     ["package.json", "{\"name\":\"fixture\",\"version\":\"1.0.0\"}\n"],
     ...(lockfile ? [["package-lock.json", "{\"name\":\"fixture\",\"lockfileVersion\":3,\"packages\":{}}\n"]] : []),
     [ALLOWED[0], "export const value = 1;\n"],
@@ -342,4 +342,20 @@ test("SHU-296 R11: writer adapters give a repo writer its exact paths", () => {
   assert.doesNotMatch(prompt, /deliberately unavailable/, "a repo writer is not told the rest of the tree is missing");
   assert.deepEqual(writerEditRules({ workspace_scope: "repo", allowed_paths: [...ALLOWED] }), ALLOWED.map((p) => `Edit(./${p})`));
   assert.throws(() => writerEditRules({ workspace_scope: "repo", allowed_paths: [] }), /edit permission rules/);
+});
+
+test("SHU-296 R12: a gitignored file at an allowed path is published, an absent allowed path is skipped, and other ignored files stay out", async () => {
+  const f = fixture(); try {
+    const allowed = [...ALLOWED, "db/0150_new.sql", "docs/optional.md"];
+    const r = f.receipt({ allowed_paths: allowed }); const { cwd } = repoWorkspace(f, r.attempt_id);
+    assert.equal(git(cwd, "check-ignore", "db/0150_new.sql"), "db/0150_new.sql", "the fixture ignores *.sql like the repository");
+    write(cwd, ALLOWED[0], "export const value = 2;\n");
+    write(cwd, "db/0150_new.sql", "CREATE TABLE fixture (id int);\n");
+    write(cwd, "db/scratch.sql", "-- ignored and not allowed\n");
+    const result = await publish(f, r, cwd);
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(git(f.remote, "diff", "--name-status", f.sha, result.remote_head), `A\tdb/0150_new.sql\nM\t${ALLOWED[0]}`,
+      "the ignored migration at an allowed path is published; the absent allowed path and the other ignored file are not");
+    assert.equal(git(f.remote, "show", `${result.remote_head}:db/0150_new.sql`), "CREATE TABLE fixture (id int);");
+  } finally { f.cleanup(); }
 });
