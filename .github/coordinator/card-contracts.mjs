@@ -156,6 +156,77 @@ Constraints.
 
 Out of scope: the Dockerfile, the env manifest, deployment.test.mjs, compose files, CONFIG_SCHEMA's entries, any network call or credential, any change outside the paths you are given.`;
 
+// The fourth card is the first whole-tree card: organization owners edit
+// their own profile (slice O2). Its writer holds the bound tree with
+// dependencies installed, so it can typecheck and run the suite, and may still
+// change only these paths. Until reviewers run commands, the card PR's CI runs
+// typecheck, test and test:db, and the review desk judges the exact head.
+export const SHU160_PATHS = Object.freeze([
+  "packages/organizations/src/profile-writes.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/profile-writes.test.ts",
+  "packages/organizations/test/profile-writes-mutations.mjs",
+  "packages/db/migrations/0150_organization_profile.sql",
+  "packages/db/src/postgres-organization-profile-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-profile.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-profile.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/test/organization-profile-http.test.ts",
+  "packages/private-documents/src/organization-documents.ts",
+  "package.json",
+]);
+
+const SHU160_ACCEPTANCE = [
+  "(1) every profile field (Arabic and English name, descriptions, website) is written only through preview, confirm and receipt on the existing safe-write contract, and letting the website bypass preview makes the runSafeWriteConformance check for the profile write fail;",
+  "(2) the logo and the commercial licence are private objects delivered only by authorized, expiring links, and marking the licence public-read makes the private-delivery negative-control test fail;",
+  "(3) only the organization's owner may write; a recruiter or any other grant gets not_found, never 403, and accepting it makes the recruiter-write-refused test fail;",
+  "(4) no document key or URL ever appears in a receipt, and letting one in makes the receipt-whitelist test fail;",
+  "(5) an owner can never edit another organization, and allowing it makes the cross-org test fail;",
+  "(6) every write is audited in the same transaction as the change, migration 0150 is additive and its audit constraint still accepts every existing row and every operation 0147 and 0148 added, and packages/organizations/test/profile-writes-mutations.mjs applies mutations (1) to (5) and each fails its named test;",
+  "(7) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU160_BRIEF = `Card SHU-160: organization owners edit their own profile through safe write (slice O2).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md, especially row OR-03, finding OR-F10, slice O2 in section 11 and decision D-OR1.
+- The safe-write path card SHU-84 added for the language preference: packages/safe-write-contract (including src/conformance.ts and runSafeWriteConformance), packages/db/src/safe-write-store.ts, packages/db/migrations/0147_person_language_safe_write.sql, apps/gateway/src/language-preference.ts and apps/gateway/test/language-preference.test.ts. Follow that pattern exactly.
+- packages/organizations (the O1 read model), packages/organizations/test/mutations.mjs (the mutation-script pattern) and packages/private-documents (private storage with authorized, expiring delivery).
+
+Goal. An organization owner can edit their own organization's name (Arabic and English), descriptions and website. Every one of those fields goes through the existing safe-write path: preview, then confirm, then a receipt, the same contract as the language preference. The owner can also replace or remove the logo and upload a commercial-licence document. Both are stored as private objects through the existing private-documents storage and delivered only by authorized, expiring links, never by a public URL (finding OR-F10). Every write is audited in the same transaction as the change, following the existing authorization_mutation_audit pattern.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/profile-writes-mutations.mjs that makes a named test fail. Model the script on packages/organizations/test/mutations.mjs: apply each mutation to the built module, run the named test, expect it to fail, and restore.
+(1) Bypass preview for website: the runSafeWriteConformance check for the profile write fails.
+(2) Mark the licence public-read: the private-delivery negative-control test fails.
+(3) Accept a recruiter or any other non-owner grant on write: the recruiter-write-refused test fails. A non-owner gets not_found, never 403.
+(4) Let a document key or URL into the receipt: the receipt-whitelist test fails.
+(5) Edit an organization other than the caller's own: the cross-org test fails.
+Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/profile-writes.ts (new)
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/profile-writes.test.ts (new)
+- packages/organizations/test/profile-writes-mutations.mjs (new)
+- packages/db/migrations/0150_organization_profile.sql (new; additive; any widened audit constraint must still accept every existing row and every operation 0147 and 0148 added)
+- packages/db/src/postgres-organization-profile-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-profile.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0150_organization_profile" after "0148_candidate_profile_records" in both schema_migrations lists
+- apps/gateway/src/organization-profile.ts (new; modelled on language-preference.ts)
+- apps/gateway/src/index.ts (route wiring only)
+- apps/gateway/test/organization-profile-http.test.ts (new)
+- packages/private-documents/src/organization-documents.ts (new, only if an organization document kind is needed; do not modify existing private-documents files)
+- package.json: only append the new built test files to the existing test and test:db commands, and add a test:organization-profile:mutations script that runs the mutation script, chained into test after test:organizations:mutations. Never change dependencies.
+
+Out of scope: company self-activation (OR-04), staff or admin organization editing (O5), any UI beyond what the route needs, any change to packages/safe-write-contract or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -174,6 +245,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU295_PATHS,
     acceptance: SHU295_ACCEPTANCE,
     brief: SHU295_BRIEF,
+  }),
+  "SHU-160": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU160_PATHS,
+    revision_paths: SHU160_PATHS,
+    acceptance: SHU160_ACCEPTANCE,
+    brief: SHU160_BRIEF,
   }),
 });
 
