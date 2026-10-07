@@ -225,7 +225,7 @@ Your paths, and what each may hold:
 
 Out of scope: company self-activation (OR-04), staff or admin organization editing (O5), any UI beyond what the route needs, any change to packages/safe-write-contract or the login code, the lockfile, and any network call, credential, staging or production access.
 
-Finish with npm run typecheck and npm test passing. In your final message, list the files you changed and how each acceptance item is pinned.`;
+Finish with npm run typecheck and npm test passing. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
