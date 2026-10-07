@@ -13,7 +13,7 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CARD_CONTRACTS, SHU197_PATHS, cardBrief, cardContract } from "../card-contracts.mjs";
+import { CARD_CONTRACTS, SHU197_PATHS, cardBrief, cardContract, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import {
   fixtureAcceptance,
   fixtureReviewScope,
@@ -102,6 +102,22 @@ test("CARD_LANE_PROMPTS: the writer and the reviewer of a card both get its brie
   const fixture = { ...input, issue_id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" };
   assert.doesNotMatch(buildCodexReviewPrompt(fixture), /Card brief/);
   assert.match(buildCodexReviewPrompt(fixture), /the contract the files and their folders document/);
+});
+
+test("CARD_LANE_FINISH: both writer prompts say to finish the brief and keep FAILED for run failures", () => {
+  const input = { issue_id: "SHU-197", authorization_ref: "SHU-197", attempt_id: "attempt-1", target_sha: SHA, task_context: "ctx" };
+  const writers = [
+    ["codex writer", buildCodexPrompt({ ...input, workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU197_PATHS] })],
+    ["codex reviser", buildCodexPrompt({ ...input, workspace_scope: "scoped", scope_phase: "revision", allowed_paths: [...SHU197_PATHS] })],
+    ["claude writer", buildClaudePrompt({ ...input, role: "build", allowed_paths: [...SHU197_PATHS] })],
+    ["claude reviser", buildClaudePrompt({ ...input, role: "revise", allowed_paths: [...SHU197_PATHS] })],
+  ];
+  for (const [name, prompt] of writers) {
+    assert.ok(prompt.includes(WRITER_FINISH_RULE), `${name} prompt carries the finish rule`);
+    assert.doesNotMatch(prompt, /if unable to finish|upstream\/run failure/, `${name} prompt never offers a stage for unfinished work`);
+  }
+  assert.match(WRITER_FINISH_RULE, /never use either for work you have not finished yet/);
+  assert.ok(!buildCodexReviewPrompt(input).includes(WRITER_FINISH_RULE), "a reviewer is not told to build");
 });
 
 test("CARD_LANE_BRIEF: the pinned register has the 27 inventory rows with known states", () => {
