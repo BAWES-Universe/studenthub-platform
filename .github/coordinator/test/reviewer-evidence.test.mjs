@@ -9,7 +9,8 @@ import {
   launchBuilder,
   persistClaudeEnvelope,
 } from "../adapters/claude-code.mjs";
-import { runReviewEvidence } from "../review-execution.mjs";
+import { confinedTestResultLine, reviewTestFiles, runReviewEvidence } from "../review-execution.mjs";
+import { fixtureReviewTests } from "../workspace-scope.mjs";
 import { reviewFindingsFromCallback } from "../review-findings.mjs";
 import { bounded, MAX_CAPTURE_BYTES } from "../review-execution-child.mjs";
 import { CANONICAL_SEED, inspectFixtureSeed, SEED_MARKER } from "../fixture-seed.mjs";
@@ -474,4 +475,65 @@ test("SHU-71: a failing confined run still launches the Claude reviewer, told FA
   assert.notEqual(out.reason_code, "REVIEW_EXECUTION_UNAVAILABLE");
   assert.equal(out.callback?.stage, "BLOCKED");
   assert.ok(reviewFindingsFromCallback(out.callback)?.links.length > 0, "the BLOCK's findings reach the writer");
+});
+
+test("WHOLE_TREE_REVIEW_TESTS: a whole-tree card's confined run proves confinement, runs no tests, and the reviewer is told why", async (t) => {
+  assert.deepEqual(fixtureReviewTests("SHU-300"), [], "a whole-tree card declares an explicit empty list");
+  assert.deepEqual(reviewTestFiles({ SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["tools/fixture/test/scan-vacuous.test.mjs"]) }, "SHU-300"), [],
+    "the host's fixture list never reaches a whole-tree card");
+  assert.deepEqual(reviewTestFiles({}, "SHU-140"), ["tools/fixture/test/scan-vacuous.test.mjs"], "a fixture lane keeps its own tests");
+  assert.deepEqual(reviewTestFiles({ SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["host.test.mjs"]) }, "SHU-63"), ["host.test.mjs"], "other cards keep the host list");
+
+  const root = privateTemp("whole-tree-review-");
+  const workspace = path.join(root, ATTEMPT);
+  const evidence = path.join(root, "evidence");
+  fs.mkdirSync(workspace, { mode: 0o755 });
+  fs.mkdirSync(evidence, { mode: 0o700 });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const expectedUid = (process.getuid?.() ?? 1000) + 1000;
+  const run = (testsReport) => {
+    const seen = [];
+    const execFileImpl = (_file, args, _options, callback) => {
+      seen.push(args.slice(args.lastIndexOf("--") + 1));
+      const report = {
+        version: "1.0.0", target_sha: SHA, test_files: [], expected_uid: expectedUid, actual_uid: expectedUid,
+        filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
+        protected_class_probes: { coordinator_evidence: "DENIED" }, symlink_probe: "DENIED", traversal_probe: "DENIED",
+        inherited_descriptor_probe: "DENIED", environment_value_probe: "DENIED", process_inspection_probe: "DENIED",
+        tests: testsReport,
+      };
+      queueMicrotask(() => callback(null, JSON.stringify(report), ""));
+    };
+    return { seen, promise: runReviewEvidence({
+      attempt_id: ATTEMPT, issue_id: "SHU-300", target_sha: SHA, cwd: workspace,
+      env: {
+        PATH: process.env.PATH,
+        SHU_REVIEW_EXEC_UID: String(expectedUid),
+        SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+        SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+        SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["tools/fixture/test/scan-vacuous.test.mjs"]),
+        SHU_REVIEW_EVIDENCE_DIR: evidence,
+      },
+      execFileImpl, validateWrapperImpl: (wrapper) => wrapper, startProcessCanaryImpl, listenProbeImpl,
+    }) };
+  };
+  const notRun = run({ executed: false, exit_code: null, signal: null, stdout: "", stderr: "" });
+  const result = await notRun.promise;
+  assert.deepEqual(notRun.seen, [[]], "the confined child is asked to run no test files");
+  assert.equal(result.executed, true, "confinement was proven, so the reviewer may launch");
+  assert.equal(result.tests_run, false);
+  assert.equal(result.passed, null);
+  assert.equal(result.reason_code, "REVIEW_TESTS_NOT_RUN");
+  assert.ok(result.evidence_link, "the confinement proof is still retained");
+  assert.match(confinedTestResultLine(result), /^Confined test result: NOT RUN\. This is a whole-tree card/);
+  assert.equal(confinedTestResultLine({ tests_run: true, passed: false }), "Confined test result: FAIL");
+  assert.equal(confinedTestResultLine({ tests_run: true, passed: true }), "Confined test result: PASS");
+
+  const dir = privateTemp("whole-tree-prompt-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cli = executor(output("PASS", {}, dir));
+  await launchBuilder(launchArgs(dir, null, { issue_id: "SHU-300", authorization_ref: "SHU-300", execFileImpl: cli,
+    reviewEvidenceImpl: async () => ({ ...result, evidence_link: TEST_LINK, isolation_wrapper: ["/test/reviewer-model-wrapper"] }) }));
+  assert.ok(cli.calls[0].args.some((arg) => arg.includes("Confined test result: NOT RUN. This is a whole-tree card")),
+    "the Claude reviewer is told the run did not try, never FAIL");
 });

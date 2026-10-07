@@ -39,11 +39,11 @@ function privateDirectory(dir, { fsImpl = fs, ownUid = process.getuid?.() } = {}
   return resolved;
 }
 
-// A fixture lane runs its own committed tests; every other card runs the host's
-// configured list.
+// A fixture lane runs its own committed tests, a whole-tree card runs none
+// (workspace-scope.mjs), and every other card runs the host's configured list.
 export function reviewTestFiles(env = {}, issueId = null) {
   const laneTests = fixtureReviewTests(issueId);
-  if (laneTests?.length) return laneTests;
+  if (Array.isArray(laneTests)) return laneTests;
   let files;
   try { files = JSON.parse(env.SHU_REVIEW_TEST_FILES_JSON ?? ""); }
   catch { throw new Error("SHU_REVIEW_TEST_FILES_JSON must be a JSON array"); }
@@ -330,7 +330,10 @@ export async function runReviewEvidence({
       && Array.isArray(report?.forbidden_env_keys)
       && report.forbidden_env_keys.length === 0
       && runtimeIsolationEvidenceValid(report);
-    const executed = probeOk && report?.tests?.executed === true;
+    // With no test files the child proves confinement and runs nothing; that is
+    // a complete result, reported as tests not run rather than as a failure.
+    const testsNotRun = probeOk && files.length === 0 && report?.tests?.executed === false;
+    const executed = probeOk && (report?.tests?.executed === true || testsNotRun);
     const artifact = report ? persistEvidence(evidenceDir, attempt_id, report, fsImpl, sensitiveEnvironmentValues(env)) : null;
     if (!executed) {
       return {
@@ -342,9 +345,22 @@ export async function runReviewEvidence({
         report,
       };
     }
+    if (testsNotRun) {
+      return {
+        ok: true,
+        executed: true,
+        tests_run: false,
+        passed: null,
+        reason_code: "REVIEW_TESTS_NOT_RUN",
+        evidence_link: artifact.link,
+        report,
+        isolation_wrapper: modelWrapper,
+      };
+    }
     return {
       ok: true,
       executed: true,
+      tests_run: true,
       passed: report.tests.exit_code === 0,
       reason_code: report.tests.exit_code === 0 ? "REVIEW_TESTS_PASSED" : "REVIEW_TESTS_FAILED",
       evidence_link: artifact.link,
@@ -366,6 +382,15 @@ export async function runReviewEvidence({
       try { fsImpl.rmSync(siblingProbeDir, { recursive: true, force: true }); } catch { /* probe cleanup never masks the outcome */ }
     }
   }
+}
+
+// The line both reviewer prompts carry about the confined run. A whole-tree
+// card's run proves confinement and executes no tests, so its reviewer is told
+// where the tests do run instead of reading "FAIL" into a run that never tried.
+export const WHOLE_TREE_TESTS_NOTE = "NOT RUN. This is a whole-tree card: its tests only run after a build, which the confined runner does not do. CI runs the build, npm test and npm run test:db on the card's pull request, and the card cannot merge until they pass. Judge every acceptance item by reading the code and its tests, and do not block on this run.";
+export function confinedTestResultLine(reviewEvidence) {
+  if (reviewEvidence?.tests_run === false) return `Confined test result: ${WHOLE_TREE_TESTS_NOTE}`;
+  return `Confined test result: ${reviewEvidence?.passed ? "PASS" : "FAIL"}`;
 }
 
 export function sensitiveEnvironmentValues(env = {}) {

@@ -58,8 +58,20 @@ export function fixtureReviewScope(issueId) {
 
 // The node tests a fixture lane's reviewer runs: the test files of that lane's
 // own declared scope, so each lane's review runs its own tests (SHU-71).
+//
+// A whole-tree card runs none: its tests are TypeScript that only run after a
+// build, which the confined runner does not do, and CI runs the build, the
+// tests and the database tests on the card's pull request before it can merge.
+// The empty list is explicit so the reviewer never falls back to the host's
+// fixture list, which named files absent from every whole-tree head and turned
+// each confined run into a failure about a missing file. null means "the lane
+// declares no tests of its own", which keeps the host list for those lanes.
 export function fixtureReviewTests(issueId) {
-  return laneContract(issueId)?.revision_paths.filter((file) => /\.test\.(?:m?js|cjs)$/.test(file)) ?? null;
+  const contract = laneContract(issueId);
+  if (!contract) return null;
+  if (contract.workspace_mode === "repo") return [];
+  const tests = contract.revision_paths.filter((file) => /\.test\.(?:m?js|cjs)$/.test(file));
+  return tests.length ? tests : null;
 }
 
 // A fixture card's acceptance check. Its reviewer holds the lane to it whatever

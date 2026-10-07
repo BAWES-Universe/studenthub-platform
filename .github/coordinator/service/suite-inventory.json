@@ -2052,6 +2052,7 @@
     "the builder is launched THROUGH the configured privilege-drop wrapper",
     "with no wrapper configured the builder is launched directly",
     "a broker-enabled launch with NO wrapper HOLDs before the builder is spawned",
+    "CALLBACK_DEFECT_NAMED: a rejected writer callback names the rule it broke and keeps what it said",
     "launch intent is durable before the adapter boundary throws",
     "repeated run over one persistent store NEVER double-reserves or double-dispatches",
     "active receipt on a card that left the pickable set still consumes max_dispatch",
@@ -3886,6 +3887,7 @@
     "SHU71_WRITER_LANE_SAME_FAMILY_REFUSED: an activation naming a writer and reviewer of one family launches nothing",
     "SHU-71 Codex review of a failing confined run: the reviewer still launches, told FAIL, and its BLOCK carries findings",
     "SHU-71: a failing confined run still launches the Claude reviewer, told FAIL, and its BLOCK carries findings",
+    "WHOLE_TREE_REVIEW_TESTS: a whole-tree card's confined run proves confinement, runs no tests, and the reviewer is told why",
     "SHU71_REVIEWER_LAUNCHABLE: an activation names only a reviewer lane the supervisor can start",
     "SHU71_CLAUDE_WRITER_GATED: a Claude writer carries the writer contract; the Claude reviewer does not",
     "SHU71_CLAUDE_WRITER_GATED_DISPATCH: an unwired host refuses the Claude build before reservation",
@@ -18029,6 +18031,10 @@
       ]
     },
     {
+      "name": "CALLBACK_DEFECT_NAMED: a rejected writer callback names the rule it broke and keeps what it said",
+      "capabilities": []
+    },
+    {
       "name": "launch intent is durable before the adapter boundary throws",
       "capabilities": []
     },
@@ -29584,6 +29590,10 @@
           "name": "linux_proc"
         }
       ]
+    },
+    {
+      "name": "WHOLE_TREE_REVIEW_TESTS: a whole-tree card's confined run proves confinement, runs no tests, and the reviewer is told why",
+      "capabilities": []
     },
     {
       "name": "SHU71_REVIEWER_LAUNCHABLE: an activation names only a reviewer lane the supervisor can start",
