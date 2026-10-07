@@ -41,6 +41,9 @@ export function createEpisodeHarness({
   initialBranchHead = SHA_INPUT,
   configOverrides = {},
   extraNodes = [],
+  // SHU-298: answer the settle query and state update. Off by default so the
+  // SHU-226/SHU-260 suites keep observing the card as filed.
+  settleSupport = false,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "shu225-harness-"));
   const node = {
@@ -64,6 +67,12 @@ export function createEpisodeHarness({
   const repairRelations = new Map();
   const entityComments = new Map();
   const incidentCreatePlan = [];
+  const summaryIssueId = "22222222-2222-4222-8222-222222220071";
+  const settleStates = [
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Triage", type: "triage" },
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", name: "Backlog", type: "backlog" },
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", name: "Done", type: "completed" },
+  ];
   const triggers = { "codex-cli": 0, "claude-code": 0, "hermes-pool": 0 };
   const polls = new Map();
   const launched = [];
@@ -83,6 +92,23 @@ export function createEpisodeHarness({
         .filter((relation) => relation.issueId === issue.id)
         .map(() => ({ type: "related", relatedIssue: { id: nodeId, identifier: issueId } }));
       return respond({ issue: { ...issue, relations: { nodes: relations } } });
+    }
+    if (settleSupport && query.includes("CoordinatorIncidentSettleState")) {
+      const issue = incidentIssues.get(variables.id);
+      const state = settleStates.find((entry) => entry.id === variables.input?.stateId);
+      if (!issue || !state) return respond({ issueUpdate: { success: false, issue: null } });
+      issue.state = { ...state };
+      return respond({ issueUpdate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
+    }
+    if (settleSupport && query.includes("CoordinatorIncidentSettle")) {
+      const incident = incidentIssues.get(variables.incidentId) ?? null;
+      return respond({
+        incident,
+        summary: variables.summaryId === "SHU-71"
+          ? { id: summaryIssueId, identifier: "SHU-71", comments: { nodes: entityComments.get(summaryIssueId) ?? [] } }
+          : null,
+        teams: { nodes: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", key: "SHU", states: { nodes: settleStates } }] },
+      });
     }
     if (query.includes("CoordinatorIncidentTriage")) {
       const incident = incidentIssues.get(variables.incidentId) ?? null;
@@ -174,7 +200,8 @@ export function createEpisodeHarness({
     }
     if (query.includes("commentCreate")) {
       const isFixture = nodes.some((n) => n.id === variables.issueId);
-      const isEntity = incidentIssues.has(variables.issueId) || repairIssues.has(variables.issueId);
+      const isEntity = incidentIssues.has(variables.issueId) || repairIssues.has(variables.issueId)
+        || (settleSupport && variables.issueId === summaryIssueId);
       if (!isFixture && !isEntity) throw new Error(`non-UUID comment write (${variables.issueId})`);
       const body = String(variables.body ?? "");
       if (isEntity) {
@@ -313,6 +340,7 @@ export function createEpisodeHarness({
     repairIssues,
     repairRelations,
     entityComments,
+    summaryIssueId,
     triggers,
     launched,
     adapters,

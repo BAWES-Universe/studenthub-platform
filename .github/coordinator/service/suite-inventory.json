@@ -2489,6 +2489,15 @@
     "SHU-226 M8: restart keeps the same event identity",
     "SHU-226 M10: an unproven episode never writes",
     "SHU-226 A11/A12: the eight-attempt payload is complete and explicitly below the Linear bound",
+    "SHU-298 S1: a writer that reported FAILED is builder_failed, not an unknown breaker",
+    "SHU-298 S2: builder_failed needs a fresh activation and never self-repairs",
+    "SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the card",
+    "SHU-298 S4: a real card's stop leaves Triage for Backlog and puts one line on SHU-71",
+    "SHU-298 S5: a fixture's stop is closed and posts nothing on SHU-71",
+    "SHU-298 S6: settling waits for triage, leaves a person's choice alone, and never touches another card",
+    "SHU-298 S7: a lost state update is retried on the next tick",
+    "SHU-298 S8: the summary line carries only closed vocabulary",
+    "SHU-298 S9: end to end, a fixture stop is filed, triaged, closed, and still triaged on the next tick",
     "SHU-226 mutation M1 bypass the existing deterministic identity guard",
     "SHU-226 mutation M2 report a generic refused activation",
     "SHU-226 mutation M3 ignore disabled reporting authority",
@@ -20384,6 +20393,42 @@
     },
     {
       "name": "SHU-226 A11/A12: the eight-attempt payload is complete and explicitly below the Linear bound",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S1: a writer that reported FAILED is builder_failed, not an unknown breaker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S2: builder_failed needs a fresh activation and never self-repairs",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S4: a real card's stop leaves Triage for Backlog and puts one line on SHU-71",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S5: a fixture's stop is closed and posts nothing on SHU-71",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S6: settling waits for triage, leaves a person's choice alone, and never touches another card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S7: a lost state update is retried on the next tick",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S8: the summary line carries only closed vocabulary",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S9: end to end, a fixture stop is filed, triaged, closed, and still triaged on the next tick",
       "capabilities": []
     },
     {

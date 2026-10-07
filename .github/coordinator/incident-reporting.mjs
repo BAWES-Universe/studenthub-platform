@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { adapterNameForLane, LANE_NAMES } from "./launch-vocabulary.mjs";
+import { adapterNameForLane, isWriterRole, LANE_NAMES, roleForReceipt } from "./launch-vocabulary.mjs";
+import { isFixtureIssue } from "./workspace-scope.mjs";
 
 export const INCIDENT_VERSION = "1.0.0";
 export const INCIDENT_TEAM_KEY = "SHU";
@@ -28,6 +29,7 @@ export const INCIDENT_REASON = Object.freeze({
   UNREADABLE_HEAD: "unreadable_head",
   ADAPTER_PAUSED: "adapter_paused",
   EXPIRED: "activation_expired",
+  BUILDER_FAILED: "builder_failed",
   UNKNOWN: "unknown_breaker",
 });
 
@@ -39,6 +41,7 @@ const REASON_EXPLANATIONS = Object.freeze({
   [INCIDENT_REASON.UNREADABLE_HEAD]: "The authoritative branch head could not be verified.",
   [INCIDENT_REASON.ADAPTER_PAUSED]: "The episode's worker adapter entered its durable paused state.",
   [INCIDENT_REASON.EXPIRED]: "A previously accepted episode expired while it was still in progress.",
+  [INCIDENT_REASON.BUILDER_FAILED]: "The writer reported FAILED: it could not finish the card's brief. A retry is a fresh activation.",
   [INCIDENT_REASON.UNKNOWN]: "The episode ended on an unclassified fail-closed breaker; inspect the bound attempt.",
 });
 
@@ -185,11 +188,18 @@ export function deriveIncidentEvent({ activation, receipts = [], config = {}, ep
   }
   if (!reasonCode && activation.reporting_exception === "expired") reasonCode = INCIDENT_REASON.EXPIRED;
   if (!reasonCode) return null;
+  // SHU-298: a writer that reported FAILED is a known cause, not an unknown
+  // breaker. Only the latest attempt decides, so an older FAILED never relabels
+  // a later stop.
+  if (reasonCode === INCIDENT_REASON.UNKNOWN && latest?.verdict_stage === "FAILED" && isWriterRole(roleForReceipt(latest))) {
+    reasonCode = INCIDENT_REASON.BUILDER_FAILED;
+  }
   const identity = incidentIdentity(activation.activation_id, reasonCode);
   return identity ? {
     ...identity,
     activation_id: activation.activation_id,
     issue_id: activation.target_issue_id,
+    fixture: isFixtureIssue(activation.target_issue_id),
     coordinator_revision: SHA_RE.test(activation.coordinator_revision ?? "") ? activation.coordinator_revision : null,
     reason_code: reasonCode,
     explanation: REASON_EXPLANATIONS[reasonCode],
@@ -233,7 +243,7 @@ export function renderIncidentDescription(event, config = {}) {
     `- Activation: \`${event.activation_id}\``,
     `- Coordinator revision: \`${event.coordinator_revision ?? "unavailable"}\``,
     `- Reason code: \`${event.reason_code}\``,
-    `- Fixture: [${event.issue_id}](${fixtureUrl.toString()})`,
+    `- ${event.fixture ? "Fixture" : "Card"}: [${event.issue_id}](${fixtureUrl.toString()})`,
     `- Budgets: \`max_revise=${maxRevise}\`, \`max_failed_attempts=${maxFailed}\``,
     "",
     "### Episode attempts",
@@ -241,6 +251,7 @@ export function renderIncidentDescription(event, config = {}) {
     ...attempts.map((attempt) => `- \`${attempt.attempt_id}\` — lane \`${attempt.lane}\`, head \`${attempt.target_sha}\`${attempt.result_sha ? ` → \`${attempt.result_sha}\`` : ""}, stage \`${attempt.stage}\`, verdict \`${attempt.verdict ?? "none"}\`, at \`${attempt.at}\``),
     "",
     "Reporting only. The coordinator did not repair, re-arm, launch, clear a pause, or edit its activation.",
+    ...(event.fixture ? ["", "This is a rehearsal fixture's stop, so the coordinator closes it itself once it is filed. Nothing needs a person."] : []),
   ];
   const body = lines.join("\n");
   return Buffer.byteLength(body, "utf8") <= INCIDENT_MAX_BODY_BYTES ? body : null;
