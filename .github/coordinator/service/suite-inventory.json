@@ -3971,6 +3971,7 @@
     "SHU-296 R9: npm runs only for a repo writer whose bound head has a lockfile; scoped writers and reviewers never install",
     "SHU-296 R10: run keeps its 60s default and takes a per-call timeout",
     "SHU-296 R11: writer adapters give a repo writer its exact paths",
+    "SHU-296 R12: a gitignored file at an allowed path is published, an absent allowed path is skipped, and other ignored files stay out",
     "SHU-296 mutation: M1 repo-mode path refusal removed",
     "SHU-296 mutation: M2 receipt-level repo path refusal skipped",
     "SHU-296 mutation: M3 contract-level repo path refusal skipped",
@@ -3981,7 +3982,8 @@
     "SHU-296 mutation: M8 every writer installs",
     "SHU-296 mutation: M9 install keeps the default timeout",
     "SHU-296 mutation: M10 install failure loses its fixed code",
-    "SHU-296 mutation: M11 npm inherits the coordinator environment"
+    "SHU-296 mutation: M11 npm inherits the coordinator environment",
+    "SHU-296 mutation: M12 ignore rules drop an allowed path"
   ],
   "requirements": [
     {
@@ -30177,6 +30179,20 @@
       ]
     },
     {
+      "name": "SHU-296 R12: a gitignored file at an allowed path is published, an absent allowed path is skipped, and other ignored files stay out",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
       "name": "SHU-296 mutation: M1 repo-mode path refusal removed",
       "capabilities": [
         {
@@ -30318,6 +30334,20 @@
     },
     {
       "name": "SHU-296 mutation: M11 npm inherits the coordinator environment",
+      "capabilities": [
+        {
+          "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "SHU-296 mutation: M12 ignore rules drop an allowed path",
       "capabilities": [
         {
           "name": "git"

@@ -19,6 +19,7 @@ const cases = [
   ["M9 install keeps the default timeout", "attempt-workspace.mjs", "{ runEnv, timeout: DEPENDENCY_INSTALL_TIMEOUT_MS }", "{ runEnv }", "SHU-296 R7"],
   ["M10 install failure loses its fixed code", "attempt-workspace.mjs", '{ workspaceCode: "DEPENDENCY_INSTALL_FAILED" });', "{});", "SHU-296 R8"],
   ["M11 npm inherits the coordinator environment", "attempt-workspace.mjs", "const runEnv = { ...workerEnv, npm_config_cache", "const runEnv = { ...process.env, ...workerEnv, npm_config_cache", "SHU-296 R7"],
+  ["M12 ignore rules drop an allowed path", "workspace-result.mjs", '...(workspace_scope === "repo" ? scope.paths : [])', "", "SHU-296 R12"],
 ];
 
 for (const [name, file, from, to, pattern] of cases) test(`SHU-296 mutation: ${name}`, () => {
