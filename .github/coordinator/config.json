@@ -11,7 +11,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-300"
+      "SHU-301"
     ]
   },
   "adapter_pause_map": {},
@@ -210,6 +210,31 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/organization-profile-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-301",
+      "authorization_ref": "SHU-301",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "sixth real card, a whole-tree card: the document half of slice O2 (logo and commercial licence as private documents); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/private-documents/src/index.ts",
+        "apps/gateway/src/organization-documents-http.ts",
+        "apps/gateway/src/organization-documents-runtime.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/test/organization-documents-http.test.ts",
+        "apps/gateway/test/organization-documents-mutations.mjs",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/private-documents/src/index.ts",
+        "apps/gateway/src/organization-documents-http.ts",
+        "apps/gateway/src/organization-documents-runtime.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/test/organization-documents-http.test.ts",
+        "apps/gateway/test/organization-documents-mutations.mjs",
         "package.json"
       ]
     }
