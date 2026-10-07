@@ -144,6 +144,7 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Workspace authority: ${workspace_scope} (${scope_phase}).`,
     `Local checkout head: ${scoped_base_sha ?? target_sha}. The authoritative full target remains ${target_sha}.`,
     ...(workspace_scope === "scoped" ? [`You may create, modify, or delete only these exact paths: ${allowed_paths.join(", ")}. Files outside this set are deliberately unavailable and the host broker refuses any outside result.`] : []),
+    ...(workspace_scope === "repo" ? [`You may create, modify, or delete only these exact paths: ${allowed_paths.join(", ")}. The rest of the repository is checked out, with its dependencies installed, so you can build and run tests, but the host broker refuses any result that changes a file outside this set. Gitignored output such as node_modules/ and dist/ is never part of the result.`] : []),
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
     "Implement the change and run the relevant tests. Leave the tested changes in the workspace; do NOT git add, commit, modify .git, push, open a PR or touch the network. A separate host broker snapshots your files, creates the result commit and pushes it after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",

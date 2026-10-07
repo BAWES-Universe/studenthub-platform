@@ -7,6 +7,10 @@
 // the writer builds from and the reviewer holds the result to. All of it is
 // pinned in reviewed code. config.json may name a card lane but never widen
 // it (workspace-scope.mjs), and Linear text never reaches a prompt.
+//
+// A card may add workspace_mode: "repo". Its writer then gets the whole tree at
+// the bound head, with dependencies installed by the host, and may still change
+// only its paths. Without it the writer sees only its paths.
 
 export const SHU197_PATHS = Object.freeze([
   "deploy/coolify/preflight.mjs",

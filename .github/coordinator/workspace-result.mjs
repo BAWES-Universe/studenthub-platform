@@ -152,7 +152,10 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     }
     return r.stdout;
   };
-  if (workspace_scope === "scoped") {
+  // A "repo" writer sees the whole tree, but its result is held to its paths
+  // exactly like a scoped one: from the preserved full base, by full-tree diff.
+  const boundBase = workspace_scope === "scoped" || workspace_scope === "repo";
+  if (boundBase) {
     const baseBundle = baseBundlePath(env, attempt_id, { mustExist: true });
     // Fetch while the worker alternate is temporarily detached. Otherwise Git
     // may treat partial-clone objects reachable through that alternate as
@@ -180,19 +183,26 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     names = [...scope.paths].sort();
   } else {
     const others = (await git("ls-files", "--others", "--exclude-standard", "-z")).split("\0").filter(Boolean);
-    names = [...new Set([...tracked, ...others])].sort();
+    // A repo writer's own paths are authorized by name, so an ignore rule never
+    // drops one (the repository ignores *.sql, yet a card may add a migration).
+    names = [...new Set([...tracked, ...others, ...(workspace_scope === "repo" ? scope.paths : [])])].sort();
   }
   if (names.length > 20000) throw new Error("workspace snapshot exceeds file limit");
   // Scoped snapshots start from the complete bound base tree, then overlay only
   // authorized paths. Hidden sparse paths therefore survive byte-for-byte;
-  // absence is never misread as mass deletion.
-  await git("read-tree", workspace_scope === "scoped" ? target_sha : "--empty");
+  // absence is never misread as mass deletion. A repo snapshot starts there too
+  // but lists names like a full one (tracked plus non-ignored untracked, plus
+  // its own paths), so gitignored output such as node_modules/ and dist/ is
+  // never published.
+  await git("read-tree", boundBase ? target_sha : "--empty");
   let total = 0;
   for (const name of names) {
     const file = readWorkspaceFile(worktree, name);
     if (!file) {
+      // An allowed path the repo writer never created is simply absent.
+      if (!tracked.includes(name) && workspace_scope === "repo" && scope.paths.includes(name)) continue;
       if (!tracked.includes(name)) throw new Error("untracked file disappeared during snapshot");
-      if (workspace_scope === "scoped") await git("update-index", "--remove", "--", name);
+      if (boundBase) await git("update-index", "--remove", "--", name);
       continue;
     }
     total += file.data.length;
@@ -203,7 +213,7 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     await git("update-index", "--add", "--cacheinfo", file.mode, sha, name);
   }
   const tree = (await git("write-tree")).trim();
-  if (workspace_scope === "scoped") {
+  if (boundBase) {
     const fullDiff = validateScopedResultDiff(await git("diff", "--name-status", "-z", "-M", target_sha, tree), scope.paths);
     if (!fullDiff.ok) {
       throw Object.assign(new Error(`RESULT_SCOPE_REFUSED: ${fullDiff.reason}`), { workspaceCode: "RESULT_SCOPE_REFUSED" });

@@ -2,10 +2,19 @@ import { resolveReceiptRoleAuthority, roleForLane } from "./launch-vocabulary.mj
 import path from "node:path";
 import { cardContract, CARD_CONTRACTS } from "./card-contracts.mjs";
 
-export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full"]);
+export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full", "repo"]);
 export const SCOPE_PHASES = Object.freeze(["initial", "revision", "review"]);
 export const WORKSPACE_SCOPE_FIELDS = Object.freeze(["workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha"]);
 const SHA = /^[0-9a-f]{40}$/;
+
+// A "repo" writer holds the whole tree at target_sha, with dependencies the
+// host installed from the bound lockfile, as the lane uid, before the writer
+// starts (attempt-workspace.mjs). The lockfile stays the base's, so its writer
+// may never author the lockfile, npm's config or node_modules/, nor the
+// workflows and coordinator in .github/. package.json stays writable because
+// its scripts list the test files a card adds; a dependency change there no
+// longer matches the lockfile, so npm ci in CI refuses it.
+export const REPO_MODE_REFUSED_PATHS = Object.freeze(["package-lock.json", ".npmrc", "node_modules", ".github"]);
 
 export const SHU140_INITIAL_BUILD_PATHS = Object.freeze([
   "tools/fixture/scan-vacuous.mjs",
@@ -33,6 +42,8 @@ const FIXTURE_CONTRACTS = Object.freeze({
 // no seeded defect (card-contracts.mjs). An id is never both.
 for (const id of Object.keys(CARD_CONTRACTS)) {
   if (Object.hasOwn(FIXTURE_CONTRACTS, id)) throw new Error(`${id} cannot be both a fixture and a card lane`);
+  const mode = validateCardContractMode(CARD_CONTRACTS[id]);
+  if (!mode.ok) throw new Error(`${id}: ${mode.reason}`);
 }
 function laneContract(issueId) {
   if (typeof issueId !== "string") return null;
@@ -81,10 +92,40 @@ export function resolveFixtureLane(config = {}, issueId) {
   return lanes.find((lane) => lane.id === issueId) ?? null;
 }
 
+// Repo-mode paths never reach what the host's dependency install owns.
+export function validateRepoModePaths(paths, { name = "allowed_paths" } = {}) {
+  const refused = paths.find((entry) => REPO_MODE_REFUSED_PATHS.some((owned) => entry === owned || entry.startsWith(`${owned}/`)));
+  if (refused !== undefined) return { ok: false, reason: `repo-mode ${name} may not include ${refused}` };
+  return { ok: true, paths: [...paths] };
+}
+
+// A card opts into a whole-tree writer with workspace_mode "repo"; any other
+// stated mode is refused, and an unstated one keeps the scoped writer.
+export function validateCardContractMode(contract = {}) {
+  if (!Object.hasOwn(contract, "workspace_mode")) return { ok: true, workspace_scope: "scoped" };
+  if (contract.workspace_mode !== "repo") return { ok: false, reason: "card workspace_mode must be \"repo\" when stated" };
+  for (const key of ["initial_build_paths", "revision_paths"]) {
+    const paths = validateAllowedPaths(contract[key], { name: key });
+    if (!paths.ok) return paths;
+    const owned = validateRepoModePaths(paths.paths, { name: key });
+    if (!owned.ok) return owned;
+  }
+  return { ok: true, workspace_scope: "repo" };
+}
+
 // Check issue binding again on durable receipts, including recovery, before I/O.
-export function validateFixtureAttemptScope(receipt = {}) {
-  const contract = laneContract(receipt.issue_id);
-  if (!contract || receipt.workspace_scope !== "scoped") return { ok: true };
+// `contract` is a test seam; production callers never pass it.
+// A card writer always holds its contract's mode: only a reviewer, or a legacy
+// fixture lane without scope config, may hold the full tree.
+export function validateFixtureAttemptScope(receipt = {}, contract = laneContract(receipt.issue_id)) {
+  if (contract && !Object.hasOwn(contract, "seeded_defect_path") && receipt.workspace_scope === "full" && receipt.scope_phase !== "review") {
+    return { ok: false, reason: `LANE_MISMATCH: ${receipt.issue_id} writer may not hold a full workspace` };
+  }
+  if (!contract || !["scoped", "repo"].includes(receipt.workspace_scope)) return { ok: true };
+  const mode = validateCardContractMode(contract);
+  if (!mode.ok || mode.workspace_scope !== receipt.workspace_scope) {
+    return { ok: false, reason: `LANE_MISMATCH: ${receipt.issue_id} ${receipt.workspace_scope} workspace differs from its contract's mode` };
+  }
   const expected = receipt.scope_phase === "revision" ? contract.revision_paths : contract.initial_build_paths;
   if (JSON.stringify(receipt.allowed_paths) !== JSON.stringify(expected)) {
     return { ok: false, reason: `LANE_MISMATCH: ${receipt.issue_id} ${receipt.scope_phase} paths differ from its fixture contract` };
@@ -114,8 +155,7 @@ export function validateAllowedPaths(value, { name = "allowed_paths", allowEmpty
   return { ok: true, paths: [...value] };
 }
 
-export function validateFixtureScopePolicy(fixture = {}) {
-  const contract = laneContract(fixture.id);
+export function validateFixtureScopePolicy(fixture = {}, contract = laneContract(fixture.id)) {
   if (!contract) return { ok: false, reason: "unknown fixture scope issue id" };
   const initial = validateAllowedPaths(fixture.initial_build_paths, { name: "fixture_lane.initial_build_paths" });
   if (!initial.ok) return initial;
@@ -128,7 +168,13 @@ export function validateFixtureScopePolicy(fixture = {}) {
         JSON.stringify(revision.paths) !== JSON.stringify(contract.revision_paths)) {
       return { ok: false, reason: `card scope paths differ from the reviewed exact ${fixture.id} contract` };
     }
-    return { ok: true, initial_build_paths: initial.paths, revision_paths: revision.paths, seeded_defect_path: null };
+    // The mode is the contract's; config may restate it but never choose it.
+    const mode = validateCardContractMode(contract);
+    if (!mode.ok) return mode;
+    if (Object.hasOwn(fixture, "workspace_mode") && fixture.workspace_mode !== contract.workspace_mode) {
+      return { ok: false, reason: `card workspace_mode differs from the reviewed ${fixture.id} contract` };
+    }
+    return { ok: true, workspace_scope: mode.workspace_scope, initial_build_paths: initial.paths, revision_paths: revision.paths, seeded_defect_path: null };
   }
   if (fixture.seeded_defect_path !== contract.seeded_defect_path) {
     return { ok: false, reason: `fixture_lane.seeded_defect_path must pin the reviewed ${fixture.id} trap` };
@@ -143,7 +189,7 @@ export function validateFixtureScopePolicy(fixture = {}) {
       JSON.stringify(revision.paths) !== JSON.stringify(contract.revision_paths)) {
     return { ok: false, reason: `fixture scope paths differ from the reviewed exact ${fixture.id} contract` };
   }
-  return { ok: true, initial_build_paths: initial.paths, revision_paths: revision.paths, seeded_defect_path: fixture.seeded_defect_path };
+  return { ok: true, workspace_scope: "scoped", initial_build_paths: initial.paths, revision_paths: revision.paths, seeded_defect_path: fixture.seeded_defect_path };
 }
 
 export function validateWorkspaceScope({ workspace_scope, scope_phase, allowed_paths, scoped_base_sha = null } = {}, { requireScopedBase = false } = {}) {
@@ -156,6 +202,7 @@ export function validateWorkspaceScope({ workspace_scope, scope_phase, allowed_p
     return { ok: false, reason: "scoped workspace requires its deterministic scoped_base_sha" };
   }
   if (workspace_scope === "full" && scoped_base_sha !== null) return { ok: false, reason: "full workspace must not carry a scoped_base_sha" };
+  if (workspace_scope === "repo" && scoped_base_sha !== null) return { ok: false, reason: "repo workspace must not carry a scoped_base_sha" };
   if (scope_phase === "review") {
     if (workspace_scope !== "full" || !Array.isArray(allowed_paths) || allowed_paths.length !== 0) {
       return { ok: false, reason: "review workspace must be full with no allowed-path subset" };
@@ -166,7 +213,8 @@ export function validateWorkspaceScope({ workspace_scope, scope_phase, allowed_p
     if (!Array.isArray(allowed_paths) || allowed_paths.length !== 0) return { ok: false, reason: "full workspace must not carry allowed paths" };
     return { ok: true, paths: [] };
   }
-  return validateAllowedPaths(allowed_paths);
+  const paths = validateAllowedPaths(allowed_paths);
+  return paths.ok && workspace_scope === "repo" ? validateRepoModePaths(paths.paths) : paths;
 }
 
 export function normalizeReceiptWorkspaceScope(receipt = {}) {
@@ -174,12 +222,14 @@ export function normalizeReceiptWorkspaceScope(receipt = {}) {
   if (!authority.ok) return authority;
   const present = WORKSPACE_SCOPE_FIELDS.filter((field) => Object.hasOwn(receipt, field));
   if (present.length === 0) {
-    return { ok: true, scope: {
+    const scope = {
       workspace_scope: "full",
       scope_phase: authority.role === "review" ? "review" : "initial",
       allowed_paths: [],
       scoped_base_sha: null,
-    } };
+    };
+    const laneCheck = validateFixtureAttemptScope({ issue_id: receipt.issue_id, ...scope });
+    return laneCheck.ok ? { ok: true, scope } : laneCheck;
   }
   if (present.length !== WORKSPACE_SCOPE_FIELDS.length) {
     return { ok: false, reason: "workspace scope metadata is partially present" };
@@ -193,7 +243,7 @@ export function normalizeReceiptWorkspaceScope(receipt = {}) {
   return checked.ok ? { ok: true, scope: { ...candidate, allowed_paths: [...candidate.allowed_paths] } } : checked;
 }
 
-export function initialWorkspaceScope({ issueId, requestedWorker, role = roleForLane(requestedWorker), fixtureLane, allowedPaths = [], legacy = false } = {}) {
+export function initialWorkspaceScope({ issueId, requestedWorker, role = roleForLane(requestedWorker), fixtureLane, allowedPaths = [], legacy = false, contract } = {}) {
   if (!role || role !== roleForLane(requestedWorker) && role !== "revise") throw new Error("invalid initial workspace role");
   if (role === "review") return { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null };
   if (fixtureLane && fixtureLane.id !== issueId) throw new Error(`LANE_MISMATCH: fixture lane does not match ${issueId}`);
@@ -201,9 +251,9 @@ export function initialWorkspaceScope({ issueId, requestedWorker, role = roleFor
     if (!fixtureScopeConfigured(fixtureLane) && legacy) {
       return { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
     }
-    const policy = validateFixtureScopePolicy(fixtureLane);
+    const policy = validateFixtureScopePolicy(fixtureLane, contract);
     if (!policy.ok) throw new Error(policy.reason);
-    return { workspace_scope: "scoped", scope_phase: "initial", allowed_paths: policy.initial_build_paths, scoped_base_sha: null };
+    return { workspace_scope: policy.workspace_scope, scope_phase: "initial", allowed_paths: policy.initial_build_paths, scoped_base_sha: null };
   }
   if (legacy) return { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
   const paths = validateAllowedPaths(allowedPaths);
@@ -211,13 +261,13 @@ export function initialWorkspaceScope({ issueId, requestedWorker, role = roleFor
   return { workspace_scope: "scoped", scope_phase: "initial", allowed_paths: paths.paths, scoped_base_sha: null };
 }
 
-export function successorWorkspaceScope(role, fixtureLane) {
+export function successorWorkspaceScope(role, fixtureLane, contract) {
   if (role === "review") return { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null };
   if (role !== "revise") throw new Error(`unsupported successor scope role ${String(role)}`);
   if (!fixtureScopeConfigured(fixtureLane ?? {})) {
     return { workspace_scope: "full", scope_phase: "revision", allowed_paths: [], scoped_base_sha: null };
   }
-  const policy = validateFixtureScopePolicy(fixtureLane);
+  const policy = validateFixtureScopePolicy(fixtureLane, contract);
   if (!policy.ok) throw new Error(policy.reason);
-  return { workspace_scope: "scoped", scope_phase: "revision", allowed_paths: policy.revision_paths, scoped_base_sha: null };
+  return { workspace_scope: policy.workspace_scope, scope_phase: "revision", allowed_paths: policy.revision_paths, scoped_base_sha: null };
 }
