@@ -254,9 +254,9 @@ export const SHU300_PATHS = Object.freeze([
 
 const SHU300_ACCEPTANCE = [
   "(1) the Arabic and English name, the descriptions and the website are written only through preview, confirm and receipt on the existing safe-write contract, and runSafeWriteConformance runs over the profile write's own builder, so letting the website bypass preview makes that conformance test fail;",
-  "(2) only the organization's owner may write; a recruiter or any other grant gets not_found, never 403, and accepting it makes the recruiter-write-refused test fail;",
-  "(3) an owner can never edit another organization, and allowing it makes the cross-org test fail;",
-  "(4) the store's commit compares the previewed value inside the transaction and refuses with state_changed when it moved, and replacing that compare with an unconditional write makes the stale-confirm test fail;",
+  "(2) only the organization's owner may write; a recruiter or any other grant gets not_found, never 403; the owner decision is one function the Postgres store calls inside its commit transaction, and accepting a recruiter there makes the recruiter-write-refused test fail;",
+  "(3) an owner can never edit another organization; the same function decides it, and allowing it makes the cross-org test fail;",
+  "(4) the store's commit compares the previewed value inside the transaction through a function it calls there and refuses with state_changed when the value moved; making that compare always succeed makes the stale-confirm test fail; grants are read FOR SHARE under the organization lock, and a racing duplicate confirm returns token_already_used;",
   "(5) every write is audited in the same transaction as the change with hashed organization references (organizationAuditRef, never a raw id), migration 0150 is additive and its audit constraint still accepts every existing row and every operation 0147 and 0148 added;",
   "(6) packages/organizations/test/profile-writes-mutations.mjs applies mutations (1) to (4), each makes its named test fail, and the script itself passes on the unmutated code;",
   "(7) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
@@ -281,11 +281,19 @@ Pitfalls a previous attempt at this slice hit. Avoid each one:
 - HTTP: follow language-preference.ts for headers (x-content-type-options nosniff, referrer-policy no-referrer), body parsing and the try/catch around the handler, and have the HTTP test call the real handler.
 - The Postgres test must exercise the store against the database (test:db), not grep the SQL file.
 
+What this card's own first run got wrong. Its reviewer blocked it for these; fix each one:
+- Mutations must hit the code production runs. The owner check and the stale-state compare were helpers in profile-writes.ts that only the test's fake store called, while the Postgres store made its own decisions in SQL, so breaking the real checks left every test green and every mutation still "killed". Keep each decision in one exported function in packages/organizations/src/profile-writes.ts, give that function to PostgresOrganizationProfileStore through its constructor (login-runtime.ts wires it in; packages/db must not import packages/organizations, and dependencies stay unchanged), and have the store call it inside the commit transaction on the rows it read there. The store's grants query selects the caller's grant rows without filtering by role or organization, so the role and organization decision is the injected function's, not the SQL's. The mutations in (2) to (4) change those functions, and the unit tests drive them through the real profile write.
+- Revocation race: under the organization advisory lock, read the caller's grants with SELECT ... FOR SHARE, so a concurrent revocation either commits first or waits for this write.
+- Duplicate confirm: if two confirms of one token race, the unique index on the audit token raises 23505. Catch it inside the store and return token_already_used, never an error or a 503.
+- Migration 0150: add the same halves check that 0147 adds (auth_audit_safe_write_halves) for the new operation, so a value-present audit row without a token reference is refused.
+- Cover a successful commit in the Postgres test: assert its audit row exists with the hashed organization reference and the expected operation.
+- package.json: leave every existing script's text as it is. Append the new built test files at the END of the existing node --test lists in test and test:db, add the test:organization-profile:mutations script, and add " && npm run test:organization-profile:mutations" as its own step right after "npm run test:organizations:mutations" in test. Do not edit test:organizations:mutations itself, packages/organizations/test/organizations.test.ts or packages/organizations/test/mutations.mjs. Run npm test to the end before you return.
+
 Acceptance. Each item is pinned by a mutation in packages/organizations/test/profile-writes-mutations.mjs that makes a named test fail.
 (1) Let the website bypass preview: the runSafeWriteConformance test for the profile write fails.
-(2) Accept a recruiter or any other non-owner grant on write: the recruiter-write-refused test fails. A non-owner gets not_found, never 403.
-(3) Edit an organization other than the caller's own: the cross-org test fails.
-(4) Replace the in-transaction compare with an unconditional write: the stale-confirm test fails.
+(2) Accept a recruiter or any other non-owner grant on write, in the owner function the store calls: the recruiter-write-refused test fails. A non-owner gets not_found, never 403.
+(3) Accept another organization's grant, in that same function: the cross-org test fails.
+(4) Make the state compare the store calls always succeed: the stale-confirm test fails.
 Use synthetic fixtures only.
 
 Your paths, and what each may hold:

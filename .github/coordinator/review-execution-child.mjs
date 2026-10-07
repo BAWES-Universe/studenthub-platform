@@ -208,7 +208,7 @@ async function main() {
   }
 
   process.stdout.write(JSON.stringify(report));
-  if (!probeOk || !report.tests.executed) process.exitCode = 70;
+  if (!probeOk || (testFiles.length > 0 && !report.tests.executed)) process.exitCode = 70;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

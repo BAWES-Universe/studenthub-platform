@@ -51,8 +51,8 @@ const CASES = [
   {
     name: "M6 restore a posture where execution is never evidenced",
     file: "review-execution.mjs",
-    from: "    const executed = probeOk && report?.tests?.executed === true;",
-    to: "    const executed = false && probeOk && report?.tests?.executed === true;",
+    from: "    const executed = probeOk && (report?.tests?.executed === true || testsNotRun);",
+    to: "    const executed = false && probeOk && (report?.tests?.executed === true || testsNotRun);",
     pattern: "SHU-232 B6",
   },
   {
