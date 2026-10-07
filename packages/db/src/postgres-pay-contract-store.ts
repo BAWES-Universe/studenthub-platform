@@ -119,7 +119,7 @@ function transactionFor(client: PoolClient): PayContractTransaction {
   return {
     async lockPair(candidateId: string, storeId: string) {
       // Concurrent creates for one pair queue here, so the overlap check always sees the other's row.
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`pay-contracts:${candidateId}:${storeId}`]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [`pay-contracts:${candidateId}:${storeId}`]);
       const { rows } = await client.query<ContractRow>(
         `SELECT ${COLUMNS} FROM pay_contracts WHERE candidate_principal_id = $1 AND store_id = $2 ORDER BY pay_contracts.start_date DESC, id`,
         [candidateId, storeId],
