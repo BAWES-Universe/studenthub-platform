@@ -503,9 +503,12 @@ test("SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the c
   assert.doesNotMatch(cardBody, /closes it itself/);
 });
 
+const S_COORDINATOR = "55555555-5555-4555-8555-555555550001";
+const S_PERSON = "55555555-5555-4555-8555-555555550002";
+
 // A fake Linear for the sSettle step: one incident, the SHU-71 summary card,
 // and the team's states.
-function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [], personMovesTo = null, historyFails = false, restoreFailures = 0 } = {}) {
+function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [], personMovesTo = null, personMovesOnRestore = [], historyFails = false, restoreFailures = 0, history = [] } = {}) {
   const calls = [];
   const store = {
     incident: {
@@ -523,14 +526,17 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     olderPages: olderPages.map((page) => [...page]),
     // A person's move that lands between the settle read and its write.
     personMovesTo,
+    // A person's moves that land between a put-back's history read and its write.
+    personMovesOnRestore: [...personMovesOnRestore],
     historyFails,
     restoreFailures,
-    history: [],
+    history: [...history],
   };
-  const move = (next) => {
-    store.history.push({ fromState: { id: store.incident.state.id, name: store.incident.state.name }, toState: { id: next.id, name: next.name } });
+  const move = (next, actor = S_PERSON) => {
+    store.history.push({ actor: { id: actor }, fromState: { id: store.incident.state.id, name: store.incident.state.name }, toState: { id: next.id, name: next.name } });
     store.incident.state = { ...next };
   };
+  store.move = move;
   const pageInfo = (index) => (index < store.olderPages.length ? { hasPreviousPage: true, startCursor: `cursor-${index}` } : { hasPreviousPage: false, startCursor: null });
   const states = [
     { id: "33333333-3333-4333-8333-333333333301", name: "Triage", type: "triage" },
@@ -551,8 +557,9 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
         store.restoreFailures -= 1;
         return { issueUpdate: { success: false } };
       }
-      const next = [...states, ...store.history.map((entry) => entry.fromState)].find((entry) => entry.id === variables.input.stateId);
-      move(next);
+      if (isRestore && store.personMovesOnRestore.length) move(store.personMovesOnRestore.shift());
+      const next = [...states, ...store.history.flatMap((entry) => [entry.fromState, entry.toState])].find((entry) => entry.id === variables.input.stateId);
+      move(next, S_COORDINATOR);
       return { issueUpdate: { success: true } };
     }
     if (query.includes("CoordinatorIncidentSettle")) {
@@ -565,7 +572,12 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     if (query.includes("CoordinatorStopHistory")) {
       if (store.historyFails) throw new Error("history unreadable");
       assert.equal(variables.id, event.issue_uuid);
-      return { issue: { history: { nodes: store.history.map((entry) => ({ ...entry })) } } };
+      // Newest first, as Linear lists it; settling sorts by createdAt itself.
+      const nodes = store.history.map((entry, index) => ({ ...entry, createdAt: new Date(Date.UTC(2026, 9, 8, 12, 0, index)).toISOString() })).reverse();
+      return {
+        viewer: { id: S_COORDINATOR },
+        issue: { state: { id: store.incident.state.id, name: store.incident.state.name }, history: { nodes, pageInfo: { hasNextPage: false, hasPreviousPage: false } } },
+      };
     }
     if (query.includes("CoordinatorStopSummaryPage")) {
       assert.equal(variables.summaryId, STOP_SUMMARY_ISSUE);
@@ -748,10 +760,43 @@ test("SHU-298 S12: a person's move that lands between the read and the write is 
 
   const later = sSettleStore(event);
   assert.equal((await sSettle(event, later)).status, "SETTLED");
-  for (const next of [inProgress, { id: "33333333-3333-4333-8333-333333333302", name: "Backlog", type: "backlog" }]) {
-    later.store.history.push({ fromState: { id: later.store.incident.state.id, name: later.store.incident.state.name }, toState: { id: next.id, name: next.name } });
-    later.store.incident.state = { ...next };
-  }
+  for (const next of [inProgress, { id: "33333333-3333-4333-8333-333333333302", name: "Backlog", type: "backlog" }]) later.store.move(next);
   assert.equal((await sSettle(event, later)).status, "SETTLED", "a person's own later move back to Backlog is theirs, never undone");
   assert.equal(later.store.incident.state.name, "Backlog");
+});
+
+test("SHU-298 S13: a person's move that lands during a put-back is kept, on this tick or a later one", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const inProgress = { id: "33333333-3333-4333-8333-333333333304", name: "In Progress", type: "started" };
+  const todo = { id: "33333333-3333-4333-8333-333333333305", name: "Todo", type: "unstarted" };
+  const backlog = { id: "33333333-3333-4333-8333-333333333302", name: "Backlog" };
+  const triage = { id: "s-current", name: "Triage" };
+
+  const twice = sSettleStore(event, { personMovesTo: inProgress, personMovesOnRestore: [todo] });
+  const result = await sSettle(event, twice);
+  assert.equal(result.status, "RESTORED");
+  assert.equal(result.state, "Todo", "the person's newer choice wins over the one being put back");
+  assert.equal(twice.store.incident.state.name, "Todo");
+  assert.equal((await sSettle(event, twice)).status, "PARTIAL", "a later tick leaves it alone");
+  assert.equal(twice.store.incident.state.name, "Todo");
+
+  // A put-back that overwrote a newer move and was not caught before the tick
+  // ended: the card sits outside Triage/Backlog/Done, and the next tick still
+  // finds it and puts the person's state back.
+  const step = (actor, from, to) => ({ actor: { id: actor }, fromState: { id: from.id, name: from.name }, toState: { id: to.id, name: to.name } });
+  const left = sSettleStore(event, {
+    state: "In Progress",
+    history: [step(S_PERSON, triage, inProgress), step(S_COORDINATOR, inProgress, backlog), step(S_PERSON, backlog, todo), step(S_COORDINATOR, todo, inProgress)],
+  });
+  left.store.incident.state = { ...inProgress };
+  const next = await sSettle(event, left);
+  assert.equal(next.status, "RESTORED");
+  assert.equal(left.store.incident.state.name, "Todo");
+
+  const review = { id: "33333333-3333-4333-8333-333333333306", name: "In Review", type: "started" };
+  const endless = sSettleStore(event, { personMovesTo: inProgress, personMovesOnRestore: [todo, review, inProgress] });
+  assert.equal((await sSettle(event, endless)).status, "UNVERIFIED", "a put-back still being raced is never reported as done");
+  assert.equal(endless.store.incident.state.name, "In Review", "the last put-back overwrote the person's latest move");
+  assert.equal((await sSettle(event, endless)).status, "RESTORED", "the next tick finishes it, though the card is outside Triage");
+  assert.equal(endless.store.incident.state.name, "In Progress", "and the person's latest move stands");
 });

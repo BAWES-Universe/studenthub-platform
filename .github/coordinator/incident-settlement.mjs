@@ -9,8 +9,9 @@
 // repairs, re-arms, relaunches, clears a pause or edits an activation: a retry
 // is still a fresh activation. A card a person already moved out of Triage is
 // left where they put it. Linear has no conditional update, so a person's move
-// can land between the read and the write; the card's history then shows the
-// write did not start from Triage, and settling puts the person's state back.
+// can land between a read and a write of ours; the card's history then shows a
+// change of ours after the person's latest move, and settling puts the
+// person's state back, on every tick, wherever the card sits.
 import { INCIDENT_STATE_NAME, INCIDENT_TEAM_KEY } from "./incident-reporting.mjs";
 
 export const SETTLE_CALL_TIMEOUT_MS = 1_500;
@@ -28,6 +29,11 @@ export const SETTLE_AFTER_TRIAGE = Object.freeze(["MISSING_AUTHORITY", "REPAIR_R
 // unread history could already hold it.
 export const SUMMARY_PAGE_SIZE = 250;
 export const SUMMARY_MAX_PAGES = 20;
+// The incident card's whole history is read in one page; a card with more
+// entries than this cannot be checked and stays UNVERIFIED.
+export const HISTORY_PAGE_SIZE = 250;
+// Put-backs per tick before the rest is left for the next tick.
+export const RESTORE_ROUNDS = 3;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ISSUE_RE = /^SHU-[0-9]+$/;
@@ -57,8 +63,13 @@ export const LINEAR_STOP_SUMMARY_PAGE_QUERY = `
 
 export const LINEAR_SETTLE_HISTORY_QUERY = `
   query CoordinatorStopHistory($id: String!) {
+    viewer { id }
     issue(id: $id) {
-      history(last: 10, orderBy: createdAt) { nodes { fromState { id name } toState { id name } } }
+      state { id name }
+      history(first: 250) {
+        nodes { createdAt actor { id } fromState { id name } toState { id name } }
+        pageInfo { hasNextPage hasPreviousPage }
+      }
     }
   }`;
 
@@ -100,37 +111,60 @@ async function summaryAlreadyPosted(comments, marker, call) {
   }
 }
 
-// Linear has no conditional update, so a person's move can land between the
-// settle read and its write. Their move then shows in the history as
-// Triage -> X, followed by our write X -> target. Whenever the card sits in the
-// target state (right after the write, and on every later tick, so a check that
-// could not finish is picked up again), that pattern is looked for and the
-// person's X is put back.
-// Returns the restored state's name, null when nothing was overwritten, or
-// false when the history could not be read or the restore did not apply
-// (reported as UNVERIFIED, and checked again on the next tick).
-async function restorePersonsMove(issueId, targetStateId, call) {
-  let nodes = null;
-  for (let tries = 0; tries < 2 && !Array.isArray(nodes); tries += 1) {
-    try {
-      nodes = (await call(LINEAR_SETTLE_HISTORY_QUERY, { id: issueId }))?.issue?.history?.nodes ?? null;
-    } catch { nodes = null; }
-  }
-  if (!Array.isArray(nodes)) return false;
-  const changes = nodes.filter((entry) => entry?.toState?.id && entry.fromState?.id !== entry.toState.id);
-  const last = changes.length - 1 - [...changes].reverse().findIndex((entry) => entry.toState.id === targetStateId);
-  if (last >= changes.length) return false;
-  const into = changes[last];
-  const prior = changes[last - 1];
-  const overwritten = into.fromState?.name !== INCIDENT_STATE_NAME
-    && typeof into.fromState?.id === "string" && into.fromState.id
-    && prior?.fromState?.name === INCIDENT_STATE_NAME && prior.toState.id === into.fromState.id;
-  if (!overwritten) return null;
+// Linear has no conditional update, so any write of ours (the settle move, or a
+// put-back) can land just after a person's move and overwrite it. The card's
+// whole state history, with who made each change, decides it: the person's
+// latest move wins. When a change of ours came after it and the card is not
+// where they put it, it goes back there, and the history is read again, so a
+// person's move that lands during the put-back is caught too. This runs on
+// every tick the incident is confirmed, wherever the card now sits, so nothing
+// depends on a check finishing within one tick.
+// Returns the state's name when the card was put back, null when no move of a
+// person's is overwritten, or false when the history could not be read in full
+// or a put-back did not apply (UNVERIFIED, checked again on the next tick).
+async function readStateHistory(issueId, call) {
   for (let tries = 0; tries < 2; tries += 1) {
-    try {
-      const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: issueId, input: { stateId: into.fromState.id } });
-      if (result?.issueUpdate?.success === true) return into.fromState.name ?? "unknown";
-    } catch { /* retried once, then left for the next tick */ }
+    let data = null;
+    try { data = await call(LINEAR_SETTLE_HISTORY_QUERY, { id: issueId }); } catch { continue; }
+    const viewerId = data?.viewer?.id;
+    const history = data?.issue?.history;
+    const current = data?.issue?.state;
+    if (typeof viewerId !== "string" || !viewerId || !Array.isArray(history?.nodes) || typeof current?.id !== "string") continue;
+    if (history.pageInfo?.hasNextPage !== false || history.pageInfo?.hasPreviousPage !== false) return null;
+    const changes = history.nodes.filter((entry) => entry?.toState?.id && entry.fromState?.id !== entry.toState.id);
+    if (changes.some((entry) => Number.isNaN(Date.parse(entry.createdAt)))) return null;
+    changes.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    return { viewerId, current, changes };
+  }
+  return null;
+}
+
+function overwrittenChoice({ viewerId, current, changes }) {
+  const ours = (entry) => entry.actor?.id === viewerId;
+  const person = changes.length - 1 - [...changes].reverse().findIndex((entry) => !ours(entry));
+  if (person >= changes.length) return null;
+  const wanted = changes[person].toState;
+  if (wanted.name === INCIDENT_STATE_NAME || current.id === wanted.id) return null;
+  return changes.slice(person + 1).some(ours) ? wanted : null;
+}
+
+async function keepPersonsChoice(issueId, call) {
+  let restored = null;
+  for (let round = 0; round <= RESTORE_ROUNDS; round += 1) {
+    const view = await readStateHistory(issueId, call);
+    if (!view) return false;
+    const wanted = overwrittenChoice(view);
+    if (!wanted) return restored;
+    if (round === RESTORE_ROUNDS) return false;
+    let applied = false;
+    for (let tries = 0; tries < 2 && !applied; tries += 1) {
+      try {
+        const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: issueId, input: { stateId: wanted.id } });
+        applied = result?.issueUpdate?.success === true;
+      } catch { /* retried once, then left for the next tick */ }
+    }
+    if (!applied) return false;
+    restored = wanted.name ?? "unknown";
   }
   return false;
 }
@@ -181,7 +215,6 @@ export async function settleCoordinatorIncident({
   let moved = incident.state?.name === target.name;
   let restored = null;
   let verified = true;
-  let writtenStateId = null;
   if (!moved && incident.state?.name === INCIDENT_STATE_NAME) {
     const teams = state?.teams?.nodes ?? [];
     const team = teams.length === 1 && teams[0]?.key === INCIDENT_TEAM_KEY ? teams[0] : null;
@@ -190,16 +223,12 @@ export async function settleCoordinatorIncident({
       try {
         const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: event.issue_uuid, input: { stateId: states[0].id } });
         moved = result?.issueUpdate?.success === true;
-        if (moved) writtenStateId = states[0].id;
       } catch { /* a lost response is re-checked on the next tick */ }
     }
   }
-  const targetStateId = writtenStateId ?? (moved ? incident.state?.id : null);
-  if (moved) {
-    const check = typeof targetStateId === "string" && targetStateId ? await restorePersonsMove(event.issue_uuid, targetStateId, call) : false;
-    if (check === false) verified = false;
-    else if (check !== null) { restored = check; moved = false; }
-  }
+  const check = await keepPersonsChoice(event.issue_uuid, call);
+  if (check === false) verified = false;
+  else if (check !== null) { restored = check; moved = false; }
 
   let summarized = event.fixture === true ? null : false;
   if (event.fixture !== true) {

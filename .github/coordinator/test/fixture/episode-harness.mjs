@@ -15,6 +15,9 @@ import { join } from "node:path";
 import { main, parseReceiptsFromComments } from "../../reconcile.mjs";
 import { withBatchedComments } from "./linear-board.mjs";
 
+// The coordinator's own Linear user, as the settle history check sees it.
+const SETTLE_VIEWER_ID = "55555555-5555-4555-8555-555555550001";
+
 // The head the WRITE binds to, and the head a revision moves the branch to.
 export const SHA_INPUT = "a".repeat(40);
 export const SHA_WRITE = "b".repeat(40);
@@ -97,13 +100,16 @@ export function createEpisodeHarness({
       const issue = incidentIssues.get(variables.id);
       const state = settleStates.find((entry) => entry.id === variables.input?.stateId);
       if (!issue || !state) return respond({ issueUpdate: { success: false, issue: null } });
-      issue.history = [...(issue.history ?? []), { fromState: { id: issue.state?.id ?? null, name: issue.state?.name ?? null }, toState: { id: state.id, name: state.name } }];
+      issue.history = [...(issue.history ?? []), { createdAt: new Date(Date.UTC(2026, 9, 8, 12, 0, (issue.history ?? []).length)).toISOString(), actor: { id: SETTLE_VIEWER_ID }, fromState: { id: issue.state?.id ?? null, name: issue.state?.name ?? null }, toState: { id: state.id, name: state.name } }];
       issue.state = { ...state };
       return respond({ issueUpdate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
     }
     if (settleSupport && query.includes("CoordinatorStopHistory")) {
       const issue = incidentIssues.get(variables.id) ?? null;
-      return respond({ issue: issue ? { history: { nodes: issue.history ?? [] } } : null });
+      return respond({
+        viewer: { id: SETTLE_VIEWER_ID },
+        issue: issue ? { state: issue.state, history: { nodes: issue.history ?? [], pageInfo: { hasNextPage: false, hasPreviousPage: false } } } : null,
+      });
     }
     if (settleSupport && query.includes("CoordinatorIncidentSettle")) {
       const incident = incidentIssues.get(variables.incidentId) ?? null;

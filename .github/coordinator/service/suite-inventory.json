@@ -2501,6 +2501,7 @@
     "SHU-298 S10: a write Linear answers with success false is not counted as done",
     "SHU-298 S11: the summary marker is looked for through SHU-71's whole history",
     "SHU-298 S12: a person's move that lands between the read and the write is put back",
+    "SHU-298 S13: a person's move that lands during a put-back is kept, on this tick or a later one",
     "SHU-226 mutation M1 bypass the existing deterministic identity guard",
     "SHU-226 mutation M2 report a generic refused activation",
     "SHU-226 mutation M3 ignore disabled reporting authority",
@@ -20444,6 +20445,10 @@
     },
     {
       "name": "SHU-298 S12: a person's move that lands between the read and the write is put back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S13: a person's move that lands during a put-back is kept, on this tick or a later one",
       "capabilities": []
     },
     {
