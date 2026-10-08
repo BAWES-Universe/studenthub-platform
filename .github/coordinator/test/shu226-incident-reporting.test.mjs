@@ -800,3 +800,25 @@ test("SHU-298 S13: a person's move that lands during a put-back is kept, on this
   assert.equal((await sSettle(event, endless)).status, "RESTORED", "the next tick finishes it, though the card is outside Triage");
   assert.equal(endless.store.incident.state.name, "In Progress", "and the person's latest move stands");
 });
+
+test("SHU-298 S14: a card a person puts back into Triage stays there", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const fake = sSettleStore(event);
+  assert.equal((await sSettle(event, fake)).status, "SETTLED");
+  fake.store.move({ id: "s-current", name: "Triage", type: "triage" });
+  const writes = fake.calls.filter((call) => call.query.includes("SettleState")).length;
+  assert.equal((await sSettle(event, fake)).status, "PARTIAL");
+  assert.equal(fake.store.incident.state.name, "Triage", "the person's choice of Triage is kept");
+  assert.equal(fake.calls.filter((call) => call.query.includes("SettleState")).length, writes, "no write on a card a person moved");
+  assert.equal(fake.store.summaryComments.length, 1);
+
+  const raced = sSettleStore(event);
+  assert.equal((await sSettle(event, raced)).status, "SETTLED");
+  raced.store.move({ id: "s-current", name: "Triage", type: "triage" });
+  raced.store.move({ id: "33333333-3333-4333-8333-333333333302", name: "Backlog", type: "backlog" }, S_COORDINATOR);
+  const result = await sSettle(event, raced);
+  assert.equal(result.status, "RESTORED", "an overwritten move into Triage is put back too");
+  assert.equal(raced.store.incident.state.name, "Triage");
+  assert.equal((await sSettle(event, raced)).status, "PARTIAL", "and it stays there on later ticks");
+  assert.equal(raced.store.incident.state.name, "Triage");
+});

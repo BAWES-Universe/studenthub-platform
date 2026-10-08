@@ -7,8 +7,8 @@
 //
 // Settling only moves the card out of Triage and posts that line. It never
 // repairs, re-arms, relaunches, clears a pause or edits an activation: a retry
-// is still a fresh activation. A card a person already moved out of Triage is
-// left where they put it. Linear has no conditional update, so a person's move
+// is still a fresh activation. A card a person has moved at all, out of Triage
+// or back into it, is left where they put it. Linear has no conditional update, so a person's move
 // can land between a read and a write of ours; the card's history then shows a
 // change of ours after the person's latest move, and settling puts the
 // person's state back, on every tick, wherever the card sits.
@@ -139,12 +139,15 @@ async function readStateHistory(issueId, call) {
   return null;
 }
 
+// A person has moved the card at least once, so its state is theirs to decide.
+const personMoved = ({ viewerId, changes }) => changes.some((entry) => entry.actor?.id !== viewerId);
+
 function overwrittenChoice({ viewerId, current, changes }) {
   const ours = (entry) => entry.actor?.id === viewerId;
   const person = changes.length - 1 - [...changes].reverse().findIndex((entry) => !ours(entry));
   if (person >= changes.length) return null;
   const wanted = changes[person].toState;
-  if (wanted.name === INCIDENT_STATE_NAME || current.id === wanted.id) return null;
+  if (current.id === wanted.id) return null;
   return changes.slice(person + 1).some(ours) ? wanted : null;
 }
 
@@ -215,7 +218,10 @@ export async function settleCoordinatorIncident({
   let moved = incident.state?.name === target.name;
   let restored = null;
   let verified = true;
-  if (!moved && incident.state?.name === INCIDENT_STATE_NAME) {
+  // Settling moves the card only when no person has ever moved it: a card a
+  // person put back into Triage stays there.
+  const before = !moved && incident.state?.name === INCIDENT_STATE_NAME ? await readStateHistory(event.issue_uuid, call) : null;
+  if (before && !personMoved(before)) {
     const teams = state?.teams?.nodes ?? [];
     const team = teams.length === 1 && teams[0]?.key === INCIDENT_TEAM_KEY ? teams[0] : null;
     const states = team?.states?.nodes?.filter((entry) => entry?.name === target.name && entry?.type === target.type) ?? [];
