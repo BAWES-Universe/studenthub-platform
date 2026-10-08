@@ -6,7 +6,7 @@ import type { FinanceReferenceResolver } from "./types.js";
  */
 
 /** ISO 13616 registry lengths; a country missing here has no IBAN and is refused. */
-const IBAN_LENGTHS: Readonly<Record<string, number>> = {
+export const IBAN_LENGTHS: Readonly<Record<string, number>> = {
   AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22, BH: 22, BI: 27, BR: 29, BY: 28, CH: 21, CR: 22,
   CY: 28, CZ: 24, DE: 22, DJ: 27, DK: 18, DO: 28, EE: 20, EG: 29, ES: 24, FI: 18, FK: 18, FO: 18, FR: 27, GB: 22,
   GE: 22, GI: 23, GL: 18, GR: 27, GT: 28, HN: 28, HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26, IT: 27, JO: 30,
@@ -36,13 +36,40 @@ export function ibanChecksumValid(iban: string): boolean {
   return remainder === 1;
 }
 
-/** Beneficiary name as a bank file carries it: printable, single-spaced, at most 70 characters. */
+/**
+ * Code points a stored beneficiary name may not contain: every control (Cc), format (Cf), line (Zl) and
+ * paragraph (Zp) separator, the ogham space mark (the one space NFKC does not fold into U+0020), and the
+ * outlined letters and digits U+1CCD6-U+1CCF9, whose compatibility mappings arrived in Unicode 16 and so
+ * normalize differently in PostgreSQL 16 and 17 (Unicode 15).
+ * Listed explicitly rather than as Unicode properties so that migration 0183's
+ * `candidate_beneficiary_name_valid` lists exactly the same set; a test checks both against each other
+ * and this list against the runtime's own properties.
+ */
+export const BENEFICIARY_NAME_FORBIDDEN_RANGES: readonly (readonly [number, number])[] = Object.freeze([
+  [0x0000, 0x001f], [0x007f, 0x009f], [0x00ad, 0x00ad], [0x0600, 0x0605], [0x061c, 0x061c], [0x06dd, 0x06dd],
+  [0x070f, 0x070f], [0x0890, 0x0891], [0x08e2, 0x08e2], [0x1680, 0x1680], [0x180e, 0x180e], [0x200b, 0x200f],
+  [0x2028, 0x202e], [0x2060, 0x2064], [0x2066, 0x206f], [0xfeff, 0xfeff], [0xfff9, 0xfffb], [0x110bd, 0x110bd],
+  [0x110cd, 0x110cd], [0x13430, 0x1343f], [0x1bca0, 0x1bca3], [0x1ccd6, 0x1ccf9], [0x1d173, 0x1d17a], [0xe0001, 0xe0001],
+  [0xe0020, 0xe007f],
+].map((range) => Object.freeze(range as [number, number])));
+
+const forbidden = (name: string): boolean => [...name].some((char) => {
+  const code = char.codePointAt(0)!;
+  return BENEFICIARY_NAME_FORBIDDEN_RANGES.some(([low, high]) => code >= low && code <= high);
+});
+
+/**
+ * Beneficiary name as a bank file carries it: NFKC, single U+0020 spaces with none at either end,
+ * none of the forbidden code points, 2 to 70 code points. Input whitespace of any kind is folded to
+ * single spaces first; the result is returned only if it is itself NFKC, so what is stored is
+ * exactly what migration 0183's CHECK accepts.
+ */
 export function normalizeBeneficiaryName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const cleaned = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  const cleaned = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
   // Counted in code points, as PostgreSQL's char_length counts them, so a name that passes here also fits the column.
   const length = [...cleaned].length;
-  if (length < 2 || length > 70 || /[\p{Cc}\p{Cf}]/u.test(cleaned)) return undefined;
+  if (length < 2 || length > 70 || forbidden(cleaned) || cleaned.normalize("NFKC") !== cleaned) return undefined;
   return cleaned;
 }
 

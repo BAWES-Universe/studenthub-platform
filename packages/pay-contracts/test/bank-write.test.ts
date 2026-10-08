@@ -6,7 +6,7 @@ import {
 import {
   acceptAnyBankDetailsValue, BANK_DETAILS_FIELD, bankDetailsRecordRef, bankDetailsValue,
   buildBankDetailsWrite, candidateBankOwnerDecision, catalogueBankDetailsCheck, InMemoryFinanceReferenceResolver,
-  normalizeBeneficiaryName, parseBankDetailsValue,
+  BENEFICIARY_NAME_FORBIDDEN_RANGES, normalizeBeneficiaryName, parseBankDetailsValue,
 } from "../src/index.js";
 
 // Synthetic fixtures only; the catalogue ids are made up.
@@ -111,4 +111,17 @@ test("SHU182_BANK_OWNER only a person with a candidate grant may keep bank detai
   const x = rig();
   x.setRoles(["staff"]);
   assert.deepEqual(await x.writer.preview({ principalRef: x.principalRef, change: x.change() }), { ok: false, reason: "not_own_record" });
+});
+
+test("SHU182_BANK_NAME_RULE the explicit forbidden list covers every control, format and separator code point this runtime knows", () => {
+  const listed = (code: number) => BENEFICIARY_NAME_FORBIDDEN_RANGES.some(([low, high]) => code >= low && code <= high);
+  const missing: string[] = [];
+  for (let code = 0; code <= 0x10ffff; code++) {
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(String.fromCodePoint(code)) && !listed(code)) missing.push(code.toString(16));
+  }
+  assert.deepEqual(missing, []);
+  for (const name of ["Zero\u200Bwidth", "Soft\u00ADhyphen", "Ogham\u1680mark"]) assert.equal(normalizeBeneficiaryName(name), name.includes("\u1680") ? "Ogham mark" : undefined, name);
+  assert.equal(normalizeBeneficiaryName("Tab\tand\u00A0nbsp  doubled "), "Tab and nbsp doubled");
+  assert.equal(normalizeBeneficiaryName("Cafe\u0301"), "Café");
 });

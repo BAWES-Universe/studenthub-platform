@@ -6,7 +6,7 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import {
   acceptAnyBankDetailsValue, BANK_DETAILS_FIELD, bankDetailsRecordRef, bankDetailsValue,
-  buildBankDetailsWrite, catalogueBankDetailsCheck, type BankDetails,
+  buildBankDetailsWrite, catalogueBankDetailsCheck, IBAN_LENGTHS, normalizeBeneficiaryName, normalizeIban, type BankDetails,
 } from "@studenthub/pay-contracts";
 import {
   BANK_DETAILS_OPERATION, principalAuditRef, PostgresAuthzStore, PostgresBankDetailsStore, PostgresFinanceReferenceResolver,
@@ -197,10 +197,24 @@ test("SHU182_BANK_PG_STALE a value changed after the preview is not overwritten"
 test("SHU182_BANK_PG_SCHEMA the table and the ledger refuse malformed rows from any writer", async () => {
   const id = await person();
   const bankId = await catalogueItem("bank");
-  for (const [iban, name] of [["kw81cbku0000000000001234560101", NAME], [IBAN, " padded"], [IBAN, "x".repeat(71)], [IBAN, "A"]]) {
-    await assert.rejects(pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)",
-      [id, bankId, iban, name]), { code: "23514" }, `${iban} / ${name}`);
+  const insert = (bank: string, iban: string, name: string) => pool.query(
+    "INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)", [id, bank, iban, name]);
+  for (const [iban, name] of [
+    ["kw81cbku0000000000001234560101", NAME], ["KW82CBKU0000000000001234560101", NAME], [withCheckDigits("KW", 29), NAME],
+    [withCheckDigits("ZZ", 22), NAME], [IBAN, " padded"], [IBAN, "Two  spaces"], [IBAN, "Tab\there"], [IBAN, "No\u00A0break"],
+    [IBAN, "Cafe\u0301 decomposed"], [IBAN, "Zero\u200Bwidth"], [IBAN, "x".repeat(71)], [IBAN, "A"],
+  ]) {
+    await assert.rejects(insert(bankId, iban, name), { code: "23514" }, `${iban} / ${JSON.stringify(name)}`);
   }
+  // The bank must be a catalogue bank, and active when the row is written.
+  // The trigger answers first (23514); the composite foreign key (23503) stands behind it.
+  await assert.rejects(insert(await catalogueItem("currency"), IBAN, NAME),
+    (error: { code?: string }) => error.code === "23514" || error.code === "23503", "a currency as the bank");
+  await assert.rejects(insert(await catalogueItem("bank", "deleted"), IBAN, NAME), { code: "23514" }, "a retired bank");
+  await insert(bankId, IBAN, NAME);
+  await pool.query("UPDATE catalogue_items SET status = 'deleted', deleted_at = $2 WHERE id = $1", [bankId, FIXED]);
+  await assert.rejects(pool.query("UPDATE candidate_bank_details SET iban = $2 WHERE principal_id = $1", [id, "GB82WEST12345698765432"]),
+    { code: "23514" }, "a rewrite keeping a bank retired since");
   const ref = principalAuditRef(id);
   const forged = randomUUID().replaceAll("-", "").padEnd(64, "0");
   const receipt = (fields: unknown, orgs: string[] = [], actor = ref, requestRef = randomUUID().replaceAll("-", "").padEnd(64, "0")) => pool.query(
@@ -272,6 +286,51 @@ test("SHU182_BANK_PG_PROJECTIONS stored bank details reach none of the platform'
   ]);
   const wire = JSON.stringify(outputs);
   for (const secret of [IBAN, sentinelName, bankId]) assert.ok(!wire.includes(secret), `a non-finance read carries ${secret}`);
+});
+
+/** A checksum-valid IBAN of the given country and length, whatever the registry says about either. */
+function withCheckDigits(country: string, length: number, bban = "0".repeat(length - 4)): string {
+  const digits = (bban + country + "00").replace(/[A-Z]/g, (char) => String(char.charCodeAt(0) - 55));
+  let remainder = 0;
+  for (const digit of digits) remainder = (remainder * 10 + Number(digit)) % 97;
+  return `${country}${String(98 - remainder).padStart(2, "0")}${bban}`;
+}
+
+test("SHU182_BANK_PG_IBAN_AGREES the database and the application accept exactly the same IBANs", async () => {
+  const corpus: string[] = [IBAN, "GB82WEST12345698765432", "KW81CBKU0000000000001234560101".toLowerCase()];
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for (const a of letters) for (const b of letters) {
+    const country = a + b;
+    const length = IBAN_LENGTHS[country] ?? 22;
+    const valid = withCheckDigits(country, length, "AB12".padEnd(length - 4, "7"));
+    corpus.push(valid, withCheckDigits(country, length + 1), withCheckDigits(country, length - 1));
+    corpus.push(valid.slice(0, 2) + String((Number(valid.slice(2, 4)) + 1) % 100).padStart(2, "0") + valid.slice(4));
+  }
+  const { rows } = await pool.query<{ iban: string; ok: boolean }>(
+    "SELECT iban, candidate_iban_valid(iban) AS ok FROM unnest($1::text[]) AS iban", [corpus]);
+  const disagreements = rows.filter((row) => row.ok !== (normalizeIban(row.iban) === row.iban)).map((row) => row.iban);
+  assert.deepEqual(disagreements, []);
+  assert.equal(rows.filter((row) => row.ok).length, Object.keys(IBAN_LENGTHS).length + 2, "one valid IBAN per registered country, plus the two fixtures");
+});
+
+test("SHU182_BANK_PG_NAME_AGREES the database and the application accept exactly the same names, code point by code point", async () => {
+  // Every Unicode scalar value, between letters, at the end and alone after a letter.
+  const { rows } = await pool.query<{ cp: number; mid: boolean; tail: boolean }>(
+    `SELECT cp, candidate_beneficiary_name_valid('Ab' || chr(cp) || 'Cd') AS mid, candidate_beneficiary_name_valid('Ab' || chr(cp)) AS tail
+       FROM generate_series(1, 1114111) AS cp WHERE cp NOT BETWEEN 55296 AND 57343`);
+  const disagreements: string[] = [];
+  for (const { cp, mid, tail } of rows) {
+    const char = String.fromCodePoint(cp);
+    for (const [name, ok] of [[`Ab${char}Cd`, mid], [`Ab${char}`, tail]] as const) {
+      if (ok !== (normalizeBeneficiaryName(name) === name)) disagreements.push(`U+${cp.toString(16).toUpperCase()} ${name.endsWith("Cd") ? "between letters" : "at the end"}`);
+    }
+  }
+  assert.equal(rows.length, 1_112_063);
+  assert.deepEqual(disagreements.slice(0, 50), [], `${disagreements.length} disagreements`);
+  const names = [NAME, "عبدالله الكندري", "\u{1F600}".repeat(70), "\u{1F600}".repeat(71), " lead", "trail ", "Two  spaces", "Ａｂ", "Cafe\u0301"];
+  const named = await pool.query<{ name: string; ok: boolean }>(
+    "SELECT name, candidate_beneficiary_name_valid(name) AS ok FROM unnest($1::text[]) AS name", [names]);
+  assert.deepEqual(named.rows.filter((row) => row.ok !== (normalizeBeneficiaryName(row.name) === row.name)).map((row) => row.name), []);
 });
 
 async function sources(dir: URL): Promise<URL[]> {
