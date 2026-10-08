@@ -505,7 +505,7 @@ test("SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the c
 
 // A fake Linear for the sSettle step: one incident, the SHU-71 summary card,
 // and the team's states.
-function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [], personMovesTo = null, historyFails = false } = {}) {
+function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [], personMovesTo = null, historyFails = false, restoreFailures = 0 } = {}) {
   const calls = [];
   const store = {
     incident: {
@@ -524,6 +524,7 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     // A person's move that lands between the settle read and its write.
     personMovesTo,
     historyFails,
+    restoreFailures,
     history: [],
   };
   const move = (next) => {
@@ -544,6 +545,11 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
       if (store.personMovesTo) {
         move(store.personMovesTo);
         store.personMovesTo = null;
+      }
+      const isRestore = !states.some((entry) => entry.id === variables.input.stateId);
+      if (isRestore && store.restoreFailures > 0) {
+        store.restoreFailures -= 1;
+        return { issueUpdate: { success: false } };
       }
       const next = [...states, ...store.history.map((entry) => entry.fromState)].find((entry) => entry.id === variables.input.stateId);
       move(next);
@@ -601,11 +607,11 @@ test("SHU-298 S4: a real card's stop leaves Triage for Backlog and puts one line
   assert.match(line, /Coordinator stop on SHU-197 \(`builder_failed`, SHU-905\): The writer reported FAILED/);
   assert.equal(line.split("\n").length, 2, "one marker line and one plain line");
 
-  const writesBefore = fake.calls.filter((call) => !call.query.includes("query CoordinatorIncidentSettle(")).length;
+  const writesBefore = fake.calls.filter((call) => !call.query.includes("query CoordinatorIncidentSettle(") && !call.query.includes("CoordinatorStopHistory")).length;
   const again = await sSettle(event, fake);
   assert.equal(again.status, "SETTLED");
   assert.equal(fake.store.summaryComments.length, 1, "replay never posts the line twice");
-  assert.equal(fake.calls.filter((call) => !call.query.includes("query CoordinatorIncidentSettle(")).length, writesBefore, "replay writes nothing");
+  assert.equal(fake.calls.filter((call) => !call.query.includes("query CoordinatorIncidentSettle(") && !call.query.includes("CoordinatorStopHistory")).length, writesBefore, "replay writes nothing");
 });
 
 test("SHU-298 S5: a fixture's stop is closed and posts nothing on SHU-71", async () => {
@@ -727,6 +733,25 @@ test("SHU-298 S12: a person's move that lands between the read and the write is 
   assert.equal((await sSettle(event, clean)).status, "SETTLED");
   assert.equal(clean.calls.filter((call) => call.query.includes("SettleState")).length, 1, "an unraced move is written once");
 
-  const blind = sSettleStore(event, { historyFails: true });
+  const blind = sSettleStore(event, { historyFails: true, personMovesTo: inProgress });
   assert.equal((await sSettle(event, blind)).status, "UNVERIFIED", "an unreadable history is never reported as settled");
+  assert.equal((await sSettle(event, blind)).status, "UNVERIFIED", "and stays unverified while it cannot be read");
+  blind.store.historyFails = false;
+  assert.equal((await sSettle(event, blind)).status, "RESTORED", "a later tick finishes the check and puts the person's state back");
+  assert.equal(blind.store.incident.state.name, "In Progress");
+
+  const stuck = sSettleStore(event, { personMovesTo: inProgress, restoreFailures: 2 });
+  assert.equal((await sSettle(event, stuck)).status, "UNVERIFIED", "a restore Linear refuses twice is not reported as restored");
+  assert.equal(stuck.store.incident.state.name, "Backlog");
+  assert.equal((await sSettle(event, stuck)).status, "RESTORED", "the next tick retries it");
+  assert.equal(stuck.store.incident.state.name, "In Progress");
+
+  const later = sSettleStore(event);
+  assert.equal((await sSettle(event, later)).status, "SETTLED");
+  for (const next of [inProgress, { id: "33333333-3333-4333-8333-333333333302", name: "Backlog", type: "backlog" }]) {
+    later.store.history.push({ fromState: { id: later.store.incident.state.id, name: later.store.incident.state.name }, toState: { id: next.id, name: next.name } });
+    later.store.incident.state = { ...next };
+  }
+  assert.equal((await sSettle(event, later)).status, "SETTLED", "a person's own later move back to Backlog is theirs, never undone");
+  assert.equal(later.store.incident.state.name, "Backlog");
 });

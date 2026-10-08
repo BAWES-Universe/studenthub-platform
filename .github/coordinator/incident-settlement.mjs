@@ -100,24 +100,39 @@ async function summaryAlreadyPosted(comments, marker, call) {
   }
 }
 
-// Our write is the latest change to the target state. If it did not start from
-// Triage, a person moved the card after it was read: put their state back.
+// Linear has no conditional update, so a person's move can land between the
+// settle read and its write. Their move then shows in the history as
+// Triage -> X, followed by our write X -> target. Whenever the card sits in the
+// target state (right after the write, and on every later tick, so a check that
+// could not finish is picked up again), that pattern is looked for and the
+// person's X is put back.
 // Returns the restored state's name, null when nothing was overwritten, or
-// false when the history could not be read (reported as UNVERIFIED).
+// false when the history could not be read or the restore did not apply
+// (reported as UNVERIFIED, and checked again on the next tick).
 async function restorePersonsMove(issueId, targetStateId, call) {
-  let nodes;
-  try {
-    nodes = (await call(LINEAR_SETTLE_HISTORY_QUERY, { id: issueId }))?.issue?.history?.nodes;
-  } catch { return false; }
+  let nodes = null;
+  for (let tries = 0; tries < 2 && !Array.isArray(nodes); tries += 1) {
+    try {
+      nodes = (await call(LINEAR_SETTLE_HISTORY_QUERY, { id: issueId }))?.issue?.history?.nodes ?? null;
+    } catch { nodes = null; }
+  }
   if (!Array.isArray(nodes)) return false;
-  const ours = [...nodes].reverse().find((entry) => entry?.toState?.id === targetStateId);
-  if (!ours) return false;
-  const before = ours.fromState;
-  if (!before || before.name === INCIDENT_STATE_NAME || typeof before.id !== "string" || !before.id) return null;
-  try {
-    await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: issueId, input: { stateId: before.id } });
-  } catch { /* the history still shows it; the card is out of Triage, so settling never touches it again */ }
-  return before.name ?? "unknown";
+  const changes = nodes.filter((entry) => entry?.toState?.id && entry.fromState?.id !== entry.toState.id);
+  const last = changes.length - 1 - [...changes].reverse().findIndex((entry) => entry.toState.id === targetStateId);
+  if (last >= changes.length) return false;
+  const into = changes[last];
+  const prior = changes[last - 1];
+  const overwritten = into.fromState?.name !== INCIDENT_STATE_NAME
+    && typeof into.fromState?.id === "string" && into.fromState.id
+    && prior?.fromState?.name === INCIDENT_STATE_NAME && prior.toState.id === into.fromState.id;
+  if (!overwritten) return null;
+  for (let tries = 0; tries < 2; tries += 1) {
+    try {
+      const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: issueId, input: { stateId: into.fromState.id } });
+      if (result?.issueUpdate?.success === true) return into.fromState.name ?? "unknown";
+    } catch { /* retried once, then left for the next tick */ }
+  }
+  return false;
 }
 
 async function boundedCall(call, timeoutMs, timeoutImpl) {
@@ -166,6 +181,7 @@ export async function settleCoordinatorIncident({
   let moved = incident.state?.name === target.name;
   let restored = null;
   let verified = true;
+  let writtenStateId = null;
   if (!moved && incident.state?.name === INCIDENT_STATE_NAME) {
     const teams = state?.teams?.nodes ?? [];
     const team = teams.length === 1 && teams[0]?.key === INCIDENT_TEAM_KEY ? teams[0] : null;
@@ -174,13 +190,15 @@ export async function settleCoordinatorIncident({
       try {
         const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: event.issue_uuid, input: { stateId: states[0].id } });
         moved = result?.issueUpdate?.success === true;
+        if (moved) writtenStateId = states[0].id;
       } catch { /* a lost response is re-checked on the next tick */ }
-      if (moved) {
-        const check = await restorePersonsMove(event.issue_uuid, states[0].id, call);
-        if (check === false) verified = false;
-        else if (check !== null) { restored = check; moved = false; }
-      }
     }
+  }
+  const targetStateId = writtenStateId ?? (moved ? incident.state?.id : null);
+  if (moved) {
+    const check = typeof targetStateId === "string" && targetStateId ? await restorePersonsMove(event.issue_uuid, targetStateId, call) : false;
+    if (check === false) verified = false;
+    else if (check !== null) { restored = check; moved = false; }
   }
 
   let summarized = event.fixture === true ? null : false;
