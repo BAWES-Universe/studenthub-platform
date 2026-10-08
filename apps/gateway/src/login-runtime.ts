@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
-import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore } from "@studenthub/db";
+import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -17,10 +17,12 @@ import {
 } from "@studenthub/profile";
 
 import { createLoginApplication } from "./login-application.js";
-import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter } from "@studenthub/organizations";
+import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organizationOwnerDecision,
+  organizationProfileStateDecision, organizationProfileRecordRef, organizationProfilePrincipalRef } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
+import { createOrganizationProfile } from "./organization-profile.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -203,6 +205,9 @@ export function createRuntimeLoginFromEnv(
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
+  const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
+    ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
+    recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -241,6 +246,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
+      ...(organizationProfileStore && safeWriteKey ? { organizationProfile: createOrganizationProfile({sessions:loginStore.sessions,store:organizationProfileStore,secret:safeWriteKey}) } : {}),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
@@ -253,7 +259,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close()]);
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close()]);
     },
   };
 }
