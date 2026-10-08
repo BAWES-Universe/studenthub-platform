@@ -35,3 +35,5 @@ export { PostgresOrganizationProfileStore, ORGANIZATION_PROFILE_OPERATION,
   type PostgresOrganizationProfileStoreOptions } from "./postgres-organization-profile-store.js";
 export { PostgresBankDetailsStore, BANK_DETAILS_OPERATION,
   type PostgresBankDetailsStoreOptions } from "./postgres-bank-details-store.js";
+export { PostgresCandidateProfileStore, CANDIDATE_PROFILE_OPERATION,
+  type PostgresCandidateProfileStoreOptions } from "./postgres-candidate-profile-store.js";

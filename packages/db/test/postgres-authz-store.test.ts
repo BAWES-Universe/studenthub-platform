@@ -1572,7 +1572,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0147_person_language_safe_write",
           "0148_candidate_profile_records",
           "0150_organization_profile",
-          "0182_pay_contracts", "0183_candidate_bank_details",
+          "0182_pay_contracts", "0183_candidate_bank_details", "0184_candidate_self_edits",
         ],
         "each migration is recorded exactly once",
       );
@@ -1625,7 +1625,7 @@ test(
             "0147_person_language_safe_write",
             "0148_candidate_profile_records",
             "0150_organization_profile",
-            "0182_pay_contracts", "0183_candidate_bank_details",
+            "0182_pay_contracts", "0183_candidate_bank_details", "0184_candidate_self_edits",
           ],
         );
       } finally {

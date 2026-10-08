@@ -3,6 +3,7 @@ import type { BrowserResponse, LoginApplication } from "@studenthub/login-contra
 import type { ContextNavigation, NavigationResult, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
 import type { BankDetailsService } from "./bank-details.js";
+import type { CandidateProfileService } from "./candidate-profile.js";
 import {
   OWN_PROFILE_FIELD_CONTRACT,
   OWN_PROFILE_FIELD_NAMES,
@@ -28,6 +29,8 @@ export interface BrowserLoginApplication extends LoginApplication {
   /** SHU-84 safe write; absent unless a signing key is configured. */
   readonly preferences?: LanguagePreference;
   readonly bankDetails?: BankDetailsService;
+  /** SHU-143: own profile fields through the safe write. */
+  readonly candidateProfile?: CandidateProfileService;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
