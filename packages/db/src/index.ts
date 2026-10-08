@@ -31,3 +31,5 @@ export { PostgresFinanceReferenceResolver, PostgresPayContractStore } from "./po
 export { runMigrations } from "./migrate.js";
 export { bootstrapAdmin, type BootstrapResult } from "./bootstrap-admin.js";
 export { DEFAULT_DATABASE_URL, databaseUrl } from "./connection.js";
+export { PostgresOrganizationProfileStore, ORGANIZATION_PROFILE_OPERATION,
+  type PostgresOrganizationProfileStoreOptions } from "./postgres-organization-profile-store.js";
