@@ -4,15 +4,17 @@ import {
   runSafeWriteConformance, TEST_SECRET, type CommitInput, type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 import {
-  acceptAnyBankDetailsValue, BANK_DETAILS_FIELD, bankDetailsPrincipalRef, bankDetailsRecordRef, bankDetailsValue,
+  acceptAnyBankDetailsValue, BANK_DETAILS_FIELD, bankDetailsRecordRef, bankDetailsValue,
   buildBankDetailsWrite, candidateBankOwnerDecision, catalogueBankDetailsCheck, InMemoryFinanceReferenceResolver,
-  parseBankDetailsValue,
+  normalizeBeneficiaryName, parseBankDetailsValue,
 } from "../src/index.js";
 
 // Synthetic fixtures only; the catalogue ids are made up.
 const PERSON = "principal-candidate-c";
 const BANK = "33333333-3333-4333-8333-333333333333";
 const OTHER_BANK = "5555abcd-5555-4555-8555-55555555abcd";
+// The platform uses the SHU-59 audit reference here; any 64-hex reference serves this in-memory store.
+const PRINCIPAL_REF = "c".repeat(64);
 const IBAN = "KW81CBKU0000000000001234560101";
 const DETAILS = { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" };
 
@@ -24,7 +26,7 @@ function rig() {
   let roles = ["candidate"];
   const commits: CommitInput[] = [];
   const store: SafeWriteStore = {
-    ownedRecord: (principalRef) => principalRef === bankDetailsPrincipalRef(PERSON)
+    ownedRecord: (principalRef) => principalRef === PRINCIPAL_REF
       && candidateBankOwnerDecision(roles.map((role) => ({ role }))) ? bankDetailsRecordRef(PERSON) : null,
     readField: () => value,
     commit: (input) => {
@@ -39,7 +41,7 @@ function rig() {
     personRef: bankDetailsRecordRef(PERSON), field: BANK_DETAILS_FIELD, value: bankDetailsValue(details),
   });
   return {
-    banks, writer, change, commits, principalRef: bankDetailsPrincipalRef(PERSON),
+    banks, writer, change, commits, principalRef: PRINCIPAL_REF,
     value: () => value, setRoles: (next: string[]) => { roles = next; },
   };
 }
@@ -95,6 +97,10 @@ test("SHU182_BANK_CANONICAL only the canonical encoding of normalized details is
     "not json",
   ]) assert.equal(await check(value), false, value);
   assert.equal(parseBankDetailsValue(JSON.stringify({ iban: IBAN, bankId: BANK, beneficiaryName: "Synthetic Person" })), undefined);
+  // Name length is counted in code points, as the database column counts it.
+  assert.equal(normalizeBeneficiaryName("\u{1F600}".repeat(70)), "\u{1F600}".repeat(70));
+  assert.equal(normalizeBeneficiaryName("\u{1F600}".repeat(71)), undefined);
+  assert.equal(normalizeBeneficiaryName("\u{1F600}"), undefined);
 });
 
 test("SHU182_BANK_OWNER only a person with a candidate grant may keep bank details", async () => {

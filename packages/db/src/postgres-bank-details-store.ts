@@ -20,10 +20,11 @@ import { createHash } from "node:crypto";
 import pg from "pg";
 import type { CommitInput, CommitOutcome, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
 import {
-  BANK_DETAILS_FIELD, bankDetailsPrincipalRef, bankDetailsRecordRef, bankDetailsValue,
+  BANK_DETAILS_FIELD, bankDetailsRecordRef, bankDetailsValue,
   candidateBankOwnerDecision, parseBankDetailsValue,
 } from "@studenthub/pay-contracts";
 
+import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 
 export const BANK_DETAILS_OPERATION = "candidate.bank_details.safe_write" as const;
@@ -64,7 +65,7 @@ export class PostgresBankDetailsStore {
   /** The port for one signed-in principal; it can reach that person's own row only. */
   forPrincipal(principalId: string): SafeWriteStore {
     if (typeof principalId !== "string" || principalId.length === 0) throw new TypeError("principal id required");
-    const ownPrincipalRef = bankDetailsPrincipalRef(principalId);
+    const ownPrincipalRef = principalAuditRef(principalId);
     const ownRecordRef = bankDetailsRecordRef(principalId);
     return {
       ownedRecord: async (principalRef) =>
@@ -80,7 +81,7 @@ export class PostgresBankDetailsStore {
   /** The caller's own receipt, or null. A reference owned by someone else is indistinguishable from none. */
   async readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null> {
     if (!REFERENCE.test(receiptRef)) return null;
-    const principalRef = bankDetailsPrincipalRef(principalId);
+    const principalRef = principalAuditRef(principalId);
     const { rows } = await this.#pool.query<{ actor_principal_ref: string | null; after_summary: Record<string, unknown> }>(
       `SELECT actor_principal_ref, after_summary FROM authorization_mutation_audit
         WHERE operation = $1 AND request_ref = $2 AND target_principal_ref = $3`,

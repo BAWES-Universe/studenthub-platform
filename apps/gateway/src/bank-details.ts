@@ -5,10 +5,11 @@ import type {
   ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 import {
-  BANK_DETAILS_FIELD, BankDetailError, bankDetailsPrincipalRef, bankDetailsRecordRef, bankDetailsValue,
-  buildBankDetailsWrite, catalogueBankDetailsCheck, normalizeBankDetails, parseBankDetailsValue,
+  BANK_DETAILS_FIELD, BankDetailError, bankDetailsRecordRef, bankDetailsValue,
+  buildBankDetailsWrite, catalogueBankDetailsCheck, parseBankDetailsValue, validateBankDetails,
   type BankDetails, type FinanceReferenceResolver,
 } from "@studenthub/pay-contracts";
+import { principalAuditRef } from "@studenthub/db";
 
 /**
  * SHU-182 (F1): a signed-in candidate changes their own bank details through
@@ -54,22 +55,34 @@ function refusal(reason: RejectionReason): BankDetailsResult {
   return { status, body: { error: reason } };
 }
 
-/** The typed input error, so a form can say which part is wrong. */
-function details(raw: Record<string, unknown>): { ok: true; value: BankDetails } | { ok: false; result: BankDetailsResult } {
+/** The typed input error, so a form can say which part is wrong. An unreachable catalogue is a 503. */
+async function details(raw: Record<string, unknown>, banks: FinanceReferenceResolver):
+  Promise<{ ok: true; value: BankDetails } | { ok: false; result: BankDetailsResult }> {
   try {
-    return { ok: true, value: normalizeBankDetails({ bankId: raw.bankId, iban: raw.iban, beneficiaryName: raw.beneficiaryName }) };
+    return { ok: true, value: await validateBankDetails({ bankId: raw.bankId, iban: raw.iban, beneficiaryName: raw.beneficiaryName }, banks) };
   } catch (error) {
     if (error instanceof BankDetailError && error.status === 400) return { ok: false, result: { status: 400, body: { error: error.code } } };
     throw error;
   }
 }
 
-/** The person's own details, shown back to them as a typed object rather than the stored JSON. */
-function shown(value: string | null): BankDetails | null {
+export interface MaskedBankDetails { readonly bankId: string; readonly ibanMasked: string; readonly beneficiaryName: string }
+
+/**
+ * What a preview shows. The full IBAN never leaves the server, not even to its
+ * owner (as the own-profile projection already excludes it): the country, check
+ * digits and last four characters are enough to recognize an account. The token
+ * commits to the full value's digest, so masking the display weakens nothing.
+ */
+export function maskBankDetails(value: string | null): MaskedBankDetails | null {
   if (value === null) return null;
   const parsed = parseBankDetailsValue(value);
   if (!parsed) throw new Error("unreadable bank details value");
-  return parsed;
+  return Object.freeze({
+    bankId: parsed.bankId,
+    ibanMasked: `${parsed.iban.slice(0, 4)}${"•".repeat(parsed.iban.length - 8)}${parsed.iban.slice(-4)}`,
+    beneficiaryName: parsed.beneficiaryName,
+  });
 }
 
 export function createBankDetails(ports: {
@@ -100,27 +113,27 @@ export function createBankDetails(ports: {
       const principalId = await principal(sessionId);
       if (!principalId) return { status: 401, body: { error: "unauthorized" } };
       if (!exactKeys(body, DETAIL_KEYS)) return { status: 400, body: { error: "invalid_request" } };
-      const input = details(body);
+      const input = await details(body, ports.banks);
       if (!input.ok) return input.result;
       const result = await writer(principalId).preview({
-        principalRef: bankDetailsPrincipalRef(principalId),
+        principalRef: principalAuditRef(principalId),
         change: { personRef: bankDetailsRecordRef(principalId), field: BANK_DETAILS_FIELD, value: bankDetailsValue(input.value) },
       });
       if (!result.ok) return refusal(result.reason);
       const change = result.changes[0]!;
-      return { status: 200, body: { before: shown(change.before), after: shown(change.after), token: result.token } };
+      return { status: 200, body: { before: maskBankDetails(change.before), after: maskBankDetails(change.after), token: result.token } };
     },
 
     async confirm(sessionId, body) {
       const principalId = await principal(sessionId);
       if (!principalId) return { status: 401, body: { error: "unauthorized" } };
       if (!exactKeys(body, [...DETAIL_KEYS, "token"])) return { status: 400, body: { error: "invalid_request" } };
-      const input = details(body);
+      const input = await details(body, ports.banks);
       if (!input.ok) return input.result;
       const actionToken = token(body.token);
       if (!actionToken) return refusal("token_not_issued");
       const result = await writer(principalId).confirm({
-        principalRef: bankDetailsPrincipalRef(principalId),
+        principalRef: principalAuditRef(principalId),
         token: actionToken,
         change: { personRef: bankDetailsRecordRef(principalId), field: BANK_DETAILS_FIELD, value: bankDetailsValue(input.value) },
       });

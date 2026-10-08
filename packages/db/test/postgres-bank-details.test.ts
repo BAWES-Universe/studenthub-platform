@@ -5,11 +5,12 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import {
-  acceptAnyBankDetailsValue, BANK_DETAILS_FIELD, bankDetailsPrincipalRef, bankDetailsRecordRef, bankDetailsValue,
+  acceptAnyBankDetailsValue, BANK_DETAILS_FIELD, bankDetailsRecordRef, bankDetailsValue,
   buildBankDetailsWrite, catalogueBankDetailsCheck, type BankDetails,
 } from "@studenthub/pay-contracts";
 import {
-  BANK_DETAILS_OPERATION, PostgresAuthzStore, PostgresBankDetailsStore, PostgresFinanceReferenceResolver, runMigrations,
+  BANK_DETAILS_OPERATION, principalAuditRef, PostgresAuthzStore, PostgresBankDetailsStore, PostgresFinanceReferenceResolver,
+  PostgresPayContractStore, PostgresProfileRecordStore, PostgresSafeWriteStore, LANGUAGE_FIELD, personRecordRef, runMigrations,
 } from "@studenthub/db";
 
 // Synthetic fixtures only: made-up people, a made-up bank and a checksum-valid test IBAN.
@@ -57,7 +58,7 @@ function rig(id: string, check = catalogueBankDetailsCheck(banks)) {
   const change = (details: BankDetails) => ({
     personRef: bankDetailsRecordRef(id), field: BANK_DETAILS_FIELD, value: bankDetailsValue(details),
   });
-  const principalRef = bankDetailsPrincipalRef(id);
+  const principalRef = principalAuditRef(id);
   async function write(details: BankDetails) {
     const preview = await writer.preview({ principalRef, change: change(details) });
     assert.ok(preview.ok, JSON.stringify(preview));
@@ -68,7 +69,7 @@ function rig(id: string, check = catalogueBankDetailsCheck(banks)) {
 
 /** A commit straight to the store, as a confirm racing another writer would reach it. */
 function directCommit(id: string, expectedBefore: string | null, details: BankDetails, tokenId = randomUUID(), receiptRef = randomUUID().replaceAll("-", "").padEnd(64, "0")) {
-  const principalRef = bankDetailsPrincipalRef(id);
+  const principalRef = principalAuditRef(id);
   return store.forPrincipal(id).commit({
     personRef: bankDetailsRecordRef(id), principalRef, tokenId, field: BANK_DETAILS_FIELD,
     expectedBefore, value: bankDetailsValue(details), changeSetDigest: "b".repeat(64),
@@ -93,8 +94,8 @@ test("SHU182_BANK_PG_WRITE confirm stores the triple and a self-authored, value-
     [done.receipt.receiptRef]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].operation, BANK_DETAILS_OPERATION);
-  assert.equal(rows[0].actor_principal_ref, bankDetailsPrincipalRef(id));
-  assert.equal(rows[0].target_principal_ref, bankDetailsPrincipalRef(id));
+  assert.equal(rows[0].actor_principal_ref, principalAuditRef(id));
+  assert.equal(rows[0].target_principal_ref, principalAuditRef(id));
   assert.deepEqual(rows[0].target_org_refs, []);
   assert.deepEqual(rows[0].before_summary, { valuePresent: false });
   assert.deepEqual(rows[0].after_summary.fields, [BANK_DETAILS_FIELD]);
@@ -159,7 +160,8 @@ test("SHU182_BANK_PG_RACE two confirms of one token store once and report token_
   const id = await person();
   const bankId = await catalogueItem("bank");
   const details = { bankId, iban: IBAN, beneficiaryName: NAME };
-  // Store the value first so the raced change is a no-op and both confirms reach the store's single-use check.
+  // Store the value first so the raced change is a no-op. Either unique index may answer the loser
+  // (two confirms can share a committedAt); the direct commits below pin the token index itself.
   assert.ok((await rig(id).write(details)).ok);
   const a = rig(id), b = rig(id);
   const preview = await a.writer.preview({ principalRef: a.principalRef, change: a.change(details) });
@@ -183,6 +185,7 @@ test("SHU182_BANK_PG_STALE a value changed after the preview is not overwritten"
   assert.ok(preview.ok);
   await pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)",
     [id, bankId, "GB82WEST12345698765432", NAME]);
+  // This refusal comes from the contract's own pre-read; the direct commit below pins the store's compare.
   assert.deepEqual(await x.writer.confirm({ principalRef: x.principalRef, change: x.change(details), token: preview.token }),
     { ok: false, reason: "state_changed" });
   assert.equal((await stored(id)).iban, "GB82WEST12345698765432");
@@ -198,7 +201,7 @@ test("SHU182_BANK_PG_SCHEMA the table and the ledger refuse malformed rows from 
     await assert.rejects(pool.query("INSERT INTO candidate_bank_details (principal_id, bank_id, iban, beneficiary_name) VALUES ($1, $2, $3, $4)",
       [id, bankId, iban, name]), { code: "23514" }, `${iban} / ${name}`);
   }
-  const ref = bankDetailsPrincipalRef(id);
+  const ref = principalAuditRef(id);
   const forged = randomUUID().replaceAll("-", "").padEnd(64, "0");
   const receipt = (fields: unknown, orgs: string[] = [], actor = ref, requestRef = randomUUID().replaceAll("-", "").padEnd(64, "0")) => pool.query(
     `INSERT INTO authorization_mutation_audit (request_ref, actor_principal_ref, operation, target_principal_ref, target_org_refs, before_summary, after_summary)
@@ -216,6 +219,61 @@ test("SHU182_BANK_PG_SCHEMA the table and the ledger refuse malformed rows from 
   await assert.rejects(store.readReceipt(id, forged), /malformed bank details receipt/);
 });
 
+test("SHU182_BANK_PG_RETIRE_RACE a bank retired while the commit waits on its row is not stored", async () => {
+  const id = await person();
+  const bankId = await catalogueItem("bank");
+  const details = { bankId, iban: IBAN, beneficiaryName: NAME };
+  const retire = await pool.connect();
+  try {
+    await retire.query("BEGIN");
+    await retire.query("UPDATE catalogue_items SET status = 'deleted', deleted_at = $2 WHERE id = $1", [bankId, FIXED]);
+    // The retire holds the row; the commit must wait for it rather than read the old status.
+    const pending = Promise.resolve(directCommit(id, null, details));
+    for (let i = 0; i < 200; i++) {
+      const waiting = await pool.query(
+        "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM catalogue_items WHERE catalogue_type%'");
+      if (waiting.rows.length > 0) break;
+      const done = await Promise.race([pending.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 10))]);
+      if (done) break;
+    }
+    await retire.query("COMMIT");
+    assert.deepEqual(await pending, { ok: false, reason: "state_changed" });
+  } finally {
+    retire.release();
+  }
+  assert.equal(await stored(id), undefined);
+});
+
+test("SHU182_BANK_PG_NAME_LENGTH a name the validator accepts fits the column, counted in code points", async () => {
+  const id = await person();
+  const bankId = await catalogueItem("bank");
+  const longest = "\u{1F600}".repeat(70);
+  const done = await rig(id).write({ bankId, iban: IBAN, beneficiaryName: longest });
+  assert.ok(done.ok, JSON.stringify(done));
+  assert.equal((await stored(id)).beneficiary_name, longest);
+  const x = rig(id);
+  for (const name of ["\u{1F600}".repeat(71), "\u{1F600}"]) {
+    assert.deepEqual(await x.writer.preview({ principalRef: x.principalRef, change: x.change({ bankId, iban: IBAN, beneficiaryName: name }) }),
+      { ok: false, reason: "invalid_value" }, name);
+  }
+});
+
+test("SHU182_BANK_PG_PROJECTIONS stored bank details reach none of the platform's other reads", async () => {
+  const id = await person();
+  const bankId = await catalogueItem("bank");
+  const sentinelName = "Sentinel Beneficiary Qzx";
+  assert.ok((await rig(id).write({ bankId, iban: IBAN, beneficiaryName: sentinelName })).ok);
+  const outputs = await Promise.all([
+    authz.getPrincipal(id), authz.listPrincipals(), authz.listGrantsForPrincipal(id),
+    authz.listAuthorizationMutationAuditRecords({ limit: 1_000 }), authz.listOrganizations(),
+    new PostgresProfileRecordStore(pool).listAll(id),
+    new PostgresPayContractStore(pool).listForCandidate(id),
+    new PostgresSafeWriteStore({ pool }).forPrincipal(id).readField(personRecordRef(id), LANGUAGE_FIELD),
+  ]);
+  const wire = JSON.stringify(outputs);
+  for (const secret of [IBAN, sentinelName, bankId]) assert.ok(!wire.includes(secret), `a non-finance read carries ${secret}`);
+});
+
 async function sources(dir: URL): Promise<URL[]> {
   const out: URL[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -227,18 +285,30 @@ async function sources(dir: URL): Promise<URL[]> {
   return out;
 }
 
-test("SHU182_BANK_NOT_PROJECTED only the bank-details store and its migration name the bank-details table", async () => {
+async function namers(pattern: RegExp): Promise<string[]> {
   // Compiled to dist/packages/db/test/, so the repository root is four levels up.
   const root = new URL("../../../../", import.meta.url);
-  const readers: string[] = [];
+  const found: string[] = [];
   for (const top of ["apps/", "packages/", "tools/"]) {
     for (const file of await sources(new URL(top, root))) {
       if (/\/test\//.test(file.pathname)) continue;
-      if ((await readFile(file, "utf8")).includes("candidate_bank_details")) readers.push(file.pathname.slice(root.pathname.length));
+      if (pattern.test(await readFile(file, "utf8"))) found.push(file.pathname.slice(root.pathname.length));
     }
   }
-  assert.deepEqual(readers.sort(), [
+  return found.sort();
+}
+
+test("SHU182_BANK_NOT_PROJECTED only the bank-details path can reach the table or decode its value", async () => {
+  assert.deepEqual(await namers(/candidate_bank_details/), [
     "packages/db/migrations/0183_candidate_bank_details.sql",
     "packages/db/src/postgres-bank-details-store.ts",
+  ]);
+  // Whatever can read the store or decode its value is the bank-details path itself, or exports and wires it.
+  assert.deepEqual(await namers(/\b(PostgresBankDetailsStore|parseBankDetailsValue|maskBankDetails|createBankDetails|BankDetailsStore)\b/), [
+    "apps/gateway/src/bank-details.ts",
+    "apps/gateway/src/login-runtime.ts",
+    "packages/db/src/index.ts",
+    "packages/db/src/postgres-bank-details-store.ts",
+    "packages/pay-contracts/src/bank-write.ts",
   ]);
 });

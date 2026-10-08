@@ -3,7 +3,8 @@ import { Readable } from "node:stream";
 import { test } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { CommitInput, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
-import { bankDetailsPrincipalRef, bankDetailsRecordRef, InMemoryFinanceReferenceResolver } from "@studenthub/pay-contracts";
+import { bankDetailsRecordRef, InMemoryFinanceReferenceResolver } from "@studenthub/pay-contracts";
+import { principalAuditRef } from "@studenthub/db";
 import { createBankDetails, handleBankDetails, type BankDetailsService } from "../src/bank-details.js";
 
 // Synthetic fixtures only: a made-up person, bank and checksum-valid test IBAN.
@@ -22,7 +23,7 @@ function rig(options: { candidate?: boolean } = {}) {
   const store = {
     forPrincipal(principalId: string): SafeWriteStore {
       return {
-        ownedRecord: (ref) => options.candidate !== false && principalId === PERSON && ref === bankDetailsPrincipalRef(PERSON)
+        ownedRecord: (ref) => options.candidate !== false && principalId === PERSON && ref === principalAuditRef(PERSON)
           ? bankDetailsRecordRef(PERSON) : null,
         readField: () => value,
         commit: (input: CommitInput) => {
@@ -67,6 +68,7 @@ async function call(service: BankDetailsService | undefined, path: string, body:
 
 const input = { bankId: BANK.toUpperCase(), iban: "kw81 cbku 0000 0000 0000 1234 5601 01", beneficiaryName: "  Synthetic   Person " };
 const normalized = { bankId: BANK, iban: IBAN, beneficiaryName: "Synthetic Person" };
+const masked = { bankId: BANK, ibanMasked: "KW81••••••••••••••••••••••0101", beneficiaryName: "Synthetic Person" };
 
 test("SHU182_BANK_HTTP_FLOW preview normalizes, confirm stores, and the receipt carries no bank detail", async () => {
   const x = rig();
@@ -76,7 +78,8 @@ test("SHU182_BANK_HTTP_FLOW preview normalizes, confirm stores, and the receipt 
   assert.equal(preview.headers["x-content-type-options"], "nosniff");
   assert.equal(preview.headers["referrer-policy"], "no-referrer");
   assert.deepEqual(preview.body.before, null);
-  assert.deepEqual(preview.body.after, normalized);
+  assert.deepEqual(preview.body.after, masked);
+  assert.ok(!preview.raw.includes(IBAN), "a preview serves the full IBAN");
   assert.equal(x.value(), null, "a preview writes nothing");
   const done = await call(x.service, "/candidate/bank-details/confirm", { ...input, token: preview.body.token });
   assert.equal(done.status, 200, done.raw);
@@ -87,9 +90,10 @@ test("SHU182_BANK_HTTP_FLOW preview normalizes, confirm stores, and the receipt 
   for (const response of [done.raw, receipt.raw]) {
     for (const secret of [IBAN, BANK, "Synthetic Person"]) assert.ok(!response.includes(secret), `response carries ${secret}`);
   }
-  // A second preview shows the stored details back to their owner as the before value.
+  // A second preview shows the stored details back to their owner, masked, as the before value.
   const next = await call(x.service, "/candidate/bank-details/preview", { ...normalized, iban: "GB82WEST12345698765432" });
-  assert.deepEqual(next.body.before, normalized);
+  assert.deepEqual(next.body.before, masked);
+  assert.ok(!next.raw.includes(IBAN) && !next.raw.includes("GB82WEST12345698765432"), "a preview serves a full IBAN");
 });
 
 test("SHU182_BANK_HTTP_INPUT input errors are typed and never echo what was sent", async () => {
@@ -98,7 +102,7 @@ test("SHU182_BANK_HTTP_INPUT input errors are typed and never echo what was sent
     [{ ...input, iban: "KW82CBKU0000000000001234560101" }, 400, "invalid_iban"],
     [{ ...input, bankId: "not-a-uuid" }, 400, "invalid_bank"],
     [{ ...input, beneficiaryName: "x" }, 400, "invalid_beneficiary_name"],
-    [{ ...input, bankId: "99999999-9999-4999-8999-999999999999" }, 400, "invalid_value"],
+    [{ ...input, bankId: "99999999-9999-4999-8999-999999999999" }, 400, "invalid_bank"],
     [{ ...input, extra: true }, 400, "invalid_request"],
     [{ bankId: BANK, iban: IBAN }, 400, "invalid_request"],
   ];

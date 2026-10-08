@@ -40,7 +40,9 @@ export function ibanChecksumValid(iban: string): boolean {
 export function normalizeBeneficiaryName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const cleaned = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
-  if (cleaned.length < 2 || cleaned.length > 70 || /[\p{Cc}\p{Cf}]/u.test(cleaned)) return undefined;
+  // Counted in code points, as PostgreSQL's char_length counts them, so a name that passes here also fits the column.
+  const length = [...cleaned].length;
+  if (length < 2 || length > 70 || /[\p{Cc}\p{Cf}]/u.test(cleaned)) return undefined;
   return cleaned;
 }
 

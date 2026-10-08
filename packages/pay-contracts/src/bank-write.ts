@@ -48,7 +48,6 @@ function ref(domain: string, value: string): string {
   return createHash("sha256").update(`studenthub:${domain}:v1\0`).update(value).digest("hex");
 }
 export const bankDetailsRecordRef = (principalId: string): string => ref("candidate-bank-details-record", principalId);
-export const bankDetailsPrincipalRef = (principalId: string): string => ref("candidate-bank-details-principal", principalId);
 
 /**
  * Whether a value may be written. Production checks the triple against the

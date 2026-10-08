@@ -20,6 +20,8 @@ const mutations = [
     "const spentRef = tokenRef(input.tokenId);", "const spentRef = tokenRef(input.tokenId + Math.random());"],
   ["read a receipt without matching its owner", "SHU182_BANK_PG_WRITE",
     "AND request_ref = $2 AND target_principal_ref = $3`", "AND request_ref = $2 AND $3::text IS NOT NULL`"],
+  ["read the bank's status without waiting for a retire", "SHU182_BANK_PG_RETIRE_RACE",
+    "WHERE catalogue_type = 'bank' AND id = $1::uuid FOR SHARE", "WHERE catalogue_type = 'bank' AND id = $1::uuid"],
   ["serve a receipt for another record", "SHU182_BANK_PG_SCHEMA",
     "|| a?.personRef !== bankDetailsRecordRef(principalId)", "|| !a"],
 ];
