@@ -12,6 +12,8 @@
     "@studenthub/organizations": "1.0.0",
     "@bawes/actor-assertion": "*",
     "@studenthub/profile-records": "1.0.0",
-    "pg": "^8.16.0"
+    "pg": "^8.16.0",
+    "@studenthub/pay-contracts": "1.0.0",
+    "@studenthub/safe-write-contract": "3.0.0"
   }
 }

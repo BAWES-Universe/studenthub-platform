@@ -27,6 +27,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference } from "./language-preference.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
+import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
@@ -166,6 +167,7 @@ export function createGatewayServer(
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
+    if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,
       (login as BrowserLoginApplication & { organizationProfile?: OrganizationProfile } | undefined)?.organizationProfile,
       login?.web?.origin)) return;

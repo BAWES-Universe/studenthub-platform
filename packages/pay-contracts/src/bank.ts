@@ -1,3 +1,4 @@
+import { NAME_FORBIDDEN_CODE_POINT_RANGES } from "./name-code-points.js";
 import type { FinanceReferenceResolver } from "./types.js";
 
 /**
@@ -6,7 +7,7 @@ import type { FinanceReferenceResolver } from "./types.js";
  */
 
 /** ISO 13616 registry lengths; a country missing here has no IBAN and is refused. */
-const IBAN_LENGTHS: Readonly<Record<string, number>> = {
+export const IBAN_LENGTHS: Readonly<Record<string, number>> = {
   AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22, BH: 22, BI: 27, BR: 29, BY: 28, CH: 21, CR: 22,
   CY: 28, CZ: 24, DE: 22, DJ: 27, DK: 18, DO: 28, EE: 20, EG: 29, ES: 24, FI: 18, FK: 18, FO: 18, FR: 27, GB: 22,
   GE: 22, GI: 23, GL: 18, GR: 27, GT: 28, HN: 28, HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26, IT: 27, JO: 30,
@@ -36,11 +37,33 @@ export function ibanChecksumValid(iban: string): boolean {
   return remainder === 1;
 }
 
-/** Beneficiary name as a bank file carries it: printable, single-spaced, at most 70 characters. */
+/**
+ * Code points a stored beneficiary name may not contain: controls (Cc), format characters (Cf), line and
+ * paragraph separators (Zl, Zp), private use (Co), every code point unassigned in Unicode 16 (Cn), the ogham
+ * space mark (the one space NFKC does not fold into U+0020), and the letters with compatibility mappings added
+ * after Unicode 14 (U+1CCD6-U+1CCF9, U+1E030-U+1E06D). Excluding unassigned and recently assigned code points
+ * keeps the rule the same whichever Unicode version normalizes it: Node, PostgreSQL 16 and PostgreSQL 17 ship
+ * different ones. The list is explicit (name-code-points.ts) so migration 0183 can carry exactly the same set.
+ */
+export const BENEFICIARY_NAME_FORBIDDEN_RANGES = NAME_FORBIDDEN_CODE_POINT_RANGES;
+
+const forbidden = (name: string): boolean => [...name].some((char) => {
+  const code = char.codePointAt(0)!;
+  return BENEFICIARY_NAME_FORBIDDEN_RANGES.some(([low, high]) => code >= low && code <= high);
+});
+
+/**
+ * Beneficiary name as a bank file carries it: NFKC, single U+0020 spaces with none at either end,
+ * none of the forbidden code points, 2 to 70 code points. Input whitespace of any kind is folded to
+ * single spaces first; the result is returned only if it is itself NFKC, so what is stored is
+ * exactly what migration 0183's CHECK accepts.
+ */
 export function normalizeBeneficiaryName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const cleaned = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
-  if (cleaned.length < 2 || cleaned.length > 70 || /[\p{Cc}\p{Cf}]/u.test(cleaned)) return undefined;
+  const cleaned = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  // Counted in code points, as PostgreSQL's char_length counts them, so a name that passes here also fits the column.
+  const length = [...cleaned].length;
+  if (length < 2 || length > 70 || forbidden(cleaned) || cleaned.normalize("NFKC") !== cleaned) return undefined;
   return cleaned;
 }
 
@@ -59,8 +82,8 @@ export class BankDetailError extends Error {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Closed input; the bank must be an active SHU-166 catalogue bank. */
-export async function validateBankDetails(input: unknown, banks: FinanceReferenceResolver): Promise<BankDetails> {
+/** Closed input, normalized without any lookup. Whether the bank exists is `validateBankDetails`'s question. */
+export function normalizeBankDetails(input: unknown): BankDetails {
   if (typeof input !== "object" || input === null || Array.isArray(input)) throw new BankDetailError("invalid_bank_details", 400);
   const raw = input as Record<string, unknown>;
   if (Object.keys(raw).some((key) => !["bankId", "iban", "beneficiaryName"].includes(key))) throw new BankDetailError("invalid_bank_details", 400);
@@ -69,7 +92,12 @@ export async function validateBankDetails(input: unknown, banks: FinanceReferenc
   if (iban === undefined) throw new BankDetailError("invalid_iban", 400);
   const beneficiaryName = normalizeBeneficiaryName(raw.beneficiaryName);
   if (beneficiaryName === undefined) throw new BankDetailError("invalid_beneficiary_name", 400);
-  const bankId = raw.bankId.toLowerCase();
+  return Object.freeze({ bankId: raw.bankId.toLowerCase(), iban, beneficiaryName });
+}
+
+/** Closed input; the bank must be an active SHU-166 catalogue bank. */
+export async function validateBankDetails(input: unknown, banks: FinanceReferenceResolver): Promise<BankDetails> {
+  const { bankId, iban, beneficiaryName } = normalizeBankDetails(input);
   let bank: { readonly status: "active" | "deleted" } | undefined;
   try { bank = await banks.resolve("bank", bankId); } catch { throw new BankDetailError("reference_unavailable", 503); }
   if (bank?.status !== "active") throw new BankDetailError("invalid_bank", 400);
