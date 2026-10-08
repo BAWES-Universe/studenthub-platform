@@ -9,8 +9,13 @@ const contractsPath = at("contracts.js");
 const resolutionPath = at("resolution.js");
 const bankPath = at("bank.js");
 const storePath = at("memory-store.js");
-const suite = fileURLToPath(new URL("../../../dist/packages/pay-contracts/test/contracts.test.js", import.meta.url));
-const files = new Map(await Promise.all([contractsPath, resolutionPath, bankPath, storePath].map(async (path) => [path, await readFile(path, "utf8")])));
+const bankWritePath = at("bank-write.js");
+const suiteAt = (file) => fileURLToPath(new URL(`../../../dist/packages/pay-contracts/test/${file}`, import.meta.url));
+const contractsSuite = suiteAt("contracts.test.js");
+const bankWriteSuite = suiteAt("bank-write.test.js");
+const gatewayPath = new URL("../../../dist/apps/gateway/src/bank-details.js", import.meta.url);
+const httpSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/bank-details-http.test.js", import.meta.url));
+const files = new Map(await Promise.all([contractsPath, resolutionPath, bankPath, storePath, bankWritePath, gatewayPath].map(async (path) => [path, await readFile(path, "utf8")])));
 const mutations = [
   ["overlap check dropped", contractsPath,
     "c.status !== \"deleted\" && c.id !== candidate.id && overlaps(c, candidate)",
@@ -36,10 +41,27 @@ const mutations = [
   ["contract write moved outside the audit's transaction", storePath,
     "if (rows.has(contract.id))",
     "this.#rows.set(contract.id, contract); if (rows.has(contract.id))", "SHU182_AUDIT_ATOMIC"],
+  ["bank details previewed without the catalogue check", bankWritePath,
+    "await checked(request) ? implementation.preview(request)",
+    "true ? implementation.preview(request)", "SHU182_BANK_VALUE_CHECKED", bankWriteSuite],
+  ["bank details confirmed without re-checking the catalogue", bankWritePath,
+    "await checked(request) ? implementation.confirm(request)",
+    "true ? implementation.confirm(request)", "SHU182_BANK_VALUE_CHECKED", bankWriteSuite],
+  ["non-canonical bank details value accepted", bankWritePath,
+    "return bankDetailsValue(details) === value ? Object.freeze(details) : undefined;",
+    "return Object.freeze(details);", "SHU182_BANK_CANONICAL", bankWriteSuite],
+  ["any grant may keep bank details", bankWritePath,
+    "rows.some((row) => row.role === \"candidate\")",
+    "rows.some((row) => true)", "SHU182_BANK_OWNER", bankWriteSuite],
+  ["bank details accepted from any origin", gatewayPath,
+    "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\")",
+    "if (false)", "SHU182_BANK_HTTP_BOUNDARY", httpSuite],
+  ["unknown body keys accepted", gatewayPath,
+    "if (!exactKeys(body, DETAIL_KEYS))", "if (false)", "SHU182_BANK_HTTP_INPUT", httpSuite],
 ];
 
 try {
-  for (const [name, path, from, to, assertionName] of mutations) {
+  for (const [name, path, from, to, assertionName, suite = contractsSuite] of mutations) {
     const original = files.get(path);
     assert.equal(original.split(from).length - 1, 1, `mutation binds exactly once: ${name}`);
     await writeFile(path, original.replace(from, to));

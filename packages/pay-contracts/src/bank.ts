@@ -59,8 +59,8 @@ export class BankDetailError extends Error {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Closed input; the bank must be an active SHU-166 catalogue bank. */
-export async function validateBankDetails(input: unknown, banks: FinanceReferenceResolver): Promise<BankDetails> {
+/** Closed input, normalized without any lookup. Whether the bank exists is `validateBankDetails`'s question. */
+export function normalizeBankDetails(input: unknown): BankDetails {
   if (typeof input !== "object" || input === null || Array.isArray(input)) throw new BankDetailError("invalid_bank_details", 400);
   const raw = input as Record<string, unknown>;
   if (Object.keys(raw).some((key) => !["bankId", "iban", "beneficiaryName"].includes(key))) throw new BankDetailError("invalid_bank_details", 400);
@@ -69,7 +69,12 @@ export async function validateBankDetails(input: unknown, banks: FinanceReferenc
   if (iban === undefined) throw new BankDetailError("invalid_iban", 400);
   const beneficiaryName = normalizeBeneficiaryName(raw.beneficiaryName);
   if (beneficiaryName === undefined) throw new BankDetailError("invalid_beneficiary_name", 400);
-  const bankId = raw.bankId.toLowerCase();
+  return Object.freeze({ bankId: raw.bankId.toLowerCase(), iban, beneficiaryName });
+}
+
+/** Closed input; the bank must be an active SHU-166 catalogue bank. */
+export async function validateBankDetails(input: unknown, banks: FinanceReferenceResolver): Promise<BankDetails> {
+  const { bankId, iban, beneficiaryName } = normalizeBankDetails(input);
   let bank: { readonly status: "active" | "deleted" } | undefined;
   try { bank = await banks.resolve("bank", bankId); } catch { throw new BankDetailError("reference_unavailable", 503); }
   if (bank?.status !== "active") throw new BankDetailError("invalid_bank", 400);
