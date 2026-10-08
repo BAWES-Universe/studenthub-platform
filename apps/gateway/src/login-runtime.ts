@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresCandidateProfileStore, PostgresFinanceReferenceResolver } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -25,6 +25,7 @@ import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
 import { createOrganizationProfile } from "./organization-profile.js";
 import { createBankDetails } from "./bank-details.js";
+import { createCandidateProfile } from "./candidate-profile.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -213,6 +214,8 @@ export function createRuntimeLoginFromEnv(
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: value("DATABASE_URL") }) : undefined;
+  // SHU-143: a candidate's own profile fields, behind the same signing key.
+  const candidateProfileStore = safeWriteKey ? new PostgresCandidateProfileStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -254,6 +257,9 @@ export function createRuntimeLoginFromEnv(
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),
+      ...(candidateProfileStore && safeWriteKey
+        ? { candidateProfile: createCandidateProfile({ sessions: loginStore.sessions, store: candidateProfileStore, secret: safeWriteKey }) }
+        : {}),
       ...(organizationProfileStore && safeWriteKey ? { organizationProfile: createOrganizationProfile({sessions:loginStore.sessions,store:organizationProfileStore,secret:safeWriteKey}) } : {}),
       web: {
         origin: new URL(callbackUrl).origin,
@@ -268,7 +274,7 @@ export function createRuntimeLoginFromEnv(
     },
     async close() {
       await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(),
-        bankDetailsStore?.close(), banks?.close()]);
+        bankDetailsStore?.close(), banks?.close(), candidateProfileStore?.close()]);
     },
   };
 }

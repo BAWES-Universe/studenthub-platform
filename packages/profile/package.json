@@ -18,7 +18,9 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@studenthub/contracts": "0.1.0"
+    "@studenthub/contracts": "0.1.0",
+    "@studenthub/pay-contracts": "1.0.0",
+    "@studenthub/safe-write-contract": "3.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
