@@ -97,8 +97,13 @@ export function createEpisodeHarness({
       const issue = incidentIssues.get(variables.id);
       const state = settleStates.find((entry) => entry.id === variables.input?.stateId);
       if (!issue || !state) return respond({ issueUpdate: { success: false, issue: null } });
+      issue.history = [...(issue.history ?? []), { fromState: { id: issue.state?.id ?? null, name: issue.state?.name ?? null }, toState: { id: state.id, name: state.name } }];
       issue.state = { ...state };
       return respond({ issueUpdate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
+    }
+    if (settleSupport && query.includes("CoordinatorStopHistory")) {
+      const issue = incidentIssues.get(variables.id) ?? null;
+      return respond({ issue: issue ? { history: { nodes: issue.history ?? [] } } : null });
     }
     if (settleSupport && query.includes("CoordinatorIncidentSettle")) {
       const incident = incidentIssues.get(variables.incidentId) ?? null;

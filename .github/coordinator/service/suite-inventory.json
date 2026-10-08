@@ -2500,6 +2500,7 @@
     "SHU-298 S9: end to end, a fixture stop is filed, triaged, closed, and still triaged on the next tick",
     "SHU-298 S10: a write Linear answers with success false is not counted as done",
     "SHU-298 S11: the summary marker is looked for through SHU-71's whole history",
+    "SHU-298 S12: a person's move that lands between the read and the write is put back",
     "SHU-226 mutation M1 bypass the existing deterministic identity guard",
     "SHU-226 mutation M2 report a generic refused activation",
     "SHU-226 mutation M3 ignore disabled reporting authority",
@@ -20439,6 +20440,10 @@
     },
     {
       "name": "SHU-298 S11: the summary marker is looked for through SHU-71's whole history",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-298 S12: a person's move that lands between the read and the write is put back",
       "capabilities": []
     },
     {

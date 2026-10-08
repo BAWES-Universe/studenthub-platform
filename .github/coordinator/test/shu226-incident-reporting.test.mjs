@@ -505,7 +505,7 @@ test("SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the c
 
 // A fake Linear for the sSettle step: one incident, the SHU-71 summary card,
 // and the team's states.
-function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [] } = {}) {
+function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [], personMovesTo = null, historyFails = false } = {}) {
   const calls = [];
   const store = {
     incident: {
@@ -521,6 +521,14 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     commentSuccess,
     // Older SHU-71 history, newest page first; each page is a list of bodies.
     olderPages: olderPages.map((page) => [...page]),
+    // A person's move that lands between the settle read and its write.
+    personMovesTo,
+    historyFails,
+    history: [],
+  };
+  const move = (next) => {
+    store.history.push({ fromState: { id: store.incident.state.id, name: store.incident.state.name }, toState: { id: next.id, name: next.name } });
+    store.incident.state = { ...next };
   };
   const pageInfo = (index) => (index < store.olderPages.length ? { hasPreviousPage: true, startCursor: `cursor-${index}` } : { hasPreviousPage: false, startCursor: null });
   const states = [
@@ -533,8 +541,12 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     if (query.includes("CoordinatorIncidentSettleState")) {
       if (store.failUpdate) throw new Error("lost response");
       if (!store.updateSuccess) return { issueUpdate: { success: false } };
-      const next = states.find((entry) => entry.id === variables.input.stateId);
-      store.incident.state = { ...next };
+      if (store.personMovesTo) {
+        move(store.personMovesTo);
+        store.personMovesTo = null;
+      }
+      const next = [...states, ...store.history.map((entry) => entry.fromState)].find((entry) => entry.id === variables.input.stateId);
+      move(next);
       return { issueUpdate: { success: true } };
     }
     if (query.includes("CoordinatorIncidentSettle")) {
@@ -543,6 +555,11 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
         summary: { id: "44444444-4444-4444-8444-444444440071", identifier: STOP_SUMMARY_ISSUE, comments: { nodes: store.summaryComments.map((body) => ({ body })), pageInfo: pageInfo(0) } },
         teams: { nodes: [{ id: "t", key: "SHU", states: { nodes: states } }] },
       };
+    }
+    if (query.includes("CoordinatorStopHistory")) {
+      if (store.historyFails) throw new Error("history unreadable");
+      assert.equal(variables.id, event.issue_uuid);
+      return { issue: { history: { nodes: store.history.map((entry) => ({ ...entry })) } } };
     }
     if (query.includes("CoordinatorStopSummaryPage")) {
       assert.equal(variables.summaryId, STOP_SUMMARY_ISSUE);
@@ -692,4 +709,24 @@ test("SHU-298 S11: the summary marker is looked for through SHU-71's whole histo
   assert.equal(result.status, "PARTIAL");
   assert.equal(unread.store.summaryComments.length, 0, "an unread history posts nothing");
   assert.equal(unread.store.incident.state.name, "Backlog", "the card still leaves Triage");
+});
+
+test("SHU-298 S12: a person's move that lands between the read and the write is put back", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const inProgress = { id: "33333333-3333-4333-8333-333333333304", name: "In Progress", type: "started" };
+  const raced = sSettleStore(event, { personMovesTo: inProgress });
+  const result = await sSettle(event, raced);
+  assert.equal(result.status, "RESTORED");
+  assert.equal(result.state, "In Progress");
+  assert.equal(raced.store.incident.state.name, "In Progress", "the person's state wins");
+  assert.equal(raced.store.summaryComments.length, 1, "the line for Khalid is still posted once");
+  assert.equal((await sSettle(event, raced)).status, "PARTIAL", "a later tick leaves the person's state alone");
+  assert.equal(raced.store.incident.state.name, "In Progress");
+
+  const clean = sSettleStore(event);
+  assert.equal((await sSettle(event, clean)).status, "SETTLED");
+  assert.equal(clean.calls.filter((call) => call.query.includes("SettleState")).length, 1, "an unraced move is written once");
+
+  const blind = sSettleStore(event, { historyFails: true });
+  assert.equal((await sSettle(event, blind)).status, "UNVERIFIED", "an unreadable history is never reported as settled");
 });

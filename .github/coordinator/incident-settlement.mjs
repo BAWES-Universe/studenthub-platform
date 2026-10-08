@@ -8,7 +8,9 @@
 // Settling only moves the card out of Triage and posts that line. It never
 // repairs, re-arms, relaunches, clears a pause or edits an activation: a retry
 // is still a fresh activation. A card a person already moved out of Triage is
-// left where they put it.
+// left where they put it. Linear has no conditional update, so a person's move
+// can land between the read and the write; the card's history then shows the
+// write did not start from Triage, and settling puts the person's state back.
 import { INCIDENT_STATE_NAME, INCIDENT_TEAM_KEY } from "./incident-reporting.mjs";
 
 export const SETTLE_CALL_TIMEOUT_MS = 1_500;
@@ -53,6 +55,13 @@ export const LINEAR_STOP_SUMMARY_PAGE_QUERY = `
     }
   }`;
 
+export const LINEAR_SETTLE_HISTORY_QUERY = `
+  query CoordinatorStopHistory($id: String!) {
+    issue(id: $id) {
+      history(last: 10, orderBy: createdAt) { nodes { fromState { id name } toState { id name } } }
+    }
+  }`;
+
 export const LINEAR_SETTLE_UPDATE_MUTATION = `
   mutation CoordinatorIncidentSettleState($id: String!, $input: IssueUpdateInput!) {
     issueUpdate(id: $id, input: $input) { success issue { id identifier } }
@@ -89,6 +98,26 @@ async function summaryAlreadyPosted(comments, marker, call) {
     } catch { return null; }
     if (!page) return null;
   }
+}
+
+// Our write is the latest change to the target state. If it did not start from
+// Triage, a person moved the card after it was read: put their state back.
+// Returns the restored state's name, null when nothing was overwritten, or
+// false when the history could not be read (reported as UNVERIFIED).
+async function restorePersonsMove(issueId, targetStateId, call) {
+  let nodes;
+  try {
+    nodes = (await call(LINEAR_SETTLE_HISTORY_QUERY, { id: issueId }))?.issue?.history?.nodes;
+  } catch { return false; }
+  if (!Array.isArray(nodes)) return false;
+  const ours = [...nodes].reverse().find((entry) => entry?.toState?.id === targetStateId);
+  if (!ours) return false;
+  const before = ours.fromState;
+  if (!before || before.name === INCIDENT_STATE_NAME || typeof before.id !== "string" || !before.id) return null;
+  try {
+    await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: issueId, input: { stateId: before.id } });
+  } catch { /* the history still shows it; the card is out of Triage, so settling never touches it again */ }
+  return before.name ?? "unknown";
 }
 
 async function boundedCall(call, timeoutMs, timeoutImpl) {
@@ -135,6 +164,8 @@ export async function settleCoordinatorIncident({
   const target = event.fixture === true ? FIXTURE_SETTLED_STATE : CARD_SETTLED_STATE;
 
   let moved = incident.state?.name === target.name;
+  let restored = null;
+  let verified = true;
   if (!moved && incident.state?.name === INCIDENT_STATE_NAME) {
     const teams = state?.teams?.nodes ?? [];
     const team = teams.length === 1 && teams[0]?.key === INCIDENT_TEAM_KEY ? teams[0] : null;
@@ -144,6 +175,11 @@ export async function settleCoordinatorIncident({
         const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: event.issue_uuid, input: { stateId: states[0].id } });
         moved = result?.issueUpdate?.success === true;
       } catch { /* a lost response is re-checked on the next tick */ }
+      if (moved) {
+        const check = await restorePersonsMove(event.issue_uuid, states[0].id, call);
+        if (check === false) verified = false;
+        else if (check !== null) { restored = check; moved = false; }
+      }
     }
   }
 
@@ -163,7 +199,8 @@ export async function settleCoordinatorIncident({
     }
   }
 
-  const status = moved && summarized !== false ? "SETTLED" : "PARTIAL";
-  stdout(`incident-settlement: ${event.event_id} ${status} ${moved ? target.name : "unmoved"}${summarized === null ? "" : summarized ? " summary" : " no-summary"}`);
-  return { status, state: moved ? target.name : incident.state?.name ?? null, summarized };
+  const status = restored !== null ? "RESTORED" : !verified ? "UNVERIFIED" : moved && summarized !== false ? "SETTLED" : "PARTIAL";
+  const where = restored !== null ? `restored ${restored}` : moved ? target.name : "unmoved";
+  stdout(`incident-settlement: ${event.event_id} ${status} ${where}${summarized === null ? "" : summarized ? " summary" : " no-summary"}`);
+  return { status, state: restored ?? (moved ? target.name : incident.state?.name ?? null), summarized };
 }
