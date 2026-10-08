@@ -1571,6 +1571,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0146_reference_catalogue",
           "0147_person_language_safe_write",
           "0148_candidate_profile_records",
+          "0150_organization_profile",
         ],
         "each migration is recorded exactly once",
       );
@@ -1622,6 +1623,7 @@ test(
             "0146_reference_catalogue",
             "0147_person_language_safe_write",
             "0148_candidate_profile_records",
+            "0150_organization_profile",
           ],
         );
       } finally {
