@@ -105,6 +105,7 @@ test("SHU182_TERMS_VALIDATION closed fields, exact decimals, and the company sid
   await rejects(contracts.create(STAFF, input({ terms: withoutCompletion })), "invalid_completion_percentage", 400);
   await rejects(contracts.create(STAFF, input({ terms: { payModel: "weekly" } })), "invalid_pay_model", 400);
   await rejects(contracts.create(STAFF, input({ startDate: "2026-02-30" })), "invalid_start_date", 400);
+  await rejects(contracts.create(STAFF, input({ startDate: "0000-06-15" })), "invalid_start_date", 400);
   await rejects(contracts.create(STAFF, input({ endDate: "2025-12-31" })), "invalid_end_date", 400);
   await rejects(contracts.create(STAFF, input({ autoGenerate: true })), "invalid_auto_generate", 400);
   await rejects(contracts.create(STAFF, input({ transferCost: "1e3" })), "invalid_transfer_cost", 400);
@@ -211,6 +212,13 @@ test("SHU182_PERIOD_SELECTION contracts are chosen by overlap with the period, o
   const inactive = legacyRow("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", { storeId: S2, status: "inactive" });
   assert.equal(resolveEffectiveRate({ candidateId: C, storeId: S2, contracts: [inactive], today: TODAY }).contractId, inactive.id);
   throwsResolution(() => pick({ start: "2026-03-31", end: "2026-03-01" }), "invalid_period");
+  // Impossible dates are refused, so they can never step around the contract in force into manual pay.
+  const manual = { entered: { candidateHourlyRate: "50", companyHourlyRate: "60" } };
+  for (const period of [{ start: "2026-13-01", end: "2026-13-31" }, { start: "2026-02-30", end: "2026-03-01" }, { start: "2026-03-01", end: "2026-03-32" }]) {
+    throwsResolution(() => resolveEffectiveRate({ candidateId: C, storeId: S, contracts: all, period, today: TODAY, ...manual }), "invalid_period");
+  }
+  throwsResolution(() => resolveEffectiveRate({ candidateId: C, storeId: S, contracts: all, today: "2026-13-01", ...manual }), "invalid_period");
+  throwsResolution(() => resolveEffectiveRate({ candidateId: C, storeId: S, contracts: all, period: { start: "0000-01-01", end: "2026-03-31" }, today: TODAY, ...manual }), "invalid_period");
 });
 
 test("SHU182_AMBIGUOUS_REJECTED two matching contracts are refused, not resolved to the newest; an explicit id settles it", () => {

@@ -26,7 +26,8 @@ CREATE TABLE pay_contracts (
   updated_at             timestamptz NOT NULL,
   deleted_at             timestamptz,
   CHECK ((status = 'deleted') = (deleted_at IS NOT NULL)),
-  CHECK (
+  -- IS TRUE: a comparison with a NULL term is unknown, which a bare CHECK would let through.
+  CHECK ((
     (pay_model = 'hourly'
       AND candidate_hourly_rate > 0 AND company_hourly_rate >= candidate_hourly_rate
       AND candidate_total IS NULL AND company_total IS NULL AND completion_percentage IS NULL AND salary_day IS NULL)
@@ -36,7 +37,7 @@ CREATE TABLE pay_contracts (
     OR (pay_model = 'monthly_salary'
       AND candidate_total > 0 AND company_total >= candidate_total AND salary_day IS NOT NULL
       AND candidate_hourly_rate IS NULL AND company_hourly_rate IS NULL AND completion_percentage IS NULL)
-  )
+  ) IS TRUE)
 );
 
 CREATE INDEX pay_contracts_pair_idx ON pay_contracts (candidate_principal_id, store_id, start_date);

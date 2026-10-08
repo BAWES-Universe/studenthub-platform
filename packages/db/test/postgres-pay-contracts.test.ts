@@ -90,6 +90,11 @@ test("SHU182/PG-02 the table refuses rows the domain would refuse", async () => 
     "negative transfer cost": { transfer_cost: "-0.001" },
     "unknown pay model": { pay_model: "commission" },
     "malformed store id": { store_id: "store with spaces" },
+    // A NULL term makes the per-model comparison unknown; the CHECK must still refuse it.
+    "hourly without rates": { candidate_hourly_rate: null, company_hourly_rate: null },
+    "hourly without a company rate": { company_hourly_rate: null },
+    "fixed price without a candidate total": { pay_model: "fixed_price", candidate_hourly_rate: null, company_hourly_rate: null, company_total: "10", completion_percentage: 10 },
+    "monthly without a company total": { pay_model: "monthly_salary", candidate_hourly_rate: null, company_hourly_rate: null, candidate_total: "5", salary_day: 3 },
   };
   for (const [label, change] of Object.entries(attempts)) {
     const next = { ...row, ...change, id: randomUUID() };

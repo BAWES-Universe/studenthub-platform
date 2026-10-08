@@ -35,7 +35,8 @@ function partyId(value: unknown, code: string): string {
 function date(value: unknown, code: string): IsoDate {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid(code);
   const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) invalid(code);
+  // Year 0000 round-trips in JavaScript but is outside PostgreSQL's date range.
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value || value.startsWith("0000")) invalid(code);
   return value;
 }
 
@@ -109,7 +110,7 @@ function normalizeEditable(raw: Record<string, unknown>): EditableFields {
 }
 
 function overlaps(a: { startDate: IsoDate; endDate?: IsoDate }, b: { startDate: IsoDate; endDate?: IsoDate }): boolean {
-  return (a.endDate === undefined || a.endDate >= b.startDate) && (b.endDate === undefined || b.endDate >= a.startDate);
+  return (a.endDate == null || a.endDate >= b.startDate) && (b.endDate == null || b.endDate >= a.startDate);
 }
 
 /**

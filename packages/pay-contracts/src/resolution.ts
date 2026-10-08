@@ -77,7 +77,12 @@ export class RateResolutionError extends Error {
   }
 }
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** A real `YYYY-MM-DD` calendar date: `2026-13-01` or `2026-02-30` would compare lexically and skew selection. */
+export function isCalendarDate(value: unknown): value is IsoDate {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value && !value.startsWith("0000");
+}
 
 /**
  * Legacy contract selection (`TransferCandidate.php:1006-1059`), made explicit:
@@ -91,16 +96,16 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 export function matchContracts(input: RateResolutionInput): { readonly contracts: readonly PayContract[]; readonly steps: readonly ResolutionStep[] } {
   const steps: ResolutionStep[] = [];
   const { period } = input;
-  if (period !== undefined && (!DATE.test(period.start) || !DATE.test(period.end) || period.end < period.start)) {
+  if (!isCalendarDate(input.today) || (period !== undefined && (!isCalendarDate(period.start) || !isCalendarDate(period.end) || period.end < period.start))) {
     throw new RateResolutionError("invalid_period", 400);
   }
   let matches = input.contracts.filter((c) => c.candidateId === input.candidateId && c.storeId === input.storeId && c.status !== "deleted");
   if (period !== undefined) {
-    matches = matches.filter((c) => c.startDate <= period.end && (c.endDate === undefined || c.endDate >= period.start));
+    matches = matches.filter((c) => c.startDate <= period.end && (c.endDate == null || c.endDate >= period.start));
     steps.push("contracts_matched_by_period");
   } else {
     // Legacy's fallback checks only the end date, so a contract that starts later still matches.
-    matches = matches.filter((c) => c.endDate === undefined || c.endDate >= input.today);
+    matches = matches.filter((c) => c.endDate == null || c.endDate >= input.today);
     steps.push("contracts_matched_active_today");
   }
   const applicableIds = matches.map((c) => c.id);
