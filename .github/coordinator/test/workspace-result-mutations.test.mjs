@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 // Mutate independent copies of the current source; never checkout/reset the
 // implementation under test. Every probe must fail an assertion, not syntax.
 const mutations = [
-  ["M1 callback before commit", "adapters/codex-cli.mjs", 'if (!callbackValid(callback, { attempt_id, target_sha })) {', 'if (false) {', "callback is bound"],
+  ["M1 callback before commit", "adapters/codex-cli.mjs", 'if (defect) {', 'if (false) {', "callback is bound"],
   ["M2 worker Git directory", "workspace-result.mjs", '"--git-dir", dir, "--work-tree", worktree', '"--git-dir", path.join(worktree,".git"), "--work-tree", worktree', "filters, hooks"],
   ["M3 worker index", "workspace-result.mjs", 'const indexFile = path.join(dir, "snapshot-index");', 'const indexFile = path.join(worktree, ".git/index");', "filters, hooks"],
   ["M4 wrong parent", "workspace-result.mjs", 'tree, "-p", target_sha,', 'tree,', "host commits raw files"],

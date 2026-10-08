@@ -27,7 +27,7 @@ import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRole } from "../launch-vocabulary.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild } from "../push-broker.mjs";
-import { runReviewEvidence } from "../review-execution.mjs";
+import { confinedTestResultLine, runReviewEvidence } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
 import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
@@ -149,7 +149,8 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     WRITER_FINISH_RULE,
     "Implement the change and run the relevant tests. Leave the tested changes in the workspace; do NOT git add, commit, modify .git, push, open a PR or touch the network. A separate host broker snapshots your files, creates the result commit and pushes it after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":null,"stage":"${writerSuccessStage(scope_phase)}|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":null,"stage":"${writerSuccessStage(scope_phase)}|BLOCKED|FAILED","links":["<evidence: test names or repo-relative paths of files you touched>"],"summary":"<short note>"}`,
+    "Copy attempt_id and target_sha exactly as written above. Links are plain test names or repo-relative paths; never a URL and never a file: URI, including any the review findings quote.",
     `This is ${scope_phase === "revision" ? "a REVISION addressing review findings" : "the INITIAL build"}, so the only success stage is ${writerSuccessStage(scope_phase)}; the host refuses any other success stage. For ${writerSuccessStage(scope_phase)} use result_sha:null to declare that the tested workspace is ready for the host to commit. For BLOCKED or FAILED use the bound head as result_sha. Stop all file writers before returning; the host refuses an unstable workspace.`,
   ].filter(Boolean).join("\n");
 }
@@ -410,13 +411,29 @@ function inlineReviewEvidence(reviewEvidence) {
   return Buffer.byteLength(payload) > MAX_REVIEW_EVIDENCE_BYTES ? null : payload;
 }
 
-export function callbackValid(callback, { attempt_id, target_sha }) {
-  if (!callback || typeof callback !== "object") return false;
-  if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
+export function callbackValid(callback, binding) {
+  return callbackDefect(callback, binding) === null;
+}
+
+// The first rule a writer callback breaks, or null when it is valid. The fifth
+// card's revision ended "without a valid attempt/SHA-bound schema callback" and
+// nothing said which rule failed, so the HOLD now names it.
+export function callbackDefect(callback, { attempt_id, target_sha }) {
+  if (!callback || typeof callback !== "object") return "no final JSON message";
+  if (callback.attempt_id !== attempt_id) return "attempt_id is not the bound attempt";
+  if (callback.target_sha !== target_sha) return "target_sha is not the bound head";
+  if (!CALLBACK_STAGES.includes(callback.stage)) return "stage is not a writer stage";
   const workspaceReady = callback.result_sha === null && SUCCESS_CALLBACK_STAGES.includes(callback.stage);
-  if (!workspaceReady && !SHA_RE.test(callback.result_sha ?? "")) return false;
-  if (!CALLBACK_STAGES.includes(callback.stage)) return false;
-  if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
+  if (!workspaceReady && !SHA_RE.test(callback.result_sha ?? "")) {
+    return SUCCESS_CALLBACK_STAGES.includes(callback.stage)
+      ? "result_sha must be null or a 40-hex sha"
+      : `result_sha must be the bound head for ${callback.stage}`;
+  }
+  if (!Array.isArray(callback.links) || callback.links.length === 0) return "links is empty";
+  return linksValid(callback.links) ? null : "links holds a non-http(s) URL or an empty or oversized entry";
+}
+
+function linksValid(links) {
   // Option A removed the worker's ability to produce an http(s) URL: it never
   // pushes, never opens a PR, and has no network. Requiring one made the
   // callback unsatisfiable for a COMPLIANT worker, so validation always failed
@@ -426,7 +443,7 @@ export function callbackValid(callback, { attempt_id, target_sha }) {
   // Evidence is still required, and anything that IS a URL must still be
   // http(s): these strings are rendered into Linear and GitHub comments, so a
   // file:, data: or javascript: link must never be accepted.
-  return callback.links.every((link) => {
+  return links.every((link) => {
     if (typeof link !== "string") return false;
     const trimmed = link.trim();
     if (trimmed.length === 0 || trimmed.length > 512) return false;
@@ -436,6 +453,22 @@ export function callbackValid(callback, { attempt_id, target_sha }) {
       return true; // a plain evidence reference, e.g. a test name or path
     }
   });
+}
+
+// What a rejected callback said, kept on the host's completion record so the
+// next run's report can show it. Bounded, and only fields of the closed shape.
+const REJECTED_TEXT_MAX = 1000;
+const REJECTED_LINKS_MAX = 10;
+export function rejectedCallbackSummary(callback, { attempt_id, target_sha }) {
+  const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : null);
+  return {
+    attempt_id_matches: callback.attempt_id === attempt_id,
+    target_sha_matches: callback.target_sha === target_sha,
+    result_sha: text(callback.result_sha, 64),
+    stage: text(callback.stage, 32),
+    links: Array.isArray(callback.links) ? callback.links.slice(0, REJECTED_LINKS_MAX).map((link) => text(link, 200)) : null,
+    summary: text(callback.summary, REJECTED_TEXT_MAX),
+  };
 }
 
 // First real-card run (2b): codex exited 1 eight seconds after launch with no
@@ -887,7 +920,7 @@ export async function launchBuilder({
     task_context: reviewer ? [
       task_context,
       `Confined exact-head test evidence URI (machine provenance only; not readable): ${reviewEvidence.evidence_link}`,
-      `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
+      confinedTestResultLine(reviewEvidence),
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
     ].filter(Boolean).join("\n") : task_context,
     ...(reviewer ? { review_rule } : {}),
@@ -1113,8 +1146,13 @@ export async function launchBuilder({
     return { stage: "COMPLETED", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
       callback, evidence_links: callback.links, ...audit, ok: true };
   }
-  if (!callbackValid(callback, { attempt_id, target_sha })) {
-    return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", reason: "completed without a valid attempt/SHA-bound schema callback", ok: false };
+  const defect = callbackDefect(callback, { attempt_id, target_sha });
+  if (defect) {
+    return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+      reason_code: "CALLBACK_BINDING_INVALID",
+      reason: `completed without a valid attempt/SHA-bound schema callback: ${defect}`,
+      ...(callback && typeof callback === "object" ? { rejected_callback: rejectedCallbackSummary(callback, { attempt_id, target_sha }) } : {}),
+      ok: false };
   }
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };

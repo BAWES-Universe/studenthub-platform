@@ -27,6 +27,7 @@ import {
   parseFinalMessage,
   parseCodexCallback,
   callbackValid,
+  callbackDefect,
   persistDurableSession,
   readDurableSession,
   CALLBACK_SCHEMA,
@@ -1553,4 +1554,31 @@ test("a broker-enabled launch with NO wrapper HOLDs before the builder is spawne
   assert.equal(out.pause_adapter, true);
   assert.match(String(out.reason ?? ""), /SHU_WORKER_LAUNCH_WRAPPER/);
   assert.equal(spawned, 0, "the builder must never run: a HOLD after it has already run as the coordinator is not protection");
+});
+
+test("CALLBACK_DEFECT_NAMED: a rejected writer callback names the rule it broke and keeps what it said", async () => {
+  const binding = { attempt_id: ATTEMPT, target_sha: SHA };
+  const valid = JSON.parse(callbackJson("BUILD_READY"));
+  assert.equal(callbackDefect(valid, binding), null);
+  assert.equal(callbackDefect(null, binding), "no final JSON message");
+  assert.match(callbackDefect({ ...valid, attempt_id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee" }, binding), /attempt_id/);
+  assert.match(callbackDefect({ ...valid, target_sha: "6".repeat(40) }, binding), /target_sha/);
+  assert.match(callbackDefect({ ...valid, stage: "BLOCKED", result_sha: null }, binding), /result_sha must be the bound head for BLOCKED/);
+  assert.match(callbackDefect({ ...valid, links: [] }, binding), /links is empty/);
+  assert.match(callbackDefect({ ...valid, links: ["file:///srv/shu/review-evidence/x.json"] }, binding), /non-http/);
+
+  const stdout = jsonl({ finalText: callbackJson("BUILD_READY", { links: ["file:///srv/shu/review-evidence/x.json"], summary: "done" }) });
+  const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
+  const exec = (_f, _a, _o, cb) => queueMicrotask(() => cb(null, stdout, ""));
+  const out = await launchBuilder({ ...launchInput(), execFileImpl: exec, schemaFile: join(schemaDir, "schema.json") });
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.reason_code, "CALLBACK_BINDING_INVALID");
+  assert.match(out.reason, /valid attempt\/SHA-bound schema callback: links holds a non-http/);
+  assert.equal(out.rejected_callback.stage, "BUILD_READY");
+  assert.equal(out.rejected_callback.attempt_id_matches, true);
+  assert.deepEqual(out.rejected_callback.links, ["file:///srv/shu/review-evidence/x.json"]);
+  assert.equal(out.rejected_callback.summary, "done");
+
+  const prompt = buildCodexPrompt({ ...launchInput(), scope_phase: "revision" });
+  assert.match(prompt, /never a URL and never a file: URI, including any the review findings quote/);
 });

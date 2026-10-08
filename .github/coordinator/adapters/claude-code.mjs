@@ -18,7 +18,7 @@ import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
 import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
-import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
+import { confinedTestResultLine, runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 
 export const ADAPTER_NAME = "claude-code";
@@ -562,7 +562,7 @@ export async function launchBuilder({
       task_context,
       ...(role === "review" ? [
       `Confined exact-head test evidence URI (machine provenance only; do not Read): ${reviewEvidence.evidence_link}`,
-      `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
+      confinedTestResultLine(reviewEvidence),
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
       ] : []),
     ].filter(Boolean).join("\n"),
