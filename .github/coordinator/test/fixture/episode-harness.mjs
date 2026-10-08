@@ -15,9 +15,6 @@ import { join } from "node:path";
 import { main, parseReceiptsFromComments } from "../../reconcile.mjs";
 import { withBatchedComments } from "./linear-board.mjs";
 
-// The coordinator's own Linear user, as the settle history check sees it.
-const SETTLE_VIEWER_ID = "55555555-5555-4555-8555-555555550001";
-
 // The head the WRITE binds to, and the head a revision moves the branch to.
 export const SHA_INPUT = "a".repeat(40);
 export const SHA_WRITE = "b".repeat(40);
@@ -44,8 +41,8 @@ export function createEpisodeHarness({
   initialBranchHead = SHA_INPUT,
   configOverrides = {},
   extraNodes = [],
-  // SHU-298: answer the settle query and state update. Off by default so the
-  // SHU-226/SHU-260 suites keep observing the card as filed.
+  // SHU-298: answer the settle query and the SHU-71 summary line. Off by
+  // default so the SHU-226/SHU-260 suites see no extra Linear traffic.
   settleSupport = false,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "shu225-harness-"));
@@ -71,8 +68,9 @@ export function createEpisodeHarness({
   const entityComments = new Map();
   const incidentCreatePlan = [];
   const summaryIssueId = "22222222-2222-4222-8222-222222220071";
-  const settleStates = [
-    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Triage", type: "triage" },
+  // SHU-298: incident cards are filed in Backlog (a real card's stop) or Done
+  // (a fixture's stop).
+  const incidentStates = [
     { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", name: "Backlog", type: "backlog" },
     { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", name: "Done", type: "completed" },
   ];
@@ -96,21 +94,6 @@ export function createEpisodeHarness({
         .map(() => ({ type: "related", relatedIssue: { id: nodeId, identifier: issueId } }));
       return respond({ issue: { ...issue, relations: { nodes: relations } } });
     }
-    if (settleSupport && query.includes("CoordinatorIncidentSettleState")) {
-      const issue = incidentIssues.get(variables.id);
-      const state = settleStates.find((entry) => entry.id === variables.input?.stateId);
-      if (!issue || !state) return respond({ issueUpdate: { success: false, issue: null } });
-      issue.history = [...(issue.history ?? []), { createdAt: new Date(Date.UTC(2026, 9, 8, 12, 0, (issue.history ?? []).length)).toISOString(), actor: { id: SETTLE_VIEWER_ID }, fromState: { id: issue.state?.id ?? null, name: issue.state?.name ?? null }, toState: { id: state.id, name: state.name } }];
-      issue.state = { ...state };
-      return respond({ issueUpdate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
-    }
-    if (settleSupport && query.includes("CoordinatorStopHistory")) {
-      const issue = incidentIssues.get(variables.id) ?? null;
-      return respond({
-        viewer: { id: SETTLE_VIEWER_ID },
-        issue: issue ? { state: issue.state, history: { nodes: issue.history ?? [], pageInfo: { hasNextPage: false, hasPreviousPage: false } } } : null,
-      });
-    }
     if (settleSupport && query.includes("CoordinatorIncidentSettle")) {
       const incident = incidentIssues.get(variables.incidentId) ?? null;
       return respond({
@@ -118,7 +101,6 @@ export function createEpisodeHarness({
         summary: variables.summaryId === "SHU-71"
           ? { id: summaryIssueId, identifier: "SHU-71", comments: { nodes: entityComments.get(summaryIssueId) ?? [] } }
           : null,
-        teams: { nodes: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", key: "SHU", states: { nodes: settleStates } }] },
       });
     }
     if (query.includes("CoordinatorIncidentTriage")) {
@@ -153,7 +135,7 @@ export function createEpisodeHarness({
       return respond({ teams: { nodes: [{
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         key: "SHU",
-        states: { nodes: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Triage", type: "triage" }] },
+        states: { nodes: incidentStates.filter((state) => state.name === variables.stateName) },
         labels: { nodes: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "repo:platform" }] },
       }] } });
     }
@@ -170,7 +152,7 @@ export function createEpisodeHarness({
         title: input.title,
         description: input.description,
         team: { id: input.teamId, key: "SHU" },
-        state: { id: input.stateId, name: "Triage", type: "triage" },
+        state: { ...incidentStates.find((state) => state.id === input.stateId) },
         labels: { nodes: [{ id: input.labelIds[0], name: "repo:platform" }] },
         assignee: null,
       };

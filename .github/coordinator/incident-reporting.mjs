@@ -4,7 +4,18 @@ import { isFixtureIssue } from "./workspace-scope.mjs";
 
 export const INCIDENT_VERSION = "1.0.0";
 export const INCIDENT_TEAM_KEY = "SHU";
+// SHU-298: an incident card is filed where it ends up, never in a pickable
+// state: a rehearsal fixture's stop is expected, so it is filed closed (Done),
+// and a real card's stop is filed in Backlog. The coordinator never changes an
+// existing card's state, so it can never overwrite a person's move.
+export const INCIDENT_FILED_STATES = Object.freeze({
+  card: Object.freeze({ name: "Backlog", type: "backlog" }),
+  fixture: Object.freeze({ name: "Done", type: "completed" }),
+});
+// Cards filed before SHU-298 sit in Triage; they are still the coordinator's.
 export const INCIDENT_STATE_NAME = "Triage";
+export const INCIDENT_OWNED_STATE_NAMES = Object.freeze([INCIDENT_STATE_NAME, INCIDENT_FILED_STATES.card.name, INCIDENT_FILED_STATES.fixture.name]);
+export const incidentFiledState = (event) => (event?.fixture === true ? INCIDENT_FILED_STATES.fixture : INCIDENT_FILED_STATES.card);
 export const INCIDENT_LABEL_NAME = "repo:platform";
 export const INCIDENT_MAX_ATTEMPTS = 3;
 export const INCIDENT_MAX_EPISODE_ATTEMPTS = 8;
@@ -287,7 +298,7 @@ async function boundedCall(call, { timeoutMs = INCIDENT_CALL_TIMEOUT_MS, timeout
 function incidentDelivered(issue, event) {
   if (!issue || issue.id !== event.issue_uuid || issue.title !== `coordinator stop: ${event.issue_id} — ${event.reason_code}`) return false;
   if (!String(issue.description ?? "").includes(`<!-- coordinator-incident-event ${event.event_id} -->`)) return false;
-  if (issue.team?.key !== INCIDENT_TEAM_KEY || issue.state?.name !== INCIDENT_STATE_NAME || issue.assignee !== null) return false;
+  if (issue.team?.key !== INCIDENT_TEAM_KEY || !INCIDENT_OWNED_STATE_NAMES.includes(issue.state?.name) || issue.assignee !== null) return false;
   if (!(issue.labels?.nodes ?? []).some((label) => label?.name === INCIDENT_LABEL_NAME)) return false;
   return (issue.relations?.nodes ?? []).some((relation) => relation?.type === "related" && relation?.relatedIssue?.identifier === event.issue_id);
 }
@@ -365,13 +376,14 @@ export async function reportCoordinatorIncident({
     try {
       metadata = await boundedCall(() => sendLinear(LINEAR_INCIDENT_METADATA_QUERY, {
         teamKey: INCIDENT_TEAM_KEY,
-        stateName: INCIDENT_STATE_NAME,
+        stateName: incidentFiledState(event).name,
         labelName: INCIDENT_LABEL_NAME,
       }, token, fetchImpl), options);
     } catch { metadata = null; }
     const teams = metadata?.teams?.nodes ?? [];
     const team = teams.length === 1 && teams[0]?.key === INCIDENT_TEAM_KEY ? teams[0] : null;
-    const states = team?.states?.nodes?.filter((state) => state?.name === INCIDENT_STATE_NAME && state?.type === "triage") ?? [];
+    const filed = incidentFiledState(event);
+    const states = team?.states?.nodes?.filter((state) => state?.name === filed.name && state?.type === filed.type) ?? [];
     const labels = team?.labels?.nodes?.filter((label) => label?.name === INCIDENT_LABEL_NAME) ?? [];
     if (!team || states.length !== 1 || labels.length !== 1) throw new Error("incident metadata unavailable");
 

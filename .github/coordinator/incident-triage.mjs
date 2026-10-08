@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { familyForLane, isWriterRole, roleForReceipt } from "./launch-vocabulary.mjs";
-import { INCIDENT_OWNED_STATE_NAMES } from "./incident-settlement.mjs";
+import { INCIDENT_OWNED_STATE_NAMES } from "./incident-reporting.mjs";
 
 export const TRIAGE_VERSION = "1.0.0";
 export const TRIAGE_RESUME_AUTHORITY = false;

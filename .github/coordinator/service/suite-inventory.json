@@ -2471,7 +2471,7 @@
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
     "SHU-224: committed scope is pinned to one card lane while dispatch stays disabled",
     "SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed",
-    "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card",
+    "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted incident card",
     "SHU-226 A1: a synchronous breaker is reported in the tick that persists it",
     "SHU-226 A2/A3: revision and retryable-failure exhaustion each file all bounded attempts",
     "SHU-226 A4 (M1): replay does not duplicate",
@@ -2485,24 +2485,21 @@
     "SHU-226 A11: the card carries no secrets; no raw evidence in reporting output",
     "SHU-226 M2: a refused activation still writes zero",
     "SHU-226 M3: disabled means disabled: zero writes",
-    "SHU-226 M6: an incident card is filed in Triage, never pickable",
+    "SHU-226 M6: an incident card is filed in Backlog or Done, never pickable",
     "SHU-226 M8: restart keeps the same event identity",
     "SHU-226 M10: an unproven episode never writes",
     "SHU-226 A11/A12: the eight-attempt payload is complete and explicitly below the Linear bound",
     "SHU-298 S1: a writer that reported FAILED is builder_failed, not an unknown breaker",
     "SHU-298 S2: builder_failed needs a fresh activation and never self-repairs",
     "SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the card",
-    "SHU-298 S4: a real card's stop leaves Triage for Backlog and puts one line on SHU-71",
-    "SHU-298 S5: a fixture's stop is closed and posts nothing on SHU-71",
-    "SHU-298 S6: settling waits for triage, leaves a person's choice alone, and never touches another card",
-    "SHU-298 S7: a lost state update is retried on the next tick",
+    "SHU-298 S4: a real card's stop is filed in Backlog and puts one line on SHU-71",
+    "SHU-298 S5: a fixture's stop is filed closed and posts nothing on SHU-71",
+    "SHU-298 S6: settling waits for triage, never changes a card's state, and never touches another card",
+    "SHU-298 S7: a lost summary write is retried on the next tick",
     "SHU-298 S8: the summary line carries only closed vocabulary",
-    "SHU-298 S9: end to end, a fixture stop is filed, triaged, closed, and still triaged on the next tick",
-    "SHU-298 S10: a write Linear answers with success false is not counted as done",
+    "SHU-298 S9: end to end, a fixture stop is filed closed, triaged, and still triaged on the next tick",
+    "SHU-298 S10: a summary Linear answers with success false is not counted as done",
     "SHU-298 S11: the summary marker is looked for through SHU-71's whole history",
-    "SHU-298 S12: a person's move that lands between the read and the write is put back",
-    "SHU-298 S13: a person's move that lands during a put-back is kept, on this tick or a later one",
-    "SHU-298 S14: a card a person puts back into Triage stays there",
     "SHU-226 mutation M1 bypass the existing deterministic identity guard",
     "SHU-226 mutation M2 report a generic refused activation",
     "SHU-226 mutation M3 ignore disabled reporting authority",
@@ -20329,7 +20326,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card",
+      "name": "SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted incident card",
       "capabilities": []
     },
     {
@@ -20385,7 +20382,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-226 M6: an incident card is filed in Triage, never pickable",
+      "name": "SHU-226 M6: an incident card is filed in Backlog or Done, never pickable",
       "capabilities": []
     },
     {
@@ -20413,19 +20410,19 @@
       "capabilities": []
     },
     {
-      "name": "SHU-298 S4: a real card's stop leaves Triage for Backlog and puts one line on SHU-71",
+      "name": "SHU-298 S4: a real card's stop is filed in Backlog and puts one line on SHU-71",
       "capabilities": []
     },
     {
-      "name": "SHU-298 S5: a fixture's stop is closed and posts nothing on SHU-71",
+      "name": "SHU-298 S5: a fixture's stop is filed closed and posts nothing on SHU-71",
       "capabilities": []
     },
     {
-      "name": "SHU-298 S6: settling waits for triage, leaves a person's choice alone, and never touches another card",
+      "name": "SHU-298 S6: settling waits for triage, never changes a card's state, and never touches another card",
       "capabilities": []
     },
     {
-      "name": "SHU-298 S7: a lost state update is retried on the next tick",
+      "name": "SHU-298 S7: a lost summary write is retried on the next tick",
       "capabilities": []
     },
     {
@@ -20433,27 +20430,15 @@
       "capabilities": []
     },
     {
-      "name": "SHU-298 S9: end to end, a fixture stop is filed, triaged, closed, and still triaged on the next tick",
+      "name": "SHU-298 S9: end to end, a fixture stop is filed closed, triaged, and still triaged on the next tick",
       "capabilities": []
     },
     {
-      "name": "SHU-298 S10: a write Linear answers with success false is not counted as done",
+      "name": "SHU-298 S10: a summary Linear answers with success false is not counted as done",
       "capabilities": []
     },
     {
       "name": "SHU-298 S11: the summary marker is looked for through SHU-71's whole history",
-      "capabilities": []
-    },
-    {
-      "name": "SHU-298 S12: a person's move that lands between the read and the write is put back",
-      "capabilities": []
-    },
-    {
-      "name": "SHU-298 S13: a person's move that lands during a put-back is kept, on this tick or a later one",
-      "capabilities": []
-    },
-    {
-      "name": "SHU-298 S14: a card a person puts back into Triage stays there",
       "capabilities": []
     },
     {
