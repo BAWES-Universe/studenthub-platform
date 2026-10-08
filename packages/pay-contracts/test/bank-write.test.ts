@@ -113,12 +113,12 @@ test("SHU182_BANK_OWNER only a person with a candidate grant may keep bank detai
   assert.deepEqual(await x.writer.preview({ principalRef: x.principalRef, change: x.change() }), { ok: false, reason: "not_own_record" });
 });
 
-test("SHU182_BANK_NAME_RULE the explicit forbidden list covers every control, format and separator code point this runtime knows", () => {
+test("SHU182_BANK_NAME_RULE the explicit forbidden list covers every control, format, separator, private-use and unassigned code point this runtime knows", () => {
   const listed = (code: number) => BENEFICIARY_NAME_FORBIDDEN_RANGES.some(([low, high]) => code >= low && code <= high);
   const missing: string[] = [];
   for (let code = 0; code <= 0x10ffff; code++) {
     if (code >= 0xd800 && code <= 0xdfff) continue;
-    if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(String.fromCodePoint(code)) && !listed(code)) missing.push(code.toString(16));
+    if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}]/u.test(String.fromCodePoint(code)) && !listed(code)) missing.push(code.toString(16));
   }
   assert.deepEqual(missing, []);
   for (const name of ["Zero\u200Bwidth", "Soft\u00ADhyphen", "Ogham\u1680mark"]) assert.equal(normalizeBeneficiaryName(name), name.includes("\u1680") ? "Ogham mark" : undefined, name);

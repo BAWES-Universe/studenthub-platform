@@ -1,3 +1,4 @@
+import { NAME_FORBIDDEN_CODE_POINT_RANGES } from "./name-code-points.js";
 import type { FinanceReferenceResolver } from "./types.js";
 
 /**
@@ -37,21 +38,14 @@ export function ibanChecksumValid(iban: string): boolean {
 }
 
 /**
- * Code points a stored beneficiary name may not contain: every control (Cc), format (Cf), line (Zl) and
- * paragraph (Zp) separator, the ogham space mark (the one space NFKC does not fold into U+0020), and the
- * outlined letters and digits U+1CCD6-U+1CCF9, whose compatibility mappings arrived in Unicode 16 and so
- * normalize differently in PostgreSQL 16 and 17 (Unicode 15).
- * Listed explicitly rather than as Unicode properties so that migration 0183's
- * `candidate_beneficiary_name_valid` lists exactly the same set; a test checks both against each other
- * and this list against the runtime's own properties.
+ * Code points a stored beneficiary name may not contain: controls (Cc), format characters (Cf), line and
+ * paragraph separators (Zl, Zp), private use (Co), every code point unassigned in Unicode 16 (Cn), the ogham
+ * space mark (the one space NFKC does not fold into U+0020), and the letters with compatibility mappings added
+ * after Unicode 14 (U+1CCD6-U+1CCF9, U+1E030-U+1E06D). Excluding unassigned and recently assigned code points
+ * keeps the rule the same whichever Unicode version normalizes it: Node, PostgreSQL 16 and PostgreSQL 17 ship
+ * different ones. The list is explicit (name-code-points.ts) so migration 0183 can carry exactly the same set.
  */
-export const BENEFICIARY_NAME_FORBIDDEN_RANGES: readonly (readonly [number, number])[] = Object.freeze([
-  [0x0000, 0x001f], [0x007f, 0x009f], [0x00ad, 0x00ad], [0x0600, 0x0605], [0x061c, 0x061c], [0x06dd, 0x06dd],
-  [0x070f, 0x070f], [0x0890, 0x0891], [0x08e2, 0x08e2], [0x1680, 0x1680], [0x180e, 0x180e], [0x200b, 0x200f],
-  [0x2028, 0x202e], [0x2060, 0x2064], [0x2066, 0x206f], [0xfeff, 0xfeff], [0xfff9, 0xfffb], [0x110bd, 0x110bd],
-  [0x110cd, 0x110cd], [0x13430, 0x1343f], [0x1bca0, 0x1bca3], [0x1ccd6, 0x1ccf9], [0x1d173, 0x1d17a], [0xe0001, 0xe0001],
-  [0xe0020, 0xe007f],
-].map((range) => Object.freeze(range as [number, number])));
+export const BENEFICIARY_NAME_FORBIDDEN_RANGES = NAME_FORBIDDEN_CODE_POINT_RANGES;
 
 const forbidden = (name: string): boolean => [...name].some((char) => {
   const code = char.codePointAt(0)!;
