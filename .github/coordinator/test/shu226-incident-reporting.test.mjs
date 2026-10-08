@@ -14,6 +14,7 @@ import {
   settleCoordinatorIncident,
   stopSummaryMarker,
   STOP_SUMMARY_ISSUE,
+  SUMMARY_MAX_PAGES,
 } from "../incident-settlement.mjs";
 import { isFixtureIssue } from "../workspace-scope.mjs";
 import {
@@ -504,7 +505,7 @@ test("SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the c
 
 // A fake Linear for the sSettle step: one incident, the SHU-71 summary card,
 // and the team's states.
-function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null } = {}) {
+function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdate = false, title = null, updateSuccess = true, commentSuccess = true, olderPages = [] } = {}) {
   const calls = [];
   const store = {
     incident: {
@@ -516,7 +517,12 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     },
     summaryComments: [...summaryComments],
     failUpdate,
+    updateSuccess,
+    commentSuccess,
+    // Older SHU-71 history, newest page first; each page is a list of bodies.
+    olderPages: olderPages.map((page) => [...page]),
   };
+  const pageInfo = (index) => (index < store.olderPages.length ? { hasPreviousPage: true, startCursor: `cursor-${index}` } : { hasPreviousPage: false, startCursor: null });
   const states = [
     { id: "33333333-3333-4333-8333-333333333301", name: "Triage", type: "triage" },
     { id: "33333333-3333-4333-8333-333333333302", name: CARD_SETTLED_STATE.name, type: CARD_SETTLED_STATE.type },
@@ -526,6 +532,7 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     calls.push({ query, variables });
     if (query.includes("CoordinatorIncidentSettleState")) {
       if (store.failUpdate) throw new Error("lost response");
+      if (!store.updateSuccess) return { issueUpdate: { success: false } };
       const next = states.find((entry) => entry.id === variables.input.stateId);
       store.incident.state = { ...next };
       return { issueUpdate: { success: true } };
@@ -533,11 +540,19 @@ function sSettleStore(event, { state = "Triage", summaryComments = [], failUpdat
     if (query.includes("CoordinatorIncidentSettle")) {
       return {
         incident: { ...store.incident },
-        summary: { id: "44444444-4444-4444-8444-444444440071", identifier: STOP_SUMMARY_ISSUE, comments: { nodes: store.summaryComments.map((body) => ({ body })) } },
+        summary: { id: "44444444-4444-4444-8444-444444440071", identifier: STOP_SUMMARY_ISSUE, comments: { nodes: store.summaryComments.map((body) => ({ body })), pageInfo: pageInfo(0) } },
         teams: { nodes: [{ id: "t", key: "SHU", states: { nodes: states } }] },
       };
     }
+    if (query.includes("CoordinatorStopSummaryPage")) {
+      assert.equal(variables.summaryId, STOP_SUMMARY_ISSUE);
+      const index = Number(/^cursor-([0-9]+)$/.exec(variables.before)?.[1]);
+      const page = store.olderPages[index];
+      if (!page) throw new Error("unknown cursor");
+      return { issue: { comments: { nodes: page.map((body) => ({ body })), pageInfo: pageInfo(index + 1) } } };
+    }
     if (query.includes("commentCreate")) {
+      if (!store.commentSuccess) return { commentCreate: { success: false } };
       store.summaryComments.push(variables.body);
       store.commentIssue = variables.issueId;
       return { commentCreate: { success: true } };
@@ -643,4 +658,38 @@ test("SHU-298 S9: end to end, a fixture stop is filed, triaged, closed, and stil
     assert.equal(h.repairIssues.size, repairs, "no second repair card");
     assert.equal(incident.state.name, "Done");
   } finally { h.cleanup(); }
+});
+
+test("SHU-298 S10: a write Linear answers with success false is not counted as done", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const fake = sSettleStore(event, { updateSuccess: false, commentSuccess: false });
+  const first = await sSettle(event, fake);
+  assert.equal(first.status, "PARTIAL");
+  assert.equal(first.state, "Triage");
+  assert.equal(first.summarized, false);
+  fake.store.updateSuccess = true;
+  fake.store.commentSuccess = true;
+  const second = await sSettle(event, fake);
+  assert.equal(second.status, "SETTLED");
+  assert.equal(fake.store.incident.state.name, "Backlog");
+  assert.equal(fake.store.summaryComments.length, 1);
+});
+
+test("SHU-298 S11: the summary marker is looked for through SHU-71's whole history", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const marker = stopSummaryMarker(event.event_id);
+  const older = sSettleStore(event, { summaryComments: ["newer"], olderPages: [["older"], [`${marker}\nposted long ago`]] });
+  assert.equal((await sSettle(event, older)).status, "SETTLED");
+  assert.equal(older.store.summaryComments.length, 1, "a marker on an older page is never posted again");
+  assert.equal(older.calls.filter((call) => call.query.includes("CoordinatorStopSummaryPage")).length, 2);
+
+  const absent = sSettleStore(event, { olderPages: [["older"], ["oldest"]] });
+  assert.equal((await sSettle(event, absent)).status, "SETTLED");
+  assert.equal(absent.store.summaryComments.length, 1, "a history read to its start without the marker gets the line");
+
+  const unread = sSettleStore(event, { olderPages: Array.from({ length: SUMMARY_MAX_PAGES }, () => ["filler"]) });
+  const result = await sSettle(event, unread);
+  assert.equal(result.status, "PARTIAL");
+  assert.equal(unread.store.summaryComments.length, 0, "an unread history posts nothing");
+  assert.equal(unread.store.incident.state.name, "Backlog", "the card still leaves Triage");
 });

@@ -21,6 +21,11 @@ export const INCIDENT_OWNED_STATE_NAMES = Object.freeze([INCIDENT_STATE_NAME, CA
 // Triage outcomes that are a decision. Unreadable or still-confirming triage
 // leaves the card in Triage for the next tick.
 export const SETTLE_AFTER_TRIAGE = Object.freeze(["MISSING_AUTHORITY", "REPAIR_READY", "LANDED"]);
+// SHU-71's history is read newest first, a page at a time, until the marker is
+// found or the history ends. Past this many pages the line is not posted: an
+// unread history could already hold it.
+export const SUMMARY_PAGE_SIZE = 250;
+export const SUMMARY_MAX_PAGES = 20;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ISSUE_RE = /^SHU-[0-9]+$/;
@@ -34,10 +39,17 @@ export const LINEAR_SETTLE_QUERY = `
     }
     summary: issue(id: $summaryId) {
       id identifier
-      comments(last: 250, orderBy: createdAt) { nodes { body } }
+      comments(last: 250, orderBy: createdAt) { nodes { body } pageInfo { hasPreviousPage startCursor } }
     }
     teams(filter: { key: { eq: $teamKey } }, first: 2) {
       nodes { id key states(first: 100) { nodes { id name type } } }
+    }
+  }`;
+
+export const LINEAR_STOP_SUMMARY_PAGE_QUERY = `
+  query CoordinatorStopSummaryPage($summaryId: String!, $before: String!) {
+    issue(id: $summaryId) {
+      comments(last: 250, before: $before, orderBy: createdAt) { nodes { body } pageInfo { hasPreviousPage startCursor } }
     }
   }`;
 
@@ -59,6 +71,24 @@ export function renderStopSummary(event, incidentIdentifier) {
     stopSummaryMarker(event.event_id),
     `Coordinator stop on ${event.issue_id} (\`${event.reason_code}\`, ${incidentIdentifier}): ${event.explanation} Nothing was repaired or relaunched.`,
   ].join("\n");
+}
+
+const hasMarker = (comments, marker) => (comments?.nodes ?? []).some((comment) => String(comment?.body ?? "").includes(marker));
+
+// true: the marker is on SHU-71. false: the whole history was read and it is
+// not. null: the history could not be read to its start, so nothing is posted.
+async function summaryAlreadyPosted(comments, marker, call) {
+  let page = comments;
+  for (let pages = 1; ; pages += 1) {
+    if (hasMarker(page, marker)) return true;
+    const info = page?.pageInfo;
+    if (info?.hasPreviousPage !== true) return false;
+    if (pages >= SUMMARY_MAX_PAGES || typeof info.startCursor !== "string" || !info.startCursor) return null;
+    try {
+      page = (await call(LINEAR_STOP_SUMMARY_PAGE_QUERY, { summaryId: STOP_SUMMARY_ISSUE, before: info.startCursor }))?.issue?.comments ?? null;
+    } catch { return null; }
+    if (!page) return null;
+  }
 }
 
 async function boundedCall(call, timeoutMs, timeoutImpl) {
@@ -111,8 +141,8 @@ export async function settleCoordinatorIncident({
     const states = team?.states?.nodes?.filter((entry) => entry?.name === target.name && entry?.type === target.type) ?? [];
     if (states.length === 1) {
       try {
-        await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: event.issue_uuid, input: { stateId: states[0].id } });
-        moved = true;
+        const result = await call(LINEAR_SETTLE_UPDATE_MUTATION, { id: event.issue_uuid, input: { stateId: states[0].id } });
+        moved = result?.issueUpdate?.success === true;
       } catch { /* a lost response is re-checked on the next tick */ }
     }
   }
@@ -120,13 +150,15 @@ export async function settleCoordinatorIncident({
   let summarized = event.fixture === true ? null : false;
   if (event.fixture !== true) {
     const summary = state?.summary ?? null;
-    const already = (summary?.comments?.nodes ?? []).some((comment) => String(comment?.body ?? "").includes(stopSummaryMarker(event.event_id)));
     const body = renderStopSummary(event, incident.identifier);
-    if (already) summarized = true;
-    else if (UUID_RE.test(summary?.id ?? "") && summary.identifier === STOP_SUMMARY_ISSUE && body) {
+    const already = UUID_RE.test(summary?.id ?? "") && summary.identifier === STOP_SUMMARY_ISSUE
+      ? await summaryAlreadyPosted(summary.comments, stopSummaryMarker(event.event_id), call)
+      : null;
+    if (already === true) summarized = true;
+    else if (already === false && body) {
       try {
-        await call(commentMutation, { issueId: summary.id, body });
-        summarized = true;
+        const result = await call(commentMutation, { issueId: summary.id, body });
+        summarized = result?.commentCreate?.success === true;
       } catch { /* retried on the next tick; the marker keeps it to one line */ }
     }
   }
