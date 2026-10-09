@@ -58,6 +58,8 @@
     ".github/coordinator/test/attempt-workspace.test.mjs",
     ".github/coordinator/test/capacity-scheduler.test.mjs",
     ".github/coordinator/test/card-lanes.test.mjs",
+    ".github/coordinator/test/card-run-mutations.test.mjs",
+    ".github/coordinator/test/card-run.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
@@ -1973,6 +1975,42 @@
     "malformed persisted costs fail closed without replacing forensic evidence",
     "persisted reservation estimated cost must remain an integer",
     "four concurrent processes cannot oversubscribe a two-slot ledger",
+    "SHU-86 mutation M1 arm a busy host",
+    "SHU-86 mutation M2 arm without a verified receipt at HEAD",
+    "SHU-86 mutation M3 arm a dirty checkout or one off main",
+    "SHU-86 mutation M4 arm a card whose branch moved off the revision",
+    "SHU-86 mutation M5 arm a unit with no resident drop-in",
+    "SHU-86 mutation M6 tick without reading back the supervisor's environment",
+    "SHU-86 mutation M7 keep ticking a card that is not eligible",
+    "SHU-86 mutation M8 tick past the run window",
+    "SHU-86 mutation M9 revert under a running worker",
+    "SHU-86 mutation M10 accept another run's armed activation",
+    "SHU-86 mutation M11 pick a reviewer from the author's family",
+    "SHU-86 mutation M12 run a fixture lane as a card",
+    "SHU-86 mutation M13 leave a failed arm unreverted",
+    "SHU-86 mutation M14 take another run's lock",
+    "SHU-86 mutation M15 leave the activation record armed after revert",
+    "SHU-86 mutation M16 leave the dispatch drop-ins after revert",
+    "SHU-86 mutation M17 read a review PASS as a stop",
+    "SHU-86 mutation M18 keep ticking when the tick does not report this run armed",
+    "SHU-86 mutation M19 ignore a leftover build or review worktree",
+    "SHU-86 mutation M20 take a pull request on a card run",
+    "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
+    "SHU-86 C2: planning refuses anything but one committed card",
+    "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
+    "SHU-86 C4: only the coordinator's own tick ends a run, and an unreadable tick ends it too",
+    "SHU-86 C5: the host is busy while any run, drop-in, worker or worktree is left",
+    "SHU-86 C6: a busy host is refused before anything is armed",
+    "SHU-86 C7: only a clean, installed main is armed",
+    "SHU-86 C8: a card run needs its coordinator branch at the installed revision",
+    "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
+    "SHU-86 C10: a failed arm still reverts everything it wrote",
+    "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
+    "SHU-86 C12: a run that outlives its window stops at the window and reverts",
+    "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
+    "SHU-86 C14: one run at a time, as root only",
+    "SHU-86 C15: plan changes nothing, and review flags come all together",
+    "SHU-86 C16: a unit without its resident drop-in is not armed",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17334,6 +17372,150 @@
     },
     {
       "name": "four concurrent processes cannot oversubscribe a two-slot ledger",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M1 arm a busy host",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M2 arm without a verified receipt at HEAD",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M3 arm a dirty checkout or one off main",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M4 arm a card whose branch moved off the revision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M5 arm a unit with no resident drop-in",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M6 tick without reading back the supervisor's environment",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M7 keep ticking a card that is not eligible",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M8 tick past the run window",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M9 revert under a running worker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M10 accept another run's armed activation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M11 pick a reviewer from the author's family",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M12 run a fixture lane as a card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M13 leave a failed arm unreverted",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M14 take another run's lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M15 leave the activation record armed after revert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M16 leave the dispatch drop-ins after revert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M17 read a review PASS as a stop",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M18 keep ticking when the tick does not report this run armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M19 ignore a leftover build or review worktree",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M20 take a pull request on a card run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C2: planning refuses anything but one committed card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C4: only the coordinator's own tick ends a run, and an unreadable tick ends it too",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C5: the host is busy while any run, drop-in, worker or worktree is left",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C6: a busy host is refused before anything is armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C7: only a clean, installed main is armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C8: a card run needs its coordinator branch at the installed revision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C10: a failed arm still reverts everything it wrote",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C12: a run that outlives its window stops at the window and reverts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C14: one run at a time, as root only",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C15: plan changes nothing, and review flags come all together",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C16: a unit without its resident drop-in is not armed",
       "capabilities": []
     },
     {
