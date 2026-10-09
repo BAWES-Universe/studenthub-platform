@@ -4,6 +4,8 @@ import { createRuntimeCatalogueFromEnv } from './catalogue-runtime.js';
 import { handleProfileRecords, PROFILE_RECORDS_CSS, type ProfileRecordsRuntime } from './profile-records-http.js';
 import { createRuntimeProfileRecordsFromEnv } from './profile-records-runtime.js';
 import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-runtime.js';
+import { handleOrganizationDocuments, type OrganizationDocumentsRuntime } from './organization-documents-http.js';
+import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -137,6 +139,7 @@ export function createGatewayServer(
   documents?: CandidateDocuments,
   catalogue?: ReferenceCatalogue,
   profileRecords?: ProfileRecordsRuntime,
+  organizationDocuments?: OrganizationDocumentsRuntime,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -166,6 +169,7 @@ export function createGatewayServer(
     try {
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
+    if (await handleOrganizationDocuments(request, response, organizationDocuments)) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
     if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,
@@ -500,6 +504,7 @@ if (entrypoint === import.meta.url) {
   const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
+  const runtimeOrganizationDocuments = await createRuntimeOrganizationDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
   const runtimeProfileRecords = createRuntimeProfileRecordsFromEnv();
   const telemetry = new Telemetry(telemetryMode(process.env));
@@ -513,8 +518,9 @@ if (entrypoint === import.meta.url) {
     runtimeDocuments?.service,
     runtimeCatalogue?.service,
     runtimeProfileRecords,
+    runtimeOrganizationDocuments,
   );
-  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });
