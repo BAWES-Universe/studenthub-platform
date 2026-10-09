@@ -1830,12 +1830,12 @@ export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
   "scope_phase",
   "allowed_paths",
   "scoped_base_sha",
+  // SHU-303: what a review-only attempt diffs against is fixed at RESERVED.
+  "review_base_sha",
   // SHU-231: the episode a receipt belongs to. Stamped by the coordinator at
   // RESERVED, so two records claiming one attempt_id under DIFFERENT episodes are
   // a conflict -> HOLD, never a silent override of a spent approval.
   "episode_id",
-  // SHU-303: what a review-only attempt diffs against is fixed at RESERVED.
-  "review_base_sha",
 ]);
 
 function immutableFieldEqual(a, b, field) {

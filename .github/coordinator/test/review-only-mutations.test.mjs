@@ -120,8 +120,8 @@ const CASES = [
   {
     name: "M16 let a stored base change",
     file: "reconcile.mjs",
-    from: '  "review_base_sha",\n]);',
-    to: "]); // SHU303-M16",
+    from: '  // SHU-303: what a review-only attempt diffs against is fixed at RESERVED.\n  "review_base_sha",\n',
+    to: "  // SHU303-M16\n",
     pattern: "SHU-303 H2:",
   },
   {

@@ -136,7 +136,8 @@ export function resolveReviewOnlyLane(config = {}, issueId) {
     ids.add(lane.id);
   }
   resolveFixtureLane(config, issueId); // the build lanes' own checks, and no id in both
-  return lanes.find((lane) => lane.id === issueId) ?? null;
+  const lane = lanes.find((entry) => entry.id === issueId);
+  return lane ?? null;
 }
 
 // Repo-mode paths never reach what the host's dependency install owns.

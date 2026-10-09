@@ -250,7 +250,8 @@ export function createEpisodeHarness({
       polls.set(runId, "running");
       launched.push({ lane: name, attempt_id: o.attempt_id, target_sha: o.target_sha, run_id: runId,
         cwd: o.cwd, workspace_scope: o.workspace_scope, scope_phase: o.scope_phase,
-        allowed_paths: o.allowed_paths, scoped_base_sha: o.scoped_base_sha, review_base_sha: o.review_base_sha, branch: o.branch });
+        allowed_paths: o.allowed_paths, scoped_base_sha: o.scoped_base_sha,
+        ...(reviewOnly ? { review_base_sha: o.review_base_sha, branch: o.branch } : {}) });
       return { stage: "RUNNING", external_run_id: runId, worker_identity: `${name}:session-${triggers[name]}`, conversation_url: `https://example.invalid/${runId}` };
     },
     async monitorRun(o) {
