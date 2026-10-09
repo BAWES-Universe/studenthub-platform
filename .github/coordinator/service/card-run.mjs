@@ -49,6 +49,7 @@ export const CARD_RUN_LIMITS = Object.freeze({
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
+  reportTimeoutMs: 30 * 1000,
 });
 const SHA_RE = /^[0-9a-f]{40}$/;
 
@@ -279,13 +280,15 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
+  let summary;
+  let credentials;
   try {
     const busy = busyReasons(io, paths);
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
     const config = JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
     const plan = planRun({ config, revision, now: io.now(), review, limits });
-    const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
+    credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
     const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials });
     const ticks = [];
     let result;
@@ -319,12 +322,14 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
-    const summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, prepared, ...result, ticks, revert: reverted };
-    // Reported last, once the host is as the revert left it.
-    return { ...summary, report: await postRunReport({ io, credentials, result: summary }) };
+    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, prepared, ...result, ticks, revert: reverted };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
+  // Reported last, once the host is as the revert left it and the lock is
+  // released, so a slow Linear never holds the host. The report is bounded
+  // and best effort: it never changes the result.
+  return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };
 }
 
 export const defaultIO = Object.freeze({

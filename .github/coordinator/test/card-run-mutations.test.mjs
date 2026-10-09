@@ -257,8 +257,8 @@ const CASES = [
   },
   {
     name: "M37 finish a run without posting its report",
-    from: "    return { ...summary, report: await postRunReport({ io, credentials, result: summary }) };",
-    to: "    return { ...summary, report: { posted: true, issue: \"SHU-71\" } }; // SHU86-M37",
+    from: "  return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };",
+    to: "  return { ...summary, report: { posted: true, issue: \"SHU-71\" } }; // SHU86-M37",
     pattern: "SHU-86 C27:",
   },
   {
@@ -279,6 +279,26 @@ const CASES = [
     file: "service/card-prepare.mjs",
     from: "  if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);",
     to: "  if (result.reason) lines.push(`Reason: ${result.reason}`); // SHU86-M40",
+    pattern: "SHU-86 C29:",
+  },
+  {
+    name: "M43 post the report while the run still holds the lock",
+    from: "    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }\n  }\n  // Reported last",
+    to: "  }\n  // SHU86-M43\n  // Reported last",
+    pattern: "SHU-86 C30:",
+  },
+  {
+    name: "M44 wait on Linear without a deadline",
+    file: "service/card-prepare.mjs",
+    from: "    const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);",
+    to: "    const send = (query, variables) => sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch); // SHU86-M44",
+    pattern: "SHU-86 C30:",
+  },
+  {
+    name: "M45 copy the card's state name into the report unflattened",
+    file: "service/card-prepare.mjs",
+    from: "from ${plainReason(card.from)} to Todo",
+    to: "from ${card.from} to Todo",
     pattern: "SHU-86 C29:",
   },
 ];

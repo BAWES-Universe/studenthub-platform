@@ -155,6 +155,10 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       }
       if (query.includes("CardRunReportIssue")) {
         host.api.push(`linear report read ${variables.id}`);
+        host.lockAtReport = host.files.has(PATHS.lock);
+        // A stall that would outlast any sane deadline, yet ends, so a run
+        // without a deadline fails this test by assertion rather than hanging.
+        if (host.failReport === "stall") return new Promise((_, reject) => setTimeout(() => reject(new Error("the fake stall ended")), 1500));
         if (host.failReport === "read") return respond(500, null);
         return respond(200, { data: { issue: { id: "report-uuid", identifier: variables.id } } });
       }
@@ -694,6 +698,24 @@ test("SHU-86 C29: the report is one comment of plain lines, whatever the coordin
   assert.doesNotMatch(reason, /\n/);
   assert.equal(plainReason("a\tb\r\nc"), "a b c");
   const unreverted = renderRunReport({ ...base, outcome: "ERROR", reason: "boom", revert: { reverted: false, code: "CARD_RUN_REVERT_READBACK" } });
-  assert.match(unreverted, /^The revert did not finish \(CARD_RUN_REVERT_READBACK\); the host stays busy/m);
+  assert.match(unreverted, /^The revert did not finish \(CARD_RUN_REVERT_READBACK\); check the host before the next run\.$/m);
+  const moved = renderRunReport({ ...base, outcome: "PASS", prepared: { card: { card: "SHU-301", action: "move-to-todo", from: "Back\nlog <!-- x -->" }, branch: null } });
+  assert.match(moved, /^Before arming: moved SHU-301 from Back log x to Todo\.$/m, "a state name is flattened like the reason");
+  assert.equal(moved.split("<!--").length, 2);
   assert.match(renderRunReport({ ...base, outcome: "SOMETHING_NEW" }), /SOMETHING_NEW, an outcome this runner does not know\./);
+});
+
+test("SHU-86 C30: the report goes out after the lock is released, and a stalled Linear cannot hold the run", async () => {
+  const host = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  host.failReport = "stall";
+  const started = Date.now();
+  const result = await attempt(() => runCard({ io: host.io, paths: PATHS, limits: { ...CARD_RUN_LIMITS, reportTimeoutMs: 50 } }));
+  assert.equal(host.lockAtReport, false, "the lock is released before the report");
+  assert.equal(result.outcome, "PASS");
+  assert.equal(result.ok, true);
+  assert.equal(result.report?.posted, false);
+  assert.equal(result.report.code, "CARD_RUN_REPORT");
+  assert.match(result.report.reason, /did not answer within 50 ms/);
+  assert.ok(Date.now() - started < 5000, "the run returned at the report deadline");
+  reverted(host);
 });

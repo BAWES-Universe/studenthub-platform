@@ -2017,6 +2017,9 @@
     "SHU-86 mutation M38 post the report before the host is reverted",
     "SHU-86 mutation M39 let a failed report fail the run",
     "SHU-86 mutation M40 copy the coordinator's reason into the report unflattened",
+    "SHU-86 mutation M43 post the report while the run still holds the lock",
+    "SHU-86 mutation M44 wait on Linear without a deadline",
+    "SHU-86 mutation M45 copy the card's state name into the report unflattened",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2046,6 +2049,7 @@
     "SHU-86 C27: after the revert, the run posts one plain report on the SHU-71 tracking card",
     "SHU-86 C28: a report that cannot be posted is recorded, and never changes the run's result",
     "SHU-86 C29: the report is one comment of plain lines, whatever the coordinator's reason says",
+    "SHU-86 C30: the report goes out after the lock is released, and a stalled Linear cannot hold the run",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17578,6 +17582,18 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M43 post the report while the run still holds the lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M44 wait on Linear without a deadline",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M45 copy the card's state name into the report unflattened",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17691,6 +17707,10 @@
     },
     {
       "name": "SHU-86 C29: the report is one comment of plain lines, whatever the coordinator's reason says",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C30: the report goes out after the lock is released, and a stalled Linear cannot hold the run",
       "capabilities": []
     },
     {

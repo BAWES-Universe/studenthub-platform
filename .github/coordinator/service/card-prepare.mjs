@@ -222,6 +222,7 @@ export async function prepareRun({ io, plan, revision, repo, credentials, apply 
 // result: a report that cannot be posted is recorded in the output instead.
 export const REPORT_ISSUE = "SHU-71";
 const REPORT_REASON_MAX = 300;
+export const REPORT_TIMEOUT_MS = 30 * 1000;
 
 export const REPORT_ISSUE_QUERY = `
   query CardRunReportIssue($id: String!) {
@@ -263,23 +264,35 @@ export function renderRunReport(result) {
   const card = result.prepared?.card;
   const branch = result.prepared?.branch;
   const before = [
-    card ? (card.action === "move-to-todo" ? `moved ${card.card} from ${card.from} to Todo` : `${card.card} was already in Todo`) : null,
+    card ? (card.action === "move-to-todo" ? `moved ${card.card} from ${plainReason(card.from)} to Todo` : `${card.card} was already in Todo`) : null,
     branch ? (branch.action === "create" ? `created ${branch.branch}` : `${branch.branch} was already at the revision`) : null,
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
   lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
   lines.push(result.revert?.reverted
     ? "The host is reverted and idle."
-    : `The revert did not finish (${result.revert?.code ?? "unknown"}); the host stays busy and the next run refuses until it is cleared.`);
+    : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);
   return lines.join("\n");
 }
 
-export async function postRunReport({ io, credentials, result }) {
+// Each Linear call of the report gets its own deadline, so a stalled request
+// cannot keep the run from returning.
+function bounded(promise, timeoutMs) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Linear did not answer within ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS }) {
   try {
-    const data = await sendLinear(REPORT_ISSUE_QUERY, { id: REPORT_ISSUE }, credentials.LINEAR_API_TOKEN, io.fetch);
+    if (!credentials?.LINEAR_API_TOKEN) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "no coordinator credentials" };
+    const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);
+    const data = await send(REPORT_ISSUE_QUERY, { id: REPORT_ISSUE });
     const issue = data?.issue ?? null;
     if (!issue?.id || issue.identifier !== REPORT_ISSUE) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: `${REPORT_ISSUE} cannot be read from Linear` };
-    const posted = await sendLinear(REPORT_COMMENT_MUTATION, { issueId: issue.id, body: renderRunReport(result) }, credentials.LINEAR_API_TOKEN, io.fetch);
+    const posted = await send(REPORT_COMMENT_MUTATION, { issueId: issue.id, body: renderRunReport(result) });
     if (posted?.commentCreate?.success !== true) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "Linear did not accept the comment" };
     return { posted: true, issue: REPORT_ISSUE };
   } catch (error) {
