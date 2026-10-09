@@ -52,7 +52,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   const files = new Map();
   const dirs = new Set();
   const calls = [];
-  const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [],
+  const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
     head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32) };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, gid: 0, ...extra });
   put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify(config));
@@ -137,13 +137,31 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     if (url === "https://api.linear.app/graphql") {
       assert.equal(auth, "lin-secret-value");
       const { query, variables } = JSON.parse(options.body);
+      // Linear's side of the card: every state change lands in its history.
+      const moveCard = (state) => {
+        host.linearClock += 1000;
+        host.history.push({ createdAt: new Date(host.linearClock).toISOString(), fromState: { id: host.card.state.id }, toState: { id: state.id } });
+        host.card.state = state;
+      };
+      if (query.includes("CardRunHistory")) {
+        host.api.push("linear history");
+        // Oldest first, two to a page, so the newest change is only on the last
+        // page and the reader must follow every page.
+        const nodes = [...host.history];
+        const start = variables.after ? Number(variables.after) : 0;
+        return respond(200, { data: { issue: { history: { nodes: nodes.slice(start, start + 2),
+          pageInfo: { hasNextPage: start + 2 < nodes.length, endCursor: String(start + 2) } } } } });
+      }
       host.api.push(query.includes("CardRunTodo") ? `linear todo ${variables.stateId}` : "linear read");
       if (query.includes("CardRunTodo")) {
+        if (host.beforeTodo) { const hook = host.beforeTodo; host.beforeTodo = null; hook(host, moveCard); }
         if (host.failTodo) return respond(200, { data: { issueUpdate: { success: true } } });
-        host.card.state = { id: variables.stateId, name: "Todo", type: "unstarted" };
+        const states = { [TODO_ID]: { id: TODO_ID, name: "Todo", type: "unstarted" }, ...host.knownStates };
+        moveCard(states[variables.stateId] ?? { id: variables.stateId, name: "?", type: "unstarted" });
         return respond(200, { data: { issueUpdate: { success: true } } });
       }
-      return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, ...host.card,
+      if (host.onCardRead) host.onCardRead(host, moveCard);
+      return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, updatedAt: new Date(host.linearClock).toISOString(), ...host.card,
         team: { id: "team", states: { nodes: [{ id: TODO_ID, name: "Todo", type: "unstarted" }] } } } } });
     }
     assert.equal(auth, "Bearer gh-secret-value");
@@ -414,7 +432,7 @@ test("SHU-86 C15: plan changes nothing, and review flags come all together", asy
   const freshPlan = (await main(["plan"], fresh.io, PATHS)).output.prepare;
   assert.equal(freshPlan.branch.action, "create");
   assert.equal(freshPlan.card.action, "move-to-todo");
-  assert.deepEqual(fresh.api, ["linear read", "github read"], "plan only reads");
+  assert.deepEqual(fresh.api, ["linear read", "github read", "linear read"], "plan only reads");
   assert.equal(host.files.has(PATHS.lock), false);
   assert.throws(() => parseArgs(["run", "--review-pr", "239"]), { code: "CARD_RUN_USAGE" });
   assert.throws(() => parseArgs(["arm"]), { code: "CARD_RUN_USAGE" });
@@ -491,7 +509,7 @@ test("SHU-86 C21: a backlog card nobody owns moves to Todo before arming, and re
   const result = await runCard({ io: host.io, paths: PATHS });
   assert.equal(result.outcome, "PASS");
   assert.deepEqual(result.prepared.card, { card: "SHU-301", state: "Todo", action: "move-to-todo", from: "Backlog" });
-  assert.deepEqual(host.api, ["linear read", "github read", `linear todo ${TODO_ID}`, "linear read"]);
+  assert.deepEqual(host.api, ["linear read", "github read", "linear read", `linear todo ${TODO_ID}`, "linear history", "linear read"]);
   reverted(host);
 });
 
@@ -516,6 +534,12 @@ test("SHU-86 C23: a Todo move that does not read back stops the run before armin
   host.failTodo = true;
   await assert.rejects(runCard({ io: host.io, paths: PATHS }), { code: "CARD_RUN_CARD_READBACK" });
   noArming(host);
+  // The move took, but someone claimed the card meanwhile.
+  const claimed = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  claimed.beforeTodo = (h) => { h.card.assignee = { id: "person" }; };
+  const result = await attempt(() => runCard({ io: claimed.io, paths: PATHS }));
+  assert.equal(result.thrown, "CARD_RUN_CARD_READBACK");
+  noArming(claimed);
 });
 
 test("SHU-86 C24: only the coordinator's own private credentials are used, and never shown", async () => {
@@ -538,4 +562,38 @@ test("SHU-86 C24: only the coordinator's own private credentials are used, and n
   const refused = fakeHost();
   refused.files.get(PATHS.coordinatorEnv).mode = 0o644;
   assert.doesNotMatch(JSON.stringify((await main(["run"], refused.io, PATHS)).output), /secret-value/);
+});
+
+test("SHU-86 C25: the card is read again after the branch step, and one started or claimed meanwhile is never moved or armed", async () => {
+  const PROGRESS = { id: "progress", name: "In Progress", type: "started" };
+  for (const [label, start, change, code] of [
+    ["Todo, then started", { id: TODO_ID, name: "Todo", type: "unstarted" }, (h, move) => move(PROGRESS), "CARD_RUN_CARD_STATE"],
+    ["Backlog, then started", { id: "backlog", name: "Backlog", type: "backlog" }, (h, move) => move(PROGRESS), "CARD_RUN_CARD_STATE"],
+    ["Backlog, then assigned", { id: "backlog", name: "Backlog", type: "backlog" }, (h) => { h.card.assignee = { id: "person" }; }, "CARD_RUN_CARD_OWNED"],
+  ]) {
+    const host = fakeHost({ card: { state: start, assignee: null, delegate: null }, branchHead: "" });
+    let reads = 0;
+    host.onCardRead = (h, move) => { if (++reads === 2) change(h, move); };
+    await assert.rejects(runCard({ io: host.io, paths: PATHS }), { code }, label);
+    assert.equal(host.api.some((call) => call.startsWith("linear todo")), false, `${label}: the card is not moved`);
+    assert.deepEqual(host.api.slice(-1), ["linear read"], `${label}: the refusal comes from the second read`);
+    noArming(host);
+  }
+});
+
+test("SHU-86 C26: a card someone starts while the run moves it is put back where they left it, and the run stops", async () => {
+  const PROGRESS = { id: "progress", name: "In Progress", type: "started" };
+  const host = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  host.knownStates = { progress: PROGRESS };
+  host.beforeTodo = (h, move) => move(PROGRESS);
+  await assert.rejects(runCard({ io: host.io, paths: PATHS }), { code: "CARD_RUN_CARD_RACE" });
+  assert.deepEqual(host.card.state, PROGRESS, "the other move stands");
+  assert.deepEqual(host.api.filter((call) => call.startsWith("linear todo")), [`linear todo ${TODO_ID}`, "linear todo progress"]);
+  noArming(host);
+  // Without a concurrent move, the run's own move is its only change.
+  const calm = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  calm.history.push({ createdAt: "2026-10-09T14:00:00.000Z", fromState: { id: "triage" }, toState: { id: "backlog" } });
+  calm.history.push({ createdAt: "2026-10-09T14:30:00.000Z", fromState: null, toState: null });
+  const result = await attempt(() => runCard({ io: calm.io, paths: PATHS }));
+  assert.equal(result.prepared?.card.action, "move-to-todo", JSON.stringify(result.thrown));
 });

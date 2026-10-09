@@ -50,6 +50,7 @@ export const CARD_QUERY = `
     issue(id: $id) {
       id
       identifier
+      updatedAt
       state { id name type }
       assignee { id }
       delegate { id }
@@ -88,9 +89,58 @@ async function checkCard(io, credentials, id) {
   return { issue, decision };
 }
 
-async function prepareCardState(io, credentials, id, { issue, decision }, apply) {
+// Every state change made on the card after the given moment, oldest first.
+// The whole history is read, so the answer does not depend on Linear's order.
+export const CARD_HISTORY_QUERY = `
+  query CardRunHistory($id: String!, $after: String) {
+    issue(id: $id) {
+      history(first: 50, after: $after) {
+        nodes { createdAt fromState { id } toState { id } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+const HISTORY_MAX_PAGES = 20;
+
+async function stateChangesSince(io, credentials, id, since) {
+  const changes = [];
+  let after = null;
+  for (let page = 0; page < HISTORY_MAX_PAGES; page += 1) {
+    const data = await sendLinear(CARD_HISTORY_QUERY, { id, after }, credentials.LINEAR_API_TOKEN, io.fetch);
+    const history = data?.issue?.history;
+    if (!Array.isArray(history?.nodes)) refuse("CARD_RUN_CARD_READBACK", `${id}'s history cannot be read`);
+    for (const entry of history.nodes) {
+      if ((entry?.fromState || entry?.toState) && Date.parse(entry.createdAt) > since) changes.push(entry);
+    }
+    if (!history.pageInfo?.hasNextPage) return changes.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    after = history.pageInfo.endCursor;
+  }
+  refuse("CARD_RUN_CARD_READBACK", `${id}'s history is longer than this run reads`);
+}
+
+// The card is read again here, after the branch step, so the decision is made
+// on its state just before the write, never on the first snapshot. Linear has
+// no conditional update, so the move is checked afterwards against the card's
+// history: the only state change since that read must be this run's own, from
+// the state it read to Todo. If anyone else moved the card in between, the
+// card goes back to the state they set and the run is refused.
+async function prepareCardState(io, credentials, id, apply) {
+  const { issue, decision } = await checkCard(io, credentials, id);
   if (decision.action === "none" || !apply) return { card: id, state: issue.state.name, action: decision.action };
+  const since = Date.parse(issue.updatedAt);
+  if (!Number.isFinite(since)) refuse("CARD_RUN_CARD_UNREADABLE", `${id} has no readable updatedAt`);
   await sendLinear(CARD_TODO_MUTATION, { id: issue.id, stateId: decision.stateId }, credentials.LINEAR_API_TOKEN, io.fetch);
+  const changes = await stateChangesSince(io, credentials, issue.id, since);
+  if (changes.length === 0) refuse("CARD_RUN_CARD_READBACK", `${id} did not move to ${TODO_STATE}`);
+  const own = changes.length === 1 && changes[0].fromState?.id === issue.state.id && changes[0].toState?.id === decision.stateId;
+  if (!own) {
+    const mine = changes.filter((entry) => entry.toState?.id === decision.stateId).at(-1);
+    const theirs = mine?.fromState?.id;
+    if (theirs && theirs !== issue.state.id) {
+      await sendLinear(CARD_TODO_MUTATION, { id: issue.id, stateId: theirs }, credentials.LINEAR_API_TOKEN, io.fetch);
+    }
+    refuse("CARD_RUN_CARD_RACE", `${id} changed state while this run moved it to ${TODO_STATE}; it was put back and the run stops`);
+  }
   const after = await readCard(io, credentials, id);
   if (cardAction(after).action !== "none") refuse("CARD_RUN_CARD_READBACK", `${id} did not read back as an unowned ${TODO_STATE} card`);
   return { card: id, state: after.state.name, action: decision.action, from: decision.from };
@@ -134,11 +184,12 @@ async function prepareBranch(io, credentials, repo, branch, revision, apply) {
 
 // Makes the planned card ready to run, or with apply false says what it would
 // do. Nothing is written until the card is known to be movable; then the
-// branch comes first, so a card is moved only once its branch is right.
+// branch comes first, so a card is moved only once its branch is right, and
+// the card is read again just before it is moved.
 export async function prepareRun({ io, plan, revision, repo, credentials, apply = true }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) refuse("CARD_RUN_CONFIG", "pilot_repo must name one GitHub repository");
-  const checked = await checkCard(io, credentials, plan.id);
+  await checkCard(io, credentials, plan.id);
   const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null;
-  const card = await prepareCardState(io, credentials, plan.id, checked, apply);
+  const card = await prepareCardState(io, credentials, plan.id, apply);
   return { branch, card };
 }

@@ -189,8 +189,8 @@ const CASES = [
   {
     name: "M29 create the branch before the card is known to be movable",
     file: "service/card-prepare.mjs",
-    from: "  const checked = await checkCard(io, credentials, plan.id);\n  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null;",
-    to: "  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null; // SHU86-M29\n  const checked = await checkCard(io, credentials, plan.id);",
+    from: "  await checkCard(io, credentials, plan.id);\n  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null;",
+    to: "  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null; // SHU86-M29\n  await checkCard(io, credentials, plan.id);",
     pattern: "SHU-86 C22:",
   },
   {
@@ -198,6 +198,48 @@ const CASES = [
     from: "credentials, apply: false });",
     to: "credentials, apply: true }); // SHU86-M30",
     pattern: "SHU-86 C15:",
+  },
+  {
+    name: "M31 move or arm on the first snapshot, ignoring the read after the branch step",
+    file: "service/card-prepare.mjs",
+    from: "  const { issue, decision } = await checkCard(io, credentials, id);\n  if (decision.action === \"none\" || !apply)",
+    to: "  const issue = await readCard(io, credentials, id); const seen = cardAction(issue); // SHU86-M31\n  const decision = seen.action === \"refuse\" ? { action: \"none\" } : seen;\n  if (decision.action === \"none\" || !apply)",
+    pattern: "SHU-86 C25:",
+  },
+  {
+    name: "M32 trust the Todo move without checking the card's history",
+    file: "service/card-prepare.mjs",
+    from: "  const own = changes.length === 1 &&",
+    to: "  const own = true || changes.length === 1 && // SHU86-M32\n",
+    pattern: "SHU-86 C26:",
+  },
+  {
+    name: "M33 leave a concurrently started card in Todo",
+    file: "service/card-prepare.mjs",
+    from: "    if (theirs && theirs !== issue.state.id) {",
+    to: "    if (false) { // SHU86-M33",
+    pattern: "SHU-86 C26:",
+  },
+  {
+    name: "M34 read only the first page of the card's history",
+    file: "service/card-prepare.mjs",
+    from: "    if (!history.pageInfo?.hasNextPage) return",
+    to: "    if (true) return // SHU86-M34\n",
+    pattern: "SHU-86 C26:",
+  },
+  {
+    name: "M35 count history from before the run's own read",
+    file: "service/card-prepare.mjs",
+    from: "&& Date.parse(entry.createdAt) > since) changes.push(entry);",
+    to: ") changes.push(entry); // SHU86-M35",
+    pattern: "SHU-86 C26:",
+  },
+  {
+    name: "M36 take a move that left no trace in the history as done",
+    file: "service/card-prepare.mjs",
+    from: "  if (changes.length === 0) refuse(",
+    to: "  if (false) refuse( // SHU86-M36\n",
+    pattern: "SHU-86 C23:",
   },
 ];
 

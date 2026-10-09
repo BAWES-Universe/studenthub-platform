@@ -2005,6 +2005,12 @@
     "SHU-86 mutation M28 read credentials from a file others can read",
     "SHU-86 mutation M29 create the branch before the card is known to be movable",
     "SHU-86 mutation M30 let plan write to Linear or GitHub",
+    "SHU-86 mutation M31 move or arm on the first snapshot, ignoring the read after the branch step",
+    "SHU-86 mutation M32 trust the Todo move without checking the card's history",
+    "SHU-86 mutation M33 leave a concurrently started card in Todo",
+    "SHU-86 mutation M34 read only the first page of the card's history",
+    "SHU-86 mutation M35 count history from before the run's own read",
+    "SHU-86 mutation M36 take a move that left no trace in the history as done",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2029,6 +2035,8 @@
     "SHU-86 C22: a card someone owns, or one already started or finished, is refused before any write",
     "SHU-86 C23: a Todo move that does not read back stops the run before arming",
     "SHU-86 C24: only the coordinator's own private credentials are used, and never shown",
+    "SHU-86 C25: the card is read again after the branch step, and one started or claimed meanwhile is never moved or armed",
+    "SHU-86 C26: a card someone starts while the run moves it is put back where they left it, and the run stops",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17513,6 +17521,30 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M31 move or arm on the first snapshot, ignoring the read after the branch step",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M32 trust the Todo move without checking the card's history",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M33 leave a concurrently started card in Todo",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M34 read only the first page of the card's history",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M35 count history from before the run's own read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M36 take a move that left no trace in the history as done",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17606,6 +17638,14 @@
     },
     {
       "name": "SHU-86 C24: only the coordinator's own private credentials are used, and never shown",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C25: the card is read again after the branch step, and one started or claimed meanwhile is never moved or armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C26: a card someone starts while the run moves it is put back where they left it, and the run stops",
       "capabilities": []
     },
     {
