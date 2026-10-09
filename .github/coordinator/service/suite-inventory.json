@@ -81,6 +81,8 @@
     ".github/coordinator/test/repo-scope.test.mjs",
     ".github/coordinator/test/reseed-append-contract.test.mjs",
     ".github/coordinator/test/reseed-append-mutations.test.mjs",
+    ".github/coordinator/test/review-only-mutations.test.mjs",
+    ".github/coordinator/test/review-only.test.mjs",
     ".github/coordinator/test/review-routing.test.mjs",
     ".github/coordinator/test/reviewer-evidence.test.mjs",
     ".github/coordinator/test/schema.test.mjs",
@@ -2400,6 +2402,39 @@
     "RESEED mutation M6 message",
     "RESEED mutation M7 digest convention",
     "RESEED mutation M8 extra path",
+    "SHU-303 mutation M1 let a reviewer judge its own family's pull request",
+    "SHU-303 mutation M2 let a review-only record name a writer",
+    "SHU-303 mutation M3 accept part of the review-only group",
+    "SHU-303 mutation M4 let the record pick a reviewer its lane does not list",
+    "SHU-303 mutation M5 let a review-only record arm a lane that is not a review lane",
+    "SHU-303 mutation M6 route a review-only BLOCK to a revision",
+    "SHU-303 mutation M7 file an incident card for a review-only BLOCK",
+    "SHU-303 mutation M8 review without a GitHub token",
+    "SHU-303 mutation M9 review a fork",
+    "SHU-303 mutation M10 review a head that moved",
+    "SHU-303 mutation M11 review from a base that is not the PR's fork point",
+    "SHU-303 mutation M12 reserve a review the pull request check refused",
+    "SHU-303 mutation M13 review on the dispatch branch instead of the PR's own",
+    "SHU-303 mutation M14 drop the base from the reservation",
+    "SHU-303 mutation M15 let review_base_sha ride on a writer receipt",
+    "SHU-303 mutation M16 let a stored base change",
+    "SHU-303 mutation M17 let the host launch another base",
+    "SHU-303 mutation M18 drop the base from the signed order",
+    "SHU-303 mutation M19 diff only part of the change",
+    "SHU-303 mutation M20 accept a base that is not an ancestor",
+    "SHU-303 mutation M21 run the host's fixture tests for a review-only run",
+    "SHU-303 R1: a review-only record comes whole, with a reviewer from another family and no writer",
+    "SHU-303 R2: only the review lane runs a review-only record, with a reviewer its lane lists",
+    "SHU-303 R3: the committed review lane is the reviewed card, once, with its own ref and reviewer lanes only",
+    "SHU-303 E1: a review-only verdict is final: PASS and BLOCKED both end the episode with no successor",
+    "SHU-303 E2: a BLOCK is a finished review, not an incident; a run that could not review is one",
+    "SHU-303 P1: the pull request must still be open, of this repository, at the approved head and base",
+    "SHU-303 P2: an armed tick reviews the PR's own branch at the approved head, diffed from the approved base",
+    "SHU-303 P3: a pull request that moved, closed or cannot be read stops the run before any write",
+    "SHU-303 V1: the reviewer gets the PR's whole change from its base, and a final-verdict rule",
+    "SHU-303 V2: both reviewer prompts carry the review-only brief, and no PR text or declared scope",
+    "SHU-303 H1: the host gate launches only the approved review: that head, that base, a reviewer",
+    "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
     "work order: all three roles are valid on runtimes that support them",
     "work order: unknown role / unknown runtime / bad sha fail closed",
     "capabilities: review is read-only (no commit/push), build/revise are write roles",
@@ -19956,6 +19991,138 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "SHU-303 mutation M1 let a reviewer judge its own family's pull request",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M2 let a review-only record name a writer",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M3 accept part of the review-only group",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M4 let the record pick a reviewer its lane does not list",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M5 let a review-only record arm a lane that is not a review lane",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M6 route a review-only BLOCK to a revision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M7 file an incident card for a review-only BLOCK",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M8 review without a GitHub token",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M9 review a fork",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M10 review a head that moved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M11 review from a base that is not the PR's fork point",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M12 reserve a review the pull request check refused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M13 review on the dispatch branch instead of the PR's own",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M14 drop the base from the reservation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M15 let review_base_sha ride on a writer receipt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M16 let a stored base change",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M17 let the host launch another base",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M18 drop the base from the signed order",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M19 diff only part of the change",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M20 accept a base that is not an ancestor",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M21 run the host's fixture tests for a review-only run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 R1: a review-only record comes whole, with a reviewer from another family and no writer",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 R2: only the review lane runs a review-only record, with a reviewer its lane lists",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 R3: the committed review lane is the reviewed card, once, with its own ref and reviewer lanes only",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 E1: a review-only verdict is final: PASS and BLOCKED both end the episode with no successor",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 E2: a BLOCK is a finished review, not an incident; a run that could not review is one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P1: the pull request must still be open, of this repository, at the approved head and base",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P2: an armed tick reviews the PR's own branch at the approved head, diffed from the approved base",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P3: a pull request that moved, closed or cannot be read stops the run before any write",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 V1: the reviewer gets the PR's whole change from its base, and a final-verdict rule",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 V2: both reviewer prompts carry the review-only brief, and no PR text or declared scope",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 H1: the host gate launches only the approved review: that head, that base, a reviewer",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
+      "capabilities": []
     },
     {
       "name": "work order: all three roles are valid on runtimes that support them",

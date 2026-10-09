@@ -169,6 +169,8 @@ export function parseIncidentMarkers(comments = []) {
 
 function classifyEndedReason(reason) {
   if (/review PASS/.test(reason ?? "")) return null;
+  // SHU-303: a review-only run's PASS or BLOCKED is the review it was run for.
+  if (/^review-only verdict (?:PASS|BLOCKED) at /.test(reason ?? "")) return null;
   if (/retryable failures exhausted/.test(reason ?? "")) return INCIDENT_REASON.FAILURE_EXHAUSTED;
   if (/revision attempts exhausted/.test(reason ?? "")) return INCIDENT_REASON.REVISION_EXHAUSTED;
   if (/ended HOLD without a coherent verdict|role authority or author exclusion HOLD/.test(reason ?? "")) return INCIDENT_REASON.AMBIGUOUS_HOLD;

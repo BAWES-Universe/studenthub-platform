@@ -1,6 +1,6 @@
 // Re-evaluate the existing dispatch authority in the child at launch and before
 // publication. The signed work order carries data; it cannot turn a gate on.
-import { resolveFixtureLane, validateFixtureAttemptScope } from "./workspace-scope.mjs";
+import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope } from "./workspace-scope.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,8 +48,14 @@ function evaluate(order, io) {
       return denied(activation && activation.state !== "armed" ? activationRefusalCode(activation) : "DISPATCH_DISABLED");
     }
     if (activation && !activationAllowsTarget(activation, order.issue_id)) return denied("TARGET_NOT_ALLOWED");
-    const fixtureLane = resolveFixtureLane(config, order.issue_id);
+    const fixtureLane = resolveReviewOnlyLane(config, order.issue_id) ?? resolveFixtureLane(config, order.issue_id);
     if (fixtureLane && fixtureLane.authorization_ref !== order.authorization_ref) return denied("LANE_REF");
+    // SHU-303: a review-only order is the one review its activation approved:
+    // that head, that base, a reviewer. The signed order cannot pick another.
+    if (activation?.review_only === true || Object.hasOwn(order, "review_base_sha")) {
+      if (activation?.review_only !== true || order.role !== "review" || order.target_sha !== activation.initial_target_sha
+          || order.review_base_sha !== activation.review_base_sha) return denied("REVIEW_BINDING");
+    }
     if (!validateFixtureAttemptScope(order).ok) return denied("ATTEMPT_SCOPE");
     return { ok: true, code: null };
   } catch { return denied("CHECK_FAILED"); }

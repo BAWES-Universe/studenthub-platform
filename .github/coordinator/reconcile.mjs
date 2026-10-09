@@ -36,7 +36,7 @@ import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
-import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
 import { triageCoordinatorIncident } from "./incident-triage.mjs";
 import { settleCoordinatorIncident } from "./incident-settlement.mjs";
@@ -611,6 +611,10 @@ export function validateReceipt(receipt) {
       if (!scope.ok) errors.push(`workspace scope invalid: ${scope.reason}`);
     }
   }
+  if (Object.hasOwn(receipt, "review_base_sha")) {
+    if (!TARGET_SHA_RE.test(receipt.review_base_sha ?? "") || receipt.review_base_sha === receipt.target_sha) errors.push("invalid review_base_sha");
+    if (!authority.ok || authority.role !== "review") errors.push("review_base_sha belongs only on a review receipt");
+  }
   expectType("last_activity", ["string"]);
   for (const [field, allowed] of [
     ["worker_identity", ["string", "null"]],
@@ -758,6 +762,7 @@ export function createReceipt({
   episode_id = null,
   activation_digest = null,
   review_findings = null,
+  review_base_sha = null,
   attempt_id = randomUUID(),
   reserved_at = new Date().toISOString(),
 }) {
@@ -773,6 +778,8 @@ export function createReceipt({
     episode_id,
     ...(activation_digest ? { activation_digest } : {}),
     ...(scope_phase === "revision" && validReviewFindings(review_findings) ? { review_findings } : {}),
+    // SHU-303: the base a review-only run diffs its bound head against.
+    ...(review_base_sha !== null ? { review_base_sha } : {}),
     stage: "RESERVED",
     requested_worker,
     worker_identity: null,
@@ -1711,6 +1718,52 @@ export async function fetchBranchHead(request) {
   return (await measureBranchHead(request)).sha;
 }
 
+// SHU-303: before a review-only run reserves anything, the pull request its
+// activation names must still be what was approved: open, a branch of this
+// repository (never a fork), at the approved head, and forked from the approved
+// base, which is the merge base of that head with the PR's base branch. Any
+// difference, or an answer the coordinator cannot read, is a refusal with no
+// write. Returns { ok, code?, reason?, branch? }; never throws.
+export async function verifyReviewOnlyPull({ repo, pr, head_sha, base_sha, githubToken, fetchImpl = fetch }) {
+  if (!githubToken) return { ok: false, code: "UNREADABLE_HEAD", reason: "a review-only run needs the GitHub token to read its pull request" };
+  const get = async (url) => {
+    const res = await fetchImpl(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  };
+  let pull;
+  try {
+    pull = await get(`https://api.github.com/repos/${repo}/pulls/${pr}`);
+  } catch (error) {
+    return { ok: false, code: "UNREADABLE_HEAD", reason: `pull request #${pr} could not be read (${error.message})` };
+  }
+  if (pull?.number !== pr || pull?.state !== "open") return { ok: false, code: "STALE_HEAD", reason: `pull request #${pr} is not open` };
+  if (pull.head?.repo?.full_name !== repo || pull.base?.repo?.full_name !== repo) {
+    return { ok: false, code: "STALE_HEAD", reason: `pull request #${pr} is not a branch of ${repo}` };
+  }
+  const branch = pull.head?.ref;
+  const baseRef = pull.base?.ref;
+  if (typeof branch !== "string" || !branch || typeof baseRef !== "string" || !baseRef) {
+    return { ok: false, code: "UNREADABLE_HEAD", reason: `pull request #${pr} names no head or base branch` };
+  }
+  if (pull.head?.sha !== head_sha) {
+    return { ok: false, code: "STALE_HEAD", reason: `pull request #${pr} head is ${pull.head?.sha ?? "<unknown>"}, not the approved ${head_sha}` };
+  }
+  let compare;
+  try {
+    compare = await get(`https://api.github.com/repos/${repo}/compare/${encodeURIComponent(baseRef)}...${head_sha}`);
+  } catch (error) {
+    return { ok: false, code: "UNREADABLE_HEAD", reason: `the base of pull request #${pr} could not be read (${error.message})` };
+  }
+  if (compare?.merge_base_commit?.sha !== base_sha) {
+    return { ok: false, code: "STALE_HEAD", reason: `pull request #${pr} forks from ${compare?.merge_base_commit?.sha ?? "<unknown>"}, not the approved base ${base_sha}` };
+  }
+  return { ok: true, branch };
+}
+
 // Receipt comments: the receipt JSON is embedded in a fenced block so it can be
 // round-tripped from the Linear thread (durable source of truth for the pilot).
 export function receiptCommentBody(receipt) {
@@ -1781,6 +1834,8 @@ export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
   // RESERVED, so two records claiming one attempt_id under DIFFERENT episodes are
   // a conflict -> HOLD, never a silent override of a spent approval.
   "episode_id",
+  // SHU-303: what a review-only attempt diffs against is fixed at RESERVED.
+  "review_base_sha",
 ]);
 
 function immutableFieldEqual(a, b, field) {
@@ -1941,6 +1996,8 @@ export async function backfillSuccessorDirectives({
   for (const terminal of eligible) {
     considered += 1;
     const issueId = terminal.issue_id;
+    // SHU-303: a review-only verdict is final; there is no writer to direct.
+    if (resolveReviewOnlyLane(config, issueId)) continue;
     const comments = commentsByIssue.get(issueId) ?? commentsByIssue.get(terminal.linearId ?? "") ?? [];
     const linearIssueId = linearIdFor.get(issueId) ?? terminal.linearId ?? null;
     // Existing directives on THIS card, dedup keyed by successor attempt_id.
@@ -2810,7 +2867,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   const writerLanes = singleRunActivation.state !== "armed" ? null
     : singleRunActivation.writer_lanes ? new Map(Object.entries(singleRunActivation.writer_lanes))
     : singleRunActivation.writer_lane && singleRunActivation.target_issue_id
-      ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.writer_lane]]) : null;
+      ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.writer_lane]])
+      // SHU-303: a review-only run's first and only step is its reviewer.
+      : singleRunActivation.review_only && singleRunActivation.target_issue_id
+        ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.reviewer_lane]]) : null;
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
   if (!singleRunActivation.requested) {
@@ -2976,7 +3036,23 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     throw new Error(`dispatch refused: no contract-bound authorization_ref for ${candidate.id} (free text and unapproved fixture ids are rejected)`);
   }
   const repo = candidate.repo ?? config.pilot_repo;
-  const branch = (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
+  let branch = (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
+  // SHU-303: a review-only run reviews the pull request its activation names,
+  // on that PR's own branch, and only while the PR is still what was approved.
+  const reviewOnly = singleRunActivation.state === "armed" && singleRunActivation.review_only === true;
+  if (reviewOnly) {
+    if (selection.successor || candidate.id !== singleRunActivation.target_issue_id) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — a review-only run has exactly one step, on ${singleRunActivation.target_issue_id}`);
+      return 2;
+    }
+    const pull = await verifyReviewOnlyPull({ repo, pr: singleRunActivation.review_pr, head_sha: singleRunActivation.initial_target_sha,
+      base_sha: singleRunActivation.review_base_sha, githubToken, fetchImpl });
+    if (!pull.ok) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — review-only HOLD=${pull.code}: ${pull.reason}`);
+      return 2;
+    }
+    branch = pull.branch;
+  }
   // SHU-225: when this selection is the ARMED episode's routed successor, the claim
   // carries the successor's own lane, bound head and deterministic attempt id. This
   // is the ONLY place a successor is turned into work — there is no second
@@ -3094,6 +3170,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     // second successor for the same step. A first dispatch keeps randomUUID().
     ...(successor?.attempt_id ? { attempt_id: successor.attempt_id } : {}),
     ...(successor?.review_findings ? { review_findings: successor.review_findings } : {}),
+    ...(reviewOnly ? { review_base_sha: singleRunActivation.review_base_sha } : {}),
   });
   if (!reservedOk) {
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);
@@ -3243,6 +3320,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       scope_phase: receipt.scope_phase,
       allowed_paths: [...receipt.allowed_paths],
       scoped_base_sha: receipt.scoped_base_sha,
+      ...(receipt.review_base_sha ? { review_base_sha: receipt.review_base_sha } : {}),
       task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt) + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
       ...options,
       fetchImpl,

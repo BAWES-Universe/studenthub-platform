@@ -772,6 +772,7 @@ export async function launchBuilder({
   scope_phase = "initial",
   allowed_paths = [],
   scoped_base_sha = null,
+  review_base_sha = null,
   cwd = process.cwd(),
   env = process.env,
   resume = false,
@@ -913,7 +914,7 @@ export async function launchBuilder({
   }
   const auditNotes = reviewer ? [`review execution proof: ${reviewEvidence.reason_code}`] : [];
   const review_rule = reviewer
-    ? await reviewRuleImpl({ issue_id, target_sha, git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) })
+    ? await reviewRuleImpl({ issue_id, target_sha, ...(review_base_sha ? { review_base_sha } : {}), git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) })
     : undefined;
 
   const input = { issue_id, authorization_ref, attempt_id, target_sha, branch, repo, role,
