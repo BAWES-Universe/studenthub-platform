@@ -2648,6 +2648,18 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       let launch;
       try {
         const options = await preparedLaunchOptions(adapter, receipt, env, io, { resume: true });
+        // SHU-303: a recovered review is still the one review its activation
+        // approved; the pull request is read again before any worker starts.
+        if (receipt.review_base_sha) {
+          const pull = singleRunActivation.review_only === true
+            ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
+              base_sha: receipt.review_base_sha, githubToken, fetchImpl })
+            : { ok: false, code: "STALE_HEAD", reason: "no review-only activation is armed" };
+          if (!pull.ok || pull.branch !== receipt.branch) {
+            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — review-only HOLD=${pull.ok ? "STALE_HEAD" : pull.code}: ${pull.ok ? "the pull request's branch changed" : pull.reason}; slot held`);
+            continue;
+          }
+        }
         launch = await adapterModule.launchBuilder({
           recovery: true, // host-local authorization required by Hermes recovery
           external_run_id: receipt.external_run_id ?? null, // codex-cli exact-id resume target (codexrun_<uuid>)
@@ -2657,7 +2669,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
           authorization_ref: receipt.authorization_ref,
           attempt_id: receipt.attempt_id,
           target_sha: receipt.target_sha,
-          task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
+          ...(receipt.review_base_sha ? { review_base_sha: receipt.review_base_sha } : {}),
+          task_context: orderTaskContext(receipt),
           ...options,
           fetchImpl,
           io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },

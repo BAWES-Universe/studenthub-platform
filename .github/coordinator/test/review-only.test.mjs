@@ -19,7 +19,7 @@ import {
   renderActivationLine,
   episodeVerdict,
 } from "../single-run-activation.mjs";
-import { createReceipt, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS } from "../reconcile.mjs";
+import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS } from "../reconcile.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { REVIEW_ONLY_BRIEF, cardBrief, reviewOnlyCard } from "../card-contracts.mjs";
@@ -352,6 +352,32 @@ test("SHU-303 P4: a pull request that moves while the workspace is prepared stop
       assert.equal(held?.stage, "HOLD", tick.text);
       assert.ok(held.notes.includes(`adapter reason code: ${code}`), JSON.stringify(held.notes));
       assert.match(tick.text, new RegExp(`final activation check refused \\(${code}\\)`));
+    } finally { h.cleanup(); }
+  }
+});
+
+test("SHU-303 P5: an uncertain review launch is recovered only while the pull request is still the approved one", async () => {
+  const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
+  for (const [change, launches] of [[null, 1], [(pull) => { pull.headSha = "b".repeat(40); }, 0], [(pull) => { pull.headRef = "feature/renamed"; }, 0]]) {
+    const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
+      activationId: "shu303-review-run-0006", reviewOnly: { pr: 240, baseSha: BASE, authorFamily: "claude" },
+      configOverrides: { fixture_lane: undefined, review_lanes: CONFIG.review_lanes } });
+    try {
+      const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+        role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/reviewed", target_sha: h.record.initial_target_sha,
+        workspace_scope: "full", scope_phase: "review", episode_id: h.record.activation_id, review_base_sha: BASE });
+      assert.ok(made.ok, JSON.stringify(made.errors));
+      const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+      h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+      if (change) change(h.pull);
+      const tick = await h.runTick();
+      assert.equal(h.launched.length, launches, tick.text);
+      if (launches) {
+        assert.equal(h.launched[0].review_base_sha, BASE, "the recovered reviewer keeps the review-only diff base");
+        assert.doesNotMatch(h.launched[0].task_context, /feature\/reviewed/, "the PR's branch name never reaches the recovered reviewer");
+      } else {
+        assert.match(tick.text, /launch reconciliation for SHU-304 SKIPPED — review-only HOLD=STALE_HEAD/);
+      }
     } finally { h.cleanup(); }
   }
 });

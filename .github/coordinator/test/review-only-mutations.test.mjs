@@ -194,6 +194,20 @@ const CASES = [
     to: "    throw error; // SHU303-M26",
     pattern: "SHU-303 E3:",
   },
+  {
+    name: "M27 recover an uncertain review launch without reading the pull request again",
+    file: "reconcile.mjs",
+    from: "          if (!pull.ok || pull.branch !== receipt.branch) {\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation",
+    to: "          if (false) { // SHU303-M27\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation",
+    pattern: "SHU-303 P5:",
+  },
+  {
+    name: "M28 put the PR's branch name in a recovered reviewer's prompt",
+    file: "reconcile.mjs",
+    from: "          task_context: orderTaskContext(receipt),\n",
+    to: "          task_context: `on ${receipt.branch}`, // SHU303-M28\n",
+    pattern: "SHU-303 P5:",
+  },
 ];
 
 for (const mutation of CASES) {
