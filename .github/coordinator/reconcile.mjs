@@ -3293,6 +3293,18 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         // SHU-71 run 6: this refusal used to read as a failed git command (COMMAND_FAILED).
         if (!final.ok) throw Object.assign(new Error("activation no longer allows this launch"), { activationCode: final.code });
       }
+      // SHU-303: the pull request can move while the workspace is prepared, so
+      // it is read again as the last step before the reviewer launches. Only a
+      // review-only reservation carries review_base_sha; a resumed one is read
+      // against the activation that is armed now.
+      if (receipt.review_base_sha) {
+        const pull = singleRunActivation.review_only === true
+          ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
+            base_sha: receipt.review_base_sha, githubToken, fetchImpl })
+          : { ok: false, code: "STALE_HEAD" };
+        const code = !pull.ok ? `REVIEW_${pull.code}` : pull.branch !== receipt.branch ? "REVIEW_STALE_HEAD" : null;
+        if (code) throw Object.assign(new Error("the pull request is no longer the approved review"), { activationCode: code });
+      }
     } catch (error) {
       const diagnosis = error?.activationCode ? `FINAL_CHECK_${error.activationCode}` : workspaceFailureCode(error);
       const bundleDetail = diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? `; ${error.message}` : "";

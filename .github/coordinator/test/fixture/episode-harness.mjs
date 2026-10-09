@@ -226,6 +226,9 @@ export function createEpisodeHarness({
       const pr = /\/pulls\/(\d+)$/.exec(u);
       if (pr && pull) {
         pullReads.push(u);
+        // A test may move the pull request between reads (e.g. while the
+        // workspace is prepared): onRead sees how many /pulls reads came first.
+        pull.onRead?.(pullReads.filter((read) => /\/pulls\/\d+$/.test(read)).length);
         if (!pull.readable) return { status: 502, ok: false, json: async () => ({}) };
         return { status: 200, ok: true, json: async () => ({ number: pull.number, state: pull.state,
           head: { ref: pull.headRef, sha: pull.headSha, repo: { full_name: pull.headRepo } },

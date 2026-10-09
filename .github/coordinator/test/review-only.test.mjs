@@ -315,6 +315,30 @@ test("SHU-303 P3: a pull request that moved, closed or cannot be read stops the 
   } finally { h.cleanup(); }
 });
 
+test("SHU-303 P4: a pull request that moves while the workspace is prepared stops the run before the reviewer launches", async () => {
+  const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
+  const cases = [
+    [(pull) => { pull.headSha = "b".repeat(40); }, "FINAL_CHECK_REVIEW_STALE_HEAD"],
+    [(pull) => { pull.headRef = "feature/renamed"; }, "FINAL_CHECK_REVIEW_STALE_HEAD"],
+    [(pull) => { pull.readable = false; }, "FINAL_CHECK_REVIEW_UNREADABLE_HEAD"],
+  ];
+  for (const [change, code] of cases) {
+    const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
+      activationId: "shu303-review-run-0004", reviewOnly: { pr: 240, baseSha: BASE, authorFamily: "claude" },
+      configOverrides: { fixture_lane: undefined, review_lanes: CONFIG.review_lanes } });
+    try {
+      h.pull.onRead = (reads) => { if (reads === 2) change(h.pull); };
+      const tick = await h.runTick();
+      assert.equal(tick.code, 2, tick.text);
+      assert.equal(h.launched.length, 0, "no reviewer launches on a moved pull request");
+      const [held] = h.receipts();
+      assert.equal(held?.stage, "HOLD", tick.text);
+      assert.ok(held.notes.includes(`adapter reason code: ${code}`), JSON.stringify(held.notes));
+      assert.match(tick.text, new RegExp(`final activation check refused \\(${code}\\)`));
+    } finally { h.cleanup(); }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // What the reviewer is told
 // ---------------------------------------------------------------------------

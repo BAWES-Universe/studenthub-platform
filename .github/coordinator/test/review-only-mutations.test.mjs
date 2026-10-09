@@ -173,6 +173,20 @@ const CASES = [
     to: "  catch { reviewOnly = true; } // SHU303-M23",
     pattern: "SHU-303 E3:",
   },
+  {
+    name: "M24 launch the reviewer without reading the pull request again",
+    file: "reconcile.mjs",
+    from: '        if (code) throw Object.assign(new Error("the pull request is no longer the approved review"), { activationCode: code });',
+    to: "        // SHU303-M24",
+    pattern: "SHU-303 P4:",
+  },
+  {
+    name: "M25 accept a pull request whose branch changed under the reservation",
+    file: "reconcile.mjs",
+    from: ': pull.branch !== receipt.branch ? "REVIEW_STALE_HEAD" : null;',
+    to: ": null; // SHU303-M25",
+    pattern: "SHU-303 P4:",
+  },
 ];
 
 for (const mutation of CASES) {
