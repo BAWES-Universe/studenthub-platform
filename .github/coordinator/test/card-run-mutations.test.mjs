@@ -151,6 +151,12 @@ const CASES = [
     to: '  io.exec("systemctl", ["stop", "shu71-evidence.service"]); // SHU86-M23',
     pattern: "SHU-86 C19:",
   },
+  {
+    name: "M24 start a tick after the window closed",
+    from: "        // Never start a tick once the window has closed.\n        if (io.now().getTime() >= deadline) {",
+    to: "        if (false) { // SHU86-M24",
+    pattern: "SHU-86 C12:",
+  },
 ];
 
 for (const mutation of CASES) {

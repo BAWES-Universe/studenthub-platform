@@ -1998,6 +1998,7 @@
     "SHU-86 mutation M21 count a stopped run as a success",
     "SHU-86 mutation M22 abandon the revert when the dispatch-off tick fails",
     "SHU-86 mutation M23 retire the record although the broker did not stop",
+    "SHU-86 mutation M24 start a tick after the window closed",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -17470,6 +17471,10 @@
     },
     {
       "name": "SHU-86 mutation M23 retire the record although the broker did not stop",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M24 start a tick after the window closed",
       "capabilities": []
     },
     {

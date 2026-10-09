@@ -326,6 +326,8 @@ test("SHU-86 C12: a run that outlives its window stops at the window and reverts
   assert.ok(result.ticks.length > 1);
   assert.ok(host.clock - START.getTime() >= CARD_RUN_LIMITS.runMs);
   assert.ok(host.clock - START.getTime() <= CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.tickIntervalMs, "and not later");
+  const deadline = START.getTime() + CARD_RUN_LIMITS.runMs;
+  for (const entry of result.ticks) assert.ok(Date.parse(entry.at) < deadline, `no tick starts at or after the window: ${entry.at}`);
   reverted(host);
 });
 
