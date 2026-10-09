@@ -11,11 +11,11 @@
 // the activation spent. Revert always runs, and refuses only while a worker is
 // still running.
 //
-// Not in this slice (still operator steps): installing the revision with the
-// prerequisite provisioner, moving the card to Todo and creating its
-// coordinator/<card> branch at the installed revision, and posting the report.
-// Nothing here starts on its own: there is no timer, and importing the module
-// has no effect.
+// Before arming, the run itself moves the card to Todo and creates its
+// coordinator/<card> branch at the installed revision (card-prepare.mjs).
+// Still operator steps: installing the revision with the prerequisite
+// provisioner, and posting the report. Nothing here starts on its own: there
+// is no timer, and importing the module has no effect.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateActivationRecord, MAX_ACTIVATION_WINDOW_MS } from "../single-run-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
+import { prepareRun, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -33,6 +34,7 @@ export const CARD_RUN_PATHS = Object.freeze({
   unitDir: "/etc/systemd/system",
   lock: "/run/lock/shu-card-run.lock",
   tmp: "/tmp",
+  coordinatorEnv: COORDINATOR_ENV,
 });
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
 export const RUN_DROP_IN = "95-v1-run.conf";
@@ -272,7 +274,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
 // coordinator ends the episode or the window closes, then revert.
-export function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null }) {
+export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -282,12 +284,8 @@ export function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, 
     const revision = installedRevision(io, paths);
     const config = JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
     const plan = planRun({ config, revision, now: io.now(), review, limits });
-    if (plan.branch) {
-      const line = git(io, paths, ["ls-remote", "origin", `refs/heads/${plan.branch}`]);
-      const head = line.split(/\s+/)[0];
-      if (!line) refuse("CARD_RUN_BRANCH_MISSING", `${plan.branch} does not exist; create it at ${revision}`);
-      if (head !== revision) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", `${plan.branch} is at ${head}, not ${revision}`);
-    }
+    const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
+    const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials });
     const ticks = [];
     let result;
     try {
@@ -320,7 +318,7 @@ export function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, 
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
-    return { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, ...result, ticks, revert: reverted };
+    return { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, prepared, ...result, ticks, revert: reverted };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
@@ -330,6 +328,7 @@ export const defaultIO = Object.freeze({
   fs,
   uid: () => process.getuid(),
   now: () => new Date(),
+  fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   exec: (file, args) => {
     const result = spawnSync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -351,16 +350,24 @@ export function parseArgs(argv) {
   return { command, review };
 }
 
-export function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
+export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
   try {
     const { command, review } = parseArgs(argv);
     if (command === "plan") {
       const revision = installedRevision(io, paths);
       const config = JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
       const plan = planRun({ config, revision, now: io.now(), review });
-      return { code: 0, output: { ...plan, busy: busyReasons(io, paths) } };
+      // What the run would do to the card and its branch, read only.
+      let prepare;
+      try {
+        const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
+        prepare = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials, apply: false });
+      } catch (error) {
+        prepare = { refused: error.code ?? "CARD_RUN_ERROR", reason: error.message };
+      }
+      return { code: 0, output: { ...plan, busy: busyReasons(io, paths), prepare } };
     }
-    const result = runCard({ io, paths, review });
+    const result = await runCard({ io, paths, review });
     return { code: result.ok && result.revert.reverted ? 0 : 1, output: result };
   } catch (error) {
     return { code: 2, output: { ok: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message } };
@@ -368,7 +375,7 @@ export function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { code, output } = main(process.argv.slice(2));
+  const { code, output } = await main(process.argv.slice(2));
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
   process.exitCode = code;
 }

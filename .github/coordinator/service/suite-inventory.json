@@ -1999,6 +1999,20 @@
     "SHU-86 mutation M22 abandon the revert when the dispatch-off tick fails",
     "SHU-86 mutation M23 retire the record although the broker did not stop",
     "SHU-86 mutation M24 start a tick after the window closed",
+    "SHU-86 mutation M25 run a card a person or agent owns",
+    "SHU-86 mutation M26 move a started or finished card back to Todo",
+    "SHU-86 mutation M27 arm although the Todo move did not read back",
+    "SHU-86 mutation M28 read credentials from a file others can read",
+    "SHU-86 mutation M29 create the branch before the card is known to be movable",
+    "SHU-86 mutation M30 let plan write to Linear or GitHub",
+    "SHU-86 mutation M31 move or arm on the first snapshot, ignoring the read after the branch step",
+    "SHU-86 mutation M32 trust the Todo move without checking the card's history",
+    "SHU-86 mutation M33 leave a concurrently started card in Todo",
+    "SHU-86 mutation M34 read only the first page of the card's history",
+    "SHU-86 mutation M35 count history from before the run's own read",
+    "SHU-86 mutation M41 put a raced card back even after it changed again",
+    "SHU-86 mutation M42 leave a card claimed during the move in Todo",
+    "SHU-86 mutation M36 take a move that left no trace in the history as done",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2006,7 +2020,7 @@
     "SHU-86 C5: the host is busy while any run, drop-in, worker or worktree is left",
     "SHU-86 C6: a busy host is refused before anything is armed",
     "SHU-86 C7: only a clean, installed main is armed",
-    "SHU-86 C8: a card run needs its coordinator branch at the installed revision",
+    "SHU-86 C8: a missing coordinator branch is created at the installed revision; a moved one is refused",
     "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
     "SHU-86 C10: a failed arm still reverts everything it wrote",
     "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
@@ -2019,6 +2033,12 @@
     "SHU-86 C18: a failed dispatch-off tick still finishes the revert",
     "SHU-86 C19: a failed teardown keeps the activation record, so the host stays busy",
     "SHU-86 C20: no tick starts when arming itself outlasted the window",
+    "SHU-86 C21: a backlog card nobody owns moves to Todo before arming, and reads back",
+    "SHU-86 C22: a card someone owns, or one already started or finished, is refused before any write",
+    "SHU-86 C23: a Todo move that does not read back stops the run before arming",
+    "SHU-86 C24: only the coordinator's own private credentials are used, and never shown",
+    "SHU-86 C25: the card is read again after the branch step, and one started or claimed meanwhile is never moved or armed",
+    "SHU-86 C26: a card someone starts while the run moves it is put back where they left it, and the run stops",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17479,6 +17499,62 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M25 run a card a person or agent owns",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M26 move a started or finished card back to Todo",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M27 arm although the Todo move did not read back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M28 read credentials from a file others can read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M29 create the branch before the card is known to be movable",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M30 let plan write to Linear or GitHub",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M31 move or arm on the first snapshot, ignoring the read after the branch step",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M32 trust the Todo move without checking the card's history",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M33 leave a concurrently started card in Todo",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M34 read only the first page of the card's history",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M35 count history from before the run's own read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M41 put a raced card back even after it changed again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M42 leave a card claimed during the move in Todo",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M36 take a move that left no trace in the history as done",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17507,7 +17583,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 C8: a card run needs its coordinator branch at the installed revision",
+      "name": "SHU-86 C8: a missing coordinator branch is created at the installed revision; a moved one is refused",
       "capabilities": []
     },
     {
@@ -17556,6 +17632,30 @@
     },
     {
       "name": "SHU-86 C20: no tick starts when arming itself outlasted the window",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C21: a backlog card nobody owns moves to Todo before arming, and reads back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C22: a card someone owns, or one already started or finished, is refused before any write",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C23: a Todo move that does not read back stops the run before arming",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C24: only the coordinator's own private credentials are used, and never shown",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C25: the card is read again after the branch step, and one started or claimed meanwhile is never moved or armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C26: a card someone starts while the run moves it is put back where they left it, and the run stops",
       "capabilities": []
     },
     {
