@@ -2018,6 +2018,7 @@
     "SHU-86 C17: only an answered card is a successful run; a stop exits non-zero",
     "SHU-86 C18: a failed dispatch-off tick still finishes the revert",
     "SHU-86 C19: a failed teardown keeps the activation record, so the host stays busy",
+    "SHU-86 C20: no tick starts when arming itself outlasted the window",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17551,6 +17552,10 @@
     },
     {
       "name": "SHU-86 C19: a failed teardown keeps the activation record, so the host stays busy",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C20: no tick starts when arming itself outlasted the window",
       "capabilities": []
     },
     {

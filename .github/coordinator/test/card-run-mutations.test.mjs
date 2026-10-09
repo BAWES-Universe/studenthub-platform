@@ -153,9 +153,9 @@ const CASES = [
   },
   {
     name: "M24 start a tick after the window closed",
-    from: "        // Never start a tick once the window has closed.\n        if (io.now().getTime() >= deadline) {",
-    to: "        if (false) { // SHU86-M24",
-    pattern: "SHU-86 C12:",
+    from: "        // arming itself can outlast it.\n        if (io.now().getTime() >= deadline) {",
+    to: "        // arming itself can outlast it.\n        if (false) { // SHU86-M24",
+    pattern: "SHU-86 C20:",
   },
 ];
 

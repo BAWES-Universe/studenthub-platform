@@ -294,6 +294,12 @@ export function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, 
       const armed = arm(io, plan, revision, paths);
       const deadline = Date.parse(plan.record.expires_at);
       for (;;) {
+        // Never start a tick once the window has closed, including the first:
+        // arming itself can outlast it.
+        if (io.now().getTime() >= deadline) {
+          result = { ok: false, outcome: "EXPIRED", reason: `the run window closed at ${plan.record.expires_at}` };
+          break;
+        }
         const startedAt = io.now().toISOString();
         const outcome = tickOutcome(tick(io), plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
@@ -305,16 +311,7 @@ export function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, 
           result = { ok: false, outcome: "NOT_ELIGIBLE", reason: outcome.excluded.join("; ") || "no eligible work" };
           break;
         }
-        if (io.now().getTime() >= deadline) {
-          result = { ok: false, outcome: "EXPIRED", reason: `the run window closed at ${plan.record.expires_at}` };
-          break;
-        }
         io.sleep(limits.tickIntervalMs);
-        // Never start a tick once the window has closed.
-        if (io.now().getTime() >= deadline) {
-          result = { ok: false, outcome: "EXPIRED", reason: `the run window closed at ${plan.record.expires_at}` };
-          break;
-        }
       }
       result = { ...result, ...armed };
     } catch (error) {

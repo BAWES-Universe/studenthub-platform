@@ -419,3 +419,17 @@ test("SHU-86 C19: a failed teardown keeps the activation record, so the host sta
   assert.ok(busyReasons(host.io, PATHS).some((reason) => reason.includes("activation record")));
   assert.equal(host.files.has(PATHS.lock), false);
 });
+
+test("SHU-86 C20: no tick starts when arming itself outlasted the window", () => {
+  let restarts = 0;
+  const host = fakeHost({
+    edit: (h, when) => { if (when === "restart" && ++restarts === 1) h.clock += CARD_RUN_LIMITS.runMs + 1; },
+    onTick: (h) => tickText(spent("SHU-301", "review PASS — the episode is complete")),
+  });
+  const result = attempt(() => runCard({ io: host.io, paths: PATHS }));
+  assert.equal(result.outcome, "EXPIRED");
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.ticks, []);
+  assert.equal(host.ticks, 1, "only the dispatch-off tick ran");
+  reverted(host);
+});
