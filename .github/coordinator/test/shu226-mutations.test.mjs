@@ -47,10 +47,10 @@ const CASES = [
   },
   {
     name: "M6 file in a pickable state",
-    from: 'export const INCIDENT_STATE_NAME = "Triage";',
-    to: 'export const INCIDENT_STATE_NAME = "Todo"; // SHU226-M6',
-    pattern: "an incident card is filed in Triage, never pickable",
-    named: /an incident card is filed in Triage, never pickable/,
+    from: '  card: Object.freeze({ name: "Backlog", type: "backlog" }),',
+    to: '  card: Object.freeze({ name: "Todo", type: "unstarted" }), // SHU226-M6',
+    pattern: "an incident card is filed in Backlog or Done, never pickable",
+    named: /an incident card is filed in Backlog or Done, never pickable/,
   },
   {
     name: "M7 treat pending as delivered",

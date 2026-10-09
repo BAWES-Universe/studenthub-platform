@@ -316,6 +316,71 @@ Out of scope: the logo and the commercial licence, company self-activation (OR-0
 
 Finish with npm run typecheck and npm test passing. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-301 is the document half of slice O2, after SHU-300 landed the text half.
+// SHU-160's second run built a first pass of it, and the verifier blocked it for
+// a parallel module, missing cross-site checks and a delivery path the candidate
+// documents route already owns. The brief names each so the build avoids them.
+export const SHU301_PATHS = Object.freeze([
+  "packages/private-documents/src/index.ts",
+  "apps/gateway/src/organization-documents-http.ts",
+  "apps/gateway/src/organization-documents-runtime.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/test/organization-documents-http.test.ts",
+  "apps/gateway/test/organization-documents-mutations.mjs",
+  "package.json",
+]);
+
+const SHU301_ACCEPTANCE = [
+  "(1) an organization owner can upload, replace and remove the organization's logo (company-logo) and commercial licence (commercial-licence) through the existing PrivateDocuments class, with no parallel storage module, and fetch either only through an authorized, expiring delivery link; serving a document without a valid, unexpired link makes the private-delivery negative-control test fail;",
+  "(2) every response carries only the document's id, type, mime type, size and version, never a storage key, a data field or a URL other than the delivery link the delivery operation returns, and letting a key or URL into an upload, replace or remove response makes the response-whitelist test fail;",
+  "(3) a cookie-authenticated upload, replace, remove or delivery-link request needs the exact configured Origin, is refused when sec-fetch-site is cross-site, and needs the right content type, as the candidate documents route does; dropping the origin check makes the cross-site-upload test fail;",
+  "(4) only the organization's owner may change or fetch its documents; a recruiter, a candidate, another organization's owner or an anonymous caller gets not_found, never 403, and mapping that refusal to 403 makes the non-owner test fail;",
+  "(5) organization delivery links use their own path, which handleCandidateDocuments does not claim, and verify with the organization service's own key; candidate delivery links and every existing private-documents and candidate-documents test are unchanged;",
+  "(6) apps/gateway/test/organization-documents-mutations.mjs applies mutations (1) to (4), each makes its named test fail, and the script itself passes on the unmutated code;",
+  "(7) npm run typecheck and npm test pass, the new test runs from package.json's test command, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU301_BRIEF = `Card SHU-301: organization owners replace the logo and upload the commercial licence as private documents (slice O2b, the document half of O2).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md, especially row OR-03, finding OR-F10 and slice O2 in section 11.
+- packages/private-documents/src/index.ts. PrivateDocuments already supports organization documents: the company-logo and commercial-licence types, an organization scope (orgId with no personId), an org-owner authorization check through resolveActiveContext, upload, replace, remove, issueDelivery and deliver. This card uses that class.
+- apps/gateway/src/candidate-documents-http.ts and apps/gateway/src/candidate-documents-runtime.ts: how the gateway reads the session credential, checks Origin and sec-fetch-site, limits and parses bodies, sets security headers, maps errors to a closed vocabulary, and builds the service from the DOCUMENT_* environment.
+- apps/gateway/src/index.ts: how handleCandidateDocuments and handleOrganizationProfile are mounted.
+- packages/private-documents/test/mutations.mjs and packages/organizations/test/profile-writes-mutations.mjs: the mutation-script pattern.
+
+Goal. An organization's owner can upload, replace and remove the organization's logo and commercial licence, and fetch either one through an authorized, expiring link, never a public URL (finding OR-F10). The stored document of each type for an organization is the source of truth; there is no database change.
+
+Pitfalls the first attempt at this slice hit. Avoid each one:
+- Do not add a parallel document module. Use PrivateDocuments as it is. The only change allowed in packages/private-documents/src/index.ts is an optional delivery path option for the PrivateDocuments constructor, used by issueDelivery, deliver and handleDelivery. Its default must stay "/private-documents/delivery", so every candidate link stays byte-identical and every existing private-documents test passes unchanged.
+- Delivery path: handleCandidateDocuments claims every URL that starts with /candidate-documents or /private-documents/, and it is mounted before any organization route. Organization delivery links therefore need their own path outside both prefixes, for example /organization-documents/delivery, set through that option. They must verify with the organization service's own signing key.
+- Cross-site requests: every cookie-authenticated request that changes a document or issues a delivery link must check the exact configured Origin, refuse sec-fetch-site cross-site, and require application/json (or the exact upload content type you define), as the candidate route does. The delivery GET itself is the only request that may skip the Origin check, and only because its signed, expiring link is the authority.
+- Not found: a non-owner, another organization's owner or an anonymous caller gets 404 not_found, never 403. PrivateDocuments raises denied for all of these, so the route maps denied to not_found.
+- Responses: return only id, type, mime, size and version for a document, and the url and expiresAt that issueDelivery returns for a delivery request. Never return the stored data, the scope, a storage key or any other URL.
+- Wiring: build the organization service in apps/gateway/src/organization-documents-runtime.ts from the same DOCUMENT_* environment and stores the candidate runtime uses, with the same session-based authenticate. When that environment is absent, return undefined and the route answers 503 unavailable, as the candidate route does.
+
+Acceptance. Each item is pinned by a mutation in apps/gateway/test/organization-documents-mutations.mjs that makes a named test fail. Model the script on packages/organizations/test/profile-writes-mutations.mjs: build first, apply each mutation to the built module under dist/, run the named test with the same --test-name-pattern form (a "^" prefix and a trailing space after the full test name), expect it to fail, and restore. Check by hand that each mutant really fails its test and that the script passes on the unmutated code.
+(1) Serve a document without a valid, unexpired delivery link: the private-delivery negative-control test fails.
+(2) Let a storage key or URL into an upload, replace or remove response: the response-whitelist test fails.
+(3) Drop the Origin check: the cross-site-upload test fails.
+(4) Map a non-owner's refusal to 403: the non-owner test fails.
+Use synthetic fixtures only: a temporary FileDocumentStore and an in-memory authz store and session store, as the existing private-documents tests do. The HTTP test calls the real handler.
+
+Your paths, and what each may hold:
+- packages/private-documents/src/index.ts: only the optional delivery path option described above
+- apps/gateway/src/organization-documents-http.ts (new; modelled on candidate-documents-http.ts)
+- apps/gateway/src/organization-documents-runtime.ts (new; modelled on candidate-documents-runtime.ts)
+- apps/gateway/src/index.ts: route wiring only, mounted after handleCandidateDocuments
+- apps/gateway/test/organization-documents-http.test.ts (new)
+- apps/gateway/test/organization-documents-mutations.mjs (new)
+- package.json: leave every existing script's text as it is. Append the new built test file at the END of the node --test list in test, add a test:organization-documents:mutations script that runs the mutation script, and add " && npm run test:organization-documents:mutations" as its own step right after "npm run test:organization-profile:mutations" in test. Never change dependencies.
+
+Out of scope: any profile text field (SHU-300 did those), any database migration, company self-activation (OR-04), staff or admin organization editing (O5), any UI beyond what the route needs, any change to the candidate documents route or packages/safe-write-contract, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -353,6 +418,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU300_PATHS,
     acceptance: SHU300_ACCEPTANCE,
     brief: SHU300_BRIEF,
+  }),
+  "SHU-301": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU301_PATHS,
+    revision_paths: SHU301_PATHS,
+    acceptance: SHU301_ACCEPTANCE,
+    brief: SHU301_BRIEF,
   }),
 });
 

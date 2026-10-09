@@ -45,6 +45,12 @@ for (const id of Object.keys(CARD_CONTRACTS)) {
   const mode = validateCardContractMode(CARD_CONTRACTS[id]);
   if (!mode.ok) throw new Error(`${id}: ${mode.reason}`);
 }
+// SHU-298: a fixture is a rehearsal lane with a seeded defect. Its stops are
+// expected, so their incident cards close themselves.
+export function isFixtureIssue(issueId) {
+  return typeof issueId === "string" && Object.hasOwn(FIXTURE_CONTRACTS, issueId);
+}
+
 function laneContract(issueId) {
   if (typeof issueId !== "string") return null;
   return Object.hasOwn(FIXTURE_CONTRACTS, issueId) ? FIXTURE_CONTRACTS[issueId] : cardContract(issueId);

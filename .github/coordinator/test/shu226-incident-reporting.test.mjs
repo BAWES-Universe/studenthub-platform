@@ -6,12 +6,21 @@ import {
   receiptCommentBody,
   sendLinear,
 } from "../reconcile.mjs";
+import { MISSING_AUTHORITY, repairPolicyDecision } from "../incident-triage.mjs";
+import {
+  renderStopSummary,
+  settleCoordinatorIncident,
+  stopSummaryMarker,
+  STOP_SUMMARY_ISSUE,
+  SUMMARY_MAX_PAGES,
+} from "../incident-settlement.mjs";
+import { isFixtureIssue } from "../workspace-scope.mjs";
 import {
   deriveIncidentEvent,
   incidentIdentity,
   INCIDENT_MAX_BODY_BYTES,
   INCIDENT_REASON,
-  INCIDENT_STATE_NAME,
+  incidentFiledState,
   parseIncidentMarkers,
   renderIncidentDescription,
   renderIncidentMarker,
@@ -102,7 +111,7 @@ function pushReceipts(h, receipts) {
   for (const item of receipts) h.comments.push({ body: receiptCommentBody(item), createdAt: item.last_activity });
 }
 
-test("SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card", async () => {
+test("SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted incident card", async () => {
   const h = createEpisodeHarness({ activationId: ACTIVATION, githubToken: "ghtok", now: NOW });
   try {
     const held = receipt({ n: 1, worker: "claude-verifier", stage: "HOLD", target: SHA_WRITE });
@@ -114,7 +123,7 @@ test("SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlist
     assert.equal(h.incidentIssues.size, 1, "one incident card is delivered");
     const incident = [...h.incidentIssues.values()][0];
     assert.equal(incident.title, `coordinator stop: ${TARGET} — ambiguous_hold`);
-    assert.equal(incident.state.name, "Triage", "an incident card is filed in Triage, never pickable");
+    assert.equal(incident.state.name, "Done", "an incident card is filed in Backlog or Done, never pickable; a fixture's stop is filed closed");
     assert.equal(incident.assignee, null);
     assert.match(incident.description, new RegExp(held.attempt_id));
     assert.match(incident.description, /lane `claude-verifier`/);
@@ -363,8 +372,9 @@ test("SHU-226 M3: disabled means disabled: zero writes", async () => {
   assert.equal(calls, 0, "disabled means disabled: zero writes");
 });
 
-test("SHU-226 M6: an incident card is filed in Triage, never pickable", () => {
-  assert.equal(INCIDENT_STATE_NAME, "Triage", "an incident card is filed in Triage, never pickable");
+test("SHU-226 M6: an incident card is filed in Backlog or Done, never pickable", () => {
+  assert.deepEqual(incidentFiledState({ fixture: false }), { name: "Backlog", type: "backlog" }, "an incident card is filed in Backlog or Done, never pickable");
+  assert.deepEqual(incidentFiledState({ fixture: true }), { name: "Done", type: "completed" }, "an incident card is filed in Backlog or Done, never pickable");
 });
 
 test("SHU-226 M8: restart keeps the same event identity", () => {
@@ -396,4 +406,275 @@ test("SHU-226 A11/A12: the eight-attempt payload is complete and explicitly belo
   assert.ok(body);
   assert.ok(Buffer.byteLength(body, "utf8") <= INCIDENT_MAX_BODY_BYTES);
   for (const attempt of attempts) assert.match(body, new RegExp(attempt.attempt_id), "largest episode silently omits nothing");
+});
+
+// SHU-298: the coordinator triages its own stop cards.
+const S_NOW = new Date("2026-10-07T12:00:00.000Z");
+const S_ACTIVATION = "shu298settle0001";
+const S_CARD = "SHU-197";
+const S_FIXTURE = "SHU-140";
+
+function sAttemptId(n) {
+  return `${String(n).padStart(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
+}
+
+function sReceipt({ issue = S_CARD, n = 1, worker = "codex-builder", stage = "HOLD", verdict = null, target = SHA_INPUT, result = null, at = S_NOW.toISOString() } = {}) {
+  const made = createReceipt({
+    issue_id: issue,
+    authorization_ref: issue,
+    requested_worker: worker,
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: `coordinator/${issue}`,
+    target_sha: target,
+    attempt_id: sAttemptId(n),
+    episode_id: S_ACTIVATION,
+    reserved_at: at,
+  });
+  assert.equal(made.ok, true, made.errors?.join("; "));
+  const value = {
+    ...made.receipt,
+    stage,
+    worker_identity: `${worker}:session-${n}`,
+    external_run_id: `run_${n}`,
+    adapter_status: "completed",
+    timestamps: { reserved: at, launch: at, heartbeat: null, terminal: at },
+    last_activity: at,
+    notes: [],
+  };
+  if (verdict) value.verdict_stage = verdict;
+  if (result) value.result_sha = result;
+  return value;
+}
+
+function sDeriveFor(issue, receipts, reason = "no routable successor (no order)") {
+  return deriveIncidentEvent({
+    activation: { requested: true, state: "armed", valid: true, activation_id: S_ACTIVATION, target_issue_id: issue, coordinator_revision: REVISION },
+    receipts,
+    config: {},
+    episodeDecision: { ended: true, reason },
+  });
+}
+
+test("SHU-298 S1: a writer that reported FAILED is builder_failed, not an unknown breaker", () => {
+  const failedBuild = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  assert.equal(failedBuild.reason_code, INCIDENT_REASON.BUILDER_FAILED);
+  assert.match(failedBuild.explanation, /writer reported FAILED/);
+
+  // The SHU-160 run-2 shape: two blocked reviews, then the revising writer gave up.
+  const failedRevise = sDeriveFor(S_CARD, [
+    sReceipt({ n: 1, stage: "COMPLETED", verdict: "BUILD_READY", result: SHA_WRITE, at: "2026-10-07T11:00:00.000Z" }),
+    sReceipt({ n: 2, worker: "claude-verifier", verdict: "BLOCKED", target: SHA_WRITE, at: "2026-10-07T11:10:00.000Z" }),
+    sReceipt({ n: 3, verdict: "FAILED", target: SHA_WRITE, result: SHA_WRITE, at: "2026-10-07T11:20:00.000Z" }),
+  ]);
+  assert.equal(failedRevise.reason_code, INCIDENT_REASON.BUILDER_FAILED);
+
+  // Only the latest attempt decides: a reviewer FAILED, or a stop after an
+  // older writer FAILED, stays an unknown breaker.
+  assert.equal(sDeriveFor(S_CARD, [sReceipt({ worker: "claude-verifier", verdict: "FAILED", target: SHA_WRITE })]).reason_code, INCIDENT_REASON.UNKNOWN);
+  assert.equal(sDeriveFor(S_CARD, [
+    sReceipt({ n: 1, verdict: "FAILED", result: SHA_INPUT, at: "2026-10-07T11:00:00.000Z" }),
+    sReceipt({ n: 2, worker: "claude-verifier", target: SHA_WRITE, at: "2026-10-07T11:10:00.000Z" }),
+  ]).reason_code, INCIDENT_REASON.UNKNOWN);
+  // Known breakers keep their own code.
+  assert.equal(sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })], "revision attempts exhausted — the episode is over").reason_code, INCIDENT_REASON.REVISION_EXHAUSTED);
+});
+
+test("SHU-298 S2: builder_failed needs a fresh activation and never self-repairs", () => {
+  const decision = repairPolicyDecision({ reason_code: INCIDENT_REASON.BUILDER_FAILED });
+  assert.equal(decision.action, "MISSING_AUTHORITY");
+  assert.deepEqual(decision.requirements, [MISSING_AUTHORITY.ACTIVATION]);
+});
+
+test("SHU-298 S3: a fixture stop is marked as a fixture; a card stop names the card", () => {
+  assert.equal(isFixtureIssue(S_FIXTURE), true);
+  assert.equal(isFixtureIssue("SHU-254"), true);
+  assert.equal(isFixtureIssue(S_CARD), false);
+  assert.equal(isFixtureIssue(undefined), false);
+  const fixture = sDeriveFor(S_FIXTURE, [sReceipt({ issue: S_FIXTURE, worker: "claude-verifier", target: SHA_WRITE })]);
+  const card = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  assert.equal(fixture.fixture, true);
+  assert.equal(card.fixture, false);
+  const fixtureBody = renderIncidentDescription(fixture);
+  const cardBody = renderIncidentDescription(card);
+  assert.match(fixtureBody, /- Fixture: \[SHU-140\]/);
+  assert.match(fixtureBody, /rehearsal fixture's stop, so the coordinator closes it itself/);
+  assert.match(cardBody, /- Card: \[SHU-197\]/);
+  assert.doesNotMatch(cardBody, /closes it itself/);
+});
+
+// A fake Linear for the sSettle step: one incident and the SHU-71 summary card.
+// Any state write is recorded, so a test can show settling never makes one.
+function sSettleStore(event, { state = "Backlog", summaryComments = [], title = null, commentSuccess = true, commentFails = false, olderPages = [] } = {}) {
+  const calls = [];
+  const store = {
+    incident: {
+      id: event.issue_uuid,
+      identifier: "SHU-905",
+      title: title ?? `coordinator stop: ${event.issue_id} — ${event.reason_code}`,
+      description: `<!-- coordinator-incident-event ${event.event_id} -->\nbody`,
+      state: { id: "s-current", name: state },
+    },
+    summaryComments: [...summaryComments],
+    commentSuccess,
+    commentFails,
+    // Older SHU-71 history, newest page first; each page is a list of bodies.
+    olderPages: olderPages.map((page) => [...page]),
+  };
+  const pageInfo = (index) => (index < store.olderPages.length ? { hasPreviousPage: true, startCursor: `cursor-${index}` } : { hasPreviousPage: false, startCursor: null });
+  const sendLinear = async (query, variables) => {
+    calls.push({ query, variables });
+    if (query.includes("issueUpdate")) throw new Error("settling never changes a card's state");
+    if (query.includes("CoordinatorIncidentSettle")) {
+      return {
+        incident: { ...store.incident },
+        summary: { id: "44444444-4444-4444-8444-444444440071", identifier: STOP_SUMMARY_ISSUE, comments: { nodes: store.summaryComments.map((body) => ({ body })), pageInfo: pageInfo(0) } },
+      };
+    }
+    if (query.includes("CoordinatorStopSummaryPage")) {
+      assert.equal(variables.summaryId, STOP_SUMMARY_ISSUE);
+      const index = Number(/^cursor-([0-9]+)$/.exec(variables.before)?.[1]);
+      const page = store.olderPages[index];
+      if (!page) throw new Error("unknown cursor");
+      return { issue: { comments: { nodes: page.map((body) => ({ body })), pageInfo: pageInfo(index + 1) } } };
+    }
+    if (query.includes("commentCreate")) {
+      if (store.commentFails) throw new Error("lost response");
+      if (!store.commentSuccess) return { commentCreate: { success: false } };
+      store.summaryComments.push(variables.body);
+      store.commentIssue = variables.issueId;
+      return { commentCreate: { success: true } };
+    }
+    throw new Error(`unexpected query ${query}`);
+  };
+  return { store, calls, sendLinear };
+}
+
+const sSettle = (event, fake, triageStatus = "MISSING_AUTHORITY") => settleCoordinatorIncident({
+  event,
+  triageStatus,
+  token: "tok",
+  fetchImpl: null,
+  sendLinear: fake.sendLinear,
+  commentMutation: "mutation CoordinatorSummary { commentCreate }",
+});
+const sWrites = (fake) => fake.calls.filter((call) => !call.query.includes("query ")).length;
+
+test("SHU-298 S4: a real card's stop is filed in Backlog and puts one line on SHU-71", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  assert.deepEqual(incidentFiledState(event), { name: "Backlog", type: "backlog" }, "a real stop is filed in Backlog");
+  const fake = sSettleStore(event);
+  const first = await sSettle(event, fake);
+  assert.equal(first.status, "SETTLED");
+  assert.equal(fake.store.summaryComments.length, 1);
+  assert.equal(fake.store.commentIssue, "44444444-4444-4444-8444-444444440071", "the line goes on SHU-71 by its UUID");
+  const [line] = fake.store.summaryComments;
+  assert.ok(line.includes(stopSummaryMarker(event.event_id)));
+  assert.match(line, /Coordinator stop on SHU-197 \(`builder_failed`, SHU-905\): The writer reported FAILED/);
+  assert.equal(line.split("\n").length, 2, "one marker line and one plain line");
+
+  const writesBefore = sWrites(fake);
+  const again = await sSettle(event, fake);
+  assert.equal(again.status, "SETTLED");
+  assert.equal(fake.store.summaryComments.length, 1, "replay never posts the line twice");
+  assert.equal(sWrites(fake), writesBefore, "replay writes nothing");
+});
+
+test("SHU-298 S5: a fixture's stop is filed closed and posts nothing on SHU-71", async () => {
+  const event = sDeriveFor(S_FIXTURE, [sReceipt({ issue: S_FIXTURE, worker: "claude-verifier", target: SHA_WRITE })]);
+  assert.deepEqual(incidentFiledState(event), { name: "Done", type: "completed" }, "a fixture stop is filed closed");
+  const fake = sSettleStore(event, { state: "Done" });
+  const result = await sSettle(event, fake, "REPAIR_READY");
+  assert.equal(result.status, "SETTLED");
+  assert.equal(fake.store.summaryComments.length, 0);
+  assert.equal(sWrites(fake), 0);
+});
+
+test("SHU-298 S6: settling waits for triage, never changes a card's state, and never touches another card", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  for (const status of ["STATE_UNREADABLE", "WAITING_CONFIRMATION", "NOT_AUTHORIZED", null]) {
+    const fake = sSettleStore(event);
+    assert.equal((await sSettle(event, fake, status)).status, "WAITING_FOR_TRIAGE");
+    assert.equal(fake.calls.length, 0, `${status}: zero calls before triage has decided`);
+  }
+
+  for (const state of ["Triage", "Backlog", "In Progress", "Todo", "Done", "Canceled"]) {
+    const placed = sSettleStore(event, { state });
+    assert.equal((await sSettle(event, placed)).status, "SETTLED");
+    assert.equal(placed.store.incident.state.name, state, `${state}: wherever a person put the card, it stays`);
+    assert.equal(placed.calls.filter((call) => call.query.includes("issueUpdate")).length, 0, `${state}: no state write`);
+    assert.equal(placed.store.summaryComments.length, 1, `${state}: the line for Khalid is still posted once`);
+  }
+
+  const other = sSettleStore(event, { title: "some other card" });
+  const result = await sSettle(event, other);
+  assert.equal(result.status, "INCIDENT_UNCONFIRMED");
+  assert.equal(other.calls.length, 1, "only the read; no writes");
+});
+
+test("SHU-298 S7: a lost summary write is retried on the next tick", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const fake = sSettleStore(event, { commentFails: true });
+  assert.equal((await sSettle(event, fake)).status, "PARTIAL");
+  fake.store.commentFails = false;
+  assert.equal((await sSettle(event, fake)).status, "SETTLED");
+  assert.equal(fake.store.summaryComments.length, 1);
+});
+
+test("SHU-298 S8: the summary line carries only closed vocabulary", () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  assert.equal(renderStopSummary(event, "not-an-identifier"), null);
+  assert.equal(renderStopSummary({ ...event, issue_id: "SHU-1\nnope" }, "SHU-905"), null);
+  assert.ok(renderStopSummary(event, "SHU-905"));
+});
+
+test("SHU-298 S9: end to end, a fixture stop is filed closed, triaged, and still triaged on the next tick", async () => {
+  const h = createEpisodeHarness({ activationId: S_ACTIVATION, githubToken: "ghtok", now: S_NOW, settleSupport: true });
+  try {
+    const held = sReceipt({ issue: S_FIXTURE, worker: "claude-verifier", target: SHA_WRITE });
+    held.authorization_ref = "FIXTURE-OPUS-CONTRACT-20260905";
+    h.comments.push({ body: receiptCommentBody(held), createdAt: held.last_activity });
+    const first = await h.runTick();
+    assert.equal(first.code, 2, "the breaker still stops the episode");
+    assert.equal(h.incidentIssues.size, 1);
+    const incident = [...h.incidentIssues.values()][0];
+    assert.equal(incident.state.name, "Done", "a fixture stop never waits in Triage");
+    assert.match(first.text, /incident-settlement: inc_[0-9a-f]{32} SETTLED/);
+    assert.equal(h.entityComments.get(h.summaryIssueId) ?? undefined, undefined, "a fixture posts nothing on SHU-71");
+    const repairs = h.repairIssues.size;
+
+    const second = await h.runTick();
+    assert.match(second.text, /incident-triage: inc_[0-9a-f]{32} REPAIR_READY/, "triage still recognizes the closed card");
+    assert.equal(h.repairIssues.size, repairs, "no second repair card");
+    assert.equal(incident.state.name, "Done");
+  } finally { h.cleanup(); }
+});
+
+test("SHU-298 S10: a summary Linear answers with success false is not counted as done", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const fake = sSettleStore(event, { commentSuccess: false });
+  const first = await sSettle(event, fake);
+  assert.equal(first.status, "PARTIAL");
+  assert.equal(first.summarized, false);
+  fake.store.commentSuccess = true;
+  const second = await sSettle(event, fake);
+  assert.equal(second.status, "SETTLED");
+  assert.equal(fake.store.summaryComments.length, 1);
+});
+
+test("SHU-298 S11: the summary marker is looked for through SHU-71's whole history", async () => {
+  const event = sDeriveFor(S_CARD, [sReceipt({ verdict: "FAILED", result: SHA_INPUT })]);
+  const marker = stopSummaryMarker(event.event_id);
+  const older = sSettleStore(event, { summaryComments: ["newer"], olderPages: [["older"], [`${marker}\nposted long ago`]] });
+  assert.equal((await sSettle(event, older)).status, "SETTLED");
+  assert.equal(older.store.summaryComments.length, 1, "a marker on an older page is never posted again");
+  assert.equal(older.calls.filter((call) => call.query.includes("CoordinatorStopSummaryPage")).length, 2);
+
+  const absent = sSettleStore(event, { olderPages: [["older"], ["oldest"]] });
+  assert.equal((await sSettle(event, absent)).status, "SETTLED");
+  assert.equal(absent.store.summaryComments.length, 1, "a history read to its start without the marker gets the line");
+
+  const unread = sSettleStore(event, { olderPages: Array.from({ length: SUMMARY_MAX_PAGES }, () => ["filler"]) });
+  const result = await sSettle(event, unread);
+  assert.equal(result.status, "PARTIAL");
+  assert.equal(unread.store.summaryComments.length, 0, "an unread history posts nothing");
 });

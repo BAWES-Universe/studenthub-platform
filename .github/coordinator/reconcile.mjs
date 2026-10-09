@@ -39,6 +39,7 @@ import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailur
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
 import { triageCoordinatorIncident } from "./incident-triage.mjs";
+import { settleCoordinatorIncident } from "./incident-settlement.mjs";
 import { coordinatorJournalDirectory } from "./push-broker.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -2460,7 +2461,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     });
     if (incident.status === "confirmed" && event) {
       try {
-        await triageCoordinatorIncident({
+        const triage = await triageCoordinatorIncident({
           event,
           confirmed: true,
           token: linearToken,
@@ -2470,6 +2471,18 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
           commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
           receiptActorIds: config.linear_receipt_actor_ids,
           now: io.now?.() ?? new Date(),
+          stdout: io.stdout,
+          timeoutMs: io.incidentTimeoutMs,
+          timeoutImpl: io.incidentTimeout,
+        });
+        // SHU-298: once triage has decided, the card leaves Triage on its own.
+        await settleCoordinatorIncident({
+          event,
+          triageStatus: triage?.status,
+          token: linearToken,
+          fetchImpl,
+          sendLinear,
+          commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
           stdout: io.stdout,
           timeoutMs: io.incidentTimeoutMs,
           timeoutImpl: io.incidentTimeout,

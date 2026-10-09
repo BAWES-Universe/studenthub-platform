@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { familyForLane, isWriterRole, roleForReceipt } from "./launch-vocabulary.mjs";
+import { INCIDENT_OWNED_STATE_NAMES } from "./incident-reporting.mjs";
 
 export const TRIAGE_VERSION = "1.0.0";
 export const TRIAGE_RESUME_AUTHORITY = false;
@@ -50,6 +51,9 @@ const PROTECTED_REASONS = Object.freeze({
   unreadable_head: Object.freeze([MISSING_AUTHORITY.PRODUCTION_CONTACT]),
   adapter_paused: Object.freeze([MISSING_AUTHORITY.CREDENTIALS]),
   activation_expired: Object.freeze([MISSING_AUTHORITY.GRANT_OR_AUTHORIZATION, MISSING_AUTHORITY.ACTIVATION]),
+  // SHU-298: the writer could not finish the card. Retrying it needs a fresh
+  // activation; nothing in the coordinator is broken.
+  builder_failed: Object.freeze([MISSING_AUTHORITY.ACTIVATION]),
   unknown_breaker: Object.freeze([MISSING_AUTHORITY.UNKNOWN_REASON]),
 });
 
@@ -254,7 +258,7 @@ function hasRelation(issue, type, identifier) {
 function incidentConfirmed(issue, event) {
   if (!issue || issue.id !== event.issue_uuid || issue.title !== `coordinator stop: ${event.issue_id} — ${event.reason_code}`) return false;
   if (!String(issue.description ?? "").includes(`<!-- coordinator-incident-event ${event.event_id} -->`)) return false;
-  if (issue.team?.key !== REPAIR_TEAM_KEY || issue.state?.name !== "Triage" || issue.assignee !== null || issue.delegate !== null) return false;
+  if (issue.team?.key !== REPAIR_TEAM_KEY || !INCIDENT_OWNED_STATE_NAMES.includes(issue.state?.name) || issue.assignee !== null || issue.delegate !== null) return false;
   if (!hasLabels(issue, ["repo:platform"]) || !hasRelation(issue, "related", event.issue_id)) return false;
   return true;
 }
