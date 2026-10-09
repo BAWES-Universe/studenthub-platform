@@ -320,8 +320,11 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   // SHU-303: a review-only run has no writer to revise, so its first coherent
   // verdict ends it. PASS and BLOCKED are the review's answer; any other
   // verdict is a run that could not review, reported as such.
-  let reviewOnly = false;
-  try { reviewOnly = Boolean(resolveReviewOnlyLane(config, targetIssueId)); } catch { reviewOnly = true; }
+  // A malformed review_lanes ends the episode by naming the configuration, so
+  // nothing launches on it and the stop says why.
+  let reviewOnly;
+  try { reviewOnly = Boolean(resolveReviewOnlyLane(config, targetIssueId)); }
+  catch (error) { return { ended: true, reason: `committed review_lanes is invalid (${error.message}) — no episode runs on it` }; }
   if (reviewOnly) {
     const at = terminal.target_sha ?? "<unknown head>";
     if (["PASS", "BLOCKED"].includes(verdict?.outcome) && verdictMatchesLane(terminal.requested_worker, terminal.verdict_stage)) {

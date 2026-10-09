@@ -2435,6 +2435,10 @@
     "SHU-303 V2: both reviewer prompts carry the review-only brief, and no PR text or declared scope",
     "SHU-303 H1: the host gate launches only the approved review: that head, that base, a reviewer",
     "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
+    "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
+    "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
+    "SHU-303 E3: a malformed review_lanes ends the episode by naming the configuration",
+    "SHU-303 D1: the PR's branch name rides the order as a checkout field, never in the reviewer's prompt",
     "work order: all three roles are valid on runtimes that support them",
     "work order: unknown role / unknown runtime / bad sha fail closed",
     "capabilities: review is read-only (no commit/push), build/revise are write roles",
@@ -20122,6 +20126,22 @@
     },
     {
       "name": "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 E3: a malformed review_lanes ends the episode by naming the configuration",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 D1: the PR's branch name rides the order as a checkout field, never in the reviewer's prompt",
       "capabilities": []
     },
     {

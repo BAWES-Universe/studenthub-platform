@@ -159,6 +159,20 @@ const CASES = [
     to: "  // SHU303-M21",
     pattern: "SHU-303 V2:",
   },
+  {
+    name: "M22 put the PR's branch name in the reviewer's prompt",
+    file: "supervisor-dispatch.mjs",
+    from: '  const where = receipt.review_base_sha ? "the pull request under review" : receipt.branch;',
+    to: "  const where = receipt.branch; // SHU303-M22",
+    pattern: "SHU-303 D1:",
+  },
+  {
+    name: "M23 treat a malformed review_lanes as a review-only run",
+    file: "single-run-activation.mjs",
+    from: "  catch (error) { return { ended: true, reason: `committed review_lanes is invalid (${error.message}) — no episode runs on it` }; }",
+    to: "  catch { reviewOnly = true; } // SHU303-M23",
+    pattern: "SHU-303 E3:",
+  },
 ];
 
 for (const mutation of CASES) {

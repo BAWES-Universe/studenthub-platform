@@ -33,7 +33,7 @@ import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS }
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
 import fs from "node:fs";
-import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
+import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
@@ -3321,7 +3321,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       allowed_paths: [...receipt.allowed_paths],
       scoped_base_sha: receipt.scoped_base_sha,
       ...(receipt.review_base_sha ? { review_base_sha: receipt.review_base_sha } : {}),
-      task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt) + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
+      task_context: orderTaskContext(receipt) + reviewFindingsContext(receipt) + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
       ...options,
       fetchImpl,
       io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },
