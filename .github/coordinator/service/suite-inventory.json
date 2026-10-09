@@ -1995,6 +1995,9 @@
     "SHU-86 mutation M18 keep ticking when the tick does not report this run armed",
     "SHU-86 mutation M19 ignore a leftover build or review worktree",
     "SHU-86 mutation M20 take a pull request on a card run",
+    "SHU-86 mutation M21 count a stopped run as a success",
+    "SHU-86 mutation M22 abandon the revert when the dispatch-off tick fails",
+    "SHU-86 mutation M23 retire the record although the broker did not stop",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2011,6 +2014,9 @@
     "SHU-86 C14: one run at a time, as root only",
     "SHU-86 C15: plan changes nothing, and review flags come all together",
     "SHU-86 C16: a unit without its resident drop-in is not armed",
+    "SHU-86 C17: only an answered card is a successful run; a stop exits non-zero",
+    "SHU-86 C18: a failed dispatch-off tick still finishes the revert",
+    "SHU-86 C19: a failed teardown keeps the activation record, so the host stays busy",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17455,6 +17461,18 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M21 count a stopped run as a success",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M22 abandon the revert when the dispatch-off tick fails",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M23 retire the record although the broker did not stop",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17516,6 +17534,18 @@
     },
     {
       "name": "SHU-86 C16: a unit without its resident drop-in is not armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C17: only an answered card is a successful run; a stop exits non-zero",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C18: a failed dispatch-off tick still finishes the revert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C19: a failed teardown keeps the activation record, so the host stays busy",
       "capabilities": []
     },
     {

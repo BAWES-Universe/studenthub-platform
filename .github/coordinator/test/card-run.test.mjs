@@ -108,9 +108,11 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         edit(host, "restart");
         return ok();
       }
+      if (line === "stop shu71-evidence.service" && host.failStop) return { status: 1, stdout: "", stderr: "failed" };
       if (line === "show -p MainPID --value shu-supervisor.service") return ok(`${host.supervisorPid}\n`);
       if (line === "start shu-coordinator.service") {
         host.ticks += 1;
+        if (host.failTicks?.has(host.ticks)) return { status: 1, stdout: "", stderr: "failed" };
         host.lastTick = onTick ? onTick(host) : tickText(armed(JSON.parse(files.get(PATHS.activation)?.text ?? "{}").activation_id));
         return ok();
       }
@@ -376,4 +378,42 @@ test("SHU-86 C16: a unit without its resident drop-in is not armed", () => {
   assert.equal(host.ticks, 1, "only the dispatch-off tick ran");
   host.files.set(dropIn("shu-coordinator.service", RESIDENT_DROP_IN), { text: "[Service]\n" });
   reverted(host);
+});
+
+test("SHU-86 C17: only an answered card is a successful run; a stop exits non-zero", () => {
+  for (const [reason, outcome, ok, code] of [
+    ["stop: retryable failures exhausted", "STOPPED", false, 1],
+    [`review-only verdict BLOCKED at ${HEAD} — the episode is complete`, "REVIEW_BLOCKED", true, 0],
+    ["review PASS — the episode is complete", "PASS", true, 0],
+  ]) {
+    const host = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", reason)) : tickText("activation=absent (committed gates only)")) });
+    const result = main(["run"], host.io, PATHS);
+    assert.equal(result.output.outcome, outcome);
+    assert.equal(result.output.ok, ok, reason);
+    assert.equal(result.code, code, reason);
+    reverted(host);
+  }
+});
+
+test("SHU-86 C18: a failed dispatch-off tick still finishes the revert", () => {
+  const host = fakeHost({ onTick: (h) => tickText(spent("SHU-301", "review PASS — the episode is complete")) });
+  host.failTicks = new Set([2]);
+  const result = attempt(() => runCard({ io: host.io, paths: PATHS }));
+  assert.equal(result.outcome, "PASS");
+  assert.equal(result.revert?.reverted, true);
+  assert.match(result.revert.dispatch_off_tick, /^tick failed: /);
+  reverted(host);
+  assert.ok(host.calls.includes("systemctl stop shu71-evidence.service"));
+});
+
+test("SHU-86 C19: a failed teardown keeps the activation record, so the host stays busy", () => {
+  const host = fakeHost({ onTick: () => tickText(spent("SHU-301", "review PASS — the episode is complete")) });
+  host.failStop = true;
+  const result = attempt(() => runCard({ io: host.io, paths: PATHS }));
+  assert.equal(result.revert?.reverted, false);
+  assert.equal(result.revert.code, "CARD_RUN_COMMAND");
+  assert.equal(host.files.has(PATHS.activation), true, "the record stays until teardown succeeds");
+  assert.equal(host.environ.includes("ENABLE_DISPATCH=true"), false, "dispatch is off all the same");
+  assert.ok(busyReasons(host.io, PATHS).some((reason) => reason.includes("activation record")));
+  assert.equal(host.files.has(PATHS.lock), false);
 });

@@ -131,6 +131,10 @@ export function tickOutcome(text, activationId = null) {
   return { ended: false, outcome: null, reason: null, activation, eligible, excluded };
 }
 
+// The outcomes where the card got its answer: a passed build, or a review-only
+// verdict either way. A stop, refusal or expiry is a failed run.
+export const ANSWERED = Object.freeze(new Set(["PASS", "REVIEW_PASS", "REVIEW_BLOCKED"]));
+
 // Every reason the host is not idle. A run starts only when this is empty.
 export function busyReasons(io, paths = CARD_RUN_PATHS) {
   const reasons = [];
@@ -240,12 +244,11 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   run(io, "systemctl", ["daemon-reload"]);
   run(io, "systemctl", ["restart", "shu-supervisor.service"]);
   if (supervisorEnvironment(io).includes("ENABLE_DISPATCH=true")) refuse("CARD_RUN_REVERT_READBACK", "dispatch is still on after revert");
-  const offTick = tickOutcome(tick(io));
-  let retired = null;
-  if (io.fs.existsSync(paths.activation)) {
-    retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation.json`);
-    io.fs.renameSync(paths.activation, retired);
-  }
+  // Dispatch is already off here, so a failed dispatch-off tick is reported
+  // and the rest of the cleanup still runs.
+  let offTick;
+  try { offTick = tickOutcome(tick(io)).activation; }
+  catch (error) { offTick = `tick failed: ${error.message}`; }
   run(io, "systemctl", ["stop", "shu71-evidence.service"]);
   const killed = workerCount(io);
   if (killed) {
@@ -254,10 +257,17 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
     io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
   }
   if (workerCount(io) !== 0) refuse("CARD_RUN_REVERT_READBACK", "shu-worker processes survived cleanup");
+  // The record is retired last: until every step above succeeded it stays,
+  // so the host reads busy and the next run refuses.
+  let retired = null;
+  if (io.fs.existsSync(paths.activation)) {
+    retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation.json`);
+    io.fs.renameSync(paths.activation, retired);
+  }
   for (const name of io.fs.readdirSync(paths.tmp)) {
     if (/^shu-npm-cache-/.test(name)) io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
   }
-  return { reverted: true, code: null, dispatch_off_tick: offTick.activation, retired, killed };
+  return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed };
 }
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
@@ -287,7 +297,7 @@ export function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, 
         const outcome = tickOutcome(tick(io), plan.record.activation_id);
         ticks.push({ at: io.now().toISOString(), activation: outcome.activation, eligible: outcome.eligible });
         if (outcome.ended) {
-          result = { ok: outcome.outcome !== "REFUSED", outcome: outcome.outcome, reason: outcome.reason };
+          result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
         }
         if (ticks.length === 1 && outcome.eligible === 0) {

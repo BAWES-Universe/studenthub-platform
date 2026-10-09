@@ -133,6 +133,24 @@ const CASES = [
     to: '    if (false) refuse("CARD_RUN_REVIEW_INPUT", // SHU86-M20\n',
     pattern: "SHU-86 C2:",
   },
+  {
+    name: "M21 count a stopped run as a success",
+    from: "      result = { ok: ANSWERED.has(outcome.outcome),",
+    to: '      result = { ok: outcome.outcome !== "REFUSED", // SHU86-M21\n',
+    pattern: "SHU-86 C17:",
+  },
+  {
+    name: "M22 abandon the revert when the dispatch-off tick fails",
+    from: "  try { offTick = tickOutcome(tick(io)).activation; }\n  catch (error) { offTick = `tick failed: ${error.message}`; }",
+    to: "  offTick = tickOutcome(tick(io)).activation; // SHU86-M22",
+    pattern: "SHU-86 C18:",
+  },
+  {
+    name: "M23 retire the record although the broker did not stop",
+    from: '  run(io, "systemctl", ["stop", "shu71-evidence.service"]);',
+    to: '  io.exec("systemctl", ["stop", "shu71-evidence.service"]); // SHU86-M23',
+    pattern: "SHU-86 C19:",
+  },
 ];
 
 for (const mutation of CASES) {
