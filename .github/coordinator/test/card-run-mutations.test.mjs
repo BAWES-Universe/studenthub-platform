@@ -175,8 +175,8 @@ const CASES = [
   {
     name: "M27 arm although the Todo move did not read back",
     file: "service/card-prepare.mjs",
-    from: '  if (cardAction(after).action !== "none") refuse(',
-    to: '  if (false) refuse( // SHU86-M27\n',
+    from: '  if (cardAction(after).action !== "none") {',
+    to: '  if (false) { // SHU86-M27',
     pattern: "SHU-86 C23:",
   },
   {
@@ -216,8 +216,8 @@ const CASES = [
   {
     name: "M33 leave a concurrently started card in Todo",
     file: "service/card-prepare.mjs",
-    from: "    if (theirs && theirs !== issue.state.id) {",
-    to: "    if (false) { // SHU86-M33",
+    from: "    const restored = theirs !== issue.state.id && await putBack(theirs);",
+    to: "    const restored = false; // SHU86-M33",
     pattern: "SHU-86 C26:",
   },
   {
@@ -237,9 +237,16 @@ const CASES = [
   {
     name: "M41 put a raced card back even after it changed again",
     file: "service/card-prepare.mjs",
-    from: "      if (current.state?.id === decision.stateId && later.length === 0) {",
-    to: "      if (true) { // SHU86-M41",
+    from: "    if (current.state?.id !== decision.stateId || later.length !== 0) return false;",
+    to: "    // SHU86-M41",
     pattern: "SHU-86 C26:",
+  },
+  {
+    name: "M42 leave a card claimed during the move in Todo",
+    file: "service/card-prepare.mjs",
+    from: "    const restored = await putBack(issue.state.id);",
+    to: "    const restored = false; // SHU86-M42",
+    pattern: "SHU-86 C23:",
   },
   {
     name: "M36 take a move that left no trace in the history as done",

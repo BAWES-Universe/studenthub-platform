@@ -132,29 +132,37 @@ async function prepareCardState(io, credentials, id, apply) {
   await sendLinear(CARD_TODO_MUTATION, { id: issue.id, stateId: decision.stateId }, credentials.LINEAR_API_TOKEN, io.fetch);
   const changes = await stateChangesSince(io, credentials, issue.id, since);
   if (changes.length === 0) refuse("CARD_RUN_CARD_READBACK", `${id} did not move to ${TODO_STATE}`);
-  const own = changes.length === 1 && changes[0].fromState?.id === issue.state.id && changes[0].toState?.id === decision.stateId;
+  const mine = changes.filter((entry) => entry.toState?.id === decision.stateId).at(-1);
+  // Linear cannot make a put-back conditional either. It is sent only while
+  // the card still sits in this run's Todo with no state change after the
+  // run's own move, which leaves the shortest window this API allows; any
+  // later change wins and the card is left as it is.
+  const putBack = async (stateId) => {
+    if (!mine || !stateId || stateId === decision.stateId) return false;
+    const current = await readCard(io, credentials, id);
+    const later = await stateChangesSince(io, credentials, issue.id, Date.parse(mine.createdAt));
+    if (current.state?.id !== decision.stateId || later.length !== 0) return false;
+    await sendLinear(CARD_TODO_MUTATION, { id: issue.id, stateId }, credentials.LINEAR_API_TOKEN, io.fetch);
+    return true;
+  };
+  const left = (restored, what) => restored
+    ? `it was put back to ${what} and the run stops`
+    : "it was not put back, because it changed again or the change cannot be told apart; check the card by hand";
+  const own = changes.length === 1 && mine === changes[0] && mine.fromState?.id === issue.state.id;
   if (!own) {
-    // Linear cannot make the put-back conditional either. It is sent only
-    // while the card still sits in this run's Todo with nothing after the
-    // run's own move, which leaves the shortest window this API allows; any
-    // later change wins and the card is left as it is.
-    const mine = changes.filter((entry) => entry.toState?.id === decision.stateId).at(-1);
+    // Someone moved the card between the read and the move: theirs is the
+    // state the run's move overwrote.
     const theirs = mine?.fromState?.id;
-    let restored = false;
-    if (theirs && theirs !== issue.state.id) {
-      const current = await readCard(io, credentials, id);
-      const later = await stateChangesSince(io, credentials, issue.id, Date.parse(mine.createdAt));
-      if (current.state?.id === decision.stateId && later.length === 0) {
-        await sendLinear(CARD_TODO_MUTATION, { id: issue.id, stateId: theirs }, credentials.LINEAR_API_TOKEN, io.fetch);
-        restored = true;
-      }
-    }
-    refuse("CARD_RUN_CARD_RACE", restored
-      ? `${id} changed state while this run moved it to ${TODO_STATE}; it was put back to the state set meanwhile and the run stops`
-      : `${id} changed state while this run moved it to ${TODO_STATE}; it was not put back, because it changed again or the other change cannot be told apart; check the card by hand`);
+    const restored = theirs !== issue.state.id && await putBack(theirs);
+    refuse("CARD_RUN_CARD_RACE", `${id} changed state while this run moved it to ${TODO_STATE}; ${left(restored, "the state set meanwhile")}`);
   }
   const after = await readCard(io, credentials, id);
-  if (cardAction(after).action !== "none") refuse("CARD_RUN_CARD_READBACK", `${id} did not read back as an unowned ${TODO_STATE} card`);
+  if (cardAction(after).action !== "none") {
+    // Claimed between the read and the move: the run's move is undone, so
+    // the owner finds the card where it was.
+    const restored = await putBack(issue.state.id);
+    refuse("CARD_RUN_CARD_READBACK", `${id} did not read back as an unowned ${TODO_STATE} card; ${left(restored, issue.state.name)}`);
+  }
   return { card: id, state: after.state.name, action: decision.action, from: decision.from };
 }
 

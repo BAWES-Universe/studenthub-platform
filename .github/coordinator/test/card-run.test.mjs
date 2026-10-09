@@ -537,10 +537,24 @@ test("SHU-86 C23: a Todo move that does not read back stops the run before armin
   noArming(host);
   // The move took, but someone claimed the card meanwhile.
   const claimed = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  const BACKLOG = { id: "backlog", name: "Backlog", type: "backlog" };
+  claimed.knownStates = { backlog: BACKLOG };
   claimed.beforeTodo = (h) => { h.card.assignee = { id: "person" }; };
   const result = await attempt(() => runCard({ io: claimed.io, paths: PATHS }));
   assert.equal(result.thrown, "CARD_RUN_CARD_READBACK");
+  assert.deepEqual(claimed.card.state, BACKLOG, "the run's move is undone, so the owner finds the card where it was");
+  assert.deepEqual(claimed.api.filter((call) => call.startsWith("linear todo")), [`linear todo ${TODO_ID}`, "linear todo backlog"]);
   noArming(claimed);
+  // Claimed and then moved on by its owner: the owner's move stands.
+  const moved = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  moved.knownStates = { backlog: BACKLOG };
+  moved.beforeTodo = (h) => { h.card.assignee = { id: "person" }; };
+  let reads = 0;
+  moved.onCardRead = (h, move) => { if (++reads === 3) move({ id: "progress", name: "In Progress", type: "started" }); };
+  assert.equal((await attempt(() => runCard({ io: moved.io, paths: PATHS }))).thrown, "CARD_RUN_CARD_READBACK");
+  assert.equal(moved.card.state.id, "progress");
+  assert.deepEqual(moved.api.filter((call) => call.startsWith("linear todo")), [`linear todo ${TODO_ID}`]);
+  noArming(moved);
 });
 
 test("SHU-86 C24: only the coordinator's own private credentials are used, and never shown", async () => {
