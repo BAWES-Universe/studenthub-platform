@@ -255,6 +255,32 @@ const CASES = [
     to: "  if (false) refuse( // SHU86-M36\n",
     pattern: "SHU-86 C23:",
   },
+  {
+    name: "M37 finish a run without posting its report",
+    from: "    return { ...summary, report: await postRunReport({ io, credentials, result: summary }) };",
+    to: "    return { ...summary, report: { posted: true, issue: \"SHU-71\" } }; // SHU86-M37",
+    pattern: "SHU-86 C27:",
+  },
+  {
+    name: "M38 post the report before the host is reverted",
+    from: "    let reverted;\n    try { reverted = revert(io, paths, limits); }",
+    to: "    await postRunReport({ io, credentials, result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, ...result, ticks, revert: {} } }); // SHU86-M38\n    let reverted;\n    try { reverted = revert(io, paths, limits); }",
+    pattern: "SHU-86 C27:",
+  },
+  {
+    name: "M39 let a failed report fail the run",
+    file: "service/card-prepare.mjs",
+    from: "  } catch (error) {\n    return { posted: false, issue: REPORT_ISSUE, code: \"CARD_RUN_REPORT\", reason: plainReason(error.message) };",
+    to: "  } catch (error) { // SHU86-M39\n    throw error;",
+    pattern: "SHU-86 C28:",
+  },
+  {
+    name: "M40 copy the coordinator's reason into the report unflattened",
+    file: "service/card-prepare.mjs",
+    from: "  if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);",
+    to: "  if (result.reason) lines.push(`Reason: ${result.reason}`); // SHU86-M40",
+    pattern: "SHU-86 C29:",
+  },
 ];
 
 for (const mutation of CASES) {

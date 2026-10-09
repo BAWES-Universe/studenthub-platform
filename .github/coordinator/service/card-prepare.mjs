@@ -213,3 +213,76 @@ export async function prepareRun({ io, plan, revision, repo, credentials, apply 
   const card = await prepareCardState(io, credentials, plan.id, apply);
   return { branch, card };
 }
+
+// SHU-86, third slice: the run reports itself. After the revert, one comment
+// goes on the SHU-71 tracking card, the card coordinator stop lines already
+// go to, never on the run's own card, whose comments the coordinator reads.
+// The report is plain words from closed vocabularies plus the coordinator's
+// own reason, flattened and cut short. Posting it never changes the run's
+// result: a report that cannot be posted is recorded in the output instead.
+export const REPORT_ISSUE = "SHU-71";
+const REPORT_REASON_MAX = 300;
+
+export const REPORT_ISSUE_QUERY = `
+  query CardRunReportIssue($id: String!) {
+    issue(id: $id) { id identifier }
+  }`;
+
+export const REPORT_COMMENT_MUTATION = `
+  mutation CardRunReportComment($issueId: String!, $body: String!) {
+    commentCreate(input: { issueId: $issueId, body: $body }) { success }
+  }`;
+
+export const RUN_OUTCOME_TEXT = Object.freeze({
+  PASS: "the review passed at the exact head; the pull request waits to be merged",
+  REVIEW_PASS: "the review-only run passed the pull request",
+  REVIEW_BLOCKED: "the review-only run blocked the pull request",
+  STOPPED: "the coordinator stopped the episode",
+  REFUSED: "the coordinator refused the run",
+  EXPIRED: "the run window closed before the episode ended",
+  NOT_ELIGIBLE: "the card was not eligible on the first tick",
+  ERROR: "the run failed",
+});
+
+export function reportMarker(activationId) {
+  return `<!-- card-run-report ${activationId} -->`;
+}
+
+// One line, no markup that could open or close a comment, and short.
+export function plainReason(text) {
+  const flat = String(text ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").replace(/<!--|-->/g, " ").replace(/\s+/g, " ").trim();
+  return flat.length > REPORT_REASON_MAX ? `${flat.slice(0, REPORT_REASON_MAX - 1)}…` : flat;
+}
+
+export function renderRunReport(result) {
+  const lines = [
+    reportMarker(result.activation_id),
+    `Card run on ${result.card} (${result.kind}): ${result.outcome}, ${RUN_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
+  ];
+  if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
+  const card = result.prepared?.card;
+  const branch = result.prepared?.branch;
+  const before = [
+    card ? (card.action === "move-to-todo" ? `moved ${card.card} from ${card.from} to Todo` : `${card.card} was already in Todo`) : null,
+    branch ? (branch.action === "create" ? `created ${branch.branch}` : `${branch.branch} was already at the revision`) : null,
+  ].filter(Boolean);
+  if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
+  lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
+  lines.push(result.revert?.reverted
+    ? "The host is reverted and idle."
+    : `The revert did not finish (${result.revert?.code ?? "unknown"}); the host stays busy and the next run refuses until it is cleared.`);
+  return lines.join("\n");
+}
+
+export async function postRunReport({ io, credentials, result }) {
+  try {
+    const data = await sendLinear(REPORT_ISSUE_QUERY, { id: REPORT_ISSUE }, credentials.LINEAR_API_TOKEN, io.fetch);
+    const issue = data?.issue ?? null;
+    if (!issue?.id || issue.identifier !== REPORT_ISSUE) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: `${REPORT_ISSUE} cannot be read from Linear` };
+    const posted = await sendLinear(REPORT_COMMENT_MUTATION, { issueId: issue.id, body: renderRunReport(result) }, credentials.LINEAR_API_TOKEN, io.fetch);
+    if (posted?.commentCreate?.success !== true) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "Linear did not accept the comment" };
+    return { posted: true, issue: REPORT_ISSUE };
+  } catch (error) {
+    return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: plainReason(error.message) };
+  }
+}
