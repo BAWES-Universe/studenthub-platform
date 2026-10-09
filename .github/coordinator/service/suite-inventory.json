@@ -2010,6 +2010,7 @@
     "SHU-86 mutation M33 leave a concurrently started card in Todo",
     "SHU-86 mutation M34 read only the first page of the card's history",
     "SHU-86 mutation M35 count history from before the run's own read",
+    "SHU-86 mutation M41 put a raced card back even after it changed again",
     "SHU-86 mutation M36 take a move that left no trace in the history as done",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
@@ -17538,6 +17539,10 @@
     },
     {
       "name": "SHU-86 mutation M35 count history from before the run's own read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M41 put a raced card back even after it changed again",
       "capabilities": []
     },
     {

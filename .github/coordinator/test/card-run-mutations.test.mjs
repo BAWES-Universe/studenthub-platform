@@ -235,6 +235,13 @@ const CASES = [
     pattern: "SHU-86 C26:",
   },
   {
+    name: "M41 put a raced card back even after it changed again",
+    file: "service/card-prepare.mjs",
+    from: "      if (current.state?.id === decision.stateId && later.length === 0) {",
+    to: "      if (true) { // SHU86-M41",
+    pattern: "SHU-86 C26:",
+  },
+  {
     name: "M36 take a move that left no trace in the history as done",
     file: "service/card-prepare.mjs",
     from: "  if (changes.length === 0) refuse(",

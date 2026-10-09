@@ -158,6 +158,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         if (host.failTodo) return respond(200, { data: { issueUpdate: { success: true } } });
         const states = { [TODO_ID]: { id: TODO_ID, name: "Todo", type: "unstarted" }, ...host.knownStates };
         moveCard(states[variables.stateId] ?? { id: variables.stateId, name: "?", type: "unstarted" });
+        if (host.afterTodo) { const hook = host.afterTodo; host.afterTodo = null; hook(host, moveCard); }
         return respond(200, { data: { issueUpdate: { success: true } } });
       }
       if (host.onCardRead) host.onCardRead(host, moveCard);
@@ -590,6 +591,16 @@ test("SHU-86 C26: a card someone starts while the run moves it is put back where
   assert.deepEqual(host.card.state, PROGRESS, "the other move stands");
   assert.deepEqual(host.api.filter((call) => call.startsWith("linear todo")), [`linear todo ${TODO_ID}`, "linear todo progress"]);
   noArming(host);
+  // A card that changed again after the run's move is not put back: the later change wins.
+  const DONE = { id: "done", name: "Done", type: "completed" };
+  const again = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  again.beforeTodo = (h, move) => move(PROGRESS);
+  again.afterTodo = (h, move) => move(DONE);
+  const refused = await attempt(() => runCard({ io: again.io, paths: PATHS }));
+  assert.equal(refused.thrown, "CARD_RUN_CARD_RACE");
+  assert.deepEqual(again.card.state, DONE, "the latest change stands");
+  assert.deepEqual(again.api.filter((call) => call.startsWith("linear todo")), [`linear todo ${TODO_ID}`], "no stale put-back");
+  noArming(again);
   // Without a concurrent move, the run's own move is its only change.
   const calm = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
   calm.history.push({ createdAt: "2026-10-09T14:00:00.000Z", fromState: { id: "triage" }, toState: { id: "backlog" } });
