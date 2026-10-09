@@ -1997,7 +1997,14 @@ export async function backfillSuccessorDirectives({
     considered += 1;
     const issueId = terminal.issue_id;
     // SHU-303: a review-only verdict is final; there is no writer to direct.
-    if (resolveReviewOnlyLane(config, issueId)) continue;
+    // A malformed review_lanes directs nothing either.
+    let reviewOnlyTerminal;
+    try { reviewOnlyTerminal = Boolean(resolveReviewOnlyLane(config, issueId)); }
+    catch (error) {
+      out(`dispatch: backfill skipped ${issueId} — committed review_lanes is invalid (${error.message})`);
+      continue;
+    }
+    if (reviewOnlyTerminal) continue;
     const comments = commentsByIssue.get(issueId) ?? commentsByIssue.get(terminal.linearId ?? "") ?? [];
     const linearIssueId = linearIdFor.get(issueId) ?? terminal.linearId ?? null;
     // Existing directives on THIS card, dedup keyed by successor attempt_id.

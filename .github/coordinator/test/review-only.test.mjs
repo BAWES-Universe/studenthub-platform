@@ -179,11 +179,28 @@ test("SHU-303 E1: a review-only verdict is final: PASS and BLOCKED both end the 
   assert.equal(fresh.ended, false, "an unstarted review is not spent");
 });
 
-test("SHU-303 E3: a malformed review_lanes ends the episode by naming the configuration", () => {
+test("SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick", async () => {
+  const broken = { ...SCOPED, review_lanes: "SHU-304" };
   const scope = { episode_id: "shu303-review-run-0001", supersedes: new Set() };
-  const decision = episodeVerdict({ receipts: [reviewReceipt()], targetIssueId: DESK, config: { ...SCOPED, review_lanes: "SHU-304" }, episodeScope: scope });
+  const decision = episodeVerdict({ receipts: [reviewReceipt()], targetIssueId: DESK, config: broken, episodeScope: scope });
   assert.equal(decision.ended, true);
   assert.match(decision.reason, /^committed review_lanes is invalid \(review_lanes must be an array\) — no episode runs on it$/);
+
+  let status;
+  assert.doesNotThrow(() => { status = statusOf(record(), { config: broken }); }, "a malformed lane list never crashes the activation read");
+  assert.equal(status.state, "refused");
+  assert.match(status.reason, /^committed configuration is invalid: review_lanes must be an array$/);
+
+  const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
+  const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
+    activationId: "shu303-review-run-0005", reviewOnly: { pr: 240, baseSha: BASE, authorFamily: "claude" },
+    configOverrides: { fixture_lane: undefined, review_lanes: "SHU-304" } });
+  try {
+    const tick = await h.runTick();
+    assert.match(tick.text, /committed configuration is invalid: review_lanes must be an array/);
+    assert.equal(h.receipts().length, 0, "nothing is reserved");
+    assert.equal(h.launched.length, 0, "nothing is launched");
+  } finally { h.cleanup(); }
 });
 
 test("SHU-303 E2: a BLOCK is a finished review, not an incident; a run that could not review is one", () => {

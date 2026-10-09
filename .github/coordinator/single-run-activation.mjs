@@ -739,8 +739,15 @@ export function singleRunActivationStatus({
     return refused("a single-run activation requires a committed single-issue dispatch_scope; this configuration is board-wide");
   }
   const [scopeIssue] = scopeIds;
-  const reviewLane = resolveReviewOnlyLane(config, scopeIssue);
-  const fixtureLane = reviewLane ?? resolveFixtureLane(config, scopeIssue) ?? config?.fixture_lane ?? {};
+  // A malformed committed lane list is a named refusal, never a crashed tick.
+  let reviewLane;
+  let fixtureLane;
+  try {
+    reviewLane = resolveReviewOnlyLane(config, scopeIssue);
+    fixtureLane = reviewLane ?? resolveFixtureLane(config, scopeIssue) ?? config?.fixture_lane ?? {};
+  } catch (error) {
+    return refused(`committed configuration is invalid: ${error.message}`);
+  }
   if (fixtureLane.id && fixtureLane.id !== scopeIssue) {
     return refused(`committed configuration is inconsistent: fixture_lane.id ${fixtureLane.id} is not the scoped issue ${scopeIssue}`);
   }

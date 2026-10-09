@@ -2437,10 +2437,11 @@
     "SHU-303 H2: review_base_sha belongs only on a review receipt, is a real base, and never changes",
     "SHU-303 mutation M22 put the PR's branch name in the reviewer's prompt",
     "SHU-303 mutation M23 treat a malformed review_lanes as a review-only run",
-    "SHU-303 E3: a malformed review_lanes ends the episode by naming the configuration",
+    "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
     "SHU-303 D1: the PR's branch name rides the order as a checkout field, never in the reviewer's prompt",
     "SHU-303 mutation M24 launch the reviewer without reading the pull request again",
     "SHU-303 mutation M25 accept a pull request whose branch changed under the reservation",
+    "SHU-303 mutation M26 let a malformed review_lanes crash the activation read",
     "SHU-303 P4: a pull request that moves while the workspace is prepared stops the run before the reviewer launches",
     "work order: all three roles are valid on runtimes that support them",
     "work order: unknown role / unknown runtime / bad sha fail closed",
@@ -20140,7 +20141,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-303 E3: a malformed review_lanes ends the episode by naming the configuration",
+      "name": "SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick",
       "capabilities": []
     },
     {
@@ -20153,6 +20154,10 @@
     },
     {
       "name": "SHU-303 mutation M25 accept a pull request whose branch changed under the reservation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M26 let a malformed review_lanes crash the activation read",
       "capabilities": []
     },
     {

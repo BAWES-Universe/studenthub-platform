@@ -187,6 +187,13 @@ const CASES = [
     to: ": null; // SHU303-M25",
     pattern: "SHU-303 P4:",
   },
+  {
+    name: "M26 let a malformed review_lanes crash the activation read",
+    file: "single-run-activation.mjs",
+    from: "    return refused(`committed configuration is invalid: ${error.message}`);",
+    to: "    throw error; // SHU303-M26",
+    pattern: "SHU-303 E3:",
+  },
 ];
 
 for (const mutation of CASES) {
