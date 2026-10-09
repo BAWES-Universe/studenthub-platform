@@ -1,6 +1,6 @@
 import { resolveReceiptRoleAuthority, roleForLane } from "./launch-vocabulary.mjs";
 import path from "node:path";
-import { cardContract, CARD_CONTRACTS } from "./card-contracts.mjs";
+import { cardContract, CARD_CONTRACTS, reviewOnlyCard } from "./card-contracts.mjs";
 
 export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full", "repo"]);
 export const SCOPE_PHASES = Object.freeze(["initial", "revision", "review"]);
@@ -73,6 +73,9 @@ export function fixtureReviewScope(issueId) {
 // each confined run into a failure about a missing file. null means "the lane
 // declares no tests of its own", which keeps the host list for those lanes.
 export function fixtureReviewTests(issueId) {
+  // SHU-303: a review-only run reviews another pull request's whole tree, so
+  // like a whole-tree card it runs none here and CI runs them on that PR.
+  if (reviewOnlyCard(issueId)) return [];
   const contract = laneContract(issueId);
   if (!contract) return null;
   if (contract.workspace_mode === "repo") return [];
@@ -86,7 +89,7 @@ export function fixtureReviewTests(issueId) {
 export const FIXTURE_ACCEPTANCE = "every test and every acceptance-oracle row in the declared scope agrees with the contract the lane's files document.";
 export function fixtureAcceptance(issueId) {
   if (typeof issueId === "string" && Object.hasOwn(FIXTURE_CONTRACTS, issueId)) return FIXTURE_ACCEPTANCE;
-  return cardContract(issueId)?.acceptance ?? null;
+  return cardContract(issueId)?.acceptance ?? reviewOnlyCard(issueId)?.acceptance ?? null;
 }
 
 // The legacy object remains supported; additional lanes must have unique IDs.
@@ -100,7 +103,11 @@ export function resolveFixtureLane(config = {}, issueId) {
     if (!cardContract(card?.id)) throw new Error("card_lanes may name only a reviewed card contract");
   }
   const lanes = [...(config.fixture_lane ? [config.fixture_lane] : []), ...extra, ...cards];
+  const reviewLanes = config.review_lanes ?? [];
+  if (!Array.isArray(reviewLanes)) throw new Error("review_lanes must be an array");
   const ids = new Set();
+  // A review-only lane id may never also name a build lane.
+  for (const lane of reviewLanes) if (typeof lane?.id === "string") ids.add(lane.id);
   for (const lane of lanes) {
     if (!lane || typeof lane.id !== "string" || !lane.id || ids.has(lane.id)) {
       throw new Error("fixture lanes require unique issue ids");
@@ -108,6 +115,29 @@ export function resolveFixtureLane(config = {}, issueId) {
     ids.add(lane.id);
   }
   return lanes.find((lane) => lane.id === issueId) ?? null;
+}
+
+// SHU-303: review_lanes name the standing review-only cards. Each must be a
+// reviewed review-only card whose authorization_ref is its own id, and may
+// list only reviewer lanes; the activation picks one of them per run.
+export function resolveReviewOnlyLane(config = {}, issueId) {
+  const lanes = config.review_lanes ?? [];
+  if (!Array.isArray(lanes)) throw new Error("review_lanes must be an array");
+  const ids = new Set();
+  for (const lane of lanes) {
+    if (!lane || typeof lane.id !== "string" || !reviewOnlyCard(lane.id) || ids.has(lane.id)) {
+      throw new Error("review_lanes may name only a reviewed review-only card, once");
+    }
+    if (lane.authorization_ref !== lane.id) throw new Error(`review lane ${lane.id} must carry its own id as authorization_ref`);
+    if (!Array.isArray(lane.reviewer_lanes) || lane.reviewer_lanes.length === 0
+        || lane.reviewer_lanes.some((name) => typeof name !== "string" || roleForLane(name) !== "review")) {
+      throw new Error(`review lane ${lane.id} must list its reviewer lanes`);
+    }
+    ids.add(lane.id);
+  }
+  resolveFixtureLane(config, issueId); // the build lanes' own checks, and no id in both
+  const lane = lanes.find((entry) => entry.id === issueId);
+  return lane ?? null;
 }
 
 // Repo-mode paths never reach what the host's dependency install owns.

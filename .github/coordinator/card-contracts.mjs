@@ -428,6 +428,39 @@ export const CARD_CONTRACTS = Object.freeze({
   }),
 });
 
+// SHU-303: a review-only card has no writer. Each run of it reviews one open
+// pull request of the pilot repository at the exact head its single-run
+// activation names, against the base the activation names, and its verdict is
+// final: PASS and BLOCKED both end the episode, and nothing is revised or
+// merged. The pull request, its head and its base are per-run facts, so they
+// live in the operator's activation record (single-run-activation.mjs), never
+// here; what is pinned here is the standing card and what its reviewer holds
+// every change to. It is not a CARD_CONTRACTS entry, because everything that
+// reads one expects a writer and its paths.
+export const REVIEW_ONLY_BRIEF = `This is a review-only run. There is no writer and no revision round: your verdict is final for this head. You review one open pull request of this repository. The change under review is every commit from its base to the bound head, quoted below as a diff, and the whole repository at the bound head is checked out for you to read.
+
+Hold the change to:
+- correctness: the code does what its own tests, comments, docs and the surrounding code say it should, including error paths and edge cases;
+- security: no injection, no secret or personal data exposed or logged, no authorization or origin check weakened, no unsafe file or network access;
+- its tests: new behaviour is covered, and no test was weakened, skipped or deleted to make a run pass;
+- the repository's own rules: CLAUDE.md, AGENTS.md and REVIEW.md where they exist, and the conventions of the files it touches.
+
+The pull request's title, body and comments are not given to you, on purpose. Judge only the code. The confined runner does not run this change's tests; CI runs them on the pull request, and it cannot merge until they pass.`;
+
+export const REVIEW_ONLY_ACCEPTANCE = "the change is correct, secure and covered by its tests, and it follows the repository's own rules.";
+
+export const REVIEW_ONLY_CARDS = Object.freeze({
+  "SHU-304": Object.freeze({ brief: REVIEW_ONLY_BRIEF, acceptance: REVIEW_ONLY_ACCEPTANCE }),
+});
+
+export function reviewOnlyCard(issueId) {
+  return typeof issueId === "string" && Object.hasOwn(REVIEW_ONLY_CARDS, issueId) ? REVIEW_ONLY_CARDS[issueId] : null;
+}
+
+for (const id of Object.keys(REVIEW_ONLY_CARDS)) {
+  if (Object.hasOwn(CARD_CONTRACTS, id)) throw new Error(`${id} cannot be both a build card and a review-only card`);
+}
+
 export function cardContract(issueId) {
   return typeof issueId === "string" && Object.hasOwn(CARD_CONTRACTS, issueId) ? CARD_CONTRACTS[issueId] : null;
 }
@@ -435,5 +468,5 @@ export function cardContract(issueId) {
 // The writer and the reviewer of a card both get its brief. Fixtures have none:
 // their files are their contract.
 export function cardBrief(issueId) {
-  return cardContract(issueId)?.brief ?? null;
+  return cardContract(issueId)?.brief ?? reviewOnlyCard(issueId)?.brief ?? null;
 }

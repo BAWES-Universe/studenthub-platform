@@ -471,6 +471,7 @@ export async function launchBuilder({
   scope_phase = "review",
   allowed_paths = [],
   scoped_base_sha = null,
+  review_base_sha = null,
   oauth_token,
   cwd = process.cwd(),
   env = process.env,
@@ -566,7 +567,7 @@ export async function launchBuilder({
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
       ] : []),
     ].filter(Boolean).join("\n"),
-    ...(role === "review" ? { review_rule: await reviewRuleImpl({ issue_id, target_sha, git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) }) } : {}),
+    ...(role === "review" ? { review_rule: await reviewRuleImpl({ issue_id, target_sha, ...(review_base_sha ? { review_base_sha } : {}), git: (args) => gitInCheckout({ cwd, execFileImpl: reviewGitExecImpl, env }, args) }) } : {}),
   };
   const args = buildClaudeArgs(input, { resume });
   let result;

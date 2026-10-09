@@ -149,6 +149,11 @@
       "pattern": "^[0-9a-f]{40}$",
       "description": "Deterministic parentless worker-input commit derived from target_sha plus allowed_paths. Null for full and repo workspaces; never substitutes for target_sha authority."
     },
+    "review_base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "SHU-303: on a review-only run's review receipt only, the base its bound head is diffed against (the merge base the activation approved). Absent on every other receipt; immutable for a given attempt_id."
+    },
     "external_run_id": {
       "type": ["string", "null"],
       "description": "Provider run id (apirun_..., clauderun_... or codexrun_<thread-uuid>), or supervisor_<attempt_id> for the supervisor transport, stored once known. May be present at LAUNCH_UNKNOWN for an exact-id recoverable local session.",

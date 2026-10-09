@@ -8,13 +8,21 @@ import { reviewFindingsContext } from "./review-findings.mjs";
 
 export const SUPERVISOR_DISPATCH_NOTE = "launch transport: supervisor 2.0.0";
 
+// SHU-303: a review-only run reviews someone else's pull request, so its branch
+// name is the PR author's text. It travels as a checkout field only; the
+// prompt names the run by trusted identifiers.
+export function orderTaskContext(receipt) {
+  const where = receipt.review_base_sha ? "the pull request under review" : receipt.branch;
+  return `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${where} @ ${receipt.target_sha}`;
+}
+
 export function supervisorOrder(receipt, options = {}) {
   return {
     version: "1.0.0", role: roleForReceipt(receipt), runtime: receipt.runtime ?? runtimeForLane(receipt.requested_worker),
     ...Object.fromEntries(["issue_id", "authorization_ref", "attempt_id", "target_sha", "repo", "branch",
-      "workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha"].filter(k => receipt[k] !== undefined).map(k => [k, receipt[k]])),
+      "workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha", "review_base_sha"].filter(k => receipt[k] !== undefined).map(k => [k, receipt[k]])),
     // Findings are read from the durable receipt, so a resubmitted order is identical.
-    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + reviewFindingsContext(receipt),
+    task_context: orderTaskContext(receipt) + reviewFindingsContext(receipt),
     ...(options.cwd ? { cwd: options.cwd } : {}),
   };
 }

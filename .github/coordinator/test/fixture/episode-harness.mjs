@@ -44,6 +44,9 @@ export function createEpisodeHarness({
   // SHU-298: answer the settle query and the SHU-71 summary line. Off by
   // default so the SHU-226/SHU-260 suites see no extra Linear traffic.
   settleSupport = false,
+  // SHU-303: a review-only run. { pr, baseSha, authorFamily } go on the record,
+  // and the fake GitHub answers for that pull request from `pull`.
+  reviewOnly = null,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "shu225-harness-"));
   const node = {
@@ -78,6 +81,12 @@ export function createEpisodeHarness({
   const polls = new Map();
   const launched = [];
   const branchHead = { value: initialBranchHead };
+  const pull = reviewOnly ? {
+    number: reviewOnly.pr, state: "open", headRef: "feature/reviewed", headSha: initialBranchHead,
+    headRepo: "BAWES-Universe/studenthub-platform", baseRepo: "BAWES-Universe/studenthub-platform",
+    baseRef: "main", mergeBase: reviewOnly.baseSha, readable: true,
+  } : null;
+  const pullReads = [];
 
   const linearFetch = async (url, opts) => {
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
@@ -214,6 +223,22 @@ export function createEpisodeHarness({
       if (/\/branches\//.test(u)) {
         return { status: 200, ok: true, json: async () => ({ commit: { sha: branchHead.value } }) };
       }
+      const pr = /\/pulls\/(\d+)$/.exec(u);
+      if (pr && pull) {
+        pullReads.push(u);
+        // A test may move the pull request between reads (e.g. while the
+        // workspace is prepared): onRead sees how many /pulls reads came first.
+        pull.onRead?.(pullReads.filter((read) => /\/pulls\/\d+$/.test(read)).length);
+        if (!pull.readable) return { status: 502, ok: false, json: async () => ({}) };
+        return { status: 200, ok: true, json: async () => ({ number: pull.number, state: pull.state,
+          head: { ref: pull.headRef, sha: pull.headSha, repo: { full_name: pull.headRepo } },
+          base: { ref: pull.baseRef, repo: { full_name: pull.baseRepo } } }) };
+      }
+      const compare = /\/compare\/([^/]+)\.\.\.([0-9a-f]{40})$/.exec(u);
+      if (compare && pull) {
+        pullReads.push(u);
+        return { status: 200, ok: true, json: async () => ({ merge_base_commit: { sha: pull.mergeBase } }) };
+      }
       const commit = /\/commits\/([0-9a-f]{40})$/.exec(u);
       if (commit) return { status: 200, ok: true, json: async () => ({ sha: commit[1] }) };
       return { status: 404, ok: false, json: async () => ({}) };
@@ -228,7 +253,8 @@ export function createEpisodeHarness({
       polls.set(runId, "running");
       launched.push({ lane: name, attempt_id: o.attempt_id, target_sha: o.target_sha, run_id: runId,
         cwd: o.cwd, workspace_scope: o.workspace_scope, scope_phase: o.scope_phase,
-        allowed_paths: o.allowed_paths, scoped_base_sha: o.scoped_base_sha });
+        allowed_paths: o.allowed_paths, scoped_base_sha: o.scoped_base_sha,
+        ...(reviewOnly ? { review_base_sha: o.review_base_sha, branch: o.branch, task_context: o.task_context } : {}) });
       return { stage: "RUNNING", external_run_id: runId, worker_identity: `${name}:session-${triggers[name]}`, conversation_url: `https://example.invalid/${runId}` };
     },
     async monitorRun(o) {
@@ -273,6 +299,12 @@ export function createEpisodeHarness({
   if (withReviewerLane) record.reviewer_lane = reviewerLane;
   if (writerLane) record.writer_lane = writerLane;
   if (supersedesAttemptIds) record.supersedes_attempt_ids = supersedesAttemptIds;
+  if (reviewOnly) {
+    record.initial_target_sha = initialBranchHead;
+    record.review_pr = reviewOnly.pr;
+    record.review_base_sha = reviewOnly.baseSha;
+    record.pr_author_family = reviewOnly.authorFamily;
+  }
   const activationPath = join(dir, "activation.json");
   writeFileSync(activationPath, JSON.stringify(record, null, 1));
   chmodSync(activationPath, 0o600);
@@ -342,6 +374,8 @@ export function createEpisodeHarness({
     activationPath,
     record,
     branchHead,
+    pull,
+    pullReads,
     runTick,
     fetchImpl,
     receipts,

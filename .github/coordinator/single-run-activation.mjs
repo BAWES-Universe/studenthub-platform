@@ -85,7 +85,7 @@ import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
 import { readProgressionPush } from './two-fixture-progression.mjs';
 import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
-import { resolveFixtureLane } from "./workspace-scope.mjs";
+import { resolveFixtureLane, resolveReviewOnlyLane } from "./workspace-scope.mjs";
 import { cardContract } from "./card-contracts.mjs";
 import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
@@ -97,7 +97,7 @@ import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane
 // SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
 // the activation record's accepted lanes and the routing module's review
 // capability can never drift apart.
-import { ACTIVATION_REVIEWER_LANES, ACTIVATION_WRITER_LANES, adapterForLane, familyForLane } from "./launch-vocabulary.mjs";
+import { ACTIVATION_REVIEWER_LANES, ACTIVATION_WRITER_LANES, adapterForLane, familyForLane, RUNTIME_FAMILY } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -126,7 +126,14 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
 // can reverse the roles (a Claude build reviewed by Codex) without relabelling
 // the card. It is read only for the first build: every revision returns to the
 // runtime of the build receipt, so the writer is fixed for the whole episode.
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane"]);
+// SHU-303: a review-only run names the pull request it reviews, that PR's
+// base, and the model family that wrote it. The three come together or not at
+// all, and only on a committed review-only lane (step 3 below): the record picks
+// which PR head a standing review card judges, never which card runs.
+export const REVIEW_ONLY_ACTIVATION_KEYS = Object.freeze(["review_pr", "review_base_sha", "pr_author_family"]);
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane", ...REVIEW_ONLY_ACTIVATION_KEYS]);
+export const PR_AUTHOR_FAMILIES = Object.freeze([...new Set(Object.values(RUNTIME_FAMILY))]);
+export const MAX_REVIEW_PR = 9999999;
 
 export const ACTIVATION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -309,6 +316,21 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   const verdict = outcomeForEvidenceStage(terminal.verdict_stage);
   if (verdict?.outcome === "PASS" && verdictMatchesLane(terminal.requested_worker, terminal.verdict_stage)) {
     return { ended: true, reason: "review PASS — the episode is complete" };
+  }
+  // SHU-303: a review-only run has no writer to revise, so its first coherent
+  // verdict ends it. PASS and BLOCKED are the review's answer; any other
+  // verdict is a run that could not review, reported as such.
+  // A malformed review_lanes ends the episode by naming the configuration, so
+  // nothing launches on it and the stop says why.
+  let reviewOnly;
+  try { reviewOnly = Boolean(resolveReviewOnlyLane(config, targetIssueId)); }
+  catch (error) { return { ended: true, reason: `committed review_lanes is invalid (${error.message}) — no episode runs on it` }; }
+  if (reviewOnly) {
+    const at = terminal.target_sha ?? "<unknown head>";
+    if (["PASS", "BLOCKED"].includes(verdict?.outcome) && verdictMatchesLane(terminal.requested_worker, terminal.verdict_stage)) {
+      return { ended: true, reason: `review-only verdict ${verdict.outcome} at ${at} — the episode is complete` };
+    }
+    return { ended: true, reason: `review-only run ended ${terminal.verdict_stage ?? "without a verdict"} at ${at} without a review verdict` };
   }
 
   let routed;
@@ -553,6 +575,31 @@ export function validateActivationRecord(record) {
     const pairError = writerPairError(record.writer_lane, record.reviewer_lane);
     if (pairError) return { ok: false, reason: pairError };
   }
+  // SHU-303: the review-only group. A review-only run has no writer, reviews
+  // the exact head the record approves, and its reviewer may not be of the
+  // family that wrote the pull request.
+  const reviewKeys = REVIEW_ONLY_ACTIVATION_KEYS.filter((key) => key in record);
+  if (reviewKeys.length > 0) {
+    if (reviewKeys.length !== REVIEW_ONLY_ACTIVATION_KEYS.length) {
+      return { ok: false, reason: `a review-only activation needs ${REVIEW_ONLY_ACTIVATION_KEYS.join(", ")} together (got ${reviewKeys.join(", ")})` };
+    }
+    if (!Number.isInteger(record.review_pr) || record.review_pr < 1 || record.review_pr > MAX_REVIEW_PR) {
+      return { ok: false, reason: "review_pr must be a pull request number" };
+    }
+    if (typeof record.review_base_sha !== "string" || !REVISION_RE.test(record.review_base_sha)) {
+      return { ok: false, reason: "review_base_sha must be a 40-character lowercase commit SHA" };
+    }
+    if (!PR_AUTHOR_FAMILIES.includes(record.pr_author_family)) {
+      return { ok: false, reason: `pr_author_family must be one of ${PR_AUTHOR_FAMILIES.join(", ")}` };
+    }
+    if (!("initial_target_sha" in record)) return { ok: false, reason: "a review-only activation must name the head it reviews in initial_target_sha" };
+    if (record.review_base_sha === record.initial_target_sha) return { ok: false, reason: "review_base_sha must differ from the reviewed head" };
+    if ("writer_lane" in record) return { ok: false, reason: "a review-only activation has no writer_lane" };
+    if (typeof record.reviewer_lane !== "string") return { ok: false, reason: "a review-only activation must name its reviewer_lane" };
+    if (familyForLane(record.reviewer_lane) === record.pr_author_family) {
+      return { ok: false, reason: `reviewer_lane ${record.reviewer_lane} is of the pull request author's family ${record.pr_author_family} — a family never reviews its own work` };
+    }
+  }
   // SHU-231: the episode boundary. Optional; when present it must be a
   // non-empty, duplicate-free list of canonical attempt UUIDs. An EMPTY list is
   // refused rather than ignored, because it reads as "I retired something" while
@@ -692,7 +739,15 @@ export function singleRunActivationStatus({
     return refused("a single-run activation requires a committed single-issue dispatch_scope; this configuration is board-wide");
   }
   const [scopeIssue] = scopeIds;
-  const fixtureLane = resolveFixtureLane(config, scopeIssue) ?? config?.fixture_lane ?? {};
+  // A malformed committed lane list is a named refusal, never a crashed tick.
+  let reviewLane;
+  let fixtureLane;
+  try {
+    reviewLane = resolveReviewOnlyLane(config, scopeIssue);
+    fixtureLane = reviewLane ?? resolveFixtureLane(config, scopeIssue) ?? config?.fixture_lane ?? {};
+  } catch (error) {
+    return refused(`committed configuration is invalid: ${error.message}`);
+  }
   if (fixtureLane.id && fixtureLane.id !== scopeIssue) {
     return refused(`committed configuration is inconsistent: fixture_lane.id ${fixtureLane.id} is not the scoped issue ${scopeIssue}`);
   }
@@ -731,6 +786,17 @@ export function singleRunActivationStatus({
     if (!fixtureLane.reviewer_lane || record.reviewer_lane !== fixtureLane.reviewer_lane) {
       return refused(`activation reviewer_lane ${record.reviewer_lane ?? "(none)"} is not the card lane's ${fixtureLane.reviewer_lane ?? "(none)"}`);
     }
+  }
+
+  // SHU-303: a review-only lane runs only review-only records, with one of the
+  // reviewers its committed lane lists; a review-only record runs nowhere else.
+  if (reviewLane) {
+    if (!("review_pr" in record)) return refused(`activation for review-only lane ${scopeIssue} must name review_pr, review_base_sha and pr_author_family`);
+    if (!reviewLane.reviewer_lanes.includes(record.reviewer_lane)) {
+      return refused(`activation reviewer_lane ${record.reviewer_lane} is not one of the review lane's ${reviewLane.reviewer_lanes.join(", ")}`);
+    }
+  } else if ("review_pr" in record) {
+    return refused(`activation names review_pr but ${scopeIssue} is not a review-only lane`);
   }
 
   // (4) Revision binding — resolved from the running checkout, never self-declared.
@@ -792,6 +858,7 @@ export function singleRunActivationStatus({
     writer_lane: record.writer_lane ?? null,
     supersedes_attempt_ids: record.supersedes_attempt_ids ?? [],
     initial_target_sha: record.initial_target_sha ?? null,
+    ...(reviewLane ? { review_only: true, review_pr: record.review_pr, review_base_sha: record.review_base_sha, pr_author_family: record.pr_author_family } : {}),
     episode: episode.reason,
     // SHU-225: the episode's routable successor, when one exists. This is what
     // re-admits the issue to selection for the NEXT step of the SAME episode.
@@ -841,7 +908,8 @@ export function activationAllowsTarget(activation, issueId) {
 export function renderActivationLine(activation) {
   if (!activation || activation.state === "absent") return "activation=absent (committed gates only)";
   if (activation.state === "armed") {
-    const pair = activation.writer_lane ? ` writer=${activation.writer_lane} reviewer=${activation.reviewer_lane}` : "";
+    const pair = activation.writer_lane ? ` writer=${activation.writer_lane} reviewer=${activation.reviewer_lane}`
+      : activation.review_only ? ` review-only pr=#${activation.review_pr} head=${activation.initial_target_sha} base=${activation.review_base_sha} reviewer=${activation.reviewer_lane}` : "";
     return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}${pair}`;
   }
   return `activation=REFUSED (${activation.reason})`;

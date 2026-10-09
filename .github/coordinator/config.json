@@ -238,5 +238,16 @@
         "package.json"
       ]
     }
+  ],
+  "review_lanes": [
+    {
+      "id": "SHU-304",
+      "authorization_ref": "SHU-304",
+      "reviewer_lanes": [
+        "codex-verifier",
+        "claude-verifier"
+      ],
+      "note": "the standing review-only card (SHU-303): each run reviews one open pull request at the exact head and base its activation names; brief pinned in card-contracts.mjs"
+    }
   ]
 }
