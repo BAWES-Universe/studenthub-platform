@@ -19,7 +19,7 @@ const mutations = [
   ["M9 nondeterministic retry", "workspace-result.mjs", '`StudentHub worker result ${attempt_id}`', '`StudentHub worker result ${attempt_id} ${randomUUID()}`', "host commits raw files"],
   ["M10 wrong tree", "workspace-result.mjs", 'const tree = (await git("write-tree")).trim();', 'const tree = (await git("rev-parse", `${target_sha}^{tree}`)).trim();', "host commits raw files"],
   ["M11 premium builder", "adapters/codex-cli.mjs", 'CODEX_MODEL = "gpt-5.6-sol"', 'CODEX_MODEL = "gpt-6"', "model choices"],
-  ["M12 premium reviewer", "adapters/claude-code.mjs", 'CLAUDE_MODEL = "opus"', 'CLAUDE_MODEL = "fable"', "model choices"],
+  ["M12 premium reviewer", "adapters/claude-code.mjs", 'CLAUDE_MODEL = "claude-opus-5"', 'CLAUDE_MODEL = "fable"', "model choices"],
   ["M13 expiry at publication", "push-broker.mjs", 'if (verdict !== true) return revoked(verdict);\n  } catch', 'if (false) return revoked(verdict);\n  } catch', "expiry during snapshot"],
   ["M14 empty after binding", "workspace-result.mjs", 'if (fs.lstatSync(path.join(stateDir, `workspace-result-${attempt_id}.json`), { throwIfNoEntry: false })) {', 'if (false) {', "AFTER_BINDING"],
 ];
