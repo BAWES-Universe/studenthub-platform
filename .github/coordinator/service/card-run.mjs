@@ -460,11 +460,17 @@ export function removeTimer(io, paths = CARD_RUN_PATHS) {
   if (["active", "activating", "deactivating", "reloading"].includes(state)) {
     refuse("CARD_RUN_TIMER_BUSY", `${AUTO_SERVICE} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
   }
-  // The unit files stay until the timer is off, so a failed disable can be
-  // retried rather than leave an enabled timer with no files.
-  io.exec("systemctl", ["disable", "--now", AUTO_TIMER]);
-  const timerState = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
-  if (["active", "activating", "reloading"].includes(timerState)) refuse("CARD_RUN_TIMER", `${AUTO_TIMER} is still ${timerState} after disable`);
+  // The unit files stay until the timer reads back disabled and inactive, so a
+  // failed disable or readback can be retried rather than leave an enabled
+  // timer with no files. A retry after the timer file is gone skips the
+  // disable, which would fail on a missing unit.
+  const timerFile = path.join(paths.unitDir, AUTO_TIMER);
+  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);
+  const timerEnabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
+  const timerActive = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
+  if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {
+    refuse("CARD_RUN_TIMER", `${AUTO_TIMER} reads ${timerEnabled || "unknown"}/${timerActive || "unknown"} after disable; its unit files stay`);
+  }
   const failed = [];
   for (const name of [AUTO_TIMER, AUTO_SERVICE]) {
     const file = path.join(paths.unitDir, name);

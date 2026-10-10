@@ -821,11 +821,17 @@ test("SHU-86 C34: a run that finds the host taken after the claim gives the clai
 
 // systemd as the timer commands see it: unit files on disk, and the states
 // the test sets.
-function withSystemd(host, { serviceState = "inactive", timerState = "active", enabled = "enabled", disableStops = true } = {}) {
+function withSystemd(host, { serviceState = "inactive", timerState = "active", enabled = "enabled", disable = "ok" } = {}) {
   const exec = host.exec;
   host.io = { ...host.io, nodePath: () => "/usr/bin/node", exec: (file, args) => {
     const line = args.join(" ");
-    if (file === "systemctl" && line === `disable --now ${AUTO_TIMER}` && disableStops) timerState = "inactive";
+    if (file === "systemctl" && line === `disable --now ${AUTO_TIMER}`) {
+      host.calls.push(`systemctl ${line}`);
+      if (disable === "fails") return { status: 1, stdout: "", stderr: "failed" };
+      if (disable === "ok") { timerState = "inactive"; enabled = "disabled"; }
+      if (disable === "no-readback") { timerState = ""; enabled = ""; }
+      return { status: 0, stdout: "", stderr: "" };
+    }
     if (file === "systemctl" && line === `is-active ${AUTO_SERVICE}`) { host.calls.push(`systemctl ${line}`); return { status: serviceState === "active" ? 0 : 3, stdout: `${serviceState}\n`, stderr: "" }; }
     if (file === "systemctl" && line === `is-active ${AUTO_TIMER}`) { host.calls.push(`systemctl ${line}`); return { status: 0, stdout: `${timerState}\n`, stderr: "" }; }
     if (file === "systemctl" && line === `is-enabled ${AUTO_TIMER}`) { host.calls.push(`systemctl ${line}`); return { status: 0, stdout: `${enabled}\n`, stderr: "" }; }
@@ -863,9 +869,14 @@ test("SHU-86 C35: the timer installs exact units, never replaces different ones,
   assert.equal(busy.thrown, "CARD_RUN_TIMER_BUSY", "never stop a run before its revert");
   assert.equal(host.files.has(service), true);
   assert.ok(!host.calls.includes(`systemctl disable --now ${AUTO_TIMER}`));
-  const stuck = withSystemd(host, { disableStops: false });
-  assert.equal((await attempt(() => removeTimer(stuck.io, PATHS))).thrown, "CARD_RUN_TIMER", "a timer that stays on after disable is refused");
-  assert.equal(host.files.has(timer), true, "its files stay so the removal can be retried");
+  for (const [label, options, code] of [
+    ["a timer that stays on after disable", { disable: "stays" }, "CARD_RUN_TIMER"],
+    ["a failed disable, even with the timer already inactive", { disable: "fails", timerState: "inactive" }, "CARD_RUN_COMMAND"],
+    ["a disable whose readback fails", { disable: "no-readback" }, "CARD_RUN_TIMER"],
+  ]) {
+    assert.equal((await attempt(() => removeTimer(withSystemd(host, options).io, PATHS))).thrown, code, `${label} is refused`);
+    assert.equal(host.files.has(timer) && host.files.has(service), true, `after ${label} both unit files stay for a retry`);
+  }
   const idle = withSystemd(host);
   assert.deepEqual(await attempt(() => removeTimer(idle.io, PATHS)), { removed: true });
   assert.equal(host.files.has(service), false);

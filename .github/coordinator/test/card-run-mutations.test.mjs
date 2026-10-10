@@ -364,8 +364,14 @@ const CASES = [
   },
   {
     name: "M56 remove the unit files while the timer is still on",
-    from: '  if (["active", "activating", "reloading"].includes(timerState)) refuse(',
-    to: "  if (false) refuse( // SHU86-M56\n",
+    from: '  if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {',
+    to: "  if (false) { // SHU86-M56",
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M57 ignore a failed disable",
+    from: '  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);',
+    to: '  if (io.fs.existsSync(timerFile)) io.exec("systemctl", ["disable", "--now", AUTO_TIMER]); // SHU86-M57',
     pattern: "SHU-86 C35:",
   },
 ];

@@ -2031,6 +2031,7 @@
     "SHU-86 mutation M54 let systemd kill a run before its revert",
     "SHU-86 mutation M55 count the timer from the service's last run",
     "SHU-86 mutation M56 remove the unit files while the timer is still on",
+    "SHU-86 mutation M57 ignore a failed disable",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -17652,6 +17653,10 @@
     },
     {
       "name": "SHU-86 mutation M56 remove the unit files while the timer is still on",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M57 ignore a failed disable",
       "capabilities": []
     },
     {
