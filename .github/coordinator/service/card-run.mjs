@@ -65,6 +65,9 @@ export const CARD_RUN_LIMITS = Object.freeze({
 // timer is on the calendar rather than relative to the service's last run: a
 // start skipped by a condition never makes the service inactive again, so a
 // timer counting from that would never fire again.
+// Declared before the CLI entry at the bottom runs main, so a default that
+// reads it is never in its temporal dead zone.
+export const CARD_RUN_MODULE = fileURLToPath(import.meta.url);
 export const AUTO_SERVICE = "shu-card-run.service";
 export const AUTO_TIMER = "shu-card-run.timer";
 export const AUTO_SCHEDULE = "*:00/30";
@@ -552,4 +555,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   process.exitCode = code;
 }
 
-export const CARD_RUN_MODULE = fileURLToPath(import.meta.url);

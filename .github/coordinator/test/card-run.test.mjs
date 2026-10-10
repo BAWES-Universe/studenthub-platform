@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -891,5 +892,20 @@ test("SHU-86 C36: the timer commands take no flags", () => {
   for (const command of ["auto", "timer-install", "timer-remove"]) {
     assert.equal(parseArgs([command]).command, command);
     assert.throws(() => parseArgs([command, "--review-pr", "1"]), { code: "CARD_RUN_USAGE" });
+  }
+});
+
+test("SHU-86 C37: the commands run from argv the way an operator or the unit starts them", () => {
+  // In-process calls to main never reach the CLI entry, which runs while the
+  // module is still being evaluated. As root the child drops to nobody, so it
+  // refuses before touching the host.
+  const module = path.join(HERE, "..", "service", "card-run.mjs");
+  const asNobody = process.getuid?.() === 0 ? { uid: 65534, gid: 65534 } : {};
+  const cases = [["timer-install", "CARD_RUN_NOT_ROOT"], ["timer-remove", "CARD_RUN_NOT_ROOT"], ["auto", "CARD_RUN_NOT_ROOT"], ["bogus", "CARD_RUN_USAGE"]];
+  for (const [command, code] of cases) {
+    const child = spawnSync(process.execPath, [module, command], { encoding: "utf8", timeout: 30_000, ...asNobody });
+    assert.doesNotMatch(`${child.stdout}${child.stderr}`, /before initialization|ReferenceError/, command);
+    assert.equal(child.status, 2, `${command}: ${child.stdout}${child.stderr}`);
+    assert.equal(JSON.parse(child.stdout).code, code, command);
   }
 });

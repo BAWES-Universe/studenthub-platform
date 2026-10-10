@@ -2068,6 +2068,7 @@
     "SHU-86 C34: a run that finds the host taken after the claim gives the claim back",
     "SHU-86 C35: the timer installs exact units, never replaces different ones, and is removed only between runs",
     "SHU-86 C36: the timer commands take no flags",
+    "SHU-86 C37: the commands run from argv the way an operator or the unit starts them",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17801,6 +17802,10 @@
     },
     {
       "name": "SHU-86 C36: the timer commands take no flags",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C37: the commands run from argv the way an operator or the unit starts them",
       "capabilities": []
     },
     {
