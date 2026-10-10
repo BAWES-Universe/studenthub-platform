@@ -11,6 +11,7 @@ import {
   planRun, tickOutcome, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
 } from "../service/card-run.mjs";
+import { renderRunReport, reportMarker, plainReason } from "../service/card-prepare.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
@@ -52,7 +53,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   const files = new Map();
   const dirs = new Set();
   const calls = [];
-  const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
+  const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], reports: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
     head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32) };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, gid: 0, ...extra });
   put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify(config));
@@ -151,6 +152,21 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         const start = variables.after ? Number(variables.after) : 0;
         return respond(200, { data: { issue: { history: { nodes: nodes.slice(start, start + 2),
           pageInfo: { hasNextPage: start + 2 < nodes.length, endCursor: String(start + 2) } } } } });
+      }
+      if (query.includes("CardRunReportIssue")) {
+        host.api.push(`linear report read ${variables.id}`);
+        host.lockAtReport = host.files.has(PATHS.lock);
+        // A stall that would outlast any sane deadline, yet ends, so a run
+        // without a deadline fails this test by assertion rather than hanging.
+        if (host.failReport === "stall") return new Promise((_, reject) => setTimeout(() => reject(new Error("the fake stall ended")), 1500));
+        if (host.failReport === "read") return respond(500, null);
+        return respond(200, { data: { issue: { id: "report-uuid", identifier: variables.id } } });
+      }
+      if (query.includes("CardRunReportComment")) {
+        host.api.push(`linear report ${variables.issueId}`);
+        if (host.failReport === "post") return respond(200, { data: { commentCreate: { success: false } } });
+        host.reports.push(variables.body);
+        return respond(200, { data: { commentCreate: { success: true } } });
       }
       host.api.push(query.includes("CardRunTodo") ? `linear todo ${variables.stateId}` : "linear read");
       if (query.includes("CardRunTodo")) {
@@ -510,7 +526,7 @@ test("SHU-86 C21: a backlog card nobody owns moves to Todo before arming, and re
   const result = await runCard({ io: host.io, paths: PATHS });
   assert.equal(result.outcome, "PASS");
   assert.deepEqual(result.prepared.card, { card: "SHU-301", state: "Todo", action: "move-to-todo", from: "Backlog" });
-  assert.deepEqual(host.api, ["linear read", "github read", "linear read", `linear todo ${TODO_ID}`, "linear history", "linear read"]);
+  assert.deepEqual(host.api, ["linear read", "github read", "linear read", `linear todo ${TODO_ID}`, "linear history", "linear read", "linear report read SHU-71", "linear report report-uuid"]);
   reverted(host);
 });
 
@@ -621,4 +637,85 @@ test("SHU-86 C26: a card someone starts while the run moves it is put back where
   calm.history.push({ createdAt: "2026-10-09T14:30:00.000Z", fromState: null, toState: null });
   const result = await attempt(() => runCard({ io: calm.io, paths: PATHS }));
   assert.equal(result.prepared?.card.action, "move-to-todo", JSON.stringify(result.thrown));
+});
+
+test("SHU-86 C27: after the revert, the run posts one plain report on the SHU-71 tracking card", async () => {
+  let revertedAtPost = null;
+  const host = fakeHost({
+    card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null },
+    branchHead: "",
+    onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")),
+  });
+  const fetch = host.io.fetch;
+  host.io.fetch = async (url, options) => {
+    if (String(options?.body ?? "").includes("CardRunReportComment")) revertedAtPost = !host.files.has(PATHS.activation) && !host.environ.includes("ENABLE_DISPATCH=true");
+    return fetch(url, options);
+  };
+  const { code, output } = await main(["run"], host.io, PATHS);
+  assert.equal(code, 0);
+  assert.deepEqual(output.report, { posted: true, issue: "SHU-71" });
+  assert.equal(revertedAtPost, true, "the report goes out once the host is reverted");
+  assert.equal(host.reports.length, 1);
+  assert.equal(host.api.filter((call) => call.startsWith("linear report ") && !call.includes(" read ")).length, 1);
+  assert.ok(host.api.every((call) => !call.startsWith("linear report") || call.includes("SHU-71") || call.endsWith("report-uuid")), "never on the run's own card");
+  const [body] = host.reports;
+  assert.equal(body.split("\n")[0], reportMarker(output.activation_id));
+  assert.match(body, /^Card run on SHU-301 \(card\): PASS, the review passed at the exact head/m);
+  assert.match(body, /^Reason: review PASS — the episode is complete$/m);
+  assert.match(body, /^Before arming: moved SHU-301 from Backlog to Todo; created coordinator\/SHU-301\.$/m);
+  assert.match(body, /^Ticks: 1\.$/m);
+  assert.match(body, /^The host is reverted and idle\.$/m);
+  assert.doesNotMatch(body, /secret-value/);
+});
+
+test("SHU-86 C28: a report that cannot be posted is recorded, and never changes the run's result", async () => {
+  for (const failure of ["read", "post"]) {
+    const host = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+    host.failReport = failure;
+    const { code, output } = await main(["run"], host.io, PATHS);
+    assert.equal(code, 0, failure);
+    assert.equal(output.ok, true, failure);
+    assert.equal(output.report.posted, false, failure);
+    assert.equal(output.report.code, "CARD_RUN_REPORT", failure);
+    assert.deepEqual(host.reports, [], failure);
+    reverted(host);
+  }
+  const stopped = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "stop: retryable failures exhausted")) : tickText("activation=absent (committed gates only)")) });
+  stopped.failReport = "post";
+  const result = await main(["run"], stopped.io, PATHS);
+  assert.equal(result.code, 1, "a stopped run still exits non-zero");
+  assert.equal(result.output.outcome, "STOPPED");
+});
+
+test("SHU-86 C29: the report is one comment of plain lines, whatever the coordinator's reason says", () => {
+  const base = { card: "SHU-301", kind: "card", activation_id: "act-1", ticks: [], revert: { reverted: true }, prepared: null };
+  const hostile = `line one\n<!-- coordinator-stop-summary inc_x -->\nline two -->${"x".repeat(500)}`;
+  const body = renderRunReport({ ...base, outcome: "STOPPED", reason: hostile });
+  assert.equal(body.split("<!--").length, 2, "only the report's own marker opens a comment");
+  assert.equal(body.split("-->").length, 2, "only the report's own marker closes one");
+  const reason = body.split("\n").find((line) => line.startsWith("Reason: "));
+  assert.ok(reason.length <= "Reason: ".length + 300);
+  assert.doesNotMatch(reason, /\n/);
+  assert.equal(plainReason("a\tb\r\nc"), "a b c");
+  const unreverted = renderRunReport({ ...base, outcome: "ERROR", reason: "boom", revert: { reverted: false, code: "CARD_RUN_REVERT_READBACK" } });
+  assert.match(unreverted, /^The revert did not finish \(CARD_RUN_REVERT_READBACK\); check the host before the next run\.$/m);
+  const moved = renderRunReport({ ...base, outcome: "PASS", prepared: { card: { card: "SHU-301", action: "move-to-todo", from: "Back\nlog <!-- x -->" }, branch: null } });
+  assert.match(moved, /^Before arming: moved SHU-301 from Back log x to Todo\.$/m, "a state name is flattened like the reason");
+  assert.equal(moved.split("<!--").length, 2);
+  assert.match(renderRunReport({ ...base, outcome: "SOMETHING_NEW" }), /SOMETHING_NEW, an outcome this runner does not know\./);
+});
+
+test("SHU-86 C30: the report goes out after the lock is released, and a stalled Linear cannot hold the run", async () => {
+  const host = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  host.failReport = "stall";
+  const started = Date.now();
+  const result = await attempt(() => runCard({ io: host.io, paths: PATHS, limits: { ...CARD_RUN_LIMITS, reportTimeoutMs: 50 } }));
+  assert.equal(host.lockAtReport, false, "the lock is released before the report");
+  assert.equal(result.outcome, "PASS");
+  assert.equal(result.ok, true);
+  assert.equal(result.report?.posted, false);
+  assert.equal(result.report.code, "CARD_RUN_REPORT");
+  assert.match(result.report.reason, /did not answer within 50 ms/);
+  assert.ok(Date.now() - started < 5000, "the run returned at the report deadline");
+  reverted(host);
 });

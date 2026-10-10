@@ -12,10 +12,11 @@
 // still running.
 //
 // Before arming, the run itself moves the card to Todo and creates its
-// coordinator/<card> branch at the installed revision (card-prepare.mjs).
-// Still operator steps: installing the revision with the prerequisite
-// provisioner, and posting the report. Nothing here starts on its own: there
-// is no timer, and importing the module has no effect.
+// coordinator/<card> branch at the installed revision (card-prepare.mjs), and
+// after the revert it posts its own report on the SHU-71 tracking card. Still
+// an operator step: installing the revision with the prerequisite
+// provisioner. Nothing here starts on its own: there is no timer, and
+// importing the module has no effect.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -23,7 +24,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateActivationRecord, MAX_ACTIVATION_WINDOW_MS } from "../single-run-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
-import { prepareRun, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
+import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -48,6 +49,7 @@ export const CARD_RUN_LIMITS = Object.freeze({
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
+  reportTimeoutMs: 30 * 1000,
 });
 const SHA_RE = /^[0-9a-f]{40}$/;
 
@@ -278,13 +280,15 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
+  let summary;
+  let credentials;
   try {
     const busy = busyReasons(io, paths);
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
     const config = JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
     const plan = planRun({ config, revision, now: io.now(), review, limits });
-    const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
+    credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
     const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials });
     const ticks = [];
     let result;
@@ -318,10 +322,14 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
-    return { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, prepared, ...result, ticks, revert: reverted };
+    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, prepared, ...result, ticks, revert: reverted };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
+  // Reported last, once the host is as the revert left it and the lock is
+  // released, so a slow Linear never holds the host. The report is bounded
+  // and best effort: it never changes the result.
+  return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };
 }
 
 export const defaultIO = Object.freeze({
