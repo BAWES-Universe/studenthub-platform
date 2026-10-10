@@ -897,13 +897,14 @@ test("SHU-86 C36: the timer commands take no flags", () => {
 
 test("SHU-86 C37: the commands run from argv the way an operator or the unit starts them", () => {
   // In-process calls to main never reach the CLI entry, which runs while the
-  // module is still being evaluated. As root the child drops to nobody, so it
-  // refuses before touching the host.
+  // module is still being evaluated. The child is told it is not root before
+  // the module loads, so it refuses before touching the host even when the
+  // test runs as root, and without needing the right to switch users.
   const module = path.join(HERE, "..", "service", "card-run.mjs");
-  const asNobody = process.getuid?.() === 0 ? { uid: 65534, gid: 65534 } : {};
+  const notRoot = "data:text/javascript,process.getuid=()=>65534";
   const cases = [["timer-install", "CARD_RUN_NOT_ROOT"], ["timer-remove", "CARD_RUN_NOT_ROOT"], ["auto", "CARD_RUN_NOT_ROOT"], ["bogus", "CARD_RUN_USAGE"]];
   for (const [command, code] of cases) {
-    const child = spawnSync(process.execPath, [module, command], { encoding: "utf8", timeout: 30_000, ...asNobody });
+    const child = spawnSync(process.execPath, ["--import", notRoot, module, command], { encoding: "utf8", timeout: 30_000 });
     assert.doesNotMatch(`${child.stdout}${child.stderr}`, /before initialization|ReferenceError/, command);
     assert.equal(child.status, 2, `${command}: ${child.stdout}${child.stderr}`);
     assert.equal(JSON.parse(child.stdout).code, code, command);
