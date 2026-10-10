@@ -357,9 +357,15 @@ const CASES = [
     pattern: "SHU-86 C35:",
   },
   {
-    name: "M55 start the service while the pause file exists",
-    from: "    `ConditionPathExists=!${pause}`,",
-    to: "    // SHU86-M55",
+    name: "M55 count the timer from the service's last run",
+    from: "    `OnCalendar=${AUTO_SCHEDULE}`,",
+    to: '    "OnUnitInactiveSec=30min", // SHU86-M55',
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M56 remove the unit files while the timer is still on",
+    from: '  if (["active", "activating", "reloading"].includes(timerState)) refuse(',
+    to: "  if (false) refuse( // SHU86-M56\n",
     pattern: "SHU-86 C35:",
   },
 ];

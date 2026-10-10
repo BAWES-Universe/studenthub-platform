@@ -821,10 +821,11 @@ test("SHU-86 C34: a run that finds the host taken after the claim gives the clai
 
 // systemd as the timer commands see it: unit files on disk, and the states
 // the test sets.
-function withSystemd(host, { serviceState = "inactive", timerState = "active", enabled = "enabled" } = {}) {
+function withSystemd(host, { serviceState = "inactive", timerState = "active", enabled = "enabled", disableStops = true } = {}) {
   const exec = host.exec;
   host.io = { ...host.io, nodePath: () => "/usr/bin/node", exec: (file, args) => {
     const line = args.join(" ");
+    if (file === "systemctl" && line === `disable --now ${AUTO_TIMER}` && disableStops) timerState = "inactive";
     if (file === "systemctl" && line === `is-active ${AUTO_SERVICE}`) { host.calls.push(`systemctl ${line}`); return { status: serviceState === "active" ? 0 : 3, stdout: `${serviceState}\n`, stderr: "" }; }
     if (file === "systemctl" && line === `is-active ${AUTO_TIMER}`) { host.calls.push(`systemctl ${line}`); return { status: 0, stdout: `${timerState}\n`, stderr: "" }; }
     if (file === "systemctl" && line === `is-enabled ${AUTO_TIMER}`) { host.calls.push(`systemctl ${line}`); return { status: 0, stdout: `${enabled}\n`, stderr: "" }; }
@@ -840,18 +841,19 @@ test("SHU-86 C35: the timer installs exact units, never replaces different ones,
   const host = withSystemd(fakeHost());
   const installed = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
   assert.equal(installed.installed, true);
-  assert.equal(host.files.get(service).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE, pause: PATHS.pause }));
+  assert.equal(host.files.get(service).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE }));
   assert.equal(host.files.get(timer).text, autoTimerUnit());
   assert.match(host.files.get(service).text, /^ExecStart=\/usr\/bin\/node \S+card-run\.mjs auto$/m);
-  assert.match(host.files.get(service).text, /^ConditionPathExists=!\/etc\/shu\/card-run\.paused$/m);
+  assert.doesNotMatch(host.files.get(service).text, /^Condition/m, "a skipped start would leave a relative timer stuck; auto checks the pause file");
   assert.match(host.files.get(service).text, /^TimeoutStartSec=8h$/m);
-  assert.match(host.files.get(timer).text, /^OnUnitInactiveSec=30min$/m);
+  assert.match(host.files.get(timer).text, /^OnCalendar=\*:00\/30$/m);
+  assert.doesNotMatch(host.files.get(timer).text, /^On(Unit|Boot|Startup|Active)/m, "the timer never counts from the service's last state");
   for (const file of [service, timer]) assert.equal(host.files.get(file).mode, 0o644);
   assert.ok(host.calls.includes(`systemctl enable --now ${AUTO_TIMER}`));
   assert.equal((await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).installed, true, "installing the same units again is a no-op");
   const other = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/local/bin/node", module: MODULE }));
   assert.equal(other.thrown, "CARD_RUN_TIMER", "different units are never replaced");
-  assert.equal(host.files.get(service).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE, pause: PATHS.pause }));
+  assert.equal(host.files.get(service).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE }));
   const relative = await attempt(() => installTimer(withSystemd(fakeHost()).io, PATHS, { node: "node", module: MODULE }));
   assert.equal(relative.thrown, "CARD_RUN_TIMER");
   const dead = withSystemd(fakeHost(), { timerState: "failed" });
@@ -861,6 +863,9 @@ test("SHU-86 C35: the timer installs exact units, never replaces different ones,
   assert.equal(busy.thrown, "CARD_RUN_TIMER_BUSY", "never stop a run before its revert");
   assert.equal(host.files.has(service), true);
   assert.ok(!host.calls.includes(`systemctl disable --now ${AUTO_TIMER}`));
+  const stuck = withSystemd(host, { disableStops: false });
+  assert.equal((await attempt(() => removeTimer(stuck.io, PATHS))).thrown, "CARD_RUN_TIMER", "a timer that stays on after disable is refused");
+  assert.equal(host.files.has(timer), true, "its files stay so the removal can be retried");
   const idle = withSystemd(host);
   assert.deepEqual(await attempt(() => removeTimer(idle.io, PATHS)), { removed: true });
   assert.equal(host.files.has(service), false);

@@ -60,15 +60,18 @@ export const CARD_RUN_LIMITS = Object.freeze({
 });
 
 // The timer and the one-shot service it starts. The service may run far longer
-// than any run can take, so systemd never kills a run before its revert.
+// than any run can take, so systemd never kills a run before its revert. The
+// pause file is checked by `auto` itself, not by a unit condition, and the
+// timer is on the calendar rather than relative to the service's last run: a
+// start skipped by a condition never makes the service inactive again, so a
+// timer counting from that would never fire again.
 export const AUTO_SERVICE = "shu-card-run.service";
 export const AUTO_TIMER = "shu-card-run.timer";
-export const AUTO_INTERVAL = "30min";
-export function autoServiceUnit({ node, module, pause = CARD_RUN_PATHS.pause }) {
+export const AUTO_SCHEDULE = "*:00/30";
+export function autoServiceUnit({ node, module }) {
   return [
     "[Unit]",
     "Description=StudentHub card run: the committed card, at most once per installed revision",
-    `ConditionPathExists=!${pause}`,
     "[Service]",
     "Type=oneshot",
     "User=root",
@@ -80,10 +83,9 @@ export function autoServiceUnit({ node, module, pause = CARD_RUN_PATHS.pause }) 
 export function autoTimerUnit() {
   return [
     "[Unit]",
-    `Description=Every ${AUTO_INTERVAL}, run the installed revision's card if it has not run yet`,
+    "Description=Every half hour, run the installed revision's card if it has not run yet",
     "[Timer]",
-    "OnBootSec=15min",
-    `OnUnitInactiveSec=${AUTO_INTERVAL}`,
+    `OnCalendar=${AUTO_SCHEDULE}`,
     `Unit=${AUTO_SERVICE}`,
     "[Install]",
     "WantedBy=timers.target",
@@ -436,7 +438,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
 export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
-  const units = [[AUTO_SERVICE, autoServiceUnit({ node, module, pause: paths.pause })], [AUTO_TIMER, autoTimerUnit()]];
+  const units = [[AUTO_SERVICE, autoServiceUnit({ node, module })], [AUTO_TIMER, autoTimerUnit()]];
   for (const [name, text] of units) {
     const file = path.join(paths.unitDir, name);
     if (!io.fs.existsSync(file)) writeExclusive(io, file, text, 0o644);
@@ -458,14 +460,24 @@ export function removeTimer(io, paths = CARD_RUN_PATHS) {
   if (["active", "activating", "deactivating", "reloading"].includes(state)) {
     refuse("CARD_RUN_TIMER_BUSY", `${AUTO_SERVICE} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
   }
+  // The unit files stay until the timer is off, so a failed disable can be
+  // retried rather than leave an enabled timer with no files.
   io.exec("systemctl", ["disable", "--now", AUTO_TIMER]);
+  const timerState = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
+  if (["active", "activating", "reloading"].includes(timerState)) refuse("CARD_RUN_TIMER", `${AUTO_TIMER} is still ${timerState} after disable`);
+  const failed = [];
   for (const name of [AUTO_TIMER, AUTO_SERVICE]) {
     const file = path.join(paths.unitDir, name);
-    if (io.fs.existsSync(file)) io.fs.unlinkSync(file);
+    if (!io.fs.existsSync(file)) continue;
+    try {
+      io.fs.unlinkSync(file);
+    } catch (error) {
+      failed.push(`${file} (${error.code ?? error.message})`);
+    }
   }
   run(io, "systemctl", ["daemon-reload"]);
   const left = [AUTO_TIMER, AUTO_SERVICE].map((name) => path.join(paths.unitDir, name)).filter((file) => io.fs.existsSync(file));
-  if (left.length) refuse("CARD_RUN_TIMER", `still present: ${left.join(", ")}`);
+  if (failed.length || left.length) refuse("CARD_RUN_TIMER", `still present: ${[...new Set([...failed, ...left])].join(", ")}`);
   return { removed: true };
 }
 

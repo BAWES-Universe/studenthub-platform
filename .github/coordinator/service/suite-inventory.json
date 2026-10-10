@@ -2029,7 +2029,8 @@
     "SHU-86 mutation M52 remove the timer while its run is going",
     "SHU-86 mutation M53 accept a timer that did not come up",
     "SHU-86 mutation M54 let systemd kill a run before its revert",
-    "SHU-86 mutation M55 start the service while the pause file exists",
+    "SHU-86 mutation M55 count the timer from the service's last run",
+    "SHU-86 mutation M56 remove the unit files while the timer is still on",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -17646,7 +17647,11 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M55 start the service while the pause file exists",
+      "name": "SHU-86 mutation M55 count the timer from the service's last run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M56 remove the unit files while the timer is still on",
       "capabilities": []
     },
     {
