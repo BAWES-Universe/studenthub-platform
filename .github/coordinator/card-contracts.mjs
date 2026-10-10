@@ -381,6 +381,98 @@ Out of scope: any profile text field (SHU-300 did those), any database migration
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-305 is the first write slice of O5 (SHU-163): staff and admin set or
+// clear an organization's status override through safe write, on SHU-300's
+// pattern. The brief carries what SHU-300's reviewer blocked, so the build
+// starts from the pattern that passed.
+export const SHU305_PATHS = Object.freeze([
+  "packages/organizations/src/status-writes.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/status-writes.test.ts",
+  "packages/organizations/test/status-writes-mutations.mjs",
+  "packages/db/migrations/0184_organization_status_override.sql",
+  "packages/db/src/postgres-organization-status-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-status.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-status.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-status-http.test.ts",
+  "package.json",
+]);
+
+const SHU305_ACCEPTANCE = [
+  "(1) an organization's status override (active, under_review, inactive, or none to clear it) is written only through preview, confirm and receipt on the existing safe-write contract, and runSafeWriteConformance runs over the status write's own builder, so letting the status bypass preview makes that conformance test fail;",
+  "(2) only a staff or admin grant that covers the organization (on the organization itself, or a subtree grant on an ancestor such as the operator organization) may write; an org-owner, a recruiter, a candidate or any other grant gets not_found, never 403; an operator organization itself is never a target; the decision is one function the Postgres store calls inside its commit transaction, and accepting an org-owner there makes the owner-write-refused test fail;",
+  "(3) the store's commit compares the previewed value inside the transaction through a function it calls there and refuses with state_changed when the value moved; making that compare always succeed makes the stale-confirm test fail; grants are read FOR SHARE under the organization lock, and a racing duplicate confirm returns token_already_used;",
+  "(4) once the platform holds a status record for an organization, OrganizationRepository derives that organization's status from it for every audience (employer, staff, admin) and in every read (the organization card, sub-organizations and the company list) through deriveOrganizationStatus, including an inactive status and an organization with no approved snapshot, and a cleared record falls back to the counter derivation rather than the imported override; the live gateway passes the store's status reader to the repository; ignoring the stored record makes the stored-override-wins test fail;",
+  "(5) every write is audited in the same transaction as the change with hashed organization references (organizationAuditRef, never a raw id) under the new operation organization.status.safe_write; migration 0184 is additive, and its audit constraints and summary function still accept every existing row and every operation migrations 0147 to 0183 added;",
+  "(6) packages/organizations/test/status-writes-mutations.mjs applies mutations (1) to (4), each makes its named test fail, and the script itself passes on the unmutated code;",
+  "(7) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU305_BRIEF = `Card SHU-305: staff and admin change an organization's status through safe write (slice O5a, the first write slice of O5).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: the status rule in section 1 (point 2), finding OR-F2, row OR-08 and slice O5 in section 11.
+- SHU-300's organization profile write, which this card copies and which passed review: packages/organizations/src/profile-writes.ts and its tests and mutation script, packages/db/src/postgres-organization-profile-store.ts, packages/db/migrations/0150_organization_profile.sql, apps/gateway/src/organization-profile.ts, apps/gateway/test/organization-profile-http.test.ts, and how apps/gateway/src/login-runtime.ts constructs it.
+- packages/organizations/src/organizations.ts: statusOverride, deriveOrganizationStatus, ORGANIZATION_DIRECTORY_ROLES, DEFAULT_OPERATOR_ORG_IDS and OrganizationRepository.
+- packages/contracts/src/authz/context.ts (listEffectiveContexts) and packages/contracts/src/authz/organization.ts: how a subtree grant on an ancestor covers a descendant organization.
+- packages/db/migrations/0183_candidate_bank_details.sql: the latest definitions of the audit constraints and of authorization_audit_summary_valid, which your migration must extend, not replace with an older copy.
+
+Goal. Staff and admin can set an organization's status override to active, under_review or inactive, or clear it, through the existing safe-write path: preview, then confirm, then a receipt, the same contract as the organization profile. The value is stored in the platform database, and the read model then shows it to every audience, so employer, staff and admin always see the same status (finding OR-F2).
+
+Design:
+- Store the override in a new table organization_status_overrides (org_id text primary key referencing organizations(id) on delete cascade, status text null with a check constraint allowing only active, under_review and inactive, updated_at timestamptz). NULL means cleared. In the safe-write field vocabulary, the one field is "status", and clearing is the value "none".
+- Who may write: one exported decision function in packages/organizations/src/status-writes.ts takes the caller's grant rows (org_id, role, scope), the target organization id and the target's ancestor ids, and allows the write only when a grant with role staff or admin is on the target itself, or is a subtree grant on one of its ancestors. An operator organization (DEFAULT_OPERATOR_ORG_IDS) is never a target. Everything else, including org-owner and recruiter, is refused, and the route answers 404 not_found, never 403.
+- Read model: give OrganizationRepository an optional constructor port, statusRecords, whose read(orgId) returns the platform's status record for an organization: absent (no record), cleared, or a status (active, under_review or inactive). Keep one derivation: give deriveOrganizationStatus an optional second argument, the record, rather than writing a second status function. A stored status wins; a cleared record skips the imported company_status_override and falls back to the counter derivation; an absent record, or no argument, keeps today's behaviour exactly. Never write the stored status into company_status_override: the legacy codes there are only 10 (active) and 9 (under_review), so inactive cannot be expressed that way and 0 means no override.
+- Apply the record wherever status is derived: read (the status field, and for staff and admin the statusOverride field, which shows the stored status, or not_recorded when cleared), listSubOrganizations and the company list entries.
+- No approved snapshot: the live gateway's snapshot adapter is unconfigured, so today every row is undefined and every field is not_imported. A stored status must still show there: status (and statusOverride for staff and admin) come from the record, while every other field and the snapshot provenance stay not_imported. A cleared or absent record with no snapshot leaves status not_imported. Test the stored record with and without a snapshot, and with inactive. Existing organizations and directory tests must pass unchanged.
+- Live wiring: login-runtime.ts constructs the status store from DATABASE_URL, passes its status reader to OrganizationRepository as statusRecords whether or not the safe-write key is set, and constructs the status write service from the same store only when the key is set (as the organization profile does), so live reads consult the new table. The store exposes that reader as a method that reads organization_status_overrides; the Postgres test reads a committed write back through it, and the HTTP test reads the result of a confirmed write through an OrganizationRepository given the same port.
+
+Pitfalls SHU-300's reviewer blocked. Avoid each one:
+- Mutations must hit the code production runs. Keep the grant decision and the stale-state compare as exported functions in status-writes.ts, give them to PostgresOrganizationStatusStore through its constructor (login-runtime.ts wires them in; packages/db must not import packages/organizations, and dependencies stay unchanged), and have the store call them inside the commit transaction on the rows it read there. The store's grants query selects the caller's grant rows (org_id, role, scope) without filtering by role or organization, and its ancestry query reads the organization chain, so the decision is the injected function's, not the SQL's.
+- Audit rows: write organizationAuditRef(orgId) in target_org_refs, never the raw id.
+- Lost update: two staff members can race. The commit compares the previewed value (expectedBefore) inside the transaction through the injected compare and returns state_changed when it moved. Take an advisory lock keyed on the organization, and read the caller's grants with SELECT ... FOR SHARE under it, so a concurrent revocation either commits first or waits for this write.
+- Duplicate confirm: if two confirms of one token race, the unique index on the audit token raises 23505. Catch it inside the store and return token_already_used, never an error or a 503.
+- Migration 0184: add organization.status.safe_write to every constraint and to authorization_audit_summary_valid where organization.profile.safe_write appears, with target_org_refs cardinality > 0, the safe-write halves check, the receipt shape with fields exactly ["status"], and unique indexes on its token and receipt as 0150 adds for the profile. Start from 0183's definitions so every operation and every existing row stays valid.
+- Conformance: run runSafeWriteConformance over the status write's own builder, the function the gateway route calls, not over the raw createSafeWrite factory.
+- Mutation script: copy packages/organizations/test/profile-writes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$"). Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- HTTP: follow organization-profile.ts for the session, Origin and content-type checks, headers, body parsing, error mapping and the try/catch around the handler, and have the HTTP test call the real handler.
+- The Postgres test must exercise the store against the database (test:db), including one successful commit whose audit row has the hashed organization reference and the new operation, and one refused org-owner write.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/status-writes-mutations.mjs that makes a named test fail.
+(1) Let the status bypass preview: the runSafeWriteConformance test for the status write fails.
+(2) Accept an org-owner grant in the decision function the store calls: the owner-write-refused test fails.
+(3) Make the state compare the store calls always succeed: the stale-confirm test fails.
+(4) Ignore the stored record in OrganizationRepository: the stored-override-wins test fails.
+Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/status-writes.ts (new)
+- packages/organizations/src/organizations.ts: only the optional statusRecords port on OrganizationRepository, the optional record argument of deriveOrganizationStatus, and applying the record wherever status is derived
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/status-writes.test.ts (new)
+- packages/organizations/test/status-writes-mutations.mjs (new)
+- packages/db/migrations/0184_organization_status_override.sql (new; additive)
+- packages/db/src/postgres-organization-status-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-status.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0184_organization_status_override" after "0183_candidate_bank_details" in both schema_migrations lists
+- apps/gateway/src/organization-status.ts (new; modelled on organization-profile.ts)
+- apps/gateway/src/index.ts (route wiring only)
+- apps/gateway/src/login-runtime.ts (wiring only: construct the status store next to the organization profile store, pass its status reader to OrganizationRepository, and construct the status service from it when the safe-write key is set)
+- apps/gateway/test/organization-status-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append the new built test files at the END of the existing node --test lists in test and test:db, add a test:organization-status:mutations script that runs the mutation script, and add " && npm run test:organization-status:mutations" as its own step right after "npm run test:organization-documents:mutations" in test. Never change dependencies.
+
+Out of scope: creating organizations or sub-organizations, commercial terms, account-manager assignment, approved-to-hire, the status-change email or any notification, any UI beyond what the route needs, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -425,6 +517,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU301_PATHS,
     acceptance: SHU301_ACCEPTANCE,
     brief: SHU301_BRIEF,
+  }),
+  "SHU-305": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU305_PATHS,
+    revision_paths: SHU305_PATHS,
+    acceptance: SHU305_ACCEPTANCE,
+    brief: SHU305_BRIEF,
   }),
 });
 

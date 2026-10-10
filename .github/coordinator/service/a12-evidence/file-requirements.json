@@ -550,7 +550,9 @@
     "file": ".github/coordinator/test/card-run.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
-    "call_sites": []
+    "call_sites": [
+      ".github/coordinator/test/card-run.test.mjs:909"
+    ]
   },
   {
     "file": ".github/coordinator/test/claude-contract.test.mjs",
