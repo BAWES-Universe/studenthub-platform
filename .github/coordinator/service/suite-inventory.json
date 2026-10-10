@@ -2020,6 +2020,18 @@
     "SHU-86 mutation M43 post the report while the run still holds the lock",
     "SHU-86 mutation M44 wait on Linear without a deadline",
     "SHU-86 mutation M45 copy the card's state name into the report unflattened",
+    "SHU-86 mutation M46 let the timer run the same revision twice",
+    "SHU-86 mutation M47 run while the host is paused",
+    "SHU-86 mutation M48 keep the claim when the host was taken after it",
+    "SHU-86 mutation M49 stay silent about a refusal before arming",
+    "SHU-86 mutation M50 report a refusal before arming as a failed revert",
+    "SHU-86 mutation M51 replace timer units that hold other content",
+    "SHU-86 mutation M52 remove the timer while its run is going",
+    "SHU-86 mutation M53 accept a timer that did not come up",
+    "SHU-86 mutation M54 let systemd kill a run before its revert",
+    "SHU-86 mutation M55 count the timer from the service's last run",
+    "SHU-86 mutation M56 remove the unit files while the timer is still on",
+    "SHU-86 mutation M57 ignore a failed disable",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2050,6 +2062,12 @@
     "SHU-86 C28: a report that cannot be posted is recorded, and never changes the run's result",
     "SHU-86 C29: the report is one comment of plain lines, whatever the coordinator's reason says",
     "SHU-86 C30: the report goes out after the lock is released, and a stalled Linear cannot hold the run",
+    "SHU-86 C31: the timer runs the committed card once per installed revision, and never again at that revision",
+    "SHU-86 C32: a paused, locked, busy or not-ready host is skipped without touching the host or Linear",
+    "SHU-86 C33: a refusal before arming spends the revision's run and is reported once",
+    "SHU-86 C34: a run that finds the host taken after the claim gives the claim back",
+    "SHU-86 C35: the timer installs exact units, never replaces different ones, and is removed only between runs",
+    "SHU-86 C36: the timer commands take no flags",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17594,6 +17612,54 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M46 let the timer run the same revision twice",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M47 run while the host is paused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M48 keep the claim when the host was taken after it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M49 stay silent about a refusal before arming",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M50 report a refusal before arming as a failed revert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M51 replace timer units that hold other content",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M52 remove the timer while its run is going",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M53 accept a timer that did not come up",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M54 let systemd kill a run before its revert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M55 count the timer from the service's last run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M56 remove the unit files while the timer is still on",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M57 ignore a failed disable",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17711,6 +17777,30 @@
     },
     {
       "name": "SHU-86 C30: the report goes out after the lock is released, and a stalled Linear cannot hold the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C31: the timer runs the committed card once per installed revision, and never again at that revision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C32: a paused, locked, busy or not-ready host is skipped without touching the host or Linear",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C33: a refusal before arming spends the revision's run and is reported once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C34: a run that finds the host taken after the claim gives the claim back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C35: the timer installs exact units, never replaces different ones, and is removed only between runs",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C36: the timer commands take no flags",
       "capabilities": []
     },
     {

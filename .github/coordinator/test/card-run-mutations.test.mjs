@@ -94,8 +94,8 @@ const CASES = [
   },
   {
     name: "M14 take another run's lock",
-    from: '{ flag: "wx", mode: 0o600 }',
-    to: "{ mode: 0o600 } /* SHU86-M14 */",
+    from: 'String(process.pid), { flag: "wx", mode: 0o600 }',
+    to: "String(process.pid), { mode: 0o600 } /* SHU86-M14 */",
     pattern: "SHU-86 C14:",
   },
   {
@@ -300,6 +300,79 @@ const CASES = [
     from: "from ${plainReason(card.from)} to Todo",
     to: "from ${card.from} to Todo",
     pattern: "SHU-86 C29:",
+  },
+  {
+    name: "M46 let the timer run the same revision twice",
+    from: '{ flag: "wx", mode: 0o600 });\n  } catch (error) {\n    if (error.code === "EEXIST")',
+    to: '{ mode: 0o600 }); // SHU86-M46\n  } catch (error) {\n    if (error.code === "EEXIST")',
+    pattern: "SHU-86 C31:",
+  },
+  {
+    name: "M47 run while the host is paused",
+    from: '  if (io.fs.existsSync(paths.pause)) return skip("PAUSED",',
+    to: '  if (false) return skip("PAUSED", // SHU86-M47\n',
+    pattern: "SHU-86 C32:",
+  },
+  {
+    name: "M48 keep the claim when the host was taken after it",
+    from: "      io.fs.unlinkSync(claim);\n      return skip(",
+    to: "      return skip( // SHU86-M48\n",
+    pattern: "SHU-86 C34:",
+  },
+  {
+    name: "M49 stay silent about a refusal before arming",
+    from: "    result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });\n  }\n  try {",
+    to: "  }\n  try { // SHU86-M49",
+    pattern: "SHU-86 C33:",
+  },
+  {
+    name: "M50 report a refusal before arming as a failed revert",
+    file: "service/card-prepare.mjs",
+    from: '  lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."',
+    to: '  lines.push(false ? "" // SHU86-M50\n',
+    pattern: "SHU-86 C33:",
+  },
+  {
+    name: "M51 replace timer units that hold other content",
+    from: '    else if (io.fs.readFileSync(file, "utf8") !== text) refuse(',
+    to: "    else if (false) refuse( // SHU86-M51\n",
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M52 remove the timer while its run is going",
+    from: '  if (["active", "activating", "deactivating", "reloading"].includes(state)) {',
+    to: "  if (false) { // SHU86-M52",
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M53 accept a timer that did not come up",
+    from: '  if (enabled !== "enabled" || active !== "active") refuse(',
+    to: "  if (false) refuse( // SHU86-M53\n",
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M54 let systemd kill a run before its revert",
+    from: '    "TimeoutStartSec=8h",',
+    to: '    "TimeoutStartSec=90min", // SHU86-M54',
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M55 count the timer from the service's last run",
+    from: "    `OnCalendar=${AUTO_SCHEDULE}`,",
+    to: '    "OnUnitInactiveSec=30min", // SHU86-M55',
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M56 remove the unit files while the timer is still on",
+    from: '  if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {',
+    to: "  if (false) { // SHU86-M56",
+    pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M57 ignore a failed disable",
+    from: '  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);',
+    to: '  if (io.fs.existsSync(timerFile)) io.exec("systemctl", ["disable", "--now", AUTO_TIMER]); // SHU86-M57',
+    pattern: "SHU-86 C35:",
   },
 ];
 

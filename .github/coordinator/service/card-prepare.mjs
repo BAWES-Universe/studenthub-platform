@@ -243,6 +243,7 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   EXPIRED: "the run window closed before the episode ended",
   NOT_ELIGIBLE: "the card was not eligible on the first tick",
   ERROR: "the run failed",
+  NOT_STARTED: "the run refused before arming",
 });
 
 export function reportMarker(activationId) {
@@ -260,6 +261,7 @@ export function renderRunReport(result) {
     reportMarker(result.activation_id),
     `Card run on ${result.card} (${result.kind}): ${result.outcome}, ${RUN_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
   ];
+  if (result.trigger === "timer") lines.push(`Started by the card-run timer, once for revision ${result.revision}.`);
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
   const card = result.prepared?.card;
   const branch = result.prepared?.branch;
@@ -269,9 +271,9 @@ export function renderRunReport(result) {
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
   lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
-  lines.push(result.revert?.reverted
-    ? "The host is reverted and idle."
-    : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);
+  lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."
+    : result.revert?.reverted ? "The host is reverted and idle."
+      : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);
   return lines.join("\n");
 }
 

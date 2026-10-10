@@ -15,8 +15,14 @@
 // coordinator/<card> branch at the installed revision (card-prepare.mjs), and
 // after the revert it posts its own report on the SHU-71 tracking card. Still
 // an operator step: installing the revision with the prerequisite
-// provisioner. Nothing here starts on its own: there is no timer, and
-// importing the module has no effect.
+// provisioner.
+//
+// The fourth slice adds `auto`, what the card-run timer starts: it runs the
+// committed card at most once per installed revision and otherwise does
+// nothing. A skip (paused, locked, busy, not installed, a review card, already
+// ran) touches neither the host nor Linear. `timer-install` and `timer-remove`
+// put the timer on the host and take it off; installing it is the owner's one
+// go. Importing the module has no effect.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -36,6 +42,7 @@ export const CARD_RUN_PATHS = Object.freeze({
   lock: "/run/lock/shu-card-run.lock",
   tmp: "/tmp",
   coordinatorEnv: COORDINATOR_ENV,
+  pause: "/etc/shu/card-run.paused",
 });
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
 export const RUN_DROP_IN = "95-v1-run.conf";
@@ -51,6 +58,40 @@ export const CARD_RUN_LIMITS = Object.freeze({
   killWaitMs: 10 * 1000,
   reportTimeoutMs: 30 * 1000,
 });
+
+// The timer and the one-shot service it starts. The service may run far longer
+// than any run can take, so systemd never kills a run before its revert. The
+// pause file is checked by `auto` itself, not by a unit condition, and the
+// timer is on the calendar rather than relative to the service's last run: a
+// start skipped by a condition never makes the service inactive again, so a
+// timer counting from that would never fire again.
+export const AUTO_SERVICE = "shu-card-run.service";
+export const AUTO_TIMER = "shu-card-run.timer";
+export const AUTO_SCHEDULE = "*:00/30";
+export function autoServiceUnit({ node, module }) {
+  return [
+    "[Unit]",
+    "Description=StudentHub card run: the committed card, at most once per installed revision",
+    "[Service]",
+    "Type=oneshot",
+    "User=root",
+    `ExecStart=${node} ${module} auto`,
+    "TimeoutStartSec=8h",
+    "",
+  ].join("\n");
+}
+export function autoTimerUnit() {
+  return [
+    "[Unit]",
+    "Description=Every half hour, run the installed revision's card if it has not run yet",
+    "[Timer]",
+    `OnCalendar=${AUTO_SCHEDULE}`,
+    `Unit=${AUTO_SERVICE}`,
+    "[Install]",
+    "WantedBy=timers.target",
+    "",
+  ].join("\n");
+}
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 export function refuse(code, detail = "") {
@@ -276,7 +317,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
 // coordinator ends the episode or the window closes, then revert.
-export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null }) {
+export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator" }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -286,7 +327,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const busy = busyReasons(io, paths);
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
-    const config = JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
+    const config = readConfig(io, paths);
     const plan = planRun({ config, revision, now: io.now(), review, limits });
     credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
     const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials });
@@ -322,7 +363,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
-    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, prepared, ...result, ticks, revert: reverted };
+    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
@@ -330,6 +371,120 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   // released, so a slow Linear never holds the host. The report is bounded
   // and best effort: it never changes the result.
   return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };
+}
+
+function readConfig(io, paths) {
+  return JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
+}
+
+// Refusals that mean "not now" rather than "this run went wrong": a later
+// timer start may find the host free.
+const NOT_NOW = Object.freeze(new Set(["CARD_RUN_LOCKED", "CARD_RUN_HOST_BUSY"]));
+
+export const autoClaim = (paths, revision, id) => path.join(paths.stateDir, `card-run-auto-${revision}-${id}.json`);
+
+// What the timer starts. It runs the committed card at most once per installed
+// revision: the claim is written before the run starts, so a crash or a
+// refusal still counts as that revision's run and nothing loops. Every reason
+// not to run is a skip that touches neither the host nor Linear.
+export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS }) {
+  if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
+  const skip = (skipped, reason) => ({ ok: true, trigger: "timer", skipped, reason });
+  if (io.fs.existsSync(paths.pause)) return skip("PAUSED", `${paths.pause} exists`);
+  if (io.fs.existsSync(paths.lock)) return skip("LOCKED", `${paths.lock} exists`);
+  const busy = busyReasons(io, paths);
+  if (busy.length) return skip("HOST_BUSY", busy.join("; "));
+  let revision;
+  let plan;
+  try {
+    revision = installedRevision(io, paths);
+    plan = planRun({ config: readConfig(io, paths), revision, now: io.now(), limits });
+  } catch (error) {
+    // A review card needs its pull request from an operator, so the timer never
+    // runs one; any other planning refusal waits for the next install.
+    return skip("NOT_READY", error.message);
+  }
+  const claim = autoClaim(paths, revision, plan.id);
+  try {
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (error.code === "EEXIST") return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
+    throw error;
+  }
+  let result;
+  try {
+    result = await runCard({ io, paths, limits, trigger: "timer" });
+  } catch (error) {
+    if (NOT_NOW.has(error.code)) {
+      io.fs.unlinkSync(claim);
+      return skip(error.code === "CARD_RUN_LOCKED" ? "LOCKED" : "HOST_BUSY", error.message);
+    }
+    // Refused before arming: nothing was armed, and the claim stands, so the
+    // owner hears about it once instead of on every timer start.
+    result = { ok: false, card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger: "timer", revision,
+      outcome: "NOT_STARTED", reason: error.message, code: error.code ?? "CARD_RUN_ERROR", ticks: [], revert: null };
+    let credentials = null;
+    try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
+    result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });
+  }
+  try {
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, activation_id: result.activation_id, outcome: result.outcome, ok: result.ok })}\n`, { mode: 0o600 });
+  } catch { /* the claim alone already stops a second run */ }
+  return { ...result, claim };
+}
+
+// Puts the timer on the host: the owner's one go. It never replaces units with
+// other content; take the old ones off first.
+export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
+  if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
+  if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
+  const units = [[AUTO_SERVICE, autoServiceUnit({ node, module })], [AUTO_TIMER, autoTimerUnit()]];
+  for (const [name, text] of units) {
+    const file = path.join(paths.unitDir, name);
+    if (!io.fs.existsSync(file)) writeExclusive(io, file, text, 0o644);
+    else if (io.fs.readFileSync(file, "utf8") !== text) refuse("CARD_RUN_TIMER", `${file} exists with other content; run timer-remove first`);
+  }
+  run(io, "systemctl", ["daemon-reload"]);
+  run(io, "systemctl", ["enable", "--now", AUTO_TIMER]);
+  const enabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
+  const active = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
+  if (enabled !== "enabled" || active !== "active") refuse("CARD_RUN_TIMER", `the timer reads ${enabled || "unknown"}/${active || "unknown"} after install`);
+  return { installed: true, units: units.map(([name]) => path.join(paths.unitDir, name)), enabled, active };
+}
+
+// Takes the timer off. It refuses while a run the timer started is still going:
+// stopping that service would kill the run before its revert.
+export function removeTimer(io, paths = CARD_RUN_PATHS) {
+  if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
+  const state = io.exec("systemctl", ["is-active", AUTO_SERVICE]).stdout.trim();
+  if (["active", "activating", "deactivating", "reloading"].includes(state)) {
+    refuse("CARD_RUN_TIMER_BUSY", `${AUTO_SERVICE} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
+  }
+  // The unit files stay until the timer reads back disabled and inactive, so a
+  // failed disable or readback can be retried rather than leave an enabled
+  // timer with no files. A retry after the timer file is gone skips the
+  // disable, which would fail on a missing unit.
+  const timerFile = path.join(paths.unitDir, AUTO_TIMER);
+  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);
+  const timerEnabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
+  const timerActive = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
+  if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {
+    refuse("CARD_RUN_TIMER", `${AUTO_TIMER} reads ${timerEnabled || "unknown"}/${timerActive || "unknown"} after disable; its unit files stay`);
+  }
+  const failed = [];
+  for (const name of [AUTO_TIMER, AUTO_SERVICE]) {
+    const file = path.join(paths.unitDir, name);
+    if (!io.fs.existsSync(file)) continue;
+    try {
+      io.fs.unlinkSync(file);
+    } catch (error) {
+      failed.push(`${file} (${error.code ?? error.message})`);
+    }
+  }
+  run(io, "systemctl", ["daemon-reload"]);
+  const left = [AUTO_TIMER, AUTO_SERVICE].map((name) => path.join(paths.unitDir, name)).filter((file) => io.fs.existsSync(file));
+  if (failed.length || left.length) refuse("CARD_RUN_TIMER", `still present: ${[...new Set([...failed, ...left])].join(", ")}`);
+  return { removed: true };
 }
 
 export const defaultIO = Object.freeze({
@@ -346,7 +501,10 @@ export const defaultIO = Object.freeze({
 
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
-  if (!["plan", "run"].includes(command)) refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes]");
+  if (!["plan", "run", "auto", "timer-install", "timer-remove"].includes(command)) {
+    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto | timer-install | timer-remove");
+  }
+  if (!["plan", "run"].includes(command) && rest.length) refuse("CARD_RUN_USAGE", `${command} takes no flags`);
   const flags = {};
   for (let i = 0; i < rest.length; i += 2) {
     if (!/^--(review-pr|review-head|review-base|author-family)$/.test(rest[i] ?? "") || rest[i + 1] === undefined) refuse("CARD_RUN_USAGE", `unknown or empty flag ${rest[i]}`);
@@ -363,7 +521,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     const { command, review } = parseArgs(argv);
     if (command === "plan") {
       const revision = installedRevision(io, paths);
-      const config = JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
+      const config = readConfig(io, paths);
       const plan = planRun({ config, revision, now: io.now(), review });
       // What the run would do to the card and its branch, read only.
       let prepare;
@@ -374,6 +532,12 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
         prepare = { refused: error.code ?? "CARD_RUN_ERROR", reason: error.message };
       }
       return { code: 0, output: { ...plan, busy: busyReasons(io, paths), prepare } };
+    }
+    if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath }) };
+    if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
+    if (command === "auto") {
+      const result = await autoRun({ io, paths });
+      return { code: result.skipped || (result.ok && result.revert?.reverted) ? 0 : 1, output: result };
     }
     const result = await runCard({ io, paths, review });
     return { code: result.ok && result.revert.reverted ? 0 : 1, output: result };

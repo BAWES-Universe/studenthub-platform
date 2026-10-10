@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   planRun, tickOutcome, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
+  autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason } from "../service/card-prepare.mjs";
 
@@ -29,6 +30,7 @@ const PATHS = Object.freeze({
   lock: "/run/lock/shu-card-run.lock",
   tmp: "/tmp",
   coordinatorEnv: "/srv/shu/coordinator.env",
+  pause: "/etc/shu/card-run.paused",
 });
 const TODO_ID = "todo-state-id";
 const UNITS = ["shu-supervisor.service", "shu-coordinator.service"];
@@ -718,4 +720,176 @@ test("SHU-86 C30: the report goes out after the lock is released, and a stalled 
   assert.match(result.report.reason, /did not answer within 50 ms/);
   assert.ok(Date.now() - started < 5000, "the run returned at the report deadline");
   reverted(host);
+});
+
+// The timer's view of a run: what `auto` did to the host and to Linear.
+const passOnFirstTick = (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)"));
+const CLAIM = autoClaim(PATHS, REV, "SHU-301");
+const untouched = (host) => {
+  noArming(host);
+  assert.deepEqual(host.api, [], "Linear and GitHub were not called");
+  assert.deepEqual(host.reports, []);
+};
+
+test("SHU-86 C31: the timer runs the committed card once per installed revision, and never again at that revision", async () => {
+  const host = fakeHost({ onTick: passOnFirstTick });
+  const first = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(first.skipped, undefined);
+  assert.equal(first.outcome, "PASS");
+  assert.equal(first.trigger, "timer");
+  assert.equal(first.claim, CLAIM);
+  reverted(host);
+  assert.equal(host.reports.length, 1);
+  assert.match(host.reports[0], new RegExp(`^Started by the card-run timer, once for revision ${REV}\\.$`, "m"));
+  const recorded = JSON.parse(host.files.get(CLAIM).text);
+  assert.equal(recorded.outcome, "PASS");
+  assert.equal(recorded.revision, REV);
+  assert.equal(host.files.get(CLAIM).mode, 0o600);
+  const ticks = host.ticks;
+  const calls = host.calls.length;
+  const api = host.api.length;
+  const second = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(second.skipped, "ALREADY_RAN");
+  assert.equal(host.ticks, ticks, "no second run");
+  assert.equal(host.api.length, api, "no second Linear call");
+  assert.equal(host.reports.length, 1, "no second report");
+  assert.ok(host.calls.slice(calls).every((call) => !call.startsWith("systemctl")), "no unit touched");
+  host.head = HEAD;
+  host.main = HEAD;
+  host.files.set(PATHS.receipt, { text: JSON.stringify({ version: 1, revision: HEAD, state: "VERIFIED", effects: [] }), mode: 0o644, uid: 0, gid: 0 });
+  host.branchHead = HEAD;
+  const next = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(next.skipped, undefined, "a new install gets its own run");
+  assert.equal(next.claim, autoClaim(PATHS, HEAD, "SHU-301"));
+});
+
+test("SHU-86 C32: a paused, locked, busy or not-ready host is skipped without touching the host or Linear", async () => {
+  const cases = {
+    PAUSED: (h) => h.files.set(PATHS.pause, { text: "" }),
+    LOCKED: (h) => h.files.set(PATHS.lock, { text: "1" }),
+    HOST_BUSY: (h) => { h.workers = () => 1; },
+    NOT_READY: (h) => { h.dirty = " M x\n"; },
+  };
+  for (const [code, edit] of Object.entries(cases)) {
+    const host = fakeHost({ onTick: passOnFirstTick });
+    edit(host);
+    const { code: exit, output } = await main(["auto"], host.io, PATHS);
+    assert.equal(output.skipped, code, code);
+    assert.equal(exit, 0, `${code} is a quiet skip`);
+    assert.equal(host.files.has(CLAIM), false, `${code} claims nothing`);
+    untouched(host);
+  }
+  const review = fakeHost({ id: "SHU-304" });
+  const skipped = await attempt(() => autoRun({ io: review.io, paths: PATHS }));
+  assert.equal(skipped.skipped, "NOT_READY", "the timer never runs a review card");
+  assert.match(skipped.reason, /CARD_RUN_REVIEW_INPUT/);
+  untouched(review);
+  const user = fakeHost();
+  user.io = { ...user.io, uid: () => 1000 };
+  assert.equal((await attempt(() => autoRun({ io: user.io, paths: PATHS }))).thrown, "CARD_RUN_NOT_ROOT");
+});
+
+test("SHU-86 C33: a refusal before arming spends the revision's run and is reported once", async () => {
+  const host = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
+  const { code, output } = await main(["auto"], host.io, PATHS);
+  assert.equal(code, 1);
+  assert.equal(output.outcome, "NOT_STARTED");
+  assert.equal(output.ok, false);
+  noArming(host);
+  assert.equal(host.reports.length, 1);
+  assert.match(host.reports[0], /^Card run on SHU-301 \(card\): NOT_STARTED, the run refused before arming\.$/m);
+  assert.match(host.reports[0], /^Nothing was armed, so there was nothing to revert\.$/m);
+  assert.doesNotMatch(host.reports[0], /revert did not finish/);
+  assert.equal(JSON.parse(host.files.get(CLAIM).text).outcome, "NOT_STARTED");
+  const again = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(again.skipped, "ALREADY_RAN");
+  assert.equal(host.reports.length, 1, "reported once, not on every timer start");
+});
+
+test("SHU-86 C34: a run that finds the host taken after the claim gives the claim back", async () => {
+  const host = fakeHost({ onTick: passOnFirstTick });
+  const write = host.fs.writeFileSync;
+  host.io = { ...host.io, fs: { ...host.fs, writeFileSync: (file, text, options) => {
+    if (file === PATHS.lock) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+    return write(file, text, options);
+  } } };
+  const result = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(result.skipped, "LOCKED");
+  assert.equal(host.files.has(CLAIM), false, "the next timer start may still run this revision");
+  untouched(host);
+});
+
+// systemd as the timer commands see it: unit files on disk, and the states
+// the test sets.
+function withSystemd(host, { serviceState = "inactive", timerState = "active", enabled = "enabled", disable = "ok" } = {}) {
+  const exec = host.exec;
+  host.io = { ...host.io, nodePath: () => "/usr/bin/node", exec: (file, args) => {
+    const line = args.join(" ");
+    if (file === "systemctl" && line === `disable --now ${AUTO_TIMER}`) {
+      host.calls.push(`systemctl ${line}`);
+      if (disable === "fails") return { status: 1, stdout: "", stderr: "failed" };
+      if (disable === "ok") { timerState = "inactive"; enabled = "disabled"; }
+      if (disable === "no-readback") { timerState = ""; enabled = ""; }
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (file === "systemctl" && line === `is-active ${AUTO_SERVICE}`) { host.calls.push(`systemctl ${line}`); return { status: serviceState === "active" ? 0 : 3, stdout: `${serviceState}\n`, stderr: "" }; }
+    if (file === "systemctl" && line === `is-active ${AUTO_TIMER}`) { host.calls.push(`systemctl ${line}`); return { status: 0, stdout: `${timerState}\n`, stderr: "" }; }
+    if (file === "systemctl" && line === `is-enabled ${AUTO_TIMER}`) { host.calls.push(`systemctl ${line}`); return { status: 0, stdout: `${enabled}\n`, stderr: "" }; }
+    return exec(file, args);
+  } };
+  return host;
+}
+
+test("SHU-86 C35: the timer installs exact units, never replaces different ones, and is removed only between runs", async () => {
+  const MODULE = "/srv/shu/studenthub-platform/.github/coordinator/service/card-run.mjs";
+  const service = `${PATHS.unitDir}/${AUTO_SERVICE}`;
+  const timer = `${PATHS.unitDir}/${AUTO_TIMER}`;
+  const host = withSystemd(fakeHost());
+  const installed = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
+  assert.equal(installed.installed, true);
+  assert.equal(host.files.get(service).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE }));
+  assert.equal(host.files.get(timer).text, autoTimerUnit());
+  assert.match(host.files.get(service).text, /^ExecStart=\/usr\/bin\/node \S+card-run\.mjs auto$/m);
+  assert.doesNotMatch(host.files.get(service).text, /^Condition/m, "a skipped start would leave a relative timer stuck; auto checks the pause file");
+  assert.match(host.files.get(service).text, /^TimeoutStartSec=8h$/m);
+  assert.match(host.files.get(timer).text, /^OnCalendar=\*:00\/30$/m);
+  assert.doesNotMatch(host.files.get(timer).text, /^On(Unit|Boot|Startup|Active)/m, "the timer never counts from the service's last state");
+  for (const file of [service, timer]) assert.equal(host.files.get(file).mode, 0o644);
+  assert.ok(host.calls.includes(`systemctl enable --now ${AUTO_TIMER}`));
+  assert.equal((await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).installed, true, "installing the same units again is a no-op");
+  const other = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/local/bin/node", module: MODULE }));
+  assert.equal(other.thrown, "CARD_RUN_TIMER", "different units are never replaced");
+  assert.equal(host.files.get(service).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE }));
+  const relative = await attempt(() => installTimer(withSystemd(fakeHost()).io, PATHS, { node: "node", module: MODULE }));
+  assert.equal(relative.thrown, "CARD_RUN_TIMER");
+  const dead = withSystemd(fakeHost(), { timerState: "failed" });
+  assert.equal((await attempt(() => installTimer(dead.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).thrown, "CARD_RUN_TIMER", "a timer that does not come up is refused");
+  const running = withSystemd(host, { serviceState: "activating" });
+  const busy = await attempt(() => removeTimer(running.io, PATHS));
+  assert.equal(busy.thrown, "CARD_RUN_TIMER_BUSY", "never stop a run before its revert");
+  assert.equal(host.files.has(service), true);
+  assert.ok(!host.calls.includes(`systemctl disable --now ${AUTO_TIMER}`));
+  for (const [label, options, code] of [
+    ["a timer that stays on after disable", { disable: "stays" }, "CARD_RUN_TIMER"],
+    ["a failed disable, even with the timer already inactive", { disable: "fails", timerState: "inactive" }, "CARD_RUN_COMMAND"],
+    ["a disable whose readback fails", { disable: "no-readback" }, "CARD_RUN_TIMER"],
+  ]) {
+    assert.equal((await attempt(() => removeTimer(withSystemd(host, options).io, PATHS))).thrown, code, `${label} is refused`);
+    assert.equal(host.files.has(timer) && host.files.has(service), true, `after ${label} both unit files stay for a retry`);
+  }
+  const idle = withSystemd(host);
+  assert.deepEqual(await attempt(() => removeTimer(idle.io, PATHS)), { removed: true });
+  assert.equal(host.files.has(service), false);
+  assert.equal(host.files.has(timer), false);
+  assert.ok(host.calls.includes(`systemctl disable --now ${AUTO_TIMER}`));
+  const { code, output } = await main(["timer-install"], withSystemd(fakeHost()).io, PATHS);
+  assert.equal(code, 0);
+  assert.equal(output.installed, true);
+});
+
+test("SHU-86 C36: the timer commands take no flags", () => {
+  for (const command of ["auto", "timer-install", "timer-remove"]) {
+    assert.equal(parseArgs([command]).command, command);
+    assert.throws(() => parseArgs([command, "--review-pr", "1"]), { code: "CARD_RUN_USAGE" });
+  }
 });
