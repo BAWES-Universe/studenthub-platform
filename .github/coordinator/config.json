@@ -11,7 +11,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-301"
+      "SHU-305"
     ]
   },
   "adapter_pause_map": {},
@@ -235,6 +235,47 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/test/organization-documents-http.test.ts",
         "apps/gateway/test/organization-documents-mutations.mjs",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-305",
+      "authorization_ref": "SHU-305",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "seventh real card and the first for the card-run timer, a whole-tree card: slice O5a (staff and admin change an organization's status through safe write); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/status-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/status-writes.test.ts",
+        "packages/organizations/test/status-writes-mutations.mjs",
+        "packages/db/migrations/0184_organization_status_override.sql",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-status.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-status-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/status-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/status-writes.test.ts",
+        "packages/organizations/test/status-writes-mutations.mjs",
+        "packages/db/migrations/0184_organization_status_override.sql",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-status.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-status-http.test.ts",
         "package.json"
       ]
     }
