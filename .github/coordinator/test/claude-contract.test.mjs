@@ -109,7 +109,7 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.deepEqual(call.args.slice(call.args.indexOf("--disallowedTools"), call.args.indexOf("--disallowedTools") + 2), ["--disallowedTools", "mcp__*"]);
   assert.ok(call.args.includes("--strict-mcp-config"));
   assert.equal(call.args.join(" ").includes("Bash"), false, "Claude's own tool surface cannot execute builder-authored code");
-  assert.equal(CLAUDE_MODEL, "opus", "the verifier must never inherit Fable or another host default");
+  assert.equal(CLAUDE_MODEL, "claude-opus-5", "the verifier must never inherit Fable or another host default");
   assert.ok(call.args.includes("--session-id"));
   assert.ok(call.args.includes(ATTEMPT));
   assert.match(call.args.at(-1), new RegExp(`Bound head: ${SHA}`));

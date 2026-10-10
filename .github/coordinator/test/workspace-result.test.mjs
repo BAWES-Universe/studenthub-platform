@@ -199,7 +199,7 @@ test("SHU-228: new and resumed model choices and worker network are explicit",()
     const args=codex.buildCodexArgs(input,{resume,sessionId:randomUUID(),schemaFile:"/tmp/schema",cwd:"/tmp/worker"});
     assert.equal(args[args.indexOf("--model")+1],"gpt-5.6-sol");
     assert.equal(args[args.indexOf("--config")+1],"sandbox_workspace_write.network_access=false");
-    const review=buildClaudeArgs(input,{resume});assert.equal(review[review.indexOf("--model")+1],"opus");
+    const review=buildClaudeArgs(input,{resume});assert.equal(review[review.indexOf("--model")+1],"claude-opus-5");
   }
 });
 

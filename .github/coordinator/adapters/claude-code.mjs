@@ -22,7 +22,7 @@ import { confinedTestResultLine, runReviewEvidence, sensitiveEnvironmentValues }
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 
 export const ADAPTER_NAME = "claude-code";
-export const CLAUDE_MODEL = "opus";
+export const CLAUDE_MODEL = "claude-opus-5";
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["PASS"]);
 export const CALLBACK_STAGES = Object.freeze(["PASS", "BLOCKED", "FAILED"]);
 const ATTEMPT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
