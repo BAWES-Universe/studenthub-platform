@@ -1,0 +1,179 @@
+name: Verify claim manifests
+
+# The second half of the receipt authority. `verifier-receipt.yml` produces receipts; this workflow checks
+# that a candidate's pins actually describe runs that exist, and that the receipt inside each one records the
+# tests the candidate claims. A pin is a small JSON object, so the authoring lane can write one - and a pin
+# nobody verifies is worth exactly as much as the forged receipt file it replaced. This is where a pin stops
+# being a claim and starts being evidence, and it runs from protected main, so a candidate cannot choose the
+# code that judges it.
+#
+# It is deliberately cheap: it re-fetches runs that already exist rather than running the suite again.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Commit whose committed claim manifest should be verified
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+jobs:
+  # The tools that turn a pin into evidence are themselves checked, from the protected checkout, before any pin
+  # is judged. Their tests stub `gh`, so they need no token and no network, and they assert the refusals: a run
+  # that is not a dispatch of this workflow on main, an archive whose bytes are not the ones GitHub digested, a
+  # receipt with no attestation, a receipt belonging to another run, an attestation naming another workflow, a
+  # rule whose fetched bytes disagree with the blob id the API reports, a fetch the API will not serve, a run
+  # that is not the protected branch's (which emits no pin at all), and a manifest carrying no pin for the run
+  # being verified.
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Test the receipt tooling
+        run: node --test --test-reporter=tap .github/verifier-receipt/test/*.test.mjs
+
+  verify:
+    needs: selftest
+    runs-on: ubuntu-latest
+    steps:
+      # The verifier comes from the dispatching ref - protected main - and never from the candidate.
+      - name: Check out the verifier from the protected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: verifier
+
+      - name: Check out the candidate for its manifest and receipts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+
+      # A candidate that touches the authority is refused outright: it cannot be measured by a verifier it
+      # could have altered, and it cannot use this run to approve the change that introduces it.
+      #
+      # ITEM 7a. THIS CALLS THE MODULE THAT DECIDES, AND USED TO GREP A LISTING THE AUTHORITY HAD ABANDONED.
+      #
+      # The step was `gh api /compare/main...<sha> --jq .files[].filename` piped through `grep -E`, and the
+      # authority's own `authority-scope.mjs` records, with measurements, why that form answers the wrong
+      # question: GitHub's compare endpoint caps `files` at 300 entries and truncates with nothing in the
+      # response saying so, and A RENAME IS REPORTED UNDER ITS NEW NAME ONLY. So a candidate that ran
+      # `git mv .github/verifier-receipt/admissibility.mjs tools/adm.mjs` - which DELETES the rule that
+      # decides - produced a listing naming `tools/adm.mjs`, matched no pattern, and was admitted. A review
+      # ran exactly that and this step printed "the candidate does not alter the receipt authority".
+      #
+      # `decideAuthorityScope` was already in the protected checkout and this workflow was already checking it
+      # out; it just never called it. It reads git TREE object ids - which move when a file moves, and carry
+      # `mode`, so a chmod is a change too - against the candidate's MERGE BASE rather than against main, and
+      # it refuses a truncated tree BY NAME instead of inferring completeness from a length. The CLI at the
+      # foot of that module is the entry point; its reads go through `fetch` with this job's own token.
+      - name: Refuse a candidate that alters the receipt authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          node verifier/.github/verifier-receipt/authority-scope.mjs "$REPO" main "$CANDIDATE_SHA"
+
+      # ITEM 7b. THE GATE BELOW HAS NEVER BEEN TRUE, AND THE PATH IT NAMES IS PENDING THE OWNER'S DECISION.
+      #
+      # PENDING-MANIFEST-PATH - measured, not suspected:
+      #   $ git log --oneline --all -- '.github/coordinator/service/verifier-receipts.json'
+      #   (no output - the file has never existed in any ref of this repository)
+      # so `hashFiles(...)` is `''` on every candidate, the condition is false on every candidate, and THE
+      # ONLY STEP THAT FETCHES, VERIFIES AND COMPARES A PIN HAS NEVER RUN. Everything below is therefore
+      # written and tested but unexercised in production; the suite in `selftest` is what stands behind it.
+      #
+      # WHICH FILE THIS SHOULD NAME IS NOT DECIDED HERE. The three candidates are the phantom name below, the
+      # writer's real output at `.github/coordinator/service/receipts/<name>.json`, and an artifact fetched
+      # through the API; the owner is choosing between them. Naming one here would settle it by accident. The
+      # marker above is the string to grep for when that decision lands - it appears on both steps that depend
+      # on this condition, and they must keep the same condition as each other.
+      - name: Verify every pin the candidate's manifest carries
+        # PENDING-MANIFEST-PATH: always false today; see the comment block above.
+        if: hashFiles('candidate/.github/coordinator/service/verifier-receipts.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          pins=$(node -e "
+            const fs = require('fs');
+            const body = JSON.parse(fs.readFileSync('.github/coordinator/service/verifier-receipts.json', 'utf8'));
+            const pins = Array.isArray(body) ? body : body.pins ?? [];
+            for (const pin of pins) console.log(pin.run_id);
+          ")
+          if [ -z "$pins" ]; then
+            echo "no pins: the manifest can carry no PASS, which is a state and not a failure"
+            exit 0
+          fi
+          for run in $pins; do
+            echo "::group::verifying run $run"
+            # The authority's own fetch tool, run from the protected ref: it reads the run, the artifact and
+            # the attestation back from the API and refuses anything that does not match.
+            #
+            # It also refuses to emit a pin unless the run it is part of is itself on the protected branch,
+            # reading GITHUB_REF and GITHUB_EVENT_NAME, which Actions sets before node starts. This workflow
+            # is workflow_dispatch-only and is dispatched on main, so those are refs/heads/main and
+            # workflow_dispatch here.
+            #
+            # ITEM 3a. WHAT THAT CHECK IS AND IS NOT, CORRECTED. This comment used to say that a copy of this
+            # workflow running from a pull request head "would get an advisory report on stderr and a non-zero
+            # exit instead, which is the intended outcome". That is false, and it was the only place in the
+            # repository addressing the question: a copy of this workflow from a PR head is edited by the same
+            # author who edits the env, so it simply sets GITHUB_REF and GITHUB_EVENT_NAME to main's values and
+            # gets a pin. Measured: an honest pull_request run exits 4 with no pin and no --out file; the same
+            # run setting those two variables itself exits 0 and writes one.
+            #
+            # WHAT ACTUALLY BINDS is that the consumer that matters is THIS workflow: workflow_dispatch-only,
+            # dispatched from protected main, with a real token and a verifier checked out from the
+            # dispatching ref. A candidate cannot dispatch it against itself with a verifier of its own
+            # choosing, and a pin only becomes a record by being committed and surviving this run. The env
+            # check inside fetch-receipt.mjs is a guard rail against ACCIDENT - a stray branch invocation, a
+            # reused step, a local run - and not a defence against a candidate that is trying.
+            node ../verifier/.github/verifier-receipt/fetch-receipt.mjs --repo "$REPO" --run "$run" \
+              --out "/tmp/pin-$run.json"
+            # The pin the candidate wrote must be the pin the API produces, field for field, or the candidate
+            # is asking to be judged on a run that does not say what it claims. The comparison is the
+            # verifier's own module, run from the protected checkout like the fetch tool beside it: it used to
+            # be a `node -e` string here, and a string in a step body is a thing no test can reach.
+            node ../verifier/.github/verifier-receipt/compare-pin.mjs \
+              --fetched "/tmp/pin-$run.json" \
+              --manifest .github/coordinator/service/verifier-receipts.json
+            echo "::endgroup::"
+          done
+
+      # ITEM 7b. GATED ON THE SAME CONDITION AS THE STEP WHOSE WORK IT DESCRIBES. It carried no `if:`, so on
+      # every candidate to date - all of them, see PENDING-MANIFEST-PATH above - the verify step was skipped
+      # and this step still printed a full account of work that had not happened, on a green job. A step that
+      # claims work is as much a false statement as a comment that does.
+      - name: Report what this proves
+        # PENDING-MANIFEST-PATH: must stay identical to the verify step's condition above.
+        if: hashFiles('candidate/.github/coordinator/service/verifier-receipts.json') != ''
+        working-directory: candidate
+        run: |
+          echo "Every pin in this candidate's manifest describes a run that exists; whose artifact digest"
+          echo "GitHub computed and whose downloaded archive hashes to it; whose receipt was taken out of that"
+          echo "archive, is attested by GitHub under the protected workflow ref, and is admissible under the"
+          echo "rule fetched from refs/heads/main; and whose recorded verdict and identity fields match what"
+          echo "the candidate committed - the whole body it publishes, not only its verdict. The receipt's own"
+          echo "hash is the attestation's subject and is NOT the artifact digest - the two are hashes of"
+          echo "different objects. Terms with no pin remain BLOCK."
+
+      # And the other side of it, which is the state EVERY candidate is actually in today. It says what
+      # happened rather than what would have happened, so a reader of a green job cannot mistake the one for
+      # the other.
+      - name: Report that nothing was verified
+        # PENDING-MANIFEST-PATH: the complement of the condition above; keep the two in step.
+        if: hashFiles('candidate/.github/coordinator/service/verifier-receipts.json') == ''
+        run: |
+          echo "This candidate carries no manifest at .github/coordinator/service/verifier-receipts.json;"
+          echo "nothing was verified. No pin was fetched, no receipt was read and no comparison was made."
+          echo "This job establishes only that the candidate does not alter the receipt authority."
