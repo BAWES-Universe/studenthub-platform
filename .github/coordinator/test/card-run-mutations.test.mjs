@@ -290,8 +290,8 @@ const CASES = [
   {
     name: "M44 wait on Linear without a deadline",
     file: "service/card-prepare.mjs",
-    from: "        try { return await bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs); }",
-    to: "        try { return await sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch); } // SHU86-M44",
+    from: "    const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);",
+    to: "    const send = (query, variables) => sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch); // SHU86-M44",
     pattern: "SHU-86 C30:",
   },
   {
@@ -461,15 +461,22 @@ const CASES = [
   {
     name: "M70 never try a lost report again",
     file: "service/card-prepare.mjs",
-    from: "          if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;",
-    to: "          throw error; // SHU86-M70",
+    from: "        if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;",
+    to: "        throw error; // SHU86-M70",
     pattern: "SHU-86 C42:",
   },
   {
     name: "M71 try every failed report again",
     file: "service/card-prepare.mjs",
-    from: "          if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;",
-    to: "          if (attempt >= REPORT_ATTEMPTS) throw error; // SHU86-M71",
+    from: "        if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;",
+    to: "        if (attempt >= REPORT_ATTEMPTS) throw error; // SHU86-M71",
+    pattern: "SHU-86 C42:",
+  },
+  {
+    name: "M72 post a report again without looking for it first",
+    file: "service/card-prepare.mjs",
+    from: "        if (found.length) return { posted: true, issue: REPORT_ISSUE };",
+    to: "        // SHU86-M72",
     pattern: "SHU-86 C42:",
   },
 ];

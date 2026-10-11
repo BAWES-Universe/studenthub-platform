@@ -286,8 +286,8 @@ const REPORT_REASON_MAX = 300;
 export const REPORT_TIMEOUT_MS = 30 * 1000;
 
 export const REPORT_ISSUE_QUERY = `
-  query CardRunReportIssue($id: String!) {
-    issue(id: $id) { id identifier }
+  query CardRunReportIssue($id: String!, $marker: String!) {
+    issue(id: $id) { id identifier comments(first: 1, filter: { body: { contains: $marker } }) { nodes { id } } }
   }`;
 
 export const REPORT_COMMENT_MUTATION = `
@@ -350,28 +350,35 @@ function bounded(promise, timeoutMs) {
 
 // A request that never reached Linear (fetch's own TypeError, "fetch failed")
 // is tried again a bounded number of times: the first timer run lost its report
-// that way. Linear's answers and the deadline are never retried.
+// that way. Linear's answers and the deadline are never retried. A comment whose
+// send failed may still have been created, so before every try the card is read
+// for this run's report marker, and a report already there is never posted again.
 export const REPORT_ATTEMPTS = 3;
 export const REPORT_RETRY_WAIT_MS = 15 * 1000;
 
 export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS }) {
   try {
     if (!credentials?.LINEAR_API_TOKEN) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "no coordinator credentials" };
-    const send = async (query, variables) => {
-      for (let attempt = 1; ; attempt += 1) {
-        try { return await bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs); }
-        catch (error) {
-          if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;
-          io.sleep(REPORT_RETRY_WAIT_MS);
-        }
+    const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);
+    const body = renderRunReport(result);
+    const marker = reportMarker(result.activation_id);
+    for (let attempt = 1; ; attempt += 1) {
+      let posted;
+      try {
+        const data = await send(REPORT_ISSUE_QUERY, { id: REPORT_ISSUE, marker });
+        const issue = data?.issue ?? null;
+        const found = issue?.comments?.nodes;
+        if (!issue?.id || issue.identifier !== REPORT_ISSUE || !Array.isArray(found)) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: `${REPORT_ISSUE} cannot be read from Linear` };
+        if (found.length) return { posted: true, issue: REPORT_ISSUE };
+        posted = await send(REPORT_COMMENT_MUTATION, { issueId: issue.id, body });
+      } catch (error) {
+        if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;
+        io.sleep(REPORT_RETRY_WAIT_MS);
+        continue;
       }
-    };
-    const data = await send(REPORT_ISSUE_QUERY, { id: REPORT_ISSUE });
-    const issue = data?.issue ?? null;
-    if (!issue?.id || issue.identifier !== REPORT_ISSUE) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: `${REPORT_ISSUE} cannot be read from Linear` };
-    const posted = await send(REPORT_COMMENT_MUTATION, { issueId: issue.id, body: renderRunReport(result) });
-    if (posted?.commentCreate?.success !== true) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "Linear did not accept the comment" };
-    return { posted: true, issue: REPORT_ISSUE };
+      if (posted?.commentCreate?.success !== true) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "Linear did not accept the comment" };
+      return { posted: true, issue: REPORT_ISSUE };
+    }
   } catch (error) {
     return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: plainReason(error.message) };
   }

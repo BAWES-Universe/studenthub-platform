@@ -543,7 +543,7 @@
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
     "call_sites": [
-      ".github/coordinator/test/card-run-mutations.test.mjs:488"
+      ".github/coordinator/test/card-run-mutations.test.mjs:495"
     ]
   },
   {
@@ -551,7 +551,7 @@
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
     "call_sites": [
-      ".github/coordinator/test/card-run.test.mjs:1103"
+      ".github/coordinator/test/card-run.test.mjs:1123"
     ]
   },
   {

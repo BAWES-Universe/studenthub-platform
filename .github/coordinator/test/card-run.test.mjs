@@ -238,12 +238,17 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         // without a deadline fails this test by assertion rather than hanging.
         if (host.failReport === "stall") return new Promise((_, reject) => setTimeout(() => reject(new Error("the fake stall ended")), 1500));
         if (host.failReport === "read") return respond(500, null);
-        return respond(200, { data: { issue: { id: "report-uuid", identifier: variables.id } } });
+        const nodes = host.reports.filter((body) => body.includes(variables.marker)).slice(0, 1).map((_, i) => ({ id: `report-comment-${i}` }));
+        return respond(200, { data: { issue: { id: "report-uuid", identifier: variables.id, comments: { nodes } } } });
       }
       if (query.includes("CardRunReportComment")) {
         host.api.push(`linear report ${variables.issueId}`);
         if (host.failReport === "post") return respond(200, { data: { commentCreate: { success: false } } });
+        // A request that does not reach Linear, or one Linear commits whose
+        // answer is lost on the way back: both throw fetch's own TypeError.
+        if (host.postFailures > 0) { host.postFailures -= 1; throw new TypeError("fetch failed"); }
         host.reports.push(variables.body);
+        if (host.lostAnswers > 0) { host.lostAnswers -= 1; throw new TypeError("fetch failed"); }
         return respond(200, { data: { commentCreate: { success: true } } });
       }
       host.api.push(query.includes("CardRunTodo") ? `linear todo ${variables.stateId}` : "linear read");
@@ -510,7 +515,7 @@ test("SHU-86 C41: a tick is read from the journal, flushed first, and only its o
   assert.throws(() => tick(silent.io), { code: "CARD_RUN_TICK" });
 });
 
-test("SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times", async () => {
+test("SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice", async () => {
   const flaky = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
   flaky.networkFailures = REPORT_ATTEMPTS - 1;
   const before = flaky.clock;
@@ -531,6 +536,21 @@ test("SHU-86 C42: a report that never reached Linear is tried again, a bounded n
   refused.failReport = "read";
   assert.equal((await main(["run"], refused.io, PATHS)).output.report.posted, false);
   assert.equal(refused.api.filter((call) => call === "linear report read SHU-71").length, 1);
+  // A comment send that failed is tried again only after the card is read
+  // for this run's marker: a send that never arrived is posted on the next
+  // try, and one Linear committed before its answer was lost is never posted
+  // twice.
+  const unsent = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  unsent.postFailures = 1;
+  assert.deepEqual((await main(["run"], unsent.io, PATHS)).output.report, { posted: true, issue: "SHU-71" });
+  assert.equal(unsent.reports.length, 1);
+  assert.equal(unsent.api.filter((call) => call === "linear report report-uuid").length, 2);
+  const lost = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  lost.lostAnswers = REPORT_ATTEMPTS;
+  assert.deepEqual((await main(["run"], lost.io, PATHS)).output.report, { posted: true, issue: "SHU-71" });
+  assert.equal(lost.reports.length, 1, "a committed report is never posted twice");
+  assert.equal(lost.api.filter((call) => call === "linear report report-uuid").length, 1);
+  assert.equal(lost.api.filter((call) => call === "linear report read SHU-71").length, 2);
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {
