@@ -333,7 +333,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const config = readConfig(io, paths);
     const plan = planRun({ config, revision, now: io.now(), review, limits });
     credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
-    const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials });
+    const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials });
     const ticks = [];
     let result;
     try {
@@ -530,7 +530,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
       let prepare;
       try {
         const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
-        prepare = await prepareRun({ io, plan, revision, repo: config.pilot_repo, credentials, apply: false });
+        prepare = await prepareRun({ io, plan, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials, apply: false });
       } catch (error) {
         prepare = { refused: error.code ?? "CARD_RUN_ERROR", reason: error.message };
       }

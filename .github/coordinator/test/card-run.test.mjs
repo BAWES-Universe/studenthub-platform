@@ -13,7 +13,9 @@ import {
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER,
 } from "../service/card-run.mjs";
-import { renderRunReport, reportMarker, plainReason } from "../service/card-prepare.mjs";
+import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND } from "../service/card-prepare.mjs";
+import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
+import { brokerGitEnv } from "../push-broker.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
@@ -21,6 +23,7 @@ const REV = "a".repeat(40);
 const HEAD = "b".repeat(40);
 const BASE = "c".repeat(40);
 const START = new Date("2026-10-09T15:30:07.000Z");
+const PUSH_REMOTE = "git@github.com:BAWES-Universe/studenthub-platform.git";
 const PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
   stateDir: "/srv/shu/state",
@@ -57,7 +60,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   const dirs = new Set();
   const calls = [];
   const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], reports: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
-    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32) };
+    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32), pushDir: null, pushDirs: new Set() };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, gid: 0, ...extra });
   put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify(config));
   put(PATHS.receipt, JSON.stringify({ version: 1, revision: REV, state: "VERIFIED", effects: [] }));
@@ -65,7 +68,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   for (const dir of [PATHS.stateDir, PATHS.worktrees, PATHS.tmp, "/run/lock"]) dirs.add(dir);
   put(`${PATHS.tmp}/shu-npm-cache-1/x`, "cache");
   put(`${PATHS.tmp}/keep-me`, "other");
-  put(PATHS.coordinatorEnv, "GITHUB_TOKEN=gh-secret-value\nLINEAR_API_TOKEN=lin-secret-value\n", { uid: 997, mode: 0o600 });
+  put(PATHS.coordinatorEnv, `GITHUB_TOKEN=gh-secret-value\nLINEAR_API_TOKEN=lin-secret-value\nSHU_PUSH_REMOTE_URL=${PUSH_REMOTE}\n`, { uid: 997, mode: 0o600 });
   const children = (dir) => {
     const names = new Set();
     for (const file of files.keys()) if (file.startsWith(`${dir}/`)) names.add(file.slice(dir.length + 1).split("/")[0]);
@@ -105,6 +108,54 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     }
     if (file === "pkill") return ok();
     if (file === "id") return ok(args[0] === "-u" ? "997\n" : "998\n");
+    if (file === "getent" && line === "passwd shu-coordinator") return host.noHome ? { status: 2, stdout: "", stderr: "" } : ok("shu-coordinator:x:997:998::/var/lib/shu-coordinator:/usr/sbin/nologin\n");
+    // The branch push, as the deploy-key remote sees it: only the coordinator
+    // user, with the hardened git, from a fresh bare repository that borrows
+    // the checkout's objects, bounded in time, with an exact
+    // revision-to-branch refspec.
+    if (file === "runuser") {
+      assert.deepEqual(args.slice(0, 5), ["-u", "shu-coordinator", "--", "env", "-i"]);
+      assert.ok(args.includes("HOME=/var/lib/shu-coordinator") && args.includes("GIT_TERMINAL_PROMPT=0"));
+      assert.ok(args.includes("GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"));
+      const command = args.slice(args.findIndex((arg) => !arg.includes("=") && !["-u", "shu-coordinator", "--", "env", "-i"].includes(arg)));
+      if (command[0] === "mktemp") {
+        assert.deepEqual(command, ["mktemp", "-d", "/tmp/shu-card-push-XXXXXXXX"]);
+        host.pushDir = "/tmp/shu-card-push-Ab12Cd34";
+        host.pushDirs.add(host.pushDir);
+        return ok(`${host.pushDir}\n`);
+      }
+      if (command[0] === "rm") {
+        assert.deepEqual(command, ["rm", "-rf", "--", host.pushDir]);
+        host.pushDirs.delete(host.pushDir);
+        return ok();
+      }
+      assert.ok(["git", "timeout"].includes(command[0]) && command.includes("credential.helper=") && host.pushDirs.has(host.pushDir));
+      if (command[0] === "git") {
+        assert.deepEqual(command.slice(-4), ["init", "--bare", "-q", host.pushDir]);
+        return ok();
+      }
+      const refspec = args.at(-1);
+      const [sha, ref] = refspec.split(":");
+      assert.deepEqual(args.slice(args.indexOf("timeout"), args.indexOf("timeout") + 4), ["timeout", "--kill-after=10", "300", "git"]);
+      assert.ok(args.includes(`GIT_ALTERNATE_OBJECT_DIRECTORIES=${PATHS.checkout}/.git/objects`));
+      assert.ok(command.includes(`--git-dir=${host.pushDir}`) && command.includes("--no-verify"));
+      assert.equal(command.includes("-C") || command.includes(PATHS.checkout), false);
+      assert.equal(args.at(-2), PUSH_REMOTE);
+      assert.equal(args.includes("--force") || args.includes("-f") || refspec.startsWith("+"), false);
+      const dry = args.includes("--dry-run");
+      host.api.push(`git push${dry ? " dry-run" : ""} ${ref} ${sha}`);
+      // Someone creates the branch between the API read and the push. A
+      // create-only lease is refused; a plain push would fast-forward it.
+      if (host.raceBranchHead) host.branchHead = host.raceBranchHead;
+      if (host.branchHead) {
+        if (args.includes(`--force-with-lease=${ref}:`)) return { status: 1, stdout: "", stderr: "! [rejected] (stale info)" };
+        if (!dry) host.branchHead = sha;
+        return ok();
+      }
+      if (host.pushFails) return { status: host.pushFails === "timeout" ? 124 : 128, stdout: "", stderr: `ERROR: read-only key for ${PUSH_REMOTE}` };
+      if (!dry) host.branchHead = sha;
+      return ok();
+    }
     if (file === "git") {
       if (line.endsWith("rev-parse HEAD")) return ok(`${host.head}\n`);
       if (line.endsWith("rev-parse refs/heads/main")) return ok(`${host.main}\n`);
@@ -190,12 +241,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       host.api.push("github read");
       return host.branchHead ? respond(200, { ref: `refs/heads/${branch}`, object: { sha: host.branchHead } }) : respond(404, { message: "Not Found" });
     }
-    if (url === `https://api.github.com/repos/${config.pilot_repo}/git/refs` && options.method === "POST") {
-      const body = JSON.parse(options.body);
-      host.api.push(`github create ${body.ref} ${body.sha}`);
-      host.branchHead = body.sha;
-      return respond(201, { ref: body.ref, object: { sha: body.sha } });
-    }
+    // The coordinator's token is read-only: GitHub refuses any write with it.
+    if (options.method && options.method !== "GET") return respond(403, { message: "Resource not accessible by integration" });
     return respond(500, null);
   };
   host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.clock), sleep: (ms) => { host.clock += ms; } };
@@ -328,16 +375,97 @@ test("SHU-86 C7: only a clean, installed main is armed", async () => {
 
 test("SHU-86 C8: a missing coordinator branch is created at the installed revision; a moved one is refused", async () => {
   const missing = fakeHost({ branchHead: "", onTick: () => tickText(spent("SHU-301", "review PASS — the episode is complete")) });
-  const result = await runCard({ io: missing.io, paths: PATHS });
+  const result = await runCard({ io: missing.io, paths: PATHS }).catch((error) => assert.fail(`the run refused: ${error.message}`));
   assert.equal(result.outcome, "PASS");
   assert.deepEqual(result.prepared.branch, { branch: "coordinator/SHU-301", head: REV, action: "create" });
   assert.equal(missing.branchHead, REV);
-  assert.ok(missing.api.includes(`github create refs/heads/coordinator/SHU-301 ${REV}`));
+  assert.ok(missing.api.includes(`git push refs/heads/coordinator/SHU-301 ${REV}`));
+  assert.equal(missing.api.filter((call) => call.startsWith("git push")).length, 1, "one push, no dry run, during a run");
   const moved = fakeHost({ branchHead: HEAD });
   await assert.rejects(runCard({ io: moved.io, paths: PATHS }), { code: "CARD_RUN_BRANCH_NOT_AT_TARGET" });
   noArming(moved);
   assert.equal(moved.branchHead, HEAD, "an existing branch is never moved");
-  assert.equal(moved.api.some((call) => call.startsWith("github create") || call.startsWith("linear todo")), false);
+  assert.equal(moved.api.some((call) => call.startsWith("git push") || call.startsWith("linear todo")), false);
+});
+
+test("SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token", async () => {
+  // A push the remote refuses stops the run before the card moves or anything
+  // is armed, and the refusal names neither the remote nor git's output.
+  const refused = fakeHost({ branchHead: "" });
+  refused.pushFails = true;
+  const error = await runCard({ io: refused.io, paths: PATHS }).then(() => null, (e) => e);
+  assert.equal(error?.code, "CARD_RUN_BRANCH_CREATE");
+  assert.doesNotMatch(error.message, /github\.com|read-only key/);
+  noArming(refused);
+  assert.equal(refused.api.some((call) => call.startsWith("linear todo")), false);
+  assert.equal(refused.pushDirs.size, 0, "the push repository is removed after a refused push");
+  // A push that outlives its time limit is a refusal too, and says so.
+  const stalled = fakeHost({ branchHead: "" });
+  stalled.pushFails = "timeout";
+  const timedOut = await runCard({ io: stalled.io, paths: PATHS }).then(() => null, (e) => e);
+  assert.equal(timedOut?.code, "CARD_RUN_BRANCH_CREATE");
+  assert.match(timedOut.message, /timed out after 300s/);
+  assert.equal(stalled.pushDirs.size, 0);
+  noArming(stalled);
+  // No push remote, a remote for another repository, or no home for the
+  // coordinator user: refused before any push is tried.
+  for (const [label, change] of [
+    ["no remote", (h) => { h.files.get(PATHS.coordinatorEnv).text = "GITHUB_TOKEN=gh-secret-value\nLINEAR_API_TOKEN=lin-secret-value\n"; }],
+    ["other repository", (h) => { h.files.get(PATHS.coordinatorEnv).text = h.files.get(PATHS.coordinatorEnv).text.replace("studenthub-platform.git", "elsewhere.git"); }],
+    ["no home", (h) => { h.noHome = true; }],
+  ]) {
+    const host = fakeHost({ branchHead: "" });
+    change(host);
+    await assert.rejects(runCard({ io: host.io, paths: PATHS }), { code: "CARD_RUN_BRANCH_CREATE" }, label);
+    assert.equal(host.api.some((call) => call.startsWith("git push")), false, label);
+    noArming(host);
+  }
+  // plan proves the push route with a dry run, which moves nothing.
+  const planned = fakeHost({ branchHead: "" });
+  const { output } = await main(["plan"], planned.io, PATHS);
+  assert.equal(output.prepare.branch.action, "create");
+  assert.deepEqual(planned.api.filter((call) => call.startsWith("git push")), [`git push dry-run refs/heads/coordinator/SHU-301 ${REV}`]);
+  assert.equal(planned.branchHead, "");
+  assert.equal(planned.pushDirs.size, 0, "the push repository is removed after a dry run");
+  const blocked = fakeHost({ branchHead: "" });
+  blocked.pushFails = true;
+  assert.equal((await main(["plan"], blocked.io, PATHS)).output.prepare.refused, "CARD_RUN_BRANCH_CREATE");
+});
+
+test("SHU-86 C39: the branch push takes the same SSH route as the push broker on the host", () => {
+  // The broker runs in the supervisor, whose environment is supervisor.env
+  // (the transport secret only) plus the adapter keys copied from
+  // coordinator.env. SHU_PUSH_SSH_COMMAND is not an adapter key, so even when
+  // coordinator.env carries one it never reaches the broker, and the broker's
+  // route is plain ssh as the coordinator user with that user's own ~/.ssh.
+  // The branch push uses that same program, only made non-interactive and
+  // bounded; if the broker's route ever changes, this test fails first.
+  assert.equal(supervisorAdapterKeys.includes("SHU_PUSH_SSH_COMMAND"), false);
+  const source = [...supervisorAdapterKeys.map((key) => `${key}=placeholder-${key.toLowerCase()}`),
+    "GITHUB_TOKEN=gh-placeholder", "LINEAR_API_TOKEN=lin-placeholder", "SHU_PUSH_SSH_COMMAND=\"ssh -i /elsewhere/key\""].join("\n");
+  const supervisorEnv = applyAdapterLaunchEnvironment({ PATH: "/usr/bin", SHU_SUPERVISOR_SECRET: "s".repeat(40) }, adapterLaunchEnvironment(source));
+  assert.equal(Object.hasOwn(supervisorEnv, "SHU_PUSH_SSH_COMMAND"), false);
+  assert.equal(brokerGitEnv(supervisorEnv).GIT_SSH_COMMAND, "ssh");
+  assert.equal(PUSH_SSH_COMMAND.split(" ")[0], "ssh");
+  assert.deepEqual(PUSH_SSH_COMMAND.split(" ").slice(1), ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]);
+});
+
+test("SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved", async () => {
+  const ANCESTOR = "1".repeat(40);
+  for (const command of ["run", "plan"]) {
+    const host = fakeHost({ branchHead: "" });
+    host.raceBranchHead = ANCESTOR;
+    if (command === "run") {
+      const error = await runCard({ io: host.io, paths: PATHS }).then(() => null, (e) => e);
+      assert.equal(error?.code, "CARD_RUN_BRANCH_CREATE");
+      noArming(host);
+      assert.equal(host.api.some((call) => call.startsWith("linear todo")), false);
+    } else {
+      assert.equal((await main(["plan"], host.io, PATHS)).output.prepare.refused, "CARD_RUN_BRANCH_CREATE");
+    }
+    assert.equal(host.branchHead, ANCESTOR, `${command}: the branch someone else made stays where it is`);
+    assert.equal(host.pushDirs.size, 0);
+  }
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {
@@ -452,7 +580,8 @@ test("SHU-86 C15: plan changes nothing, and review flags come all together", asy
   const freshPlan = (await main(["plan"], fresh.io, PATHS)).output.prepare;
   assert.equal(freshPlan.branch.action, "create");
   assert.equal(freshPlan.card.action, "move-to-todo");
-  assert.deepEqual(fresh.api, ["linear read", "github read", "linear read"], "plan only reads");
+  assert.deepEqual(fresh.api, ["linear read", "github read", `git push dry-run refs/heads/coordinator/SHU-301 ${REV}`, "linear read"], "plan only reads, and dry-runs the push");
+  assert.equal(fresh.branchHead, "");
   assert.equal(host.files.has(PATHS.lock), false);
   assert.throws(() => parseArgs(["run", "--review-pr", "239"]), { code: "CARD_RUN_USAGE" });
   assert.throws(() => parseArgs(["arm"]), { code: "CARD_RUN_USAGE" });

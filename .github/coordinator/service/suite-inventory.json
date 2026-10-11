@@ -2032,6 +2032,15 @@
     "SHU-86 mutation M55 count the timer from the service's last run",
     "SHU-86 mutation M56 remove the unit files while the timer is still on",
     "SHU-86 mutation M57 ignore a failed disable",
+    "SHU-86 mutation M58 write the branch with the read-only token",
+    "SHU-86 mutation M59 skip the dry-run push in plan",
+    "SHU-86 mutation M60 push to any remote",
+    "SHU-86 mutation M61 push as root instead of the coordinator user",
+    "SHU-86 mutation M62 push from the checkout, under its own config",
+    "SHU-86 mutation M63 push with no time limit",
+    "SHU-86 mutation M64 let SSH prompt",
+    "SHU-86 mutation M65 leave the push repository behind",
+    "SHU-86 mutation M66 push without the create-only lease",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2069,6 +2078,9 @@
     "SHU-86 C35: the timer installs exact units, never replaces different ones, and is removed only between runs",
     "SHU-86 C36: the timer commands take no flags",
     "SHU-86 C37: the commands run from argv the way an operator or the unit starts them",
+    "SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token",
+    "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
+    "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17661,6 +17673,42 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M58 write the branch with the read-only token",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M59 skip the dry-run push in plan",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M60 push to any remote",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M61 push as root instead of the coordinator user",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M62 push from the checkout, under its own config",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M63 push with no time limit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M64 let SSH prompt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M65 leave the push repository behind",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M66 push without the create-only lease",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17806,6 +17854,18 @@
     },
     {
       "name": "SHU-86 C37: the commands run from argv the way an operator or the unit starts them",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
       "capabilities": []
     },
     {
