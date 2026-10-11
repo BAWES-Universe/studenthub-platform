@@ -214,6 +214,9 @@ async function branchHead(io, credentials, repo, branch) {
 // pushInsteadOf), and a fresh repository has none. The checkout's objects are
 // reached as an alternate, a plain path read. SSH never prompts and the push
 // is bounded in time, so a stalled remote cannot hold the run's lock.
+// The SSH program is the broker's own route on the host: plain ssh as the
+// coordinator user, whose ~/.ssh holds the deploy key. SHU_PUSH_SSH_COMMAND
+// never reaches the broker there (it is not an adapter key), and C39 pins that.
 export const PUSH_TIMEOUT_SECONDS = 300;
 export const PUSH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
 

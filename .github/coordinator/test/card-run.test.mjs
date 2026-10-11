@@ -13,7 +13,9 @@ import {
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER,
 } from "../service/card-run.mjs";
-import { renderRunReport, reportMarker, plainReason } from "../service/card-prepare.mjs";
+import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND } from "../service/card-prepare.mjs";
+import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
+import { brokerGitEnv } from "../push-broker.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
@@ -420,6 +422,24 @@ test("SHU-86 C38: the branch is pushed with the coordinator's deploy key, never 
   const blocked = fakeHost({ branchHead: "" });
   blocked.pushFails = true;
   assert.equal((await main(["plan"], blocked.io, PATHS)).output.prepare.refused, "CARD_RUN_BRANCH_CREATE");
+});
+
+test("SHU-86 C39: the branch push takes the same SSH route as the push broker on the host", () => {
+  // The broker runs in the supervisor, whose environment is supervisor.env
+  // (the transport secret only) plus the adapter keys copied from
+  // coordinator.env. SHU_PUSH_SSH_COMMAND is not an adapter key, so even when
+  // coordinator.env carries one it never reaches the broker, and the broker's
+  // route is plain ssh as the coordinator user with that user's own ~/.ssh.
+  // The branch push uses that same program, only made non-interactive and
+  // bounded; if the broker's route ever changes, this test fails first.
+  assert.equal(supervisorAdapterKeys.includes("SHU_PUSH_SSH_COMMAND"), false);
+  const source = [...supervisorAdapterKeys.map((key) => `${key}=placeholder-${key.toLowerCase()}`),
+    "GITHUB_TOKEN=gh-placeholder", "LINEAR_API_TOKEN=lin-placeholder", "SHU_PUSH_SSH_COMMAND=\"ssh -i /elsewhere/key\""].join("\n");
+  const supervisorEnv = applyAdapterLaunchEnvironment({ PATH: "/usr/bin", SHU_SUPERVISOR_SECRET: "s".repeat(40) }, adapterLaunchEnvironment(source));
+  assert.equal(Object.hasOwn(supervisorEnv, "SHU_PUSH_SSH_COMMAND"), false);
+  assert.equal(brokerGitEnv(supervisorEnv).GIT_SSH_COMMAND, "ssh");
+  assert.equal(PUSH_SSH_COMMAND.split(" ")[0], "ssh");
+  assert.deepEqual(PUSH_SSH_COMMAND.split(" ").slice(1), ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]);
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {

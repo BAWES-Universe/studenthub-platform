@@ -2078,6 +2078,7 @@
     "SHU-86 C36: the timer commands take no flags",
     "SHU-86 C37: the commands run from argv the way an operator or the unit starts them",
     "SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token",
+    "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17851,6 +17852,10 @@
     },
     {
       "name": "SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
       "capabilities": []
     },
     {
