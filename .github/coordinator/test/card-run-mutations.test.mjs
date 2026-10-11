@@ -430,6 +430,13 @@ const CASES = [
     to: '    // SHU86-M65',
     pattern: "SHU-86 C38:",
   },
+  {
+    name: "M66 push without the create-only lease",
+    file: "service/card-prepare.mjs",
+    from: '      "push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(dryRun ? ["--dry-run"] : []),',
+    to: '      "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), // SHU86-M66',
+    pattern: "SHU-86 C40:",
+  },
 ];
 
 for (const mutation of CASES) {

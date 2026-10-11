@@ -144,6 +144,14 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       assert.equal(args.includes("--force") || args.includes("-f") || refspec.startsWith("+"), false);
       const dry = args.includes("--dry-run");
       host.api.push(`git push${dry ? " dry-run" : ""} ${ref} ${sha}`);
+      // Someone creates the branch between the API read and the push. A
+      // create-only lease is refused; a plain push would fast-forward it.
+      if (host.raceBranchHead) host.branchHead = host.raceBranchHead;
+      if (host.branchHead) {
+        if (args.includes(`--force-with-lease=${ref}:`)) return { status: 1, stdout: "", stderr: "! [rejected] (stale info)" };
+        if (!dry) host.branchHead = sha;
+        return ok();
+      }
       if (host.pushFails) return { status: host.pushFails === "timeout" ? 124 : 128, stdout: "", stderr: `ERROR: read-only key for ${PUSH_REMOTE}` };
       if (!dry) host.branchHead = sha;
       return ok();
@@ -440,6 +448,24 @@ test("SHU-86 C39: the branch push takes the same SSH route as the push broker on
   assert.equal(brokerGitEnv(supervisorEnv).GIT_SSH_COMMAND, "ssh");
   assert.equal(PUSH_SSH_COMMAND.split(" ")[0], "ssh");
   assert.deepEqual(PUSH_SSH_COMMAND.split(" ").slice(1), ["-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]);
+});
+
+test("SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved", async () => {
+  const ANCESTOR = "1".repeat(40);
+  for (const command of ["run", "plan"]) {
+    const host = fakeHost({ branchHead: "" });
+    host.raceBranchHead = ANCESTOR;
+    if (command === "run") {
+      const error = await runCard({ io: host.io, paths: PATHS }).then(() => null, (e) => e);
+      assert.equal(error?.code, "CARD_RUN_BRANCH_CREATE");
+      noArming(host);
+      assert.equal(host.api.some((call) => call.startsWith("linear todo")), false);
+    } else {
+      assert.equal((await main(["plan"], host.io, PATHS)).output.prepare.refused, "CARD_RUN_BRANCH_CREATE");
+    }
+    assert.equal(host.branchHead, ANCESTOR, `${command}: the branch someone else made stays where it is`);
+    assert.equal(host.pushDirs.size, 0);
+  }
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {

@@ -2040,6 +2040,7 @@
     "SHU-86 mutation M63 push with no time limit",
     "SHU-86 mutation M64 let SSH prompt",
     "SHU-86 mutation M65 leave the push repository behind",
+    "SHU-86 mutation M66 push without the create-only lease",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2079,6 +2080,7 @@
     "SHU-86 C37: the commands run from argv the way an operator or the unit starts them",
     "SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token",
     "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
+    "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17703,6 +17705,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M66 push without the create-only lease",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17856,6 +17862,10 @@
     },
     {
       "name": "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
       "capabilities": []
     },
     {

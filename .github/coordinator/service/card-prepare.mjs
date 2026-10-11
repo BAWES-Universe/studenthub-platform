@@ -239,7 +239,11 @@ function pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun 
     const push = asCoordinator([`GIT_ALTERNATE_OBJECT_DIRECTORIES=${checkout}/.git/objects`,
       "timeout", "--kill-after=10", String(PUSH_TIMEOUT_SECONDS),
       "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`,
-      "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), credentials.SHU_PUSH_REMOTE_URL, `${revision}:refs/heads/${branch}`]);
+      // An empty lease makes the push create-only: the remote applies it
+      // only while the branch does not exist, so a branch someone creates
+      // after the read above, even at an ancestor, is refused, never moved.
+      "push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(dryRun ? ["--dry-run"] : []),
+      credentials.SHU_PUSH_REMOTE_URL, `${revision}:refs/heads/${branch}`]);
     // git's own output can name the remote; only the exit status is reported.
     if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${dryRun ? "pushed in a dry run" : "pushed"} as ${COORDINATOR_USER} (${push.status === 124 ? `timed out after ${PUSH_TIMEOUT_SECONDS}s` : `git exit ${push.status}`})`);
   } finally {
