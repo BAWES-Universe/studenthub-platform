@@ -337,7 +337,7 @@ test("main(): an unwired activation aborts dispatch, pauses the lane, and spawns
   const cfgPath = join(cfgDir, "config.json");
   writeFileSync(cfgPath, JSON.stringify({
     pilot_repo: "BAWES-Universe/studenthub-platform", team: "SHU", max_dispatch: 1,
-    enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
+    dispatch_scope_mode: "bounded", enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   }));
 
@@ -386,7 +386,7 @@ test("main(): an unreadable GitHub target aborts before reservation and adapter 
   const cfgPath = join(mkd(join(tmpdir(), "activation-github-cfg-")), "config.json");
   writeFileSync(cfgPath, JSON.stringify({
     pilot_repo: "BAWES-Universe/studenthub-platform", team: "SHU", max_dispatch: 1,
-    enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
+    dispatch_scope_mode: "bounded", enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   }));
   const comments = [];
@@ -434,7 +434,7 @@ test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the ada
   const cfgPath = join(cfgDir, "config.json");
   writeFileSync(cfgPath, JSON.stringify({
     pilot_repo: "BAWES-Universe/studenthub-platform", team: "SHU", max_dispatch: 1,
-    enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
+    dispatch_scope_mode: "bounded", enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   }));
   const made = createReceipt({
