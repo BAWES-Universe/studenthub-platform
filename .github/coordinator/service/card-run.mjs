@@ -267,11 +267,31 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
   return { activation_id: plan.record.activation_id, target, revision };
 }
 
+// One coordinator tick and its output. The coordinator is a oneshot, and
+// systemd unloads a finished unit that nothing references, so its InvocationID
+// is already gone when `systemctl start` returns: the first timer run read it
+// empty and failed. The output is read from the journal instead: the unit's own
+// lines since just before the start, flushed first, in full (json would
+// otherwise null a field over 4096 bytes), and of those only the last
+// invocation's, which is this tick's. No line at all is a refusal, never an
+// earlier tick's output read as this one's.
 export function tick(io) {
+  const since = io.now().getTime();
   run(io, "systemctl", ["start", "shu-coordinator.service"]);
-  const invocation = run(io, "systemctl", ["show", "-p", "InvocationID", "--value", "shu-coordinator.service"]).trim();
-  if (!/^[0-9a-f]{32}$/.test(invocation)) refuse("CARD_RUN_TICK", "the tick has no invocation id");
-  return run(io, "journalctl", [`_SYSTEMD_INVOCATION_ID=${invocation}`, "-o", "cat", "--no-pager"]);
+  run(io, "journalctl", ["--sync"]);
+  const raw = run(io, "journalctl", ["_SYSTEMD_UNIT=shu-coordinator.service", `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"]);
+  const entries = [];
+  for (const line of raw.split("\n")) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    const invocation = entry?._SYSTEMD_INVOCATION_ID;
+    if (typeof invocation !== "string" || !/^[0-9a-f]{32}$/.test(invocation)) continue;
+    const message = Array.isArray(entry.MESSAGE) ? Buffer.from(entry.MESSAGE).toString("utf8") : entry.MESSAGE;
+    if (typeof message === "string") entries.push({ invocation, message });
+  }
+  if (!entries.length) refuse("CARD_RUN_TICK", "the tick left no output in the journal");
+  const last = entries.at(-1).invocation;
+  return entries.filter((entry) => entry.invocation === last).map((entry) => entry.message).join("\n");
 }
 
 // Returns the run back to dispatch off. It waits a bounded time for workers to
