@@ -3,3 +3,4 @@ export * from "./organizations.js";
 export * from "./adapter.js";
 export * from "./fixtures.js";
 export * from "./profile-writes.js";
+export * from "./status-writes.js";

@@ -17,8 +17,8 @@ const mutations = [
   ],
   [
     "ignore the staff override (legacy employer copy)", "SHU-159/AC-01 STATUS",
-    "if (override.state === \"available\")\n        return available(\"status\", override.value);",
-    "if (false)\n        return available(\"status\", override.value);",
+    "if (override.state === \"available\")\n            return available(\"status\", override.value);",
+    "if (false)\n            return available(\"status\", override.value);",
   ],
   [
     "treat missing counters as zero", "SHU-159/AC-01 STATUS",

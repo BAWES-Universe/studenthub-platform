@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresOrganizationStatusStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -19,11 +19,13 @@ import {
 
 import { createLoginApplication } from "./login-application.js";
 import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organizationOwnerDecision,
-  organizationProfileStateDecision, organizationProfileRecordRef, organizationProfilePrincipalRef } from "@studenthub/organizations";
+  organizationProfileStateDecision, organizationProfileRecordRef, organizationProfilePrincipalRef,
+  organizationStatusDecision, organizationStatusStateDecision, organizationStatusRecordRef, organizationStatusPrincipalRef } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
 import { createOrganizationProfile } from "./organization-profile.js";
+import { createOrganizationStatus } from "./organization-status.js";
 import { createBankDetails } from "./bank-details.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
@@ -210,6 +212,9 @@ export function createRuntimeLoginFromEnv(
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
+  const organizationStatusStore = new PostgresOrganizationStatusStore({connectionString:value("DATABASE_URL"),
+    decision:organizationStatusDecision,stateDecision:organizationStatusStateDecision,
+    recordRef:organizationStatusRecordRef,principalRef:organizationStatusPrincipalRef});
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: value("DATABASE_URL") }) : undefined;
@@ -241,7 +246,7 @@ export function createRuntimeLoginFromEnv(
   // Organization snapshots stay unconfigured until an approved import exists:
   // the card and the company list show registry names and visibly unavailable fields.
   const organizations = new OrganizationRepository({
-    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(),
+    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,
   });
   return {
     application: {
@@ -255,6 +260,7 @@ export function createRuntimeLoginFromEnv(
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),
       ...(organizationProfileStore && safeWriteKey ? { organizationProfile: createOrganizationProfile({sessions:loginStore.sessions,store:organizationProfileStore,secret:safeWriteKey}) } : {}),
+      ...(safeWriteKey ? {organizationStatus:createOrganizationStatus({sessions:loginStore.sessions,store:organizationStatusStore,secret:safeWriteKey})}:{}),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
@@ -267,7 +273,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(),
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),
         bankDetailsStore?.close(), banks?.close()]);
     },
   };

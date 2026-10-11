@@ -29,6 +29,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference } from "./language-preference.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
+import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
@@ -174,6 +175,9 @@ export function createGatewayServer(
     if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,
       (login as BrowserLoginApplication & { organizationProfile?: OrganizationProfile } | undefined)?.organizationProfile,
+      login?.web?.origin)) return;
+    if (await handleOrganizationStatus(request,response,
+      (login as BrowserLoginApplication & {organizationStatus?:OrganizationStatus}|undefined)?.organizationStatus,
       login?.web?.origin)) return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
