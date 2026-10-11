@@ -2041,6 +2041,11 @@
     "SHU-86 mutation M64 let SSH prompt",
     "SHU-86 mutation M65 leave the push repository behind",
     "SHU-86 mutation M66 push without the create-only lease",
+    "SHU-86 mutation M67 read the tick before journald has flushed it",
+    "SHU-86 mutation M68 read every coordinator run in the window as this tick",
+    "SHU-86 mutation M69 take a silent tick as an empty one",
+    "SHU-86 mutation M70 never try a lost report again",
+    "SHU-86 mutation M71 try every failed report again",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2081,6 +2086,8 @@
     "SHU-86 C38: the branch is pushed with the coordinator's deploy key, never written with its read-only token",
     "SHU-86 C39: the branch push takes the same SSH route as the push broker on the host",
     "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
+    "SHU-86 C41: a tick is read from the journal, flushed first, and only its own invocation counts",
+    "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17709,6 +17716,26 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M67 read the tick before journald has flushed it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M68 read every coordinator run in the window as this tick",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M69 take a silent tick as an empty one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M70 never try a lost report again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M71 try every failed report again",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17866,6 +17893,14 @@
     },
     {
       "name": "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C41: a tick is read from the journal, flushed first, and only its own invocation counts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times",
       "capabilities": []
     },
     {

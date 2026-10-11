@@ -9,11 +9,11 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  planRun, tickOutcome, busyReasons, runCard, revert, parseArgs, main,
+  planRun, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER,
 } from "../service/card-run.mjs";
-import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND } from "../service/card-prepare.mjs";
+import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
 
@@ -60,7 +60,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   const dirs = new Set();
   const calls = [];
   const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], reports: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
-    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32), pushDir: null, pushDirs: new Set() };
+    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32), pushDir: null, pushDirs: new Set(),
+    journal: [], pending: [], syncs: 0, journalReads: 0 };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, gid: 0, ...extra });
   put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify(config));
   put(PATHS.receipt, JSON.stringify({ version: 1, revision: REV, state: "VERIFIED", effects: [] }));
@@ -177,12 +178,33 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         host.ticks += 1;
         if (host.failTicks?.has(host.ticks)) return { status: 1, stdout: "", stderr: "failed" };
         host.lastTick = onTick ? onTick(host) : tickText(armed(JSON.parse(files.get(PATHS.activation)?.text ?? "{}").activation_id));
+        // The tick's lines reach the journal under this start's own
+        // invocation id; journald has not flushed them until a sync.
+        const invocation = (host.ticks.toString(16) + host.invocation).slice(0, 32);
+        if (!host.dropJournal) host.pending.push(...host.lastTick.split("\n").map((message) => ({ at: host.clock, invocation, message })));
         return ok();
       }
-      if (line === "show -p InvocationID --value shu-coordinator.service") return ok(`${host.invocation}\n`);
+      // As on the host: a finished oneshot is unloaded, so its InvocationID reads empty.
+      if (line === "show -p InvocationID --value shu-coordinator.service") return ok("\n");
       return ok();
     }
-    if (file === "journalctl") return ok(host.lastTick);
+    if (file === "journalctl") {
+      if (line === "--sync") {
+        host.syncs += 1;
+        host.journal.push(...host.pending.splice(0));
+        return ok();
+      }
+      assert.equal(args[0], "_SYSTEMD_UNIT=shu-coordinator.service");
+      assert.deepEqual(args.slice(2), ["-o", "json", "--all", "--no-pager"]);
+      const since = Number(/^--since=@(\d+\.\d{3})$/.exec(args[1])?.[1]) * 1000;
+      assert.ok(Number.isFinite(since), args[1]);
+      host.journalReads += 1;
+      const lines = host.journal.filter((entry) => entry.at >= since).map((entry) => JSON.stringify({
+        _SYSTEMD_UNIT: "shu-coordinator.service", _SYSTEMD_INVOCATION_ID: entry.invocation,
+        MESSAGE: entry.bytes ? [...Buffer.from(entry.message)] : entry.message,
+      }));
+      return ok(lines.length ? `${lines.join("\n")}\n` : "");
+    }
     return { status: 127, stdout: "", stderr: `unexpected ${file}` };
   };
   // Linear and GitHub, as the coordinator's tokens see them.
@@ -209,6 +231,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       }
       if (query.includes("CardRunReportIssue")) {
         host.api.push(`linear report read ${variables.id}`);
+        // A request that never reaches Linear: fetch itself throws.
+        if (host.networkFailures > 0) { host.networkFailures -= 1; throw new TypeError("fetch failed"); }
         host.lockAtReport = host.files.has(PATHS.lock);
         // A stall that would outlast any sane deadline, yet ends, so a run
         // without a deadline fails this test by assertion rather than hanging.
@@ -466,6 +490,47 @@ test("SHU-86 C40: the branch push only creates; a branch made after the read is 
     assert.equal(host.branchHead, ANCESTOR, `${command}: the branch someone else made stays where it is`);
     assert.equal(host.pushDirs.size, 0);
   }
+});
+
+test("SHU-86 C41: a tick is read from the journal, flushed first, and only its own invocation counts", () => {
+  // The host unloads the finished oneshot, so its InvocationID reads empty;
+  // the tick still reads its own lines, never an earlier run's logged at the
+  // same instant, and only after journald has flushed them.
+  const host = fakeHost({ onTick: () => "first line\nactivation=absent (committed gates only)" });
+  host.journal.push({ at: host.clock, invocation: "e".repeat(32), message: "activation=STALE from an earlier run" });
+  assert.equal(tick(host.io), "first line\nactivation=absent (committed gates only)");
+  const sync = host.calls.indexOf("journalctl --sync");
+  const read = host.calls.findIndex((call) => call.startsWith("journalctl _SYSTEMD_UNIT="));
+  assert.ok(sync > host.calls.indexOf("systemctl start shu-coordinator.service") && read > sync, "started, then flushed, then read");
+  // A tick that left nothing in the journal is a refusal, never the output
+  // of the tick before it.
+  const silent = fakeHost();
+  silent.journal.push({ at: silent.clock - 1, invocation: "e".repeat(32), message: "activation=STALE from an earlier run" });
+  silent.dropJournal = true;
+  assert.throws(() => tick(silent.io), { code: "CARD_RUN_TICK" });
+});
+
+test("SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times", async () => {
+  const flaky = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  flaky.networkFailures = REPORT_ATTEMPTS - 1;
+  const before = flaky.clock;
+  const { output } = await main(["run"], flaky.io, PATHS);
+  assert.deepEqual(output.report, { posted: true, issue: "SHU-71" });
+  assert.equal(flaky.reports.length, 1);
+  assert.ok(flaky.clock - before >= (REPORT_ATTEMPTS - 1) * REPORT_RETRY_WAIT_MS, "it waits between tries");
+  const down = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  down.networkFailures = REPORT_ATTEMPTS + 5;
+  const result = await main(["run"], down.io, PATHS);
+  assert.equal(result.output.ok, true, "a lost report never changes the result");
+  assert.equal(result.output.report.posted, false);
+  assert.match(result.output.report.reason, /fetch failed/);
+  assert.equal(down.api.filter((call) => call === "linear report read SHU-71").length, REPORT_ATTEMPTS);
+  assert.equal(down.networkFailures, 5);
+  // An answer from Linear, even a refusal, is never asked again.
+  const refused = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "review PASS — the episode is complete")) : tickText("activation=absent (committed gates only)")) });
+  refused.failReport = "read";
+  assert.equal((await main(["run"], refused.io, PATHS)).output.report.posted, false);
+  assert.equal(refused.api.filter((call) => call === "linear report read SHU-71").length, 1);
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {

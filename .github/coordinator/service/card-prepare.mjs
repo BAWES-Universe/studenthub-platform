@@ -348,10 +348,24 @@ function bounded(promise, timeoutMs) {
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
 
+// A request that never reached Linear (fetch's own TypeError, "fetch failed")
+// is tried again a bounded number of times: the first timer run lost its report
+// that way. Linear's answers and the deadline are never retried.
+export const REPORT_ATTEMPTS = 3;
+export const REPORT_RETRY_WAIT_MS = 15 * 1000;
+
 export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS }) {
   try {
     if (!credentials?.LINEAR_API_TOKEN) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "no coordinator credentials" };
-    const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);
+    const send = async (query, variables) => {
+      for (let attempt = 1; ; attempt += 1) {
+        try { return await bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs); }
+        catch (error) {
+          if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;
+          io.sleep(REPORT_RETRY_WAIT_MS);
+        }
+      }
+    };
     const data = await send(REPORT_ISSUE_QUERY, { id: REPORT_ISSUE });
     const issue = data?.issue ?? null;
     if (!issue?.id || issue.identifier !== REPORT_ISSUE) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: `${REPORT_ISSUE} cannot be read from Linear` };

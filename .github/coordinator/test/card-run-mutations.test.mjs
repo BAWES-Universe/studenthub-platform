@@ -290,8 +290,8 @@ const CASES = [
   {
     name: "M44 wait on Linear without a deadline",
     file: "service/card-prepare.mjs",
-    from: "    const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);",
-    to: "    const send = (query, variables) => sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch); // SHU86-M44",
+    from: "        try { return await bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs); }",
+    to: "        try { return await sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch); } // SHU86-M44",
     pattern: "SHU-86 C30:",
   },
   {
@@ -436,6 +436,41 @@ const CASES = [
     from: '      "push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(dryRun ? ["--dry-run"] : []),',
     to: '      "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), // SHU86-M66',
     pattern: "SHU-86 C40:",
+  },
+  {
+    name: "M67 read the tick before journald has flushed it",
+    file: "service/card-run.mjs",
+    from: '  run(io, "journalctl", ["--sync"]);',
+    to: '  // SHU86-M67',
+    pattern: "SHU-86 C41:",
+  },
+  {
+    name: "M68 read every coordinator run in the window as this tick",
+    file: "service/card-run.mjs",
+    from: "  return entries.filter((entry) => entry.invocation === last).map((entry) => entry.message).join(\"\\n\");",
+    to: "  return entries.map((entry) => entry.message).join(\"\\n\"); // SHU86-M68",
+    pattern: "SHU-86 C41:",
+  },
+  {
+    name: "M69 take a silent tick as an empty one",
+    file: "service/card-run.mjs",
+    from: '  if (!entries.length) refuse("CARD_RUN_TICK", "the tick left no output in the journal");',
+    to: '  if (!entries.length) return ""; // SHU86-M69',
+    pattern: "SHU-86 C41:",
+  },
+  {
+    name: "M70 never try a lost report again",
+    file: "service/card-prepare.mjs",
+    from: "          if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;",
+    to: "          throw error; // SHU86-M70",
+    pattern: "SHU-86 C42:",
+  },
+  {
+    name: "M71 try every failed report again",
+    file: "service/card-prepare.mjs",
+    from: "          if (!(error instanceof TypeError) || attempt >= REPORT_ATTEMPTS) throw error;",
+    to: "          if (attempt >= REPORT_ATTEMPTS) throw error; // SHU86-M71",
+    pattern: "SHU-86 C42:",
   },
 ];
 
