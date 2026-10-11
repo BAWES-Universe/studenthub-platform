@@ -2036,6 +2036,10 @@
     "SHU-86 mutation M59 skip the dry-run push in plan",
     "SHU-86 mutation M60 push to any remote",
     "SHU-86 mutation M61 push as root instead of the coordinator user",
+    "SHU-86 mutation M62 push from the checkout, under its own config",
+    "SHU-86 mutation M63 push with no time limit",
+    "SHU-86 mutation M64 let SSH prompt",
+    "SHU-86 mutation M65 leave the push repository behind",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -17679,6 +17683,22 @@
     },
     {
       "name": "SHU-86 mutation M61 push as root instead of the coordinator user",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M62 push from the checkout, under its own config",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M63 push with no time limit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M64 let SSH prompt",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M65 leave the push repository behind",
       "capabilities": []
     },
     {

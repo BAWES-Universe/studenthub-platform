@@ -58,7 +58,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   const dirs = new Set();
   const calls = [];
   const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], reports: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
-    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32) };
+    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32), pushDir: null, pushDirs: new Set() };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, gid: 0, ...extra });
   put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify(config));
   put(PATHS.receipt, JSON.stringify({ version: 1, revision: REV, state: "VERIFIED", effects: [] }));
@@ -108,18 +108,41 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     if (file === "id") return ok(args[0] === "-u" ? "997\n" : "998\n");
     if (file === "getent" && line === "passwd shu-coordinator") return host.noHome ? { status: 2, stdout: "", stderr: "" } : ok("shu-coordinator:x:997:998::/var/lib/shu-coordinator:/usr/sbin/nologin\n");
     // The branch push, as the deploy-key remote sees it: only the coordinator
-    // user, with the hardened git and an exact revision-to-branch refspec.
+    // user, with the hardened git, from a fresh bare repository that borrows
+    // the checkout's objects, bounded in time, with an exact
+    // revision-to-branch refspec.
     if (file === "runuser") {
+      assert.deepEqual(args.slice(0, 5), ["-u", "shu-coordinator", "--", "env", "-i"]);
+      assert.ok(args.includes("HOME=/var/lib/shu-coordinator") && args.includes("GIT_TERMINAL_PROMPT=0"));
+      assert.ok(args.includes("GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"));
+      const command = args.slice(args.findIndex((arg) => !arg.includes("=") && !["-u", "shu-coordinator", "--", "env", "-i"].includes(arg)));
+      if (command[0] === "mktemp") {
+        assert.deepEqual(command, ["mktemp", "-d", "/tmp/shu-card-push-XXXXXXXX"]);
+        host.pushDir = "/tmp/shu-card-push-Ab12Cd34";
+        host.pushDirs.add(host.pushDir);
+        return ok(`${host.pushDir}\n`);
+      }
+      if (command[0] === "rm") {
+        assert.deepEqual(command, ["rm", "-rf", "--", host.pushDir]);
+        host.pushDirs.delete(host.pushDir);
+        return ok();
+      }
+      assert.ok(["git", "timeout"].includes(command[0]) && command.includes("credential.helper=") && host.pushDirs.has(host.pushDir));
+      if (command[0] === "git") {
+        assert.deepEqual(command.slice(-4), ["init", "--bare", "-q", host.pushDir]);
+        return ok();
+      }
       const refspec = args.at(-1);
       const [sha, ref] = refspec.split(":");
-      assert.deepEqual(args.slice(0, 5), ["-u", "shu-coordinator", "--", "env", "-i"]);
-      assert.ok(args.includes("HOME=/var/lib/shu-coordinator") && args.includes("GIT_SSH_COMMAND=ssh") && args.includes("credential.helper="));
-      assert.ok(args.includes(`safe.directory=${PATHS.checkout}`) && args.includes(PATHS.checkout) && args.includes("--no-verify"));
+      assert.deepEqual(args.slice(args.indexOf("timeout"), args.indexOf("timeout") + 4), ["timeout", "--kill-after=10", "300", "git"]);
+      assert.ok(args.includes(`GIT_ALTERNATE_OBJECT_DIRECTORIES=${PATHS.checkout}/.git/objects`));
+      assert.ok(command.includes(`--git-dir=${host.pushDir}`) && command.includes("--no-verify"));
+      assert.equal(command.includes("-C") || command.includes(PATHS.checkout), false);
       assert.equal(args.at(-2), PUSH_REMOTE);
       assert.equal(args.includes("--force") || args.includes("-f") || refspec.startsWith("+"), false);
       const dry = args.includes("--dry-run");
       host.api.push(`git push${dry ? " dry-run" : ""} ${ref} ${sha}`);
-      if (host.pushFails) return { status: 128, stdout: "", stderr: `ERROR: read-only key for ${PUSH_REMOTE}` };
+      if (host.pushFails) return { status: host.pushFails === "timeout" ? 124 : 128, stdout: "", stderr: `ERROR: read-only key for ${PUSH_REMOTE}` };
       if (!dry) host.branchHead = sha;
       return ok();
     }
@@ -365,6 +388,15 @@ test("SHU-86 C38: the branch is pushed with the coordinator's deploy key, never 
   assert.doesNotMatch(error.message, /github\.com|read-only key/);
   noArming(refused);
   assert.equal(refused.api.some((call) => call.startsWith("linear todo")), false);
+  assert.equal(refused.pushDirs.size, 0, "the push repository is removed after a refused push");
+  // A push that outlives its time limit is a refusal too, and says so.
+  const stalled = fakeHost({ branchHead: "" });
+  stalled.pushFails = "timeout";
+  const timedOut = await runCard({ io: stalled.io, paths: PATHS }).then(() => null, (e) => e);
+  assert.equal(timedOut?.code, "CARD_RUN_BRANCH_CREATE");
+  assert.match(timedOut.message, /timed out after 300s/);
+  assert.equal(stalled.pushDirs.size, 0);
+  noArming(stalled);
   // No push remote, a remote for another repository, or no home for the
   // coordinator user: refused before any push is tried.
   for (const [label, change] of [
@@ -384,6 +416,7 @@ test("SHU-86 C38: the branch is pushed with the coordinator's deploy key, never 
   assert.equal(output.prepare.branch.action, "create");
   assert.deepEqual(planned.api.filter((call) => call.startsWith("git push")), [`git push dry-run refs/heads/coordinator/SHU-301 ${REV}`]);
   assert.equal(planned.branchHead, "");
+  assert.equal(planned.pushDirs.size, 0, "the push repository is removed after a dry run");
   const blocked = fakeHost({ branchHead: "" });
   blocked.pushFails = true;
   assert.equal((await main(["plan"], blocked.io, PATHS)).output.prepare.refused, "CARD_RUN_BRANCH_CREATE");

@@ -203,10 +203,20 @@ async function branchHead(io, credentials, repo, branch) {
   return sha;
 }
 
-// One git push as the coordinator user, from the installed checkout, to the
-// coordinator's own push remote: never forced, hooks and credential helpers
-// off, an explicit revision-to-branch refspec. With dryRun, the remote still
-// authenticates the push, so a key that cannot write is found before a run.
+// One git push as the coordinator user to the coordinator's own push remote:
+// never forced, hooks and credential helpers off, an explicit
+// revision-to-branch refspec. With dryRun, the remote still authenticates the
+// push, so a key that cannot write is found before a run.
+//
+// Like the push broker, the push runs from an empty bare repository the
+// coordinator user just made, never from the installed checkout: the
+// checkout's own config could rewrite the destination (url.*.insteadOf or
+// pushInsteadOf), and a fresh repository has none. The checkout's objects are
+// reached as an alternate, a plain path read. SSH never prompts and the push
+// is bounded in time, so a stalled remote cannot hold the run's lock.
+export const PUSH_TIMEOUT_SECONDS = 300;
+export const PUSH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
+
 function pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun }) {
   if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) {
     refuse("CARD_RUN_BRANCH_CREATE", `SHU_PUSH_REMOTE_URL is not the ${repo} remote`);
@@ -215,12 +225,23 @@ function pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun 
   const home = String(account.stdout ?? "").trim().split(":")[5] ?? "";
   if (account.status !== 0 || !home.startsWith("/")) refuse("CARD_RUN_BRANCH_CREATE", `the ${COORDINATOR_USER} home directory cannot be resolved`);
   const env = [`HOME=${home}`, `PATH=${GIT_PATH}`, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-    "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh"];
-  const push = io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env,
-    "git", ...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${checkout}`, "-C", checkout,
-    "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), credentials.SHU_PUSH_REMOTE_URL, `${revision}:refs/heads/${branch}`]);
-  // git's own output can name the remote; only the exit status is reported.
-  if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${dryRun ? "pushed in a dry run" : "pushed"} as ${COORDINATOR_USER} (git exit ${push.status})`);
+    "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", `GIT_SSH_COMMAND=${PUSH_SSH_COMMAND}`];
+  const asCoordinator = (args) => io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env, ...args]);
+  const made = asCoordinator(["mktemp", "-d", "/tmp/shu-card-push-XXXXXXXX"]);
+  const dir = String(made.stdout ?? "").trim();
+  if (made.status !== 0 || !/^\/tmp\/shu-card-push-[A-Za-z0-9]{8}$/.test(dir)) refuse("CARD_RUN_BRANCH_CREATE", `a push repository could not be made as ${COORDINATOR_USER}`);
+  try {
+    const init = asCoordinator(["git", ...BROKER_GIT_CONFIG_ARGS, "init", "--bare", "-q", dir]);
+    if (init.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `a push repository could not be made as ${COORDINATOR_USER} (git exit ${init.status})`);
+    const push = asCoordinator([`GIT_ALTERNATE_OBJECT_DIRECTORIES=${checkout}/.git/objects`,
+      "timeout", "--kill-after=10", String(PUSH_TIMEOUT_SECONDS),
+      "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`,
+      "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), credentials.SHU_PUSH_REMOTE_URL, `${revision}:refs/heads/${branch}`]);
+    // git's own output can name the remote; only the exit status is reported.
+    if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${dryRun ? "pushed in a dry run" : "pushed"} as ${COORDINATOR_USER} (${push.status === 124 ? `timed out after ${PUSH_TIMEOUT_SECONDS}s` : `git exit ${push.status}`})`);
+  } finally {
+    asCoordinator(["rm", "-rf", "--", dir]);
+  }
 }
 
 async function prepareBranch(io, credentials, repo, checkout, branch, revision, apply) {

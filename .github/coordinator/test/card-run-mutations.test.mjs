@@ -398,9 +398,37 @@ const CASES = [
   {
     name: "M61 push as root instead of the coordinator user",
     file: "service/card-prepare.mjs",
-    from: '  const push = io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env,',
-    to: '  const push = io.exec("env", ["-i", ...env, // SHU86-M61',
+    from: '  const asCoordinator = (args) => io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env, ...args]);',
+    to: '  const asCoordinator = (args) => io.exec("env", ["-i", ...env, ...args]); // SHU86-M61',
     pattern: "SHU-86 C8:",
+  },
+  {
+    name: "M62 push from the checkout, under its own config",
+    file: "service/card-prepare.mjs",
+    from: '      "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`,',
+    to: '      "git", ...BROKER_GIT_CONFIG_ARGS, "-C", checkout, // SHU86-M62',
+    pattern: "SHU-86 C8:",
+  },
+  {
+    name: "M63 push with no time limit",
+    file: "service/card-prepare.mjs",
+    from: '      "timeout", "--kill-after=10", String(PUSH_TIMEOUT_SECONDS),',
+    to: '      // SHU86-M63',
+    pattern: "SHU-86 C8:",
+  },
+  {
+    name: "M64 let SSH prompt",
+    file: "service/card-prepare.mjs",
+    from: 'export const PUSH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";',
+    to: 'export const PUSH_SSH_COMMAND = "ssh"; // SHU86-M64',
+    pattern: "SHU-86 C8:",
+  },
+  {
+    name: "M65 leave the push repository behind",
+    file: "service/card-prepare.mjs",
+    from: '    asCoordinator(["rm", "-rf", "--", dir]);',
+    to: '    // SHU86-M65',
+    pattern: "SHU-86 C38:",
   },
 ];
 
