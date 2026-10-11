@@ -189,8 +189,8 @@ const CASES = [
   {
     name: "M29 create the branch before the card is known to be movable",
     file: "service/card-prepare.mjs",
-    from: "  await checkCard(io, credentials, plan.id);\n  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null;",
-    to: "  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null; // SHU86-M29\n  await checkCard(io, credentials, plan.id);",
+    from: "  await checkCard(io, credentials, plan.id);\n  const branch = plan.branch ? await prepareBranch(io, credentials, repo, checkout, plan.branch, revision, apply) : null;",
+    to: "  const branch = plan.branch ? await prepareBranch(io, credentials, repo, checkout, plan.branch, revision, apply) : null; // SHU86-M29\n  await checkCard(io, credentials, plan.id);",
     pattern: "SHU-86 C22:",
   },
   {
@@ -373,6 +373,34 @@ const CASES = [
     from: '  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);',
     to: '  if (io.fs.existsSync(timerFile)) io.exec("systemctl", ["disable", "--now", AUTO_TIMER]); // SHU86-M57',
     pattern: "SHU-86 C35:",
+  },
+  {
+    name: "M58 write the branch with the read-only token",
+    file: "service/card-prepare.mjs",
+    from: "  pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: !apply });",
+    to: "  if (apply) await github(io, credentials, \"POST\", `https://api.github.com/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: revision }); // SHU86-M58",
+    pattern: "SHU-86 C8:",
+  },
+  {
+    name: "M59 skip the dry-run push in plan",
+    file: "service/card-prepare.mjs",
+    from: "  pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: !apply });",
+    to: "  if (apply) pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: false }); // SHU86-M59",
+    pattern: "SHU-86 C38:",
+  },
+  {
+    name: "M60 push to any remote",
+    file: "service/card-prepare.mjs",
+    from: "  if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) {",
+    to: "  if (false) { // SHU86-M60",
+    pattern: "SHU-86 C38:",
+  },
+  {
+    name: "M61 push as root instead of the coordinator user",
+    file: "service/card-prepare.mjs",
+    from: '  const push = io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env,',
+    to: '  const push = io.exec("env", ["-i", ...env, // SHU86-M61',
+    pattern: "SHU-86 C8:",
   },
 ];
 

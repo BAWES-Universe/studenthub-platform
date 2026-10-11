@@ -11,9 +11,18 @@
 //
 // Credentials are the coordinator's own (/srv/shu/coordinator.env), read once
 // by root, kept in memory and never printed. Every write is read back.
+//
+// The coordinator's GitHub token is read-only by design, so the branch is not
+// created through the API: it is pushed the way the push broker publishes a
+// build, as the coordinator user over its deploy-key remote
+// (SHU_PUSH_REMOTE_URL), with the broker's hardened git configuration. The
+// token only reads the branch back.
 import { sendLinear } from "../reconcile.mjs";
+import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 
 export const COORDINATOR_ENV = "/srv/shu/coordinator.env";
+export const COORDINATOR_USER = "shu-coordinator";
+const GIT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 export const TODO_STATE = "Todo";
 export const MOVABLE_STATE_TYPES = Object.freeze(["backlog", "unstarted"]);
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -22,7 +31,8 @@ function refuse(code, detail) {
   throw Object.assign(new Error(`${code}: ${detail}`), { code });
 }
 
-// The coordinator's GitHub and Linear tokens, from its own environment file.
+// The coordinator's GitHub and Linear tokens and its push remote, from its
+// own environment file.
 // The file must be a regular file owned by the coordinator user with no group
 // or other access. A refusal names keys and conditions only, never a value.
 export function readCoordinatorCredentials(io, file = COORDINATOR_ENV) {
@@ -36,8 +46,11 @@ export function readCoordinatorCredentials(io, file = COORDINATOR_ENV) {
   }
   const raw = io.fs.readFileSync(file, "utf8");
   const credentials = {};
-  for (const key of ["GITHUB_TOKEN", "LINEAR_API_TOKEN"]) {
+  // The push remote is only needed to create a branch, so a run report can
+  // still be posted without it; the push itself refuses when it is missing.
+  for (const key of ["GITHUB_TOKEN", "LINEAR_API_TOKEN", "SHU_PUSH_REMOTE_URL"]) {
     const matches = raw.split("\n").filter((line) => line.startsWith(`${key}=`));
+    if (key === "SHU_PUSH_REMOTE_URL" && matches.length === 0) continue;
     const value = matches.length === 1 ? matches[0].slice(key.length + 1).trim().replace(/^(["'])(.*)\1$/, "$2") : "";
     if (!value || /[\s\\$\x00-\x1f]/.test(value)) refuse("CARD_RUN_CREDENTIALS", `${file} must hold exactly one usable ${key}`);
     credentials[key] = value;
@@ -190,13 +203,32 @@ async function branchHead(io, credentials, repo, branch) {
   return sha;
 }
 
-async function prepareBranch(io, credentials, repo, branch, revision, apply) {
+// One git push as the coordinator user, from the installed checkout, to the
+// coordinator's own push remote: never forced, hooks and credential helpers
+// off, an explicit revision-to-branch refspec. With dryRun, the remote still
+// authenticates the push, so a key that cannot write is found before a run.
+function pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun }) {
+  if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) {
+    refuse("CARD_RUN_BRANCH_CREATE", `SHU_PUSH_REMOTE_URL is not the ${repo} remote`);
+  }
+  const account = io.exec("getent", ["passwd", COORDINATOR_USER]);
+  const home = String(account.stdout ?? "").trim().split(":")[5] ?? "";
+  if (account.status !== 0 || !home.startsWith("/")) refuse("CARD_RUN_BRANCH_CREATE", `the ${COORDINATOR_USER} home directory cannot be resolved`);
+  const env = [`HOME=${home}`, `PATH=${GIT_PATH}`, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+    "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh"];
+  const push = io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env,
+    "git", ...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${checkout}`, "-C", checkout,
+    "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), credentials.SHU_PUSH_REMOTE_URL, `${revision}:refs/heads/${branch}`]);
+  // git's own output can name the remote; only the exit status is reported.
+  if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${dryRun ? "pushed in a dry run" : "pushed"} as ${COORDINATOR_USER} (git exit ${push.status})`);
+}
+
+async function prepareBranch(io, credentials, repo, checkout, branch, revision, apply) {
   const head = await branchHead(io, credentials, repo, branch);
   if (head === revision) return { branch, head, action: "none" };
   if (head !== null) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", `${branch} is at ${head}, not ${revision}; an existing branch is never moved`);
+  pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: !apply });
   if (!apply) return { branch, head: null, action: "create" };
-  const { status } = await github(io, credentials, "POST", `https://api.github.com/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: revision });
-  if (status !== 201) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be created (HTTP ${status})`);
   const after = await branchHead(io, credentials, repo, branch);
   if (after !== revision) refuse("CARD_RUN_BRANCH_READBACK", `${branch} reads back at ${after}, not ${revision}`);
   return { branch, head: after, action: "create" };
@@ -206,10 +238,11 @@ async function prepareBranch(io, credentials, repo, branch, revision, apply) {
 // do. Nothing is written until the card is known to be movable; then the
 // branch comes first, so a card is moved only once its branch is right, and
 // the card is read again just before it is moved.
-export async function prepareRun({ io, plan, revision, repo, credentials, apply = true }) {
+export async function prepareRun({ io, plan, revision, repo, checkout, credentials, apply = true }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) refuse("CARD_RUN_CONFIG", "pilot_repo must name one GitHub repository");
+  if (!String(checkout ?? "").startsWith("/")) refuse("CARD_RUN_CONFIG", "the installed checkout needs an absolute path");
   await checkCard(io, credentials, plan.id);
-  const branch = plan.branch ? await prepareBranch(io, credentials, repo, plan.branch, revision, apply) : null;
+  const branch = plan.branch ? await prepareBranch(io, credentials, repo, checkout, plan.branch, revision, apply) : null;
   const card = await prepareCardState(io, credentials, plan.id, apply);
   return { branch, card };
 }
