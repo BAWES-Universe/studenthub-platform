@@ -11,10 +11,15 @@ import { fileURLToPath } from "node:url";
 import {
   planRun, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
-  autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER,
+  autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
 } from "../service/card-run.mjs";
-import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS } from "../service/card-prepare.mjs";
+import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
+  readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
+import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
+import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken } from "../service/card-land.mjs";
+import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
+import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1126,4 +1131,352 @@ test("SHU-86 C37: the commands run from argv the way an operator or the unit sta
     assert.equal(child.status, 2, `${command}: ${child.stdout}${child.stderr}`);
     assert.equal(JSON.parse(child.stdout).code, code, command);
   }
+});
+
+// SHU-306 — a passed card lands its own work. The fake host gains a landing
+// token file, the card's Linear thread (a writer and a reviewer of this run's
+// episode, written by the trusted coordinator actor) and the GitHub the landing
+// token sees. Everything the landing does is logged in order.
+const LAND_PATHS = Object.freeze({ ...PATHS, landEnv: "/srv/shu/card-land.env" });
+const PASSED = "1".repeat(40);
+const TREE = "2".repeat(40);
+const MERGE_SHA = "3".repeat(40);
+const ACTOR = COMMITTED.linear_receipt_actor_ids[0];
+const REPO = COMMITTED.pilot_repo;
+const EPISODE = "shu-301-run-20261009T153007Z";
+
+function cardLineage() {
+  const common = { issue_id: "SHU-301", authorization_ref: "SHU-301", repo: REPO, branch: "coordinator/SHU-301", episode_id: EPISODE };
+  const writerMade = createReceipt({ ...common, requested_worker: "codex-builder", target_sha: REV, attempt_id: "00000000-0000-4000-8000-000000000301" });
+  assert.ok(writerMade.ok, JSON.stringify(writerMade.errors));
+  const writer = { ...writerMade.receipt, stage: "COMPLETED", verdict_stage: "BUILD_READY", result_sha: PASSED,
+    external_run_id: "codexrun_writer", worker_identity: "codex-author", adapter_status: "completed",
+    evidence_links: ["https://example.test/build"], last_activity: "2026-10-09T16:01:00.000Z",
+    timestamps: { ...writerMade.receipt.timestamps, launch: "2026-10-09T16:00:10.000Z", terminal: "2026-10-09T16:01:00.000Z" } };
+  const reviewMade = createReceipt({ ...common, requested_worker: "claude-verifier", target_sha: PASSED, attempt_id: "00000000-0000-4000-8000-000000000302" });
+  assert.ok(reviewMade.ok, JSON.stringify(reviewMade.errors));
+  const review = { ...reviewMade.receipt, stage: "COMPLETED", verdict_stage: "PASS", result_sha: null,
+    external_run_id: "clauderun_review", worker_identity: "claude-reviewer", adapter_status: "completed",
+    evidence_links: ["https://example.test/verdict"], last_activity: "2026-10-09T16:02:00.000Z",
+    timestamps: { ...reviewMade.receipt.timestamps, launch: "2026-10-09T16:01:10.000Z", terminal: "2026-10-09T16:02:00.000Z" } };
+  assert.equal(validateReceipt(review).valid, true);
+  return [writer, review];
+}
+
+// options: existingPr, prHead, losePost, checks (per-read conclusions: "green",
+// "pending", "red"), strict (false holds the merge), onChecks(land, read),
+// token ("none" | "custody"), unprotectedOwner.
+function landingHost(options = {}) {
+  const host = fakeHost({ onTick: options.onTick ?? passOnFirstTick, workers: options.workers });
+  if (options.token !== "none") {
+    host.files.set(LAND_PATHS.landEnv, { text: "SHU_LAND_GITHUB_TOKEN=land-secret-value\n", mode: options.token === "custody" ? 0o640 : 0o600, uid: 0, gid: 0 });
+  }
+  const land = { log: [], comments: [], posts: 0, merges: 0, checkReads: 0, pr: null, merged: false, linearClock: Date.parse("2026-10-09T17:00:00.000Z") };
+  host.land = land;
+  const comment = (body) => {
+    land.linearClock += 1000;
+    land.comments.push({ body, createdAt: new Date(land.linearClock).toISOString(), user: { id: ACTOR, displayName: "Coordinator" } });
+  };
+  for (const receipt of cardLineage()) comment(receiptCommentBody(receipt));
+  if (options.existingPr) land.pr = { number: 77, head: options.prHead ?? PASSED };
+  const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
+  const pullDetail = () => ({ number: 77, state: land.merged ? "closed" : "open", merged: land.merged, merged_at: land.merged ? "2026-10-09T18:00:00Z" : null,
+    merge_commit_sha: land.merged ? MERGE_SHA : null, draft: false, mergeable: true, mergeable_state: "clean", labels: [],
+    head: { ref: "coordinator/SHU-301", sha: land.pr.head, repo: { full_name: REPO } }, base: { ref: "main", sha: REV, repo: { full_name: REPO } } });
+  const delegate = host.io.fetch;
+  host.io.fetch = async (url, request = {}) => {
+    if (url === "https://api.linear.app/graphql") {
+      const { query, variables } = JSON.parse(request.body);
+      if (query.includes("issueUpdate") && !query.includes("CardRunTodo")) { land.log.push("linear state move"); return respond(200, { data: { issueUpdate: { success: true } } }); }
+      if (query.includes("CardLandIssue")) return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, title: "Make the thing" } } });
+      if (query.includes("CoordinatorIssueComments")) return respond(200, { data: { issue: { comments: { nodes: land.comments, pageInfo: { hasNextPage: false, endCursor: null } } } } });
+      if (query.includes("CoordinatorMergeIssue")) {
+        return respond(200, { data: { issue: { id: "issue-uuid", identifier: "SHU-301", title: "Make the thing", state: { name: "Todo", type: "unstarted" },
+          labels: { nodes: [] }, relations: { nodes: [] }, comments: { nodes: land.comments } } } });
+      }
+      if (query.includes("CoordinatorReserve")) {
+        assert.equal(variables.issueId, "issue-uuid", "landing writes go on the card");
+        const body = variables.body;
+        const kind = body.includes("coordinator-merge-attempt") ? `merge-attempt ${/"state": "(\w+)"/.exec(body)[1]}`
+          : body.includes("card-land-merged") ? "merge comment" : /"handoff"/.test(body) ? "handoff" : "receipt";
+        land.log.push(`linear ${kind}`);
+        comment(body);
+        return respond(200, { data: { commentCreate: { success: true, comment: { id: `c${land.comments.length}` } } } });
+      }
+      return delegate(url, request);
+    }
+    if (request.headers?.Authorization !== "Bearer land-secret-value") return delegate(url, request);
+    if (url === "https://api.github.com/graphql") {
+      const resolved = options.resolveThreadsAfter !== undefined && land.checkReads > options.resolveThreadsAfter;
+      const nodes = (options.threads ?? []).map((isResolved) => ({ isResolved: resolved || isResolved, comments: { nodes: [{ isMinimized: false }] } }));
+      return respond(200, { data: { repository: { pullRequest: { reviewThreads: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } } } });
+    }
+    const prefix = `https://api.github.com/repos/${REPO}`;
+    assert.ok(String(url).startsWith(prefix), url);
+    const route = String(url).slice(prefix.length);
+    const head = encodeURIComponent(`${REPO.split("/")[0]}:coordinator/SHU-301`);
+    if (request.method === "POST" && route === "/pulls") {
+      land.posts += 1;
+      land.log.push("github open pull request");
+      const body = JSON.parse(request.body);
+      land.opened = body;
+      land.pr = { number: 77, head: options.prHead ?? PASSED };
+      if (options.losePost) throw new TypeError("fetch failed");
+      return respond(201, pullDetail());
+    }
+    if (request.method === "PUT" && route === "/pulls/77/merge") {
+      land.merges += 1;
+      land.log.push("github merge");
+      land.lockAtMerge = host.files.has(PATHS.lock);
+      land.revertedAtMerge = !host.files.has(PATHS.activation) && !host.environ.includes("ENABLE_DISPATCH=true");
+      assert.deepEqual(JSON.parse(request.body), { sha: PASSED, merge_method: "squash" });
+      land.merged = true;
+      return respond(200, { merged: true, sha: MERGE_SHA });
+    }
+    assert.ok(!request.method || request.method === "GET", `${request.method} ${route}`);
+    if (route === `/pulls?state=open&head=${head}&per_page=100`) { land.log.push("github list"); return respond(200, land.pr && !land.merged ? [pullDetail()] : []); }
+    if (route === `/pulls?state=all&head=${head}&per_page=100`) return respond(200, land.pr ? [pullDetail()] : []);
+    if (route === "/pulls/77") return respond(200, pullDetail());
+    if (route === `/commits/${PASSED}/check-runs?filter=latest&per_page=100`) {
+      land.checkReads += 1;
+      options.onChecks?.(host, land.checkReads);
+      const plan = options.checks ?? ["green"];
+      const state = plan[Math.min(land.checkReads, plan.length) - 1];
+      if (!land.log.includes("github checks")) land.log.push("github checks");
+      const runs = [{ name: "fast-checks", app: { id: 15368 },
+        status: state === "pending" ? "in_progress" : "completed", conclusion: state === "pending" ? null : state === "red" ? "failure" : "success" }];
+      // An optional (not required) check that turns red after landing's green streak.
+      if (options.optionalRedAfter !== undefined && land.checkReads > options.optionalRedAfter) {
+        runs.push({ name: "optional-lint", app: { id: 15368 }, status: "completed", conclusion: "failure" });
+      }
+      return respond(200, { total_count: runs.length, check_runs: runs });
+    }
+    if (route === `/commits/${PASSED}/status?per_page=100`) return respond(200, { state: "success", statuses: [] });
+    if (route === `/commits/${PASSED}`) return respond(200, { commit: { tree: { sha: TREE } } });
+    if (route === `/commits/${MERGE_SHA}`) return respond(200, { commit: { tree: { sha: TREE } } });
+    if (route === "/branches/main") return respond(200, { protected: true, commit: { sha: REV } });
+    if (route === "/branches/main/protection") return respond(200, { required_status_checks: { strict: options.strict !== false, contexts: [], checks: [{ context: "fast-checks", app_id: 15368 }] } });
+    if (route === `/compare/${REV}...${PASSED}`) return respond(200, { status: "ahead", base_commit: { sha: REV } });
+    throw new Error(`unexpected GitHub route ${route}`);
+  };
+  return host;
+}
+const landRun = (host, limits = CARD_RUN_LIMITS) => runCard({ io: host.io, paths: LAND_PATHS, limits });
+const handoffs = (host) => parseReceiptsFromComments(host.land.comments, [ACTOR]).filter((r) => r.handoff);
+const noLandingWrites = (host) => {
+  assert.equal(host.land.merges, 0, "nothing was merged");
+  assert.equal(handoffs(host).length, 0, "no handoff was written");
+  assert.ok(!host.land.log.some((entry) => entry.startsWith("linear merge")), "no merge record or merge comment");
+};
+const neverDone = (host) => assert.ok(!host.land.log.includes("linear state move"), "a landing never moves the card");
+
+test("SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card", async () => {
+  const host = landingHost();
+  const result = await landRun(host);
+  assert.equal(result.outcome, "PASS");
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.land.pr, 77);
+  assert.equal(result.land.merge_commit, MERGE_SHA);
+  assert.equal(host.land.posts, 1);
+  assert.equal(host.land.merges, 1);
+  assert.equal(host.land.opened.title, "[SHU-301] Make the thing");
+  assert.equal(host.land.opened.base, "main");
+  assert.equal(host.land.opened.head, "coordinator/SHU-301");
+  assert.match(host.land.opened.body, /^Refs SHU-301$/m);
+  assert.match(host.land.opened.body, /SHU-71/);
+  assert.doesNotMatch(host.land.opened.body, /\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\b/i, "never a closing verb");
+  assert.deepEqual(host.land.log.filter((e) => e !== "github list"), ["github open pull request", "github checks", "linear handoff",
+    "linear merge-attempt PREPARED", "github merge", "linear merge-attempt COMPLETED", "linear merge comment"]);
+  const [handoff] = handoffs(host);
+  assert.deepEqual(handoff.handoff, { source_attempt_id: "00000000-0000-4000-8000-000000000302", target_sha: PASSED, verdict_stage: "PASS",
+    action: "merge-readiness", hold_code: "MISSING_AUTHORITY" });
+  const comment = host.land.comments.find((c) => c.body.includes("card-land-merged")).body;
+  assert.match(comment, /pull request #77/);
+  assert.ok(comment.includes(MERGE_SHA));
+  neverDone(host);
+  assert.equal(COMMITTED.routine_merge_authority.enabled, false, "the committed gate stays off");
+  assert.equal(process.env.ENABLE_ROUTINE_MERGE, undefined, "the runtime gate never enters the environment");
+  assert.equal(host.land.lockAtMerge, true, "the run lands under its own lock");
+  assert.equal(host.land.revertedAtMerge, true, "and only once the host is back to dispatch off");
+  assert.equal(host.files.has(PATHS.lock), false, "the lock is released after landing");
+  assert.match(host.reports[0], /^Landing: MERGED, its pull request went green and the SHU-259 consumer merged it\.$/m);
+  assert.match(host.reports[0], new RegExp(`^Landed: pull request #77 \\(opened by this run\\); merge commit ${MERGE_SHA}\\.$`, "m"));
+  assert.doesNotMatch(JSON.stringify(result) + host.reports.join("\n"), /land-secret-value|gh-secret-value|lin-secret-value/);
+  reverted(host);
+});
+
+test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
+  const host = landingHost({ existingPr: true });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(host.land.posts, 0, "no second pull request");
+  assert.equal(result.land.opened, false);
+  neverDone(host);
+});
+
+test("SHU-306 L3: a lost answer to the open is read back, never sent again", async () => {
+  const host = landingHost({ losePost: true });
+  const result = await landRun(host);
+  assert.equal(host.land.posts, 1, "one POST only");
+  assert.equal(host.land.log.filter((e) => e === "github list").length >= 2, true, "the list is read again");
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.land.opened, false, "a pull request found after a lost answer is not reported as this run's");
+});
+
+test("SHU-306 L4: a pull request whose head is not the passed head stops before any check is read", async () => {
+  const host = landingHost({ existingPr: true, prHead: "9".repeat(40) });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(result.land));
+  assert.equal(host.land.checkReads, 0, "no wait on a head the review never passed");
+  noLandingWrites(host);
+  assert.match(host.reports[0], /^Landing: LAND_HEAD_MISMATCH, /m);
+});
+
+test("SHU-306 L5: red checks stop the landing with no handoff and no merge", async () => {
+  const host = landingHost({ checks: ["pending", "red"] });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "PR_OPENED_CI_RED", JSON.stringify(result.land));
+  assert.equal(result.land.pr, 77);
+  noLandingWrites(host);
+  neverDone(host);
+  assert.match(host.reports[0], /^Landing: PR_OPENED_CI_RED, /m);
+});
+
+test("SHU-306 L6: checks that never go green stop at the bound with no handoff and no merge", async () => {
+  const host = landingHost({ checks: ["pending"] });
+  const before = host.clock;
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
+  noLandingWrites(host);
+  const waited = host.clock - before;
+  assert.ok(waited >= CARD_RUN_LIMITS.landWaitMs && waited <= CARD_RUN_LIMITS.landWaitMs + 2 * CARD_RUN_LIMITS.landPollMs, `waited ${waited}`);
+  // The whole run stays inside the unit's start timeout.
+  const worst = CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.workerGraceMs + CARD_RUN_LIMITS.landWaitMs + CARD_RUN_LIMITS.landPollMs
+    + 40 * CARD_RUN_LIMITS.landRequestTimeoutMs + REPORT_ATTEMPTS * (CARD_RUN_LIMITS.reportTimeoutMs * 2 + REPORT_RETRY_WAIT_MS);
+  assert.ok(worst < AUTO_TIMEOUT_START_MS, "landing keeps the run inside TimeoutStartSec");
+  assert.match(autoServiceUnit({ node: "/usr/bin/node", module: "/m" }), new RegExp(`^TimeoutStartSec=${AUTO_TIMEOUT_START_MS / 3600000}h$`, "m"));
+  assert.match(host.reports[0], /^Landing: CI_TIMEOUT, /m);
+});
+
+test("SHU-306 L7: a held merge posts no merge comment and names its recovery", async () => {
+  const host = landingHost({ strict: false });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGE_HOLD", JSON.stringify(result.land));
+  assert.equal(result.land.hold_code, "BRANCH_PROTECTION_UNSATISFIED");
+  assert.equal(host.land.merges, 0);
+  assert.equal(handoffs(host).length, 1, "the handoff was written on green");
+  assert.ok(host.land.log.includes("linear merge-attempt HOLD"));
+  assert.ok(!host.land.log.includes("linear merge comment"), "no merge comment without COMPLETED");
+  neverDone(host);
+  assert.match(host.reports[0], /^Landing: MERGE_HOLD BRANCH_PROTECTION_UNSATISFIED, the SHU-259 consumer held the merge\.$/m);
+  assert.match(host.reports[0], /HOLD is terminal for its attempt: a new installed revision re-arms the card, and a stale \/run\/lock\/shu-card-run\.lock is cleared by hand\./);
+});
+
+test("SHU-306 L8: without the landing token the run is today's run, reported as LAND_SKIPPED_NO_TOKEN", async () => {
+  for (const [label, paths] of [["no file", LAND_PATHS], ["no path", PATHS]]) {
+    const host = landingHost({ token: "none" });
+    const result = await runCard({ io: host.io, paths });
+    assert.equal(result.outcome, "PASS", label);
+    assert.equal(result.ok, true, label);
+    assert.equal(result.land.outcome, "LAND_SKIPPED_NO_TOKEN", label);
+    assert.deepEqual(host.land.log, [], `${label}: no landing call at all`);
+    assert.match(host.reports[0], /^Landing: LAND_SKIPPED_NO_TOKEN, /m, label);
+    reverted(host);
+  }
+  const keyless = landingHost();
+  keyless.files.get(LAND_PATHS.landEnv).text = "OTHER=1\n";
+  assert.equal((await landRun(keyless)).land.outcome, "LAND_SKIPPED_NO_TOKEN");
+  assert.deepEqual(keyless.land.log, []);
+  // A token file anyone else could read is refused, never used.
+  const loose = landingHost({ token: "custody" });
+  const refused = await landRun(loose);
+  assert.equal(refused.land.outcome, "LAND_ERROR");
+  assert.match(refused.land.reason, /owned by root with no group or other access/);
+  assert.deepEqual(loose.land.log, []);
+  const foreign = landingHost();
+  foreign.files.get(LAND_PATHS.landEnv).uid = 997;
+  assert.equal((await landRun(foreign)).land.outcome, "LAND_ERROR");
+  assert.deepEqual(foreign.land.log, []);
+});
+
+test("SHU-306 L9: the pause file stops landing before the pull request and again before the merge", async () => {
+  const early = landingHost();
+  early.files.set(PATHS.pause, { text: "", mode: 0o644, uid: 0, gid: 0 });
+  const first = await landRun(early);
+  assert.equal(first.land.outcome, "LAND_PAUSED", JSON.stringify(first.land));
+  assert.deepEqual(early.land.log, [], "nothing was opened");
+  const late = landingHost({ onChecks: (h) => h.files.set(PATHS.pause, { text: "", mode: 0o644, uid: 0, gid: 0 }) });
+  const second = await landRun(late);
+  assert.equal(second.land.outcome, "LAND_PAUSED", JSON.stringify(second.land));
+  assert.equal(second.land.pr, 77);
+  noLandingWrites(late);
+  assert.match(late.reports[0], /^Landing: LAND_PAUSED, /m);
+});
+
+test("SHU-306 L10: nothing lands unless the revert finished, or the run passed", async () => {
+  // The worker outlives the grace: the host stays armed, so nothing lands.
+  const armedHost = landingHost({ workers: (h) => (h.ticks >= 1 ? 1 : 0) });
+  const result = await landRun(armedHost, { ...CARD_RUN_LIMITS, workerGraceMs: 60 * 1000 });
+  assert.equal(result.outcome, "PASS");
+  assert.equal(result.revert.reverted, false);
+  assert.equal(result.land, undefined);
+  assert.deepEqual(armedHost.land.log, [], "no landing call on an unreverted host");
+  const stopped = landingHost({ onTick: (h) => (h.ticks === 1 ? tickText(spent("SHU-301", "stop: retryable failures exhausted")) : tickText("activation=absent (committed gates only)")) });
+  const stop = await landRun(stopped);
+  assert.equal(stop.outcome, "STOPPED");
+  assert.equal(stop.land, undefined);
+  assert.deepEqual(stopped.land.log, []);
+});
+
+test("SHU-306 L11: the landing token never reaches the coordinator, the supervisor or any worker", () => {
+  assert.notEqual(LAND_PATHS.landEnv, PATHS.coordinatorEnv);
+  assert.equal(CARD_LAND_ENV, "/srv/shu/card-land.env");
+  assert.notEqual(CARD_LAND_ENV, COORDINATOR_ENV);
+  assert.equal(supervisorAdapterKeys.includes(LAND_TOKEN_KEY), false);
+  const source = [...supervisorAdapterKeys.map((key) => `${key}=placeholder-${key.toLowerCase()}`),
+    "GITHUB_TOKEN=gh", "LINEAR_API_TOKEN=lin", `${LAND_TOKEN_KEY}=land-secret-value`].join("\n");
+  const adapter = adapterLaunchEnvironment(source);
+  assert.equal(Object.hasOwn(adapter, LAND_TOKEN_KEY), false);
+  const supervisorEnv = applyAdapterLaunchEnvironment({ PATH: "/usr/bin", [LAND_TOKEN_KEY]: "x" }, adapter);
+  assert.equal(Object.hasOwn(supervisorChildEnvironment(supervisorEnv), LAND_TOKEN_KEY), false);
+  assert.equal(Object.hasOwn(supervisorChildEnvironment({ ...process.env, [LAND_TOKEN_KEY]: "x" }), LAND_TOKEN_KEY), false);
+  for (const unit of ["shu-coordinator.service.in", "shu-supervisor.service.in"]) {
+    assert.doesNotMatch(fs.readFileSync(path.join(HERE, "..", "service", unit), "utf8"), /card-land|SHU_LAND_/, unit);
+  }
+  assert.doesNotMatch(autoServiceUnit({ node: "/usr/bin/node", module: "/m" }), /EnvironmentFile|card-land|SHU_LAND_/);
+  const host = fakeHost();
+  host.files.set(PATHS.coordinatorEnv, { ...host.files.get(PATHS.coordinatorEnv), text: `${host.files.get(PATHS.coordinatorEnv).text}${LAND_TOKEN_KEY}=land-secret-value\n` });
+  assert.equal(Object.hasOwn(readCoordinatorCredentials(host.io, PATHS.coordinatorEnv), LAND_TOKEN_KEY), false);
+  assert.deepEqual(readLandToken(landingHost().io, LAND_PATHS.landEnv), { token: "land-secret-value" });
+});
+
+test("SHU-306 L12: the extracted handoff writer builds exactly the record the coordinator's consumer wrote", () => {
+  const [, review] = cardLineage();
+  const decision = { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" };
+  const next = handoffReceipt(review, PASSED, decision);
+  assert.deepEqual(next, { ...review, handoff: { source_attempt_id: review.attempt_id, target_sha: PASSED, verdict_stage: "PASS", ...decision } });
+  assert.equal(validHandoff(next), true);
+});
+
+test("SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands", async () => {
+  const held = landingHost({ threads: [false] });
+  const stuck = await landRun(held);
+  assert.equal(stuck.land.outcome, "CI_TIMEOUT", JSON.stringify(stuck.land));
+  assert.match(stuck.land.reason, /1 review thread\(s\) are unresolved/);
+  noLandingWrites(held);
+  neverDone(held);
+  const later = landingHost({ threads: [false, true], resolveThreadsAfter: 1 });
+  const landed = await landRun(later);
+  assert.equal(landed.land.outcome, "MERGED", JSON.stringify(landed.land));
+  assert.ok(later.land.checkReads >= 3, "it waited for the thread to resolve");
+});
+
+test("SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch", async () => {
+  const host = landingHost({ optionalRedAfter: 2 });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGE_HOLD", JSON.stringify(result.land));
+  assert.equal(result.land.hold_code, "REQUIRED_CHECKS_NOT_GREEN");
+  assert.equal(host.land.merges, 0, "nothing merged on a red optional check");
+  assert.ok(!host.land.log.includes("linear merge comment"));
+  neverDone(host);
 });

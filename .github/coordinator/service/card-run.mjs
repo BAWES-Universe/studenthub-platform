@@ -31,6 +31,7 @@ import { validateActivationRecord, MAX_ACTIVATION_WINDOW_MS } from "../single-ru
 import { resolveFixtureLane, resolveReviewOnlyLane } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
+import { landCard, readLandToken, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -43,6 +44,8 @@ export const CARD_RUN_PATHS = Object.freeze({
   tmp: "/tmp",
   coordinatorEnv: COORDINATOR_ENV,
   pause: "/etc/shu/card-run.paused",
+  // SHU-306: the landing token, root's alone and read only by this run.
+  landEnv: CARD_LAND_ENV,
 });
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
 export const RUN_DROP_IN = "95-v1-run.conf";
@@ -57,7 +60,14 @@ export const CARD_RUN_LIMITS = Object.freeze({
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
   reportTimeoutMs: 30 * 1000,
+  // SHU-306: landing a passed card. The wait for its checks is bounded so the
+  // whole run (window, worker grace, landing, reports) stays inside the unit's
+  // TimeoutStartSec.
+  landWaitMs: 30 * 60 * 1000,
+  landPollMs: 60 * 1000,
+  landRequestTimeoutMs: 30 * 1000,
 });
+export const AUTO_TIMEOUT_START_MS = 8 * 60 * 60 * 1000;
 
 // The timer and the one-shot service it starts. The service may run far longer
 // than any run can take, so systemd never kills a run before its revert. The
@@ -386,7 +396,13 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
-    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted };
+    // SHU-306: a passed card lands its own work, still under the lock, and only
+    // once the revert has put the host back to dispatch off.
+    let land = null;
+    if (plan.kind === "card" && result.outcome === "PASS" && reverted.reverted === true) {
+      land = await landRun({ io, paths, limits, plan, config, credentials });
+    }
+    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted, ...(land ? { land } : {}) };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
@@ -394,6 +410,18 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   // released, so a slow Linear never holds the host. The report is bounded
   // and best effort: it never changes the result.
   return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };
+}
+
+// The landing token is read here, by root, from its own file; a run without
+// one is exactly the run it was before, reported as LAND_SKIPPED_NO_TOKEN.
+async function landRun({ io, paths, limits, plan, config, credentials }) {
+  let custody;
+  try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
+  if (custody.refused) return { outcome: "LAND_ERROR", reason: custody.refused };
+  if (!custody.token) return { outcome: "LAND_SKIPPED_NO_TOKEN", reason: custody.reason };
+  return landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause,
+    limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs,
+      requestTimeoutMs: limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs } });
 }
 
 function readConfig(io, paths) {

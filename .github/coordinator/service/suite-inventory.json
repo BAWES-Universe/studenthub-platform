@@ -2047,6 +2047,19 @@
     "SHU-86 mutation M70 never try a lost report again",
     "SHU-86 mutation M71 try every failed report again",
     "SHU-86 mutation M72 post a report again without looking for it first",
+    "SHU-86 mutation M73 write the handoff before green",
+    "SHU-86 mutation M74 merge without the handoff",
+    "SHU-86 mutation M75 post the merge comment without COMPLETED",
+    "SHU-86 mutation M76 open a second pull request",
+    "SHU-86 mutation M77 skip the passed-head check",
+    "SHU-86 mutation M78 move the card to Done after the merge",
+    "SHU-86 mutation M79 skip the pause re-check before the merge",
+    "SHU-86 mutation M80 skip the pause check before the pull request",
+    "SHU-86 mutation M81 land on a host the revert did not finish",
+    "SHU-86 mutation M82 land a run that did not pass",
+    "SHU-86 mutation M83 hand off while a review thread is unresolved",
+    "SHU-86 mutation M84 report a recovered pull request as this run's",
+    "SHU-86 mutation M85 merge on required checks only after the green wait",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2089,6 +2102,20 @@
     "SHU-86 C40: the branch push only creates; a branch made after the read is refused, never moved",
     "SHU-86 C41: a tick is read from the journal, flushed first, and only its own invocation counts",
     "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice",
+    "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
+    "SHU-306 L2: an open pull request is reused, never opened twice",
+    "SHU-306 L3: a lost answer to the open is read back, never sent again",
+    "SHU-306 L4: a pull request whose head is not the passed head stops before any check is read",
+    "SHU-306 L5: red checks stop the landing with no handoff and no merge",
+    "SHU-306 L6: checks that never go green stop at the bound with no handoff and no merge",
+    "SHU-306 L7: a held merge posts no merge comment and names its recovery",
+    "SHU-306 L8: without the landing token the run is today's run, reported as LAND_SKIPPED_NO_TOKEN",
+    "SHU-306 L9: the pause file stops landing before the pull request and again before the merge",
+    "SHU-306 L10: nothing lands unless the revert finished, or the run passed",
+    "SHU-306 L11: the landing token never reaches the coordinator, the supervisor or any worker",
+    "SHU-306 L12: the extracted handoff writer builds exactly the record the coordinator's consumer wrote",
+    "SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands",
+    "SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17741,6 +17768,58 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M73 write the handoff before green",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M74 merge without the handoff",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M75 post the merge comment without COMPLETED",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M76 open a second pull request",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M77 skip the passed-head check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M78 move the card to Done after the merge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M79 skip the pause re-check before the merge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M80 skip the pause check before the pull request",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M81 land on a host the revert did not finish",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M82 land a run that did not pass",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M83 hand off while a review thread is unresolved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M84 report a recovered pull request as this run's",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M85 merge on required checks only after the green wait",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -17906,6 +17985,62 @@
     },
     {
       "name": "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L2: an open pull request is reused, never opened twice",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L3: a lost answer to the open is read back, never sent again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L4: a pull request whose head is not the passed head stops before any check is read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L5: red checks stop the landing with no handoff and no merge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L6: checks that never go green stop at the bound with no handoff and no merge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L7: a held merge posts no merge comment and names its recovery",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L8: without the landing token the run is today's run, reported as LAND_SKIPPED_NO_TOKEN",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L9: the pause file stops landing before the pull request and again before the merge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L10: nothing lands unless the revert finished, or the run passed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L11: the landing token never reaches the coordinator, the supervisor or any worker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L12: the extracted handoff writer builds exactly the record the coordinator's consumer wrote",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch",
       "capabilities": []
     },
     {

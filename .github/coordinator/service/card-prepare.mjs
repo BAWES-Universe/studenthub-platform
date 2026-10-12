@@ -305,7 +305,33 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   NOT_ELIGIBLE: "the card was not eligible on the first tick",
   ERROR: "the run failed",
   NOT_STARTED: "the run refused before arming",
+  // SHU-306: what landing a passed card came to.
+  MERGED: "its pull request went green and the SHU-259 consumer merged it",
+  PR_OPENED_CI_RED: "its pull request is open but a check is red; nothing was handed off or merged",
+  CI_TIMEOUT: "its pull request did not go green within the landing bound; nothing was handed off or merged",
+  MERGE_HOLD: "the SHU-259 consumer held the merge",
+  LAND_PAUSED: "the pause file was present, so landing stopped",
+  LAND_SKIPPED_NO_TOKEN: "no landing token is installed, so the pull request waits to be opened and merged by hand",
+  LAND_HEAD_MISMATCH: "the pull request head is not the head the review passed; nothing was handed off or merged",
+  LAND_ERROR: "landing failed",
 });
+
+// How a held merge recovers: the attempt's HOLD is final, so only a new
+// installed revision runs the card again; a crashed run's lock is cleared by hand.
+export const MERGE_HOLD_RECOVERY = "A merge-attempt HOLD is terminal for its attempt: a new installed revision re-arms the card, and a stale /run/lock/shu-card-run.lock is cleared by hand.";
+
+function landingLines(land) {
+  const code = land.outcome === "MERGE_HOLD" && land.hold_code ? `MERGE_HOLD ${plainReason(land.hold_code)}` : land.outcome;
+  const lines = [`Landing: ${code}, ${RUN_OUTCOME_TEXT[land.outcome] ?? "an outcome this runner does not know"}.`];
+  const where = [
+    Number.isInteger(land.pr) ? `pull request #${land.pr}${land.opened ? " (opened by this run)" : ""}` : null,
+    /^[0-9a-f]{40}$/.test(land.merge_commit ?? "") ? `merge commit ${land.merge_commit}` : null,
+  ].filter(Boolean);
+  if (where.length) lines.push(`Landed: ${where.join("; ")}.`);
+  if (land.reason) lines.push(`Landing reason: ${plainReason(land.reason)}`);
+  if (land.outcome === "MERGE_HOLD") lines.push(MERGE_HOLD_RECOVERY);
+  return lines;
+}
 
 export function reportMarker(activationId) {
   return `<!-- card-run-report ${activationId} -->`;
@@ -332,6 +358,7 @@ export function renderRunReport(result) {
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
   lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
+  if (result.land) lines.push(...landingLines(result.land));
   lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."
     : result.revert?.reverted ? "The host is reverted and idle."
       : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);
