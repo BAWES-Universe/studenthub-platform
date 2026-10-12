@@ -2060,6 +2060,12 @@
     "SHU-86 mutation M83 hand off while a review thread is unresolved",
     "SHU-86 mutation M84 report a recovered pull request as this run's",
     "SHU-86 mutation M85 merge on required checks only after the green wait",
+    "SHU-86 mutation M86 never retry a read that did not reach its server",
+    "SHU-86 mutation M87 retry a lost write too",
+    "SHU-86 mutation M88 drop the network cause from the reason",
+    "SHU-86 mutation M89 retry without end",
+    "SHU-86 mutation M90 count a commented mutation as a read",
+    "SHU-86 mutation M91 wait for a retry by blocking the event loop",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2116,6 +2122,8 @@
     "SHU-306 L12: the extracted handoff writer builds exactly the record the coordinator's consumer wrote",
     "SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands",
     "SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch",
+    "SHU-308 L15: a read that never reached its server is tried again, and the landing still merges",
+    "SHU-308 L16: a read that keeps failing stops the landing with its cause, and a lost write is never resent",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17820,6 +17828,30 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M86 never retry a read that did not reach its server",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M87 retry a lost write too",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M88 drop the network cause from the reason",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M89 retry without end",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M90 count a commented mutation as a read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M91 wait for a retry by blocking the event loop",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18041,6 +18073,14 @@
     },
     {
       "name": "SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-308 L15: a read that never reached its server is tried again, and the landing still merges",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-308 L16: a read that keeps failing stops the landing with its cause, and a lost write is never resent",
       "capabilities": []
     },
     {

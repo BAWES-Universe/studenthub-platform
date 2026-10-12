@@ -17,7 +17,7 @@ import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_AT
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
-import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken } from "../service/card-land.mjs";
+import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest } from "../service/card-land.mjs";
 import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
@@ -279,7 +279,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     if (options.method && options.method !== "GET") return respond(403, { message: "Resource not accessible by integration" });
     return respond(500, null);
   };
-  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.clock), sleep: (ms) => { host.clock += ms; } };
+  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.clock), sleep: (ms) => { host.clock += ms; }, delay: async (ms) => { host.clock += ms; host.delays = (host.delays ?? 0) + 1; } };
   return host;
 }
 
@@ -1188,6 +1188,10 @@ function landingHost(options = {}) {
     if (url === "https://api.linear.app/graphql") {
       const { query, variables } = JSON.parse(request.body);
       if (query.includes("issueUpdate") && !query.includes("CardRunTodo")) { land.log.push("linear state move"); return respond(200, { data: { issueUpdate: { success: true } } }); }
+      if (query.includes("CardLandIssue") && (land.droppedReads ?? 0) < (options.dropLandRead ?? 0)) {
+        land.droppedReads = (land.droppedReads ?? 0) + 1;
+        throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
+      }
       if (query.includes("CardLandIssue")) return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, title: "Make the thing" } } });
       if (query.includes("CoordinatorIssueComments")) return respond(200, { data: { issue: { comments: { nodes: land.comments, pageInfo: { hasNextPage: false, endCursor: null } } } } });
       if (query.includes("CoordinatorMergeIssue")) {
@@ -1238,6 +1242,10 @@ function landingHost(options = {}) {
     if (route === `/pulls?state=all&head=${head}&per_page=100`) return respond(200, land.pr ? [pullDetail()] : []);
     if (route === "/pulls/77") return respond(200, pullDetail());
     if (route === `/commits/${PASSED}/check-runs?filter=latest&per_page=100`) {
+      if ((land.droppedChecks ?? 0) < (options.dropChecks ?? 0)) {
+        land.droppedChecks = (land.droppedChecks ?? 0) + 1;
+        throw new TypeError("fetch failed", { cause: { code: "ETIMEDOUT" } });
+      }
       land.checkReads += 1;
       options.onChecks?.(host, land.checkReads);
       const plan = options.checks ?? ["green"];
@@ -1480,3 +1488,34 @@ test("SHU-306 L14: an optional check that turns red after the green wait stops t
   assert.ok(!host.land.log.includes("linear merge comment"));
   neverDone(host);
 });
+test("SHU-308 L15: a read that never reached its server is tried again, and the landing still merges", async () => {
+  const host = landingHost({ dropLandRead: 2, dropChecks: 1 });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(host.land.droppedReads, 2, "the first read failed twice before it answered");
+  assert.equal(host.land.droppedChecks, 1, "a dropped check read is read again");
+  assert.equal(host.delays, 3, "each retry waits without blocking the event loop");
+  assert.equal(host.land.merges, 1);
+  neverDone(host);
+});
+
+test("SHU-308 L16: a read that keeps failing stops the landing with its cause, and a lost write is never resent", async () => {
+  const host = landingHost({ dropLandRead: 9 });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.equal(host.land.droppedReads, 3, "three tries in all, then it stops");
+  assert.match(result.land.reason, /fetch failed \(ECONNRESET\)/, "the report names the real network error");
+  assert.equal(host.land.posts, 0, "nothing was opened");
+  noLandingWrites(host);
+  const lost = landingHost({ losePost: true });
+  await landRun(lost);
+  assert.equal(lost.land.posts, 1, "the open is never sent twice");
+  const graphql = (query) => ({ method: "post", body: JSON.stringify({ query }) });
+  assert.equal(isReadRequest("https://api.linear.app/graphql", graphql("\n  query CardLandIssue { x }")), true);
+  for (const write of ["mutation M { x }", "# note\nmutation M { x }", "subscription S { x }"]) {
+    assert.equal(isReadRequest("https://api.linear.app/graphql", graphql(write)), false, write);
+  }
+  assert.equal(isReadRequest(`https://api.github.com/repos/${REPO}/pulls`, { method: "POST", body: "{}" }), false);
+  assert.equal(isReadRequest(`https://api.github.com/repos/${REPO}/pulls/77/merge`, { method: "put", body: "{}" }), false);
+});
+

@@ -36,6 +36,9 @@ export const LAND_LIMITS = Object.freeze({
   waitMs: 30 * 60 * 1000,
   pollMs: 60 * 1000,
   requestTimeoutMs: 30 * 1000,
+  // A read that never reached its server is tried this many times in all.
+  networkAttempts: 3,
+  networkRetryWaitMs: 15 * 1000,
   // Green must hold on this many reads in a row, so a workflow queued a moment
   // after the others is not missed.
   greenReads: 2,
@@ -72,10 +75,37 @@ export function readLandToken(io, file = CARD_LAND_ENV) {
   return { token: value };
 }
 
+// A request that only reads: a GET, or a GraphQL document that opens as a
+// query (leading whitespace and # comments aside). Anything else, a mutation
+// or a body that cannot be read, counts as a write.
+export function isReadRequest(url, options = {}) {
+  const method = String(options.method ?? "GET").toUpperCase();
+  if (method === "GET") return true;
+  if (method !== "POST" || !String(url).endsWith("/graphql")) return false;
+  try {
+    const query = JSON.parse(options.body).query;
+    if (typeof query !== "string") return false;
+    return /^(?:query\b|\{)/.test(query.replace(/^(?:\s+|#[^\n]*)*/, ""));
+  } catch { return false; }
+}
+
+// fetch's own "fetch failed" hides why; the cause's code (ECONNRESET,
+// ENOTFOUND, UND_ERR_CONNECT_TIMEOUT...) is what says it.
+export function networkReason(error) {
+  const cause = error?.cause;
+  const detail = cause?.code ?? cause?.message;
+  return `${String(error?.message ?? error)}${detail ? ` (${detail})` : ""}`;
+}
+
 // A fetch whose answer, body included, arrives within the deadline or not at
 // all. The SHU-259 consumer is handed this one too, so its calls are bounded.
-export function boundedFetch(io, timeoutMs) {
-  return async (url, options = {}) => {
+// A read that never reached its server (fetch's own TypeError) is tried again
+// a bounded number of times: the first self-landing run lost its landing to
+// one. A write is never sent twice here: opening the pull request reads the
+// list before and after a lost answer, and a Linear mutation or merge that may
+// have landed is never repeated.
+export function boundedFetch(io, timeoutMs, { attempts = LAND_LIMITS.networkAttempts, waitMs = LAND_LIMITS.networkRetryWaitMs } = {}) {
+  const once = async (url, options) => {
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     let timer;
     const deadline = new Promise((_, reject) => {
@@ -89,6 +119,21 @@ export function boundedFetch(io, timeoutMs) {
       })(), deadline]);
     } finally {
       clearTimeout(timer);
+    }
+  };
+  return async (url, options = {}) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await once(url, options);
+      } catch (error) {
+        if (!(error instanceof TypeError) || attempt >= attempts || !isReadRequest(url, options)) {
+          if (error instanceof TypeError) throw new TypeError(networkReason(error), { cause: error.cause });
+          throw error;
+        }
+        // Asynchronous, so a sibling request in the same Promise.all keeps
+        // its own deadline while this one waits.
+        await (io.delay ? io.delay(waitMs) : new Promise((resolve) => setTimeout(resolve, waitMs)));
+      }
     }
   };
 }
@@ -236,7 +281,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   const repo = config?.pilot_repo;
   const activationId = plan.record.activation_id;
   const paused = () => Boolean(pausePath) && io.fs.existsSync(pausePath);
-  const fetchImpl = boundedFetch(io, limits.requestTimeoutMs);
+  const fetchImpl = boundedFetch(io, limits.requestTimeoutMs, { attempts: limits.networkAttempts, waitMs: limits.networkRetryWaitMs });
   const gh = github(fetchImpl, landToken);
   const linearToken = credentials?.LINEAR_API_TOKEN;
   const actorIds = config?.linear_receipt_actor_ids;
