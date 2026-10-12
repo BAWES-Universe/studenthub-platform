@@ -11,7 +11,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-308"
+      "SHU-309"
     ]
   },
   "adapter_pause_map": {},
@@ -300,6 +300,29 @@
         "packages/db/src/postgres-organization-status-store.ts",
         "packages/db/test/postgres-organization-status.test.ts",
         "package.json"
+      ]
+    },
+    {
+      "id": "SHU-309",
+      "authorization_ref": "SHU-309",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "ninth real card and the second a card run lands itself (SHU-306): tidy the deploy preflight and integration register leftovers from SHU-295's review; same six paths as SHU-197, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "deploy/coolify/preflight.mjs",
+        "deploy/coolify/integration-register.json",
+        "deploy/coolify/integration-register.mjs",
+        "docs/integrations.md",
+        "deploy/coolify/test/config-schema.test.mjs",
+        "deploy/coolify/test/integration-register.test.mjs"
+      ],
+      "revision_paths": [
+        "deploy/coolify/preflight.mjs",
+        "deploy/coolify/integration-register.json",
+        "deploy/coolify/integration-register.mjs",
+        "docs/integrations.md",
+        "deploy/coolify/test/config-schema.test.mjs",
+        "deploy/coolify/test/integration-register.test.mjs"
       ]
     }
   ],
