@@ -75,12 +75,18 @@ export function readLandToken(io, file = CARD_LAND_ENV) {
   return { token: value };
 }
 
-// A request that only reads: a GET, or a GraphQL query that is not a mutation.
+// A request that only reads: a GET, or a GraphQL document that opens as a
+// query (leading whitespace and # comments aside). Anything else, a mutation
+// or a body that cannot be read, counts as a write.
 export function isReadRequest(url, options = {}) {
   const method = String(options.method ?? "GET").toUpperCase();
   if (method === "GET") return true;
   if (method !== "POST" || !String(url).endsWith("/graphql")) return false;
-  try { return !/^\s*mutation\b/.test(String(JSON.parse(options.body).query)); } catch { return false; }
+  try {
+    const query = JSON.parse(options.body).query;
+    if (typeof query !== "string") return false;
+    return /^(?:query\b|\{)/.test(query.replace(/^(?:\s+|#[^\n]*)*/, ""));
+  } catch { return false; }
 }
 
 // fetch's own "fetch failed" hides why; the cause's code (ECONNRESET,

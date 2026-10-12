@@ -599,6 +599,13 @@ const CASES = [
     to: "        if (!(error instanceof TypeError) || attempt >= 4 || !isReadRequest(url, options)) { // SHU308-M89",
     pattern: "SHU-308 L16:",
   },
+  {
+    name: "M90 count a commented mutation as a read",
+    file: "service/card-land.mjs",
+    from: '    return /^(?:query\\b|\\{)/.test(query.replace(/^(?:\\s+|#[^\\n]*)*/, ""));',
+    to: "    return !/^\\s*mutation\\b/.test(query); // SHU308-M90",
+    pattern: "SHU-308 L16:",
+  },
 ];
 
 for (const mutation of CASES) {

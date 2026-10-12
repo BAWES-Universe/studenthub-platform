@@ -17,7 +17,7 @@ import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_AT
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
-import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken } from "../service/card-land.mjs";
+import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest } from "../service/card-land.mjs";
 import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
@@ -1509,5 +1509,12 @@ test("SHU-308 L16: a read that keeps failing stops the landing with its cause, a
   const lost = landingHost({ losePost: true });
   await landRun(lost);
   assert.equal(lost.land.posts, 1, "the open is never sent twice");
+  const graphql = (query) => ({ method: "post", body: JSON.stringify({ query }) });
+  assert.equal(isReadRequest("https://api.linear.app/graphql", graphql("\n  query CardLandIssue { x }")), true);
+  for (const write of ["mutation M { x }", "# note\nmutation M { x }", "subscription S { x }"]) {
+    assert.equal(isReadRequest("https://api.linear.app/graphql", graphql(write)), false, write);
+  }
+  assert.equal(isReadRequest(`https://api.github.com/repos/${REPO}/pulls`, { method: "POST", body: "{}" }), false);
+  assert.equal(isReadRequest(`https://api.github.com/repos/${REPO}/pulls/77/merge`, { method: "put", body: "{}" }), false);
 });
 
