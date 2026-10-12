@@ -2057,6 +2057,8 @@
     "SHU-86 mutation M80 skip the pause check before the pull request",
     "SHU-86 mutation M81 land on a host the revert did not finish",
     "SHU-86 mutation M82 land a run that did not pass",
+    "SHU-86 mutation M83 hand off while a review thread is unresolved",
+    "SHU-86 mutation M84 report a recovered pull request as this run's",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2111,6 +2113,7 @@
     "SHU-306 L10: nothing lands unless the revert finished, or the run passed",
     "SHU-306 L11: the landing token never reaches the coordinator, the supervisor or any worker",
     "SHU-306 L12: the extracted handoff writer builds exactly the record the coordinator's consumer wrote",
+    "SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17803,6 +17806,14 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M83 hand off while a review thread is unresolved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M84 report a recovered pull request as this run's",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18016,6 +18027,10 @@
     },
     {
       "name": "SHU-306 L12: the extracted handoff writer builds exactly the record the coordinator's consumer wrote",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands",
       "capabilities": []
     },
     {

@@ -550,6 +550,20 @@ const CASES = [
     to: "    if (plan.kind === \"card\" && reverted.reverted === true) { // SHU306-M82",
     pattern: "SHU-306 L10:",
   },
+  {
+    name: "M83 hand off while a review thread is unresolved",
+    file: "service/card-land.mjs",
+    from: "  if (open) return { green: false, note:",
+    to: "  if (false) return { green: false, note: // SHU306-M83\n",
+    pattern: "SHU-306 L13:",
+  },
+  {
+    name: "M84 report a recovered pull request as this run's",
+    file: "service/card-land.mjs",
+    from: "  return { pr: found, opened: false };",
+    to: "  return { pr: found, opened: true }; // SHU306-M84",
+    pattern: "SHU-306 L3:",
+  },
 ];
 
 for (const mutation of CASES) {

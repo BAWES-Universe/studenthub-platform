@@ -46,6 +46,7 @@ export const LAND_OUTCOMES = Object.freeze([
 ]);
 const SHA_RE = /^[0-9a-f]{40}$/;
 const GREEN = new Set(["success", "neutral", "skipped"]);
+const THREADS_QUERY = "query CardLandThreads($owner:String!,$name:String!,$number:Int!) { repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved } pageInfo { hasNextPage } } } } }";
 
 function stop(code, detail) {
   throw Object.assign(new Error(detail), { landOutcome: code });
@@ -163,7 +164,9 @@ async function findOrOpenPull(gh, { repo, branch, card, title, activationId, hea
   if (created) return { pr: created, opened: true };
   const found = await openPulls(gh, repo, branch);
   if (!found) stop("LAND_ERROR", `no pull request of ${branch} could be opened or found`);
-  return { pr: found, opened: true };
+  // The answer was lost or refused: whoever opened the one found, it is not
+  // reported as this run's.
+  return { pr: found, opened: false };
 }
 
 function headMatches(pr, { repo, branch, head }) {
@@ -172,12 +175,14 @@ function headMatches(pr, { repo, branch, head }) {
 
 // One read of the head's checks and the pull request's own state.
 async function checkState(gh, { repo, number, head, branch }) {
-  const [runsResponse, statusResponse, pullResponse] = await Promise.all([
+  const [owner, name] = repo.split("/");
+  const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
     gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
     gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/status?per_page=100`),
     gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`),
+    gh("POST", "https://api.github.com/graphql", { query: THREADS_QUERY, variables: { owner, name, number } }),
   ]);
-  const [runs, status, pull] = await Promise.all([runsResponse.json(), statusResponse.json(), pullResponse.json()]);
+  const [runs, status, pull, threads] = await Promise.all([runsResponse.json(), statusResponse.json(), pullResponse.json(), threadsResponse.json()]);
   if (pullResponse.ok && pull && !headMatches(pull, { repo, branch, head })) return { moved: true, sha: pull?.head?.sha ?? null };
   const checkRuns = runs?.check_runs;
   const statuses = status?.statuses;
@@ -194,6 +199,14 @@ async function checkState(gh, { repo, number, head, branch }) {
   if (checkRuns.length + statuses.length === 0) return { green: false, note: "no check has reported yet" };
   if (pending) return { green: false, note: "checks are still running" };
   if (pull.mergeable !== true || pull.mergeable_state !== "clean") return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}` };
+  // The SHU-259 consumer holds for good on any unresolved review thread, so a
+  // thread (a review bot's included) keeps the run waiting before the handoff.
+  const page = threads?.data?.repository?.pullRequest?.reviewThreads;
+  if (!threadsResponse.ok || threads?.errors?.length || !Array.isArray(page?.nodes) || page.pageInfo?.hasNextPage !== false) {
+    return { green: false, note: "the review threads could not be read in full" };
+  }
+  const open = page.nodes.filter((thread) => thread?.isResolved !== true).length;
+  if (open) return { green: false, note: `${open} review thread(s) are unresolved` };
   return { green: true };
 }
 

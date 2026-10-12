@@ -1207,7 +1207,9 @@ function landingHost(options = {}) {
     }
     if (request.headers?.Authorization !== "Bearer land-secret-value") return delegate(url, request);
     if (url === "https://api.github.com/graphql") {
-      return respond(200, { data: { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } } });
+      const resolved = options.resolveThreadsAfter !== undefined && land.checkReads > options.resolveThreadsAfter;
+      const nodes = (options.threads ?? []).map((isResolved) => ({ isResolved: resolved || isResolved, comments: { nodes: [{ isMinimized: false }] } }));
+      return respond(200, { data: { repository: { pullRequest: { reviewThreads: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } } } });
     }
     const prefix = `https://api.github.com/repos/${REPO}`;
     assert.ok(String(url).startsWith(prefix), url);
@@ -1313,6 +1315,7 @@ test("SHU-306 L3: a lost answer to the open is read back, never sent again", asy
   assert.equal(host.land.posts, 1, "one POST only");
   assert.equal(host.land.log.filter((e) => e === "github list").length >= 2, true, "the list is read again");
   assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.land.opened, false, "a pull request found after a lost answer is not reported as this run's");
 });
 
 test("SHU-306 L4: a pull request whose head is not the passed head stops before any check is read", async () => {
@@ -1448,4 +1451,17 @@ test("SHU-306 L12: the extracted handoff writer builds exactly the record the co
   const next = handoffReceipt(review, PASSED, decision);
   assert.deepEqual(next, { ...review, handoff: { source_attempt_id: review.attempt_id, target_sha: PASSED, verdict_stage: "PASS", ...decision } });
   assert.equal(validHandoff(next), true);
+});
+
+test("SHU-306 L13: an unresolved review thread keeps the run waiting before the handoff; once resolved it lands", async () => {
+  const held = landingHost({ threads: [false] });
+  const stuck = await landRun(held);
+  assert.equal(stuck.land.outcome, "CI_TIMEOUT", JSON.stringify(stuck.land));
+  assert.match(stuck.land.reason, /1 review thread\(s\) are unresolved/);
+  noLandingWrites(held);
+  neverDone(held);
+  const later = landingHost({ threads: [false, true], resolveThreadsAfter: 1 });
+  const landed = await landRun(later);
+  assert.equal(landed.land.outcome, "MERGED", JSON.stringify(landed.land));
+  assert.ok(later.land.checkReads >= 3, "it waited for the thread to resolve");
 });
