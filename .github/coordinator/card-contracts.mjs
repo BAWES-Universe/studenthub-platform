@@ -547,27 +547,24 @@ Finish with npm run typecheck and npm test passing, run to the end. If a test ca
 export const SHU309_PATHS = SHU197_PATHS;
 
 const SHU309_ACCEPTANCE = [
-  "(1) validateDeploymentEnv builds the /profile URL from OIDC_CALLBACK_URL without a try/catch and has no \"OIDC_CALLBACK_URL must be a valid URL\" branch, and every OIDC_CALLBACK_URL that is not an http or https URL still fails with \"OIDC_CALLBACK_URL must be a valid url\";",
-  "(2) LOGIN_ALLOWED_RETURN_URLS is split by listParts only, an empty part still fails with \"LOGIN_ALLOWED_RETURN_URLS must be a valid url-list\", and the \"must include\" check is unchanged;",
-  "(3) a blank string item in owner_cards or credential_names reports \"<id> <field> has a blank item\", an empty credential_names array is still accepted, and removing the check makes a test in deploy/coolify/test/integration-register.test.mjs fail;",
-  "(4) only a non-empty string id is checked for duplicates: two entries without an id report each one missing and no \"id is duplicated\" error, while a repeated real id still reports \"<id> id is duplicated\", each pinned by a test;",
-  "(5) a test reads the id column of docs/integrations.md's table and asserts it equals the register's ids in order, so an extra, missing or reordered row fails it;",
-  "(6) every other export, error message and test still holds, integration-register.json and docs/integrations.md are byte-identical, preflight.mjs imports only node: builtins, and no error message contains a configured value.",
+  "(1) LOGIN_ALLOWED_RETURN_URLS is split by listParts only, an empty part still fails with \"LOGIN_ALLOWED_RETURN_URLS must be a valid url-list\", and the \"must include\" check is unchanged;",
+  "(2) a blank string item in owner_cards or credential_names reports \"<id> <field> has a blank item\", an empty credential_names array is still accepted, and removing the check makes a test in deploy/coolify/test/integration-register.test.mjs fail;",
+  "(3) only a non-empty string id is checked for duplicates: two entries without an id report each one missing and no \"id is duplicated\" error, while a repeated real id still reports \"<id> id is duplicated\", each pinned by a test;",
+  "(4) a test reads the id column of docs/integrations.md's table and asserts it equals the register's ids in order, so an extra, missing or reordered row fails it;",
+  "(5) every other export, error message and test still holds, integration-register.json and docs/integrations.md are byte-identical, preflight.mjs imports only node: builtins, and no error message contains a configured value.",
 ].join(" ");
 
 const SHU309_BRIEF = `Card SHU-309: tidy the deploy preflight and integration register leftovers.
 
-Goal. Cards SHU-197, SHU-294 and SHU-295 built and hardened validateDeploymentEnv in deploy/coolify/preflight.mjs and validateRegister in deploy/coolify/integration-register.mjs. The last review left five small notes. This card settles them. It changes no deployment value, no register entry and no documentation, and connects to nothing.
+Goal. Cards SHU-197, SHU-294 and SHU-295 built and hardened validateDeploymentEnv in deploy/coolify/preflight.mjs and validateRegister in deploy/coolify/integration-register.mjs. The last review left four small notes. This card settles them. It changes no deployment value, no register entry and no documentation, and connects to nothing.
 
-1. Dead branch. validateDeploymentEnv wraps new URL("/profile", env.OIDC_CALLBACK_URL) in a try/catch that throws "OIDC_CALLBACK_URL must be a valid URL". It can never run: the url loop above already rejects an OIDC_CALLBACK_URL that is not an http or https URL with "OIDC_CALLBACK_URL must be a valid url". Build the URL directly and remove the branch. Add a test that a non-URL OIDC_CALLBACK_URL fails with the loop's message.
+1. One split. validateDeploymentEnv splits LOGIN_ALLOWED_RETURN_URLS a second time with .split(",").map(trim) for the "must include" check. Reuse listParts (or the parts the url loop already produced). The empty-part rule and every message stay as they are.
 
-2. One split. The same function splits LOGIN_ALLOWED_RETURN_URLS again with .split(",").map(trim) for the "must include" check. Reuse listParts (or the parts the url loop already produced). The empty-part rule and every message stay as they are.
+2. Blank array items. validateRegister accepts owner_cards: [" "] or credential_names: [""], because isEmpty only looks at the array's length. Report a blank string item (empty or only whitespace) in either array field as "<id> <field> has a blank item", where <id> is the label the function already uses. An empty credential_names array stays allowed, and an empty owner_cards array keeps its current "missing or empty" error. Pin both arrays with tests.
 
-3. Blank array items. validateRegister accepts owner_cards: [" "] or credential_names: [""], because isEmpty only looks at the array's length. Report a blank string item (empty or only whitespace) in either array field as "<id> <field> has a blank item", where <id> is the label the function already uses. An empty credential_names array stays allowed, and an empty owner_cards array keeps its current "missing or empty" error. Pin both arrays with tests.
+3. Missing ids. When two entries both lack an id, the second also gets "entry-2 id is duplicated", because the missing id is added to the seen set. Check and record only ids that are non-empty strings. Each missing id keeps its "id is missing or empty" error, and a repeated real id keeps "<id> id is duplicated". Pin both.
 
-4. Missing ids. When two entries both lack an id, the second also gets "entry-2 id is duplicated", because the missing id is added to the seen set. Check and record only ids that are non-empty strings. Each missing id keeps its "id is missing or empty" error, and a repeated real id keeps "<id> id is duplicated". Pin both.
-
-5. Docs drift. The test "integration documentation lists every id" only proves each register id appears somewhere in docs/integrations.md, so a stale extra row is never caught. Replace it with a test that reads the ID column of the table (the rows that start with "| INT-") and asserts it equals the register's ids in order.
+4. Docs drift. The test "integration documentation lists every id" only proves each register id appears somewhere in docs/integrations.md, so a stale extra row is never caught. Replace it with a test that reads the ID column of the table (the rows that start with "| INT-") and asserts it equals the register's ids in order.
 
 Constraints.
 - Every other export, error message and test must keep passing. deploy/coolify/deployment-env-manifest.mjs and deploy/coolify/test/deployment.test.mjs (both outside your scope) depend on them.
@@ -576,7 +573,7 @@ Constraints.
 - deploy/coolify/integration-register.json and docs/integrations.md must stay byte-identical. They are in your workspace so the register tests can run.
 - Tests use node:test and node:assert only and import only files in your scope and node: builtins. Write expected messages out literally.
 
-Out of scope: CONFIG_SCHEMA's entries, the Dockerfile, the env manifest, deployment.test.mjs, compose files, any network call or credential, any change outside the paths you are given.
+Out of scope: the try/catch around new URL("/profile", env.OIDC_CALLBACK_URL) (it is reachable through a caller-supplied schema and keeps its message), CONFIG_SCHEMA's entries, the Dockerfile, the env manifest, deployment.test.mjs, compose files, any network call or credential, any change outside the paths you are given.
 
 In your final message, list the files you changed and how each acceptance item is pinned.`;
 
