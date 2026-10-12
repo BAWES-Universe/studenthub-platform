@@ -18,6 +18,7 @@ export class PostgresOrganizationStatusStore {
  constructor(options:PostgresOrganizationStatusStoreOptions){this.#o=options;this.#owns=!options.pool;this.#pool=options.pool??new pg.Pool({connectionString:options.connectionString??databaseUrl()})}
  async close(){if(this.#owns)await this.#pool.end()}
  async read(orgId:string):Promise<RecordValue>{const {rows}=await this.#pool.query<{status:string|null}>("SELECT status FROM organization_status_overrides WHERE org_id=$1",[orgId]);if(!rows[0])return {kind:"absent"};return rows[0].status===null?{kind:"cleared"}:{kind:"status",status:rows[0].status as "active"|"under_review"|"inactive"}}
+ async readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,RecordValue>>{if(orgIds.length===0)return new Map();const {rows}=await this.#pool.query<{org_id:string;status:string|null}>("SELECT org_id, status FROM organization_status_overrides WHERE org_id = ANY($1::text[])",[orgIds]);return new Map(rows.map(row=>[row.org_id,row.status===null?{kind:"cleared"} as const:{kind:"status",status:row.status as "active"|"under_review"|"inactive"} as const]))}
  forPrincipal(principalId:string,orgId:string):SafeWriteStore {const principal=this.#o.principalRef(principalId),record=this.#o.recordRef(orgId);return {
   ownedRecord:async candidate=>candidate===principal&&await this.#allowed(this.#pool,principalId,orgId)?record:null,
   readField:async(candidate,field)=>candidate===record&&field==="status"?this.#value(this.#pool,orgId):null,
