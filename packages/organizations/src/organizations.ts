@@ -153,7 +153,10 @@ function statusOverride(row: Row): OrganizationField<OrganizationStatus> {
  * the organization active. Missing counters never silently become zero.
  */
 export type OrganizationStatusRecord = { readonly kind:"absent" } | { readonly kind:"cleared" } | { readonly kind:"status"; readonly status:OrganizationStatus };
-export interface OrganizationStatusRecords { read(orgId:string):Promise<OrganizationStatusRecord> }
+export interface OrganizationStatusRecords {
+  read(orgId:string):Promise<OrganizationStatusRecord>;
+  readMany?(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationStatusRecord>>;
+}
 
 export function deriveOrganizationStatus(row: Row, record?:OrganizationStatusRecord): OrganizationField<OrganizationStatus> {
   if (record?.kind === "status") return available("status", record.status);
@@ -403,12 +406,21 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const children = organizations.filter((org) => org.parentOrgId === request.orgId);
       // A sub-organization lists no sub-organizations; data that claims some is refused.
       if (parentOrgId !== null && children.length > 0) throw new HierarchyViolation("nested sub-organizations");
-      const summaries: SubOrganizationSummary[] = [];
+      const visibleChildren: Organization[] = [];
       for (const child of children) {
         // Sub-organizations are visible only through an explicit covering grant.
         if (await this.#authorize(request, child.id) === undefined) continue;
+        visibleChildren.push(child);
+      }
+      const batchRecords = visibleChildren.length > 0 && this.#statusRecords?.readMany
+        ? await this.#statusRecords.readMany(visibleChildren.map((child) => child.id))
+        : undefined;
+      const summaries: SubOrganizationSummary[] = [];
+      for (const child of visibleChildren) {
         const row = snapshotRow(await this.#source.readSnapshot(child.id), child.id, request.orgId);
-        const statusRecord = await this.#statusRecords?.read(child.id);
+        const statusRecord = batchRecords
+          ? batchRecords.get(child.id) ?? { kind: "absent" as const }
+          : await this.#statusRecords?.read(child.id);
         summaries.push(Object.freeze({
           orgId: child.id,
           registryName: child.name,
@@ -445,14 +457,23 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         .filter((context) => context.role === request.role && within.has(context.orgId)
           && !this.#operators.has(context.orgId))
         .map((context) => context.orgId));
-      const entries: OrganizationDirectoryEntry[] = [];
+      const shown: Organization[] = [];
       for (const org of organizations) {
         if (!covered.has(org.id)) continue;
-        // Every covered organization is checked, so a nested sub-organization refuses the whole list.
-        if (companyParentOf(organizations, org.id, this.#operators) !== null) continue;
+        if (companyParentOf(organizations, org.id, this.#operators) !== null)
+          continue;
+        shown.push(org);
+      }
+      const batchRecords = shown.length > 0 && this.#statusRecords?.readMany
+        ? await this.#statusRecords.readMany(shown.map((org) => org.id))
+        : undefined;
+      const entries: OrganizationDirectoryEntry[] = [];
+      for (const org of shown) {
         // As in legacy (`filterParent`), the list holds top-level companies; sub-organizations open from their parent.
         const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);
-        const statusRecord = await this.#statusRecords?.read(org.id);
+        const statusRecord = batchRecords
+          ? batchRecords.get(org.id) ?? { kind: "absent" as const }
+          : await this.#statusRecords?.read(org.id);
         const children = organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length;
         const entry = directoryEntry(org, row, children, statusRecord);
         if (matchesDirectoryFilters(entry, filters)) entries.push(entry);
