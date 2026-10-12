@@ -479,6 +479,77 @@ const CASES = [
     to: "        // SHU86-M72",
     pattern: "SHU-86 C42:",
   },
+  // SHU-306: landing a passed card.
+  {
+    name: "M73 write the handoff before green",
+    file: "service/card-land.mjs",
+    from: "    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch }, limits);",
+    to: '    await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch }, limits); // SHU306-M73',
+    pattern: "SHU-306 L5:",
+  },
+  {
+    name: "M74 merge without the handoff",
+    file: "service/card-land.mjs",
+    from: "      await writeHandoffReceipt({ terminal, target: head, decision, issueId: issue.id, linearToken, fetchImpl });",
+    to: "      // SHU306-M74",
+    pattern: "SHU-306 L1:",
+  },
+  {
+    name: "M75 post the merge comment without COMPLETED",
+    file: "service/card-land.mjs",
+    from: '    const completed = record.state === "COMPLETED";',
+    to: "    const completed = true; // SHU306-M75",
+    pattern: "SHU-306 L7:",
+  },
+  {
+    name: "M76 open a second pull request",
+    file: "service/card-land.mjs",
+    from: "  if (existing) return { pr: existing, opened: false };",
+    to: "  // SHU306-M76",
+    pattern: "SHU-306 L2:",
+  },
+  {
+    name: "M77 skip the passed-head check",
+    file: "service/card-land.mjs",
+    from: "    if (!headMatches(pr, { repo, branch, head })) {",
+    to: "    if (false) { // SHU306-M77",
+    pattern: "SHU-306 L4:",
+  },
+  {
+    name: "M78 move the card to Done after the merge",
+    file: "service/card-land.mjs",
+    from: '    return result("MERGED", {',
+    to: '    await sendLinear(`mutation { issueUpdate(id: "${issue.id}", input: { stateId: "done" }) { success } }`, {}, linearToken, fetchImpl); // SHU306-M78\n    return result("MERGED", {',
+    pattern: "SHU-306 L1:",
+  },
+  {
+    name: "M79 skip the pause re-check before the merge",
+    file: "service/card-land.mjs",
+    from: '    if (paused()) return result("LAND_PAUSED", { ...prFields,',
+    to: '    if (false) return result("LAND_PAUSED", { ...prFields, // SHU306-M79\n',
+    pattern: "SHU-306 L9:",
+  },
+  {
+    name: "M80 skip the pause check before the pull request",
+    file: "service/card-land.mjs",
+    from: '    if (paused()) return result("LAND_PAUSED", { reason:',
+    to: '    if (false) return result("LAND_PAUSED", { reason: // SHU306-M80\n',
+    pattern: "SHU-306 L9:",
+  },
+  {
+    name: "M81 land on a host the revert did not finish",
+    file: "service/card-run.mjs",
+    from: '    if (plan.kind === "card" && result.outcome === "PASS" && reverted.reverted === true) {',
+    to: '    if (plan.kind === "card" && result.outcome === "PASS") { // SHU306-M81',
+    pattern: "SHU-306 L10:",
+  },
+  {
+    name: "M82 land a run that did not pass",
+    file: "service/card-run.mjs",
+    from: '    if (plan.kind === "card" && result.outcome === "PASS" && reverted.reverted === true) {',
+    to: "    if (plan.kind === \"card\" && reverted.reverted === true) { // SHU306-M82",
+    pattern: "SHU-306 L10:",
+  },
 ];
 
 for (const mutation of CASES) {

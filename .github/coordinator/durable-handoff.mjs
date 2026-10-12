@@ -78,14 +78,8 @@ export async function consumeDurableHandoffs({ receipts = [], commentsByIssue = 
         order: { ...routed.order, repo: terminal.repo, branch: terminal.branch, findings: findings(terminal) } };
       else decision = hold('AWAITING_VERDICT', routed.reason ?? 'unroutable handoff');
     }
-    const next = { ...terminal, handoff: { source_attempt_id: terminal.attempt_id, target_sha: target ?? terminal.target_sha,
-      verdict_stage: terminal.verdict_stage ?? null, ...decision } };
-    const body = receiptCommentBody(next);
-    const committed = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId, body }, linearToken, fetchImpl);
-    if (committed?.commentCreate?.success !== true) throw new Error('handoff write was not acknowledged');
-    const readback = await fetchIssueComments({ issueId, token: linearToken, fetchImpl });
-    if (!parseReceiptsFromComments(readback).some(r => r.attempt_id === next.attempt_id && same(r, next) &&
-      JSON.stringify(r.handoff) === JSON.stringify(next.handoff))) throw new Error('handoff write not durably visible');
+    const { readback } = await writeHandoffReceipt({ terminal, target: target ?? terminal.target_sha, decision,
+      issueId, linearToken, fetchImpl });
     // Include the committed action in this tick's view as well as the next
     // tick's durable replay. No separate consumed bit/action crash window.
     commentsByIssue.set(terminal.issue_id, readback);
@@ -94,6 +88,26 @@ export async function consumeDurableHandoffs({ receipts = [], commentsByIssue = 
       : `handoff: ${terminal.issue_id} ${decision.action} HOLD=${decision.hold_code}${decision.reason ? ` — ${decision.reason}` : ""}`);
   }
   return writes;
+}
+
+// The one writer of a handoff-bearing receipt: the terminal receipt plus its
+// handoff, committed in ONE comment and read back from the whole thread. The
+// coordinator's own consumer above and the card run's landing (SHU-306) both
+// write through here, so the record is built one way only.
+export function handoffReceipt(terminal, target, decision) {
+  return { ...terminal, handoff: { source_attempt_id: terminal.attempt_id, target_sha: target,
+    verdict_stage: terminal.verdict_stage ?? null, ...decision } };
+}
+
+export async function writeHandoffReceipt({ terminal, target, decision, issueId, linearToken, fetchImpl = fetch }) {
+  const next = handoffReceipt(terminal, target, decision);
+  const body = receiptCommentBody(next);
+  const committed = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId, body }, linearToken, fetchImpl);
+  if (committed?.commentCreate?.success !== true) throw new Error('handoff write was not acknowledged');
+  const readback = await fetchIssueComments({ issueId, token: linearToken, fetchImpl });
+  if (!parseReceiptsFromComments(readback).some(r => r.attempt_id === next.attempt_id && same(r, next) &&
+    JSON.stringify(r.handoff) === JSON.stringify(next.handoff))) throw new Error('handoff write not durably visible');
+  return { next, readback };
 }
 
 export function handoffContinuations(receipts, allowedActorIds = []) {
