@@ -186,6 +186,13 @@ async function reviewThreads({ fetchImpl, token, owner, name, number }) {
   } while (true);
 }
 
+// Every reported check and status, required or not, is finished and green.
+function allChecksGreen(statuses, checks) {
+  if ((statuses ?? []).length + (checks ?? []).length === 0) return false;
+  return (checks ?? []).every(run => run?.status === 'completed' && ['success', 'neutral', 'skipped'].includes(run?.conclusion))
+    && (statuses ?? []).every(status => status?.state === 'success');
+}
+
 function requiredChecksGreen(protection, statuses, checks) {
   const required = Array.isArray(protection?.contexts) ? protection.contexts.map(context => ({ context, app_id: null })) : [];
   for (const check of protection?.checks ?? []) {
@@ -255,6 +262,7 @@ export async function fetchGitHubMergeSnapshot({ repo, branch, targetSha, token,
   if (!threadsResult.ok) return { ok: false, code: 'AMBIGUOUS_GITHUB_RESPONSE', reason: 'review thread authority was unavailable or incomplete' };
   return { ok: true, merged: false, pr_number: number, head_sha: targetSha, tree_sha: treeSha, base_sha: baseLive, base_ref: pr.base.ref,
     required_checks_green: requiredGreen,
+    all_checks_green: allChecksGreen(statusResult.body.statuses, checksResult.body.check_runs),
     blocking_threads: threadsResult.nodes.filter(thread => thread?.isResolved !== true).length,
     protection_satisfied: pr.mergeable === true && pr.mergeable_state === 'clean' };
 }
@@ -335,14 +343,15 @@ function completedFrom(prepared, snapshot, now) {
     updated_at: now.toISOString() };
 }
 
-function snapshotPolicy(snapshot) {
+function snapshotPolicy(snapshot, requireAllChecks = false) {
   if (!snapshot.required_checks_green) return { ok: false, code: 'REQUIRED_CHECKS_NOT_GREEN', reason: 'one or more required checks are absent, pending or non-green' };
+  if (requireAllChecks && snapshot.all_checks_green !== true) return { ok: false, code: 'REQUIRED_CHECKS_NOT_GREEN', reason: 'one or more reported checks are pending or non-green' };
   if (snapshot.blocking_threads !== 0) return { ok: false, code: 'BLOCKING_REVIEW_THREAD', reason: 'one or more blocking review threads are unresolved' };
   if (!snapshot.protection_satisfied) return { ok: false, code: 'BRANCH_PROTECTION_UNSATISFIED', reason: 'GitHub does not report the protected pull request as clean and mergeable' };
   return { ok: true };
 }
 
-async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds }) {
+async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false }) {
   let issue;
   try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
   catch { return { ok: false, code: 'EXPLICIT_HOLD', reason: 'Linear merge authority could not be re-fetched' }; }
@@ -356,7 +365,7 @@ async function authorityNow({ source, linearIssueId, linearToken, githubToken, f
     targetSha: source.handoff.target_sha, token: githubToken, fetchImpl });
   if (!snapshot.ok) return snapshot;
   if (!snapshot.merged) {
-    const policy = snapshotPolicy(snapshot);
+    const policy = snapshotPolicy(snapshot, requireAllChecks);
     if (!policy.ok) return policy;
   }
   return { ok: true, issue, snapshot };
@@ -365,6 +374,9 @@ async function authorityNow({ source, linearIssueId, linearToken, githubToken, f
 export async function consumeMergeReadiness({
   receipts = [], issues = [], linearToken = '', githubToken = '', config = {}, env = {}, fetchImpl = fetch,
   stdout = () => {}, now = () => new Date(),
+  // Opt-in (the card-run landing passes true): every reported check, not only
+  // the required ones, must be green at both pre-merge authority re-fetches.
+  requireAllChecks = false,
 }) {
   if (!routineMergeEnabledFor(env, config)) return { writes: 0, merges: 0 };
   if (!linearToken || !githubToken) return { writes: 0, merges: 0, error: 'merge credentials unavailable' };
@@ -386,7 +398,7 @@ export async function consumeMergeReadiness({
     let existing = parsedAttempts.records.find(record => record.attempt_id === attemptId);
     if (existing?.state === 'COMPLETED' || existing?.state === 'HOLD') continue;
 
-    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds });
+    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks });
     if (!authorityCheck.ok) {
       const held = existing ? holdFrom(existing, authorityCheck.code, authorityCheck.reason, now()) : initialHoldRecord({ source, authorityRef: authority.authority_ref,
         code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now() });
@@ -419,7 +431,7 @@ export async function consumeMergeReadiness({
 
     // Immediate pre-merge re-fetch. No value from the earlier preflight is
     // authoritative here except the immutable values in the durable intent.
-    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds });
+    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks });
     if (!authorityCheck.ok) {
       const held = holdFrom(existing, authorityCheck.code, authorityCheck.reason, now());
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });

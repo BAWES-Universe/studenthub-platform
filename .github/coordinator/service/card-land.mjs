@@ -290,6 +290,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       githubToken: landToken,
       config: { ...config, routine_merge_authority: { ...config.routine_merge_authority, enabled: true } },
       env: { ENABLE_ROUTINE_MERGE: "true" },
+      requireAllChecks: true,
       fetchImpl,
       stdout: (line) => lines.push(line),
       now: () => io.now(),

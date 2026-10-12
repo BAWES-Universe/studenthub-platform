@@ -564,6 +564,13 @@ const CASES = [
     to: "  return { pr: found, opened: true }; // SHU306-M84",
     pattern: "SHU-306 L3:",
   },
+  {
+    name: "M85 merge on required checks only after the green wait",
+    file: "service/card-land.mjs",
+    from: "      requireAllChecks: true,",
+    to: "      requireAllChecks: false, // SHU306-M85",
+    pattern: "SHU-306 L14:",
+  },
 ];
 
 for (const mutation of CASES) {

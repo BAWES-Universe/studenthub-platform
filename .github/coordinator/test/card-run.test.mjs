@@ -1243,8 +1243,13 @@ function landingHost(options = {}) {
       const plan = options.checks ?? ["green"];
       const state = plan[Math.min(land.checkReads, plan.length) - 1];
       if (!land.log.includes("github checks")) land.log.push("github checks");
-      return respond(200, { total_count: 1, check_runs: [{ name: "fast-checks", app: { id: 15368 },
-        status: state === "pending" ? "in_progress" : "completed", conclusion: state === "pending" ? null : state === "red" ? "failure" : "success" }] });
+      const runs = [{ name: "fast-checks", app: { id: 15368 },
+        status: state === "pending" ? "in_progress" : "completed", conclusion: state === "pending" ? null : state === "red" ? "failure" : "success" }];
+      // An optional (not required) check that turns red after landing's green streak.
+      if (options.optionalRedAfter !== undefined && land.checkReads > options.optionalRedAfter) {
+        runs.push({ name: "optional-lint", app: { id: 15368 }, status: "completed", conclusion: "failure" });
+      }
+      return respond(200, { total_count: runs.length, check_runs: runs });
     }
     if (route === `/commits/${PASSED}/status?per_page=100`) return respond(200, { state: "success", statuses: [] });
     if (route === `/commits/${PASSED}`) return respond(200, { commit: { tree: { sha: TREE } } });
@@ -1464,4 +1469,14 @@ test("SHU-306 L13: an unresolved review thread keeps the run waiting before the 
   const landed = await landRun(later);
   assert.equal(landed.land.outcome, "MERGED", JSON.stringify(landed.land));
   assert.ok(later.land.checkReads >= 3, "it waited for the thread to resolve");
+});
+
+test("SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch", async () => {
+  const host = landingHost({ optionalRedAfter: 2 });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGE_HOLD", JSON.stringify(result.land));
+  assert.equal(result.land.hold_code, "REQUIRED_CHECKS_NOT_GREEN");
+  assert.equal(host.land.merges, 0, "nothing merged on a red optional check");
+  assert.ok(!host.land.log.includes("linear merge comment"));
+  neverDone(host);
 });
