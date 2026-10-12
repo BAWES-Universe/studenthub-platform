@@ -11,7 +11,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-305"
+      "SHU-308"
     ]
   },
   "adapter_pause_map": {},
@@ -276,6 +276,29 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/organization-status-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-308",
+      "authorization_ref": "SHU-308",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "eighth real card and the first a card run lands itself (SHU-306), a whole-tree card: read organization status records in one query per list (follow-up to SHU-305); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/test/status-batch-reads.test.ts",
+        "packages/organizations/test/status-batch-reads-mutations.mjs",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/test/status-batch-reads.test.ts",
+        "packages/organizations/test/status-batch-reads-mutations.mjs",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
         "package.json"
       ]
     }
