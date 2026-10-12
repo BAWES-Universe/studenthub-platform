@@ -473,6 +473,74 @@ Out of scope: creating organizations or sub-organizations, commercial terms, acc
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-308 follows SHU-305: Sentry found that the company list and the
+// sub-organization list read each organization's stored status with its own
+// query. A small, read-only card, and the first a card run lands itself
+// (SHU-306).
+export const SHU308_PATHS = Object.freeze([
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/test/status-batch-reads.test.ts",
+  "packages/organizations/test/status-batch-reads-mutations.mjs",
+  "packages/db/src/postgres-organization-status-store.ts",
+  "packages/db/test/postgres-organization-status.test.ts",
+  "package.json",
+]);
+
+const SHU308_ACCEPTANCE = [
+  "(1) listOrganizations reads the stored status of every organization it shows with one readMany call and no read call when the port has readMany; reading per organization makes the directory-reads-once test fail;",
+  "(2) listSubOrganizations does the same for the children it shows; reading per child makes the sub-list-reads-once test fail;",
+  "(3) an organization id missing from the readMany result is absent, so an imported override still shows; treating it as cleared makes the missing-means-absent test fail;",
+  "(4) a port without readMany keeps working through read, and every existing organizations and directory test passes unchanged;",
+  "(5) PostgresOrganizationStatusStore.readMany returns status, cleared and absent correctly in one query and makes no query for an empty list, pinned by a test:db test;",
+  "(6) packages/organizations/test/status-batch-reads-mutations.mjs applies mutations (1) to (3), each makes its named test fail, and the script passes on the unmutated code;",
+  "(7) npm run typecheck and npm test pass, the new test runs from package.json's test command, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU308_BRIEF = `Card SHU-308: read organization status records in one query per list (a follow-up to slice O5a, SHU-305).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- packages/organizations/src/organizations.ts: OrganizationStatusRecord, OrganizationStatusRecords, deriveOrganizationStatus, and OrganizationRepository's read, listSubOrganizations and listOrganizations.
+- packages/db/src/postgres-organization-status-store.ts: read(orgId), the method the live gateway uses as the repository's statusRecords port (apps/gateway/src/login-runtime.ts passes the store itself).
+- packages/organizations/test/status-writes.test.ts and status-writes-mutations.mjs: how a test imports a mutated build through an environment variable, and the --test-name-pattern form (a "^" prefix and a trailing space).
+- packages/db/test/postgres-organization-status.test.ts: the Postgres test you extend.
+
+Goal. Today listOrganizations and listSubOrganizations call statusRecords.read once per organization inside their loops, so a list of N organizations makes N database queries. Make each list read the stored status of the organizations it shows in one call. What every caller sees stays exactly the same.
+
+Design:
+- Add an optional method to OrganizationStatusRecords: readMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, OrganizationStatusRecord>>. An id with no entry in the map is absent ({kind:"absent"}), never cleared.
+- In listOrganizations, first decide which organizations will be shown (the covered, top-level ones the loop keeps today), then, when the port has readMany, call it once with exactly those ids and take each record from the map; when it has no readMany, call read per id as today. Do the same in listSubOrganizations for the children that pass the per-child authorization. Call readMany only when there is at least one id. The single-organization read keeps calling read.
+- PostgresOrganizationStatusStore gets readMany: an empty list returns an empty map without a query; otherwise one SELECT org_id, status FROM organization_status_overrides WHERE org_id = ANY($1::text[]), mapping a NULL status to cleared and a value to status. Ids with no row are left out of the map.
+- Leave snapshot reads (readSnapshot), the per-child authorization, sorting, filtering, paging and every result field as they are.
+
+Tests (packages/organizations/test/status-batch-reads.test.ts, new; synthetic fixtures only, built like the existing directory tests):
+- "SHU-308/AC-01 directory-reads-once": a counting port with read and readMany; a staff directory of at least three covered companies calls readMany exactly once with those ids and read zero times, and each entry's status comes from the map.
+- "SHU-308/AC-02 sub-list-reads-once": the same for a parent with at least two visible children.
+- "SHU-308/AC-03 missing-means-absent": a company with an imported override and no entry in the readMany map shows the imported override's status.
+- One more test: a port with only read still gives the same results.
+The test imports organizations through an environment variable (SHU308_ORG_MODULE) when it is set, as status-writes.test.ts does with SHU305_ORG_MODULE.
+
+Mutations (packages/organizations/test/status-batch-reads-mutations.mjs, modelled on status-writes-mutations.mjs, applied to dist/organizations.js; each anchor must bind exactly once):
+(1) listOrganizations ignores readMany and reads per organization: AC-01 fails.
+(2) listSubOrganizations ignores readMany and reads per child: AC-02 fails.
+(3) a missing map entry becomes {kind:"cleared"}: AC-03 fails.
+The script runs the suite unmutated first and last, and prints "3/3 SHU-308 mutations killed".
+
+Postgres test (append to packages/db/test/postgres-organization-status.test.ts): write one organization's status, clear a second one, leave a third without a row, then readMany over all three plus an unknown id returns status, cleared, and no entry for the other two; readMany([]) returns an empty map.
+
+Your paths, and what each may hold:
+- packages/organizations/src/organizations.ts: only the optional readMany on OrganizationStatusRecords and its use in listOrganizations and listSubOrganizations
+- packages/organizations/test/status-batch-reads.test.ts (new)
+- packages/organizations/test/status-batch-reads-mutations.mjs (new)
+- packages/db/src/postgres-organization-status-store.ts: only the readMany method
+- packages/db/test/postgres-organization-status.test.ts: only the appended test
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/status-batch-reads.test.js at the END of the node --test list in test, add a test:organization-status-batch:mutations script that runs the mutation script, and add " && npm run test:organization-status-batch:mutations" as its own step right after "npm run test:organization-status:mutations" in test. Never change dependencies.
+
+Out of scope: snapshot reads, the authorization calls, any migration, any gateway file, any write path, any change to packages/contracts or packages/safe-write-contract, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -524,6 +592,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU305_PATHS,
     acceptance: SHU305_ACCEPTANCE,
     brief: SHU305_BRIEF,
+  }),
+  "SHU-308": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU308_PATHS,
+    revision_paths: SHU308_PATHS,
+    acceptance: SHU308_ACCEPTANCE,
+    brief: SHU308_BRIEF,
   }),
 });
 
