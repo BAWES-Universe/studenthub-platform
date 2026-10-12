@@ -571,6 +571,34 @@ const CASES = [
     to: "      requireAllChecks: false, // SHU306-M85",
     pattern: "SHU-306 L14:",
   },
+  {
+    name: "M86 never retry a read that did not reach its server",
+    file: "service/card-land.mjs",
+    from: "        if (!(error instanceof TypeError) || attempt >= attempts || !isReadRequest(url, options)) {",
+    to: "        if (true) { // SHU308-M86",
+    pattern: "SHU-308 L15:",
+  },
+  {
+    name: "M87 retry a lost write too",
+    file: "service/card-land.mjs",
+    from: "        if (!(error instanceof TypeError) || attempt >= attempts || !isReadRequest(url, options)) {",
+    to: "        if (!(error instanceof TypeError) || attempt >= attempts) { // SHU308-M87",
+    pattern: "SHU-308 L16:",
+  },
+  {
+    name: "M88 drop the network cause from the reason",
+    file: "service/card-land.mjs",
+    from: "  return `${String(error?.message ?? error)}${detail ? ` (${detail})` : \"\"}`;",
+    to: "  return String(error?.message ?? error); // SHU308-M88",
+    pattern: "SHU-308 L16:",
+  },
+  {
+    name: "M89 retry without end",
+    file: "service/card-land.mjs",
+    from: "        if (!(error instanceof TypeError) || attempt >= attempts || !isReadRequest(url, options)) {",
+    to: "        if (!(error instanceof TypeError) || attempt >= 4 || !isReadRequest(url, options)) { // SHU308-M89",
+    pattern: "SHU-308 L16:",
+  },
 ];
 
 for (const mutation of CASES) {
