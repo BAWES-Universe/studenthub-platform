@@ -130,7 +130,9 @@ export function boundedFetch(io, timeoutMs, { attempts = LAND_LIMITS.networkAtte
           if (error instanceof TypeError) throw new TypeError(networkReason(error), { cause: error.cause });
           throw error;
         }
-        io.sleep(waitMs);
+        // Asynchronous, so a sibling request in the same Promise.all keeps
+        // its own deadline while this one waits.
+        await (io.delay ? io.delay(waitMs) : new Promise((resolve) => setTimeout(resolve, waitMs)));
       }
     }
   };

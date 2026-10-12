@@ -2065,6 +2065,7 @@
     "SHU-86 mutation M88 drop the network cause from the reason",
     "SHU-86 mutation M89 retry without end",
     "SHU-86 mutation M90 count a commented mutation as a read",
+    "SHU-86 mutation M91 wait for a retry by blocking the event loop",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -17844,6 +17845,10 @@
     },
     {
       "name": "SHU-86 mutation M90 count a commented mutation as a read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M91 wait for a retry by blocking the event loop",
       "capabilities": []
     },
     {

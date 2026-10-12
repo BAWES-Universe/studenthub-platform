@@ -279,7 +279,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     if (options.method && options.method !== "GET") return respond(403, { message: "Resource not accessible by integration" });
     return respond(500, null);
   };
-  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.clock), sleep: (ms) => { host.clock += ms; } };
+  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.clock), sleep: (ms) => { host.clock += ms; }, delay: async (ms) => { host.clock += ms; host.delays = (host.delays ?? 0) + 1; } };
   return host;
 }
 
@@ -1494,6 +1494,7 @@ test("SHU-308 L15: a read that never reached its server is tried again, and the 
   assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
   assert.equal(host.land.droppedReads, 2, "the first read failed twice before it answered");
   assert.equal(host.land.droppedChecks, 1, "a dropped check read is read again");
+  assert.equal(host.delays, 3, "each retry waits without blocking the event loop");
   assert.equal(host.land.merges, 1);
   neverDone(host);
 });

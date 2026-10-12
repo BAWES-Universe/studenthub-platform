@@ -606,6 +606,13 @@ const CASES = [
     to: "    return !/^\\s*mutation\\b/.test(query); // SHU308-M90",
     pattern: "SHU-308 L16:",
   },
+  {
+    name: "M91 wait for a retry by blocking the event loop",
+    file: "service/card-land.mjs",
+    from: "        await (io.delay ? io.delay(waitMs) : new Promise((resolve) => setTimeout(resolve, waitMs)));",
+    to: "        io.sleep(waitMs); // SHU308-M91",
+    pattern: "SHU-308 L15:",
+  },
 ];
 
 for (const mutation of CASES) {
