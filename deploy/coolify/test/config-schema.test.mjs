@@ -100,6 +100,36 @@ test("url-list variables reject invalid URLs, non-http schemes, and empty parts"
   }
 });
 
+test("a schema without allowed return URLs reports the required profile URL", () => {
+  const schema = CONFIG_SCHEMA.filter(({ name }) => name !== "LOGIN_ALLOWED_RETURN_URLS");
+  const env = validEnv();
+  delete env.LOGIN_ALLOWED_RETURN_URLS;
+  assert.throws(
+    () => validateDeploymentEnv(env, schema),
+    { message: "LOGIN_ALLOWED_RETURN_URLS must include https://studenthub.example.test/profile" },
+  );
+});
+
+test("a blank optional allowed return URL list reports the required profile URL", () => {
+  const schema = CONFIG_SCHEMA.map((entry) => entry.name === "LOGIN_ALLOWED_RETURN_URLS"
+    ? { ...entry, required: false }
+    : entry);
+  assert.throws(
+    () => validateDeploymentEnv({ ...validEnv(), LOGIN_ALLOWED_RETURN_URLS: "" }, schema),
+    { message: "LOGIN_ALLOWED_RETURN_URLS must include https://studenthub.example.test/profile" },
+  );
+});
+
+test("a non-http callback rejected by a caller-supplied schema uses the existing URL message", () => {
+  const schema = CONFIG_SCHEMA.map((entry) => entry.name === "OIDC_CALLBACK_URL"
+    ? { ...entry, kind: "string" }
+    : entry);
+  assert.throws(
+    () => validateDeploymentEnv({ ...validEnv(), OIDC_CALLBACK_URL: "ftp://studenthub.example.test/login/callback" }, schema),
+    { message: "OIDC_CALLBACK_URL must be a valid URL" },
+  );
+});
+
 test("platform database hosts must be hostnames and reject empty parts", () => {
   const invalidHosts = [
     "-reporting-db", "reporting-db-", "reporting_db", ".reporting-db", "reporting-db.",

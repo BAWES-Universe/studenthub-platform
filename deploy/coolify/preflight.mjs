@@ -54,7 +54,7 @@ export function validateDeploymentEnv(env = process.env, schema = CONFIG_SCHEMA)
   if (env.HOST !== "0.0.0.0") {
     throw new Error("HOST must be 0.0.0.0 in the gateway container");
   }
-  let allowedReturnUrls;
+  let allowedReturnUrls = [];
   for (const { name, kind, required } of schema) {
     if ((kind !== "url" && kind !== "url-list") || name === "DATABASE_URL") continue;
     const value = env[name];
@@ -95,6 +95,9 @@ export function validateDeploymentEnv(env = process.env, schema = CONFIG_SCHEMA)
   try {
     profileUrl = new URL("/profile", env.OIDC_CALLBACK_URL);
   } catch {
+    throw new Error("OIDC_CALLBACK_URL must be a valid URL");
+  }
+  if (profileUrl.protocol !== "http:" && profileUrl.protocol !== "https:") {
     throw new Error("OIDC_CALLBACK_URL must be a valid URL");
   }
   const requiredProfileUrl = profileUrl.href;
