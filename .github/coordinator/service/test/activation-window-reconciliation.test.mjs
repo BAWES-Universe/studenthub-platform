@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render, assertPolicy, serviceParameters, names } from '../units.mjs';
 import { fixtureParameters } from '../verify.mjs';
+import { cardQueue } from '../../single-run-activation.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(join(tmpdir(), 'shu-reconciliation-'));
@@ -102,8 +103,12 @@ function assertDispatch(config) {
   assert.equal(config.enable_dispatch, false, 'RECON_CONFIG_GATE: committed dispatch must remain off');
   // After SHU-71 stage 5: one real card at a time through its card lane, one slot.
   assert.equal(config.max_dispatch, 1, 'RECON_CONFIG_CAPACITY: committed capacity must remain one');
-  assert.equal(config.dispatch_scope.issue_ids.length, 1, 'RECON_CONFIG_SCOPE: committed scope must name one card');
-  assert.ok((config.card_lanes ?? []).some((lane) => lane.id === config.dispatch_scope.issue_ids[0]), 'RECON_CONFIG_SCOPE: the scoped card must have a card lane');
+  // One card, or a committed queue of card lanes run one per episode (SHU-312).
+  const queue = cardQueue(config);
+  assert.ok(config.dispatch_scope.issue_ids.length === 1 || (queue.queue && queue.ok), 'RECON_CONFIG_SCOPE: committed scope must name one card or a valid card queue');
+  for (const id of config.dispatch_scope.issue_ids) {
+    assert.ok((config.card_lanes ?? []).some((lane) => lane.id === id), 'RECON_CONFIG_SCOPE: every scoped card must have a card lane');
+  }
 }
 test('RECON_CONFIG_POSITIVE: committed gates and scope remain fixed', () => {
   assertDispatch(JSON.parse(fs.readFileSync(new URL('../../config.json', import.meta.url))));
