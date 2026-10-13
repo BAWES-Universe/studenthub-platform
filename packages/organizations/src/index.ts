@@ -4,3 +4,4 @@ export * from "./adapter.js";
 export * from "./fixtures.js";
 export * from "./profile-writes.js";
 export * from "./status-writes.js";
+export * from "./commercial-terms-writes.js";
