@@ -21,6 +21,15 @@
 // TimeoutStartSec. Nothing here throws: every stop is an outcome for the run
 // report.
 //
+// SHU-310: a review bot's low-severity thread used to hold a passed card for
+// the whole wait, since the consumer merges only with no unresolved thread.
+// With landing_thread_settle.enabled in the committed config (off by
+// default), a thread whose comments all come from one allowlisted bot that
+// labelled it low is settled: a follow-up note goes on the card, the landing
+// replies on the thread, re-reads it whole, resolves it, and reads it again.
+// Any change to it after it was classified, then or on any later read before
+// the handoff, stops the landing. Any other thread still blocks.
+//
 // The landing token is the only credential that can open and merge a pull
 // request. It lives in its own root-only file that card-run alone reads; it is
 // never in the coordinator's environment file, so neither the coordinator unit
@@ -45,11 +54,169 @@ export const LAND_LIMITS = Object.freeze({
 });
 export const LAND_OUTCOMES = Object.freeze([
   "MERGED", "PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "LAND_PAUSED", "LAND_SKIPPED_NO_TOKEN",
-  "LAND_HEAD_MISMATCH", "LAND_ERROR",
+  "LAND_HEAD_MISMATCH", "LAND_ERROR", "THREADS_HELD",
 ]);
 const SHA_RE = /^[0-9a-f]{40}$/;
 const GREEN = new Set(["success", "neutral", "skipped"]);
-const THREADS_QUERY = "query CardLandThreads($owner:String!,$name:String!,$number:Int!) { repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved } pageInfo { hasNextPage } } } } }";
+const THREAD_FIELDS = "id isResolved comments(first:20) { nodes { id url body updatedAt author { __typename login } } pageInfo { hasNextPage } }";
+const THREADS_QUERY = `query CardLandThreads($owner:String!,$name:String!,$number:Int!) { viewer { login } repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { ${THREAD_FIELDS} } pageInfo { hasNextPage } } } } }`;
+const THREAD_QUERY = `query CardLandThread($id:ID!) { viewer { login } node(id:$id) { ... on PullRequestReviewThread { ${THREAD_FIELDS} } } }`;
+const THREAD_REPLY_MUTATION = "mutation CardLandThreadReply($id:ID!,$body:String!) { addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}) { comment { id } } }";
+const THREAD_RESOLVE_MUTATION = "mutation CardLandThreadResolve($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } } }";
+
+// SHU-310: which threads a landing may settle. Each bot reads its own label
+// from a fixed place, so prose that quotes a label never counts.
+const LOW_LABELS = Object.freeze({
+  coderabbit: Object.freeze(["🟡 Minor", "🔵 Trivial", "🧹 Nitpick"]),
+  sentry: Object.freeze(["LOW"]),
+});
+const HIGH_LABEL_RE = /🟠 Major|🔴 Critical|Severity: (?:MEDIUM|HIGH|CRITICAL)/;
+
+// The committed policy, or null when settling is off. On but malformed is a
+// refusal, never a guess.
+export function settlePolicy(config) {
+  const policy = config?.landing_thread_settle;
+  if (policy === undefined || policy?.enabled === false) return null;
+  const bots = policy?.bots;
+  const logins = Array.isArray(bots) ? bots.map((bot) => bot?.login) : [];
+  if (policy?.enabled !== true || !Number.isInteger(policy.max_per_run) || policy.max_per_run < 1 || policy.max_per_run > 10
+      || !Array.isArray(bots) || bots.length === 0 || new Set(logins).size !== logins.length
+      || bots.some((bot) => !/^[a-z0-9-]+$/.test(bot?.login ?? "") || !Object.hasOwn(LOW_LABELS, bot?.labels ?? "")
+        || Object.keys(bot).some((key) => key !== "login" && key !== "labels"))) {
+    stop("LAND_ERROR", "landing_thread_settle in the committed config is malformed");
+  }
+  return { maxPerRun: policy.max_per_run, bots: new Map(bots.map((bot) => [bot.login, bot.labels])) };
+}
+
+// The label a bot put on its comment: "low", "high", or "none".
+export function botSeverity(kind, body) {
+  const text = String(body ?? "");
+  if (HIGH_LABEL_RE.test(text)) return { level: "high" };
+  const first = text.split("\n").find((line) => line.trim()) ?? "";
+  if (kind === "coderabbit") {
+    const parts = first.split("|").map((part) => part.trim().replace(/^[*_\s]+|[*_\s]+$/g, ""));
+    const low = parts.filter((part) => LOW_LABELS.coderabbit.includes(part));
+    const others = LOW_LABELS.coderabbit.filter((label) => !low.includes(label) && text.includes(label));
+    if (low.length === 1 && others.length === 0) return { level: "low", label: low[0] };
+    return { level: low.length || others.length ? "high" : "none" };
+  }
+  if (kind === "sentry") {
+    const all = text.match(/<sub>Severity: [A-Z]+<\/sub>/g) ?? [];
+    const inFirst = first.match(/<sub>Severity: ([A-Z]+)<\/sub>/);
+    if (all.length === 1 && inFirst) return inFirst[1] === "LOW" ? { level: "low", label: "LOW" } : { level: "high" };
+    return { level: all.length ? "high" : "none" };
+  }
+  return { level: "high" };
+}
+
+export function settleMarker(threadId) {
+  return `<!-- card-land-settle ${threadId} -->`;
+}
+
+const commentKey = (comment) => `${comment?.id} ${comment?.updatedAt} ${comment?.body}`;
+
+// A thread as the landing reads it: complete, with the landing's own replies
+// (by the token's own login, carrying this thread's marker) set apart.
+function readThread(node, viewer) {
+  const nodes = node?.comments?.nodes;
+  if (typeof node?.id !== "string" || !Array.isArray(nodes) || nodes.length === 0 || node.comments.pageInfo?.hasNextPage !== false) return null;
+  const marker = settleMarker(node.id);
+  const own = (comment) => typeof viewer === "string" && comment?.author?.login === viewer && String(comment?.body ?? "").includes(marker);
+  return { id: node.id, isResolved: node.isResolved === true, url: nodes[0]?.url ?? null,
+    others: nodes.filter((comment) => !own(comment)), replies: nodes.filter(own) };
+}
+
+// Settleable only when every comment but the landing's own reply comes from
+// one allowlisted bot, the first carries that bot's low label and none
+// carries a higher one.
+export function classifyThread(node, viewer, policy) {
+  const thread = readThread(node, viewer);
+  if (!thread) return { settle: false, why: "the thread could not be read in full" };
+  const [first] = thread.others;
+  const login = first?.author?.login;
+  const kind = policy.bots.get(login);
+  if (!first || thread.replies.length > 1 || (thread.replies.length && thread.others.length === 0)) return { settle: false, why: "the thread is not a review bot's", url: thread.url };
+  if (!kind || thread.others.some((comment) => comment?.author?.__typename !== "Bot" || comment?.author?.login !== login)) {
+    return { settle: false, why: "a comment is not from an allowlisted review bot", url: thread.url };
+  }
+  const severity = botSeverity(kind, first.body);
+  if (severity.level !== "low" || thread.others.slice(1).some((comment) => botSeverity(kind, comment.body).level === "high")) {
+    return { settle: false, why: `${login} did not label it low`, url: thread.url };
+  }
+  return { settle: true, id: thread.id, url: thread.url, bot: login, severity: severity.label, first: first.body,
+    snapshot: thread.others.map(commentKey), replied: thread.replies.length === 1 };
+}
+
+// A settled thread must stay exactly as the landing left it: resolved, with
+// the same comments, until the handoff.
+function signature(thread) {
+  return JSON.stringify([...thread.others, ...thread.replies].map(commentKey));
+}
+
+function checkSettled(node, viewer, id, expected) {
+  const thread = readThread(node, viewer);
+  if (!thread || thread.id !== id || !thread.isResolved || signature(thread) !== expected) {
+    stop("LAND_ERROR", `settled review thread ${thread?.url ?? id} changed before the handoff`);
+  }
+}
+
+async function graphql(gh, query, variables) {
+  const response = await gh("POST", "https://api.github.com/graphql", { query, variables });
+  const json = await response.json();
+  if (!response.ok || json?.errors?.length || !json?.data) stop("LAND_ERROR", `a GitHub GraphQL call failed (HTTP ${response.status})`);
+  return json.data;
+}
+
+// The thread now, checked against what was classified: the same bot comments,
+// unchanged, and exactly one landing reply.
+async function rereadThread(gh, id, snapshot) {
+  const data = await graphql(gh, THREAD_QUERY, { id });
+  const thread = readThread(data?.node, data?.viewer?.login);
+  if (!thread || thread.id !== id || thread.replies.length !== 1
+      || JSON.stringify(thread.others.map(commentKey)) !== JSON.stringify(snapshot)) {
+    stop("LAND_ERROR", `review thread ${thread?.url ?? id} changed after the landing classified it`);
+  }
+  return thread;
+}
+
+// Settles one classified thread. Every write is sent once: a write whose
+// answer is lost stops the landing, and a later run finds its marker.
+async function settleThread(ctx, entry) {
+  const { gh, issue, linearToken, fetchImpl, actorIds, card, prNumber, head, audit } = ctx;
+  const marker = settleMarker(entry.id);
+  const notes = await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl });
+  if (!notes.some((comment) => actorIds.includes(comment?.user?.id) && String(comment?.body ?? "").includes(marker))) {
+    // Quoted, with no comment markers or code fences, so the bot's text can
+    // never read as a record on the card.
+    const finding = String(entry.first ?? "").replace(/<!--|-->/g, " ").replace(/```/g, "'''").slice(0, 1500);
+    const body = [marker, `Follow-up from pull request #${prNumber}: ${entry.bot} labelled a review thread ${entry.severity} after the independent PASS at ${head}. The landing settled it so ${card} could land; it is left for a later card.`,
+      `Thread: ${entry.url}`, "", ...finding.split("\n").map((line) => `> ${line}`)].join("\n");
+    const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
+    if (posted?.commentCreate?.success !== true) stop("LAND_ERROR", `the follow-up note for review thread ${entry.url} was not written`);
+  }
+  if (!entry.replied) {
+    const body = [marker, `Not blocking this landing: ${entry.bot} labelled it ${entry.severity}, after an independent PASS at ${head}. A follow-up note is on ${card}.`].join("\n");
+    const data = await graphql(gh, THREAD_REPLY_MUTATION, { id: entry.id, body });
+    if (!data?.addPullRequestReviewThreadReply?.comment?.id) stop("LAND_ERROR", `the reply on review thread ${entry.url} was not written`);
+  }
+  const before = await rereadThread(gh, entry.id, entry.snapshot);
+  if (before.isResolved) stop("LAND_ERROR", `review thread ${entry.url} was resolved by someone else`);
+  const resolved = await graphql(gh, THREAD_RESOLVE_MUTATION, { id: entry.id });
+  if (resolved?.resolveReviewThread?.thread?.isResolved !== true) stop("LAND_ERROR", `review thread ${entry.url} was not resolved`);
+  const after = await rereadThread(gh, entry.id, entry.snapshot);
+  if (!after.isResolved || JSON.stringify(after.replies.map(commentKey)) !== JSON.stringify(before.replies.map(commentKey))) {
+    stop("LAND_ERROR", `review thread ${entry.url} changed while it was being resolved`);
+  }
+  audit.settled.push({ url: entry.url, bot: entry.bot, severity: entry.severity });
+  return signature(after);
+}
+
+async function verifySettled(gh, settled) {
+  for (const [id, expected] of settled) {
+    const data = await graphql(gh, THREAD_QUERY, { id });
+    checkSettled(data?.node, data?.viewer?.login, id, expected);
+  }
+}
 
 function stop(code, detail) {
   throw Object.assign(new Error(detail), { landOutcome: code });
@@ -219,7 +386,7 @@ function headMatches(pr, { repo, branch, head }) {
 }
 
 // One read of the head's checks and the pull request's own state.
-async function checkState(gh, { repo, number, head, branch }) {
+async function checkState(gh, { repo, number, head, branch, settled }) {
   const [owner, name] = repo.split("/");
   const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
     gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
@@ -250,23 +417,35 @@ async function checkState(gh, { repo, number, head, branch }) {
   if (!threadsResponse.ok || threads?.errors?.length || !Array.isArray(page?.nodes) || page.pageInfo?.hasNextPage !== false) {
     return { green: false, note: "the review threads could not be read in full" };
   }
-  const open = page.nodes.filter((thread) => thread?.isResolved !== true).length;
-  if (open) return { green: false, note: `${open} review thread(s) are unresolved` };
+  const viewer = threads.data.viewer?.login;
+  for (const [id, expected] of settled ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
+  const open = page.nodes.filter((thread) => thread?.isResolved !== true);
+  if (open.length) return { green: false, note: `${open.length} review thread(s) are unresolved`, open, viewer };
   return { green: true };
 }
 
-async function waitForGreen(io, gh, target, limits) {
+// settle, when given, is handed the unresolved threads of a read on which
+// nothing else stood in the way. It may end the wait with an outcome.
+async function waitForGreen(io, gh, target, limits, settle) {
   const deadline = io.now().getTime() + limits.waitMs;
   let streak = 0;
   let last = "no read yet";
   for (;;) {
     let state;
-    try { state = await checkState(gh, target); } catch (error) { state = { green: false, note: `a read failed: ${error.message}` }; }
+    try { state = await checkState(gh, target); } catch (error) {
+      if (error.landOutcome) throw error;
+      state = { green: false, note: `a read failed: ${error.message}` };
+    }
     if (state.moved) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${state.sha} after the review passed ${target.head}`);
     if (state.red) return { outcome: "PR_OPENED_CI_RED", reason: `red: ${state.red.join(", ")}` };
     streak = state.green ? streak + 1 : 0;
     if (streak >= limits.greenReads) return { outcome: "GREEN" };
     if (!state.green) last = state.note;
+    if (state.open && settle) {
+      const step = await settle(state.open, state.viewer);
+      if (step.outcome) return step;
+      last = step.note;
+    }
     if (io.now().getTime() >= deadline) return { outcome: "CI_TIMEOUT", reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${last}` };
     io.sleep(limits.pollMs);
   }
@@ -274,7 +453,10 @@ async function waitForGreen(io, gh, target, limits) {
 
 // The run's landing. Returns an outcome, never throws.
 export async function landCard({ io, plan, config, credentials, landToken, pausePath, limits = LAND_LIMITS }) {
-  const result = (outcome, extra = {}) => ({ outcome, ...extra });
+  // SHU-310: what settling did, on every outcome, when it is on.
+  let policy = null;
+  const audit = { settled: [], blocking: [] };
+  const result = (outcome, extra = {}) => ({ outcome, ...extra, ...(policy ? { threads: audit } : {}) });
   if (!landToken) return result("LAND_SKIPPED_NO_TOKEN", { reason: "no landing token" });
   const card = plan.id;
   const branch = plan.branch;
@@ -288,6 +470,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   let pr = null;
   try {
     if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
+    policy = settlePolicy(config);
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "") || !branch) stop("LAND_ERROR", "pilot_repo or the card branch is missing");
     if (config?.routine_merge_authority?.repo !== repo) stop("LAND_ERROR", "the committed merge authority does not name the pilot repository");
     if (!linearToken || !Array.isArray(actorIds) || actorIds.length === 0) stop("LAND_ERROR", "the coordinator's Linear token or trusted receipt actors are missing");
@@ -304,10 +487,30 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     }
     const prFields = { pr: pr.number, opened: opened.opened, head };
 
-    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch }, limits);
+    // SHU-310: settles review bot threads only when every unresolved thread
+    // is settleable and the run stays within its limit.
+    const settled = new Map();
+    const ctx = { gh, issue, linearToken, fetchImpl, actorIds, card, prNumber: pr.number, head, audit };
+    const settle = policy && (async (open, viewer) => {
+      const entries = open.map((node) => classifyThread(node, viewer, policy));
+      const blocking = entries.filter((entry) => !entry.settle);
+      audit.blocking = blocking.map(({ url, why }) => ({ url, why }));
+      if (blocking.length) {
+        return { note: `${blocking.length} review thread(s) are unresolved and not settleable: ${blocking.map(({ url, why }) => `${url ?? "a thread"} (${why})`).join(", ")}` };
+      }
+      if (audit.settled.length + entries.length > policy.maxPerRun) {
+        return { outcome: "THREADS_HELD", reason: `${entries.length} review bot thread(s) would take this run past its limit of ${policy.maxPerRun}: ${entries.map(({ url }) => url).join(", ")}` };
+      }
+      if (paused()) return { outcome: "LAND_PAUSED", reason: `${pausePath} exists; no review thread was settled and the pull request stays open and unmerged` };
+      for (const entry of entries) settled.set(entry.id, await settleThread(ctx, entry));
+      return { note: `${entries.length} review bot thread(s) settled; green must hold again` };
+    });
+    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled }, limits, settle || undefined);
     if (checks.outcome !== "GREEN") return result(checks.outcome, { ...prFields, reason: checks.reason });
+    audit.blocking = [];
 
     if (paused()) return result("LAND_PAUSED", { ...prFields, reason: `${pausePath} exists; the pull request stays open and unmerged` });
+    await verifySettled(gh, settled);
 
     // The handoff: the terminal PASS plus merge-readiness, the very record the
     // coordinator's own consumer writes, through its writer.

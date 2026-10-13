@@ -17,7 +17,7 @@ import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_AT
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
-import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest } from "../service/card-land.mjs";
+import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePolicy, botSeverity, classifyThread, settleMarker } from "../service/card-land.mjs";
 import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
@@ -1165,9 +1165,14 @@ function cardLineage() {
 
 // options: existingPr, prHead, losePost, checks (per-read conclusions: "green",
 // "pending", "red"), strict (false holds the merge), onChecks(land, read),
-// token ("none" | "custody"), unprotectedOwner.
+// token ("none" | "custody"), unprotectedOwner, threads (a human thread per
+// isResolved flag), botThreads (SHU-310: [[login, body, typename?]...] per
+// thread), settle (landing_thread_settle overrides), editOnReply, loseReply.
 function landingHost(options = {}) {
-  const host = fakeHost({ onTick: options.onTick ?? passOnFirstTick, workers: options.workers });
+  const config = options.settle
+    ? configFor("SHU-301", (c) => ({ ...c, landing_thread_settle: { ...c.landing_thread_settle, enabled: true, ...options.settle } }))
+    : undefined;
+  const host = fakeHost({ onTick: options.onTick ?? passOnFirstTick, workers: options.workers, ...(config ? { config } : {}) });
   if (options.token !== "none") {
     host.files.set(LAND_PATHS.landEnv, { text: "SHU_LAND_GITHUB_TOKEN=land-secret-value\n", mode: options.token === "custody" ? 0o640 : 0o600, uid: 0, gid: 0 });
   }
@@ -1179,6 +1184,18 @@ function landingHost(options = {}) {
   };
   for (const receipt of cardLineage()) comment(receiptCommentBody(receipt));
   if (options.existingPr) land.pr = { number: 77, head: options.prHead ?? PASSED };
+  let commentSeq = 100;
+  const reviewComment = ([login, body, typename = "Bot"]) => {
+    commentSeq += 1;
+    return { id: `rc${commentSeq}`, url: `https://github.com/${REPO}/pull/77#discussion_r${commentSeq}`, body,
+      updatedAt: "2026-10-09T17:30:00Z", author: { __typename: typename, login } };
+  };
+  land.threads = [
+    ...(options.threads ?? []).map((isResolved) => ({ isResolved, comments: [reviewComment(["khalid", "Please rename this.", "User"])] })),
+    ...(options.botThreads ?? []).map((comments) => ({ isResolved: false, comments: comments.map(reviewComment) })),
+  ].map((thread, index) => ({ id: `PRRT_${index}`, ...thread }));
+  land.replies = 0;
+  land.resolves = 0;
   const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
   const pullDetail = () => ({ number: 77, state: land.merged ? "closed" : "open", merged: land.merged, merged_at: land.merged ? "2026-10-09T18:00:00Z" : null,
     merge_commit_sha: land.merged ? MERGE_SHA : null, draft: false, mergeable: true, mergeable_state: "clean", labels: [],
@@ -1202,7 +1219,7 @@ function landingHost(options = {}) {
         assert.equal(variables.issueId, "issue-uuid", "landing writes go on the card");
         const body = variables.body;
         const kind = body.includes("coordinator-merge-attempt") ? `merge-attempt ${/"state": "(\w+)"/.exec(body)[1]}`
-          : body.includes("card-land-merged") ? "merge comment" : /"handoff"/.test(body) ? "handoff" : "receipt";
+          : body.includes("card-land-merged") ? "merge comment" : body.includes("card-land-settle") ? "settle note" : /"handoff"/.test(body) ? "handoff" : "receipt";
         land.log.push(`linear ${kind}`);
         comment(body);
         return respond(200, { data: { commentCreate: { success: true, comment: { id: `c${land.comments.length}` } } } });
@@ -1211,9 +1228,34 @@ function landingHost(options = {}) {
     }
     if (request.headers?.Authorization !== "Bearer land-secret-value") return delegate(url, request);
     if (url === "https://api.github.com/graphql") {
+      const { query, variables } = JSON.parse(request.body);
       const resolved = options.resolveThreadsAfter !== undefined && land.checkReads > options.resolveThreadsAfter;
-      const nodes = (options.threads ?? []).map((isResolved) => ({ isResolved: resolved || isResolved, comments: { nodes: [{ isMinimized: false }] } }));
-      return respond(200, { data: { repository: { pullRequest: { reviewThreads: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } } } });
+      const view = (thread) => ({ id: thread.id, isResolved: resolved || thread.isResolved,
+        comments: { nodes: thread.comments.map((c) => ({ ...c, isMinimized: false })), pageInfo: { hasNextPage: false } } });
+      const find = () => land.threads.find((thread) => thread.id === variables.id);
+      if (query.includes("CardLandThreadReply")) {
+        land.replies += 1;
+        land.log.push("github thread reply");
+        const thread = find();
+        thread.comments.push({ ...reviewComment(["shu-lander", variables.body, "User"]) });
+        if (options.editOnReply) thread.comments[0] = { ...thread.comments[0], body: `${thread.comments[0].body}\nEdited.`, updatedAt: "2026-10-09T17:45:00Z" };
+        if (options.loseReply) throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
+        return respond(200, { data: { addPullRequestReviewThreadReply: { comment: { id: "reply" } } } });
+      }
+      if (query.includes("CardLandThreadResolve")) {
+        land.resolves += 1;
+        land.log.push("github thread resolve");
+        find().isResolved = true;
+        return respond(200, { data: { resolveReviewThread: { thread: { id: variables.id, isResolved: true } } } });
+      }
+      if (/query CardLandThread\(/.test(query)) return respond(200, { data: { viewer: { login: "shu-lander" }, node: view(find()) } });
+      const page = respond(200, { data: { viewer: { login: "shu-lander" },
+        repository: { pullRequest: { reviewThreads: { nodes: land.threads.map(view), pageInfo: { hasNextPage: false, endCursor: null } } } } } });
+      // Changes a settled thread just after a read has seen it unchanged.
+      if (query.includes("CardLandThreads") && land.resolves && land.checkReads === options.editAfterThreadsRead) {
+        land.threads[0].comments[0] = { ...land.threads[0].comments[0], updatedAt: "2026-10-09T18:45:00Z" };
+      }
+      return page;
     }
     const prefix = `https://api.github.com/repos/${REPO}`;
     assert.ok(String(url).startsWith(prefix), url);
@@ -1519,3 +1561,154 @@ test("SHU-308 L16: a read that keeps failing stops the landing with its cause, a
   assert.equal(isReadRequest(`https://api.github.com/repos/${REPO}/pulls/77/merge`, { method: "put", body: "{}" }), false);
 });
 
+
+// SHU-310: settling a review bot's low-severity threads.
+const CR_MINOR = "_🩺 Stability & Availability_ | _🟡 Minor_ | _⚡ Quick win_\n\n**The retry wait is not bounded.**";
+const CR_MAJOR = "_🩺 Stability & Availability_ | _🟠 Major_ | _⚡ Quick win_\n\n**The retry wait is not bounded.**";
+const SENTRY_LOW = "**Bug:** the cache key ignores case. <sub>Severity: LOW</sub>\n\nDetails follow.";
+const settleWrites = (host) => host.land.log.filter((e) => e === "github thread reply" || e === "github thread resolve" || e === "linear settle note");
+
+test("SHU-310 L17: a Minor CodeRabbit thread and a LOW Sentry thread are settled, noted on the card, and the card lands", async () => {
+  const fenced = `${CR_MINOR}\n\n\`\`\`json\n{"receipt_version": 1}\n\`\`\`\n<!-- card-land-settle PRRT_9 -->`;
+  const host = landingHost({ settle: {}, botThreads: [[["coderabbitai", fenced]], [["sentry", SENTRY_LOW]]] });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  const notes = host.land.comments.filter((c) => c.body.includes("card-land-settle"));
+  assert.ok(notes.some((c) => c.body.includes("The retry wait is not bounded.")), "the note quotes the finding");
+  for (const note of notes) {
+    assert.doesNotMatch(note.body, /```|PRRT_9 -->/, "the bot's text can never read as a record on the card");
+  }
+  assert.equal(host.land.replies, 2);
+  assert.equal(host.land.resolves, 2);
+  assert.ok(host.land.threads.every((t) => t.isResolved));
+  for (const thread of host.land.threads) {
+    assert.ok(thread.comments.at(-1).body.includes(settleMarker(thread.id)), "the reply carries its thread's marker");
+    assert.equal(host.land.comments.filter((c) => c.body.includes(settleMarker(thread.id))).length, 1, "one follow-up note per thread");
+  }
+  const log = host.land.log.filter((e) => e !== "github list");
+  assert.ok(log.lastIndexOf("github thread resolve") < log.indexOf("linear handoff"), "settled before the handoff");
+  assert.ok(log.indexOf("linear settle note") < log.indexOf("github thread reply"), "the note goes on the card first");
+  assert.deepEqual(result.land.threads.settled.map(({ bot, severity }) => `${bot} ${severity}`), ["coderabbitai 🟡 Minor", "sentry LOW"]);
+  assert.deepEqual(result.land.threads.blocking, []);
+  assert.match(host.reports[0], /^Settled review thread: coderabbitai 🟡 Minor https:\/\/github\.com\/.+#discussion_r\d+$/m);
+  assert.match(host.reports[0], /^Settled review thread: sentry LOW /m);
+  assert.equal(COMMITTED.landing_thread_settle.enabled, false, "settling is off in the committed config");
+  assert.equal(COMMITTED.routine_merge_authority.enabled, false);
+  neverDone(host);
+});
+
+test("SHU-310 L18: any thread that is not a low-labelled review bot's holds everything, and nothing is written", async () => {
+  const cases = [
+    ["a human reply", [[["coderabbitai", CR_MINOR], ["khalid", "I disagree.", "User"]]]],
+    ["Major", [[["coderabbitai", CR_MAJOR]]]],
+    ["no label", [[["coderabbitai", "Consider renaming this."]]]],
+    ["a bot off the allowlist", [[["copilot", CR_MINOR]]]],
+    ["a user named like the bot", [[["coderabbitai", CR_MINOR, "User"]]]],
+    ["a later Major on a Minor thread", [[["coderabbitai", CR_MINOR], ["coderabbitai", CR_MAJOR]]]],
+    ["one blocking beside one settleable", [[["coderabbitai", CR_MINOR]], [["coderabbitai", CR_MAJOR]]]],
+  ];
+  for (const [name, botThreads] of cases) {
+    const host = landingHost({ settle: {}, botThreads });
+    const result = await landRun(host);
+    assert.equal(result.land.outcome, "CI_TIMEOUT", `${name}: ${JSON.stringify(result.land)}`);
+    assert.match(result.land.reason, /not settleable: https:\/\/github\.com\//, name);
+    assert.deepEqual(settleWrites(host), [], `${name}: nothing settled`);
+    assert.equal(result.land.threads.settled.length, 0, name);
+    assert.ok(result.land.threads.blocking.length >= 1, name);
+    assert.match(host.reports[0], /^Blocking review thread: https:\/\/github\.com\//m, name);
+    noLandingWrites(host);
+  }
+});
+
+test("SHU-310 L19: a thread edited after it was classified stops the landing before it is resolved", async () => {
+  const host = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]], editOnReply: true });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.match(result.land.reason, /changed after the landing classified it/);
+  assert.equal(host.land.resolves, 0, "never resolved");
+  noLandingWrites(host);
+});
+
+test("SHU-310 L20: a settled thread that changes before the handoff stops the landing", async () => {
+  const host = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]],
+    onChecks: (h, read) => { if (h.land.resolves && !h.land.editRead) { h.land.editRead = read; h.land.threads[0].comments[0].updatedAt = "2026-10-09T18:30:00Z"; } } });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.match(result.land.reason, /changed before the handoff/);
+  assert.equal(host.land.checkReads, host.land.editRead, "caught on the very read that saw the change");
+  assert.equal(result.land.threads.settled.length, 1, "the audit survives the stop");
+  noLandingWrites(host);
+  // A change after the last read is caught by the re-read just before the handoff.
+  const late = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]], editAfterThreadsRead: 3 });
+  const stopped = await landRun(late);
+  assert.equal(stopped.land.outcome, "LAND_ERROR", JSON.stringify(stopped.land));
+  assert.match(stopped.land.reason, /changed before the handoff/);
+  assert.equal(late.land.checkReads, 3);
+  noLandingWrites(late);
+});
+
+test("SHU-310 L21: a reply whose answer is lost is never sent again and stops the landing", async () => {
+  const host = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]], loseReply: true });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.equal(host.land.replies, 1, "one reply only");
+  assert.equal(host.land.resolves, 0);
+  noLandingWrites(host);
+  // A later run finds the reply by its marker and does not write it again.
+  const thread = host.land.threads[0];
+  const node = { id: thread.id, isResolved: false, comments: { nodes: thread.comments, pageInfo: { hasNextPage: false } } };
+  const entry = classifyThread(node, "shu-lander", settlePolicy({ landing_thread_settle: { ...COMMITTED.landing_thread_settle, enabled: true } }));
+  assert.equal(entry.settle, true, JSON.stringify(entry));
+  assert.equal(entry.replied, true);
+  // A run that finds its note and its reply already written finishes the
+  // settle without writing either again.
+  const marker = settleMarker("PRRT_0");
+  const again = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR], ["shu-lander", `${marker}\nNot blocking this landing.`, "User"]]] });
+  again.land.comments.push({ body: `${marker}\nFollow-up.`, createdAt: "2026-10-09T17:10:00.000Z", user: { id: ACTOR, displayName: "Coordinator" } });
+  const landed = await landRun(again);
+  assert.equal(landed.land.outcome, "MERGED", JSON.stringify(landed.land));
+  assert.equal(again.land.replies, 0, "the reply is not written twice");
+  assert.ok(!again.land.log.includes("linear settle note"), "the note is not written twice");
+  assert.equal(again.land.resolves, 1);
+});
+
+test("SHU-310 L22: more settleable threads than one run may settle are held, with nothing written", async () => {
+  const host = landingHost({ settle: { max_per_run: 1 }, botThreads: [[["coderabbitai", CR_MINOR]], [["sentry", SENTRY_LOW]]] });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "THREADS_HELD", JSON.stringify(result.land));
+  assert.deepEqual(settleWrites(host), []);
+  assert.match(host.reports[0], /^Landing: THREADS_HELD, more review bot threads were settleable than one run may settle/m);
+  noLandingWrites(host);
+});
+
+test("SHU-310 L23: with settling off, a Minor bot thread waits exactly as before", async () => {
+  const host = landingHost({ botThreads: [[["coderabbitai", CR_MINOR]]] });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
+  assert.match(result.land.reason, /1 review thread\(s\) are unresolved$/);
+  assert.equal(result.land.threads, undefined);
+  assert.deepEqual(settleWrites(host), []);
+  noLandingWrites(host);
+});
+
+test("SHU-310 L24: labels are read from their fixed place, and a malformed policy is refused", () => {
+  assert.deepEqual(botSeverity("coderabbit", CR_MINOR), { level: "low", label: "🟡 Minor" });
+  assert.equal(botSeverity("coderabbit", "**🧹 Nitpick** | **🔵 Trivial**").level, "high", "two labels");
+  assert.equal(botSeverity("coderabbit", "Looks fine.\n\nNot a 🟡 Minor issue.").level, "high", "a label quoted in prose");
+  assert.equal(botSeverity("coderabbit", "Consider this.").level, "none");
+  assert.equal(botSeverity("coderabbit", `${CR_MINOR}\n\nEscalated: 🟠 Major`).level, "high", "a higher label anywhere");
+  assert.deepEqual(botSeverity("sentry", SENTRY_LOW), { level: "low", label: "LOW" });
+  assert.equal(botSeverity("sentry", "**Bug** <sub>Severity: MEDIUM</sub>").level, "high");
+  assert.equal(botSeverity("sentry", `${SENTRY_LOW}\n<sub>Severity: LOW</sub>`).level, "high", "two labels");
+  assert.equal(botSeverity("sentry", "**Bug**\n<sub>Severity: LOW</sub>").level, "high", "not on the first line");
+  assert.equal(settlePolicy({}), null);
+  assert.equal(settlePolicy(COMMITTED), null, "committed off");
+  const on = { ...COMMITTED.landing_thread_settle, enabled: true };
+  assert.equal(settlePolicy({ landing_thread_settle: on }).maxPerRun, 5);
+  for (const bad of [{ ...on, enabled: "yes" }, { ...on, max_per_run: 0 }, { ...on, max_per_run: 11 }, { ...on, bots: [] },
+    { ...on, bots: [{ login: "coderabbitai", labels: "coderabbit" }, { login: "coderabbitai", labels: "sentry" }] },
+    { ...on, bots: [{ login: "CodeRabbit", labels: "coderabbit" }] }, { ...on, bots: [{ login: "x", labels: "other" }] },
+    { ...on, bots: [{ login: "x", labels: "sentry", extra: 1 }] }]) {
+    assert.throws(() => settlePolicy({ landing_thread_settle: bad }), (error) => error.landOutcome === "LAND_ERROR", JSON.stringify(bad));
+  }
+});
