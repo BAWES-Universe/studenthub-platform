@@ -425,6 +425,60 @@ export function parseActivationArgs(argv = []) {
 }
 
 // ---------------------------------------------------------------------------
+// SHU-312: a committed queue of cards
+// ---------------------------------------------------------------------------
+
+// dispatch_scope may list up to MAX_CARD_QUEUE committed card lanes, in the
+// order the card-run timer runs them. Only the timer reads the order; the
+// coordinator still runs one card per episode, the armed activation's own.
+export const MAX_CARD_QUEUE = 5;
+const FIXTURE_PAIR = Object.freeze(["SHU-140", "SHU-254"]);
+
+// The committed queue, or why the scope is not one. A single id is not a
+// queue, and neither is the fixture pair, which keeps its own handling.
+export function cardQueue(config = {}) {
+  const ids = config?.dispatch_scope?.issue_ids;
+  if (!Array.isArray(ids) || ids.length < 2) return { queue: false, ids: null, reason: null };
+  if (ids.length === 2 && FIXTURE_PAIR.every((id) => ids.includes(id))) return { queue: false, ids: null, reason: null };
+  const no = (reason) => ({ queue: true, ok: false, ids: null, reason });
+  if (ids.length > MAX_CARD_QUEUE) return no(`a card queue lists at most ${MAX_CARD_QUEUE} cards`);
+  if (new Set(ids).size !== ids.length) return no("a card queue names each card once");
+  const cards = config.card_lanes ?? [];
+  for (const id of ids) {
+    if (typeof id !== "string" || !LINEAR_ISSUE_ID_RE.test(id)) return no("a card queue names canonical SHU-<number> cards");
+    let lane;
+    try {
+      if (resolveReviewOnlyLane(config, id)) return no(`${id} is a review-only lane; a card queue holds build cards only`);
+      lane = resolveFixtureLane(config, id);
+    } catch (error) {
+      return no(`committed configuration is invalid: ${error.message}`);
+    }
+    if (!lane || !Array.isArray(cards) || !cards.some((card) => card?.id === id) || !cardContract(id)) {
+      return no(`${id} is not a committed card lane`);
+    }
+  }
+  return { queue: true, ok: true, ids: [...ids], reason: null };
+}
+
+// The configuration one tick works with. Under a queue, the scope narrows to
+// the armed activation's target when that target is in the queue; otherwise
+// the queue stays as committed, which every scope check refuses, so a queue
+// with no armed card scopes nothing. The record is only read here to pick
+// the scope: singleRunActivationStatus still checks every binding of it
+// against the narrowed configuration, and a record that changes between the
+// two reads names another target than the scope and is refused.
+export function narrowQueueScope(config, filePath, io = {}) {
+  const queue = cardQueue(config);
+  if (!queue.queue || !queue.ok || typeof filePath !== "string" || !filePath) return config;
+  const file = readActivationText(filePath, io);
+  if (!file.ok) return config;
+  let record;
+  try { record = JSON.parse(file.text); } catch { return config; }
+  if (!validateActivationRecord(record).ok || !queue.ids.includes(record.target_issue_id)) return config;
+  return { ...config, dispatch_scope: { issue_ids: [record.target_issue_id] } };
+}
+
+// ---------------------------------------------------------------------------
 // The running coordinator's own revision
 // ---------------------------------------------------------------------------
 

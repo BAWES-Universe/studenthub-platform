@@ -31,7 +31,7 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
+import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
@@ -2225,12 +2225,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 }
 
 async function reconcileTick(argv = process.argv.slice(2), env = process.env, io = {}) {
-  const config0 = loadConfig(io.configPath);
-  const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
-  const dispatchScope = resolveDispatchScope(config);
   // SHU-63: an operator's --activation declaration is parsed here, but its STATUS is
   // computed after the durable receipts are read — the one-use binding needs them.
   const activationArg = parseActivationArgs(argv);
+  // SHU-312: a committed card queue scopes this tick to the armed card alone.
+  const config0 = narrowQueueScope(loadConfig(io.configPath), activationArg.path, io);
+  const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
+  const dispatchScope = resolveDispatchScope(config);
   const linearToken = env.LINEAR_API_TOKEN ?? "";
   const githubToken = env.GITHUB_TOKEN ?? "";
   const fetchImpl = io.fetchImpl ?? fetch;
