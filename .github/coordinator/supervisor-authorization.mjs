@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
 import { dispatchEnabledFor, resolveDispatchScope, parseReceiptsFromComments } from "./reconcile.mjs";
-import { singleRunActivationStatus, activationAllowsTarget, activationRefusalCode } from "./single-run-activation.mjs";
+import { singleRunActivationStatus, activationAllowsTarget, activationRefusalCode, narrowQueueScope } from "./single-run-activation.mjs";
 
 // SHU-71 run 5: a correct revision was held because this check said no at
 // publication, and nothing said which part said no. Every denial now names its
@@ -25,11 +25,12 @@ function evaluate(order, io) {
   try {
     const dir = path.dirname(fileURLToPath(import.meta.url));
     const env = io.env ?? process.env;
-    const config = io.config ?? JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
+    const filePath = env.SHU_SUPERVISOR_ACTIVATION_FILE;
+    // SHU-312: a committed card queue scopes the order to the armed card alone.
+    const config = narrowQueueScope(io.config ?? JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")), filePath, io.activation?.io);
     const scope = resolveDispatchScope(config);
     if (!scope.valid || (scope.issueIds && !scope.issueIds.has(order.issue_id))) return denied("DISPATCH_SCOPE");
     if (config.adapter_pause_map?.[order.runtime]) return denied("ADAPTER_PAUSED");
-    const filePath = env.SHU_SUPERVISOR_ACTIVATION_FILE;
     // The broker serves the SHU-71 fixtures' threads only. A scope that can admit
     // either fixture (the pair, one fixture alone, or no scope) still reads them,
     // because their receipts decide spent and retry; a scope without a fixture,

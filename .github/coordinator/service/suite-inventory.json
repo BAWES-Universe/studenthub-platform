@@ -2085,6 +2085,15 @@
     "SHU-86 mutation M108 consumer ignores a failed last thread check",
     "SHU-86 mutation M109 trust a thread an earlier landing settled",
     "SHU-86 mutation M110 drop the audit when the policy is refused",
+    "SHU-86 mutation M111 build on a main that does not descend from the install",
+    "SHU-86 mutation M112 arm the installed revision instead of the branch's main tip",
+    "SHU-86 mutation M113 run past a queued card that did not land",
+    "SHU-86 mutation M114 count a run that did not land as landed",
+    "SHU-86 mutation M115 narrow a queue to a card outside it",
+    "SHU-86 mutation M116 select the card again inside the run",
+    "SHU-86 mutation M117 accept a queue longer than five",
+    "SHU-86 mutation M118 run a queue by hand",
+    "SHU-86 mutation M119 keep a queue scope for an order of another queued card",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2154,6 +2163,13 @@
     "SHU-310 L25: a comment that lands between the last read and the resolve reopens the thread and stops the landing",
     "SHU-310 L26: a settled thread that changes after the handoff holds the merge at the consumer's last check",
     "SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome",
+    "SHU-312 Q1: a card queue is two to five distinct committed card lanes; anything else scopes nothing",
+    "SHU-312 Q2: a queue narrows each tick to the armed card alone, and without one scopes nothing",
+    "SHU-312 Q3: the host gate admits only the armed card's order under a queue",
+    "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
+    "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
+    "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
+    "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17958,6 +17974,42 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M111 build on a main that does not descend from the install",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M112 arm the installed revision instead of the branch's main tip",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M113 run past a queued card that did not land",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M114 count a run that did not land as landed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M115 narrow a queue to a card outside it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M116 select the card again inside the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M117 accept a queue longer than five",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M118 run a queue by hand",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M119 keep a queue scope for an order of another queued card",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18231,6 +18283,34 @@
     },
     {
       "name": "SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q1: a card queue is two to five distinct committed card lanes; anything else scopes nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q2: a queue narrows each tick to the armed card alone, and without one scopes nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q3: the host gate admits only the armed card's order under a queue",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
       "capabilities": []
     },
     {

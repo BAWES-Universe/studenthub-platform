@@ -130,8 +130,8 @@ const CASES = [
   },
   {
     name: "M20 take a pull request on a card run",
-    from: '    if (review) refuse("CARD_RUN_REVIEW_INPUT",',
-    to: '    if (false) refuse("CARD_RUN_REVIEW_INPUT", // SHU86-M20\n',
+    from: '    if (review) refuse("CARD_RUN_REVIEW_INPUT", `${id} is not the review card;',
+    to: '    if (false) refuse("CARD_RUN_REVIEW_INPUT", // SHU86-M20\n`${id} is not the review card;',
     pattern: "SHU-86 C2:",
   },
   {
@@ -377,15 +377,15 @@ const CASES = [
   {
     name: "M58 write the branch with the read-only token",
     file: "service/card-prepare.mjs",
-    from: "  pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: !apply });",
-    to: "  if (apply) await github(io, credentials, \"POST\", `https://api.github.com/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: revision }); // SHU86-M58",
+    from: '    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(apply ? [] : ["--dry-run"]),',
+    to: '    const push = { status: 0 }; if (apply) github(io, credentials, "POST", `https://api.github.com/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: base }); void ([ // SHU86-M58\n',
     pattern: "SHU-86 C8:",
   },
   {
     name: "M59 skip the dry-run push in plan",
     file: "service/card-prepare.mjs",
-    from: "  pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: !apply });",
-    to: "  if (apply) pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: false }); // SHU86-M59",
+    from: '    const push = git(["push", "--no-verify",',
+    to: '    const push = !apply ? { status: 0 } : git(["push", "--no-verify", // SHU86-M59\n',
     pattern: "SHU-86 C38:",
   },
   {
@@ -405,8 +405,8 @@ const CASES = [
   {
     name: "M62 push from the checkout, under its own config",
     file: "service/card-prepare.mjs",
-    from: '      "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`,',
-    to: '      "git", ...BROKER_GIT_CONFIG_ARGS, "-C", checkout, // SHU86-M62',
+    from: '      "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`, ...args]);',
+    to: '      "git", ...BROKER_GIT_CONFIG_ARGS, "-C", checkout, ...args]); // SHU86-M62',
     pattern: "SHU-86 C8:",
   },
   {
@@ -433,8 +433,8 @@ const CASES = [
   {
     name: "M66 push without the create-only lease",
     file: "service/card-prepare.mjs",
-    from: '      "push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(dryRun ? ["--dry-run"] : []),',
-    to: '      "push", "--no-verify", ...(dryRun ? ["--dry-run"] : []), // SHU86-M66',
+    from: '    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(apply ? [] : ["--dry-run"]),',
+    to: '    const push = git(["push", "--no-verify", ...(apply ? [] : ["--dry-run"]), // SHU86-M66\n',
     pattern: "SHU-86 C40:",
   },
   {
@@ -743,6 +743,64 @@ const CASES = [
     from: "  const settleOn = config?.landing_thread_settle?.enabled === true;",
     to: "  const settleOn = false; // SHU310-M110",
     pattern: "SHU-310 L27:",
+  },
+  {
+    name: "M111 build on a main that does not descend from the install",
+    file: "service/card-prepare.mjs",
+    from: '  const ancestor = git(["merge-base", "--is-ancestor", revision, tip]);',
+    to: '  const ancestor = { status: 0 }; // SHU312-M111',
+    pattern: "SHU-312 Q4:",
+  },
+  {
+    name: "M112 arm the installed revision instead of the branch's main tip",
+    from: "    const plan = prepared.branch ? onBase(planned, prepared.branch.head) : planned;",
+    to: "    const plan = planned; // SHU312-M112",
+    pattern: "SHU-312 Q4:",
+  },
+  {
+    name: "M113 run past a queued card that did not land",
+    from: "    if (!io.fs.existsSync(claim)) return { id };",
+    to: "    return { id }; // SHU312-M113",
+    pattern: "SHU-312 Q5:",
+  },
+  {
+    name: "M114 count a run that did not land as landed",
+    from: '.readFileSync(path.join(paths.stateDir, file), "utf8"))?.land === "MERGED") return true;',
+    to: '.readFileSync(path.join(paths.stateDir, file), "utf8"))) return true; // SHU312-M114',
+    pattern: "SHU-312 Q6:",
+  },
+  {
+    name: "M115 narrow a queue to a card outside it",
+    file: "single-run-activation.mjs",
+    from: "  if (!validateActivationRecord(record).ok || !queue.ids.includes(record.target_issue_id)) return config;",
+    to: "  if (!validateActivationRecord(record).ok) return config; // SHU312-M115",
+    pattern: "SHU-312 Q2:",
+  },
+  {
+    name: "M116 select the card again inside the run",
+    from: '    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id });',
+    to: '    result = await runCard({ io, paths, limits, trigger: "timer" }); // SHU312-M116',
+    pattern: "SHU-312 Q5:",
+  },
+  {
+    name: "M117 accept a queue longer than five",
+    file: "single-run-activation.mjs",
+    from: "  if (ids.length > MAX_CARD_QUEUE) return no(",
+    to: "  if (false) return no( // SHU312-M117\n",
+    pattern: "SHU-312 Q1:",
+  },
+  {
+    name: "M118 run a queue by hand",
+    from: '    if (cardQueue(readConfig(io, paths)).queue) refuse("CARD_RUN_SCOPE",',
+    to: '    if (false) refuse("CARD_RUN_SCOPE", // SHU312-M118\n',
+    pattern: "SHU-312 Q7:",
+  },
+  {
+    name: "M119 keep a queue scope for an order of another queued card",
+    file: "supervisor-authorization.mjs",
+    from: "    const config = narrowQueueScope(io.config ?? JSON.parse(",
+    to: "    const config = ((c) => ({ ...c, dispatch_scope: { issue_ids: [order.issue_id] } }))(io.config ?? JSON.parse( // SHU312-M119\n",
+    pattern: "SHU-312 Q3:",
   },
 ];
 

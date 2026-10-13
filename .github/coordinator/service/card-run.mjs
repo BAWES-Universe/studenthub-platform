@@ -12,7 +12,8 @@
 // still running.
 //
 // Before arming, the run itself moves the card to Todo and creates its
-// coordinator/<card> branch at the installed revision (card-prepare.mjs), and
+// coordinator/<card> branch at main's current tip, which must descend from the
+// installed revision (card-prepare.mjs, SHU-312), and
 // after the revert it posts its own report on the SHU-71 tracking card. Still
 // an operator step: installing the revision with the prerequisite
 // provisioner.
@@ -23,11 +24,20 @@
 // ran) touches neither the host nor Linear. `timer-install` and `timer-remove`
 // put the timer on the host and take it off; installing it is the owner's one
 // go. Importing the module has no effect.
+//
+// SHU-312: the committed dispatch_scope may be a queue of up to five card
+// lanes. The timer then runs at most one card per start: the first queued card
+// that has not landed, and only once every earlier one has landed (MERGED) by a
+// timer run, at this revision or an earlier install. Any other outcome of the
+// card in front stops the queue (QUEUE_STOPPED) until a new install re-arms it;
+// all landed is QUEUE_DONE. A crashed run leaves its lock behind and every
+// later start skips LOCKED until the lock is cleared by hand, after checking
+// that no card-run process is alive.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validateActivationRecord, MAX_ACTIVATION_WINDOW_MS } from "../single-run-activation.mjs";
+import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS } from "../single-run-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
@@ -117,11 +127,23 @@ const stamp = (date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}
 // The record this run arms, built only from the committed configuration at the
 // installed revision. A review-only run takes its pull request, head, base and
 // author family from the operator, exactly as the activation keys require.
-export function planRun({ config, revision, now, review = null, limits = CARD_RUN_LIMITS }) {
+// Under a committed queue (SHU-312) the caller names which queued card; the
+// selection is made once, by nextCard, and never again inside the run.
+export function planRun({ config, revision, now, review = null, limits = CARD_RUN_LIMITS, cardId = null }) {
   if (!SHA_RE.test(revision ?? "")) refuse("CARD_RUN_REVISION", "the installed revision is not a full SHA");
-  const ids = config?.dispatch_scope?.issue_ids;
-  if (!Array.isArray(ids) || ids.length !== 1) refuse("CARD_RUN_SCOPE", "the committed dispatch_scope must name exactly one card");
-  const [id] = ids;
+  const queue = cardQueue(config);
+  let id;
+  if (queue.queue) {
+    if (!queue.ok) refuse("CARD_RUN_SCOPE", queue.reason);
+    if (review) refuse("CARD_RUN_REVIEW_INPUT", "a review run never comes from a card queue");
+    if (!queue.ids.includes(cardId)) refuse("CARD_RUN_SCOPE", "a card queue runs only a named queued card");
+    id = cardId;
+  } else {
+    const ids = config?.dispatch_scope?.issue_ids;
+    if (!Array.isArray(ids) || ids.length !== 1) refuse("CARD_RUN_SCOPE", "the committed dispatch_scope must name exactly one card or a card queue");
+    [id] = ids;
+    if (cardId !== null && cardId !== id) refuse("CARD_RUN_SCOPE", `${cardId} is not the committed card`);
+  }
   let reviewLane;
   let cardLane;
   try {
@@ -158,6 +180,50 @@ export function planRun({ config, revision, now, review = null, limits = CARD_RU
   const shape = validateActivationRecord(record);
   if (!shape.ok) refuse("CARD_RUN_RECORD", shape.reason);
   return { id, kind, record, branch: kind === "card" ? `coordinator/${id}` : null };
+}
+
+// SHU-312: a card builds on the main tip its branch was made at, so the
+// activation's approved input is that tip; the record is checked again.
+export function onBase(plan, base) {
+  if (plan.kind !== "card") return plan;
+  if (!SHA_RE.test(base ?? "")) refuse("CARD_RUN_BASE", "the card branch has no base commit");
+  const record = { ...plan.record, initial_target_sha: base };
+  const shape = validateActivationRecord(record);
+  if (!shape.ok) refuse("CARD_RUN_RECORD", shape.reason);
+  return { ...plan, record };
+}
+
+// The landing outcome a timer run recorded for this card at any installed
+// revision. Claims live in the root-owned state directory.
+function landedByTimer(io, paths, id) {
+  const name = new RegExp(`^card-run-auto-[0-9a-f]{40}-${id}\\.json$`);
+  for (const file of io.fs.readdirSync(paths.stateDir)) {
+    if (!name.test(file)) continue;
+    try {
+      if (JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"))?.land === "MERGED") return true;
+    } catch { /* an unreadable claim proves nothing */ }
+  }
+  return false;
+}
+
+// Which card this start runs, decided once. A single committed card is itself
+// (its once-per-revision claim is checked by the caller). A queue gives the
+// first card a timer run has not landed, unless that card already ran at this
+// revision: it did not land, so the queue stops there until a new install.
+export function nextCard(io, paths, config, revision) {
+  const queue = cardQueue(config);
+  if (!queue.queue) return { id: null };
+  if (!queue.ok) return { id: null, skipped: "NOT_READY", reason: `CARD_RUN_SCOPE: ${queue.reason}` };
+  for (const id of queue.ids) {
+    if (landedByTimer(io, paths, id)) continue;
+    const claim = autoClaim(paths, revision, id);
+    if (!io.fs.existsSync(claim)) return { id };
+    let ran = null;
+    try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
+    const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
+    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}` };
+  }
+  return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }
 
 // What one coordinator tick said about this run. The coordinator is the only
@@ -350,7 +416,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
 // coordinator ends the episode or the window closes, then revert.
-export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator" }) {
+export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator", cardId = null }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -361,9 +427,10 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
     const config = readConfig(io, paths);
-    const plan = planRun({ config, revision, now: io.now(), review, limits });
+    const planned = planRun({ config, revision, now: io.now(), review, limits, cardId });
     credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
-    const prepared = await prepareRun({ io, plan, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials });
+    const prepared = await prepareRun({ io, plan: planned, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials });
+    const plan = prepared.branch ? onBase(planned, prepared.branch.head) : planned;
     const ticks = [];
     let result;
     try {
@@ -449,7 +516,10 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   let plan;
   try {
     revision = installedRevision(io, paths);
-    plan = planRun({ config: readConfig(io, paths), revision, now: io.now(), limits });
+    const config = readConfig(io, paths);
+    const next = nextCard(io, paths, config, revision);
+    if (next.skipped) return skip(next.skipped, next.reason);
+    plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
   } catch (error) {
     // A review card needs its pull request from an operator, so the timer never
     // runs one; any other planning refusal waits for the next install.
@@ -464,7 +534,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   }
   let result;
   try {
-    result = await runCard({ io, paths, limits, trigger: "timer" });
+    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       io.fs.unlinkSync(claim);
@@ -479,7 +549,8 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });
   }
   try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, activation_id: result.activation_id, outcome: result.outcome, ok: result.ok })}\n`, { mode: 0o600 });
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, activation_id: result.activation_id, outcome: result.outcome, ok: result.ok,
+      land: result.land?.outcome ?? null })}\n`, { mode: 0o600 });
   } catch { /* the claim alone already stops a second run */ }
   return { ...result, claim };
 }
@@ -573,16 +644,32 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     if (command === "plan") {
       const revision = installedRevision(io, paths);
       const config = readConfig(io, paths);
-      const plan = planRun({ config, revision, now: io.now(), review });
       // What the run would do to the card and its branch, read only.
-      let prepare;
-      try {
-        const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
-        prepare = await prepareRun({ io, plan, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials, apply: false });
-      } catch (error) {
-        prepare = { refused: error.code ?? "CARD_RUN_ERROR", reason: error.message };
+      const dryPrepare = async (plan) => {
+        try {
+          const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
+          return await prepareRun({ io, plan, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials, apply: false });
+        } catch (error) {
+          return { refused: error.code ?? "CARD_RUN_ERROR", reason: error.message };
+        }
+      };
+      const queue = cardQueue(config);
+      if (!queue.queue) {
+        const plan = planRun({ config, revision, now: io.now(), review });
+        return { code: 0, output: { ...plan, busy: busyReasons(io, paths), prepare: await dryPrepare(plan) } };
       }
-      return { code: 0, output: { ...plan, busy: busyReasons(io, paths), prepare } };
+      // SHU-312: the card the next timer start would run, and a dry run of
+      // every queued card's preparation from main as it is now.
+      if (review) refuse("CARD_RUN_REVIEW_INPUT", "a review run never comes from a card queue");
+      const next = nextCard(io, paths, config, revision);
+      const queued = [];
+      for (const id of queue.ok ? queue.ids : []) {
+        const plan = planRun({ config, revision, now: io.now(), cardId: id });
+        queued.push({ id, prepare: await dryPrepare(plan) });
+      }
+      const nextPlan = next.id ? planRun({ config, revision, now: io.now(), cardId: next.id }) : {};
+      return { code: 0, output: { ...nextPlan, queue: queue.ids, next, busy: busyReasons(io, paths),
+        ...(next.id ? { prepare: queued.find((entry) => entry.id === next.id).prepare } : {}), queued } };
     }
     if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath }) };
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
@@ -590,6 +677,9 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
       const result = await autoRun({ io, paths });
       return { code: result.skipped || (result.ok && result.revert?.reverted) ? 0 : 1, output: result };
     }
+    // A queue keeps its order only through the timer's claims, so it is run by
+    // the timer alone.
+    if (cardQueue(readConfig(io, paths)).queue) refuse("CARD_RUN_SCOPE", "a card queue is run by the card-run timer, never by hand");
     const result = await runCard({ io, paths, review });
     return { code: result.ok && result.revert.reverted ? 0 : 1, output: result };
   } catch (error) {

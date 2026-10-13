@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  planRun, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
+  planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
 } from "../service/card-run.mjs";
@@ -65,7 +65,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   const dirs = new Set();
   const calls = [];
   const host = { files, calls, clock: START.getTime(), ticks: 0, environ: [], lastTick: "", workers, branchHead, card: structuredClone(card), api: [], reports: [], history: [], linearClock: Date.parse("2026-10-09T15:00:00.000Z"),
-    head: REV, main: REV, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32), pushDir: null, pushDirs: new Set(),
+    head: REV, main: REV, mainTip: REV, fetchedMain: null, dirty: "", supervisorPid: "4242", invocation: "f".repeat(32), pushDir: null, pushDirs: new Set(),
     journal: [], pending: [], syncs: 0, journalReads: 0 };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, gid: 0, ...extra });
   put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify(config));
@@ -140,12 +140,31 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         assert.deepEqual(command.slice(-4), ["init", "--bare", "-q", host.pushDir]);
         return ok();
       }
-      const refspec = args.at(-1);
-      const [sha, ref] = refspec.split(":");
       assert.deepEqual(args.slice(args.indexOf("timeout"), args.indexOf("timeout") + 4), ["timeout", "--kill-after=10", "300", "git"]);
       assert.ok(args.includes(`GIT_ALTERNATE_OBJECT_DIRECTORIES=${PATHS.checkout}/.git/objects`));
-      assert.ok(command.includes(`--git-dir=${host.pushDir}`) && command.includes("--no-verify"));
+      assert.ok(command.includes(`--git-dir=${host.pushDir}`));
       assert.equal(command.includes("-C") || command.includes(PATHS.checkout), false);
+      // SHU-312: main as the deploy-key remote has it, fetched into the fresh
+      // repository, and its ancestry checked there.
+      const verb = command[command.indexOf(`--git-dir=${host.pushDir}`) + 1];
+      if (verb === "fetch") {
+        assert.deepEqual(command.slice(-5), ["fetch", "--no-tags", "--no-recurse-submodules", PUSH_REMOTE, "refs/heads/main:refs/heads/card-base"]);
+        host.api.push("git fetch main");
+        host.fetchedMain = host.mainTip;
+        return host.fetchFails ? { status: 128, stdout: "", stderr: "fatal: could not read" } : ok();
+      }
+      if (verb === "rev-parse") {
+        assert.deepEqual(command.slice(-3), ["rev-parse", "--verify", "refs/heads/card-base^{commit}"]);
+        return ok(`${host.fetchedMain}\n`);
+      }
+      if (verb === "merge-base") {
+        assert.deepEqual(command.slice(-4), ["merge-base", "--is-ancestor", host.head, host.fetchedMain]);
+        return { status: host.mainDescends === false ? 1 : 0, stdout: "", stderr: "" };
+      }
+      assert.equal(verb, "push");
+      assert.ok(command.includes("--no-verify"));
+      const refspec = args.at(-1);
+      const [sha, ref] = refspec.split(":");
       assert.equal(args.at(-2), PUSH_REMOTE);
       assert.equal(args.includes("--force") || args.includes("-f") || refspec.startsWith("+"), false);
       const dry = args.includes("--dry-run");
@@ -270,7 +289,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         team: { id: "team", states: { nodes: [{ id: TODO_ID, name: "Todo", type: "unstarted" }] } } } } });
     }
     assert.equal(auth, "Bearer gh-secret-value");
-    const branch = `coordinator/${id}`;
+    // Any card's branch: a queue's cards each read their own (SHU-312).
+    const branch = /\/git\/ref\/heads\/(coordinator\/SHU-\d+)$/.exec(url)?.[1] ?? `coordinator/${id}`;
     if (url === `https://api.github.com/repos/${config.pilot_repo}/git/ref/heads/${branch}`) {
       host.api.push("github read");
       return host.branchHead ? respond(200, { ref: `refs/heads/${branch}`, object: { sha: host.branchHead } }) : respond(404, { message: "Not Found" });
@@ -411,7 +431,7 @@ test("SHU-86 C8: a missing coordinator branch is created at the installed revisi
   const missing = fakeHost({ branchHead: "", onTick: () => tickText(spent("SHU-301", "review PASS — the episode is complete")) });
   const result = await runCard({ io: missing.io, paths: PATHS }).catch((error) => assert.fail(`the run refused: ${error.message}`));
   assert.equal(result.outcome, "PASS");
-  assert.deepEqual(result.prepared.branch, { branch: "coordinator/SHU-301", head: REV, action: "create" });
+  assert.deepEqual(result.prepared.branch, { branch: "coordinator/SHU-301", head: REV, base: REV, action: "create" });
   assert.equal(missing.branchHead, REV);
   assert.ok(missing.api.includes(`git push refs/heads/coordinator/SHU-301 ${REV}`));
   assert.equal(missing.api.filter((call) => call.startsWith("git push")).length, 1, "one push, no dry run, during a run");
@@ -664,13 +684,13 @@ test("SHU-86 C15: plan changes nothing, and review flags come all together", asy
   assert.equal(code, 0);
   assert.equal(output.record.target_issue_id, "SHU-301");
   assert.deepEqual(output.busy, []);
-  assert.deepEqual(output.prepare, { branch: { branch: "coordinator/SHU-301", head: REV, action: "none" }, card: { card: "SHU-301", state: "Todo", action: "none" } });
+  assert.deepEqual(output.prepare, { branch: { branch: "coordinator/SHU-301", head: REV, base: REV, action: "none" }, card: { card: "SHU-301", state: "Todo", action: "none" } });
   noArming(host);
   const fresh = fakeHost({ branchHead: "", card: { state: { id: "b", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
   const freshPlan = (await main(["plan"], fresh.io, PATHS)).output.prepare;
   assert.equal(freshPlan.branch.action, "create");
   assert.equal(freshPlan.card.action, "move-to-todo");
-  assert.deepEqual(fresh.api, ["linear read", "github read", `git push dry-run refs/heads/coordinator/SHU-301 ${REV}`, "linear read"], "plan only reads, and dry-runs the push");
+  assert.deepEqual(fresh.api, ["linear read", "github read", "git fetch main", `git push dry-run refs/heads/coordinator/SHU-301 ${REV}`, "linear read"], "plan only reads, and dry-runs the push");
   assert.equal(fresh.branchHead, "");
   assert.equal(host.files.has(PATHS.lock), false);
   assert.throws(() => parseArgs(["run", "--review-pr", "239"]), { code: "CARD_RUN_USAGE" });
@@ -748,7 +768,7 @@ test("SHU-86 C21: a backlog card nobody owns moves to Todo before arming, and re
   const result = await runCard({ io: host.io, paths: PATHS });
   assert.equal(result.outcome, "PASS");
   assert.deepEqual(result.prepared.card, { card: "SHU-301", state: "Todo", action: "move-to-todo", from: "Backlog" });
-  assert.deepEqual(host.api, ["linear read", "github read", "linear read", `linear todo ${TODO_ID}`, "linear history", "linear read", "linear report read SHU-71", "linear report report-uuid"]);
+  assert.deepEqual(host.api, ["linear read", "github read", "git fetch main", "linear read", `linear todo ${TODO_ID}`, "linear history", "linear read", "linear report read SHU-71", "linear report report-uuid"]);
   reverted(host);
 });
 
@@ -884,7 +904,7 @@ test("SHU-86 C27: after the revert, the run posts one plain report on the SHU-71
   assert.equal(body.split("\n")[0], reportMarker(output.activation_id));
   assert.match(body, /^Card run on SHU-301 \(card\): PASS, the review passed at the exact head/m);
   assert.match(body, /^Reason: review PASS — the episode is complete$/m);
-  assert.match(body, /^Before arming: moved SHU-301 from Backlog to Todo; created coordinator\/SHU-301\.$/m);
+  assert.match(body, new RegExp(`^Before arming: moved SHU-301 from Backlog to Todo; created coordinator/SHU-301 from main at ${REV}\\.$`, "m"));
   assert.match(body, /^Ticks: 1\.$/m);
   assert.match(body, /^The host is reverted and idle\.$/m);
   assert.doesNotMatch(body, /secret-value/);
@@ -978,6 +998,7 @@ test("SHU-86 C31: the timer runs the committed card once per installed revision,
   host.main = HEAD;
   host.files.set(PATHS.receipt, { text: JSON.stringify({ version: 1, revision: HEAD, state: "VERIFIED", effects: [] }), mode: 0o644, uid: 0, gid: 0 });
   host.branchHead = HEAD;
+  host.mainTip = HEAD;
   const next = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
   assert.equal(next.skipped, undefined, "a new install gets its own run");
   assert.equal(next.claim, autoClaim(PATHS, HEAD, "SHU-301"));
@@ -1766,4 +1787,193 @@ test("SHU-310 L27: a thread an earlier landing settled is checked again by every
   const paused = await landRun(pausedHost);
   assert.equal(paused.land.outcome, "LAND_PAUSED");
   assert.deepEqual(paused.land.threads, { settled: [], blocking: [] }, "and when the run stops before it reads the policy");
+});
+
+// SHU-312: one install runs a short committed queue of cards, one per timer
+// start, each from main as it is when its run starts.
+const QUEUE = Object.freeze(["SHU-301", "SHU-305"]);
+const queueConfig = (ids = QUEUE) => ({ ...structuredClone(COMMITTED), dispatch_scope: { issue_ids: [...ids] } });
+const passFor = (id) => (h) => tickText(spent(id, "review PASS — the episode is complete"));
+const claimFor = (host, revision, id, fields) => host.files.set(autoClaim(PATHS, revision, id),
+  { text: `${JSON.stringify({ card: id, revision, ...fields })}\n`, mode: 0o600, uid: 0, gid: 0 });
+
+test("SHU-312 Q1: a card queue is two to five distinct committed card lanes; anything else scopes nothing", async () => {
+  const { cardQueue, MAX_CARD_QUEUE } = await import("../single-run-activation.mjs");
+  assert.equal(MAX_CARD_QUEUE, 5);
+  assert.deepEqual(cardQueue(queueConfig()), { queue: true, ok: true, ids: [...QUEUE], reason: null });
+  assert.equal(cardQueue(queueConfig(["SHU-301"])).queue, false, "one card is not a queue");
+  assert.equal(cardQueue(queueConfig(["SHU-140", "SHU-254"])).queue, false, "the fixture pair keeps its own handling");
+  for (const [label, ids] of [
+    ["six cards", ["SHU-197", "SHU-294", "SHU-295", "SHU-300", "SHU-301", "SHU-305"]],
+    ["a repeated card", ["SHU-301", "SHU-301"]],
+    ["a review-only lane", ["SHU-301", "SHU-304"]],
+    ["no lane", ["SHU-301", "SHU-999"]],
+    ["a fixture", ["SHU-301", "SHU-140"]],
+    ["not an id", ["SHU-301", "shu-305"]],
+  ]) {
+    const queue = cardQueue(queueConfig(ids));
+    assert.equal(queue.queue && queue.ok === false, true, label);
+    assert.throws(() => planRun({ config: queueConfig(ids), revision: REV, now: START, cardId: ids[0] }), { code: "CARD_RUN_SCOPE" }, label);
+  }
+  // planRun takes the card it is given, only from the queue, never a review.
+  assert.equal(planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-305" }).id, "SHU-305");
+  assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START }), { code: "CARD_RUN_SCOPE" });
+  assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-308" }), { code: "CARD_RUN_SCOPE" });
+  assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-301", review: REVIEW }), { code: "CARD_RUN_REVIEW_INPUT" });
+  assert.throws(() => planRun({ config: configFor("SHU-301"), revision: REV, now: START, cardId: "SHU-305" }), { code: "CARD_RUN_SCOPE" });
+});
+
+test("SHU-312 Q2: a queue narrows each tick to the armed card alone, and without one scopes nothing", async () => {
+  const { narrowQueueScope } = await import("../single-run-activation.mjs");
+  const { resolveDispatchScope } = await import("../reconcile.mjs");
+  const record = planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-305" }).record;
+  const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
+  const narrowed = narrowQueueScope(queueConfig(), "/isolated/activation", file(JSON.stringify(record)));
+  assert.deepEqual(narrowed.dispatch_scope, { issue_ids: ["SHU-305"] });
+  assert.deepEqual([...resolveDispatchScope(narrowed).issueIds], ["SHU-305"]);
+  for (const [label, path, io] of [
+    ["no activation", null, file(JSON.stringify(record))],
+    ["a card outside the queue", "/a", file(JSON.stringify({ ...record, target_issue_id: "SHU-308", authorization_ref: "SHU-308" }))],
+    ["a malformed record", "/a", file("{")],
+    ["a record of the wrong shape", "/a", file(JSON.stringify({ ...record, coordinator_revision: "not-a-sha" }))],
+    ["a group-writable file", "/a", { ...file(JSON.stringify(record)), lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o620 }) }],
+  ]) {
+    const kept = narrowQueueScope(queueConfig(), path, io);
+    assert.deepEqual(kept.dispatch_scope.issue_ids, [...QUEUE], label);
+    assert.equal(resolveDispatchScope(kept).valid, false, `${label}: the queue as committed scopes nothing`);
+  }
+  // A single card is never narrowed, whatever the record says.
+  const single = configFor("SHU-301");
+  assert.equal(narrowQueueScope(single, "/a", file(JSON.stringify(record))), single);
+});
+
+test("SHU-312 Q3: the host gate admits only the armed card's order under a queue", async () => {
+  const { workOrderAuthorization } = await import("../supervisor-authorization.mjs");
+  const now = new Date(START.getTime() + 60_000);
+  const record = planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-305" }).record;
+  const order = (id) => ({ issue_id: id, runtime: "codex-cli", authorization_ref: id, workspace_scope: "scoped", scope_phase: "initial",
+    allowed_paths: [...COMMITTED.card_lanes.find((lane) => lane.id === id).initial_build_paths ?? []], scoped_base_sha: "e".repeat(40) });
+  const check = (id, text = JSON.stringify(record)) => workOrderAuthorization(order(id), {
+    config: { ...queueConfig(), max_dispatch: 1 }, wait: () => {},
+    env: { ENABLE_DISPATCH: "true", SHU_SUPERVISOR_ACTIVATION_FILE: "/isolated/activation", DISPATCH_TARGET_SHA: REV },
+    activation: { now, gitHead: REV, io: { lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text } },
+  });
+  assert.equal(check("SHU-301").code, "HOST_AUTH_DISPATCH_SCOPE", "another queued card is outside this run's scope");
+  assert.notEqual(check("SHU-305").code, "HOST_AUTH_DISPATCH_SCOPE", "the armed card is in scope");
+  assert.equal(check("SHU-305", "{").code, "HOST_AUTH_DISPATCH_SCOPE", "no readable activation, no scope");
+});
+
+test("SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install", async () => {
+  // Main moved past the install (an earlier card merged): the branch and the
+  // activation's approved input are main's tip, not the installed revision.
+  const ahead = fakeHost({ branchHead: "", onTick: passFor("SHU-301") });
+  ahead.mainTip = HEAD;
+  const result = await runCard({ io: ahead.io, paths: PATHS }).catch((error) => assert.fail(`the run refused: ${error.message}`));
+  assert.equal(result.outcome, "PASS");
+  assert.deepEqual(result.prepared.branch, { branch: "coordinator/SHU-301", head: HEAD, base: HEAD, action: "create" });
+  assert.equal(result.target, HEAD);
+  assert.equal(result.revision, REV, "the coordinator still runs the installed revision");
+  assert.ok(ahead.api.includes(`git push refs/heads/coordinator/SHU-301 ${HEAD}`));
+  assert.ok(ahead.calls.some((call) => call.includes(`--is-ancestor ${REV} ${HEAD}`)));
+  // A main that does not contain the install, or that cannot be fetched, is
+  // refused before anything is pushed, moved or armed.
+  for (const [label, change] of [
+    ["rewritten main", (h) => { h.mainTip = BASE; h.mainDescends = false; }],
+    ["unfetchable main", (h) => { h.fetchFails = true; }],
+  ]) {
+    const host = fakeHost({ branchHead: "" });
+    change(host);
+    const error = await runCard({ io: host.io, paths: PATHS }).then(() => null, (e) => e);
+    assert.equal(error?.code, "CARD_RUN_BASE", label);
+    assert.doesNotMatch(error.message, /github\.com|could not read/, label);
+    assert.equal(host.api.some((call) => call.startsWith("git push") || call.startsWith("linear todo")), false, label);
+    assert.equal(host.pushDirs.size, 0, `${label}: the push repository is removed`);
+    noArming(host);
+  }
+  // A branch left at the old install is never moved to the new main.
+  const stale = fakeHost({ branchHead: REV });
+  stale.mainTip = HEAD;
+  await assert.rejects(runCard({ io: stale.io, paths: PATHS }), { code: "CARD_RUN_BRANCH_NOT_AT_TARGET" });
+  assert.equal(stale.branchHead, REV);
+  noArming(stale);
+  assert.throws(() => onBase(planRun({ config: configFor("SHU-301"), revision: REV, now: START }), "not-a-sha"), { code: "CARD_RUN_BASE" });
+});
+
+test("SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land", async () => {
+  const host = fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-301")(h) : tickText("activation=absent (committed gates only)")) });
+  assert.deepEqual(nextCard(host.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
+  // Selected once: the run is the card the timer picked, although the claim it
+  // wrote first records no landing yet (GPT, SHU-312 design review).
+  const first = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(first.skipped, undefined, JSON.stringify(first));
+  assert.equal(first.card, "SHU-301");
+  assert.equal(first.outcome, "PASS");
+  const recorded = JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text);
+  assert.equal(recorded.outcome, "PASS");
+  assert.ok("land" in recorded, "the claim records the landing outcome");
+  assert.notEqual(recorded.land, "MERGED");
+  // The first card did not land, so the queue stops there for this install.
+  const ticks = host.ticks;
+  const stopped = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(stopped.skipped, "QUEUE_STOPPED");
+  assert.match(stopped.reason, /^SHU-301 ran at a{40} and did not land/);
+  assert.equal(host.ticks, ticks, "no second run");
+  // The first card landed: the next start runs the second.
+  const landed = fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-305")(h) : tickText("activation=absent (committed gates only)")) });
+  landed.mainTip = HEAD;
+  claimFor(landed, REV, "SHU-301", { outcome: "PASS", ok: true, land: "MERGED" });
+  const second = await attempt(() => autoRun({ io: landed.io, paths: PATHS }));
+  assert.equal(second.card, "SHU-305", JSON.stringify(second));
+  assert.equal(second.outcome, "PASS", JSON.stringify(second));
+  assert.equal(second.target, HEAD, "the second card starts after the first card's merge");
+  assert.ok(landed.files.has(autoClaim(PATHS, REV, "SHU-305")));
+  // Every card landed.
+  claimFor(landed, REV, "SHU-305", { outcome: "PASS", ok: true, land: "MERGED" });
+  assert.equal((await attempt(() => autoRun({ io: landed.io, paths: PATHS }))).skipped, "QUEUE_DONE");
+});
+
+test("SHU-312 Q6: a new install resumes the queue after the cards that already landed", async () => {
+  const host = fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-305")(h) : tickText("activation=absent (committed gates only)")) });
+  host.head = HEAD;
+  host.main = HEAD;
+  host.mainTip = HEAD;
+  host.files.set(PATHS.receipt, { text: JSON.stringify({ version: 1, revision: HEAD, state: "VERIFIED", effects: [] }), mode: 0o644, uid: 0, gid: 0 });
+  // SHU-301 landed under the previous install; SHU-305 ran there and did not.
+  claimFor(host, REV, "SHU-301", { outcome: "PASS", ok: true, land: "MERGED" });
+  claimFor(host, REV, "SHU-305", { outcome: "PASS", ok: true, land: "CI_TIMEOUT" });
+  assert.deepEqual(nextCard(host.io, PATHS, queueConfig(), HEAD), { id: "SHU-305" }, "a new install re-arms the card that did not land, after the one that did");
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(run.card, "SHU-305", JSON.stringify(run));
+  // A landing outcome is read only from a well-formed claim file.
+  const odd = fakeHost({ config: queueConfig() });
+  odd.files.set(`${PATHS.stateDir}/card-run-auto-x-SHU-301.json`, { text: JSON.stringify({ land: "MERGED" }), mode: 0o600, uid: 0, gid: 0 });
+  odd.files.set(`${PATHS.stateDir}/card-run-auto-${REV}-SHU-3010.json`, { text: JSON.stringify({ land: "MERGED" }), mode: 0o600, uid: 0, gid: 0 });
+  assert.deepEqual(nextCard(odd.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
+  // An invalid queue never runs.
+  const bad = fakeHost({ config: queueConfig(["SHU-301", "SHU-304"]) });
+  const skipped = await attempt(() => autoRun({ io: bad.io, paths: PATHS }));
+  assert.equal(skipped.skipped, "NOT_READY");
+  untouched(bad);
+});
+
+test("SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run", async () => {
+  const manual = fakeHost({ config: queueConfig(), branchHead: "" });
+  const refused = await main(["run"], manual.io, PATHS);
+  assert.equal(refused.code, 2);
+  assert.equal(refused.output.code, "CARD_RUN_SCOPE");
+  assert.match(refused.output.reason, /is run by the card-run timer, never by hand/);
+  noArming(manual);
+  const planned = fakeHost({ config: queueConfig(), branchHead: "" });
+  planned.mainTip = HEAD;
+  const { code, output } = await main(["plan"], planned.io, PATHS);
+  assert.equal(code, 0);
+  assert.deepEqual(output.queue, [...QUEUE]);
+  assert.deepEqual(output.next, { id: "SHU-301" });
+  assert.equal(output.id, "SHU-301");
+  assert.deepEqual(output.queued.map((entry) => [entry.id, entry.prepare.branch?.base, entry.prepare.branch?.action]),
+    [["SHU-301", HEAD, "create"], ["SHU-305", HEAD, "create"]]);
+  assert.deepEqual(output.prepare, output.queued[0].prepare);
+  assert.equal(planned.branchHead, "", "plan pushes nothing");
+  assert.equal(planned.api.some((call) => call.startsWith("linear todo") || /^git push (?!dry-run)/.test(call)), false);
+  noArming(planned);
 });

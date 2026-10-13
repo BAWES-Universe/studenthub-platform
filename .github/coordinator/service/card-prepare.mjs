@@ -5,9 +5,10 @@
 //   * the card moves to Todo, only from a not-yet-started state (backlog or
 //     unstarted) and only while no person or agent owns it. A card in triage,
 //     in progress, in review, done or canceled is refused, never reopened.
-//   * a card run's coordinator/<card> branch is created at the installed
-//     revision when it does not exist. A branch that exists elsewhere is
-//     refused, never moved: it may hold an earlier run's work.
+//   * a card run's coordinator/<card> branch is created at main's current
+//     tip (SHU-312), which must descend from the installed revision, when it
+//     does not exist. A branch that exists elsewhere is refused, never moved:
+//     it may hold an earlier run's work.
 //
 // Credentials are the coordinator's own (/srv/shu/coordinator.env), read once
 // by root, kept in memory and never printed. Every write is read back.
@@ -203,24 +204,35 @@ async function branchHead(io, credentials, repo, branch) {
   return sha;
 }
 
-// One git push as the coordinator user to the coordinator's own push remote:
-// never forced, hooks and credential helpers off, an explicit
-// revision-to-branch refspec. With dryRun, the remote still authenticates the
-// push, so a key that cannot write is found before a run.
+// The card's branch, made as the coordinator user against the coordinator's own
+// push remote: never forced, hooks and credential helpers off, explicit refs.
+// With dryRun, the remote still authenticates the push, so a key that cannot
+// write is found before a run.
 //
-// Like the push broker, the push runs from an empty bare repository the
-// coordinator user just made, never from the installed checkout: the
-// checkout's own config could rewrite the destination (url.*.insteadOf or
-// pushInsteadOf), and a fresh repository has none. The checkout's objects are
-// reached as an alternate, a plain path read. SSH never prompts and the push
-// is bounded in time, so a stalled remote cannot hold the run's lock.
+// Like the push broker, git runs in an empty bare repository the coordinator
+// user just made, never in the installed checkout: the checkout's own config
+// could rewrite the destination (url.*.insteadOf or pushInsteadOf), and a fresh
+// repository has none. The checkout's objects are reached as an alternate, a
+// plain path read. SSH never prompts and every remote step is bounded in time,
+// so a stalled remote cannot hold the run's lock.
 // The SSH program is the broker's own route on the host: plain ssh as the
 // coordinator user, whose ~/.ssh holds the deploy key. SHU_PUSH_SSH_COMMAND
 // never reaches the broker there (it is not an adapter key), and C39 pins that.
+//
+// SHU-312: the branch starts from main as the remote has it now, not from the
+// installed revision, so the second card of a queue starts after the first
+// card's merge and its pull request is not behind main. The trust is not
+// quite the same: the card may build on commits merged after the install.
+// Those commits are already on protected main, so the card does not bring
+// them in, and main must descend from the installed revision, so history the
+// install was made from is never rewritten under a card. The coordinator's
+// own code and contracts still come from the installed revision only, and the
+// exact-head review and merge check bind the head the card produced.
 export const PUSH_TIMEOUT_SECONDS = 300;
 export const PUSH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
+export const CARD_BASE_REF = "refs/heads/card-base";
 
-function pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun }) {
+function inPushRepository(io, credentials, repo, checkout, work) {
   if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) {
     refuse("CARD_RUN_BRANCH_CREATE", `SHU_PUSH_REMOTE_URL is not the ${repo} remote`);
   }
@@ -236,30 +248,50 @@ function pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun 
   try {
     const init = asCoordinator(["git", ...BROKER_GIT_CONFIG_ARGS, "init", "--bare", "-q", dir]);
     if (init.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `a push repository could not be made as ${COORDINATOR_USER} (git exit ${init.status})`);
-    const push = asCoordinator([`GIT_ALTERNATE_OBJECT_DIRECTORIES=${checkout}/.git/objects`,
+    // git's own output can name the remote; callers report only exit statuses.
+    const git = (args) => asCoordinator([`GIT_ALTERNATE_OBJECT_DIRECTORIES=${checkout}/.git/objects`,
       "timeout", "--kill-after=10", String(PUSH_TIMEOUT_SECONDS),
-      "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`,
-      // An empty lease makes the push create-only: the remote applies it
-      // only while the branch does not exist, so a branch someone creates
-      // after the read above, even at an ancestor, is refused, never moved.
-      "push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(dryRun ? ["--dry-run"] : []),
-      credentials.SHU_PUSH_REMOTE_URL, `${revision}:refs/heads/${branch}`]);
-    // git's own output can name the remote; only the exit status is reported.
-    if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${dryRun ? "pushed in a dry run" : "pushed"} as ${COORDINATOR_USER} (${push.status === 124 ? `timed out after ${PUSH_TIMEOUT_SECONDS}s` : `git exit ${push.status}`})`);
+      "git", ...BROKER_GIT_CONFIG_ARGS, `--git-dir=${dir}`, ...args]);
+    return work(git);
   } finally {
     asCoordinator(["rm", "-rf", "--", dir]);
   }
 }
 
+const exitText = (status) => (status === 124 ? `timed out after ${PUSH_TIMEOUT_SECONDS}s` : `git exit ${status}`);
+
+// Main as the remote has it now, refused unless it descends from the revision.
+function mainTip(git, credentials, revision) {
+  const fetched = git(["fetch", "--no-tags", "--no-recurse-submodules", credentials.SHU_PUSH_REMOTE_URL, `refs/heads/main:${CARD_BASE_REF}`]);
+  if (fetched.status !== 0) refuse("CARD_RUN_BASE", `main could not be fetched as ${COORDINATOR_USER} (${exitText(fetched.status)})`);
+  const read = git(["rev-parse", "--verify", `${CARD_BASE_REF}^{commit}`]);
+  const tip = String(read.stdout ?? "").trim();
+  if (read.status !== 0 || !SHA_RE.test(tip)) refuse("CARD_RUN_BASE", "the fetched main cannot be read");
+  const ancestor = git(["merge-base", "--is-ancestor", revision, tip]);
+  if (ancestor.status === 1) refuse("CARD_RUN_BASE", `main at ${tip} does not descend from the installed revision ${revision}`);
+  if (ancestor.status !== 0) refuse("CARD_RUN_BASE", `main's ancestry cannot be checked (${exitText(ancestor.status)})`);
+  return tip;
+}
+
 async function prepareBranch(io, credentials, repo, checkout, branch, revision, apply) {
   const head = await branchHead(io, credentials, repo, branch);
-  if (head === revision) return { branch, head, action: "none" };
-  if (head !== null) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", `${branch} is at ${head}, not ${revision}; an existing branch is never moved`);
-  pushBranch(io, credentials, repo, checkout, branch, revision, { dryRun: !apply });
-  if (!apply) return { branch, head: null, action: "create" };
+  const tip = inPushRepository(io, credentials, repo, checkout, (git) => {
+    const base = mainTip(git, credentials, revision);
+    if (head === base) return base;
+    if (head !== null) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", `${branch} is at ${head}, not main at ${base}; an existing branch is never moved`);
+    // An empty lease makes the push create-only: the remote applies it only
+    // while the branch does not exist, so a branch someone creates after the
+    // read above, even at an ancestor, is refused, never moved.
+    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(apply ? [] : ["--dry-run"]),
+      credentials.SHU_PUSH_REMOTE_URL, `${base}:refs/heads/${branch}`]);
+    if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${apply ? "pushed" : "pushed in a dry run"} as ${COORDINATOR_USER} (${exitText(push.status)})`);
+    return base;
+  });
+  if (head === tip) return { branch, head, base: tip, action: "none" };
+  if (!apply) return { branch, head: null, base: tip, action: "create" };
   const after = await branchHead(io, credentials, repo, branch);
-  if (after !== revision) refuse("CARD_RUN_BRANCH_READBACK", `${branch} reads back at ${after}, not ${revision}`);
-  return { branch, head: after, action: "create" };
+  if (after !== tip) refuse("CARD_RUN_BRANCH_READBACK", `${branch} reads back at ${after}, not ${tip}`);
+  return { branch, head: after, base: tip, action: "create" };
 }
 
 // Makes the planned card ready to run, or with apply false says what it would
@@ -362,7 +394,8 @@ export function renderRunReport(result) {
   const branch = result.prepared?.branch;
   const before = [
     card ? (card.action === "move-to-todo" ? `moved ${card.card} from ${plainReason(card.from)} to Todo` : `${card.card} was already in Todo`) : null,
-    branch ? (branch.action === "create" ? `created ${branch.branch}` : `${branch.branch} was already at the revision`) : null,
+    branch ? (branch.action === "create" ? `created ${branch.branch}${branch.base ? ` from main at ${branch.base}` : ""}`
+      : `${branch.branch} was already at ${branch.base ? `main at ${branch.base}` : "the revision"}`) : null,
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
   lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
