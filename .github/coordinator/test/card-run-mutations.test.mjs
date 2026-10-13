@@ -802,6 +802,12 @@ const CASES = [
     to: "    const config = ((c) => ({ ...c, dispatch_scope: { issue_ids: [order.issue_id] } }))(io.config ?? JSON.parse( // SHU312-M119\n",
     pattern: "SHU-312 Q3:",
   },
+  {
+    name: "M120 lose a failed claim write after the run",
+    from: '  } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }',
+    to: "  } catch { /* SHU312-M120 */ }",
+    pattern: "SHU-312 Q5:",
+  },
 ];
 
 for (const mutation of CASES) {

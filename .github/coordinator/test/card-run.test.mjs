@@ -1927,6 +1927,18 @@ test("SHU-312 Q5: the timer runs the queue in order, one card per start, and sto
   assert.equal(second.outcome, "PASS", JSON.stringify(second));
   assert.equal(second.target, HEAD, "the second card starts after the first card's merge");
   assert.ok(landed.files.has(autoClaim(PATHS, REV, "SHU-305")));
+  assert.equal(second.claim_error, undefined);
+  // A claim that cannot be rewritten after the run is named, not lost, and
+  // the claim written first still stops the queue at that card.
+  const full = fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-301")(h) : tickText("activation=absent (committed gates only)")) });
+  const write = full.fs.writeFileSync;
+  full.fs.writeFileSync = (file, text, options = {}) => {
+    if (file === autoClaim(PATHS, REV, "SHU-301") && options.flag !== "wx") throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+    return write(file, text, options);
+  };
+  const unrecorded = await attempt(() => autoRun({ io: full.io, paths: PATHS }));
+  assert.equal(unrecorded.claim_error, "ENOSPC");
+  assert.equal((await attempt(() => autoRun({ io: full.io, paths: PATHS }))).skipped, "QUEUE_STOPPED");
   // Every card landed.
   claimFor(landed, REV, "SHU-305", { outcome: "PASS", ok: true, land: "MERGED" });
   assert.equal((await attempt(() => autoRun({ io: landed.io, paths: PATHS }))).skipped, "QUEUE_DONE");

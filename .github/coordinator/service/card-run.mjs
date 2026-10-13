@@ -548,11 +548,16 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
     result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });
   }
+  // The claim written before the run already stops a second run at this
+  // revision. If this write fails, a queue never sees the card as landed and
+  // stops there (a later install refuses it again: its branch and card have
+  // moved), so the failure is named in the output rather than lost.
+  let claimError = null;
   try {
     io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, activation_id: result.activation_id, outcome: result.outcome, ok: result.ok,
       land: result.land?.outcome ?? null })}\n`, { mode: 0o600 });
-  } catch { /* the claim alone already stops a second run */ }
-  return { ...result, claim };
+  } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
+  return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
 }
 
 // Puts the timer on the host: the owner's one go. It never replaces units with
