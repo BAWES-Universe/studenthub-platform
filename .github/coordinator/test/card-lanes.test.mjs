@@ -26,7 +26,7 @@ import {
   validateFixtureScopePolicy,
 } from "../workspace-scope.mjs";
 import { createReceipt, receiptCommentBody, resolveAuthorizationRef } from "../reconcile.mjs";
-import { singleRunActivationStatus } from "../single-run-activation.mjs";
+import { cardQueue, singleRunActivationStatus } from "../single-run-activation.mjs";
 import { buildCodexPrompt, buildCodexReviewPrompt } from "../adapters/codex-cli.mjs";
 import { buildClaudePrompt } from "../adapters/claude-code.mjs";
 
@@ -265,7 +265,7 @@ const WRITER_RUNTIME = { "codex-builder": "codex-cli", "claude-builder": "claude
 const REVIEWER_RUNTIME = { "claude-verifier": "claude-code", "codex-verifier": "codex-cli" };
 const LATER_CARDS = CONFIG.card_lanes.filter((entry) => entry.id !== "SHU-197");
 
-test("CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contract, and the scope names exactly one of them", () => {
+test("CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contract, and the scope names one of them or a valid queue of them", () => {
   assert.ok(LATER_CARDS.length > 0, "config.json names at least one card after SHU-197");
   for (const lane of LATER_CARDS) {
     const contract = cardContract(lane.id);
@@ -295,9 +295,12 @@ test("CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contrac
   }
   assert.deepEqual(CONFIG.card_lanes.map((lane) => lane.id).sort(), Object.keys(CARD_CONTRACTS).sort(),
     "every reviewed card contract has exactly one committed card lane");
-  assert.equal(CONFIG.dispatch_scope.issue_ids.length, 1, "one card at a time");
-  const [scoped] = CONFIG.dispatch_scope.issue_ids;
-  assert.ok(LATER_CARDS.some((lane) => lane.id === scoped), "the scope names a committed card lane with a contract");
+  // One card, or a committed queue of card lanes run one per episode (SHU-312).
+  const queue = cardQueue(CONFIG);
+  assert.ok(CONFIG.dispatch_scope.issue_ids.length === 1 || (queue.queue && queue.ok), "one card, or a valid card queue");
+  for (const scoped of CONFIG.dispatch_scope.issue_ids) {
+    assert.ok(LATER_CARDS.some((lane) => lane.id === scoped), "the scope names committed card lanes with contracts");
+  }
 });
 
 test("CARD_LANE_EVERY_CARD_ARMED_TICK: an armed tick of each committed card lane launches its writer on exactly its paths, and its reviewer lane judges the result", async () => {

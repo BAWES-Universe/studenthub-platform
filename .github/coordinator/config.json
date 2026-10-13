@@ -25,7 +25,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-311"
+      "SHU-313",
+      "SHU-314"
     ]
   },
   "adapter_pause_map": {},
@@ -360,6 +361,76 @@
         "docs/integrations.md",
         "deploy/coolify/test/config-schema.test.mjs",
         "deploy/coolify/test/integration-register.test.mjs"
+      ]
+    },
+    {
+      "id": "SHU-313",
+      "authorization_ref": "SHU-313",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the first committed card queue (SHU-312), a whole-tree card: record exactly one organization status event per committed status change (follow-up to SHU-305); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/status-writes.ts",
+        "packages/organizations/test/status-events.test.ts",
+        "packages/organizations/test/status-events-mutations.mjs",
+        "packages/db/migrations/0191_organization_status_events.sql",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/status-writes.ts",
+        "packages/organizations/test/status-events.test.ts",
+        "packages/organizations/test/status-events-mutations.mjs",
+        "packages/db/migrations/0191_organization_status_events.sql",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-314",
+      "authorization_ref": "SHU-314",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the first committed card queue (SHU-312), a whole-tree card: slice O5b (an admin sets an organization's hourly rate and bonus commission through safe write); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/commercial-terms-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/commercial-terms-writes.test.ts",
+        "packages/organizations/test/commercial-terms-writes-mutations.mjs",
+        "packages/db/migrations/0192_organization_commercial_terms.sql",
+        "packages/db/src/postgres-organization-commercial-terms-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-commercial-terms.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-commercial-terms.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-commercial-terms-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/commercial-terms-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/commercial-terms-writes.test.ts",
+        "packages/organizations/test/commercial-terms-writes-mutations.mjs",
+        "packages/db/migrations/0192_organization_commercial_terms.sql",
+        "packages/db/src/postgres-organization-commercial-terms-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-commercial-terms.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-commercial-terms.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-commercial-terms-http.test.ts",
+        "package.json"
       ]
     }
   ],

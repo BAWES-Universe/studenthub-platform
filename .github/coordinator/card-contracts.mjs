@@ -610,6 +610,174 @@ Out of scope: CONFIG_SCHEMA's entries, the integration register and its docs, th
 
 In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-313 and SHU-314 are the first committed card queue (SHU-312): one
+// install runs them in this order, each from main after the one before it
+// merged. SHU-313 records the status event SHU-163 asks for (a follow-up to
+// SHU-305); SHU-314 is slice O5b, the admin-only commercial-terms write.
+export const SHU313_PATHS = Object.freeze([
+  "packages/organizations/src/status-writes.ts",
+  "packages/organizations/test/status-events.test.ts",
+  "packages/organizations/test/status-events-mutations.mjs",
+  "packages/db/migrations/0191_organization_status_events.sql",
+  "packages/db/src/postgres-organization-status-store.ts",
+  "packages/db/test/postgres-organization-status.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "package.json",
+]);
+
+const SHU313_ACCEPTANCE = [
+  "(1) a committed status write whose new stored value differs from the previous one records exactly one organization status event in the same transaction as the change and its audit row, carrying the organization id, the previous and new status (null for cleared) and the write's receipt reference; the decision of whether and what to record is one exported function in status-writes.ts that the Postgres store calls inside the commit; making it record an unchanged value makes the unchanged-no-event test fail;",
+  "(2) the event carries the transition, not only the destination; dropping the previous status makes the transition-recorded test fail;",
+  "(3) clearing (value none) is recorded as a null new status; recording \"none\" literally makes the clear-is-null test fail;",
+  "(4) a refused (not_own_record), stale (state_changed) or duplicate (token_already_used) confirm records no event, and the receipt reference is unique in the event table, pinned by a test:db test;",
+  "(5) migration 0191 only creates the event table (no constraint, function or audit change), and every existing status, organizations and directory test passes unchanged;",
+  "(6) packages/organizations/test/status-events-mutations.mjs applies mutations (1) to (3), each makes its named test fail, and the script itself passes on the unmutated code;",
+  "(7) npm run typecheck and npm test pass, the new test runs from package.json's test command, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU313_BRIEF = `Card SHU-313: record exactly one organization status event per committed status change (a follow-up to slice O5a, SHU-305).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: section 4.2 and the status-change email in section 6 (what a later delivery card will send), row OR-08.
+- packages/organizations/src/status-writes.ts: organizationStatusDecision and organizationStatusStateDecision, the pattern for a pure function the store is given.
+- packages/db/src/postgres-organization-status-store.ts: #commit, which takes the advisory lock, reads the current value, upserts organization_status_overrides and inserts the audit row in one transaction.
+- packages/organizations/test/status-writes.test.ts and status-writes-mutations.mjs: how a test imports a mutated build through an environment variable, and the --test-name-pattern form (a "^" prefix and a trailing space).
+- packages/db/test/postgres-organization-status.test.ts: the Postgres test you extend.
+
+Goal. Every committed status change leaves exactly one durable event that a later card can deliver as the account-live notification. The event is written in the same transaction as the change, so a rolled-back write leaves none and a committed write never lacks one. Nothing is sent.
+
+Design:
+- Migration 0191 creates organization_status_events (id bigserial primary key, org_id text not null referencing organizations(id) on delete cascade, receipt_ref text not null unique, from_status text null and to_status text null, each checked against active, under_review and inactive, a check that from_status IS DISTINCT FROM to_status, occurred_at timestamptz not null default clock_timestamp(), delivered_at timestamptz null). It changes no existing table, constraint or function.
+- In status-writes.ts export organizationStatusEvent(before: string | null, value: string): { from: OrganizationStatus | null; to: OrganizationStatus | null } | null. Here before is the stored value read inside the transaction (null when cleared or absent), and value is the safe-write value ("none" means cleared, so to is null). It returns null when from equals to.
+- PostgresOrganizationStatusStore takes it as a new required constructor option, event, next to decision and stateDecision (packages/db must not import packages/organizations). In #commit, after the state compare and the upsert, call it with the value read under the lock, and when it returns an event, insert one row with input.receipt.receiptRef. Keep one insert per commit. Any error, including 23505, rolls the whole transaction back as today, so no event survives a refused or duplicate confirm.
+- login-runtime.ts passes organizationStatusEvent to the store; the Postgres test passes it too.
+- Do not change the safe-write contract, the audit operation, the route or the read model.
+
+Tests (packages/organizations/test/status-events.test.ts, new; synthetic fixtures only):
+- "SHU-313/AC-01 unchanged-no-event": organizationStatusEvent returns null for active then active, for null then "none", and for every same-value pair.
+- "SHU-313/AC-02 transition-recorded": under_review then active gives from under_review, to active; null then inactive gives from null, to inactive.
+- "SHU-313/AC-03 clear-is-null": active then "none" gives from active, to null.
+- One more test drives the real status write builder through an in-memory store (as status-writes.test.ts does) whose commit calls organizationStatusEvent and records events: one changing confirm records one event, a second identical write records none, and a stale confirm records none.
+The test imports status-writes through an environment variable (SHU313_TEST_MODULE) when it is set.
+
+Mutations (packages/organizations/test/status-events-mutations.mjs, modelled on status-writes-mutations.mjs, applied to dist/status-writes.js; each anchor must bind exactly once):
+(1) the equality check is removed: AC-01 fails.
+(2) from is always null: AC-02 fails.
+(3) "none" is not mapped to null: AC-03 fails.
+The script runs the suite unmutated first and last, and prints "3/3 SHU-313 mutations killed". Keep the anchors of status-writes-mutations.mjs and status-batch-reads-mutations.mjs binding exactly once.
+
+Postgres test (append to packages/db/test/postgres-organization-status.test.ts): a committed change records exactly one event whose receipt_ref equals the audit row's request_ref and whose from and to are right; writing the same value again records none; a stale confirm, a refused org-owner write and a duplicate confirm of one token each leave the event count unchanged; clearing records to_status NULL.
+
+Your paths, and what each may hold:
+- packages/organizations/src/status-writes.ts: only organizationStatusEvent
+- packages/organizations/test/status-events.test.ts (new)
+- packages/organizations/test/status-events-mutations.mjs (new)
+- packages/db/migrations/0191_organization_status_events.sql (new; creates one table only)
+- packages/db/src/postgres-organization-status-store.ts: only the event constructor option and the one insert in #commit
+- packages/db/test/postgres-organization-status.test.ts: only the event option in the store's construction and the appended tests
+- packages/db/test/postgres-authz-store.test.ts: only add "0191_organization_status_events" after "0184_organization_status_override" in both schema_migrations lists
+- apps/gateway/src/login-runtime.ts: only passing organizationStatusEvent to the status store
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/status-events.test.js at the END of the node --test list in test, add a test:organization-status-events:mutations script that runs the mutation script, and add " && npm run test:organization-status-events:mutations" as its own step right after "npm run test:organization-status-batch:mutations" in test. Never change dependencies.
+
+Out of scope: sending any email or message, choosing recipients, a worker or delivery loop, marking events delivered, which transitions a later card notifies on, the Segment event, any change to the audit operations or packages/safe-write-contract, the read model, the route, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU314_PATHS = Object.freeze([
+  "packages/organizations/src/commercial-terms-writes.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/commercial-terms-writes.test.ts",
+  "packages/organizations/test/commercial-terms-writes-mutations.mjs",
+  "packages/db/migrations/0192_organization_commercial_terms.sql",
+  "packages/db/src/postgres-organization-commercial-terms-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-commercial-terms.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-commercial-terms.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-commercial-terms-http.test.ts",
+  "package.json",
+]);
+
+const SHU314_ACCEPTANCE = [
+  "(1) an organization's hourly rate and bonus commission (an exact decimal, or none to clear it) are written only through preview, confirm and receipt on the existing safe-write contract, and runSafeWriteConformance runs over the commercial-terms write's own builder, so letting a value bypass preview makes that conformance test fail;",
+  "(2) only an admin grant that covers the organization (on the organization itself, or a subtree grant on an ancestor such as the operator organization) may write; a staff, finance, org-owner, recruiter, candidate or any other grant gets not_found, never 403; an operator organization itself is never a target; the decision is one function the Postgres store calls inside its commit transaction, and accepting a staff grant there makes the staff-write-refused test fail;",
+  "(3) the store's commit compares the previewed value inside the transaction through a function it calls there and refuses with state_changed when the value moved; making that compare always succeed makes the stale-confirm test fail; grants are read FOR SHARE under the organization lock, and a racing duplicate confirm returns token_already_used;",
+  "(4) the audience field lists are unchanged: hourlyRate for employer, staff and admin, bonusCommission for admin only; a staff or employer read of an organization with a stored bonus commission has no bonusCommission field and the stored value appears nowhere in it; giving the staff audience the admin field list makes the staff-projection-whitelist test fail;",
+  "(5) once the platform holds a commercial-terms record for an organization, OrganizationRepository uses it for hourlyRate and bonusCommission in place of the snapshot value, a cleared record makes the organization's own value not recorded so a sub-organization falls back to its parent (the parent's stored value first, then its snapshot), an absent record keeps today's behaviour exactly, and a stored value shows even with no approved snapshot; the live gateway passes the store's reader to the repository; ignoring the stored record makes the stored-terms-win test fail;",
+  "(6) every write is audited in the same transaction as the change with hashed organization references (organizationAuditRef, never a raw id) under the new operation organization.commercial_terms.safe_write; migration 0192 is additive, and its audit constraints and summary function still accept every existing row and every operation earlier migrations added;",
+  "(7) packages/organizations/test/commercial-terms-writes-mutations.mjs applies mutations (1) to (5), each makes its named test fail, and the script itself passes on the unmutated code;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script chained into test, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU314_BRIEF = `Card SHU-314: an admin sets an organization's commercial terms through safe write (slice O5b, the second write slice of O5).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: section 2.1 (commercial terms and rate inheritance), section 3 (who sees company_hourly_rate and company_bonus_commission), row OR-07 and slice O5 in section 11.
+- SHU-305's status write, which this card copies and which passed review: packages/organizations/src/status-writes.ts, its test and mutation script, packages/db/src/postgres-organization-status-store.ts, packages/db/migrations/0184_organization_status_override.sql, apps/gateway/src/organization-status.ts, apps/gateway/test/organization-status-http.test.ts, and how apps/gateway/src/login-runtime.ts constructs it.
+- SHU-300's organization profile store (packages/db/src/postgres-organization-profile-store.ts and 0150) for a write with more than one field.
+- packages/pay-contracts/src/bank-write.ts: how a builder checks a value at preview and again at confirm and answers invalid_value.
+- packages/organizations/src/organizations.ts: ORGANIZATION_FIELDS_BY_AUDIENCE, projectOrganizationFields, inheritedDecimal, decimal, OrganizationStatusRecords (the port shape to copy) and OrganizationRepository.read.
+- packages/db/migrations/0184_organization_status_override.sql (or any later migration on main that redefines them): the latest definitions of the audit constraints and of authorization_audit_summary_valid, which your migration must extend, not replace with an older copy.
+
+Goal. An admin can set or clear an organization's hourly rate and bonus commission through the existing safe-write path: preview, then confirm, then a receipt. The values are stored in the platform database, and the read model then shows them, so the live gateway (whose approved snapshot is unconfigured) can show terms an admin set. Who may see which term does not change.
+
+Design:
+- Store each term as its own row in a new table organization_commercial_terms (org_id text referencing organizations(id) on delete cascade, field text with a check constraint allowing only hourly_rate and bonus_commission, value text null with a check constraint matching ^[0-9]{1,10}(\\.[0-9]{1,6})?$, updated_at timestamptz, primary key (org_id, field)). No row means absent and a NULL value means cleared. Keep the value as exact decimal text, never a float. The safe-write fields are "hourly_rate" and "bonus_commission", and clearing is the value "none".
+- Values: one exported function in packages/organizations/src/commercial-terms-writes.ts says whether a value is valid for a field (the decimal pattern above, or "none"). The builder checks it at preview and at confirm and answers invalid_value, as bank-write.ts does. The gateway rejects a malformed body with 400 before that. Add no range rule beyond the pattern: the spec decides none.
+- Who may write: one exported decision function in commercial-terms-writes.ts takes the caller's grant rows (org_id, role, scope), the target organization id and the target's ancestor ids, and allows the write only when a grant with role admin is on the target itself, or is a subtree grant on one of its ancestors. An operator organization (DEFAULT_OPERATOR_ORG_IDS) is never a target. Everything else, including staff and finance, is refused, and the route answers 404 not_found, never 403. Sub-organizations are valid targets.
+- Read model: give OrganizationRepository an optional constructor port, commercialTerms, whose read(orgId) returns, for each of hourlyRate and bonusCommission, absent, cleared, or a value. Keep one inheritance rule: extend inheritedDecimal (or wrap it) so that (a) an own stored value wins; (b) an own cleared record makes the own value not recorded; (c) an own absent record keeps today's snapshot logic; and when the own value is not recorded, a sub-organization falls back to its parent, where a stored parent value wins, a cleared parent record is not recorded, and an absent parent record keeps today's parent-snapshot logic. A top-level organization with no own value is not recorded. A stored value must show even when the approved snapshot is missing (row undefined), as SHU-305 did for status. Every other field and the snapshot provenance stay not_imported. With no port, or every record absent, every existing organizations, directory and status test passes unchanged.
+- Visibility: leave ORGANIZATION_FIELDS_BY_AUDIENCE and ORGANIZATION_AUDIENCE_BY_ROLE as they are. Employer and staff never receive bonusCommission, even when it is stored.
+- Live wiring: login-runtime.ts constructs the commercial-terms store from DATABASE_URL and passes its reader to OrganizationRepository as commercialTerms whether or not the safe-write key is set. It constructs the write service from the same store only when the key is set, as it does for the status store.
+
+Pitfalls SHU-300's and SHU-305's reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs. Keep the writer decision, the value check and the stale-state compare as exported functions in commercial-terms-writes.ts, give the decision and the compare to the Postgres store through its constructor (login-runtime.ts wires them in; packages/db must not import packages/organizations; dependencies stay unchanged), and have the store call them inside the commit transaction on the rows it read there. The grants query selects the caller's grant rows without filtering by role or organization, and the ancestry query reads the organization chain.
+- Audit rows: write organizationAuditRef(orgId) in target_org_refs, never the raw id. The receipt and the audit carry the field name, never the value.
+- Lost update: take an advisory lock keyed on the organization, read the caller's grants with SELECT ... FOR SHARE under it, and compare expectedBefore for the one field being written inside the transaction; return state_changed when it moved.
+- Duplicate confirm: catch 23505 from the unique token index inside the store and return token_already_used.
+- Migration 0192: add organization.commercial_terms.safe_write to every constraint and to authorization_audit_summary_valid where organization.status.safe_write appears. Use target_org_refs cardinality > 0, the safe-write halves check, the receipt shape with fields of length 1 and fields->>0 IN ('hourly_rate','bonus_commission'), and unique indexes on its token and its receipt, as 0184 adds for status. Start from the latest definitions on main (0184's today; 0191 changes none), so every operation and every existing row stays valid.
+- Conformance: run runSafeWriteConformance over the commercial-terms write's own builder, the function the gateway route calls.
+- Mutation script: copy packages/organizations/test/status-writes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$") and the environment-variable import (SHU314_TEST_MODULE, SHU314_ORG_MODULE). Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors: npm test runs every existing mutation script, and each requires its anchor to bind exactly once in dist/. Keep the anchors of packages/organizations/test/mutations.mjs binding, in particular the parent-rate fallback line \`return parent[sourceField] === null ? unavailable(name, "not_recorded") : available(name, decimal(parent[sourceField]));\` and the \`"org-owner": "employer",\` entry, as well as those of directory-mutations.mjs, status-writes-mutations.mjs and status-batch-reads-mutations.mjs. Change your code's shape, never their scripts.
+- HTTP: copy organization-status.ts for the session, Origin and content-type checks, headers, body parsing (exactly orgId, field, value), error mapping and the try/catch, under /organization/commercial-terms/preview, /confirm and the receipt read. Have the HTTP test call the real handler.
+- The Postgres test must exercise the store against the database (test:db), including one successful commit whose audit row has the hashed organization reference and the new operation, one refused staff write, and a value read back through the store's reader.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/commercial-terms-writes-mutations.mjs that makes a named test fail.
+(1) Let a value bypass preview: "SHU-314/AC-01 conformance" fails.
+(2) Accept a staff grant in the decision function the store calls: "SHU-314/AC-02 staff-write-refused" fails.
+(3) Make the state compare the store calls always succeed: "SHU-314/AC-03 stale-confirm" fails.
+(4) Give the staff audience the admin field list (anchor: \`const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience];\` in projectOrganizationFields): "SHU-314/AC-04 staff-projection-whitelist" fails. That test asserts the exact field lists of employer and staff, and that a staff and an employer read of an organization with a stored bonus commission have no bonusCommission key and do not contain the stored value anywhere in JSON.stringify of the view.
+(5) Ignore the stored record in the read model: "SHU-314/AC-05 stored-terms-win" fails. Also test: a cleared sub-organization rate falls back to a stored parent rate; and a stored value shows with no approved snapshot.
+The script prints "5/5 SHU-314 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/commercial-terms-writes.ts (new)
+- packages/organizations/src/organizations.ts: only the optional commercialTerms port on OrganizationRepository, its record types, and applying the records in the hourlyRate and bonusCommission derivation
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/commercial-terms-writes.test.ts (new)
+- packages/organizations/test/commercial-terms-writes-mutations.mjs (new)
+- packages/db/migrations/0192_organization_commercial_terms.sql (new; additive)
+- packages/db/src/postgres-organization-commercial-terms-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-commercial-terms.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0192_organization_commercial_terms" after "0191_organization_status_events" in both schema_migrations lists
+- apps/gateway/src/organization-commercial-terms.ts (new; modelled on organization-status.ts)
+- apps/gateway/src/index.ts (route wiring only, mounted after handleOrganizationStatus)
+- apps/gateway/src/login-runtime.ts (wiring only: construct the store next to the status store, pass its reader to OrganizationRepository, and construct the service from it when the safe-write key is set)
+- apps/gateway/test/organization-commercial-terms-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append the new built test files at the END of the existing node --test lists in test and test:db, add a test:organization-commercial-terms:mutations script that runs the mutation script, and add " && npm run test:organization-commercial-terms:mutations" as its own step right after "npm run test:organization-status-events:mutations" in test. Never change dependencies.
+
+Out of scope: currency_code, approved_to_hire, the rule that a company rate is not below its candidates' rates, which audiences see hourly rate, any finance-role write, creating organizations, account managers, status events or notifications (the previous card, SHU-313, added the status events; leave them as they are), any UI beyond what the route needs, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -680,6 +848,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU311_PATHS,
     acceptance: SHU311_ACCEPTANCE,
     brief: SHU311_BRIEF,
+  }),
+  "SHU-313": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU313_PATHS,
+    revision_paths: SHU313_PATHS,
+    acceptance: SHU313_ACCEPTANCE,
+    brief: SHU313_BRIEF,
+  }),
+  "SHU-314": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU314_PATHS,
+    revision_paths: SHU314_PATHS,
+    acceptance: SHU314_ACCEPTANCE,
+    brief: SHU314_BRIEF,
   }),
 });
 
