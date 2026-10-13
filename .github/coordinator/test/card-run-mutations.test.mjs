@@ -321,8 +321,8 @@ const CASES = [
   },
   {
     name: "M49 stay silent about a refusal before arming",
-    from: "    result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });\n  }\n  try {",
-    to: "  }\n  try { // SHU86-M49",
+    from: "    result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });\n  }\n  // The claim written",
+    to: "  }\n  // SHU86-M49 The claim written",
     pattern: "SHU-86 C33:",
   },
   {
