@@ -314,6 +314,8 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   LAND_SKIPPED_NO_TOKEN: "no landing token is installed, so the pull request waits to be opened and merged by hand",
   LAND_HEAD_MISMATCH: "the pull request head is not the head the review passed; nothing was handed off or merged",
   LAND_ERROR: "landing failed",
+  // SHU-310
+  THREADS_HELD: "more review bot threads were settleable than one run may settle; nothing was handed off or merged",
 });
 
 // How a held merge recovers: the attempt's HOLD is final, so only a new
@@ -329,6 +331,12 @@ function landingLines(land) {
   ].filter(Boolean);
   if (where.length) lines.push(`Landed: ${where.join("; ")}.`);
   if (land.reason) lines.push(`Landing reason: ${plainReason(land.reason)}`);
+  for (const thread of land.threads?.settled ?? []) {
+    lines.push(`Settled review thread: ${plainReason(`${thread.bot} ${thread.severity} ${thread.url}`)}`);
+  }
+  for (const thread of land.threads?.blocking ?? []) {
+    lines.push(`Blocking review thread: ${plainReason(`${thread.url ?? "unknown"} (${thread.why})`)}`);
+  }
   if (land.outcome === "MERGE_HOLD") lines.push(MERGE_HOLD_RECOVERY);
   return lines;
 }

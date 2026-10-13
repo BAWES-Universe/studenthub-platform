@@ -9,6 +9,20 @@
     "merge_method": "squash",
     "max_per_tick": 1
   },
+  "landing_thread_settle": {
+    "enabled": false,
+    "max_per_run": 5,
+    "bots": [
+      {
+        "login": "coderabbitai",
+        "labels": "coderabbit"
+      },
+      {
+        "login": "sentry",
+        "labels": "sentry"
+      }
+    ]
+  },
   "dispatch_scope": {
     "issue_ids": [
       "SHU-309"

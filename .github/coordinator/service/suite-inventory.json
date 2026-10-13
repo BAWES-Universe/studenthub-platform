@@ -2066,6 +2066,25 @@
     "SHU-86 mutation M89 retry without end",
     "SHU-86 mutation M90 count a commented mutation as a read",
     "SHU-86 mutation M91 wait for a retry by blocking the event loop",
+    "SHU-86 mutation M92 resolve without re-reading the thread",
+    "SHU-86 mutation M93 skip checking settled threads on each read",
+    "SHU-86 mutation M94 hand off without re-reading settled threads",
+    "SHU-86 mutation M95 settle while another thread blocks",
+    "SHU-86 mutation M96 settle past the per-run limit",
+    "SHU-86 mutation M97 accept a user named like the bot",
+    "SHU-86 mutation M98 ignore a later higher label",
+    "SHU-86 mutation M99 reply again on a thread already replied",
+    "SHU-86 mutation M100 write the follow-up note twice",
+    "SHU-86 mutation M101 accept a malformed settle policy",
+    "SHU-86 mutation M102 read only the first label",
+    "SHU-86 mutation M103 wait on through a settled thread's change",
+    "SHU-86 mutation M104 settle with the flag off",
+    "SHU-86 mutation M105 quote a bot's code fence on the card",
+    "SHU-86 mutation M106 leave a changed thread resolved",
+    "SHU-86 mutation M107 merge without the consumer's last thread check",
+    "SHU-86 mutation M108 consumer ignores a failed last thread check",
+    "SHU-86 mutation M109 trust a thread an earlier landing settled",
+    "SHU-86 mutation M110 drop the audit when the policy is refused",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2124,6 +2143,17 @@
     "SHU-306 L14: an optional check that turns red after the green wait stops the merge at the consumer's re-fetch",
     "SHU-308 L15: a read that never reached its server is tried again, and the landing still merges",
     "SHU-308 L16: a read that keeps failing stops the landing with its cause, and a lost write is never resent",
+    "SHU-310 L17: a Minor CodeRabbit thread and a LOW Sentry thread are settled, noted on the card, and the card lands",
+    "SHU-310 L18: any thread that is not a low-labelled review bot's holds everything, and nothing is written",
+    "SHU-310 L19: a thread edited after it was classified stops the landing before it is resolved",
+    "SHU-310 L20: a settled thread that changes before the handoff stops the landing",
+    "SHU-310 L21: a reply whose answer is lost is never sent again and stops the landing",
+    "SHU-310 L22: more settleable threads than one run may settle are held, with nothing written",
+    "SHU-310 L23: with settling off, a Minor bot thread waits exactly as before",
+    "SHU-310 L24: labels are read from their fixed place, and a malformed policy is refused",
+    "SHU-310 L25: a comment that lands between the last read and the resolve reopens the thread and stops the landing",
+    "SHU-310 L26: a settled thread that changes after the handoff holds the merge at the consumer's last check",
+    "SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17852,6 +17882,82 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M92 resolve without re-reading the thread",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M93 skip checking settled threads on each read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M94 hand off without re-reading settled threads",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M95 settle while another thread blocks",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M96 settle past the per-run limit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M97 accept a user named like the bot",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M98 ignore a later higher label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M99 reply again on a thread already replied",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M100 write the follow-up note twice",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M101 accept a malformed settle policy",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M102 read only the first label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M103 wait on through a settled thread's change",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M104 settle with the flag off",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M105 quote a bot's code fence on the card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M106 leave a changed thread resolved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M107 merge without the consumer's last thread check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M108 consumer ignores a failed last thread check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M109 trust a thread an earlier landing settled",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M110 drop the audit when the policy is refused",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18081,6 +18187,50 @@
     },
     {
       "name": "SHU-308 L16: a read that keeps failing stops the landing with its cause, and a lost write is never resent",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L17: a Minor CodeRabbit thread and a LOW Sentry thread are settled, noted on the card, and the card lands",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L18: any thread that is not a low-labelled review bot's holds everything, and nothing is written",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L19: a thread edited after it was classified stops the landing before it is resolved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L20: a settled thread that changes before the handoff stops the landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L21: a reply whose answer is lost is never sent again and stops the landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L22: more settleable threads than one run may settle are held, with nothing written",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L23: with settling off, a Minor bot thread waits exactly as before",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L24: labels are read from their fixed place, and a malformed policy is refused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L25: a comment that lands between the last read and the resolve reopens the thread and stops the landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L26: a settled thread that changes after the handoff holds the merge at the consumer's last check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome",
       "capabilities": []
     },
     {
