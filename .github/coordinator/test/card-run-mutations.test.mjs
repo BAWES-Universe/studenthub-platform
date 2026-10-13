@@ -483,8 +483,8 @@ const CASES = [
   {
     name: "M73 write the handoff before green",
     file: "service/card-land.mjs",
-    from: "    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled }, limits, settle || undefined);",
-    to: '    await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled }, limits, settle || undefined); // SHU306-M73',
+    from: "    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy }, limits, settle || undefined);",
+    to: '    await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy }, limits, settle || undefined); // SHU306-M73',
     pattern: "SHU-306 L5:",
   },
   {
@@ -629,7 +629,7 @@ const CASES = [
   {
     name: "M94 hand off without re-reading settled threads",
     file: "service/card-land.mjs",
-    from: "    await verifySettled(gh, settled);",
+    from: "    if (policy) await guardThreads(gh, { repo, number: pr.number }, settled, policy);",
     to: "    // SHU310-M94",
     pattern: "SHU-310 L20:",
   },
@@ -709,6 +709,40 @@ const CASES = [
     from: ".replace(/```/g, \"'''\")",
     to: " /* SHU310-M105 */",
     pattern: "SHU-310 L17:",
+  },  {
+    name: "M106 leave a changed thread resolved",
+    file: "service/card-land.mjs",
+    from: "    try { reopened = (await graphql(gh, THREAD_UNRESOLVE_MUTATION, { id: entry.id }))",
+    to: "    try { reopened = false && (await graphql(gh, THREAD_UNRESOLVE_MUTATION, { id: entry.id })) // SHU310-M106\n",
+    pattern: "SHU-310 L25:",
+  },
+  {
+    name: "M107 merge without the consumer's last thread check",
+    file: "service/card-land.mjs",
+    from: "      ...(policy ? { beforeMerge:",
+    to: "      ...(false ? { beforeMerge: // SHU310-M107\n",
+    pattern: "SHU-310 L26:",
+  },
+  {
+    name: "M108 consumer ignores a failed last thread check",
+    file: "merge-readiness.mjs",
+    from: "      if (guard?.ok !== true) {",
+    to: "      if (false) { // SHU310-M108",
+    pattern: "SHU-310 L26:",
+  },
+  {
+    name: "M109 trust a thread an earlier landing settled",
+    file: "service/card-land.mjs",
+    from: "  if (policy) checkLandingResolved(page.nodes, viewer, policy);",
+    to: "  // SHU310-M109",
+    pattern: "SHU-310 L27:",
+  },
+  {
+    name: "M110 drop the audit when the policy is refused",
+    file: "service/card-land.mjs",
+    from: "  const settleOn = config?.landing_thread_settle?.enabled === true;",
+    to: "  const settleOn = false; // SHU310-M110",
+    pattern: "SHU-310 L27:",
   },
 ];
 

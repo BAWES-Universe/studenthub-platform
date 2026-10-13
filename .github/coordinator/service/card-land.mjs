@@ -28,7 +28,11 @@
 // labelled it low is settled: a follow-up note goes on the card, the landing
 // replies on the thread, re-reads it whole, resolves it, and reads it again.
 // Any change to it after it was classified, then or on any later read before
-// the handoff, stops the landing. Any other thread still blocks.
+// the handoff, stops the landing; a change seen only once it is resolved
+// reopens it. GitHub has no conditional resolve or merge on a thread, so the
+// last check runs inside the SHU-259 consumer, right before its merge call.
+// A resolved thread carrying a landing reply is checked again by every run.
+// Any other thread still blocks.
 //
 // The landing token is the only credential that can open and merge a pull
 // request. It lives in its own root-only file that card-run alone reads; it is
@@ -63,6 +67,7 @@ const THREADS_QUERY = `query CardLandThreads($owner:String!,$name:String!,$numbe
 const THREAD_QUERY = `query CardLandThread($id:ID!) { viewer { login } node(id:$id) { ... on PullRequestReviewThread { ${THREAD_FIELDS} } } }`;
 const THREAD_REPLY_MUTATION = "mutation CardLandThreadReply($id:ID!,$body:String!) { addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}) { comment { id } } }";
 const THREAD_RESOLVE_MUTATION = "mutation CardLandThreadResolve($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } } }";
+const THREAD_UNRESOLVE_MUTATION = "mutation CardLandThreadReopen($id:ID!) { unresolveReviewThread(input:{threadId:$id}) { thread { id isResolved } } }";
 
 // SHU-310: which threads a landing may settle. Each bot reads its own label
 // from a fixed place, so prose that quotes a label never counts.
@@ -203,19 +208,48 @@ async function settleThread(ctx, entry) {
   if (before.isResolved) stop("LAND_ERROR", `review thread ${entry.url} was resolved by someone else`);
   const resolved = await graphql(gh, THREAD_RESOLVE_MUTATION, { id: entry.id });
   if (resolved?.resolveReviewThread?.thread?.isResolved !== true) stop("LAND_ERROR", `review thread ${entry.url} was not resolved`);
-  const after = await rereadThread(gh, entry.id, entry.snapshot);
-  if (!after.isResolved || JSON.stringify(after.replies.map(commentKey)) !== JSON.stringify(before.replies.map(commentKey))) {
-    stop("LAND_ERROR", `review thread ${entry.url} changed while it was being resolved`);
+  let after;
+  try {
+    after = await rereadThread(gh, entry.id, entry.snapshot);
+    if (!after.isResolved || JSON.stringify(after.replies.map(commentKey)) !== JSON.stringify(before.replies.map(commentKey))) {
+      stop("LAND_ERROR", `review thread ${entry.url} changed while it was being resolved`);
+    }
+  } catch (error) {
+    // A comment that landed between the last read and the resolve: the
+    // thread goes back to unresolved, so it blocks again. Sent once.
+    let reopened = false;
+    try { reopened = (await graphql(gh, THREAD_UNRESOLVE_MUTATION, { id: entry.id }))?.unresolveReviewThread?.thread?.isResolved === false; } catch { /* reported below */ }
+    throw Object.assign(new Error(`${error.message}; ${reopened ? "it was reopened" : "it could not be reopened"}`), { landOutcome: error.landOutcome ?? "LAND_ERROR" });
   }
   audit.settled.push({ url: entry.url, bot: entry.bot, severity: entry.severity });
   return signature(after);
 }
 
-async function verifySettled(gh, settled) {
-  for (const [id, expected] of settled) {
-    const data = await graphql(gh, THREAD_QUERY, { id });
-    checkSettled(data?.node, data?.viewer?.login, id, expected);
+// Every resolved thread that carries a landing reply, from this run or an
+// earlier one, must still be a settleable bot thread that ends in that reply.
+function checkLandingResolved(nodes, viewer, policy) {
+  for (const node of nodes) {
+    if (node?.isResolved !== true) continue;
+    const ours = (node?.comments?.nodes ?? []).some((comment) => comment?.author?.login === viewer && String(comment?.body ?? "").includes("<!-- card-land-settle "));
+    if (!ours) continue;
+    const entry = classifyThread(node, viewer, policy);
+    const last = node.comments.nodes.at(-1);
+    if (!entry.settle || !entry.replied || !String(last?.body ?? "").includes(settleMarker(node.id))) {
+      stop("LAND_ERROR", `review thread ${entry.url ?? node.id} was settled by a landing but no longer reads as a low review bot thread`);
+    }
   }
+}
+
+// The whole thread list, checked: settled threads exactly as left, and every
+// landing-settled thread still settleable.
+async function guardThreads(gh, { repo, number }, settled, policy) {
+  const [owner, name] = repo.split("/");
+  const data = await graphql(gh, THREADS_QUERY, { owner, name, number });
+  const page = data?.repository?.pullRequest?.reviewThreads;
+  if (!Array.isArray(page?.nodes) || page.pageInfo?.hasNextPage !== false) stop("LAND_ERROR", "the review threads could not be read in full");
+  const viewer = data.viewer?.login;
+  for (const [id, expected] of settled) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
+  checkLandingResolved(page.nodes, viewer, policy);
 }
 
 function stop(code, detail) {
@@ -386,7 +420,7 @@ function headMatches(pr, { repo, branch, head }) {
 }
 
 // One read of the head's checks and the pull request's own state.
-async function checkState(gh, { repo, number, head, branch, settled }) {
+async function checkState(gh, { repo, number, head, branch, settled, policy }) {
   const [owner, name] = repo.split("/");
   const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
     gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
@@ -419,6 +453,7 @@ async function checkState(gh, { repo, number, head, branch, settled }) {
   }
   const viewer = threads.data.viewer?.login;
   for (const [id, expected] of settled ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
+  if (policy) checkLandingResolved(page.nodes, viewer, policy);
   const open = page.nodes.filter((thread) => thread?.isResolved !== true);
   if (open.length) return { green: false, note: `${open.length} review thread(s) are unresolved`, open, viewer };
   return { green: true };
@@ -456,7 +491,10 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   // SHU-310: what settling did, on every outcome, when it is on.
   let policy = null;
   const audit = { settled: [], blocking: [] };
-  const result = (outcome, extra = {}) => ({ outcome, ...extra, ...(policy ? { threads: audit } : {}) });
+  // Carried whenever the committed config turns settling on, even when the
+  // run stops before it reads the policy, or because the policy is malformed.
+  const settleOn = config?.landing_thread_settle?.enabled === true;
+  const result = (outcome, extra = {}) => ({ outcome, ...extra, ...(settleOn ? { threads: audit } : {}) });
   if (!landToken) return result("LAND_SKIPPED_NO_TOKEN", { reason: "no landing token" });
   const card = plan.id;
   const branch = plan.branch;
@@ -505,12 +543,12 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       for (const entry of entries) settled.set(entry.id, await settleThread(ctx, entry));
       return { note: `${entries.length} review bot thread(s) settled; green must hold again` };
     });
-    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled }, limits, settle || undefined);
+    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy }, limits, settle || undefined);
     if (checks.outcome !== "GREEN") return result(checks.outcome, { ...prFields, reason: checks.reason });
     audit.blocking = [];
 
     if (paused()) return result("LAND_PAUSED", { ...prFields, reason: `${pausePath} exists; the pull request stays open and unmerged` });
-    await verifySettled(gh, settled);
+    if (policy) await guardThreads(gh, { repo, number: pr.number }, settled, policy);
 
     // The handoff: the terminal PASS plus merge-readiness, the very record the
     // coordinator's own consumer writes, through its writer.
@@ -539,6 +577,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       config: { ...config, routine_merge_authority: { ...config.routine_merge_authority, enabled: true } },
       env: { ENABLE_ROUTINE_MERGE: "true" },
       requireAllChecks: true,
+      // SHU-310: the consumer runs the thread check once more right before
+      // its merge call, and holds on a failure.
+      ...(policy ? { beforeMerge: async () => { await guardThreads(gh, { repo, number: pr.number }, settled, policy); return { ok: true }; } } : {}),
       fetchImpl,
       stdout: (line) => lines.push(line),
       now: () => io.now(),

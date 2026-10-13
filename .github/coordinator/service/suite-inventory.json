@@ -2080,6 +2080,11 @@
     "SHU-86 mutation M103 wait on through a settled thread's change",
     "SHU-86 mutation M104 settle with the flag off",
     "SHU-86 mutation M105 quote a bot's code fence on the card",
+    "SHU-86 mutation M106 leave a changed thread resolved",
+    "SHU-86 mutation M107 merge without the consumer's last thread check",
+    "SHU-86 mutation M108 consumer ignores a failed last thread check",
+    "SHU-86 mutation M109 trust a thread an earlier landing settled",
+    "SHU-86 mutation M110 drop the audit when the policy is refused",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2146,6 +2151,9 @@
     "SHU-310 L22: more settleable threads than one run may settle are held, with nothing written",
     "SHU-310 L23: with settling off, a Minor bot thread waits exactly as before",
     "SHU-310 L24: labels are read from their fixed place, and a malformed policy is refused",
+    "SHU-310 L25: a comment that lands between the last read and the resolve reopens the thread and stops the landing",
+    "SHU-310 L26: a settled thread that changes after the handoff holds the merge at the consumer's last check",
+    "SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -17930,6 +17938,26 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M106 leave a changed thread resolved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M107 merge without the consumer's last thread check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M108 consumer ignores a failed last thread check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M109 trust a thread an earlier landing settled",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M110 drop the audit when the policy is refused",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18191,6 +18219,18 @@
     },
     {
       "name": "SHU-310 L24: labels are read from their fixed place, and a malformed policy is refused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L25: a comment that lands between the last read and the resolve reopens the thread and stops the landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L26: a settled thread that changes after the handoff holds the merge at the consumer's last check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome",
       "capabilities": []
     },
     {

@@ -1167,7 +1167,8 @@ function cardLineage() {
 // "pending", "red"), strict (false holds the merge), onChecks(land, read),
 // token ("none" | "custody"), unprotectedOwner, threads (a human thread per
 // isResolved flag), botThreads (SHU-310: [[login, body, typename?]...] per
-// thread), settle (landing_thread_settle overrides), editOnReply, loseReply.
+// thread), settle (landing_thread_settle overrides), editOnReply, loseReply,
+// commentOnResolve, editOnMergeIntent.
 function landingHost(options = {}) {
   const config = options.settle
     ? configFor("SHU-301", (c) => ({ ...c, landing_thread_settle: { ...c.landing_thread_settle, enabled: true, ...options.settle } }))
@@ -1221,6 +1222,9 @@ function landingHost(options = {}) {
         const kind = body.includes("coordinator-merge-attempt") ? `merge-attempt ${/"state": "(\w+)"/.exec(body)[1]}`
           : body.includes("card-land-merged") ? "merge comment" : body.includes("card-land-settle") ? "settle note" : /"handoff"/.test(body) ? "handoff" : "receipt";
         land.log.push(`linear ${kind}`);
+        if (options.editOnMergeIntent && kind === "merge-attempt PREPARED") {
+          land.threads[0].comments[0] = { ...land.threads[0].comments[0], updatedAt: "2026-10-09T19:00:00Z" };
+        }
         comment(body);
         return respond(200, { data: { commentCreate: { success: true, comment: { id: `c${land.comments.length}` } } } });
       }
@@ -1246,7 +1250,14 @@ function landingHost(options = {}) {
         land.resolves += 1;
         land.log.push("github thread resolve");
         find().isResolved = true;
+        // A comment that lands between the landing's last read and its resolve.
+        if (options.commentOnResolve) find().comments.push(reviewComment(["khalid", "Wait, this one matters.", "User"]));
         return respond(200, { data: { resolveReviewThread: { thread: { id: variables.id, isResolved: true } } } });
+      }
+      if (query.includes("CardLandThreadReopen")) {
+        land.log.push("github thread reopen");
+        find().isResolved = false;
+        return respond(200, { data: { unresolveReviewThread: { thread: { id: variables.id, isResolved: false } } } });
       }
       if (/query CardLandThread\(/.test(query)) return respond(200, { data: { viewer: { login: "shu-lander" }, node: view(find()) } });
       const page = respond(200, { data: { viewer: { login: "shu-lander" },
@@ -1711,4 +1722,48 @@ test("SHU-310 L24: labels are read from their fixed place, and a malformed polic
     { ...on, bots: [{ login: "x", labels: "sentry", extra: 1 }] }]) {
     assert.throws(() => settlePolicy({ landing_thread_settle: bad }), (error) => error.landOutcome === "LAND_ERROR", JSON.stringify(bad));
   }
+});
+
+test("SHU-310 L25: a comment that lands between the last read and the resolve reopens the thread and stops the landing", async () => {
+  const host = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]], commentOnResolve: true });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.match(result.land.reason, /it was reopened/);
+  assert.equal(host.land.threads[0].isResolved, false, "the thread blocks again");
+  assert.equal(host.land.log.filter((e) => e === "github thread reopen").length, 1);
+  noLandingWrites(host);
+});
+
+test("SHU-310 L26: a settled thread that changes after the handoff holds the merge at the consumer's last check", async () => {
+  const host = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR]]], editOnMergeIntent: true });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGE_HOLD", JSON.stringify(result.land));
+  assert.equal(result.land.hold_code, "BLOCKING_REVIEW_THREAD");
+  assert.equal(host.land.merges, 0, "nothing merged");
+  assert.ok(!host.land.log.includes("linear merge comment"));
+  neverDone(host);
+});
+
+test("SHU-310 L27: a thread an earlier landing settled is checked again by every run, and the audit is carried on every outcome", async () => {
+  const marker = settleMarker("PRRT_0");
+  const reply = ["shu-lander", `${marker}\nNot blocking this landing.`, "User"];
+  const reopened = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR], reply, ["khalid", "This needs a fix.", "User"]]] });
+  reopened.land.threads[0].isResolved = true;
+  const stopped = await landRun(reopened);
+  assert.equal(stopped.land.outcome, "LAND_ERROR", JSON.stringify(stopped.land));
+  assert.match(stopped.land.reason, /settled by a landing but no longer reads as a low review bot thread/);
+  assert.equal(reopened.land.checkReads, 1, "caught on the first read");
+  noLandingWrites(reopened);
+  const intact = landingHost({ settle: {}, botThreads: [[["coderabbitai", CR_MINOR], reply]] });
+  intact.land.threads[0].isResolved = true;
+  const landed = await landRun(intact);
+  assert.equal(landed.land.outcome, "MERGED", JSON.stringify(landed.land));
+  const malformed = await landRun(landingHost({ settle: { max_per_run: 0 } }));
+  assert.equal(malformed.land.outcome, "LAND_ERROR");
+  assert.deepEqual(malformed.land.threads, { settled: [], blocking: [] }, "the audit is carried when the policy is refused");
+  const pausedHost = landingHost({ settle: {} });
+  pausedHost.files.set(PATHS.pause, { text: "", mode: 0o644, uid: 0, gid: 0 });
+  const paused = await landRun(pausedHost);
+  assert.equal(paused.land.outcome, "LAND_PAUSED");
+  assert.deepEqual(paused.land.threads, { settled: [], blocking: [] }, "and when the run stops before it reads the policy");
 });

@@ -377,6 +377,10 @@ export async function consumeMergeReadiness({
   // Opt-in (the card-run landing passes true): every reported check, not only
   // the required ones, must be green at both pre-merge authority re-fetches.
   requireAllChecks = false,
+  // Opt-in (the card-run landing passes it when it settled review threads):
+  // a last check run right before the merge call; anything but { ok: true }
+  // holds the merge as BLOCKING_REVIEW_THREAD.
+  beforeMerge = null,
 }) {
   if (!routineMergeEnabledFor(env, config)) return { writes: 0, merges: 0 };
   if (!linearToken || !githubToken) return { writes: 0, merges: 0, error: 'merge credentials unavailable' };
@@ -458,6 +462,17 @@ export async function consumeMergeReadiness({
         'pre-merge object bindings changed after the durable merge intent', now());
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
       continue;
+    }
+
+    if (beforeMerge) {
+      let guard;
+      try { guard = await beforeMerge(); } catch { guard = null; }
+      if (guard?.ok !== true) {
+        const held = holdFrom(existing, 'BLOCKING_REVIEW_THREAD', 'the landing\'s last review thread check failed right before the merge', now());
+        await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+        stdout(`merge-readiness: ${source.issue_id} HOLD=${held.hold_code} — ${held.reason}`);
+        continue;
+      }
     }
 
     let mergeResponse;
