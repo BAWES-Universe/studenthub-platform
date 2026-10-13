@@ -1170,8 +1170,8 @@ function cardLineage() {
 // thread), settle (landing_thread_settle overrides), editOnReply, loseReply,
 // commentOnResolve, editOnMergeIntent.
 function landingHost(options = {}) {
-  const config = options.settle
-    ? configFor("SHU-301", (c) => ({ ...c, landing_thread_settle: { ...c.landing_thread_settle, enabled: true, ...options.settle } }))
+  const config = options.settle !== undefined
+    ? configFor("SHU-301", (c) => ({ ...c, landing_thread_settle: { ...c.landing_thread_settle, enabled: options.settle !== false, ...(options.settle || {}) } }))
     : undefined;
   const host = fakeHost({ onTick: options.onTick ?? passOnFirstTick, workers: options.workers, ...(config ? { config } : {}) });
   if (options.token !== "none") {
@@ -1603,8 +1603,7 @@ test("SHU-310 L17: a Minor CodeRabbit thread and a LOW Sentry thread are settled
   assert.deepEqual(result.land.threads.blocking, []);
   assert.match(host.reports[0], /^Settled review thread: coderabbitai 🟡 Minor https:\/\/github\.com\/.+#discussion_r\d+$/m);
   assert.match(host.reports[0], /^Settled review thread: sentry LOW /m);
-  assert.equal(COMMITTED.landing_thread_settle.enabled, false, "settling is off in the committed config");
-  assert.equal(COMMITTED.routine_merge_authority.enabled, false);
+  assert.equal(COMMITTED.routine_merge_authority.enabled, false, "the committed merge gate stays off");
   neverDone(host);
 });
 
@@ -1693,7 +1692,7 @@ test("SHU-310 L22: more settleable threads than one run may settle are held, wit
 });
 
 test("SHU-310 L23: with settling off, a Minor bot thread waits exactly as before", async () => {
-  const host = landingHost({ botThreads: [[["coderabbitai", CR_MINOR]]] });
+  const host = landingHost({ settle: false, botThreads: [[["coderabbitai", CR_MINOR]]] });
   const result = await landRun(host);
   assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
   assert.match(result.land.reason, /1 review thread\(s\) are unresolved$/);
@@ -1713,7 +1712,8 @@ test("SHU-310 L24: labels are read from their fixed place, and a malformed polic
   assert.equal(botSeverity("sentry", `${SENTRY_LOW}\n<sub>Severity: LOW</sub>`).level, "high", "two labels");
   assert.equal(botSeverity("sentry", "**Bug**\n<sub>Severity: LOW</sub>").level, "high", "not on the first line");
   assert.equal(settlePolicy({}), null);
-  assert.equal(settlePolicy(COMMITTED), null, "committed off");
+  assert.equal(settlePolicy({ landing_thread_settle: { ...COMMITTED.landing_thread_settle, enabled: false } }), null, "off");
+  assert.equal(settlePolicy({ landing_thread_settle: { ...COMMITTED.landing_thread_settle, enabled: true } }).maxPerRun, 5, "the committed policy reads when on");
   const on = { ...COMMITTED.landing_thread_settle, enabled: true };
   assert.equal(settlePolicy({ landing_thread_settle: on }).maxPerRun, 5);
   for (const bad of [{ ...on, enabled: "yes" }, { ...on, max_per_run: 0 }, { ...on, max_per_run: 11 }, { ...on, bots: [] },

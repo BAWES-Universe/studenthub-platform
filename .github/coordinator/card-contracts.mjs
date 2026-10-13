@@ -577,6 +577,39 @@ Out of scope: the try/catch around new URL("/profile", env.OIDC_CALLBACK_URL) (i
 
 In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-311 settles the two notes left on SHU-309's run (#255) and its review:
+// the same six deploy-validator paths, one validator and its tests. The third
+// card a card run lands by itself, and the first with SHU-310's thread
+// settling on.
+export const SHU311_PATHS = SHU197_PATHS;
+
+const SHU311_ACCEPTANCE = [
+  "(1) with a caller-supplied schema that leaves out LOGIN_ALLOWED_RETURN_URLS (and an env without it), or marks it optional while it is unset or blank, validateDeploymentEnv throws exactly \"LOGIN_ALLOWED_RETURN_URLS must include https://studenthub.example.test/profile\" for the test env's callback, never a TypeError, pinned by a test in deploy/coolify/test/config-schema.test.mjs for both shapes;",
+  "(2) with a caller-supplied schema that declares OIDC_CALLBACK_URL with a kind other than url (for example string; leaving it out is refused earlier as an unknown OIDC_ variable), a callback whose protocol is not http: or https: (for example ftp://studenthub.example.test/login/callback) throws exactly \"OIDC_CALLBACK_URL must be a valid URL\", pinned by a test, and that message never contains the callback;",
+  "(3) for the default CONFIG_SCHEMA every result and message is unchanged, and every existing test in config-schema.test.mjs, integration-register.test.mjs and deploy/coolify/test/deployment.test.mjs still passes unchanged;",
+  "(4) integration-register.json, integration-register.mjs, integration-register.test.mjs and docs/integrations.md are byte-identical, preflight.mjs imports only node: builtins, and no error message contains a secret (DATABASE_URL, OIDC_CLIENT_SECRET) or URL credentials: the must-include message names the derived /profile URL with its username and password stripped, as it does today.",
+].join(" ");
+
+const SHU311_BRIEF = `Card SHU-311: keep the deploy preflight's return-URL check safe with a caller-supplied schema.
+
+Goal. validateDeploymentEnv(env, schema = CONFIG_SCHEMA) in deploy/coolify/preflight.mjs checks that LOGIN_ALLOWED_RETURN_URLS includes the /profile URL derived from OIDC_CALLBACK_URL. Two gaps show only with a caller-supplied schema (the second argument tests pass). This card closes both. It changes no deployment value, no schema entry and no message text for the default schema, and connects to nothing.
+
+1. Missing return URLs. allowedReturnUrls is set only inside the url loop. When the schema leaves LOGIN_ALLOWED_RETURN_URLS out (and the env has no such variable, since an undeclared LOGIN_ variable is already refused), or marks it optional and it is unset or blank, allowedReturnUrls stays undefined and allowedReturnUrls.includes throws a TypeError. Treat it as an empty list, so the existing check reports "LOGIN_ALLOWED_RETURN_URLS must include <profile url>" with the same credential stripping it does today.
+
+2. Non-http callbacks. new URL("/profile", env.OIDC_CALLBACK_URL) accepts any absolute URL. The default schema already refuses a callback that is not http(s), but a caller-supplied schema that declares OIDC_CALLBACK_URL with another kind (for example string) lets ftp:// and similar through (leaving it out of the schema is not a path: an undeclared OIDC_ variable is refused first), and its origin then reaches the "must include" message. Before deriving /profile, refuse a callback whose protocol is not http: or https: with the existing message "OIDC_CALLBACK_URL must be a valid URL".
+
+Tests (deploy/coolify/test/config-schema.test.mjs, node:test and node:assert only): build each caller-supplied schema from CONFIG_SCHEMA (filter out or replace one entry; never change CONFIG_SCHEMA itself) and the file's validEnv(), and assert the exact messages for: the schema without LOGIN_ALLOWED_RETURN_URLS, LOGIN_ALLOWED_RETURN_URLS optional and blank, and OIDC_CALLBACK_URL declared as kind string with an ftp callback. Write expected messages out literally.
+
+Constraints.
+- Every other export, error message and test must keep passing. deploy/coolify/deployment-env-manifest.mjs and deploy/coolify/test/deployment.test.mjs (both outside your scope) depend on them.
+- preflight.mjs imports nothing but node: builtins (the production image copies it alone).
+- No error message may contain a secret (DATABASE_URL, OIDC_CLIENT_SECRET) or URL credentials. The "must include" message names the derived /profile URL, with username and password stripped as today.
+- Only deploy/coolify/preflight.mjs and deploy/coolify/test/config-schema.test.mjs change. The other four paths are in your workspace so their tests can run, and must stay byte-identical.
+
+Out of scope: CONFIG_SCHEMA's entries, the integration register and its docs, the Dockerfile, the env manifest, deployment.test.mjs, compose files, any network call or credential, any change outside the paths you are given.
+
+In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -641,6 +674,12 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU309_PATHS,
     acceptance: SHU309_ACCEPTANCE,
     brief: SHU309_BRIEF,
+  }),
+  "SHU-311": Object.freeze({
+    initial_build_paths: SHU311_PATHS,
+    revision_paths: SHU311_PATHS,
+    acceptance: SHU311_ACCEPTANCE,
+    brief: SHU311_BRIEF,
   }),
 });
 
