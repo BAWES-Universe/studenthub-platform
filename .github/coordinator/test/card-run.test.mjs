@@ -1961,6 +1961,20 @@ test("SHU-312 Q6: a new install resumes the queue after the cards that already l
   odd.files.set(`${PATHS.stateDir}/card-run-auto-x-SHU-301.json`, { text: JSON.stringify({ land: "MERGED" }), mode: 0o600, uid: 0, gid: 0 });
   odd.files.set(`${PATHS.stateDir}/card-run-auto-${REV}-SHU-3010.json`, { text: JSON.stringify({ land: "MERGED" }), mode: 0o600, uid: 0, gid: 0 });
   assert.deepEqual(nextCard(odd.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
+  // A landing is read only from a claim whose content matches its name and
+  // records a passed run that merged: a swapped or partial claim proves nothing.
+  const OTHER = "c".repeat(40);
+  for (const [label, file, fields] of [
+    ["another card's claim", autoClaim(PATHS, REV, "SHU-301"), { card: "SHU-305", revision: REV, outcome: "PASS", ok: true, land: "MERGED" }],
+    ["another revision's claim", autoClaim(PATHS, REV, "SHU-301"), { card: "SHU-301", revision: OTHER, outcome: "PASS", ok: true, land: "MERGED" }],
+    ["a claim with no passed run", autoClaim(PATHS, REV, "SHU-301"), { card: "SHU-301", revision: REV, outcome: "REFUSED", ok: true, land: "MERGED" }],
+    ["a claim not ok", autoClaim(PATHS, REV, "SHU-301"), { card: "SHU-301", revision: REV, outcome: "PASS", ok: false, land: "MERGED" }],
+    ["a bare landing", autoClaim(PATHS, REV, "SHU-301"), { land: "MERGED" }],
+  ]) {
+    const swapped = fakeHost({ config: queueConfig() });
+    swapped.files.set(file, { text: JSON.stringify(fields), mode: 0o600, uid: 0, gid: 0 });
+    assert.deepEqual(nextCard(swapped.io, PATHS, queueConfig(), OTHER), { id: "SHU-301" }, label);
+  }
   // An invalid queue never runs.
   const bad = fakeHost({ config: queueConfig(["SHU-301", "SHU-304"]) });
   const skipped = await attempt(() => autoRun({ io: bad.io, paths: PATHS }));

@@ -765,8 +765,8 @@ const CASES = [
   },
   {
     name: "M114 count a run that did not land as landed",
-    from: '.readFileSync(path.join(paths.stateDir, file), "utf8"))?.land === "MERGED") return true;',
-    to: '.readFileSync(path.join(paths.stateDir, file), "utf8"))) return true; // SHU312-M114',
+    from: '\n        && claim.land === "MERGED") return true;',
+    to: ") return true; // SHU312-M114",
     pattern: "SHU-312 Q6:",
   },
   {
@@ -807,6 +807,18 @@ const CASES = [
     from: '  } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }',
     to: "  } catch { /* SHU312-M120 */ }",
     pattern: "SHU-312 Q5:",
+  },
+  {
+    name: "M121 take a landing from another card's or revision's claim",
+    from: "claim?.card === id && claim.revision === match[1] && ",
+    to: "/* SHU312-M121 */ ",
+    pattern: "SHU-312 Q6:",
+  },
+  {
+    name: "M122 take a landing from a claim with no passed run",
+    from: ' && claim.outcome === "PASS" && claim.ok === true\n        && claim.land',
+    to: " /* SHU312-M122 */ && claim.land",
+    pattern: "SHU-312 Q6:",
   },
 ];
 

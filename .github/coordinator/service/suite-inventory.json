@@ -2095,6 +2095,8 @@
     "SHU-86 mutation M118 run a queue by hand",
     "SHU-86 mutation M119 keep a queue scope for an order of another queued card",
     "SHU-86 mutation M120 lose a failed claim write after the run",
+    "SHU-86 mutation M121 take a landing from another card's or revision's claim",
+    "SHU-86 mutation M122 take a landing from a claim with no passed run",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -18012,6 +18014,14 @@
     },
     {
       "name": "SHU-86 mutation M120 lose a failed claim write after the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M121 take a landing from another card's or revision's claim",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M122 take a landing from a claim with no passed run",
       "capabilities": []
     },
     {

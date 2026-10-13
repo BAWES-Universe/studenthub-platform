@@ -194,13 +194,18 @@ export function onBase(plan, base) {
 }
 
 // The landing outcome a timer run recorded for this card at any installed
-// revision. Claims live in the root-owned state directory.
+// revision. Claims live in the root-owned state directory. A claim proves a
+// landing only when its content names this card, the revision in its own file
+// name, and a passed run that merged: a swapped or partial claim proves nothing.
 function landedByTimer(io, paths, id) {
-  const name = new RegExp(`^card-run-auto-[0-9a-f]{40}-${id}\\.json$`);
+  const name = new RegExp(`^card-run-auto-([0-9a-f]{40})-${id}\\.json$`);
   for (const file of io.fs.readdirSync(paths.stateDir)) {
-    if (!name.test(file)) continue;
+    const match = name.exec(file);
+    if (!match) continue;
     try {
-      if (JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"))?.land === "MERGED") return true;
+      const claim = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"));
+      if (claim?.card === id && claim.revision === match[1] && claim.outcome === "PASS" && claim.ok === true
+        && claim.land === "MERGED") return true;
     } catch { /* an unreadable claim proves nothing */ }
   }
   return false;
