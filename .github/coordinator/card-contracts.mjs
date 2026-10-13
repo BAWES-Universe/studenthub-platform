@@ -778,6 +778,196 @@ Out of scope: currency_code, approved_to_hire, the rule that a company rate is n
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-315 is slice O5d: the approved-to-hire half of OR-08, the same
+// staff-or-admin safe write as SHU-305's status write.
+export const SHU315_PATHS = Object.freeze([
+  "packages/organizations/src/approved-to-hire-writes.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/approved-to-hire-writes.test.ts",
+  "packages/organizations/test/approved-to-hire-writes-mutations.mjs",
+  "packages/db/migrations/0193_organization_approved_to_hire.sql",
+  "packages/db/src/postgres-organization-approved-to-hire-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-approved-to-hire.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-approved-to-hire.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-approved-to-hire-http.test.ts",
+  "package.json",
+]);
+
+const SHU315_ACCEPTANCE = [
+  "(1) an organization's approved-to-hire flag (the value true or false) is written only through preview, confirm and receipt on the existing safe-write contract, any other value is refused with invalid_value at preview and at confirm, and runSafeWriteConformance runs over the approved-to-hire write's own builder, so letting a value bypass the check makes the \"SHU-315/AC-01 conformance\" test fail;",
+  "(2) only a staff or admin grant that covers the organization (on the organization itself, or a subtree grant on an ancestor such as the operator organization) may write; an org-owner, recruiter, finance, candidate or any other grant gets not_found, never 403; an operator organization itself is never a target; the decision is one exported function the Postgres store calls inside its commit transaction, and accepting any role there makes the \"SHU-315/AC-02 employer-write-refused\" test fail;",
+  "(3) the store's commit compares the previewed value inside the transaction through an exported function it calls there and refuses with state_changed when the stored value moved; making that compare always succeed makes the \"SHU-315/AC-03 stale-confirm\" test fail; grants are read FOR SHARE under the organization's advisory lock, and a racing or repeated confirm of one token returns token_already_used;",
+  "(4) once the platform holds an approved-to-hire record for an organization, OrganizationRepository.read shows it as approvedToHire in the employer, staff and admin views (the audiences that show the field today; ORGANIZATION_FIELDS_BY_AUDIENCE is unchanged), a stored false overrides a snapshot true and the reverse, a stored value shows with no approved snapshot, and an absent record keeps today's behaviour exactly; ignoring the stored record in the projection makes the \"SHU-315/AC-04 stored-flag-wins\" test fail;",
+  "(5) the staff and admin directory (listOrganizations) shows the stored value in each entry's approvedToHire and its approvedToHire filter matches on it, the records are read with one readMany call per list, and ignoring the stored record in directoryEntry makes the \"SHU-315/AC-05 directory-filter-uses-stored\" test fail;",
+  "(6) every write is audited in the same transaction as the change with organizationAuditRef (never a raw organization id) under the new operation organization.approved_to_hire.safe_write, the receipt and the audit carry the field name only; migration 0193 is additive apart from widening the audit constraints and authorization_audit_summary_valid from 0192's definitions, and still accepts every existing row and every operation earlier migrations added; \"0193_organization_approved_to_hire\" follows \"0192_organization_commercial_terms\" in both schema_migrations lists; no notification or email is sent;",
+  "(7) packages/organizations/test/approved-to-hire-writes-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:organization-approved-to-hire:mutations chained into test right after test:organization-commercial-terms:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU315_BRIEF = `Card SHU-315: staff or admin sets an organization's approved-to-hire flag through safe write (slice O5d, the approved-to-hire half of OR-08).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: section 3 (company_approved_to_hire is visible to every audience), section 4.2 (approved_to_hire is set by staff and admin Update, gates filterByApprovedToHire, and has no transition route), row OR-08 in section 7 and slice O5 in section 11.
+- SHU-305's status write, which is the closest model (staff or admin, one field): packages/organizations/src/status-writes.ts (organizationStatusDecision, organizationStatusStateDecision), packages/db/src/postgres-organization-status-store.ts (read, readMany, forPrincipal, #commit), apps/gateway/src/organization-status.ts and its HTTP test.
+- SHU-314's commercial-terms write, the latest copy of the same pattern, which passed review: packages/organizations/src/commercial-terms-writes.ts (a value check run at preview and confirm), its test and commercial-terms-writes-mutations.mjs, packages/db/src/postgres-organization-commercial-terms-store.ts, packages/db/migrations/0192_organization_commercial_terms.sql, packages/db/test/postgres-organization-commercial-terms.test.ts, apps/gateway/src/organization-commercial-terms.ts, apps/gateway/test/organization-commercial-terms-http.test.ts, and its wiring in apps/gateway/src/login-runtime.ts and apps/gateway/src/index.ts.
+- packages/organizations/src/organizations.ts: ORGANIZATION_FIELDS_BY_AUDIENCE (approvedToHire is in EMPLOYER_FIELDS, so the employer, staff and admin views all show it), plainField, projectOrganizationFields, directoryEntry, matchesDirectoryFilters, OrganizationStatusRecords (the port shape to copy, including readMany) and how listOrganizations batch-reads status records (SHU-308).
+
+Goal. Staff or an admin can set an organization's approved-to-hire flag through the existing safe-write path: preview, then confirm, then a receipt. The value is stored in the platform database, and the read model and the directory then use it in place of the snapshot value, so the live gateway (whose approved snapshot is unconfigured) can show and filter on a flag staff set. Who sees the field does not change. Nothing is sent: no email, no notification, no event.
+
+Design:
+- Migration 0193 creates organization_approved_to_hire (org_id text primary key referencing organizations(id) on delete cascade, approved boolean not null, updated_at timestamptz not null default clock_timestamp()). No row means absent. There is no cleared state: the flag is either set (true) or cleared (false), like the legacy not-null boolean column.
+- Values: the safe-write field is "approved_to_hire" and the value is exactly "true" or "false" (policy maxValueLength 5). One exported function in packages/organizations/src/approved-to-hire-writes.ts says whether a value is valid; the builder checks it at preview and at confirm and answers invalid_value, as buildOrganizationCommercialTermsWrite does. The gateway rejects a malformed body with 400 before that.
+- Who may write: one exported decision function takes the caller's grant rows (org_id, role, scope), the target organization id and its ancestor ids, and allows the write only when a grant with role staff or admin is on the target itself or is a subtree grant on one of its ancestors. An operator organization (DEFAULT_OPERATOR_ORG_IDS) is never a target. Copy organizationStatusDecision's logic (write it in this file, do not import it, so its mutation hits only this card). Everything else is refused and the route answers 404 not_found, never 403. Sub-organizations are valid targets.
+- Stale state: an exported compare function (current, expected) => boolean, called by the store inside the transaction on the value it read there ("true", "false", or null when absent).
+- Read model: give OrganizationRepository an optional constructor port, approvedToHire, with read(orgId) and readMany(orgIds) returning { kind: "absent" } or { kind: "value", value: boolean } (export the record and port types from organizations.ts). In read, a stored value replaces the approvedToHire field (available, with the existing sourceField) for every audience whose field list contains it, including when the snapshot row is undefined; an absent record leaves plainField's result untouched. In listOrganizations, read the shown organizations' records with one readMany call (as SHU-308 does for status), pass each record to directoryEntry, and let a stored value replace the entry's approvedToHire, so matchesDirectoryFilters filters on it unchanged. listSubOrganizations and SubOrganizationSummary do not change (they carry no approvedToHire). With no port, or every record absent, every existing organizations, directory, status and commercial-terms test passes unchanged.
+- Live wiring: login-runtime.ts constructs the store from DATABASE_URL next to the commercial-terms store, passes it to OrganizationRepository as approvedToHire whether or not the safe-write key is set, closes it with the others, and constructs the write service from it only when the key is set.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs. Keep the value check, the decision and the stale compare as exported functions in approved-to-hire-writes.ts, give the decision and the compare to the Postgres store through its constructor (login-runtime.ts wires them in; packages/db must not import packages/organizations; dependencies stay unchanged), and have the store call them inside the commit transaction on the rows it read there. The grants query selects the caller's grant rows without filtering by role or organization, and the ancestry query reads the organization chain.
+- Audit rows: organizationAuditRef(orgId) in target_org_refs, never the raw id; the receipt and the audit carry the field name, never the value (before_summary is { valuePresent }).
+- Lost update: take an advisory lock keyed on the organization (pg_advisory_xact_lock(hashtextextended($1,315))), read the caller's grants FOR SHARE under it, and compare expectedBefore inside the transaction; return state_changed when it moved.
+- Duplicate confirm: check the token reference in the audit table inside the transaction and also catch 23505 from the unique token index; both return token_already_used.
+- Migration 0193: start from 0192's text (the latest definitions on main; 0191 changes none) and add organization.approved_to_hire.safe_write wherever organization.commercial_terms.safe_write appears: the operation check, the target_org_refs cardinality > 0 branch, the safe-write halves check, and the safe-write branch of authorization_audit_summary_valid with fields equal to ["approved_to_hire"]. Add unique indexes on its token and its receipt, as 0192 does. Drop nothing else, so every operation and every existing row stays valid.
+- Conformance: run runSafeWriteConformance over the approved-to-hire write's own builder, the function the gateway route calls (pass a check that accepts the suite's values, as SHU-314's test does).
+- Mutation script: copy packages/organizations/test/commercial-terms-writes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$") and the environment-variable imports (SHU315_TEST_MODULE for approved-to-hire-writes.js, SHU315_ORG_MODULE for organizations.js). Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors in dist/organizations.js. npm test runs every existing mutation script and each requires its anchor to bind exactly once; your change to organizations.ts is where they are at risk. Keep each of these exactly once, and change your code's shape, never their scripts:
+  - status-writes-mutations.mjs: \`if (record?.kind === "status")\`. Do not name your record \`record\`.
+  - commercial-terms-writes-mutations.mjs: \`const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience];\` and \`if (own.kind === "value")\`. Do not write \`own.kind === "value"\` anywhere; name your record something like approvedRecord.
+  - status-batch-reads-mutations.mjs: \`const batchRecords = shown.length > 0 && this.#statusRecords?.readMany\` and \`batchRecords.get(org.id) ?? { kind: "absent" }\`. Use a different variable name for your batch (no identifier ending in batchRecords) so neither line is repeated.
+  - directory-mutations.mjs: the directoryEntry literal must keep \`subOrganizationCount,\` immediately followed by \`legalName:\` (add nothing between them); keep \`const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);\`, \`availableValue(entry.status) !== filters.status\`, the \`.filter((context) => context.role === request.role && within.has(context.orgId)\` line, the companyParentOf continue and the entries.slice line as they are.
+  - mutations.mjs (SHU-159): \`"org-owner": "employer",\`, the parent-rate fallback line, \`const override = statusOverride(row);\` and the status and hierarchy guards.
+  - apps/gateway/test/company-directory-mutations.mjs anchors company-directory.js and web-ui.js, and packages/observability/test/mutations.mjs anchors lines of apps/gateway/src/index.js (the response close, telemetry.record and inSpan lines): add one route line in index.ts and touch none of those.
+- HTTP: copy organization-commercial-terms.ts for the session, Origin and content-type checks, headers, body parsing (exactly orgId, field and value, field "approved_to_hire", value "true" or "false"), error mapping and the try/catch, under /organization/approved-to-hire/preview, /confirm and the receipt read /organization/approved-to-hire/{orgId}/receipts/{receiptRef}. Mount it in index.ts right after handleOrganizationCommercialTerms. Have the HTTP test call the real handler.
+- The Postgres test must exercise the store against the database (test:db): one successful staff commit whose audit row has the hashed organization reference and the new operation and whose value reads back through read and readMany; one refused org-owner write; a stale confirm; and a duplicate confirm of one token.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/approved-to-hire-writes-mutations.mjs that makes a named test fail.
+(1) Make the value check accept anything: "SHU-315/AC-01 conformance" fails (it asserts a preview of "yes" is invalid_value and runs the conformance suite).
+(2) Accept any role in the decision function the store calls (anchor: \`row.role === "staff" || row.role === "admin"\` in approved-to-hire-writes.js): "SHU-315/AC-02 employer-write-refused" fails. That test also checks an org-owner and a recruiter grant on the target, a self (not subtree) staff grant on the parent, and an operator target.
+(3) Make the state compare always succeed: "SHU-315/AC-03 stale-confirm" fails.
+(4) Ignore the stored record in projectOrganizationFields: "SHU-315/AC-04 stored-flag-wins" fails. It reads as employer (org-owner), staff and admin, with a snapshot of true and a stored false, and with no snapshot and a stored true.
+(5) Ignore the stored record in directoryEntry: "SHU-315/AC-05 directory-filter-uses-stored" fails. It lists with approvedToHire true and false filters over organizations whose stored value disagrees with their snapshot, and counts one readMany call per list.
+The script prints "5/5 SHU-315 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/approved-to-hire-writes.ts (new)
+- packages/organizations/src/organizations.ts: only the optional approvedToHire port on OrganizationRepository, its record types, and applying the record to the approvedToHire field in read and in the directory
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/approved-to-hire-writes.test.ts (new)
+- packages/organizations/test/approved-to-hire-writes-mutations.mjs (new)
+- packages/db/migrations/0193_organization_approved_to_hire.sql (new)
+- packages/db/src/postgres-organization-approved-to-hire-store.ts (new; modelled on the commercial-terms store, with read and readMany)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-approved-to-hire.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0193_organization_approved_to_hire" after "0192_organization_commercial_terms" in both schema_migrations lists
+- apps/gateway/src/organization-approved-to-hire.ts (new)
+- apps/gateway/src/index.ts (one route line after handleOrganizationCommercialTerms, and its import)
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/organization-approved-to-hire-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/approved-to-hire-writes.test.js and dist/apps/gateway/test/organization-approved-to-hire-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-organization-approved-to-hire.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:organization-approved-to-hire:mutations script that runs the mutation script, and add " && npm run test:organization-approved-to-hire:mutations" as its own step right after "npm run test:organization-commercial-terms:mutations" in test. Never change dependencies.
+
+Out of scope: the status write, status events and any notification or email, the account-live email, the Segment event, commercial terms, which audiences see approvedToHire, the onboarding approval that sets the flag at creation (O3), creating organizations, sub-organization summaries, any UI beyond what the route needs, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-316 is slice O9a: the notes half of O9 (OR-27), companies only. It
+// appends through the safe-write contract, which fits an append: a note has
+// no prior value, so the preview shows before = null and the single-use token
+// makes a repeated confirm add nothing.
+export const SHU316_PATHS = Object.freeze([
+  "packages/organizations/src/organization-notes.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/organization-notes.test.ts",
+  "packages/organizations/test/organization-notes-mutations.mjs",
+  "packages/db/migrations/0194_organization_notes.sql",
+  "packages/db/src/postgres-organization-notes-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-notes.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-notes.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-notes-http.test.ts",
+  "package.json",
+]);
+
+const SHU316_ACCEPTANCE = [
+  "(1) a note is added to an organization only through preview, confirm and receipt on the existing safe-write contract (field \"note\", preview before null), and runSafeWriteConformance runs over the note write's own builder, so letting the preview report no changes makes the \"SHU-316/AC-01 conformance\" test fail;",
+  "(2) only a staff or admin grant that covers the organization (on the organization itself, or a subtree grant on an ancestor such as the operator organization) may add or list notes; an org-owner, recruiter, finance, candidate or any other grant gets not_found, never 403, for both; an operator organization itself is never a target; the decision is one exported function the Postgres store calls inside its commit transaction and before it reads any note for a list, and accepting an org-owner grant there makes the \"SHU-316/AC-02 employer-refused\" test fail;",
+  "(3) a note's text is non-empty, has no leading or trailing whitespace, is at most 2000 characters and contains no control character other than tab, line feed and carriage return; anything else is refused with invalid_value at preview and at confirm by an exported value check the builder runs; dropping the control-character rule makes the \"SHU-316/AC-03 note-text-rejected\" test fail;",
+  "(4) staff and admin list an organization's notes newest first (created time descending, then note id descending), each with its note id, text, author principal id and created time, through one exported view function the gateway applies to the store's rows; reversing its order makes the \"SHU-316/AC-04 newest-first\" test fail;",
+  "(5) that view carries exactly noteId, text, authorPrincipalId and createdAt for each note and never the organization id or the receipt reference; copying the stored row into the view makes the \"SHU-316/AC-05 list-view-whitelist\" test fail;",
+  "(6) notes are append-only: no route, store method or SQL edits or deletes one, a database trigger refuses UPDATE, a repeated confirm of one token adds no second note (token_already_used); each add inserts the note and its audit row in one transaction with organizationAuditRef (never a raw organization id) under the new operation organization.note.safe_write, and neither the audit row nor the receipt contains the note text; migration 0194 creates the notes table and its trigger and otherwise only widens the audit constraints and authorization_audit_summary_valid from 0193's definitions, still accepting every existing row and every operation earlier migrations added; \"0194_organization_notes\" follows \"0193_organization_approved_to_hire\" in both schema_migrations lists;",
+  "(7) packages/organizations/test/organization-notes-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:organization-notes:mutations chained into test right after test:organization-approved-to-hire:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU316_BRIEF = `Card SHU-316: staff and admin add notes to an organization, append-only and audited (slice O9a, the organization-notes half of OR-27).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-315 (migration 0193, the approved-to-hire write). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: the note table and "Note shape" in section 2.2, row OR-27 in section 7, slice O9 in section 11, and decision D-OR3 in section 12 (StudentHub keeps notes attached to records; the follow-up CRM, OR-10, is not this card).
+- packages/safe-write-contract/src/types.ts and safe-write.ts: the contract this card uses for the append. It already rejects an empty value, edge whitespace and a value longer than the policy's maxValueLength, and its single-use token is what makes a repeated confirm add nothing.
+- SHU-315's approved-to-hire write and SHU-314's commercial-terms write, which this card copies: packages/organizations/src/approved-to-hire-writes.ts and commercial-terms-writes.ts, their tests and mutation scripts, packages/db/src/postgres-organization-commercial-terms-store.ts (forPrincipal, readReceipt, #commit), packages/db/migrations/0193_organization_approved_to_hire.sql, packages/db/test/postgres-organization-commercial-terms.test.ts, apps/gateway/src/organization-commercial-terms.ts and its HTTP test, and the wiring in apps/gateway/src/login-runtime.ts and apps/gateway/src/index.ts.
+- packages/db/migrations/0004_create_authorization_mutation_audit.sql: the append-only trigger pattern.
+
+Goal. Staff and admins covering an organization can add a note to it and read its notes, newest first. A note is a record of who wrote what and when: it is never edited or deleted, and every add leaves an audit row that says a note was added without repeating it.
+
+Contract choice (decided; do not reopen). The note is added through the existing safe-write contract, not the idempotency contract. The safe-write contract fits an append: the field is "note", readField returns null (an append has no prior value), so the preview shows before null and after the text, and the store's commit refuses with state_changed if expectedBefore is not null. The single-use token, checked inside the transaction and backed by a unique index, makes a repeated or racing confirm return token_already_used, so a double submit adds one note. The idempotency contract (packages/idempotency-contract) has no Postgres store and no organization use yet, and the safe-write path gives preview, receipt and the audit shape every organization write already uses. Concurrent adds by two people both land; there is no stale-state compare beyond expectedBefore being null.
+
+Design:
+- Migration 0194 creates organization_notes (id bigserial primary key, org_id text not null references organizations(id) on delete cascade, author_principal_id text not null, body text not null with a check that it is between 1 and 2000 characters and equals btrim(body), receipt_ref text not null unique, created_at timestamptz not null default clock_timestamp()) and an index on (org_id, created_at desc, id desc). author_principal_id has no foreign key, so a note outlives changes to its author. Add a BEFORE UPDATE row trigger that raises (as 0004 does for the audit table). Add no DELETE or TRUNCATE trigger: packages/db/test/postgres-authz-store.test.ts truncates organizations with CASCADE, and organization deletion is slice O6's.
+- Values: in packages/organizations/src/organization-notes.ts, ORGANIZATION_NOTE_FIELDS is ["note"] and the policy's maxValueLength is 2000. One exported value check accepts the field "note" with text that contains no control character other than tab, line feed and carriage return (so no NUL, which Postgres text rejects, and no DEL); the contract itself rejects empty, edge-whitespace and over-length text. The builder runs the check at preview and confirm and answers invalid_value, as buildOrganizationCommercialTermsWrite does.
+- Who may add and list: one exported decision function, the same shape as SHU-315's (staff or admin, on the target or a subtree grant on an ancestor, never an operator organization), written in this file. The store calls it inside the commit transaction for an add, and before reading any note for a list; a refused list returns null and the route answers 404 not_found.
+- List view: one exported function takes the store's rows (id, author_principal_id, body, created_at, and whatever else the store selects) and returns notes ordered by created time descending, then id descending, each exactly { noteId, text, authorPrincipalId, createdAt } (noteId as a string, createdAt as an ISO string). The store may also ORDER BY in SQL, but the gateway always applies this function. Return every note; there is no paging in this card.
+- Store (packages/db/src/postgres-organization-notes-store.ts, modelled on the commercial-terms store): constructor takes the pool or connection string, the decision, recordRef and principalRef. forPrincipal returns a SafeWriteStore whose readField returns null for "note"; #commit takes pg_advisory_xact_lock(hashtextextended($1,316)) on the organization, reads the caller's grants FOR SHARE and the ancestry, calls the decision, checks the token reference in the audit table, requires expectedBefore null, inserts the note with the receipt's receiptRef and the raw principal id as author, and inserts the audit row (organizationAuditRef(orgId) in target_org_refs, before_summary { valuePresent: false }, after_summary the receipt shape with fields ["note"] and the tokenRef) in one transaction; 23505 becomes token_already_used. readReceipt is as the commercial-terms store's. list(principalId, orgId) reads grants and ancestry, calls the decision, and returns null or the rows. There is no update or delete method.
+- Live wiring: login-runtime.ts constructs the store from DATABASE_URL next to the approved-to-hire store, closes it with the others, and constructs the notes service (preview, confirm, receipt and list) only when the safe-write key is set, as for the other organization writes.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs: the value check, the decision and the list view are exported from organization-notes.ts; the decision reaches the store through its constructor (packages/db must not import packages/organizations; dependencies stay unchanged), and the gateway's list calls the view function on the store's rows.
+- Audit rows and receipts: organizationAuditRef, never the raw organization id; the field name "note", never the text. The Postgres test asserts JSON.stringify of the audit row contains neither the text nor the raw organization id.
+- Migration 0194: start from 0193's text (the latest definitions on main) and add organization.note.safe_write wherever organization.approved_to_hire.safe_write appears: the operation check, the target_org_refs cardinality > 0 branch, the safe-write halves check, and the safe-write branch of authorization_audit_summary_valid with fields equal to ["note"]. Add unique indexes on its token and its receipt, as 0192 and 0193 do. The operation name follows the codebase's convention that every receipt-bearing safe-write operation ends in .safe_write. Drop nothing else.
+- Conformance: run runSafeWriteConformance over the note write's own builder (pass a check that accepts the suite's values, as SHU-314's test does).
+- Mutation script: copy packages/organizations/test/commercial-terms-writes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$") and the environment-variable import (SHU316_TEST_MODULE for organization-notes.js). All five mutations target dist/organization-notes.js. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors: this card does not change organizations.ts, so the anchors of mutations.mjs, directory-mutations.mjs, status-writes-mutations.mjs, status-batch-reads-mutations.mjs, commercial-terms-writes-mutations.mjs and approved-to-hire-writes-mutations.mjs stay as they are. In apps/gateway/src/index.ts, packages/observability/test/mutations.mjs anchors the response close, telemetry.record and inSpan lines: add one route line and its import and touch none of those.
+- HTTP (apps/gateway/src/organization-notes.ts): copy organization-commercial-terms.ts for the session, Origin and content-type checks, headers, error mapping and the try/catch. POST /organization/notes/preview and /organization/notes/confirm take exactly orgId, field ("note") and value (the text), plus token on confirm; GET /organization/notes/{orgId}/receipts/{receiptRef} reads a receipt; GET /organization/notes/{orgId} returns { notes } from the view function, or 404 not_found when the store returns null. Raise the body limit to 16384 bytes so a 2000-character note with escapes and a token fits. Mount it in index.ts right after the approved-to-hire route. Have the HTTP test call the real handler, including an employer list that gets 404.
+- The Postgres test must exercise the store against the database (test:db): a staff add whose audit row has the hashed organization reference, the new operation and no text; an admin add through a subtree grant on the operator organization; a refused org-owner add and list; a duplicate confirm of one token leaving one note; two notes listed newest first; and an UPDATE of a note refused by the trigger.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/organization-notes-mutations.mjs that makes a named test fail.
+(1) Let the builder's preview report no changes (as status-writes-mutations.mjs's first mutation does, anchored on the builder's call to the contract's preview): "SHU-316/AC-01 conformance" fails.
+(2) Accept an org-owner grant in the decision function: "SHU-316/AC-02 employer-refused" fails. That test drives the real builder through an in-memory store that calls the decision on commit and on list, and also checks a recruiter grant, a self staff grant on the parent, and an operator target.
+(3) Drop the control-character rule from the value check: "SHU-316/AC-03 note-text-rejected" fails. It previews and confirms text with a NUL and with a bell character and gets invalid_value, accepts text with a line feed, and refuses whitespace-only, edge-whitespace and 2001-character text.
+(4) Reverse the view's order: "SHU-316/AC-04 newest-first" fails. It gives rows in ascending order, including two with the same created time.
+(5) Copy the stored row into the view (for example a spread of the row): "SHU-316/AC-05 list-view-whitelist" fails. It asserts the exact keys of each note and that the organization id and the receipt reference appear nowhere in JSON.stringify of the view.
+The script prints "5/5 SHU-316 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/organization-notes.ts (new)
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/organization-notes.test.ts (new)
+- packages/organizations/test/organization-notes-mutations.mjs (new)
+- packages/db/migrations/0194_organization_notes.sql (new)
+- packages/db/src/postgres-organization-notes-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-notes.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0194_organization_notes" after "0193_organization_approved_to_hire" in both schema_migrations lists
+- apps/gateway/src/organization-notes.ts (new)
+- apps/gateway/src/index.ts (one route line after the approved-to-hire route, and its import)
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/organization-notes-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/organization-notes.test.js and dist/apps/gateway/test/organization-notes-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-organization-notes.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:organization-notes:mutations script that runs the mutation script, and add " && npm run test:organization-notes:mutations" as its own step right after "npm run test:organization-approved-to-hire:mutations" in test. Never change dependencies.
+
+Out of scope: notes on contacts, candidates, requests or any other subject (the typed subject reference is for later cards; this table is organization notes only), note types (Internal Note, Phone Call and so on), editing or deleting a note, the follow-up CRM (OR-10, D-OR3), exports, the read model and directory in organizations.ts, any notification, any UI beyond what the routes need, any change to packages/safe-write-contract, packages/idempotency-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -862,6 +1052,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU314_PATHS,
     acceptance: SHU314_ACCEPTANCE,
     brief: SHU314_BRIEF,
+  }),
+  "SHU-315": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU315_PATHS,
+    revision_paths: SHU315_PATHS,
+    acceptance: SHU315_ACCEPTANCE,
+    brief: SHU315_BRIEF,
+  }),
+  "SHU-316": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU316_PATHS,
+    revision_paths: SHU316_PATHS,
+    acceptance: SHU316_ACCEPTANCE,
+    brief: SHU316_BRIEF,
   }),
 });
 

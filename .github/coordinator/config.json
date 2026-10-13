@@ -25,8 +25,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-313",
-      "SHU-314"
+      "SHU-315",
+      "SHU-316"
     ]
   },
   "adapter_pause_map": {},
@@ -430,6 +430,86 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/organization-commercial-terms-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-315",
+      "authorization_ref": "SHU-315",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the second committed card queue (SHU-312), a whole-tree card: slice O5d (staff or admin sets an organization's approved-to-hire flag through safe write); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/approved-to-hire-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/approved-to-hire-writes.test.ts",
+        "packages/organizations/test/approved-to-hire-writes-mutations.mjs",
+        "packages/db/migrations/0193_organization_approved_to_hire.sql",
+        "packages/db/src/postgres-organization-approved-to-hire-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-approved-to-hire.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-approved-to-hire.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-approved-to-hire-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/approved-to-hire-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/approved-to-hire-writes.test.ts",
+        "packages/organizations/test/approved-to-hire-writes-mutations.mjs",
+        "packages/db/migrations/0193_organization_approved_to_hire.sql",
+        "packages/db/src/postgres-organization-approved-to-hire-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-approved-to-hire.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-approved-to-hire.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-approved-to-hire-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-316",
+      "authorization_ref": "SHU-316",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the second committed card queue (SHU-312), a whole-tree card: slice O9a (staff and admin add append-only, audited notes to an organization); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organization-notes.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/organization-notes.test.ts",
+        "packages/organizations/test/organization-notes-mutations.mjs",
+        "packages/db/migrations/0194_organization_notes.sql",
+        "packages/db/src/postgres-organization-notes-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-notes.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-notes.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-notes-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organization-notes.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/organization-notes.test.ts",
+        "packages/organizations/test/organization-notes-mutations.mjs",
+        "packages/db/migrations/0194_organization_notes.sql",
+        "packages/db/src/postgres-organization-notes-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-notes.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-notes.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-notes-http.test.ts",
         "package.json"
       ]
     }
