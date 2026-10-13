@@ -587,7 +587,7 @@ const SHU311_ACCEPTANCE = [
   "(1) with a caller-supplied schema that leaves out LOGIN_ALLOWED_RETURN_URLS (and an env without it), or marks it optional while it is unset or blank, validateDeploymentEnv throws exactly \"LOGIN_ALLOWED_RETURN_URLS must include https://studenthub.example.test/profile\" for the test env's callback, never a TypeError, pinned by a test in deploy/coolify/test/config-schema.test.mjs for both shapes;",
   "(2) with a caller-supplied schema that declares OIDC_CALLBACK_URL with a kind other than url (for example string; leaving it out is refused earlier as an unknown OIDC_ variable), a callback whose protocol is not http: or https: (for example ftp://studenthub.example.test/login/callback) throws exactly \"OIDC_CALLBACK_URL must be a valid URL\", pinned by a test, and that message never contains the callback;",
   "(3) for the default CONFIG_SCHEMA every result and message is unchanged, and every existing test in config-schema.test.mjs, integration-register.test.mjs and deploy/coolify/test/deployment.test.mjs still passes unchanged;",
-  "(4) integration-register.json, integration-register.mjs, integration-register.test.mjs and docs/integrations.md are byte-identical, preflight.mjs imports only node: builtins, and no error message contains a configured value.",
+  "(4) integration-register.json, integration-register.mjs, integration-register.test.mjs and docs/integrations.md are byte-identical, preflight.mjs imports only node: builtins, and no error message contains a secret (DATABASE_URL, OIDC_CLIENT_SECRET) or URL credentials: the must-include message names the derived /profile URL with its username and password stripped, as it does today.",
 ].join(" ");
 
 const SHU311_BRIEF = `Card SHU-311: keep the deploy preflight's return-URL check safe with a caller-supplied schema.
@@ -603,7 +603,7 @@ Tests (deploy/coolify/test/config-schema.test.mjs, node:test and node:assert onl
 Constraints.
 - Every other export, error message and test must keep passing. deploy/coolify/deployment-env-manifest.mjs and deploy/coolify/test/deployment.test.mjs (both outside your scope) depend on them.
 - preflight.mjs imports nothing but node: builtins (the production image copies it alone).
-- No error message may contain a configured value.
+- No error message may contain a secret (DATABASE_URL, OIDC_CLIENT_SECRET) or URL credentials. The "must include" message names the derived /profile URL, with username and password stripped as today.
 - Only deploy/coolify/preflight.mjs and deploy/coolify/test/config-schema.test.mjs change. The other four paths are in your workspace so their tests can run, and must stay byte-identical.
 
 Out of scope: CONFIG_SCHEMA's entries, the integration register and its docs, the Dockerfile, the env manifest, deployment.test.mjs, compose files, any network call or credential, any change outside the paths you are given.
