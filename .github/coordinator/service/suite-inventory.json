@@ -116,6 +116,8 @@
     ".github/coordinator/test/shu261-review-findings.test.mjs",
     ".github/coordinator/test/shu261-reviewer-isolation.test.mjs",
     ".github/coordinator/test/shu321-mutations.test.mjs",
+    ".github/coordinator/test/shu322-card-install.test.mjs",
+    ".github/coordinator/test/shu322-mutations.test.mjs",
     ".github/coordinator/test/shu68-wiring.test.mjs",
     ".github/coordinator/test/shu71-activation-package.test.mjs",
     ".github/coordinator/test/shu71-battery.test.mjs",
@@ -3046,6 +3048,49 @@
     "SHU-321 mutation M10 drop the pause recheck before arming",
     "SHU-321 mutation M11 drop the Claude-Session trailer check",
     "SHU-321 mutation the unmutated suite passes",
+    "SHU-322 B1: a reviewed card queue on main installs in order, reports once and exits for the next start",
+    "SHU-322 B2: a coordinator change outside the queue config paths, or a deletion, is a refusal for the owner",
+    "SHU-322 B3: card-contracts.mjs may only gain lines",
+    "SHU-322 B4: config.json may only replace dispatch_scope with a new queue of appended, unlanded, contracted lanes",
+    "SHU-322 B5: every changed coordinator blob must be one a root-owned REVIEW_PASS claim recorded at an exact head",
+    "SHU-322 B6: a main that does not descend from the installed revision is refused for the owner",
+    "SHU-322 B7: main at the installed revision, or with the installed queue, is a silent skip",
+    "SHU-322 B8: a read that fails or checks not yet green skip with no claim; red checks are refused",
+    "SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated",
+    "SHU-322 B10: a held lock or a busy host skips and gives the claim back",
+    "SHU-322 B11: the pause file is read again before every step and stops the install there",
+    "SHU-322 B12: any failed step writes the pause file with its reason and reports; R is never reinstalled",
+    "SHU-322 B13: a verify or precondition failure rolls N back and pauses, and never reinstalls R",
+    "SHU-322 B14: the child plan check must show the new queue, its first card next and no refused preparation",
+    "SHU-322 B15: the timer only ever creates the pause file",
+    "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
+    "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
+    "SHU-322 mutation M1 drop the path allowlist",
+    "SHU-322 mutation M2 install a deleted coordinator file",
+    "SHU-322 mutation M3 drop the contracts deletions check",
+    "SHU-322 mutation M4 let any config key change",
+    "SHU-322 mutation M5 drop the card_lanes prefix check",
+    "SHU-322 mutation M6 drop the queue size bounds",
+    "SHU-322 mutation M7 accept a queued card that is not an appended lane",
+    "SHU-322 mutation M8 drop the landed check",
+    "SHU-322 mutation M9 drop the added contract check",
+    "SHU-322 mutation M10 drop the REVIEW_PASS blob binding",
+    "SHU-322 mutation M11 trust a review claim root did not write",
+    "SHU-322 mutation M12 drop the ancestry check",
+    "SHU-322 mutation M13 install on red checks",
+    "SHU-322 mutation M14 install before the checks are green",
+    "SHU-322 mutation M15 claim a refusal without the exclusive flag",
+    "SHU-322 mutation M16 claim an install without the exclusive flag",
+    "SHU-322 mutation M17 install on a busy host",
+    "SHU-322 mutation M18 drop the pause recheck between steps",
+    "SHU-322 mutation M19 leave the host unpaused after a failure",
+    "SHU-322 mutation M20 reinstall R instead of rolling N back",
+    "SHU-322 mutation M21 accept a plan whose next card is not the first",
+    "SHU-322 mutation M22 skip the plan check",
+    "SHU-322 mutation M23 overwrite an existing pause file",
+    "SHU-322 mutation M24 review after an install in the same start",
+    "SHU-322 mutation M25 install from a stopped queue",
+    "SHU-322 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
     "bridge: verdict stages map to the intended routing outcome",
@@ -24473,6 +24518,178 @@
     },
     {
       "name": "SHU-321 mutation the unmutated suite passes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B1: a reviewed card queue on main installs in order, reports once and exits for the next start",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B2: a coordinator change outside the queue config paths, or a deletion, is a refusal for the owner",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B3: card-contracts.mjs may only gain lines",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B4: config.json may only replace dispatch_scope with a new queue of appended, unlanded, contracted lanes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B5: every changed coordinator blob must be one a root-owned REVIEW_PASS claim recorded at an exact head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B6: a main that does not descend from the installed revision is refused for the owner",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B7: main at the installed revision, or with the installed queue, is a silent skip",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B8: a read that fails or checks not yet green skip with no claim; red checks are refused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B10: a held lock or a busy host skips and gives the claim back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B11: the pause file is read again before every step and stops the install there",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B12: any failed step writes the pause file with its reason and reports; R is never reinstalled",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B13: a verify or precondition failure rolls N back and pauses, and never reinstalls R",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B14: the child plan check must show the new queue, its first card next and no refused preparation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B15: the timer only ever creates the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M1 drop the path allowlist",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M2 install a deleted coordinator file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M3 drop the contracts deletions check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M4 let any config key change",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M5 drop the card_lanes prefix check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M6 drop the queue size bounds",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M7 accept a queued card that is not an appended lane",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M8 drop the landed check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M9 drop the added contract check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M10 drop the REVIEW_PASS blob binding",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M11 trust a review claim root did not write",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M12 drop the ancestry check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M13 install on red checks",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M14 install before the checks are green",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M15 claim a refusal without the exclusive flag",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M16 claim an install without the exclusive flag",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M17 install on a busy host",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M18 drop the pause recheck between steps",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M19 leave the host unpaused after a failure",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M20 reinstall R instead of rolling N back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M21 accept a plan whose next card is not the first",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M22 skip the plan check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M23 overwrite an existing pause file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M24 review after an install in the same start",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M25 install from a stopped queue",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation the unmutated suite passes",
       "capabilities": []
     },
     {

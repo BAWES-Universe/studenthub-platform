@@ -371,7 +371,7 @@ function passedTerminal(receipts, { card, repo, branch, activationId }) {
   return { terminal, lineage };
 }
 
-function github(fetchImpl, token) {
+export function github(fetchImpl, token) {
   return (method, url, body) => fetchImpl(url, {
     method,
     headers: {
@@ -419,20 +419,14 @@ function headMatches(pr, { repo, branch, head }) {
   return pr?.head?.sha === head && pr?.head?.ref === branch && pr?.head?.repo?.full_name === repo && pr?.base?.ref === "main";
 }
 
-// One read of the head's checks and the pull request's own state.
-async function checkState(gh, { repo, number, head, branch, settled, policy }) {
-  const [owner, name] = repo.split("/");
-  const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
-    gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
-    gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/status?per_page=100`),
-    gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`),
-    gh("POST", "https://api.github.com/graphql", { query: THREADS_QUERY, variables: { owner, name, number } }),
-  ]);
-  const [runs, status, pull, threads] = await Promise.all([runsResponse.json(), statusResponse.json(), pullResponse.json(), threadsResponse.json()]);
-  if (pullResponse.ok && pull && !headMatches(pull, { repo, branch, head })) return { moved: true, sha: pull?.head?.sha ?? null };
+// A commit's check runs and commit statuses, judged whole: unreadable or too
+// many to read in one page is not green, any completed run that is not green
+// or any failed status is red, nothing reported or anything still running is
+// not green yet.
+export function judgeChecks(runsResponse, runs, statusResponse, status) {
   const checkRuns = runs?.check_runs;
   const statuses = status?.statuses;
-  if (!runsResponse.ok || !statusResponse.ok || !pullResponse.ok || !Array.isArray(checkRuns) || !Array.isArray(statuses)
+  if (!runsResponse?.ok || !statusResponse?.ok || !Array.isArray(checkRuns) || !Array.isArray(statuses)
       || (runs.total_count ?? 0) > 100 || statuses.length >= 100) {
     return { green: false, note: "the checks could not be read in full" };
   }
@@ -444,6 +438,34 @@ async function checkState(gh, { repo, number, head, branch, settled, policy }) {
   const pending = checkRuns.some((run) => run?.status !== "completed") || statuses.some((item) => item?.state !== "success");
   if (checkRuns.length + statuses.length === 0) return { green: false, note: "no check has reported yet" };
   if (pending) return { green: false, note: "checks are still running" };
+  return { green: true };
+}
+
+// SHU-322: the same judgement of any commit, such as main's tip, read with
+// whatever token the caller's client carries.
+export async function readCommitChecks(gh, repo, sha) {
+  const [runsResponse, statusResponse] = await Promise.all([
+    gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100`),
+    gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/status?per_page=100`),
+  ]);
+  const [runs, status] = await Promise.all([runsResponse.json(), statusResponse.json()]);
+  return judgeChecks(runsResponse, runs, statusResponse, status);
+}
+
+// One read of the head's checks and the pull request's own state.
+async function checkState(gh, { repo, number, head, branch, settled, policy }) {
+  const [owner, name] = repo.split("/");
+  const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
+    gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
+    gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/status?per_page=100`),
+    gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`),
+    gh("POST", "https://api.github.com/graphql", { query: THREADS_QUERY, variables: { owner, name, number } }),
+  ]);
+  const [runs, status, pull, threads] = await Promise.all([runsResponse.json(), statusResponse.json(), pullResponse.json(), threadsResponse.json()]);
+  if (pullResponse.ok && pull && !headMatches(pull, { repo, branch, head })) return { moved: true, sha: pull?.head?.sha ?? null };
+  if (!pullResponse.ok) return { green: false, note: "the checks could not be read in full" };
+  const judged = judgeChecks(runsResponse, runs, statusResponse, status);
+  if (!judged.green) return judged;
   if (pull.mergeable !== true || pull.mergeable_state !== "clean") return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}` };
   // The SHU-259 consumer holds for good on any unresolved review thread, so a
   // thread (a review bot's included) keeps the run waiting before the handoff.

@@ -41,6 +41,11 @@
 // installed revision, lowest number first, one review per start. It reviews
 // only; merging and installing stay with people. A stopped, invalid or paused
 // queue never reviews, and a GitHub read that fails claims nothing.
+//
+// SHU-322: before that review, a QUEUE_DONE start installs the next card
+// queue itself when main commits one inside the autopilot boundary
+// (service/card-install.mjs): reviewed queue data only, never coordinator
+// code. It reports and exits; the next start runs the new queue's first card.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -50,6 +55,7 @@ import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } f
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
 import { landCard, readLandToken, boundedFetch, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { selfInstall } from "./card-install.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -550,7 +556,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // runs one; any other planning refusal waits for the next install.
     return skip("NOT_READY", error.message);
   }
-  if (done) return autoReview({ io, paths, limits, config, revision, done, skip });
+  if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
   const claim = autoClaim(paths, revision, plan.id);
   try {
     io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
@@ -729,8 +735,26 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   return { pull: null, capped };
 }
 
-// What a done queue's timer start does. One review at most per start; with no
-// candidate it is the plain QUEUE_DONE skip it always was.
+// SHU-322: what a done queue's timer start does. Card B first: when main
+// commits a new, reviewed card queue, the start installs it, reports and
+// exits, and the next start runs its first card. A refusal is claimed and
+// reported once. With nothing to install, or a read that failed, the start goes
+// on to the queue config review; a pause seen during the install never does.
+async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
+  let install;
+  try {
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons, landedByTimer } });
+  } catch (error) {
+    install = { skipped: "INSTALL_UNREADABLE", reason: error.message };
+  }
+  if (install.result) return install.result;
+  if (install.paused) return skip("PAUSED", install.reason);
+  const review = await autoReview({ io, paths, limits, config, revision, done, skip });
+  return install.skipped ? { ...review, install: { skipped: install.skipped, reason: install.reason } } : review;
+}
+
+// What a done queue's timer start does after Card B. One review at most per
+// start; with no candidate it is the plain QUEUE_DONE skip it always was.
 async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   let policy;
   try { policy = resolveQueueConfigReview(config); } catch (error) { return skip("NOT_READY", `CARD_RUN_CONFIG: ${error.message}`); }
@@ -920,7 +944,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
       const result = await autoRun({ io, paths });
-      return { code: result.skipped || (result.ok && result.revert?.reverted) ? 0 : 1, output: result };
+      return { code: result.skipped || (result.ok && (result.revert?.reverted || result.kind === "install")) ? 0 : 1, output: result };
     }
     // A queue keeps its order only through the timer's claims, so it is run by
     // the timer alone.

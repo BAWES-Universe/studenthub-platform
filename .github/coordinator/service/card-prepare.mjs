@@ -232,16 +232,24 @@ export const PUSH_TIMEOUT_SECONDS = 300;
 export const PUSH_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
 export const CARD_BASE_REF = "refs/heads/card-base";
 
-function inPushRepository(io, credentials, repo, checkout, work) {
-  if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) {
-    refuse("CARD_RUN_BRANCH_CREATE", `SHU_PUSH_REMOTE_URL is not the ${repo} remote`);
-  }
+// A command run as the coordinator user, in an empty environment but for its
+// home, a fixed PATH, no global or system git config, no prompts and the
+// broker's SSH route. SHU-322 runs its checkout merge through the same door.
+export function coordinatorRunner(io) {
   const account = io.exec("getent", ["passwd", COORDINATOR_USER]);
   const home = String(account.stdout ?? "").trim().split(":")[5] ?? "";
   if (account.status !== 0 || !home.startsWith("/")) refuse("CARD_RUN_BRANCH_CREATE", `the ${COORDINATOR_USER} home directory cannot be resolved`);
   const env = [`HOME=${home}`, `PATH=${GIT_PATH}`, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
     "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", `GIT_SSH_COMMAND=${PUSH_SSH_COMMAND}`];
   const asCoordinator = (args) => io.exec("runuser", ["-u", COORDINATOR_USER, "--", "env", "-i", ...env, ...args]);
+  return asCoordinator;
+}
+
+export function inPushRepository(io, credentials, repo, checkout, work) {
+  if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) {
+    refuse("CARD_RUN_BRANCH_CREATE", `SHU_PUSH_REMOTE_URL is not the ${repo} remote`);
+  }
+  const asCoordinator = coordinatorRunner(io);
   const made = asCoordinator(["mktemp", "-d", "/tmp/shu-card-push-XXXXXXXX"]);
   const dir = String(made.stdout ?? "").trim();
   if (made.status !== 0 || !/^\/tmp\/shu-card-push-[A-Za-z0-9]{8}$/.test(dir)) refuse("CARD_RUN_BRANCH_CREATE", `a push repository could not be made as ${COORDINATOR_USER}`);
@@ -261,14 +269,19 @@ function inPushRepository(io, credentials, repo, checkout, work) {
 const exitText = (status) => (status === 124 ? `timed out after ${PUSH_TIMEOUT_SECONDS}s` : `git exit ${status}`);
 
 // Main as the remote has it now, refused unless it descends from the revision.
-function mainTip(git, credentials, revision) {
+// SHU-322: a main that does not descend is a definite answer, not a failed
+// read, so that refusal carries the tip and says so.
+export function mainTip(git, credentials, revision) {
   const fetched = git(["fetch", "--no-tags", "--no-recurse-submodules", credentials.SHU_PUSH_REMOTE_URL, `refs/heads/main:${CARD_BASE_REF}`]);
   if (fetched.status !== 0) refuse("CARD_RUN_BASE", `main could not be fetched as ${COORDINATOR_USER} (${exitText(fetched.status)})`);
   const read = git(["rev-parse", "--verify", `${CARD_BASE_REF}^{commit}`]);
   const tip = String(read.stdout ?? "").trim();
   if (read.status !== 0 || !SHA_RE.test(tip)) refuse("CARD_RUN_BASE", "the fetched main cannot be read");
   const ancestor = git(["merge-base", "--is-ancestor", revision, tip]);
-  if (ancestor.status === 1) refuse("CARD_RUN_BASE", `main at ${tip} does not descend from the installed revision ${revision}`);
+  if (ancestor.status === 1) {
+    throw Object.assign(new Error(`CARD_RUN_BASE: main at ${tip} does not descend from the installed revision ${revision}`),
+      { code: "CARD_RUN_BASE", notDescendant: true, tip });
+  }
   if (ancestor.status !== 0) refuse("CARD_RUN_BASE", `main's ancestry cannot be checked (${exitText(ancestor.status)})`);
   return tip;
 }
@@ -426,11 +439,13 @@ function bounded(promise, timeoutMs) {
 export const REPORT_ATTEMPTS = 3;
 export const REPORT_RETRY_WAIT_MS = 15 * 1000;
 
-export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS }) {
+// SHU-322: the self-install reports through the same path with its own
+// renderer; the marker still comes from the result's activation_id.
+export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS, render = renderRunReport }) {
   try {
     if (!credentials?.LINEAR_API_TOKEN) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "no coordinator credentials" };
     const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);
-    const body = renderRunReport(result);
+    const body = render(result);
     const marker = reportMarker(result.activation_id);
     for (let attempt = 1; ; attempt += 1) {
       let posted;

@@ -185,6 +185,16 @@ still checked as for any review-only run. The timer arms it only once the queue
 is done, on one labelled queue config pull request at its exact head, with
 `codex-verifier` reviewing a Claude-written change (`service/card-run.mjs`).
 
+Once such a change is on `main`, a done queue's timer start may install it
+itself (SHU-322, `service/card-install.mjs`): only when every coordinator
+change since the installed revision is queue data (`config.json` with only
+`dispatch_scope` replaced and `card_lanes` appended, contract additions, the
+suite inventory, tests), every changed blob is one a `REVIEW_PASS` of the
+review lane above recorded at an exact head, and `main`'s checks are green.
+The install never arms a card itself: the next timer start reads the new
+revision's receipt, and every activation it arms is bound to that revision
+and checked here exactly as before. Coordinator code is never self-installed.
+
 ## One use is one *episode*, and the episode's end is derived, not assumed
 
 The approved run contract is build → exact-head BLOCK → return to the writer →
