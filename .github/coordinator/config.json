@@ -25,8 +25,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-315",
-      "SHU-316"
+      "SHU-317",
+      "SHU-318",
+      "SHU-319",
+      "SHU-320"
     ]
   },
   "adapter_pause_map": {},
@@ -510,6 +512,158 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/organization-notes-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-317",
+      "authorization_ref": "SHU-317",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the third committed card queue (SHU-312), a whole-tree card: slice F1 (staff or admin creates a pay contract through safe write); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/pay-contracts/src/contract-writes.ts",
+        "packages/pay-contracts/src/contracts.ts",
+        "packages/pay-contracts/src/index.ts",
+        "packages/pay-contracts/test/contract-writes.test.ts",
+        "packages/pay-contracts/test/contract-writes-mutations.mjs",
+        "packages/db/migrations/0195_pay_contract_create_safe_write.sql",
+        "packages/db/src/postgres-pay-contract-store.ts",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-pay-contract-safe-write.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/pay-contracts-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/pay-contracts/src/contract-writes.ts",
+        "packages/pay-contracts/src/contracts.ts",
+        "packages/pay-contracts/src/index.ts",
+        "packages/pay-contracts/test/contract-writes.test.ts",
+        "packages/pay-contracts/test/contract-writes-mutations.mjs",
+        "packages/db/migrations/0195_pay_contract_create_safe_write.sql",
+        "packages/db/src/postgres-pay-contract-store.ts",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-pay-contract-safe-write.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/pay-contracts-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-318",
+      "authorization_ref": "SHU-318",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the third committed card queue (SHU-312), a whole-tree card: slice F1 (staff or admin updates or ends a pay contract through safe write); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/pay-contracts/src/contract-changes.ts",
+        "packages/pay-contracts/src/contracts.ts",
+        "packages/pay-contracts/src/index.ts",
+        "packages/pay-contracts/test/contract-changes.test.ts",
+        "packages/pay-contracts/test/contract-changes-mutations.mjs",
+        "packages/db/migrations/0196_pay_contract_change_safe_write.sql",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/test/postgres-pay-contract-change.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/pay-contracts-change-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/pay-contracts/src/contract-changes.ts",
+        "packages/pay-contracts/src/contracts.ts",
+        "packages/pay-contracts/src/index.ts",
+        "packages/pay-contracts/test/contract-changes.test.ts",
+        "packages/pay-contracts/test/contract-changes-mutations.mjs",
+        "packages/db/migrations/0196_pay_contract_change_safe_write.sql",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/test/postgres-pay-contract-change.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/pay-contracts-change-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-319",
+      "authorization_ref": "SHU-319",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "third card of the third committed card queue (SHU-312), a whole-tree card: slice F1 (company members and staff read pay contracts, read only); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/pay-contracts/src/contract-reads.ts",
+        "packages/pay-contracts/src/index.ts",
+        "packages/pay-contracts/test/contract-reads.test.ts",
+        "packages/pay-contracts/test/contract-reads-mutations.mjs",
+        "packages/db/src/postgres-pay-contract-store.ts",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/test/postgres-pay-contract-reads.test.ts",
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/pay-contracts-read-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/pay-contracts/src/contract-reads.ts",
+        "packages/pay-contracts/src/index.ts",
+        "packages/pay-contracts/test/contract-reads.test.ts",
+        "packages/pay-contracts/test/contract-reads-mutations.mjs",
+        "packages/db/src/postgres-pay-contract-store.ts",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/test/postgres-pay-contract-reads.test.ts",
+        "apps/gateway/src/pay-contracts-http.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/pay-contracts-read-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-320",
+      "authorization_ref": "SHU-320",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "fourth card of the third committed card queue (SHU-312), a whole-tree card: slice O8 (admin records a bank's SWIFT, IBAN bank code, ABK code and transfer type); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/reference-catalogue/src/bank-payment-details.ts",
+        "packages/reference-catalogue/src/types.ts",
+        "packages/reference-catalogue/src/catalogue.ts",
+        "packages/reference-catalogue/src/memory-store.ts",
+        "packages/reference-catalogue/src/index.ts",
+        "packages/reference-catalogue/test/bank-payment-details.test.ts",
+        "packages/reference-catalogue/test/bank-payment-details-mutations.mjs",
+        "packages/db/migrations/0197_catalogue_bank_payment_details.sql",
+        "packages/db/src/postgres-catalogue-store.ts",
+        "packages/db/test/postgres-catalogue-bank-payment-details.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/catalogue-http.ts",
+        "apps/gateway/test/catalogue-bank-payment-details-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/reference-catalogue/src/bank-payment-details.ts",
+        "packages/reference-catalogue/src/types.ts",
+        "packages/reference-catalogue/src/catalogue.ts",
+        "packages/reference-catalogue/src/memory-store.ts",
+        "packages/reference-catalogue/src/index.ts",
+        "packages/reference-catalogue/test/bank-payment-details.test.ts",
+        "packages/reference-catalogue/test/bank-payment-details-mutations.mjs",
+        "packages/db/migrations/0197_catalogue_bank_payment_details.sql",
+        "packages/db/src/postgres-catalogue-store.ts",
+        "packages/db/test/postgres-catalogue-bank-payment-details.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/catalogue-http.ts",
+        "apps/gateway/test/catalogue-bank-payment-details-http.test.ts",
         "package.json"
       ]
     }
