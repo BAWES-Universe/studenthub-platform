@@ -783,7 +783,10 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   let claimError = null;
   try {
     io.fs.writeFileSync(claim, claimText({ activation_id: result.activation_id, outcome: result.outcome }), { mode: 0o600 });
-  } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
+  } catch (error) {
+    // The claim written before the run already stops a second review of this head.
+    claimError = error.code ?? "CLAIM_WRITE_FAILED";
+  }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
 }
 
@@ -793,7 +796,8 @@ async function notStarted({ io, paths, limits, error, result }) {
     code: error.code ?? "CARD_RUN_ERROR", ticks: [], revert: null };
   let credentials = null;
   try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
-  return { ...summary, report: await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs }) };
+  const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });
+  return { ...summary, report };
 }
 
 // Puts the timer on the host: the owner's one go. It never replaces units with
