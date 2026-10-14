@@ -55,7 +55,14 @@ export function payContractCreateCheck(input: {
 }
 export const acceptAnyPayContractCreateValue: PayContractCreateCheck = async () => true;
 
-export function buildPayContractCreateWrite(input: { store: SafeWriteStore; secret: SafeWriteSecret; check: PayContractCreateCheck; companyId: string; policy?: FieldPolicy; clock?: SafeWriteClock; tokenLifetimeMs?: number }): SafeWriteImplementation {
+/** A pay contract safe-write store that can also say whether a confirm token
+ * was already committed, so a repeated confirm is answered token_already_used
+ * before the domain check sees the contract that token created as a clash. */
+export interface PayContractSafeWriteStore extends SafeWriteStore {
+  tokenUsed?(tokenId: string): Promise<boolean>;
+}
+
+export function buildPayContractCreateWrite(input: { store: PayContractSafeWriteStore; secret: SafeWriteSecret; check: PayContractCreateCheck; companyId: string; policy?: FieldPolicy; clock?: SafeWriteClock; tokenLifetimeMs?: number }): SafeWriteImplementation {
   const implementation = createSafeWrite({ store: input.store, secret: input.secret, policy: input.policy ?? PAY_CONTRACT_CREATE_POLICY,
     ...(input.clock ? { clock: input.clock } : {}), ...(input.tokenLifetimeMs === undefined ? {} : { tokenLifetimeMs: input.tokenLifetimeMs }) });
   const checked = async (request: PreviewRequest | ConfirmRequest) => {
@@ -69,7 +76,11 @@ export function buildPayContractCreateWrite(input: { store: SafeWriteStore; secr
   };
   return {
     preview: async (request) => { const verdict=await checked(request);return verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.preview(request); },
-    confirm: async (request) => { const verdict=await checked(request);return verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.confirm(request); },
+    confirm: async (request) => {
+      // A spent token goes straight to the contract, which verifies it and answers token_already_used.
+      if (input.store.tokenUsed && typeof request.token?.tokenId === "string" && await input.store.tokenUsed(request.token.tokenId)) return implementation.confirm(request);
+      const verdict=await checked(request);return verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.confirm(request);
+    },
   };
 }
 
