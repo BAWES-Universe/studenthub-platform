@@ -149,11 +149,12 @@ export function selfInstallGate(facts) {
 
   const passes = Array.isArray(facts.passes) ? facts.passes : [];
   for (const change of changes) {
-    const blob = facts.blobs?.[change.path];
-    if (!SHA_RE.test(blob ?? "")) return no(`${change.path} has no readable blob at main`);
-    const pass = passes.find((entry) => entry?.files?.[change.path]?.sha === blob);
-    if (!pass) return no(`${change.path} at main (blob ${blob}) is not the blob a REVIEW_PASS claim recorded at an exact pull request head`);
+    if (!SHA_RE.test(facts.blobs?.[change.path] ?? "")) return no(`${change.path} has no readable blob at main`);
   }
+  // One review covers the whole change: blobs passed in different pull
+  // requests were never reviewed together.
+  const review = passes.find((entry) => changes.every((change) => entry?.files?.[change.path]?.sha === facts.blobs[change.path]));
+  if (!review) return no(`the coordinator changes at main are not the blobs one REVIEW_PASS claim recorded at an exact pull request head`);
 
   const checks = facts.checks;
   if (Array.isArray(checks?.red) && checks.red.length) return no(`main's checks at ${main} are red: ${checks.red.join(", ")}`);

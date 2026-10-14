@@ -342,8 +342,15 @@ test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue o
 test("SHU-322 B5: every changed coordinator blob must be one a root-owned REVIEW_PASS claim recorded at an exact head", async () => {
   const unbound = selfInstallGate(facts((f) => ({ ...f, blobs: { ...f.blobs, [TEST_PATH]: "5".repeat(40) } })));
   assert.ok(refused(unbound));
-  assert.match(unbound.reason, /is not the blob a REVIEW_PASS claim recorded/);
+  assert.match(unbound.reason, /are not the blobs one REVIEW_PASS claim recorded/);
   assert.ok(refused(selfInstallGate(facts((f) => ({ ...f, passes: [] })))));
+  // Each blob passed, but in two different pull requests: not one review.
+  const split = selfInstallGate(facts((f) => {
+    const [first, ...rest] = Object.keys(f.passes[0].files);
+    const pick = (keys) => Object.fromEntries(keys.map((key) => [key, f.passes[0].files[key]]));
+    return { ...f, passes: [{ pr: 300, head: PR_HEAD, files: pick([first]) }, { pr: 301, head: "e".repeat(40), files: pick(rest) }] };
+  }));
+  assert.ok(refused(split), "blobs passed in separate pull requests are not one review");
   const read = (edit) => {
     const host = fakeHost();
     edit(host);
@@ -587,7 +594,8 @@ test("SHU-322 B16: a done queue's timer start runs Card B first, then the review
   assert.equal(paused.github.some((entry) => entry.startsWith("pulls")), false);
   // A stopped queue never reaches Card B.
   const stopped = fakeHost();
-  stopped.put(autoClaim(PATHS, R, "SHU-316"), JSON.stringify({ card: "SHU-316", revision: R, outcome: "STOPPED", ok: false, land: null }));
+  const last = COMMITTED.dispatch_scope.issue_ids.at(-1);
+  stopped.put(autoClaim(PATHS, R, last), JSON.stringify({ card: last, revision: R, outcome: "STOPPED", ok: false, land: null }));
   const halted = await autoRun(io(stopped));
   assert.equal(halted.skipped, "QUEUE_STOPPED");
   assert.equal(stopped.calls.some((call) => call.startsWith("runuser")), false, "main is never read");

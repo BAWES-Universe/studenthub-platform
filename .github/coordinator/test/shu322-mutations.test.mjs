@@ -69,8 +69,8 @@ const CASES = [
   },
   {
     name: "M10 drop the REVIEW_PASS blob binding",
-    from: "    if (!pass) return no(",
-    to: "    if (false) /* SHU322-M10 */ return no(",
+    from: "  if (!review) return no(",
+    to: "  if (false) /* SHU322-M10 */ return no(",
     pattern: "SHU-322 B5:",
   },
   {
