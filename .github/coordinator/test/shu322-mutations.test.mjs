@@ -123,8 +123,8 @@ const CASES = [
   },
   {
     name: "M19 leave the host unpaused after a failure",
-    from: "        ...(outcome === \"INSTALL_PAUSED\" ? {} : { pause: pauseHost(io, paths, `${main} ${reason}`) }) };",
-    to: "        /* SHU322-M19 */ };",
+    from: "      const pause = outcome === \"INSTALL_PAUSED\" ? null : pauseHost(io, paths, `${main} ${reason}`);",
+    to: "      const pause = null; // SHU322-M19",
     pattern: "SHU-322 B12:",
   },
   {
@@ -165,6 +165,18 @@ const CASES = [
     to: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next; // SHU322-M25',
     pattern: "SHU-322 B16:",
   },
+  {
+    name: "M26 release the lock when the pause could not be written",
+    from: "      if (pause && !pause.held) keepLock = true;",
+    to: "      // SHU322-M26",
+    pattern: "SHU-322 B18:",
+  },
+  {
+    name: "M27 count anything at the pause path as a pause",
+    from: "held = stat.isFile() && !stat.isSymbolicLink();",
+    to: "held = true; /* SHU322-M27 */",
+    pattern: "SHU-322 B18:",
+  },
 ];
 
 for (const mutation of CASES) {
@@ -201,5 +213,5 @@ test("SHU-322 mutation the unmutated suite passes", () => {
   const run = spawnSync(process.execPath, ["--test", "--test-name-pattern=SHU-322 B", path.join(HERE, "shu322-card-install.test.mjs")],
     { cwd: COORDINATOR, env: childEnv, encoding: "utf8", timeout: 60_000 });
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, /^# pass 17$/m);
+  assert.match(run.stdout, /^# pass 18$/m);
 });

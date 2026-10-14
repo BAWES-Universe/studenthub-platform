@@ -287,13 +287,21 @@ function planCheck(io, paths, queue) {
   if (refused) throw new Error(`a dry-run preparation is refused: ${plainReason(refused.prepare?.reason ?? refused.prepare?.refused ?? "no preparation")}`);
 }
 
-// The pause file, created only: if it exists its text stays.
+// The pause file, created only: if it exists its text stays. After a failed
+// install it is what stops the next timer start, so it counts as in place only
+// when it was written now or a plain pause file was already there; otherwise
+// the caller keeps the card-run lock instead.
 function pauseHost(io, paths, reason) {
   try {
     io.fs.writeFileSync(paths.pause, `card-install: ${plainReason(reason)}\n`, { flag: "wx", mode: 0o644 });
-    return { written: true };
+    return { written: true, held: true };
   } catch (error) {
-    return { written: false, code: error.code ?? "PAUSE_WRITE_FAILED" };
+    const code = error.code ?? "PAUSE_WRITE_FAILED";
+    let held = false;
+    if (code === "EEXIST") {
+      try { const stat = io.fs.lstatSync(paths.pause); held = stat.isFile() && !stat.isSymbolicLink(); } catch { held = false; }
+    }
+    return { written: false, held, code };
   }
 }
 
@@ -316,7 +324,9 @@ export function renderInstallReport(result) {
   if (result.failed_step) lines.push(`Stopped at: ${result.failed_step}.`);
   if (result.rollback) lines.push(result.rollback.ok ? `Rolled back the prerequisites of ${result.main}; ${result.revision} was not reinstalled.`
     : `The rollback of ${result.main} failed: ${plainReason(result.rollback.reason)}`);
-  if (result.pause) lines.push(result.pause.written ? "Wrote /etc/shu/card-run.paused; the owner removes it." : `The pause file was not written (${result.pause.code}); it may already exist.`);
+  if (result.pause) lines.push(result.pause.written ? "Wrote /etc/shu/card-run.paused; the owner removes it."
+    : result.pause.held ? `The pause file was not written (${result.pause.code}); a pause file is already in place.`
+      : `The pause file could not be written (${result.pause.code}), so the card-run lock is kept: every timer start skips until the owner recovers the host and removes the lock.`);
   if (result.outcome === "NEEDS_OWNER") lines.push("Nothing on the host changed.");
   return lines.join("\n");
 }
@@ -384,6 +394,9 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
   const paused = () => io.fs.existsSync(paths.pause);
   let outcome = null;
   let result;
+  // A failed install whose pause could not be put in place keeps the lock,
+  // so the next timer start cannot run on a half-installed host.
+  let keepLock = false;
   try {
     // Nothing on the host has changed until the merge, so a pause or a busy
     // host before it gives N back for a later start.
@@ -430,12 +443,15 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
       result = { ...base, ok: true, outcome: "INSTALLED", queue, steps: [...steps], reason: `the next timer start runs ${queue[0]}` };
     } catch (error) {
       const reason = `${failedStep ?? "a step"}: ${error.message}`;
+      const pause = outcome === "INSTALL_PAUSED" ? null : pauseHost(io, paths, `${main} ${reason}`);
+      if (pause && !pause.held) keepLock = true;
       result = { ...base, outcome: outcome ?? "INSTALL_FAILED", queue, steps: [...steps], failed_step: failedStep, reason,
         ...(rollback ? { rollback } : {}),
-        ...(outcome === "INSTALL_PAUSED" ? {} : { pause: pauseHost(io, paths, `${main} ${reason}`) }) };
+        ...(pause ? { pause } : {}),
+        ...(keepLock ? { lock_kept: true } : {}) };
     }
   } finally {
-    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
+    if (!keepLock) { try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ } }
   }
   let claimError = null;
   try {

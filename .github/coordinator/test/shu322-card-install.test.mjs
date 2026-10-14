@@ -616,3 +616,50 @@ test("SHU-322 B17: the report and claim name main, the installed revision, the q
   assert.match(text, /Steps done: claim, idle, merge, rollback, install, verify, precondition, plan\./);
   assert.match(text, /the next timer start runs SHU-401/);
 });
+
+test("SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip", async () => {
+  const io = (host) => ({ io: host.io, paths: PATHS });
+  const failures = [
+    ["merge", (h) => h.failGit.add("merge")],
+    ["rollback of R", (h) => { h.provisionFails[`rollback ${R}`] = true; }],
+    ["install of N", (h) => { h.provisionFails[`install ${N}`] = true; }],
+    ["verify of N", (h) => { h.provisionFails[`verify ${N}`] = true; }],
+    ["precondition of N", (h) => { h.provisionFails[`precondition ${N}`] = true; }],
+    ["plan check", (h) => { h.plan = null; h.planStatus = 2; }],
+  ];
+  for (const [what, edit] of failures) {
+    const host = fakeHost();
+    edit(host);
+    const write = host.fs.writeFileSync;
+    host.fs.writeFileSync = (file, text, options) => {
+      if (file === PATHS.pause) throw Object.assign(new Error(`EIO ${file}`), { code: "EIO" });
+      return write(file, text, options);
+    };
+    const out = await install(host);
+    assert.equal(out.result?.outcome, "INSTALL_FAILED", what);
+    assert.deepEqual(out.result?.pause, { written: false, held: false, code: "EIO" }, what);
+    assert.equal(out.result?.lock_kept, true, what);
+    assert.equal(host.files.has(PATHS.pause), false, what);
+    assert.equal(host.files.has(PATHS.lock), true, `${what}: the card-run lock is kept`);
+    assert.match(renderInstallReport(out.result), /the card-run lock is kept/, what);
+    const next = await autoRun(io(host));
+    assert.equal(next.skipped, "LOCKED", `${what}: the next timer start cannot proceed`);
+  }
+  // Something other than a plain file at the pause path is not a pause.
+  const odd = fakeHost();
+  odd.provisionFails[`install ${N}`] = true;
+  odd.onStep = (h, name) => { if (name === `install ${N}`) h.put(PATHS.pause, "link\n"); };
+  const lstat = odd.fs.lstatSync;
+  odd.fs.lstatSync = (file) => (file === PATHS.pause ? { ...lstat(file), isSymbolicLink: () => true } : lstat(file));
+  const out = await install(odd);
+  assert.equal(out.result?.pause.held, false);
+  assert.equal(odd.files.has(PATHS.lock), true, "a symlink at the pause path keeps the lock");
+  // A plain pause file already in place releases the lock as before.
+  const plain = fakeHost();
+  plain.provisionFails[`install ${N}`] = true;
+  plain.onStep = (h, name) => { if (name === `install ${N}`) h.put(PATHS.pause, "earlier\n"); };
+  const held = await install(plain);
+  assert.deepEqual(held.result?.pause, { written: false, held: true, code: "EEXIST" });
+  assert.equal(held.result?.lock_kept, undefined);
+  assert.equal(plain.files.has(PATHS.lock), false);
+});
