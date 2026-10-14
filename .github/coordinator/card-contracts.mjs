@@ -968,6 +968,410 @@ Out of scope: notes on contacts, candidates, requests or any other subject (the 
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-317 is the create half of FI-01 (slice F1): staff or an admin records a
+// pay contract through the safe-write contract. A contract is many fields that
+// must land together, so it is ONE contract field whose value is the canonical
+// JSON of the whole contract, as SHU-182's bank details are one field for
+// bank, IBAN and beneficiary name. A create has no prior value, so the preview
+// shows before = null, as SHU-316's note append does.
+export const SHU317_PATHS = Object.freeze([
+  "packages/pay-contracts/src/contract-writes.ts",
+  "packages/pay-contracts/src/contracts.ts",
+  "packages/pay-contracts/src/index.ts",
+  "packages/pay-contracts/test/contract-writes.test.ts",
+  "packages/pay-contracts/test/contract-writes-mutations.mjs",
+  "packages/db/migrations/0195_pay_contract_create_safe_write.sql",
+  "packages/db/src/postgres-pay-contract-store.ts",
+  "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-pay-contract-safe-write.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/pay-contracts-http.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/pay-contracts-http.test.ts",
+  "package.json",
+]);
+
+const SHU317_ACCEPTANCE = [
+  "(1) a pay contract is created only through preview, confirm and receipt on the existing safe-write contract, as one field \"pay_contract\" whose value is the canonical JSON of the whole contract (preview before null); a value that is not the canonical encoding of a contract PayContracts accepts, names an inactive or unknown currency, or names a candidate without a candidate grant is refused with invalid_value at preview and at confirm by an exported check the builder runs, and runSafeWriteConformance runs over the create write's own builder, so making that check accept anything makes the \"SHU-317/AC-01 conformance\" test fail;",
+  "(2) only a staff or admin grant that covers the contract's company (on the company itself, or a subtree grant on an ancestor such as the operator organization) may create; an org-owner, recruiter, finance, candidate or any other grant gets not_found, never 403; an operator organization itself is never a target; the decision is one exported function the Postgres store calls inside its commit transaction, and accepting any role there makes the \"SHU-317/AC-02 employer-write-refused\" test fail;",
+  "(3) the company a contract binds is the organization the request names: a value whose companyId differs from the request's orgId is refused with invalid_value at preview and at confirm, and the store's commit throws on a mismatch; dropping that comparison from the check makes the \"SHU-317/AC-03 company-bound\" test fail;",
+  "(4) the check refuses at preview a contract whose period overlaps a non-deleted contract of the same candidate at the same store, reading the candidate's contracts through a port, so a person never approves a contract that cannot be stored; dropping the overlap test from the check makes the \"SHU-317/AC-04 overlap-refused-at-preview\" test fail;",
+  "(5) inside the commit the contract is created by PayContracts.create itself, on the commit's own transaction, so its overlap invariant still holds under a race: a clashing contract stored between preview and confirm makes the confirm answer state_changed and leaves no second contract; letting the exported creator rethrow overlapping_contract instead of answering state_changed makes the \"SHU-317/AC-05 racing-overlap-state-changed\" test fail;",
+  "(6) each create commits in one transaction the contract, PayContracts' own pay_contract.create audit row (pay model and contract counts) and a receipt row under the new operation pay_contract.create.safe_write with organizationAuditRef(companyId) and fields [\"pay_contract\"]; no audit row and no receipt contains an amount, a rate, the transfer cost, the raw company id or the raw candidate id; a repeated or racing confirm of one token returns token_already_used and creates one contract; migration 0195 only widens the audit constraints and authorization_audit_summary_valid from 0194's definitions (the latest on main), still accepting every existing row and every operation earlier migrations added; \"0195_pay_contract_create_safe_write\" follows \"0194_organization_notes\" in both schema_migrations lists;",
+  "(7) packages/pay-contracts/test/contract-writes-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:pay-contract-writes:mutations chained into test right after test:organization-notes:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU317_BRIEF = `Card SHU-317: staff or admin creates a pay contract through safe write (slice F1, the create half of FI-01).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-315 (migration 0193, the approved-to-hire write) and SHU-316 (migration 0194, organization notes). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/finance-contracts-and-payroll.md: section 2 (the contract and its three pay models), row FI-01 in section 6, slice F1 in section 10, and decision D-FI1 in section 11. D-FI1 (when the platform takes over money movement) is still open; it governs when money moves, not whether a contract can be recorded, and this card moves no money.
+- packages/pay-contracts/src/contracts.ts (PayContracts.create, normalizeEditable, overlaps, assertNoOverlap, PayContractError), types.ts (PayContract, ContractTerms, PayContractStore, PayContractTransaction, FinanceReferenceResolver) and memory-store.ts (InMemoryPayContractStore, InMemoryFinanceReferenceResolver). This card does not change the contract rules; it puts the existing service behind a safe write.
+- packages/pay-contracts/src/bank-write.ts: SHU-182's multi-field safe write. Bank, IBAN and beneficiary name are ONE field whose value is canonical JSON, checked by an async check (catalogueBankDetailsCheck) at preview and again at confirm, and only the canonical encoding of normalized details is a storable value (parseBankDetailsValue). This card copies that mapping.
+- packages/db/src/postgres-pay-contract-store.ts: PostgresPayContractStore, transactionFor (the per-client PayContractTransaction, whose lockPair takes the candidate-and-store advisory lock) and PostgresFinanceReferenceResolver. packages/db/src/postgres-bank-details-store.ts (#isCandidate) and packages/db/migrations/0182_pay_contracts.sql.
+- The organization safe writes this card copies for authorization, receipts and HTTP: packages/organizations/src/organization-notes.ts (SHU-316, the append with before null) and commercial-terms-writes.ts (organizationCommercialTermsDecision), packages/db/src/postgres-organization-commercial-terms-store.ts (forPrincipal, readReceipt, #grants, #ancestors, #commit), packages/db/migrations/0194_organization_notes.sql, apps/gateway/src/organization-commercial-terms.ts and its HTTP test, and the wiring in apps/gateway/src/login-runtime.ts and apps/gateway/src/index.ts.
+
+Goal. Staff or an admin covering a company can record a pay contract for it through the safe-write path: preview, then confirm, then a receipt. The contract is stored by the existing PayContracts service, so every rule SHU-182 enforces (the three pay models, exact decimals, the company amount covering the candidate amount, the active-currency rule, the no-overlap invariant per candidate and store, the audit row) holds unchanged. Nothing is paid, generated or sent.
+
+Contract mapping (decided; do not reopen):
+- One field, "pay_contract". Its value is the canonical JSON of the normalized create input: the keys autoGenerate, candidateId, companyId, currencyId, endDate (omitted when the contract is open-ended), startDate, status, storeId, terms and transferCost, in that alphabetical order, and terms with its own keys in alphabetical order (for example candidateHourlyRate, companyHourlyRate, payModel). Money values are canonicalDecimal's three-place form, currencyId is lower case, autoGenerate is a boolean, status is "active" or "inactive", and the whole is JSON.stringify output with no whitespace. The policy is { allowed: ["pay_contract"], maxValueLength: 1024 }.
+- The record is the company: personRef is payContractCompanyRecordRef(companyId). readField returns null for "pay_contract" (a create has no prior value), so the preview shows before null and after the value, and the commit refuses with state_changed if expectedBefore is not null.
+- The single-use token, checked inside the commit and backed by a unique index, makes a repeated or racing confirm return token_already_used and create one contract.
+- The confirm's response is the receipt only. The new contract is found by reading (SHU-319); do not widen the receipt.
+
+Design:
+- packages/pay-contracts/src/contracts.ts changes only in two ways: add \`export\` to the existing overlaps function, and add one exported function normalizePayContractCreate(input: unknown) (with an exported NormalizedPayContractCreate type) that does exactly what create() does today before its currency check (closedObject over FIELDS, the three party ids, normalizeEditable) and returns the normalized fields; create() calls it in place of those lines. Behaviour, error codes and every existing test stay the same.
+- packages/pay-contracts/src/contract-writes.ts (new) exports:
+  - PAY_CONTRACT_CREATE_FIELD ("pay_contract") and PAY_CONTRACT_CREATE_POLICY;
+  - payContractCreateValue(normalized): the canonical string above;
+  - payContractCompanyRecordRef(companyId) and payContractPrincipalRef(principalId), sha256 refs in the "studenthub:<domain>:v1\\0" form bank-write.ts uses, with the domains "pay-contract-company-record" and "pay-contract-principal";
+  - PayContractGrantRow ({ org_id, role, scope }) and payContractWriteDecision(rows, companyId, ancestors, operators): true only when operators does not include companyId and a grant with role staff or admin is on companyId itself or is a subtree grant on one of its ancestors. operators is a required parameter: this package cannot import packages/organizations (it builds first and does not depend on it), so login-runtime.ts passes DEFAULT_OPERATOR_ORG_IDS from @studenthub/organizations;
+  - payContractCreateCheck({ references, contracts, candidates }) returning (companyId, value) => Promise<boolean>. It parses the value, runs normalizePayContractCreate, and accepts only when payContractCreateValue of the result equals the value exactly, the result's companyId equals companyId, references.resolve("currency", currencyId) is active (a resolver that throws makes the request fail, not answer invalid_value, as catalogueBankDetailsCheck does), candidates.isCandidate(candidateId) is true, and no contract from contracts.listForCandidate(candidateId) with the same storeId and a status other than "deleted" overlaps the new period (use the exported overlaps). Any PayContractError with status 400 from normalization is a false, never a throw;
+  - acceptAnyPayContractCreateValue, for the conformance run;
+  - buildPayContractCreateWrite({ store, secret, check, companyId, policy?, clock?, tokenLifetimeMs? }): wraps createSafeWrite as buildBankDetailsWrite does and calls check(companyId, value) at preview and at confirm, answering invalid_value when it is false;
+  - payContractCreator(references) returning (store: PayContractStore, actorId, companyId, value) => Promise<{ ok: true } | { ok: false; reason: "state_changed" }>: it parses the value, throws a TypeError when its companyId differs from companyId, calls new PayContracts(store, references).create(actorId, parsed), and answers state_changed when that throws a PayContractError whose code is "overlapping_contract" or whose status is 400 (the currency was retired between confirm's check and the commit); anything else propagates.
+- packages/db/src/postgres-pay-contract-store.ts: only add \`export\` to transactionFor. Do not export it from packages/db/src/index.ts.
+- packages/db/src/postgres-pay-contract-safe-write-store.ts (new), PostgresPayContractSafeWriteStore, modelled on the commercial-terms store. Its constructor takes the pool or connection string, decision ((rows, companyId, ancestors) => boolean), creator (the shape payContractCreator returns), recordRef and principalRef. Methods:
+  - forCompany(principalId, companyId): a SafeWriteStore whose ownedRecord checks the caller's grants and the company's ancestry against the decision, whose readField returns null for "pay_contract", and whose commit runs #commit when the principal and record match (otherwise not_own_record);
+  - readReceipt(principalId, companyId, receiptRef), as the commercial-terms store's, for the new operation and fields ["pay_contract"];
+  - isCandidate(principalId): true when the principal holds a grant with role candidate (the query #isCandidate in the bank-details store runs);
+  - #commit: BEGIN; pg_advisory_xact_lock(hashtextextended($1,317)) on the company id; the caller's grants FOR SHARE and the company's ancestry; the decision (refused: not_own_record); the token reference in the audit table for pay_contract.create.safe_write (found: token_already_used); expectedBefore must be null (else state_changed); then call the creator with a PayContractStore bound to this client (get and listForCandidate query on the client, and transaction(work) runs work(transactionFor(client)) with no BEGIN or COMMIT of its own, because #commit owns them); a refusal from the creator rolls back and returns it; then insert the receipt row (request_ref the receiptRef, actor_principal_ref and target_principal_ref the input's principalRef, target_org_refs [organizationAuditRef(companyId)], before_summary { valuePresent: false }, after_summary the receipt shape with fields ["pay_contract"] and the tokenRef); COMMIT. 23505 becomes token_already_used.
+- Migration 0195_pay_contract_create_safe_write.sql adds no table.
+- HTTP (apps/gateway/src/pay-contracts-http.ts, new): POST /pay-contracts/create/preview and /pay-contracts/create/confirm take exactly orgId, field ("pay_contract") and value (a string of at most 1024 characters), plus token on confirm; GET /pay-contracts/create/{orgId}/receipts/{receiptRef} reads a receipt. The gateway does not parse the value; the builder's check judges it. Body limit 8192 bytes. Export createPayContracts(ports) and handlePayContracts(req, res, service, origin); later cards add routes to this module.
+- Live wiring (login-runtime.ts): construct PostgresPayContractStore, a PostgresFinanceReferenceResolver for pay contracts and PostgresPayContractSafeWriteStore from DATABASE_URL whether or not the safe-write key is set (as the commercial-terms store is), with decision (rows, org, ancestors) => payContractWriteDecision(rows, org, ancestors, DEFAULT_OPERATOR_ORG_IDS) and creator payContractCreator(that resolver); close all three with the others; construct the write service, with check payContractCreateCheck({ references: that resolver, contracts: the PostgresPayContractStore, candidates: the safe-write store }), only when the key is set. Mount handlePayContracts in apps/gateway/src/index.ts right after SHU-316's organization-notes route.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs. Keep the check, the decision and the creator as exported functions in contract-writes.ts; the decision and the creator reach the Postgres store through its constructor (login-runtime.ts wires them in), and the gateway builds the check from payContractCreateCheck. packages/db must not import packages/organizations and must not import contract-writes' functions directly; dependencies stay unchanged. The grants query selects the caller's grant rows without filtering by role or organization, and the ancestry query reads the organization chain.
+- One transaction: the contract, PayContracts' pay_contract.create row and the receipt row commit or roll back together. Do not call PayContracts on the pool or through PostgresPayContractStore.transaction inside #commit; that opens a second transaction.
+- Audit and receipts carry no money. The pay_contract.create row keeps its existing closed shape ({ payModel, contractCount }); the receipt row carries the field name only. The Postgres test asserts JSON.stringify of both rows contains none of the test's rates, totals or transfer cost and neither the raw company id nor the raw candidate id.
+- Migration 0195: start from 0194's text (SHU-316's migration, the latest definitions on main; read the file on your branch, never an older copy) and add pay_contract.create.safe_write wherever organization.note.safe_write appears: the operation check, the target_org_refs cardinality > 0 branch, the safe-write halves check, and the safe-write branch of authorization_audit_summary_valid with fields equal to ["pay_contract"]. Keep every operation 0194 admits, including organization.approved_to_hire.safe_write and organization.note.safe_write, and the pay_contract.create/update/remove branch unchanged. Add unique indexes on its token and its receipt, as 0192 to 0194 do. Drop nothing else.
+- Conformance: run runSafeWriteConformance over buildPayContractCreateWrite with acceptAnyPayContractCreateValue (the suite uses its own field and values).
+- Mutation script: copy packages/pay-contracts/test/mutations.mjs's form: mutate the root build dist/packages/pay-contracts/src/contract-writes.js, run the suite dist/packages/pay-contracts/test/contract-writes.test.js with --test-reporter=tap and --test-name-pattern=^<name> (a "^" prefix and a trailing space, not "$"), and require "not ok", the named test and an AssertionError. The test file imports from "../src/index.js". Name each test "SHU-317/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors. npm test runs every existing mutation script and each requires its anchor to bind exactly once. Keep each of these exactly once, and change your code's shape, never their scripts:
+  - packages/pay-contracts/test/mutations.mjs anchors dist/packages/pay-contracts/src/contracts.js on \`c.status !== "deleted" && c.id !== candidate.id && overlaps(c, candidate)\` (assertNoOverlap: leave it as it is; your normalizePayContractCreate must not repeat it), memory-store.js on \`if (rows.has(contract.id))\`, bank-write.js on \`await checked(request) ? implementation.preview(request)\`, \`await checked(request) ? implementation.confirm(request)\`, \`return bankDetailsValue(details) === value ? Object.freeze(details) : undefined;\` and \`rows.some((row) => row.role === "candidate")\`, resolution.js and bank.js lines, and apps/gateway/src/bank-details.js. Do not change memory-store.ts, bank-write.ts, bank.ts, resolution.ts or bank-details.ts.
+  - packages/db/test/bank-details-mutations.mjs and safe-write-mutations.mjs anchor postgres-bank-details-store.js and safe-write-store.js: do not change either.
+  - packages/observability/test/mutations.mjs anchors lines of apps/gateway/src/index.js (the response close, telemetry.record and inSpan lines): add one route line in index.ts and its import and touch none of those.
+- The Postgres test must exercise the store against the database (test:db): a staff commit that creates one contract readable through PostgresPayContractStore.get, with both audit rows as above; an admin create through a subtree grant on the operator organization; a refused org-owner create that leaves no contract and no audit row; a duplicate confirm of one token leaving one contract; a clashing contract inserted between preview and confirm giving state_changed; and a receipt that reads back through readReceipt.
+
+Acceptance. Each item is pinned by a mutation in packages/pay-contracts/test/contract-writes-mutations.mjs that makes a named test fail.
+(1) Make the value check accept every value: "SHU-317/AC-01 conformance" fails. It previews and confirms a value with its keys out of order, one with transferCost "1.5" (not canonical), one naming a retired currency and one naming a principal with no candidate grant, each getting invalid_value, and runs the conformance suite.
+(2) Accept any role in payContractWriteDecision (anchor: \`row.role === "staff" || row.role === "admin"\` in contract-writes.js): "SHU-317/AC-02 employer-write-refused" fails. That test drives the real builder through an in-memory SafeWriteStore whose ownedRecord and commit call the decision, and checks an org-owner, a recruiter and a finance grant on the company, a self (not subtree) staff grant on the parent, and the operator organization as a target.
+(3) Drop the companyId comparison from the check: "SHU-317/AC-03 company-bound" fails. It previews, for company A, a canonical value whose companyId is company B and expects invalid_value.
+(4) Drop the overlap test from the check: "SHU-317/AC-04 overlap-refused-at-preview" fails. It previews a contract overlapping a stored active one for the same candidate and store and expects invalid_value, and accepts one at a different store and one after a deleted contract's period.
+(5) Make the creator rethrow overlapping_contract: "SHU-317/AC-05 racing-overlap-state-changed" fails. It previews, stores a clashing contract in the InMemoryPayContractStore, confirms, and expects state_changed with exactly one contract stored.
+The script prints "5/5 SHU-317 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/pay-contracts/src/contract-writes.ts (new)
+- packages/pay-contracts/src/contracts.ts: only \`export\` on overlaps, and normalizePayContractCreate with its type, called by create()
+- packages/pay-contracts/src/index.ts (exports only)
+- packages/pay-contracts/test/contract-writes.test.ts (new)
+- packages/pay-contracts/test/contract-writes-mutations.mjs (new)
+- packages/db/migrations/0195_pay_contract_create_safe_write.sql (new)
+- packages/db/src/postgres-pay-contract-store.ts: only \`export\` on transactionFor
+- packages/db/src/postgres-pay-contract-safe-write-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-pay-contract-safe-write.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0195_pay_contract_create_safe_write" after "0194_organization_notes" in both schema_migrations lists
+- apps/gateway/src/pay-contracts-http.ts (new)
+- apps/gateway/src/index.ts (one route line after the organization-notes route, and its import)
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/pay-contracts-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append dist/packages/pay-contracts/test/contract-writes.test.js and dist/apps/gateway/test/pay-contracts-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-pay-contract-safe-write.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:pay-contract-writes:mutations script that runs the mutation script, and add " && npm run test:pay-contract-writes:mutations" as its own step right after "npm run test:organization-notes:mutations" in test. Never change dependencies.
+
+Out of scope: updating or ending a contract (SHU-318), reading contracts (SHU-319), effective-rate resolution, transfers, payouts, bank files, invoices, the weekly auto-generate job, stores as a platform table (O7), any change to the contract rules in PayContracts, bank details, the read model in packages/organizations, any notification or email, any UI beyond what the routes need, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-318 is the rest of FI-01: staff or an admin changes a pay contract's
+// terms or ends it (a soft delete), each through the safe-write contract on
+// SHU-317's pattern. The record is now the contract itself, so the preview
+// shows the contract's current terms as before and a confirm of a stale
+// preview is refused.
+export const SHU318_PATHS = Object.freeze([
+  "packages/pay-contracts/src/contract-changes.ts",
+  "packages/pay-contracts/src/contracts.ts",
+  "packages/pay-contracts/src/index.ts",
+  "packages/pay-contracts/test/contract-changes.test.ts",
+  "packages/pay-contracts/test/contract-changes-mutations.mjs",
+  "packages/db/migrations/0196_pay_contract_change_safe_write.sql",
+  "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+  "packages/db/test/postgres-pay-contract-change.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/pay-contracts-http.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/pay-contracts-change-http.test.ts",
+  "package.json",
+]);
+
+const SHU318_ACCEPTANCE = [
+  "(1) a pay contract's terms are changed only through preview, confirm and receipt on the existing safe-write contract, as one field \"pay_contract_terms\" whose value is the canonical JSON of the editable fields, and a contract is ended only through the field \"pay_contract_removal\" whose value is exactly \"removed\"; any other value is refused with invalid_value at preview and at confirm by an exported check the builder runs, and runSafeWriteConformance runs over the change write's own builder, so making the terms check accept anything makes the \"SHU-318/AC-01 conformance\" test fail;",
+  "(2) the overlap invariant keeps: a terms change that would overlap another non-deleted contract of the same candidate at the same store is refused at preview with invalid_value, and when the clash lands between preview and confirm the confirm answers state_changed with the contract unchanged; letting the exported changer rethrow overlapping_contract instead of answering state_changed makes the \"SHU-318/AC-02 overlap-on-update-refused\" test fail;",
+  "(3) the store's commit locks the contract row, compares its current canonical terms with the previewed before inside the transaction through an exported function it calls there, and refuses with state_changed when they differ (for both fields); making that compare always succeed makes the \"SHU-318/AC-03 stale-confirm\" test fail;",
+  "(4) the preview's before is the contract's current terms, rendered by one exported function that produces exactly the canonical value a resubmission of those terms would carry (end date included when present); dropping the end date from it makes the \"SHU-318/AC-04 before-is-current\" test fail;",
+  "(5) a terms change may keep a currency the catalogue has since retired only when it is the contract's current currency; a change to any other inactive or unknown currency is refused with invalid_value; letting the check accept a retired currency that is not the current one makes the \"SHU-318/AC-05 retired-currency-refused\" test fail;",
+  "(6) only a staff or admin grant covering the contract's company (SHU-317's payContractWriteDecision, called by the store inside its commit transaction) may change or end it; any other grant, an unknown contract and an ended contract all get not_found, never 403; candidate, company and store never change; each change commits PayContracts' own pay_contract.update or pay_contract.remove row and a receipt row under the new operation pay_contract.update.safe_write or pay_contract.remove.safe_write with organizationAuditRef of the contract's company in one transaction, none of which contains an amount, the raw company id or the raw candidate id; a repeated confirm of one token returns token_already_used; migration 0196 only widens the audit constraints and authorization_audit_summary_valid from 0195's definitions, still accepting every existing row and every operation earlier migrations added; \"0196_pay_contract_change_safe_write\" follows \"0195_pay_contract_create_safe_write\" in both schema_migrations lists;",
+  "(7) packages/pay-contracts/test/contract-changes-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors, including SHU-317's in contract-writes.js, still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:pay-contract-changes:mutations chained into test right after test:pay-contract-writes:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU318_BRIEF = `Card SHU-318: staff or admin updates or ends a pay contract through safe write (slice F1, the rest of FI-01).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-317 (migration 0195, the pay-contract create through safe write). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/finance-contracts-and-payroll.md: section 2, rows FI-01 and FI-04 in section 6 (auto_generate is an editable field PayContracts already validates), slice F1 in section 10, and D-FI1 in section 11 (open; this card moves no money).
+- packages/pay-contracts/src/contracts.ts: PayContracts.update (UPDATABLE fields, its contract_changed refusal when the currency row moved, the overlap check under lockPair), PayContracts.remove (the soft delete), assertCurrency (an unchanged historical currency may stay), and normalizePayContractCreate, which SHU-317 added.
+- SHU-317's create, which this card extends: packages/pay-contracts/src/contract-writes.ts (payContractWriteDecision, payContractCreateValue, payContractCreateCheck, buildPayContractCreateWrite, payContractCreator, payContractPrincipalRef), its test and contract-writes-mutations.mjs, packages/db/src/postgres-pay-contract-safe-write-store.ts, packages/db/migrations/0195_pay_contract_create_safe_write.sql, apps/gateway/src/pay-contracts-http.ts and its HTTP test, and the wiring in apps/gateway/src/login-runtime.ts.
+- SHU-315's stale compare, the model for this card's: packages/organizations/src/approved-to-hire-writes.ts and its store's #commit.
+
+Goal. Staff or an admin covering a contract's company can change its terms or end it through the safe-write path, and each preview shows the contract as it is now. A confirm whose preview is stale, or whose change would now overlap another contract, is refused rather than applied. PayContracts.update and PayContracts.remove still own the rules and their audit rows; this card adds the preview, the token, the stale check and the receipt around them. Nothing is paid or sent.
+
+Contract mapping (decided; do not reopen):
+- The record is the contract: personRef is payContractRecordRef(contractId) (domain "pay-contract-record"); the principal ref is SHU-317's payContractPrincipalRef.
+- Two fields on that record. "pay_contract_terms": the value is the canonical JSON of the editable fields autoGenerate, currencyId, endDate (omitted when open-ended), startDate, status, terms and transferCost, keys in alphabetical order at both levels, encoded exactly as SHU-317's create value is (without candidateId, companyId and storeId, which never change). "pay_contract_removal": the value is exactly "removed". The policy is { allowed: ["pay_contract_terms", "pay_contract_removal"], maxValueLength: 1024 }.
+- readField returns, for either field, the canonical terms value of the current non-deleted contract (payContractEditableValue), and null when there is none. So the removal preview shows the current terms as before and "removed" as after, and a removal previewed against one version of the contract is refused if its terms changed before the confirm.
+- Migration: yes, 0196. Each action gets its own receipt operation, matching the existing pay_contract.update and pay_contract.remove pair: pay_contract.update.safe_write with fields ["pay_contract_terms"], pay_contract.remove.safe_write with fields ["pay_contract_removal"].
+
+Design:
+- packages/pay-contracts/src/contracts.ts changes in one way only: add one exported function normalizePayContractUpdate(input: unknown) (normalizeEditable over closedObject(input, UPDATABLE)) and have update() call it in place of that expression. Behaviour, error codes and every existing test stay the same.
+- packages/pay-contracts/src/contract-changes.ts (new; import from contract-writes.ts what you reuse, do not copy it) exports:
+  - PAY_CONTRACT_TERMS_FIELD, PAY_CONTRACT_REMOVAL_FIELD, PAY_CONTRACT_CHANGE_POLICY and payContractRecordRef;
+  - payContractTermsValue(fields): the canonical string of normalized editable fields, and payContractEditableValue(contract: PayContract): the same string rendered from a stored contract; for any contract, payContractTermsValue(normalizePayContractUpdate(JSON.parse(payContractEditableValue(contract)))) equals payContractEditableValue(contract);
+  - payContractStateDecision(current, expected): current === expected;
+  - payContractChangeCheck({ references, contracts }) returning (contractId, field, value, before: string | null) => Promise<boolean>. For "pay_contract_removal" it accepts exactly "removed" when before is not null. For "pay_contract_terms" it requires before not null, the value to be the canonical encoding of normalizePayContractUpdate's result, the currency to be either the currency in before or active in the catalogue (a resolver that throws makes the request fail), and no other non-deleted contract of the same candidate at the same store (read with contracts.get(contractId), then contracts.listForCandidate) to overlap the new period. A PayContractError with status 400 is a false, never a throw;
+  - acceptAnyPayContractChangeValue, for the conformance run;
+  - buildPayContractChangeWrite({ store, secret, check, contractId, policy?, clock?, tokenLifetimeMs? }): wraps createSafeWrite; at preview and at confirm it first asks store.ownedRecord(principalRef) and answers not_own_record when it is not the request's personRef (so a caller who may not see the contract learns nothing from the check), then reads before with store.readField and calls check(contractId, field, value, before), answering invalid_value when it is false;
+  - payContractChanger(references) returning (store: PayContractStore, actorId, contractId, field, value) => Promise<{ ok: true } | { ok: false; reason: "state_changed" | "not_own_record" }>: for the terms field it calls new PayContracts(store, references).update(actorId, contractId, JSON.parse(value)), for the removal field .remove(actorId, contractId); a PayContractError with code overlapping_contract or contract_changed, or with status 400, answers state_changed, one with code not_found answers not_own_record, and anything else propagates.
+- packages/db/src/postgres-pay-contract-safe-write-store.ts gains constructor options changer and stateDecision and three methods:
+  - forContract(principalId, contractId): a SafeWriteStore whose ownedRecord reads the contract, refuses when it is missing or deleted, and otherwise asks the decision about the caller's grants and the contract company's ancestry; whose readField returns the current canonical terms (passed in through the constructor as editableValue, the function payContractEditableValue) or null; and whose commit runs #commitChange;
+  - readChangeReceipt(principalId, contractId, receiptRef), for both new operations, scoped to the contract's company's organizationAuditRef and personRef payContractRecordRef(contractId);
+  - #commitChange: BEGIN; pg_advisory_xact_lock(hashtextextended($1,318)) on the contract id; the contract row FOR UPDATE (through transactionFor(client).find); a missing or deleted contract is not_own_record; the caller's grants FOR SHARE and the company's ancestry; the decision (not_own_record); the token reference in the audit table for the field's operation (token_already_used); stateDecision(editableValue(current), expectedBefore) (state_changed); the changer on a PayContractStore bound to this client as SHU-317's #commit binds one; a refusal rolls back and is returned; then the receipt row (target_org_refs [organizationAuditRef(companyId)], before_summary { valuePresent: true }, after_summary the receipt shape with the field and the tokenRef); COMMIT. 23505 becomes token_already_used.
+- HTTP (apps/gateway/src/pay-contracts-http.ts): POST /pay-contracts/change/preview and /pay-contracts/change/confirm take exactly contractId (a UUID), field and value, plus token on confirm; GET /pay-contracts/change/{contractId}/receipts/{receiptRef} reads a receipt. Same session, Origin, content-type, header, error-mapping and try/catch handling as SHU-317's routes in the same module; handlePayContracts serves them, so index.ts does not change.
+- Live wiring (login-runtime.ts): pass changer payContractChanger(the pay-contract resolver), stateDecision payContractStateDecision and editableValue payContractEditableValue to the existing PostgresPayContractSafeWriteStore, and build the change service with payContractChangeCheck only when the safe-write key is set.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs: the check, the changer, the stale compare and the editable-value renderer are exported from contract-changes.ts and reach the store through its constructor or the gateway; packages/db does not import them directly and does not import packages/organizations; dependencies stay unchanged.
+- One transaction: the change, PayContracts' own audit row and the receipt row commit or roll back together, on the client #commitChange opened.
+- No money in audit rows or receipts: the Postgres test asserts JSON.stringify of every audit row the change wrote contains none of the test's rates, totals or transfer cost and neither the raw company id nor the raw candidate id.
+- Migration 0196: start from 0195's text (the latest definitions on main) and add pay_contract.update.safe_write and pay_contract.remove.safe_write wherever pay_contract.create.safe_write appears: the operation check, the target_org_refs cardinality > 0 branch, the safe-write halves check, and the safe-write branch of authorization_audit_summary_valid, with fields equal to ["pay_contract_terms"] and ["pay_contract_removal"] respectively. Add unique indexes on each operation's token and receipt. Drop nothing else.
+- Conformance: run runSafeWriteConformance over buildPayContractChangeWrite with acceptAnyPayContractChangeValue.
+- Mutation script: copy SHU-317's packages/pay-contracts/test/contract-writes-mutations.mjs, mutating dist/packages/pay-contracts/src/contract-changes.js and running dist/packages/pay-contracts/test/contract-changes.test.js. Name each test "SHU-318/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors. Keep each exactly once:
+  - SHU-317's contract-writes-mutations.mjs anchors contract-writes.js, including \`row.role === "staff" || row.role === "admin"\` in payContractWriteDecision: do not change contract-writes.ts (it is not one of your paths) and do not repeat that text in contract-changes.ts; reuse the decision.
+  - packages/pay-contracts/test/mutations.mjs anchors contracts.js on \`c.status !== "deleted" && c.id !== candidate.id && overlaps(c, candidate)\`, and memory-store.js, bank-write.js, bank.js, resolution.js and apps/gateway/src/bank-details.js lines: change contracts.ts only as above, and none of the others.
+  - packages/observability/test/mutations.mjs anchors apps/gateway/src/index.js: this card does not change index.ts.
+- The Postgres test must exercise the store against the database (test:db): a staff terms change whose two audit rows are as above and whose contract reads back changed; a removal that leaves the contract with status deleted and makes a second preview not_found; an org-owner change refused with the contract unchanged; a stale confirm after another change; an overlap created between preview and confirm giving state_changed; and a duplicate confirm of one token.
+
+Acceptance. Each item is pinned by a mutation in packages/pay-contracts/test/contract-changes-mutations.mjs that makes a named test fail.
+(1) Make the terms check accept every value: "SHU-318/AC-01 conformance" fails. It previews and confirms a terms value with keys out of order, one carrying candidateId, and a removal value of "deleted", each getting invalid_value, and runs the conformance suite.
+(2) Make the changer rethrow overlapping_contract: "SHU-318/AC-02 overlap-on-update-refused" fails. It previews a change, stores a clashing contract in the InMemoryPayContractStore, confirms, and expects state_changed with the contract unchanged; it also expects invalid_value for a change that already overlaps at preview.
+(3) Make payContractStateDecision always return true: "SHU-318/AC-03 stale-confirm" fails. It drives the real builder through an in-memory SafeWriteStore whose commit calls the compare on the current contract.
+(4) Drop endDate from payContractEditableValue: "SHU-318/AC-04 before-is-current" fails. It previews a change of a contract with an end date and expects before to equal payContractTermsValue of that contract's normalized fields.
+(5) Let the check accept a retired currency that is not the contract's current one (anchor: the comparison of the value's currency with before's currency in contract-changes.js, made to accept any currency): "SHU-318/AC-05 retired-currency-refused" fails. It refuses a switch to a retired currency and accepts an unchanged retired current currency.
+The script prints "5/5 SHU-318 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/pay-contracts/src/contract-changes.ts (new)
+- packages/pay-contracts/src/contracts.ts: only normalizePayContractUpdate, called by update()
+- packages/pay-contracts/src/index.ts (exports only)
+- packages/pay-contracts/test/contract-changes.test.ts (new)
+- packages/pay-contracts/test/contract-changes-mutations.mjs (new)
+- packages/db/migrations/0196_pay_contract_change_safe_write.sql (new)
+- packages/db/src/postgres-pay-contract-safe-write-store.ts: the new options and methods above; SHU-317's create path unchanged
+- packages/db/test/postgres-pay-contract-change.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0196_pay_contract_change_safe_write" after "0195_pay_contract_create_safe_write" in both schema_migrations lists
+- apps/gateway/src/pay-contracts-http.ts: the change routes and service
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/pay-contracts-change-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append dist/packages/pay-contracts/test/contract-changes.test.js and dist/apps/gateway/test/pay-contracts-change-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-pay-contract-change.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:pay-contract-changes:mutations script that runs the mutation script, and add " && npm run test:pay-contract-changes:mutations" as its own step right after "npm run test:pay-contract-writes:mutations" in test. Never change dependencies.
+
+Out of scope: creating contracts (SHU-317), reading or listing contracts (SHU-319), restoring an ended contract, changing a contract's candidate, company or store, effective-rate resolution, transfers, payouts, bank files, invoices, the weekly auto-generate job, any change to the contract rules in PayContracts, any notification or email, any UI beyond what the routes need, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-319 is FI-02 ("see my contract") and the staff list: read-only. Who
+// sees which half of a contract is one exported decision and one whitelist
+// projection, so a mutation that leaks a field or widens a role fails a test.
+export const SHU319_PATHS = Object.freeze([
+  "packages/pay-contracts/src/contract-reads.ts",
+  "packages/pay-contracts/src/index.ts",
+  "packages/pay-contracts/test/contract-reads.test.ts",
+  "packages/pay-contracts/test/contract-reads-mutations.mjs",
+  "packages/db/src/postgres-pay-contract-store.ts",
+  "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+  "packages/db/test/postgres-pay-contract-reads.test.ts",
+  "apps/gateway/src/pay-contracts-http.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/pay-contracts-read-http.test.ts",
+  "package.json",
+]);
+
+const SHU319_ACCEPTANCE = [
+  "(1) an org-owner or finance grant covering a company lists that company's contracts in the company view: for each, exactly id, candidateId, companyId, storeId, startDate, endDate (when present), currencyId, autoGenerate, status and terms with only the company side (hourly: payModel and companyHourlyRate; fixed_price: payModel, companyTotal and completionPercentage; monthly_salary: payModel, companyTotal and salaryDay); candidateHourlyRate, candidateTotal, transferCost and the timestamps never appear; projecting by copying the stored contract or its terms makes the \"SHU-319/AC-01 company-view-whitelist\" test fail;",
+  "(2) a principal holding a candidate grant lists their own contracts in the candidate view: for each, exactly id, companyId, storeId, startDate, endDate (when present), currencyId, status and terms with only the candidate side (hourly: payModel and candidateHourlyRate; fixed_price: payModel, candidateTotal and completionPercentage; monthly_salary: payModel, candidateTotal and salaryDay); companyHourlyRate, companyTotal, transferCost, autoGenerate, candidateId and the timestamps never appear; copying the stored terms into it makes the \"SHU-319/AC-02 candidate-view-whitelist\" test fail;",
+  "(3) the access decision is one exported function: a staff or admin grant covering the company gives the full view, an org-owner or finance grant covering it gives the company view, and a recruiter, candidate or any other grant gets null and the route answers 404 not_found, never 403; an operator organization is never a target; giving a recruiter the company view makes the \"SHU-319/AC-03 employer-roles-limited\" test fail;",
+  "(4) covering means a grant on the company itself or a subtree grant on one of its ancestors, the rule every organization read and write uses; treating a self grant on the parent as covering makes the \"SHU-319/AC-04 self-grant-on-parent-not-covering\" test fail;",
+  "(5) every list leaves out contracts with status deleted and orders by start date descending, then id ascending, through one exported list function the gateway applies to the store's rows; listing a deleted contract makes the \"SHU-319/AC-05 deleted-hidden\" test fail;",
+  "(6) the full view carries every PayContract field except deletedAt; the decision runs before any contract is read (a refused caller causes no contract query); the reads write nothing and add no audit row; there is no migration in this card;",
+  "(7) packages/pay-contracts/test/contract-reads-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors, including SHU-317's and SHU-318's, still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:pay-contract-reads:mutations chained into test right after test:pay-contract-changes:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU319_BRIEF = `Card SHU-319: company members and staff read pay contracts (slice F1, FI-02 and the staff list), read-only.
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-317 and SHU-318 (migrations 0195 and 0196, the pay-contract create, change and end through safe write). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/finance-contracts-and-payroll.md: section 2 (the amount columns per pay model) and rows FI-01 and FI-02 in section 6. docs/parity/ui-journeys/employer.md rows /contract-list and /contract-view (lines 69 and 70): the employer screens show company rates, completion_percentage and salary_day.
+- packages/pay-contracts/src/types.ts: PayContract, HourlyTerms, FixedPriceTerms and MonthlySalaryTerms are the fields this card projects. packages/pay-contracts/src/contracts.ts: PayContracts.listForCandidate (filters deleted, orders start date descending then id).
+- SHU-317's packages/pay-contracts/src/contract-writes.ts (payContractWriteDecision and its grant-row shape) and packages/db/src/postgres-pay-contract-safe-write-store.ts (#grants, #ancestors, isCandidate); SHU-316's list route in apps/gateway/src/organization-notes.ts (a GET that answers 404 when the store returns null, and its view function); and apps/gateway/src/pay-contracts-http.ts.
+- packages/contracts/src/authz/context.ts: a grant applies at its organization, and a subtree grant at every descendant.
+
+Goal. People who need a contract can read it, and each sees only its side. Staff and admins covering a company see everything. The company's owner and finance people see what the company pays and the contract's shape, never what the candidate is paid or the transfer cost (the margin and the payout are not the employer's). A candidate sees their own contracts and what they are paid, never what the company is charged. Everyone else learns nothing, not even that a contract exists. Nothing is written.
+
+Design:
+- packages/pay-contracts/src/contract-reads.ts (new) exports:
+  - PayContractView = "full" | "company" | "candidate";
+  - payContractReadAccess(rows, companyId, ancestors, operators): "full" | "company" | null. It returns null when operators includes companyId; "full" when a staff or admin grant covers the company; otherwise "company" when an org-owner or finance grant covers it; otherwise null. Write the covering test once, as a helper both branches call (anchor for mutation (4): \`row.scope === "subtree" && ancestors.includes(row.org_id)\`), and the company roles once (anchor for mutation (3): \`row.role === "org-owner" || row.role === "finance"\`). operators is required, as in SHU-317;
+  - projectPayContract(contract, view): builds a new frozen object from named fields only, per the acceptance (never a spread or Object.assign of the contract or its terms). The full view is every PayContract field except deletedAt, terms included whole;
+  - payContractListView(contracts, view): drops status "deleted", orders by startDate descending then id ascending, and projects each.
+- Store reads. packages/db/src/postgres-pay-contract-store.ts gains listForCompany(companyId) (the existing COLUMNS and fromRow, WHERE company_org_id = $1; it returns deleted rows too, and the list function drops them). PostgresPayContractSafeWriteStore gains readAccess(principalId, companyId), which reads the caller's grants and the company's ancestry with its existing helpers and returns the injected readDecision's answer (a new constructor option, (rows, companyId, ancestors) => PayContractView | null), and uses its existing isCandidate for the candidate list. listForCompany is a class method, not part of the PayContractStore interface, so SHU-317's bound store and InMemoryPayContractStore do not change.
+- HTTP (apps/gateway/src/pay-contracts-http.ts): GET /pay-contracts/company/{orgId} answers { view, contracts } after readAccess allows it (404 not_found when it returns null, before any contract is read), with contracts from payContractListView(listForCompany rows, view); GET /pay-contracts/mine answers { contracts } in the candidate view from listForCandidate when isCandidate is true, and 404 not_found otherwise. Both need a session (401 without one), are GET only, and send the module's no-store headers. A refused or unknown company is 404; a covering caller whose company has no contracts gets 200 with an empty list.
+- Live wiring (login-runtime.ts): pass readDecision (rows, org, ancestors) => payContractReadAccess(rows, org, ancestors, DEFAULT_OPERATOR_ORG_IDS) to the existing PostgresPayContractSafeWriteStore; the read service is built whether or not the safe-write key is set (reads need no key), from the stores SHU-317 constructs from DATABASE_URL.
+- No migration. pay_contracts has no index on company_org_id; at this volume a scan is fine, so do not add one here.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs: the gateway applies payContractListView (and so projectPayContract) to the store's rows on every list, and the store calls the injected readDecision; packages/db does not import contract-reads.ts directly and does not import packages/organizations; dependencies stay unchanged.
+- Whitelist, not blacklist: the tests assert the exact key sets per view and pay model, and that JSON.stringify of a company view contains neither the candidate amount nor the transfer cost strings and a candidate view contains neither the company amount nor the transfer cost strings. Pick distinct synthetic amounts so the assertion is meaningful.
+- Decide before reading: the HTTP test's fake store records calls and asserts a refused caller causes no listForCompany call.
+- Mutation script: copy SHU-317's contract-writes-mutations.mjs, mutating dist/packages/pay-contracts/src/contract-reads.js and running dist/packages/pay-contracts/test/contract-reads.test.js. Name each test "SHU-319/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors. Keep each exactly once: SHU-317's contract-writes-mutations.mjs (contract-writes.js) and SHU-318's contract-changes-mutations.mjs (contract-changes.js): do not change either source file and do not repeat \`row.role === "staff" || row.role === "admin"\` in a way that matters to them (each script counts only its own file, but keep your role tests in your own helper). packages/pay-contracts/test/mutations.mjs anchors contracts.js, memory-store.js, bank-write.js, bank.js, resolution.js and apps/gateway/src/bank-details.js: do not change any of them. packages/observability/test/mutations.mjs anchors apps/gateway/src/index.js: this card does not change index.ts.
+- The Postgres test must exercise the stores against the database (test:db): listForCompany returns that company's rows only (deleted ones included, for the list function to drop); readAccess answers "full" for a staff subtree grant on the operator organization, "company" for an org-owner self grant and for a finance subtree grant on the parent, and null for a recruiter grant and for a self org-owner grant on the parent.
+
+Acceptance. Each item is pinned by a mutation in packages/pay-contracts/test/contract-reads-mutations.mjs that makes a named test fail.
+(1) Copy the stored terms into the company view (for example \`terms: contract.terms\` or a spread): "SHU-319/AC-01 company-view-whitelist" fails. It projects one contract of each pay model and asserts the exact keys and the absent strings.
+(2) Copy the stored terms into the candidate view: "SHU-319/AC-02 candidate-view-whitelist" fails, with the same checks for the candidate side.
+(3) Add recruiter to the company roles (anchor: \`row.role === "org-owner" || row.role === "finance"\`): "SHU-319/AC-03 employer-roles-limited" fails. That test also checks a candidate grant, a staff grant elsewhere and the operator organization as a target.
+(4) Drop the subtree condition from the covering helper (anchor: \`row.scope === "subtree" && ancestors.includes(row.org_id)\`): "SHU-319/AC-04 self-grant-on-parent-not-covering" fails.
+(5) Keep deleted contracts in payContractListView: "SHU-319/AC-05 deleted-hidden" fails. It also checks the order with two contracts on the same start date.
+The script prints "5/5 SHU-319 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/pay-contracts/src/contract-reads.ts (new)
+- packages/pay-contracts/src/index.ts (exports only)
+- packages/pay-contracts/test/contract-reads.test.ts (new)
+- packages/pay-contracts/test/contract-reads-mutations.mjs (new)
+- packages/db/src/postgres-pay-contract-store.ts: only listForCompany
+- packages/db/src/postgres-pay-contract-safe-write-store.ts: only the readDecision option and readAccess
+- packages/db/test/postgres-pay-contract-reads.test.ts (new)
+- apps/gateway/src/pay-contracts-http.ts: the two read routes and the read service
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/pay-contracts-read-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append dist/packages/pay-contracts/test/contract-reads.test.js and dist/apps/gateway/test/pay-contracts-read-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-pay-contract-reads.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:pay-contract-reads:mutations script that runs the mutation script, and add " && npm run test:pay-contract-reads:mutations" as its own step right after "npm run test:pay-contract-changes:mutations" in test. Never change dependencies.
+
+Out of scope: any write, migration or index; sub-organization roll-up (a company's list is its own contracts; a sub-organization's are read by naming it); paging; reading one contract by id; candidate or store details beyond their ids; effective-rate resolution; transfers, payouts, invoices; exports; any UI beyond what the routes need; any change to packages/safe-write-contract, packages/contracts or the login code; the lockfile; and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-320 is the bank half of OR-25 (slice O8): the legacy bank row's payment
+// codes, recorded on the catalogue's bank items through the catalogue's own
+// admin write path. It is the foundation the payout cards (F3) will read; it
+// generates no bank file.
+export const SHU320_PATHS = Object.freeze([
+  "packages/reference-catalogue/src/bank-payment-details.ts",
+  "packages/reference-catalogue/src/types.ts",
+  "packages/reference-catalogue/src/catalogue.ts",
+  "packages/reference-catalogue/src/memory-store.ts",
+  "packages/reference-catalogue/src/index.ts",
+  "packages/reference-catalogue/test/bank-payment-details.test.ts",
+  "packages/reference-catalogue/test/bank-payment-details-mutations.mjs",
+  "packages/db/migrations/0197_catalogue_bank_payment_details.sql",
+  "packages/db/src/postgres-catalogue-store.ts",
+  "packages/db/test/postgres-catalogue-bank-payment-details.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/catalogue-http.ts",
+  "apps/gateway/test/catalogue-bank-payment-details-http.test.ts",
+  "package.json",
+]);
+
+const SHU320_ACCEPTANCE = [
+  "(1) an admin records a catalogue bank's payment details, exactly swiftCode, ibanBankCode, abkCode and transferType, all four required, in one write; each text is trimmed and upper-cased first; swiftCode must have the ISO 9362 shape (four letters, two letters, two letters or digits, and optionally three more letters or digits: 8 or 11 characters); anything else is refused with 400 invalid_swift_code; accepting any 8 to 11 letters or digits makes the \"SHU-320/AC-01 swift-shape\" test fail;",
+  "(2) transferType is exactly local, international or within_bank, refused otherwise with 400 invalid_transfer_type; ibanBankCode is exactly four letters or digits (invalid_iban_bank_code) and abkCode a whole number from 0 to 100 written in digits (invalid_abk_code; legacy bank_code_abk is a number with max 100); accepting any string as a transfer type makes the \"SHU-320/AC-02 transfer-type-closed\" test fail;",
+  "(3) only the admin role writes payment details; staff, recruiter, org-owner, finance and candidate actors get 403 catalogue_write_forbidden, the catalogue's existing answer for a refused writer; the role rule is one exported function the service calls; accepting staff makes the \"SHU-320/AC-03 admin-only\" test fail;",
+  "(4) details are written only on an active item of type bank: a deleted bank, another catalogue type's item and an unknown id get 404 catalogue_item_not_found; the service checks this before calling the store; dropping the active check makes the \"SHU-320/AC-04 active-bank-only\" test fail;",
+  "(5) the input is a closed object: any key besides the four, or a non-string value, is refused with 400 invalid_bank_payment_details; accepting an extra key makes the \"SHU-320/AC-05 closed-input\" test fail;",
+  "(6) any authorized actor reads a bank's payment details (active or deleted bank, as resolveHistorical reads), and a bank without them reads as 404 bank_payment_details_not_found; each write records the writer's principalRef in created_by_ref and updated_by_ref, as catalogue_items does; migration 0197 adds one table and its checks and changes no existing table, constraint or function, and authorization_mutation_audit is untouched; the bank list and CatalogueItem are unchanged; \"0197_catalogue_bank_payment_details\" follows \"0196_pay_contract_change_safe_write\" in both schema_migrations lists;",
+  "(7) packages/reference-catalogue/test/bank-payment-details-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors, including packages/reference-catalogue/test/mutations.mjs's in catalogue.js and memory-store.js, still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:catalogue-bank-payment-details:mutations chained into test right after test:pay-contract-reads:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU320_BRIEF = `Card SHU-320: admin records a bank's SWIFT, IBAN bank code, ABK code and transfer type (slice O8, the bank half of OR-25).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-317, SHU-318 and SHU-319 (migrations 0195 and 0196). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: the bank row in section 2.2 (bank_iban_code, bank_swift_code, bank_code_abk, bank_transfer_type local / international / within-bank, soft delete), the Bank row in section 5, row OR-25 in section 7 ("admin write, others read") and slice O8 in section 11. docs/parity/ui-journeys/admin.md ADMIN-FO-13 (bank-form requires every displayed field; the server also checks bank_transfer_type in range). docs/parity/profile-and-private-documents.md section on IBAN (a Kuwaiti IBAN must contain a known bank_iban_code). docs/parity/bank-file-contract/README.md is still proposed: read it for context only; nothing here generates a file.
+- The catalogue's existing write path, which this card follows: packages/reference-catalogue/src/catalogue.ts (ReferenceCatalogue.create, update and remove; requireWriter and WRITE_ROLES; requireId; CatalogueError), types.ts (CatalogueStore, CatalogueItem, CatalogueActor), memory-store.ts (InMemoryCatalogueStore), packages/db/src/postgres-catalogue-store.ts, packages/db/migrations/0146_reference_catalogue.sql (created_by_ref and updated_by_ref record who wrote a row), apps/gateway/src/catalogue-http.ts (authorizedActor from the actor assertion, the JSON body reader, CatalogueError to status), and apps/gateway/test/catalogue-http.test.ts (how an actor assertion is made for a test).
+- packages/reference-catalogue/test/mutations.mjs: the mutation-script form this card copies (it mutates the package build under packages/reference-catalogue/dist and runs the suite with --test).
+
+Goal. An admin can record, for a bank in the reference catalogue, the four codes the legacy bank row holds for payments: its SWIFT code, the bank code that appears in its IBANs, its ABK code and its transfer type. Every signed-in actor can read them. They are validated types, not free text, so later payout work can rely on them. No bank file is generated and no IBAN is checked against them in this card.
+
+Contract choice (decided; do not reopen). This is a catalogue write, on the catalogue's own path, not a safe write: the catalogue's actor comes from the actor assertion on its routes, its writes record the writer in created_by_ref and updated_by_ref, a refused writer gets 403 catalogue_write_forbidden, and it writes no authorization_mutation_audit row. So this card does not touch the audit constraints the safe-write cards widen. It differs from create, update and remove in one way: OR-25 makes bank data an admin write, so the writer role here is admin only, through its own exported rule, while WRITE_ROLES (staff and admin) stays as it is for every other catalogue write.
+
+Design:
+- packages/reference-catalogue/src/bank-payment-details.ts (new) exports:
+  - BANK_TRANSFER_TYPES = ["local", "international", "within_bank"] and the BankTransferType type;
+  - BankPaymentDetails { bankId, swiftCode, ibanBankCode, abkCode, transferType, updatedAt };
+  - normalizeBankPaymentDetails(value: unknown): { swiftCode, ibanBankCode, abkCode, transferType }. A closed object of exactly those four keys, each a string (else CatalogueError invalid_bank_payment_details, 400); swiftCode, ibanBankCode and abkCode trimmed and upper-cased, transferType trimmed and compared as given; swiftCode must match /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/ (invalid_swift_code), ibanBankCode /^[A-Z0-9]{4}$/ (invalid_iban_bank_code), abkCode /^(100|[1-9]?[0-9])$/ (invalid_abk_code; legacy common/models/Bank.php: bank_code_abk number, max 100), and transferType must be one of BANK_TRANSFER_TYPES (invalid_transfer_type), all 400 (legacy stores LCL, SWF and TRF for local, international and within-bank; a later bank-file card maps them);
+  - canWriteBankPaymentDetails(role): true only for "admin".
+- types.ts: CatalogueStore gains readBankPaymentDetails(bankId) => Promise<BankPaymentDetails | undefined> and writeBankPaymentDetails(bankId, details & { actorRef, now }) => Promise<BankPaymentDetails | undefined>. Both implementers change: InMemoryCatalogueStore and PostgresCatalogueStore.
+- catalogue.ts: ReferenceCatalogue gains bankPaymentDetails(actor, id) and setBankPaymentDetails(actor, id, raw). setBankPaymentDetails throws CatalogueError("catalogue_write_forbidden", 403) unless canWriteBankPaymentDetails(actor.role); requireId(id); normalizes the input; reads the item with this.store.resolveById("bank", id) and throws catalogue_item_not_found (404) unless it exists with status active; then calls writeBankPaymentDetails and throws catalogue_item_not_found if that returns undefined (the bank was deleted in between). bankPaymentDetails needs any actor, requireId, resolveById("bank", id) to exist (any status), and readBankPaymentDetails; absent details throw CatalogueError("bank_payment_details_not_found", 404).
+- memory-store.ts: a map keyed by bank id. The memory store must not itself refuse a deleted bank: the service's check is the one the AC-04 mutation removes, so a second check here would let that mutant survive. The Postgres store keeps its own guard in SQL, which the Postgres test covers.
+- Migration 0197_catalogue_bank_payment_details.sql creates catalogue_bank_payment_details (bank_id uuid primary key references catalogue_items(id), swift_code text not null with the SWIFT pattern as a CHECK, iban_bank_code text not null CHECK ~ '^[A-Z0-9]{4}$', abk_code text not null CHECK ~ '^(100|[1-9]?[0-9])$', transfer_type text not null CHECK IN ('local','international','within_bank'), created_by_ref and updated_by_ref char(64) not null with the 0146 hex check, created_at and updated_at timestamptz not null) and a BEFORE INSERT OR UPDATE row trigger that raises unless the referenced catalogue_items row has catalogue_type 'bank'.
+- PostgresCatalogueStore.writeBankPaymentDetails is one statement: INSERT ... SELECT the values FROM catalogue_items WHERE id = $1 AND catalogue_type = 'bank' AND status = 'active' ON CONFLICT (bank_id) DO UPDATE SET the four codes, updated_by_ref and updated_at, RETURNING the row (keep created_by_ref and created_at on update). No row returned means undefined. readBankPaymentDetails selects by bank_id.
+- HTTP (apps/gateway/src/catalogue-http.ts): PUT /catalogue/bank/{id}/payment-details calls setBankPaymentDetails with the JSON body and answers 200 with the details; GET /catalogue/bank/{id}/payment-details calls bankPaymentDetails and answers 200 with them. Both come after authorizedActor, as every non-list catalogue route does, and before the final 404; CatalogueError maps to its status as today. Match only parts[1] === "bank" and parts[3] === "payment-details" with four parts; every existing route keeps its behaviour.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs: the test file imports from "@studenthub/reference-catalogue" (the package build, as catalogue.test.ts does), and the mutation script mutates packages/reference-catalogue/dist/bank-payment-details.js and dist/catalogue.js, which the gateway also runs.
+- Other cards' anchors. packages/reference-catalogue/test/mutations.mjs requires each of these to bind exactly once in the package build: in catalogue.js \`...input, status: "pending", submittedAt: now\` and \`const WRITE_ROLES = new Set(["staff", "admin"]);\`; in memory-store.js the softDeleteItem lines \`const next = Object.freeze({ ...current, status: "deleted", deletedAt: now, updatedAt: now });\` followed by \`this.#items.set(id, next);\`, and \`key > after.sortKey || (key === after.sortKey && row.id > after.id)\`. Leave those lines and WRITE_ROLES as they are and do not repeat them. packages/observability/test/mutations.mjs anchors apps/gateway/src/index.js: this card does not change index.ts. apps/gateway/test/company-directory-mutations.mjs and context-navigation-mutations.mjs anchor other gateway files: do not touch them.
+- The anchors this card's own mutations use must each bind once in their file: the SWIFT pattern literal and \`return role === "admin";\` in bank-payment-details.js, the BANK_TRANSFER_TYPES membership test, the key check of the closed object, and the active check \`bank?.status !== "active"\` in catalogue.js.
+- Mutation script: copy packages/reference-catalogue/test/mutations.mjs's form (--test, --test-reporter=tap, --test-name-pattern=^<name> with a trailing space, "not ok", AssertionError, restore in finally). Name each test "SHU-320/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Migration 0197 adds one table and one trigger function and trigger. It does not touch authorization_mutation_audit, its constraints or authorization_audit_summary_valid, and it does not alter catalogue_items.
+- The Postgres test must exercise the store against the database (test:db): a write and an overwrite that read back (created_by_ref kept, updated_by_ref changed); a write on a deleted bank and on a currency item each returning undefined; a direct INSERT naming a non-bank item refused by the trigger; and a row with a 9-character SWIFT refused by its CHECK.
+
+Acceptance. Each item is pinned by a mutation in packages/reference-catalogue/test/bank-payment-details-mutations.mjs that makes a named test fail.
+(1) Replace the SWIFT pattern with /^[A-Z0-9]{8,11}$/: "SHU-320/AC-01 swift-shape" fails. It accepts "DEUTDEFF", "deutdeff500" (stored "DEUTDEFF500") and refuses "DEUTDEFF5", "1EUTDEFF" and "DEUT12FF".
+(2) Accept any string as transferType: "SHU-320/AC-02 transfer-type-closed" fails. It refuses "within-bank", "LOCAL" and "" and accepts each of the three types.
+(3) Make canWriteBankPaymentDetails accept staff: "SHU-320/AC-03 admin-only" fails. It checks staff, recruiter, org-owner, finance and candidate actors.
+(4) Drop the active check in setBankPaymentDetails: "SHU-320/AC-04 active-bank-only" fails. It writes to a deleted bank and expects catalogue_item_not_found, and checks a currency item's id and an unknown id.
+(5) Let the closed-object check pass extra keys: "SHU-320/AC-05 closed-input" fails. It sends a fifth key, a missing key and a numeric abkCode.
+The script prints "5/5 SHU-320 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/reference-catalogue/src/bank-payment-details.ts (new)
+- packages/reference-catalogue/src/types.ts: only the two CatalogueStore methods
+- packages/reference-catalogue/src/catalogue.ts: only bankPaymentDetails and setBankPaymentDetails, and their imports
+- packages/reference-catalogue/src/memory-store.ts: only the two store methods and their map
+- packages/reference-catalogue/src/index.ts (exports only)
+- packages/reference-catalogue/test/bank-payment-details.test.ts (new)
+- packages/reference-catalogue/test/bank-payment-details-mutations.mjs (new)
+- packages/db/migrations/0197_catalogue_bank_payment_details.sql (new)
+- packages/db/src/postgres-catalogue-store.ts: only the two store methods
+- packages/db/test/postgres-catalogue-bank-payment-details.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0197_catalogue_bank_payment_details" after "0196_pay_contract_change_safe_write" in both schema_migrations lists
+- apps/gateway/src/catalogue-http.ts: only the two routes
+- apps/gateway/test/catalogue-bank-payment-details-http.test.ts (new)
+- package.json: leave every existing script's text as it is. Append dist/packages/reference-catalogue/test/bank-payment-details.test.js and dist/apps/gateway/test/catalogue-bank-payment-details-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-catalogue-bank-payment-details.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:catalogue-bank-payment-details:mutations script that runs the mutation script, and add " && npm run test:catalogue-bank-payment-details:mutations" as its own step right after "npm run test:pay-contract-reads:mutations" in test. Never change dependencies.
+
+Out of scope: bank files, payment advice and payouts (F3, blocked); checking a candidate's IBAN against a bank's IBAN code; changing the bank list, CatalogueItem or any other catalogue type; a history of past codes; the WRITE_ROLES of other catalogue writes; brands, malls, tags or countries; any notification; any UI beyond what the routes need; any change to packages/safe-write-contract, packages/contracts or the login code; the lockfile; and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -1066,6 +1470,34 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU316_PATHS,
     acceptance: SHU316_ACCEPTANCE,
     brief: SHU316_BRIEF,
+  }),
+  "SHU-317": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU317_PATHS,
+    revision_paths: SHU317_PATHS,
+    acceptance: SHU317_ACCEPTANCE,
+    brief: SHU317_BRIEF,
+  }),
+  "SHU-318": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU318_PATHS,
+    revision_paths: SHU318_PATHS,
+    acceptance: SHU318_ACCEPTANCE,
+    brief: SHU318_BRIEF,
+  }),
+  "SHU-319": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU319_PATHS,
+    revision_paths: SHU319_PATHS,
+    acceptance: SHU319_ACCEPTANCE,
+    brief: SHU319_BRIEF,
+  }),
+  "SHU-320": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU320_PATHS,
+    revision_paths: SHU320_PATHS,
+    acceptance: SHU320_ACCEPTANCE,
+    brief: SHU320_BRIEF,
   }),
 });
 
