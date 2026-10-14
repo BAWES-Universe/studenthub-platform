@@ -1059,6 +1059,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu321-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/shu321-mutations.test.mjs:96"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu68-wiring.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

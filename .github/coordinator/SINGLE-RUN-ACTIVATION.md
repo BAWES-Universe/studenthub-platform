@@ -168,6 +168,23 @@ symlink, not a directory), and must not be group/world writable or world readabl
 * **It cannot be replayed.** It expires, and it is spent once the bound target's
   episode ends.
 
+### A committed card queue, and its one review exception (SHU-312, SHU-321)
+
+`dispatch_scope` may list a queue of two to five committed card lanes
+(`cardQueue`). Each tick then narrows the scope to the armed record's target
+when that target is in the queue (`narrowQueueScope`); with no such record the
+queue as committed scopes nothing. A queue holds build cards only, and a review
+run never comes from it, with one exception: the review-only lane named by the
+committed `queue_config_review` (`{"lane": "SHU-304", "label":
+"coordinator:queue-config", "max_heads_per_pr": 3}`). Under a valid queue, a
+record that targets exactly that lane narrows the scope to it, and the card-run
+timer's `planRun` accepts a review only for it. No other review lane is ever
+admitted, a malformed `queue_config_review` admits none, and every binding of
+the record (exact head, base, author family, a reviewer outside that family) is
+still checked as for any review-only run. The timer arms it only once the queue
+is done, on one labelled queue config pull request at its exact head, with
+`codex-verifier` reviewing a Claude-written change (`service/card-run.mjs`).
+
 ## One use is one *episode*, and the episode's end is derived, not assumed
 
 The approved run contract is build → exact-head BLOCK → return to the writer →
