@@ -360,6 +360,9 @@ test("SHU-322 B5: every changed coordinator blob must be one a root-owned REVIEW
   const claimFile = reviewClaim(PATHS, 300, PR_HEAD);
   const rewrite = (host, change, extra = {}) => host.put(claimFile, JSON.stringify({ ...JSON.parse(host.files.get(claimFile).text), ...change }), { mode: 0o600, ...extra });
   assert.deepEqual(read((host) => rewrite(host, { outcome: "REVIEW_BLOCKED" })), [], "a blocked review binds nothing");
+  // The supervisor ends a passed review-only episode as "review PASS", which card-run records as PASS.
+  assert.equal(read((host) => rewrite(host, { outcome: "PASS" })).length, 1, "a review recorded as PASS binds");
+  assert.deepEqual(read((host) => rewrite(host, { outcome: "STOPPED" })), [], "a stopped review binds nothing");
   assert.deepEqual(read((host) => rewrite(host, { outcome: undefined })), [], "a claim still running binds nothing");
   assert.deepEqual(read((host) => rewrite(host, { head: "f".repeat(40) })), [], "a claim naming another head binds nothing");
   assert.deepEqual(read((host) => rewrite(host, {}, { uid: 997 })), [], "a claim root did not write binds nothing");

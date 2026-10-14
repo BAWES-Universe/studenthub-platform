@@ -162,7 +162,13 @@ export function selfInstallGate(facts) {
   return { ok: true, queue: [...ids], lanes: added };
 }
 
-// Root's own REVIEW_PASS claims: regular files owned by root whose content
+// A passed review as a Card A claim records it. The supervisor ends a passed
+// review-only episode as "review PASS" (single-run-activation.mjs checks a
+// PASS before the review-only branch), so card-run reads it as PASS; the
+// review-only form is REVIEW_PASS. Only Card A writes these claim files.
+export const REVIEW_PASSED = Object.freeze(new Set(["PASS", "REVIEW_PASS"]));
+
+// Root's own passed-review claims: regular files owned by root whose content
 // names the pull request and head of their own file name.
 export function reviewPasses(io, paths) {
   const passes = [];
@@ -174,7 +180,7 @@ export function reviewPasses(io, paths) {
       const stat = io.fs.lstatSync(full);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== 0) continue;
       const claim = JSON.parse(io.fs.readFileSync(full, "utf8"));
-      if (claim?.pr === Number(match[1]) && claim.head === match[2] && claim.outcome === "REVIEW_PASS" && plainObject(claim.files)) {
+      if (claim?.pr === Number(match[1]) && claim.head === match[2] && REVIEW_PASSED.has(claim.outcome) && plainObject(claim.files)) {
         passes.push({ pr: claim.pr, head: claim.head, files: claim.files });
       }
     } catch { /* an unreadable claim proves nothing */ }
