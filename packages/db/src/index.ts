@@ -37,3 +37,4 @@ export { PostgresBankDetailsStore, BANK_DETAILS_OPERATION,
   type PostgresBankDetailsStoreOptions } from "./postgres-bank-details-store.js";
 export {PostgresOrganizationStatusStore,ORGANIZATION_STATUS_OPERATION,type PostgresOrganizationStatusStoreOptions} from "./postgres-organization-status-store.js";
 export {PostgresOrganizationCommercialTermsStore,ORGANIZATION_COMMERCIAL_TERMS_OPERATION,type PostgresOrganizationCommercialTermsStoreOptions} from "./postgres-organization-commercial-terms-store.js";
+export {PostgresOrganizationApprovedToHireStore,ORGANIZATION_APPROVED_TO_HIRE_OPERATION,type PostgresOrganizationApprovedToHireStoreOptions} from "./postgres-organization-approved-to-hire-store.js";
