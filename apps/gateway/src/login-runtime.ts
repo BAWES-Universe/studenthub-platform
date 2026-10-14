@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationNotesStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -22,7 +22,8 @@ import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organi
   organizationProfileStateDecision, organizationProfileRecordRef, organizationProfilePrincipalRef,
   organizationStatusDecision, organizationStatusStateDecision, organizationStatusEvent, organizationStatusRecordRef, organizationStatusPrincipalRef,
   organizationCommercialTermsDecision,organizationCommercialTermsStateDecision,organizationCommercialTermsRecordRef,organizationCommercialTermsPrincipalRef,
-  organizationApprovedToHireDecision,organizationApprovedToHireStateDecision,organizationApprovedToHireRecordRef,organizationApprovedToHirePrincipalRef } from "@studenthub/organizations";
+  organizationApprovedToHireDecision,organizationApprovedToHireStateDecision,organizationApprovedToHireRecordRef,organizationApprovedToHirePrincipalRef,
+  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
@@ -30,6 +31,7 @@ import { createOrganizationProfile } from "./organization-profile.js";
 import { createOrganizationStatus } from "./organization-status.js";
 import {createOrganizationCommercialTerms}from"./organization-commercial-terms.js";
 import {createOrganizationApprovedToHire}from"./organization-approved-to-hire.js";
+import {createOrganizationNotes}from"./organization-notes.js";
 import { createBankDetails } from "./bank-details.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
@@ -221,6 +223,7 @@ export function createRuntimeLoginFromEnv(
     recordRef:organizationStatusRecordRef,principalRef:organizationStatusPrincipalRef});
   const organizationCommercialTermsStore=new PostgresOrganizationCommercialTermsStore({connectionString:value("DATABASE_URL"),decision:organizationCommercialTermsDecision,stateDecision:organizationCommercialTermsStateDecision,recordRef:organizationCommercialTermsRecordRef,principalRef:organizationCommercialTermsPrincipalRef});
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
+  const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef});
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: value("DATABASE_URL") }) : undefined;
@@ -269,6 +272,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWriteKey ? {organizationStatus:createOrganizationStatus({sessions:loginStore.sessions,store:organizationStatusStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationCommercialTerms:createOrganizationCommercialTerms({sessions:loginStore.sessions,store:organizationCommercialTermsStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationApprovedToHire:createOrganizationApprovedToHire({sessions:loginStore.sessions,store:organizationApprovedToHireStore,secret:safeWriteKey})}:{}),
+      ...(safeWriteKey?{organizationNotes:createOrganizationNotes({sessions:loginStore.sessions,store:organizationNotesStore,secret:safeWriteKey})}:{}),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
@@ -281,7 +285,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationNotesStore.close(),
         bankDetailsStore?.close(), banks?.close()]);
     },
   };
