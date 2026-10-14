@@ -389,6 +389,8 @@ export function renderRunReport(result) {
     `Card run on ${result.card} (${result.kind}): ${result.outcome}, ${RUN_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
   ];
   if (result.trigger === "timer") lines.push(`Started by the card-run timer, once for revision ${result.revision}.`);
+  // SHU-321: which pull request a review run judged, and at which head.
+  if (result.kind === "review" && result.review) lines.push(`Reviewed pull request #${result.review.pr} at ${result.review.head}, from base ${result.review.base}.`);
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
   const card = result.prepared?.card;
   const branch = result.prepared?.branch;

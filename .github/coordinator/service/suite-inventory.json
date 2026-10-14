@@ -115,6 +115,7 @@
     ".github/coordinator/test/shu261-mutations.test.mjs",
     ".github/coordinator/test/shu261-review-findings.test.mjs",
     ".github/coordinator/test/shu261-reviewer-isolation.test.mjs",
+    ".github/coordinator/test/shu321-mutations.test.mjs",
     ".github/coordinator/test/shu68-wiring.test.mjs",
     ".github/coordinator/test/shu71-activation-package.test.mjs",
     ".github/coordinator/test/shu71-battery.test.mjs",
@@ -2173,6 +2174,14 @@
     "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
     "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
+    "SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pull request is reviewed, lowest first, one per start",
+    "SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or an extra path is never reviewed",
+    "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
+    "SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_pr heads per revision, and a busy host gives the head back",
+    "SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins",
+    "SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review",
+    "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
+    "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
     "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
     "review scope: a fixture reviewer is told the lane's whole declared scope, not only the diff",
     "review scope: no scope line for a non-fixture issue, a writer, or an inherited key",
@@ -2553,11 +2562,11 @@
     "SHU-140 worker-identity: a live process re-checked with the same start token is the only sighting called WORKER_LIVE",
     "SHU-140 worker-identity: a pid that vanished between the sighting and the verdict refuses WORKER_STALE_RECORD, never WORKER_LIVE",
     "SHU-140 worker-identity: a reused pid whose process-start token changed refuses WORKER_STALE_RECORD, never WORKER_LIVE",
-    "SHU-140 worker-identity: a missing or unreadable /proc entry is auditable — WORKER_UNVERIFIED by name, from structured metadata and never a command line",
+    "SHU-140 worker-identity: a missing or unreadable /proc entry is auditable \u2014 WORKER_UNVERIFIED by name, from structured metadata and never a command line",
     "SHU-140 worker-identity: a stale supervisor record whose pid was never live cannot by itself block recovery, and every other safeguard still protects the slot",
     "SHU-140 worker-identity: no argument value can reach the refusal detail, the evidence, stdout or an exception, because no command line is ever captured",
     "SHU-140 worker-identity: a process sighted working IN the attempt worktree is not exonerated by a stale supervisor record, and a record mismatch alone still refuses WORKER_STALE_RECORD",
-    "SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token — both tokens reach the audit line and the disagreement still refuses",
+    "SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token \u2014 both tokens reach the audit line and the disagreement still refuses",
     "SHU-140 worker-identity: a /proc entry that could not be READ at the re-check is PRESENCE_UNREADABLE and refuses WORKER_UNVERIFIED, never VANISHED and never 'absent'",
     "SHU-140 reconcile-dangling: the remaining guards \u2014 binding, measurability, the state machine's veto, the write, and the CLI",
     "SHU-140 recovery-request: with no request present the tick runs unchanged, dry-run semantics intact, and nothing is read, consumed or written",
@@ -3025,6 +3034,18 @@
     "SHU261 host preflight pins every inspected path",
     "SHU261 host validation pins every sentinel directory class",
     "SHU261 process marker verifies observable cmdline before confinement",
+    "SHU-321 mutation M1 drop the path allowlist",
+    "SHU-321 mutation M2 drop the contracts deletions check",
+    "SHU-321 mutation M3 claim a head without the exclusive flag",
+    "SHU-321 mutation M4 allow claude-verifier to review a Claude change",
+    "SHU-321 mutation M5 drop the fork and draft checks",
+    "SHU-321 mutation M6 review on QUEUE_STOPPED",
+    "SHU-321 mutation M7 drop the label check",
+    "SHU-321 mutation M8 let narrowQueueScope accept any review lane",
+    "SHU-321 mutation M9 drop the per-pull-request cap",
+    "SHU-321 mutation M10 drop the pause recheck before arming",
+    "SHU-321 mutation M11 drop the Claude-Session trailer check",
+    "SHU-321 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
     "bridge: verdict stages map to the intended routing outcome",
@@ -4204,8 +4225,7 @@
     "SHU71_STRANDED_RESUME: a later tick launches the stranded reservation under the same attempt",
     "SHU71_STRANDED_RELEASE: past the resume window the reservation is released and frees its slot",
     "SHU71_STRANDED_OTHER_EPISODE: a new episode releases the reservation an earlier one left behind",
-    "SHU71_STRANDED_HEAD_MOVED: a stranded reservation whose bound head moved is released, not launched"
-,
+    "SHU71_STRANDED_HEAD_MOVED: a stranded reservation whose bound head moved is released, not launched",
     "SHU71_TICK_LOGS: the production tick writes its decision lines to the journal",
     "CARD_LANE_CONFIG: the committed SHU-197 lane is exactly its reviewed contract",
     "CARD_LANE_NOT_WIDENED: config cannot widen, trap or invent a card lane",
@@ -18329,6 +18349,38 @@
       "capabilities": []
     },
     {
+      "name": "SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pull request is reviewed, lowest first, one per start",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or an extra path is never reviewed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_pr heads per revision, and a busy host gives the head back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
+      "capabilities": []
+    },
+    {
       "name": "official headless contract: execFile claude -p with JSON schema and bound UUID/SHA",
       "capabilities": []
     },
@@ -20688,7 +20740,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-140 worker-identity: a missing or unreadable /proc entry is auditable — WORKER_UNVERIFIED by name, from structured metadata and never a command line",
+      "name": "SHU-140 worker-identity: a missing or unreadable /proc entry is auditable \u2014 WORKER_UNVERIFIED by name, from structured metadata and never a command line",
       "capabilities": []
     },
     {
@@ -20704,7 +20756,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token — both tokens reach the audit line and the disagreement still refuses",
+      "name": "SHU-140 worker-identity: a record read first cannot shadow a later record's disagreeing process_token \u2014 both tokens reach the audit line and the disagreement still refuses",
       "capabilities": []
     },
     {
@@ -24374,6 +24426,54 @@
           "name": "linux_proc"
         }
       ]
+    },
+    {
+      "name": "SHU-321 mutation M1 drop the path allowlist",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M2 drop the contracts deletions check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M3 claim a head without the exclusive flag",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M4 allow claude-verifier to review a Claude change",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M5 drop the fork and draft checks",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M6 review on QUEUE_STOPPED",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M7 drop the label check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M8 let narrowQueueScope accept any review lane",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M9 drop the per-pull-request cap",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M10 drop the pause recheck before arming",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M11 drop the Claude-Session trailer check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation the unmutated suite passes",
+      "capabilities": []
     },
     {
       "name": "bridge: role/runtime mapping covers the three worker lanes",

@@ -524,5 +524,10 @@
       ],
       "note": "the standing review-only card (SHU-303): each run reviews one open pull request at the exact head and base its activation names; brief pinned in card-contracts.mjs"
     }
-  ]
+  ],
+  "queue_config_review": {
+    "lane": "SHU-304",
+    "label": "coordinator:queue-config",
+    "max_heads_per_pr": 3
+  }
 }

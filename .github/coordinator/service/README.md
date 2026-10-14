@@ -301,3 +301,23 @@ disposition. The reviewed `phase-a-driver.mjs` CLI selects
 `production-lifecycle.mjs` by default. Its syscall and command boundaries are
 replaced in tests; no test invokes the host provider against the real machine. The offline installer above is unchanged, and
 no real-host acceptance is claimed.
+
+## Card-run timer: queue config review (SHU-321)
+
+When the committed card queue is done (`QUEUE_DONE`), a start of
+`shu-card-run.timer` may review one open queue config pull request with the
+standing review-only card named by `queue_config_review` in `config.json`
+(SHU-304). A candidate is open, not a draft, based on `main`, a branch of the
+pilot repository, labelled `coordinator:queue-config`, changes only
+`config.json`, `card-contracts.mjs` (additions only),
+`service/suite-inventory.json` or files under a coordinator `test/` directory,
+and every commit carries a `Claude-Session:` trailer. The lowest-numbered
+candidate is reviewed at its exact head by `codex-verifier`, one per start, once
+per head (`/srv/shu/state/card-review-auto-pr<N>-<head>.json`, written before
+the run with each file's blob), and at most `max_heads_per_pr` heads per pull
+request per installed revision (`REVIEW_CAP`). The run arms, ticks, reverts and
+reports on SHU-71 exactly as an operator's review run does. It never merges,
+installs or writes a branch. A stopped, invalid or paused queue never reviews;
+the pause file is read again just before arming; a GitHub read that fails is a
+`REVIEW_UNREADABLE` skip with no claim. A pull request that merged `main` in
+carries a merge commit without the trailer, so it is not a candidate.
