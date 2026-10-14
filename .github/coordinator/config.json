@@ -25,10 +25,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-317",
-      "SHU-318",
-      "SHU-319",
-      "SHU-320"
+      "SHU-323",
+      "SHU-324",
+      "SHU-325",
+      "SHU-326"
     ]
   },
   "adapter_pause_map": {},
@@ -664,6 +664,144 @@
         "packages/db/test/postgres-authz-store.test.ts",
         "apps/gateway/src/catalogue-http.ts",
         "apps/gateway/test/catalogue-bank-payment-details-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-323",
+      "authorization_ref": "SHU-323",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the fourth committed card queue (SHU-312), a whole-tree card: a follow-up to slice O9a (organization notes refuse DELETE and TRUNCATE in the database); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0198_organization_notes_refuse_delete.sql",
+        "packages/db/test/postgres-organization-notes-append-only.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "packages/db/test/postgres-reference-catalogue.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0198_organization_notes_refuse_delete.sql",
+        "packages/db/test/postgres-organization-notes-append-only.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "packages/db/test/postgres-reference-catalogue.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-324",
+      "authorization_ref": "SHU-324",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the fourth committed card queue (SHU-312), a whole-tree card: slice O9b (organization notes carry a note type); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organization-notes.ts",
+        "packages/organizations/test/organization-note-types.test.ts",
+        "packages/organizations/test/organization-note-types-mutations.mjs",
+        "packages/organizations/test/organization-notes.test.ts",
+        "packages/db/migrations/0199_organization_note_types.sql",
+        "packages/db/src/postgres-organization-notes-store.ts",
+        "packages/db/test/postgres-organization-note-types.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-notes.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-notes-http.test.ts",
+        "apps/gateway/test/organization-note-types-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organization-notes.ts",
+        "packages/organizations/test/organization-note-types.test.ts",
+        "packages/organizations/test/organization-note-types-mutations.mjs",
+        "packages/organizations/test/organization-notes.test.ts",
+        "packages/db/migrations/0199_organization_note_types.sql",
+        "packages/db/src/postgres-organization-notes-store.ts",
+        "packages/db/test/postgres-organization-note-types.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-notes.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-notes-http.test.ts",
+        "apps/gateway/test/organization-note-types-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-325",
+      "authorization_ref": "SHU-325",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "third card of the fourth committed card queue (SHU-312), a whole-tree card: slice O8c (staff and admin keep an organization's brand list); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organization-brands.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/organization-brands.test.ts",
+        "packages/organizations/test/organization-brands-mutations.mjs",
+        "packages/db/migrations/0200_organization_brands.sql",
+        "packages/db/src/postgres-organization-brands-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-brands.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-brands.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-brands-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organization-brands.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/organization-brands.test.ts",
+        "packages/organizations/test/organization-brands-mutations.mjs",
+        "packages/db/migrations/0200_organization_brands.sql",
+        "packages/db/src/postgres-organization-brands-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-brands.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-brands.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-brands-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-326",
+      "authorization_ref": "SHU-326",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "fourth card of the fourth committed card queue (SHU-312), a whole-tree card: slice O6a (admin soft-deletes an organization behind dependency guards); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/deletion-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/deletion-writes.test.ts",
+        "packages/organizations/test/deletion-writes-mutations.mjs",
+        "packages/db/migrations/0201_organization_deletion.sql",
+        "packages/db/src/postgres-organization-deletion-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-deletion.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-deletion.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-deletion-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/deletion-writes.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/deletion-writes.test.ts",
+        "packages/organizations/test/deletion-writes-mutations.mjs",
+        "packages/db/migrations/0201_organization_deletion.sql",
+        "packages/db/src/postgres-organization-deletion-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-deletion.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-deletion.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-deletion-http.test.ts",
         "package.json"
       ]
     }
