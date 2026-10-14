@@ -1077,7 +1077,7 @@
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
     "call_sites": [
-      ".github/coordinator/test/shu322-mutations.test.mjs:181"
+      ".github/coordinator/test/shu322-mutations.test.mjs:193"
     ]
   },
   {

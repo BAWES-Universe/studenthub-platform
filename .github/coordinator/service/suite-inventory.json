@@ -3065,6 +3065,7 @@
     "SHU-322 B15: the timer only ever creates the pause file",
     "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
     "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
+    "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
     "SHU-322 mutation M1 drop the path allowlist",
     "SHU-322 mutation M2 install a deleted coordinator file",
     "SHU-322 mutation M3 drop the contracts deletions check",
@@ -3090,6 +3091,8 @@
     "SHU-322 mutation M23 overwrite an existing pause file",
     "SHU-322 mutation M24 review after an install in the same start",
     "SHU-322 mutation M25 install from a stopped queue",
+    "SHU-322 mutation M26 release the lock when the pause could not be written",
+    "SHU-322 mutation M27 count anything at the pause path as a pause",
     "SHU-322 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
@@ -24589,6 +24592,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
+      "capabilities": []
+    },
+    {
       "name": "SHU-322 mutation M1 drop the path allowlist",
       "capabilities": []
     },
@@ -24686,6 +24693,14 @@
     },
     {
       "name": "SHU-322 mutation M25 install from a stopped queue",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M26 release the lock when the pause could not be written",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M27 count anything at the pause path as a pause",
       "capabilities": []
     },
     {
