@@ -301,3 +301,61 @@ disposition. The reviewed `phase-a-driver.mjs` CLI selects
 `production-lifecycle.mjs` by default. Its syscall and command boundaries are
 replaced in tests; no test invokes the host provider against the real machine. The offline installer above is unchanged, and
 no real-host acceptance is claimed.
+
+## Card-run timer: queue config review (SHU-321)
+
+When the committed card queue is done (`QUEUE_DONE`), a start of
+`shu-card-run.timer` may review one open queue config pull request with the
+standing review-only card named by `queue_config_review` in `config.json`
+(SHU-304). A candidate is open, not a draft, based on `main`, a branch of the
+pilot repository, labelled `coordinator:queue-config`, changes only
+`config.json`, `card-contracts.mjs` (additions only),
+`service/suite-inventory.json` or files under a coordinator `test/` directory,
+and every commit carries a `Claude-Session:` trailer. The lowest-numbered
+candidate is reviewed at its exact head by `codex-verifier`, one per start, once
+per head (`/srv/shu/state/card-review-auto-pr<N>-<head>.json`, written before
+the run with each file's blob), and at most `max_heads_per_pr` heads per pull
+request per installed revision (`REVIEW_CAP`). The run arms, ticks, reverts and
+reports on SHU-71 exactly as an operator's review run does. It never merges,
+installs or writes a branch. A stopped, invalid or paused queue never reviews;
+the pause file is read again just before arming; a GitHub read that fails is a
+`REVIEW_UNREADABLE` skip with no claim. A pull request that merged `main` in
+carries a merge commit without the trailer, so it is not a candidate.
+
+## Card-run timer: queue self-install (SHU-322)
+
+Before that review, a `QUEUE_DONE` start whose installed revision R the
+prerequisite receipt reads `VERIFIED` reads `main` as `shu-coordinator`, in the
+same fresh bare repository the card branch push uses, and gets N
+(`service/card-install.mjs`). N equal to R, or an N whose `dispatch_scope` is
+R's, is a silent skip. Otherwise N installs itself only when
+`selfInstallGate` admits it: R is an ancestor of N; every changed
+`.github/coordinator` path is `config.json`, `card-contracts.mjs`,
+`service/suite-inventory.json` or under a `test/` directory, and none is
+deleted; `card-contracts.mjs` has no deleted line; in the parsed
+`config.json` every key but `dispatch_scope` and `card_lanes` is deep-equal,
+R's `card_lanes` are an exact prefix of N's, and the new scope is two to five
+newly appended lanes, none landed, each with a `CARD_CONTRACTS` entry added at
+N (read as text, never imported); every changed coordinator blob at N equals
+the blob a root-owned SHU-321 `REVIEW_PASS` claim recorded at that pull
+request's exact head; and N's check runs and statuses are green.
+
+A read that fails, or checks still running, is an `INSTALL_UNREADABLE` or
+`INSTALL_NOT_READY` skip with no claim, and the start goes on to the review. A
+definite refusal is claimed once in
+`/srv/shu/state/card-install-auto-<N>.json` (written exclusively), reads
+`NEEDS_OWNER`, is reported once on SHU-71 and changes nothing on the host. An
+admitted N is installed under `/run/lock/shu-card-run.lock`, the pause file
+read again before each step: claim, idle host (`busyReasons`), `git merge
+--ff-only N` in the checkout as `shu-coordinator` (hooks off, bounded), the
+provisioner's `rollback R`, `install N`, `verify N` and `precondition N`, then
+`card-run.mjs plan` of N in a child process, which must show the new queue,
+its first card next and no refused preparation. The start then reports and
+exits; the next timer start runs the first card from N's own code. A pause
+found before the merge gives N back; one found later stops there
+(`INSTALL_PAUSED`). Any failed step writes `/etc/shu/card-run.paused` with its
+reason (created only, never replaced or removed by the timer) and reports
+`INSTALL_FAILED`; a `verify` or `precondition` failure first rolls N's
+prerequisites back. R is never reinstalled by the box: after a failure the
+checkout stays at N and the owner decides. Any coordinator code change stays a
+human install.

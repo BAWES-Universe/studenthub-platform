@@ -93,6 +93,12 @@ interface EditableFields {
   readonly terms: ContractTerms;
 }
 
+export interface NormalizedPayContractCreate extends EditableFields {
+  readonly candidateId: string;
+  readonly companyId: string;
+  readonly storeId: string;
+}
+
 function normalizeEditable(raw: Record<string, unknown>): EditableFields {
   const startDate = date(raw.startDate, "invalid_start_date");
   const endDate = raw.endDate === undefined || raw.endDate === null || raw.endDate === "" ? undefined : date(raw.endDate, "invalid_end_date");
@@ -109,8 +115,17 @@ function normalizeEditable(raw: Record<string, unknown>): EditableFields {
   return { startDate, endDate, currencyId: raw.currencyId.toLowerCase(), transferCost, autoGenerate, status, terms };
 }
 
-function overlaps(a: { startDate: IsoDate; endDate?: IsoDate }, b: { startDate: IsoDate; endDate?: IsoDate }): boolean {
+export function overlaps(a: { startDate: IsoDate; endDate?: IsoDate }, b: { startDate: IsoDate; endDate?: IsoDate }): boolean {
   return (a.endDate == null || a.endDate >= b.startDate) && (b.endDate == null || b.endDate >= a.startDate);
+}
+
+/** Normalize precisely the create payload, without consulting external references. */
+export function normalizePayContractCreate(input: unknown): NormalizedPayContractCreate {
+  const raw = closedObject(input, FIELDS);
+  const candidateId = partyId(raw.candidateId, "invalid_candidate");
+  const companyId = partyId(raw.companyId, "invalid_company");
+  const storeId = partyId(raw.storeId, "invalid_store");
+  return Object.freeze({ candidateId, companyId, storeId, ...normalizeEditable(raw) });
 }
 
 /**
@@ -168,11 +183,7 @@ export class PayContracts {
 
   async create(actorId: string, input: unknown): Promise<PayContract> {
     requireActor(actorId);
-    const raw = closedObject(input, FIELDS);
-    const candidateId = partyId(raw.candidateId, "invalid_candidate");
-    const companyId = partyId(raw.companyId, "invalid_company");
-    const storeId = partyId(raw.storeId, "invalid_store");
-    const fields = normalizeEditable(raw);
+    const { candidateId, companyId, storeId, ...fields } = normalizePayContractCreate(input);
     await this.assertCurrency(fields.currencyId, undefined);
     const now = this.now().toISOString();
     return this.store.transaction(async (tx) => {
