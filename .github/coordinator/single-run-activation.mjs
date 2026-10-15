@@ -85,7 +85,7 @@ import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
 import { readProgressionPush } from './two-fixture-progression.mjs';
 import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
-import { resolveFixtureLane, resolveReviewOnlyLane } from "./workspace-scope.mjs";
+import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "./workspace-scope.mjs";
 import { cardContract } from "./card-contracts.mjs";
 import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
@@ -474,8 +474,18 @@ export function narrowQueueScope(config, filePath, io = {}) {
   if (!file.ok) return config;
   let record;
   try { record = JSON.parse(file.text); } catch { return config; }
+  // SHU-321: the committed queue_config_review lane is the one exception. Once
+  // the queue is done the timer may arm it on a queue config pull request, so
+  // a record targeting that lane, and no other review lane, narrows to it.
+  if (validateActivationRecord(record).ok && record.target_issue_id === queueConfigReviewLane(config)) {
+    return { ...config, dispatch_scope: { issue_ids: [record.target_issue_id] } };
+  }
   if (!validateActivationRecord(record).ok || !queue.ids.includes(record.target_issue_id)) return config;
   return { ...config, dispatch_scope: { issue_ids: [record.target_issue_id] } };
+}
+
+function queueConfigReviewLane(config) {
+  try { return resolveQueueConfigReview(config)?.lane ?? null; } catch { return null; }
 }
 
 // ---------------------------------------------------------------------------

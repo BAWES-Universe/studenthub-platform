@@ -33,15 +33,29 @@
 // all landed is QUEUE_DONE. A crashed run leaves its lock behind and every
 // later start skips LOCKED until the lock is cleared by hand, after checking
 // that no card-run process is alive.
+//
+// SHU-321: a QUEUE_DONE start may then run the standing review-only card
+// (committed queue_config_review, SHU-304) on one open, labelled queue config
+// pull request at its exact head, with Codex as the reviewer of Claude's
+// change: once per head, at most max_heads_per_pr heads per pull request per
+// installed revision, lowest number first, one review per start. It reviews
+// only; merging and installing stay with people. A stopped, invalid or paused
+// queue never reviews, and a GitHub read that fails claims nothing.
+//
+// SHU-322: before that review, a QUEUE_DONE start installs the next card
+// queue itself when main commits one inside the autopilot boundary
+// (service/card-install.mjs): reviewed queue data only, never coordinator
+// code. It reports and exits; the next start runs the new queue's first card.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS } from "../single-run-activation.mjs";
-import { resolveFixtureLane, resolveReviewOnlyLane } from "../workspace-scope.mjs";
+import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
-import { landCard, readLandToken, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { landCard, readLandToken, boundedFetch, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { selfInstall } from "./card-install.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -76,6 +90,8 @@ export const CARD_RUN_LIMITS = Object.freeze({
   landWaitMs: 30 * 60 * 1000,
   landPollMs: 60 * 1000,
   landRequestTimeoutMs: 30 * 1000,
+  // SHU-321: each GitHub read of the queue config review's discovery.
+  reviewRequestTimeoutMs: 30 * 1000,
 });
 export const AUTO_TIMEOUT_START_MS = 8 * 60 * 60 * 1000;
 
@@ -135,8 +151,12 @@ export function planRun({ config, revision, now, review = null, limits = CARD_RU
   let id;
   if (queue.queue) {
     if (!queue.ok) refuse("CARD_RUN_SCOPE", queue.reason);
-    if (review) refuse("CARD_RUN_REVIEW_INPUT", "a review run never comes from a card queue");
-    if (!queue.ids.includes(cardId)) refuse("CARD_RUN_SCOPE", "a card queue runs only a named queued card");
+    // SHU-321: the one review a queue admits is the committed
+    // queue_config_review lane, which the timer arms once the queue is done.
+    if (review && (cardId === null || cardId !== queueConfigReview(config)?.lane)) {
+      refuse("CARD_RUN_REVIEW_INPUT", "a review run under a card queue is only the committed queue_config_review lane");
+    }
+    if (!review && !queue.ids.includes(cardId)) refuse("CARD_RUN_SCOPE", "a card queue runs only a named queued card");
     id = cardId;
   } else {
     const ids = config?.dispatch_scope?.issue_ids;
@@ -474,7 +494,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     if (plan.kind === "card" && result.outcome === "PASS" && reverted.reverted === true) {
       land = await landRun({ io, paths, limits, plan, config, credentials });
     }
-    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted, ...(land ? { land } : {}) };
+    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
+      ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}) };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
@@ -519,17 +540,23 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   if (busy.length) return skip("HOST_BUSY", busy.join("; "));
   let revision;
   let plan;
+  let config;
+  let done = null;
   try {
     revision = installedRevision(io, paths);
-    const config = readConfig(io, paths);
+    config = readConfig(io, paths);
     const next = nextCard(io, paths, config, revision);
-    if (next.skipped) return skip(next.skipped, next.reason);
-    plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
+    // SHU-321: only a done queue may go on to review a queue config pull
+    // request; a stopped, invalid or paused one never does.
+    if (next.skipped === "QUEUE_DONE") done = next;
+    else if (next.skipped) return skip(next.skipped, next.reason);
+    else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
   } catch (error) {
     // A review card needs its pull request from an operator, so the timer never
     // runs one; any other planning refusal waits for the next install.
     return skip("NOT_READY", error.message);
   }
+  if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
   const claim = autoClaim(paths, revision, plan.id);
   try {
     io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
@@ -563,6 +590,238 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       land: result.land?.outcome ?? null })}\n`, { mode: 0o600 });
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
+}
+
+// SHU-321: once the committed queue is done, the timer may run the standing
+// review-only card on one open queue config pull request, so a queue Claude
+// wrote gets a Codex verdict at its exact head without a person running Codex.
+// It reviews only; it never merges, installs or writes a branch. A candidate
+// is open, not a draft, on main, a branch of the pilot repository, labelled,
+// touches only queue config paths, only adds to the card contracts, and every
+// commit carries a Claude-Session: trailer. Anything else is not a candidate:
+// no claim and no report.
+export const QUEUE_CONFIG_REVIEWER = "codex-verifier";
+export const QUEUE_CONFIG_AUTHOR_FAMILY = "claude";
+export const QUEUE_CONFIG_PATHS = Object.freeze([
+  ".github/coordinator/config.json",
+  ".github/coordinator/card-contracts.mjs",
+  ".github/coordinator/service/suite-inventory.json",
+]);
+const CONTRACTS_PATH = ".github/coordinator/card-contracts.mjs";
+const SESSION_TRAILER_RE = /^Claude-Session: \S+$/m;
+// One page of each list; a list that fills it may hide a file or a commit.
+const GITHUB_PAGE = 100;
+
+function queueConfigReview(config) {
+  try { return resolveQueueConfigReview(config); } catch (error) { refuse("CARD_RUN_CONFIG", error.message); }
+}
+
+// One of the exact files, or any file under a test/ directory of the coordinator.
+export function queueConfigPath(file) {
+  if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
+  const parts = file.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) return false;
+  return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");
+}
+
+// What the open-pull-request list itself says: a labelled branch of the pilot
+// repository, open and ready, against main.
+function listedCandidate(pull, repo, label) {
+  return Number.isInteger(pull?.number) && pull.number > 0 && pull.state === "open" && pull.base?.ref === "main"
+    && pull.base?.repo?.full_name === repo && pull.draft === false && pull.head?.repo?.full_name === repo && SHA_RE.test(pull.head?.sha ?? "")
+    && Array.isArray(pull.labels) && pull.labels.some((entry) => entry?.name === label);
+}
+
+// The pull request's files and commits, judged whole. A renamed file counts
+// under both names, so nothing leaves the allowlist by a rename, and the
+// contracts may only gain lines: a deleted line could loosen a pinned card.
+export function queueConfigChange(files, head, commits) {
+  if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
+  if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
+  if (commits.at(-1)?.sha !== head) return { ok: false, reason: "its head moved while it was read" };
+  const blobs = {};
+  for (const file of files) {
+    const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
+    if (!names.every(queueConfigPath)) return { ok: false, reason: `${String(file?.filename)} is not a queue config path` };
+    if (names.includes(CONTRACTS_PATH) && (file.status !== "modified" || file.deletions !== 0)) {
+      return { ok: false, reason: `${CONTRACTS_PATH} may only gain lines` };
+    }
+    if (!SHA_RE.test(file.sha ?? "") || !Number.isInteger(file.additions) || !Number.isInteger(file.deletions) || Object.hasOwn(blobs, file.filename)) {
+      return { ok: false, reason: `${file.filename} cannot be read` };
+    }
+    blobs[file.filename] = { sha: file.sha, additions: file.additions, deletions: file.deletions };
+  }
+  if (!commits.every((entry) => SESSION_TRAILER_RE.test(String(entry?.commit?.message ?? "")))) {
+    return { ok: false, reason: "a commit carries no Claude-Session: trailer" };
+  }
+  return { ok: true, files: blobs };
+}
+
+// A Claude-written change is judged by Codex, never by Claude.
+export function assertQueueConfigReviewer(plan) {
+  if (plan?.kind !== "review" || plan.record?.reviewer_lane !== QUEUE_CONFIG_REVIEWER) {
+    refuse("CARD_RUN_REVIEWER", `a queue config review is judged by ${QUEUE_CONFIG_REVIEWER}, not ${plan?.record?.reviewer_lane ?? "no reviewer"}`);
+  }
+  return plan;
+}
+
+// One claim per head, ever. The name never matches landedByTimer's, so a
+// review can never read as a landed card.
+export const reviewClaim = (paths, pr, head) => path.join(paths.stateDir, `card-review-auto-pr${pr}-${head}.json`);
+const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
+
+// The heads of this pull request already claimed, and how many claims count
+// against this revision's cap. A claim that does not clearly name another
+// revision counts: it may be this one's.
+function reviewClaims(io, paths, pr, revision) {
+  const heads = new Set();
+  let atRevision = 0;
+  for (const file of io.fs.readdirSync(paths.stateDir)) {
+    const match = REVIEW_CLAIM_RE.exec(file);
+    if (!match || Number(match[1]) !== pr) continue;
+    heads.add(match[2]);
+    let claim = null;
+    try { claim = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8")); } catch { /* counted below */ }
+    if (!(SHA_RE.test(claim?.revision ?? "") && claim.revision !== revision)) atRevision += 1;
+  }
+  return { heads, atRevision };
+}
+
+// GitHub as the coordinator's read-only token sees it, each read bounded. Any
+// answer but a readable 200 throws, and the caller skips.
+function githubReader(io, credentials, timeoutMs) {
+  const fetchBounded = boundedFetch(io, timeoutMs);
+  return async (url) => {
+    const response = await fetchBounded(url, { method: "GET", headers: {
+      Accept: "application/vnd.github+json", Authorization: `Bearer ${credentials.GITHUB_TOKEN}`,
+      "User-Agent": "shu-card-run", "X-GitHub-Api-Version": "2022-11-28" } });
+    const json = await response.json();
+    if (response.status !== 200 || json === null) refuse("CARD_RUN_REVIEW_UNREADABLE", `${url.replace("https://api.github.com", "")} cannot be read (HTTP ${response.status})`);
+    return json;
+  };
+}
+
+// The lowest-numbered candidate whose head is not claimed yet, or none. The
+// list is read whole first, so a later pull request is never reviewed while
+// an earlier one could not be read.
+async function findQueueConfigPull({ io, credentials, repo, policy, paths, revision, timeoutMs }) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) refuse("CARD_RUN_CONFIG", "pilot_repo must name one GitHub repository");
+  const get = githubReader(io, credentials, timeoutMs);
+  const api = `https://api.github.com/repos/${repo}`;
+  const open = await get(`${api}/pulls?state=open&base=main&per_page=${GITHUB_PAGE}`);
+  if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
+  const capped = [];
+  const listed = open.filter((pull) => listedCandidate(pull, repo, policy.label)).sort((a, b) => a.number - b.number);
+  for (const pull of listed) {
+    const pr = pull.number;
+    const head = pull.head.sha;
+    const claims = reviewClaims(io, paths, pr, revision);
+    if (claims.heads.has(head)) continue;
+    if (claims.atRevision >= policy.maxHeadsPerPr) {
+      capped.push(pr);
+      continue;
+    }
+    const files = await get(`${api}/pulls/${pr}/files?per_page=${GITHUB_PAGE}`);
+    const commits = await get(`${api}/pulls/${pr}/commits?per_page=${GITHUB_PAGE}`);
+    const change = queueConfigChange(files, head, commits);
+    if (!change.ok) continue;
+    // The approved base is the merge base with main, as the coordinator's
+    // own check of a review-only pull request reads it.
+    const compare = await get(`${api}/compare/main...${head}`);
+    const base = compare?.merge_base_commit?.sha;
+    if (!SHA_RE.test(base ?? "") || base === head) continue;
+    return { pull: { pr, head, base, files: change.files }, capped };
+  }
+  return { pull: null, capped };
+}
+
+// SHU-322: what a done queue's timer start does. Card B first: when main
+// commits a new, reviewed card queue, the start installs it, reports and
+// exits, and the next start runs its first card. A refusal is claimed and
+// reported once. With nothing to install, or a read that failed, the start goes
+// on to the queue config review; a pause seen during the install never does.
+async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
+  let install;
+  try {
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons, landedByTimer } });
+  } catch (error) {
+    install = { skipped: "INSTALL_UNREADABLE", reason: error.message };
+  }
+  if (install.result) return install.result;
+  if (install.paused) return skip("PAUSED", install.reason);
+  const review = await autoReview({ io, paths, limits, config, revision, done, skip });
+  return install.skipped ? { ...review, install: { skipped: install.skipped, reason: install.reason } } : review;
+}
+
+// What a done queue's timer start does after Card B. One review at most per
+// start; with no candidate it is the plain QUEUE_DONE skip it always was.
+async function autoReview({ io, paths, limits, config, revision, done, skip }) {
+  let policy;
+  try { policy = resolveQueueConfigReview(config); } catch (error) { return skip("NOT_READY", `CARD_RUN_CONFIG: ${error.message}`); }
+  if (!policy) return skip(done.skipped, done.reason);
+  let found;
+  try {
+    const credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
+    found = await findQueueConfigPull({ io, credentials, repo: config.pilot_repo, policy, paths, revision,
+      timeoutMs: limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs });
+  } catch (error) {
+    // Nothing was claimed, so the next timer start reads again.
+    return skip("REVIEW_UNREADABLE", error.message);
+  }
+  if (!found.pull) {
+    if (found.capped.length) return skip("REVIEW_CAP", `${done.reason}; pull request(s) #${found.capped.join(", #")} reached ${policy.maxHeadsPerPr} reviewed heads at ${revision}`);
+    return skip(done.skipped, done.reason);
+  }
+  const { pr, head, base, files } = found.pull;
+  const review = { pr, head, base, authorFamily: QUEUE_CONFIG_AUTHOR_FAMILY };
+  let plan;
+  try {
+    plan = assertQueueConfigReviewer(planRun({ config, revision, now: io.now(), limits, review, cardId: policy.lane }));
+  } catch (error) {
+    return skip("NOT_READY", error.message);
+  }
+  // The owner may have paused while GitHub was read; the pause wins.
+  const pausedNow = io.fs.existsSync(paths.pause);
+  if (pausedNow) return skip("PAUSED", `${paths.pause} exists`);
+  const claim = reviewClaim(paths, pr, head);
+  const claimText = (fields) => `${JSON.stringify({ pr, head, base, revision, ...fields, files })}\n`;
+  try {
+    io.fs.writeFileSync(claim, claimText({ claimed_at: io.now().toISOString() }), { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if (error.code === "EEXIST") return skip("ALREADY_REVIEWED", `pull request #${pr} at ${head} was already claimed: ${claim}`);
+    throw error;
+  }
+  let result;
+  try {
+    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: policy.lane });
+  } catch (error) {
+    if (NOT_NOW.has(error.code)) {
+      // Not now, so the head is given back for a later start.
+      io.fs.unlinkSync(claim);
+      const code = error.code === "CARD_RUN_LOCKED" ? "LOCKED" : "HOST_BUSY";
+      return skip(code, error.message);
+    }
+    result = await notStarted({ io, paths, limits, error,
+      result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, review: { pr, head, base }, revision } });
+  }
+  let claimError = null;
+  try {
+    io.fs.writeFileSync(claim, claimText({ activation_id: result.activation_id, outcome: result.outcome }), { mode: 0o600 });
+  } catch (error) {
+    // The claim written before the run already stops a second review of this head.
+    claimError = error.code ?? "CLAIM_WRITE_FAILED";
+  }
+  return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
+}
+
+// A run refused before arming: the claim stands and the owner hears it once.
+async function notStarted({ io, paths, limits, error, result }) {
+  const summary = { ok: false, ...result, trigger: "timer", outcome: "NOT_STARTED", reason: error.message,
+    code: error.code ?? "CARD_RUN_ERROR", ticks: [], revert: null };
+  let credentials = null;
+  try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
+  const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });
+  return { ...summary, report };
 }
 
 // Puts the timer on the host: the owner's one go. It never replaces units with
@@ -685,7 +944,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
       const result = await autoRun({ io, paths });
-      return { code: result.skipped || (result.ok && result.revert?.reverted) ? 0 : 1, output: result };
+      return { code: result.skipped || (result.ok && (result.revert?.reverted || result.kind === "install")) ? 0 : 1, output: result };
     }
     // A queue keeps its order only through the timer's claims, so it is run by
     // the timer alone.
