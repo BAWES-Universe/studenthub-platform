@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { createSafeWrite, type ConfirmRequest, type FieldPolicy, type PreviewRequest, type SafeWriteClock, type SafeWriteImplementation, type SafeWriteSecret, type SafeWriteStore } from "@studenthub/safe-write-contract";
+import { createSafeWrite, type ConfirmRequest, type FieldPolicy, type PreviewRequest, type SafeWriteClock, type SafeWriteImplementation, type SafeWriteSecret } from "@studenthub/safe-write-contract";
 import { normalizePayContractUpdate, overlaps, PayContractError, PayContracts, type NormalizedPayContractUpdate } from "./contracts.js";
-import { payContractPrincipalRef } from "./contract-writes.js";
+import { payContractPrincipalRef, type PayContractSafeWriteStore } from "./contract-writes.js";
 import type { FinanceReferenceResolver, PayContract, PayContractStore } from "./types.js";
 
 export const PAY_CONTRACT_TERMS_FIELD = "pay_contract_terms" as const;
@@ -36,10 +36,14 @@ export function payContractChangeCheck(input:{references:FinanceReferenceResolve
   };
 }
 export const acceptAnyPayContractChangeValue:PayContractChangeCheck=async()=>true;
-export function buildPayContractChangeWrite(input:{store:SafeWriteStore;secret:SafeWriteSecret;check:PayContractChangeCheck;contractId:string;policy?:FieldPolicy;clock?:SafeWriteClock;tokenLifetimeMs?:number}):SafeWriteImplementation {
-  const implementation=createSafeWrite({store:input.store,secret:input.secret,policy:input.policy??PAY_CONTRACT_CHANGE_POLICY,...(input.clock?{clock:input.clock}:{}),...(input.tokenLifetimeMs===undefined?{}:{tokenLifetimeMs:input.tokenLifetimeMs})});
+export function buildPayContractChangeWrite(input:{store:PayContractSafeWriteStore;secret:SafeWriteSecret;check:PayContractChangeCheck;contractId:string;policy?:FieldPolicy;clock?:SafeWriteClock;tokenLifetimeMs?:number}):SafeWriteImplementation {
+  const options={store:input.store,secret:input.secret,policy:input.policy??PAY_CONTRACT_CHANGE_POLICY,...(input.clock?{clock:input.clock}:{}),...(input.tokenLifetimeMs===undefined?{}:{tokenLifetimeMs:input.tokenLifetimeMs})};
+  const implementation=createSafeWrite(options);
+  // A committed change moves the state its token was bound to, so a replay would read as state_changed (or not_own_record after a removal).
+  // A token the store has already committed is checked by a contract that counts it spent: it still verifies the token first, then answers token_already_used.
+  const spent=async(request:ConfirmRequest)=>input.store.tokenUsed!==undefined&&typeof request.token?.tokenId==="string"&&await input.store.tokenUsed(request.token.tokenId);
   const checked=async(request:PreviewRequest|ConfirmRequest)=>{if(typeof request.change?.field!=="string"||typeof request.change?.value!=="string")return "invalid";const owned=await input.store.ownedRecord(request.principalRef);if(owned!==request.change.personRef)return "delegate";const before=await input.store.readField(request.change.personRef,request.change.field);return await input.check(input.contractId,request.change.field,request.change.value,before)?"ok":"invalid";};
-  return {preview:async r=>(await checked(r))==="invalid"?{ok:false,reason:"invalid_value"}:implementation.preview(r),confirm:async r=>(await checked(r))==="invalid"?{ok:false,reason:"invalid_value"}:implementation.confirm(r)};
+  return {preview:async r=>(await checked(r))==="invalid"?{ok:false,reason:"invalid_value"}:implementation.preview(r),confirm:async r=>await spent(r)?createSafeWrite({...options,spentTokens:new Set([r.token.tokenId])}).confirm(r):(await checked(r))==="invalid"?{ok:false,reason:"invalid_value"}:implementation.confirm(r)};
 }
 export function payContractChanger(references:FinanceReferenceResolver){return async(store:PayContractStore,actorId:string,contractId:string,field:string,value:string):Promise<{ok:true}|{ok:false;reason:"state_changed"|"not_own_record"}>=>{try{const service=new PayContracts(store,references);if(field===PAY_CONTRACT_TERMS_FIELD)await service.update(actorId,contractId,JSON.parse(value));else if(field===PAY_CONTRACT_REMOVAL_FIELD)await service.remove(actorId,contractId);else throw new TypeError("unknown pay contract field");return{ok:true};}catch(error){if(error instanceof PayContractError){if(error.code==="not_found")return{ok:false,reason:"not_own_record"};if(error.code==="overlapping_contract"||error.code==="contract_changed"||error.status===400)return{ok:false,reason:"state_changed"};}throw error;}};}
 
