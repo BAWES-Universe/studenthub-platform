@@ -39,3 +39,4 @@ export {PostgresOrganizationStatusStore,ORGANIZATION_STATUS_OPERATION,type Postg
 export {PostgresOrganizationCommercialTermsStore,ORGANIZATION_COMMERCIAL_TERMS_OPERATION,type PostgresOrganizationCommercialTermsStoreOptions} from "./postgres-organization-commercial-terms-store.js";
 export {PostgresOrganizationApprovedToHireStore,ORGANIZATION_APPROVED_TO_HIRE_OPERATION,type PostgresOrganizationApprovedToHireStoreOptions} from "./postgres-organization-approved-to-hire-store.js";
 export {PostgresOrganizationNotesStore,ORGANIZATION_NOTES_OPERATION,type OrganizationNoteDbRow} from "./postgres-organization-notes-store.js";
+export {PostgresPayContractSafeWriteStore,PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATION,type PostgresPayContractSafeWriteStoreOptions} from "./postgres-pay-contract-safe-write-store.js";
