@@ -33,6 +33,7 @@ import { handleOrganizationStatus, type OrganizationStatus } from "./organizatio
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
 import {handleOrganizationApprovedToHire,type OrganizationApprovedToHire} from "./organization-approved-to-hire.js";
 import {handleOrganizationNotes,type OrganizationNotes} from "./organization-notes.js";
+import {handlePayContracts,type PayContractsCreate} from "./pay-contracts-http.js";
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
@@ -185,6 +186,7 @@ export function createGatewayServer(
     if(await handleOrganizationCommercialTerms(request,response,(login as BrowserLoginApplication&{organizationCommercialTerms?:OrganizationCommercialTerms}|undefined)?.organizationCommercialTerms,login?.web?.origin))return;
     if(await handleOrganizationApprovedToHire(request,response,(login as BrowserLoginApplication&{organizationApprovedToHire?:OrganizationApprovedToHire}|undefined)?.organizationApprovedToHire,login?.web?.origin))return;
     if(await handleOrganizationNotes(request,response,(login as BrowserLoginApplication&{organizationNotes?:OrganizationNotes}|undefined)?.organizationNotes,login?.web?.origin))return;
+    if(await handlePayContracts(request,response,(login as BrowserLoginApplication&{payContracts?:PayContractsCreate}|undefined)?.payContracts,login?.web?.origin))return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
