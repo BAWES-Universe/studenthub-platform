@@ -1572,7 +1572,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0147_person_language_safe_write",
           "0148_candidate_profile_records",
           "0150_organization_profile",
-          "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write",
+          "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write",
         ],
         "each migration is recorded exactly once",
       );
@@ -1625,7 +1625,7 @@ test(
             "0147_person_language_safe_write",
             "0148_candidate_profile_records",
             "0150_organization_profile",
-            "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write",
+            "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write",
           ],
         );
       } finally {
