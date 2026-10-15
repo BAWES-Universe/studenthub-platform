@@ -7,3 +7,4 @@ export * from "./memory-store.js";
 export * from "./bank-write.js";
 export * from "./contract-writes.js";
 export * from "./contract-changes.js";
+export * from "./contract-reads.js";
