@@ -250,7 +250,11 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       if (query.includes("CardRunWatchReceipts")) {
         host.watchReads = (host.watchReads ?? 0) + 1;
         if (host.watchFails) throw new TypeError("fetch failed");
-        return respond(200, { data: { issue: { comments: { nodes: structuredClone(host.watchComments?.(host) ?? []) } } } });
+        // Newest first, a hundred to a page, behind any newer comments.
+        const all = [...(host.watchNewer ?? []), ...structuredClone(host.watchComments?.(host) ?? [])];
+        const start = variables.after ? Number(variables.after) : 0;
+        const more = host.watchEndless === true || start + 100 < all.length;
+        return respond(200, { data: { issue: { comments: { nodes: all.slice(start, start + 100), pageInfo: { hasNextPage: more, endCursor: more ? String(start + 100) : null } } } } });
       }
       if (query.includes("CardRunHistory")) {
         host.api.push("linear history");
@@ -1574,6 +1578,21 @@ test("SHU-86 0b: a failed receipt read is no progress and never ends the run", a
   assert.equal(output.watch.first_dispatch_at, null);
   assert.match(host.reports[0], /5 receipt read\(s\) failed/);
   reverted(host);
+});
+
+test("SHU-86 0b: a dispatch receipt behind a page of newer comments still counts, and an endless thread is a failed read", async () => {
+  const host = watchedHost();
+  host.watchNewer = Array.from({ length: 150 }, (_, i) => ({ body: `note ${i}`, createdAt: "2026-10-01T00:00:00.000Z", user: { id: "someone", displayName: "Someone" } }));
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.outcome, "PASS");
+  assert.equal(output.watch.first_dispatch_at, host.watched().launch, "the receipt on the second page is read");
+  assert.equal(output.watch.receipt_read_failures, 0);
+  const endless = watchedHost();
+  endless.watchEndless = true;
+  const again = await main(["run"], endless.io, PATHS);
+  assert.equal(again.output.outcome, "PASS", "a read that never ends never ends the run");
+  assert.equal(again.output.watch.receipt_read_failures, 5);
+  assert.equal(again.output.watch.first_dispatch_at, null);
 });
 
 test("SHU-86 0b: another run's receipts on the same card never count as this run's progress", async () => {

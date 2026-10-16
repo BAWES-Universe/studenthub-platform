@@ -16,13 +16,19 @@
 import { sendLinear, parseReceiptsFromComments } from "../reconcile.mjs";
 import { boundedFetch } from "./card-land.mjs";
 
-// Linear answers newest first, so one page holds the latest receipts.
+// Linear answers newest first and a receipt comment is edited in place, so a
+// run's first dispatch can sit on an older page: every page is read (as
+// fetchIssueComments does), up to a cap that keeps the read bounded.
 export const CARD_WATCH_RECEIPTS_QUERY = `
-  query CardRunWatchReceipts($issueId: String!) {
+  query CardRunWatchReceipts($issueId: String!, $after: String) {
     issue(id: $issueId) {
-      comments(first: 50, orderBy: createdAt) { nodes { body createdAt user { id displayName } } }
+      comments(first: 100, orderBy: createdAt, after: $after) {
+        nodes { body createdAt user { id displayName } }
+        pageInfo { hasNextPage endCursor }
+      }
     }
   }`;
+export const CARD_WATCH_MAX_PAGES = 20;
 
 const time = (value) => {
   const ms = typeof value === "string" ? Date.parse(value) : NaN;
@@ -96,16 +102,28 @@ export function createWatch({ armedAt, limits = {} }) {
   };
 }
 
-// One bounded read of the card's receipts. Any failure answers null.
+// One bounded read of the card's receipts, every page of them. Any failure,
+// a bad cursor or more than CARD_WATCH_MAX_PAGES pages answers null.
 export async function readProgress({ io, credentials, config, card, activationId, timeoutMs }) {
   const token = credentials?.LINEAR_API_TOKEN;
   const actors = config?.linear_receipt_actor_ids;
   if (!token || !Array.isArray(actors) || actors.length === 0) return null;
   try {
     const fetchImpl = boundedFetch(io, timeoutMs, { attempts: 1, waitMs: 0 });
-    const data = await sendLinear(CARD_WATCH_RECEIPTS_QUERY, { issueId: card }, token, fetchImpl);
-    const nodes = data?.issue?.comments?.nodes;
-    if (!Array.isArray(nodes)) return null;
+    const nodes = [];
+    const seen = new Set();
+    let after = null;
+    for (let pages = 0; ; pages += 1) {
+      if (pages === CARD_WATCH_MAX_PAGES) return null;
+      const data = await sendLinear(CARD_WATCH_RECEIPTS_QUERY, { issueId: card, after }, token, fetchImpl);
+      const page = data?.issue?.comments;
+      if (!Array.isArray(page?.nodes)) return null;
+      nodes.push(...page.nodes);
+      if (page.pageInfo?.hasNextPage !== true) break;
+      after = page.pageInfo.endCursor;
+      if (typeof after !== "string" || after.length === 0 || seen.has(after)) return null;
+      seen.add(after);
+    }
     return receiptProgress(parseReceiptsFromComments(nodes, actors), { card, activationId });
   } catch {
     return null;

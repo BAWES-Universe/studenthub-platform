@@ -879,6 +879,20 @@ const CASES = [
     to: '  run(io, "systemctl", ["start", "shu-coordinator.service"], bounded); // SHU86-M131',
     pattern: "SHU-86 0b: a journal read",
   },
+  {
+    name: "M132 read only the newest page of receipts",
+    file: "service/card-watch.mjs",
+    from: "      if (page.pageInfo?.hasNextPage !== true) break;",
+    to: "      break; // SHU86-M132",
+    pattern: "SHU-86 0b: a dispatch receipt behind a page",
+  },
+  {
+    name: "M133 read a thread past the page cap as complete",
+    file: "service/card-watch.mjs",
+    from: "      if (pages === CARD_WATCH_MAX_PAGES) return null;",
+    to: "      if (pages === CARD_WATCH_MAX_PAGES) break; // SHU86-M133",
+    pattern: "SHU-86 0b: a dispatch receipt behind a page",
+  },
 ];
 
 for (const mutation of CASES) {
