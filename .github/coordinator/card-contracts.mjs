@@ -1372,6 +1372,415 @@ Out of scope: bank files, payment advice and payouts (F3, blocked); checking a c
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-323 to SHU-326 are the fourth committed card queue (SHU-312). SHU-323
+// closes the gap SHU-316 left on purpose: organization notes refuse UPDATE in
+// the database, but a direct DELETE, a TRUNCATE or the ON DELETE CASCADE from a
+// hard-deleted organization can still remove them. It mirrors the audit
+// ledger's own triggers (migration 0004).
+export const SHU323_PATHS = Object.freeze([
+  "packages/db/migrations/0198_organization_notes_refuse_delete.sql",
+  "packages/db/test/postgres-organization-notes-append-only.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/db/test/postgres-reference-catalogue.test.ts",
+  "package.json",
+]);
+
+const SHU323_ACCEPTANCE = [
+  "(1) migration 0198 recreates the existing row trigger organization_notes_no_update as BEFORE UPDATE OR DELETE ... FOR EACH ROW on organization_notes, so a direct DELETE of a note raises \"organization notes are append-only\" with SQLSTATE 55000 and removes nothing; leaving DELETE out of that trigger makes the \"SHU-323/AC-01 delete-refused\" database test fail;",
+  "(2) a new statement trigger organization_notes_no_truncate, BEFORE TRUNCATE ... FOR EACH STATEMENT, refuses TRUNCATE organization_notes and a TRUNCATE organizations CASCADE that reaches it, with the same error; leaving it out makes the \"SHU-323/AC-02 truncate-refused\" database test fail;",
+  "(3) deleting an organization that has notes fails, because the foreign key's ON DELETE CASCADE deletes its notes row by row and the row trigger refuses each; the organization and its notes stay; deleting an organization with no notes still succeeds; dropping the row trigger's DELETE event makes the \"SHU-323/AC-03 noted-organization-delete-refused\" database test fail;",
+  "(4) UPDATE of a note is still refused, adding and listing notes behave as before and SHU-316's tests pass unchanged; the organization_notes table, its columns, foreign key and indexes are unchanged; 0198 changes no other table, does not touch authorization_mutation_audit, its constraints or authorization_audit_summary_valid; \"0198_organization_notes_refuse_delete\" follows the newest earlier migration (\"0197_catalogue_bank_payment_details\" once the third card queue has landed) in both schema_migrations lists;",
+  "(5) test isolation still works: the beforeEach hooks of postgres-authz-store.test.ts and postgres-reference-catalogue.test.ts, which TRUNCATE organizations with CASCADE, disable organization_notes_no_truncate before that TRUNCATE and re-enable it in a finally block, as postgres-authz-store.test.ts already does for authorization_mutation_audit_no_truncate, and change nothing else in those hooks;",
+  "(6) this card changes no TypeScript source, so it has no mutation script: each database test is the pin, and the final message says, for each of tests (1) to (3), why it fails against 0194's triggers alone;",
+  "(7) npm run typecheck and npm test pass, the new database test runs from package.json's test:db command, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU323_BRIEF = `Card SHU-323: organization notes refuse DELETE and TRUNCATE in the database (a follow-up to slice O9a, SHU-316).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-316 (migration 0194, organization notes) and the third card queue (SHU-317 to SHU-320, migrations 0195 to 0197). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- packages/db/migrations/0194_organization_notes.sql (lines 1 to 8): organization_notes, its foreign key org_id REFERENCES organizations(id) ON DELETE CASCADE, the function organization_notes_no_update() and the BEFORE UPDATE row trigger organization_notes_no_update.
+- packages/db/migrations/0004_create_authorization_mutation_audit.sql (the end of the file): the audit ledger's append-only pattern this card mirrors, one function raising with ERRCODE '55000', a BEFORE UPDATE OR DELETE row trigger and a BEFORE TRUNCATE statement trigger.
+- packages/db/test/postgres-organization-notes.test.ts: SHU-316's database test (how it makes organizations, principals and notes with random ids, and its UPDATE test).
+- packages/db/test/postgres-authz-store.test.ts (its beforeEach, about line 107) and packages/db/test/postgres-reference-catalogue.test.ts (its beforeEach, line 18): both TRUNCATE organizations with CASCADE between tests. A TRUNCATE CASCADE fires the BEFORE TRUNCATE triggers of every table it reaches, including organization_notes, even when that table is empty, so both hooks would fail once this card's trigger exists. This is why SHU-316 added no DELETE or TRUNCATE trigger.
+- packages/db/src/migrate.ts: migrations run in filename order, each in its own transaction.
+
+Goal. Organization notes are append-only by contract (SHU-316: no route, store method or SQL edits or deletes one). The database should hold that line too, as it does for the audit ledger: no DELETE, no TRUNCATE and no cascaded delete from an organization removes a note. Organizations are soft-deleted under the lifecycle contract (slice O6, SHU-326), so refusing to hard-delete an organization that has notes costs nothing the product uses. Nothing in packages/ or apps/ deletes organizations today; only test cleanup does.
+
+Design (decided; do not reopen):
+- Migration 0198_organization_notes_refuse_delete.sql, in this order:
+  - CREATE OR REPLACE FUNCTION organization_notes_no_update() RETURNS trigger, plpgsql, raising 'organization notes are append-only' USING ERRCODE = '55000' (the same message as today, so SHU-316's UPDATE test still matches /append-only/; the errcode is 0004's).
+  - DROP TRIGGER organization_notes_no_update ON organization_notes; CREATE TRIGGER organization_notes_no_update BEFORE UPDATE OR DELETE ON organization_notes FOR EACH ROW EXECUTE FUNCTION organization_notes_no_update(). The name stays, so nothing else needs to know it changed.
+  - CREATE TRIGGER organization_notes_no_truncate BEFORE TRUNCATE ON organization_notes FOR EACH STATEMENT EXECUTE FUNCTION organization_notes_no_update().
+  - Nothing else. Keep the foreign key as it is: with the row trigger firing on DELETE, the cascade itself is refused, which is what this card wants; switching it to RESTRICT is not needed and would change 0194's table.
+- Test isolation. In postgres-authz-store.test.ts's beforeEach, add "ALTER TABLE organization_notes DISABLE TRIGGER organization_notes_no_truncate" before the TRUNCATE and the matching ENABLE in the existing finally block, next to the audit trigger's pair. In postgres-reference-catalogue.test.ts's beforeEach, wrap its TRUNCATE the same way (disable, then TRUNCATE in try, enable in finally). Disabling a trigger is owner administration, as the existing comment in postgres-authz-store.test.ts says; production code never does it. Before you finish, grep every test under packages/ and apps/ for TRUNCATE and for DELETE FROM organizations. If a file outside your paths would now fail (a TRUNCATE that reaches organization_notes, or a DELETE of an organization that has notes), do not change it: stop and report BLOCKED naming the file and line.
+- The new database test packages/db/test/postgres-organization-notes-append-only.test.ts runs against the real database and never truncates organizations itself. It makes its own organizations under a random operator id, as SHU-316's test does, and inserts its note rows directly with SQL (INSERT INTO organization_notes (org_id, author_principal_id, body, receipt_ref) with a synthetic 64-hex receipt_ref), so the noted organization has no grant row (grants reference organizations without a cascade and would refuse the organization delete for another reason, which would make test (3) pass for the wrong reason). Its tests, each named "SHU-323/AC-0N <name> " followed by a description:
+  - (1) delete-refused: DELETE FROM organization_notes WHERE id = the note's id rejects with code "55000" and /append-only/, and the note is still there; also DELETE FROM organization_notes WHERE org_id = that organization rejects. It also reads pg_trigger for organization_notes_no_update and asserts (tgtype & 8) <> 0 (fires on DELETE) and (tgtype & 16) <> 0 (still fires on UPDATE).
+  - (2) truncate-refused: on one client, BEGIN, then TRUNCATE organization_notes rejects with code "55000", then ROLLBACK; the same for TRUNCATE organizations CASCADE. Run each attempt inside BEGIN and ROLLBACK so that, if the trigger were missing, the rollback keeps the tables intact for the tests after it. It also asserts from pg_trigger that organization_notes_no_truncate exists with (tgtype & 32) <> 0.
+  - (3) noted-organization-delete-refused: DELETE FROM organizations WHERE id = the noted organization rejects with /append-only/, and both the organization and its note remain; DELETE FROM organizations WHERE id = a second organization with no notes and no grants succeeds.
+  - (4) update-still-refused: UPDATE organization_notes SET body = 'changed' rejects with code "55000", and the body is unchanged.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Copy no audit constraint text: this card does not touch authorization_mutation_audit, its constraints or authorization_audit_summary_valid. Later cards in this queue that do must copy them from the newest migration in the tree; 0198 must give them nothing to copy.
+- Migration list: add "0198_organization_notes_refuse_delete" to both schema_migrations lists in postgres-authz-store.test.ts, immediately after the newest earlier entry (read the lists and the migrations directory on your branch; "0197_catalogue_bank_payment_details" when the third queue has landed). Nothing else in that file changes except the beforeEach pair above.
+- No test may leave a trigger disabled: re-enable in finally, as the existing audit pair does.
+- Other cards' anchors: this card changes no TypeScript source and no file any mutation script reads, so every mutation script's anchors stay as they are.
+
+Acceptance. Each item is pinned by a named database test; CI runs them.
+(1) Leave DELETE out of the row trigger: "SHU-323/AC-01 delete-refused" fails.
+(2) Leave out the TRUNCATE trigger: "SHU-323/AC-02 truncate-refused" fails.
+(3) Leave DELETE out of the row trigger: "SHU-323/AC-03 noted-organization-delete-refused" fails (the cascade deletes the note and the organization goes).
+(4) "SHU-323/AC-04 update-still-refused" keeps SHU-316's UPDATE rule pinned under the recreated trigger.
+In your final message, say for each of (1) to (3) why it fails against 0194's triggers alone. Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/db/migrations/0198_organization_notes_refuse_delete.sql (new)
+- packages/db/test/postgres-organization-notes-append-only.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only "0198_organization_notes_refuse_delete" in both schema_migrations lists, and the organization_notes_no_truncate disable and enable pair in beforeEach
+- packages/db/test/postgres-reference-catalogue.test.ts: only the disable, try and finally enable around its beforeEach TRUNCATE
+- package.json: leave every existing script's text as it is. Append dist/packages/db/test/postgres-organization-notes-append-only.test.js at the END of the node --test --test-concurrency=1 list in test:db. Never change dependencies.
+
+Out of scope: note types (SHU-324), any TypeScript change, any change to the notes store, routes or read model, organization deletion (SHU-326), changing the foreign key, notes on any other subject, any change to packages/safe-write-contract or packages/contracts, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-324 is slice O9b: each organization note records one type from the
+// legacy note's closed list. The type rides in the safe-write field name, so
+// the token, the receipt and the audit row carry it as closed vocabulary and
+// never the note text, and SHU-316's untyped field "note" stays the Internal
+// Note it has always been.
+export const SHU324_PATHS = Object.freeze([
+  "packages/organizations/src/organization-notes.ts",
+  "packages/organizations/test/organization-note-types.test.ts",
+  "packages/organizations/test/organization-note-types-mutations.mjs",
+  "packages/organizations/test/organization-notes.test.ts",
+  "packages/db/migrations/0199_organization_note_types.sql",
+  "packages/db/src/postgres-organization-notes-store.ts",
+  "packages/db/test/postgres-organization-note-types.test.ts",
+  "packages/db/test/postgres-organization-notes.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-notes.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-notes-http.test.ts",
+  "apps/gateway/test/organization-note-types-http.test.ts",
+  "package.json",
+]);
+
+const SHU324_ACCEPTANCE = [
+  "(1) every organization note records exactly one type from the closed list internal_note, phone_call, email, meeting, interview and task, chosen when it is added through the existing safe-write path by its field: \"note\" adds an Internal Note (SHU-316's field, unchanged), and \"note_phone_call\", \"note_email\", \"note_meeting\", \"note_interview\" and \"note_task\" add the other five; one exported function maps a field to its type, the builder, the store's commit and the gateway use it, and mapping every field to internal_note makes the \"SHU-324/AC-01 field-names-type\" test fail;",
+  "(2) a typed note's text obeys exactly SHU-316's rules (non-empty, no edge whitespace, at most 2000 characters, no control character other than tab, line feed and carriage return), checked at preview and at confirm by the same exported value check; letting a typed field skip the text rule makes the \"SHU-324/AC-02 typed-note-text-rejected\" test fail;",
+  "(3) the list returns each note's type: the view carries exactly noteId, text, authorPrincipalId, createdAt and noteType, newest first as before, and never the organization id or the receipt reference; replacing the stored type with a constant in the view makes the \"SHU-324/AC-03 list-returns-type\" test fail;",
+  "(4) a row with no type reads as internal_note, and every note that existed before migration 0199 is an Internal Note (the column's default); making a missing type fail or read as anything else makes the \"SHU-324/AC-04 untyped-reads-internal\" test fail;",
+  "(5) a stored type outside the closed list is refused by the view (it throws) rather than shown; passing an unknown stored type through makes the \"SHU-324/AC-05 unknown-stored-type-refused\" test fail;",
+  "(6) notes stay append-only and a note's type never changes (the existing UPDATE trigger refuses it, and no route, store method or SQL changes it); authorization is unchanged (a staff or admin grant covering the organization adds and lists, every other grant gets not_found); each typed add commits the note with its type and one audit row in one transaction under the existing operation organization.note.safe_write, whose receipt fields are the field name ([\"note_phone_call\"] and so on), so the type enters the audit only as that closed field name and never the note text; migration 0199 adds the note_type column (NOT NULL, default internal_note, CHECK in the closed list) and otherwise only widens the organization.note.safe_write branch of authorization_audit_summary_valid to the six field names, copied from the newest migration in the tree, still accepting every existing row and every operation earlier migrations added; \"0199_organization_note_types\" follows \"0198_organization_notes_refuse_delete\" in both schema_migrations lists;",
+  "(7) packages/organizations/test/organization-note-types-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors, including SHU-316's five in organization-notes.js, still bind exactly once and still kill their tests;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:organization-note-types:mutations chained into test right after test:catalogue-bank-payment-details:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU324_BRIEF = `Card SHU-324: organization notes carry a note type (slice O9b, the note-type half of OR-27).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-316 (migration 0194, organization notes), the third card queue (SHU-317 to SHU-320, migrations 0195 to 0197) and SHU-323 (migration 0198, notes refuse DELETE and TRUNCATE). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: the note row in section 2.2 (note_type is one of Internal Note, Phone Call, Email, Meeting, Interview, Task), row OR-27 in section 7 and slice O9 in section 11.
+- SHU-316's notes, which this card extends: packages/organizations/src/organization-notes.ts (ORGANIZATION_NOTE_FIELDS, ORGANIZATION_NOTE_POLICY, organizationNoteValue, organizationNoteDecision, organizationNotesView, buildOrganizationNoteWrite), packages/organizations/test/organization-notes.test.ts and organization-notes-mutations.mjs, packages/db/src/postgres-organization-notes-store.ts (forPrincipal, list, readReceipt, #commit), packages/db/migrations/0194_organization_notes.sql and SHU-323's 0198, packages/db/test/postgres-organization-notes.test.ts, apps/gateway/src/organization-notes.ts (request, createOrganizationNotes) and apps/gateway/test/organization-notes-http.test.ts, and the store's wiring in apps/gateway/src/login-runtime.ts.
+- packages/safe-write-contract/src/safe-write.ts: the token's change-set digest covers the field and the value, so a type carried in the field name cannot be swapped between preview and confirm.
+- The newest migration in packages/db/migrations on your branch that redefines authorization_audit_summary_valid (list the directory; it is 0197 or later once the third queue has landed, and 0198 does not redefine it): its text is the one you extend.
+
+Goal. Staff and admins who add a note to an organization say what kind of note it is (an internal note, a phone call, an email, a meeting, an interview or a task), and the list shows each note's type. A note added the SHU-316 way, and every note that existed before, is an Internal Note. A note's type is chosen once and never changes, as its text never changes.
+
+Contract mapping (decided; do not reopen):
+- The type is the field. ORGANIZATION_NOTE_TYPES is ["internal_note", "phone_call", "email", "meeting", "interview", "task"]. The six fields are "note" (internal_note: SHU-316's field keeps its meaning) and "note_phone_call", "note_email", "note_meeting", "note_interview" and "note_task". There is no "note_internal_note": one field per type. ORGANIZATION_NOTE_FIELDS becomes those six fields, and ORGANIZATION_NOTE_POLICY allows them with maxValueLength 2000 as before.
+- Why the field and not a second value: the safe-write change set is one field and one value, and its token digests both, so the type is bound to what the person previewed; a type sent beside the change would not be. The receipt's fields and the audit row's after_summary.fields carry the field name, a closed vocabulary, so the audit says which kind of note was added without the text.
+- The HTTP body stays exactly orgId, field and value (plus token on confirm); field may be any of the six.
+
+Design:
+- packages/organizations/src/organization-notes.ts (keep SHU-316's anchors; see the pitfalls):
+  - export ORGANIZATION_NOTE_TYPES and the OrganizationNoteType type, the six fields as above, and organizationNoteTypeOf(field: string): OrganizationNoteType | undefined (undefined for anything not one of the six fields). Write the map once, as a frozen object from field to type.
+  - export organizationTypedNoteValue(field, value): true only when organizationNoteTypeOf(field) is not undefined and organizationNoteValue("note", value) is true. Leave organizationNoteValue's body exactly as it is, so SHU-316's control-character mutation still reaches every typed field through it. The builder's default check becomes organizationTypedNoteValue.
+  - OrganizationNoteRow gains note_type?: string. Export organizationNoteTypeOfRow(value: string | undefined): OrganizationNoteType, returning "internal_note" when the value is undefined, the value when it is one of ORGANIZATION_NOTE_TYPES, and throwing a TypeError otherwise. organizationNotesView adds noteType: organizationNoteTypeOfRow(row.note_type) as the last key of each note, and keeps the rest of its object literal and its sort as they are.
+- Migration 0199_organization_note_types.sql:
+  - ALTER TABLE organization_notes ADD COLUMN note_type text NOT NULL DEFAULT 'internal_note' CONSTRAINT organization_notes_note_type_check CHECK (note_type IN ('internal_note','phone_call','email','meeting','interview','task')). Every existing row becomes internal_note; adding a column with a constant default fires no row trigger, so SHU-316's and SHU-323's triggers do not get in the way, and they keep refusing any later UPDATE, so a type never changes.
+  - CREATE OR REPLACE FUNCTION authorization_audit_summary_valid copied from the newest migration that defines it, with one change only: the branch (audit_operation='organization.note.safe_write' AND summary->'fields'='["note"]'::jsonb) becomes (audit_operation='organization.note.safe_write' AND summary->'fields'->>0 IN ('note','note_phone_call','note_email','note_meeting','note_interview','note_task')). The existing jsonb_array_length(summary->'fields')=1 check keeps it to one field. No operation, cardinality, halves or index changes: the operation is still organization.note.safe_write and its token and receipt indexes already exist.
+- packages/db/src/postgres-organization-notes-store.ts: the constructor gains a required option noteType: (field: string) => string | undefined (login-runtime.ts passes organizationNoteTypeOf; packages/db must not import packages/organizations). forPrincipal's readField returns null for any field. #commit replaces its "note"-only consistency check with: noteType(i.field) is not undefined and the receipt's fields are exactly [i.field], else a TypeError; it inserts note_type = noteType(i.field) with the note and writes after_summary.fields [i.field]. readReceipt accepts a receipt whose fields are one field that noteType knows. list also selects note_type. Nothing else in the store changes: the lock, the grants FOR SHARE, the decision, the token check, expectedBefore null and the 23505 handling stay as they are.
+- apps/gateway/src/organization-notes.ts: request accepts a field that is one of ORGANIZATION_NOTE_FIELDS (imported from @studenthub/organizations) instead of exactly "note"; everything else stays.
+- apps/gateway/src/login-runtime.ts: pass noteType: organizationNoteTypeOf to the existing PostgresOrganizationNotesStore. Nothing else.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- SHU-316's anchors in dist/organization-notes.js must each still bind exactly once, and its mutation script must still pass: \`implementation.preview(r)\` (the builder's call; keep one preview call), \`(row.role === "staff" || row.role === "admin")\` (do not touch the decision), \`field === "note" && !/[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]/.test(value)\` (organizationNoteValue stays as it is; do not repeat the pattern in your typed check, call organizationNoteValue), the sort comparator \`new Date(b.created_at).getTime() - new Date(a.created_at).getTime() || Number(b.id) - Number(a.id)\`, and \`({ noteId: String(row.id),\` (add noteType at the end of that literal). Check by running node packages/organizations/test/organization-notes-mutations.mjs after npm run build.
+- SHU-316's tests change only where the view gained a key: in packages/organizations/test/organization-notes.test.ts, the exact key list in "SHU-316/AC-05 list-view-whitelist" becomes ["noteId","text","authorPrincipalId","createdAt","noteType"]; in apps/gateway/test/organization-notes-http.test.ts, the expected list body gains noteType:"internal_note" (its fake rows carry no type). Change nothing else in either file.
+- Mutations must hit the code production runs: the field map, the typed check and the view are in organization-notes.ts; the store gets the map through its constructor and the gateway applies the view on every list. Dependencies stay unchanged.
+- Audit and receipts: the field name only, never the text. The Postgres test asserts JSON.stringify of a typed note's audit row contains neither the text nor the raw organization id, and that its after_summary.fields is ["note_phone_call"].
+- Migration 0199: copy authorization_audit_summary_valid from the newest migration in the tree that defines it at build time (never 0194's or another older copy), so every branch the third queue added (pay_contract.create.safe_write and the rest) survives. Change only the note branch. Add "0199_organization_note_types" to both schema_migrations lists in postgres-authz-store.test.ts right after "0198_organization_notes_refuse_delete".
+- Mutation script: copy packages/organizations/test/organization-notes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$") and the environment-variable import (SHU324_TEST_MODULE for organization-notes.js; the test file imports ../src/organization-notes.js and switches to that module when the variable is set). All five mutations target dist/organization-notes.js. Name each test "SHU-324/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors: this card does not change organizations.ts, apps/gateway/src/index.ts or any other organizations source, so mutations.mjs, directory-mutations.mjs, the status, commercial-terms and approved-to-hire scripts and packages/observability/test/mutations.mjs stay bound.
+- The Postgres test must exercise the store against the database (test:db), with random ids and no TRUNCATE of organizations (SHU-323's trigger refuses it): a staff add of each of the six fields stores the matching note_type, readable through list; its audit row has fields [field], the operation organization.note.safe_write and no text; a row inserted without note_type reads internal_note; an INSERT with note_type 'sms' is refused by the CHECK; an UPDATE of note_type is refused with /append-only/; a refused org-owner add of a typed note leaves no note; a typed receipt reads back through readReceipt.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/organization-note-types-mutations.mjs that makes a named test fail.
+(1) Map every field to internal_note in the field map: "SHU-324/AC-01 field-names-type" fails. It drives the real builder through an in-memory SafeWriteStore whose commit records organizationNoteTypeOf(field) with the text, adds one note of each field and expects the six types; it also expects invalid_value for the fields "note_sms" and "note_internal_note" at preview.
+(2) Let a typed field skip the text rule (anchor: the call organizationNoteValue("note", value) in organizationTypedNoteValue, made true): "SHU-324/AC-02 typed-note-text-rejected" fails. It previews and confirms "note_phone_call" text with a NUL and with a bell character and gets invalid_value, and accepts a phone-call note with a line feed.
+(3) Replace organizationNoteTypeOfRow(row.note_type) in the view with "internal_note": "SHU-324/AC-03 list-returns-type" fails. It views rows of several types and asserts each noteType, the exact key list and that neither the organization id nor the receipt reference appears.
+(4) Make organizationNoteTypeOfRow throw (or return anything but internal_note) for undefined: "SHU-324/AC-04 untyped-reads-internal" fails.
+(5) Let organizationNoteTypeOfRow return an unknown value as it is: "SHU-324/AC-05 unknown-stored-type-refused" fails. It expects the view of a row with note_type "sms" to throw.
+The script prints "5/5 SHU-324 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/organization-notes.ts: the types, the field map, organizationNoteTypeOf, organizationTypedNoteValue, organizationNoteTypeOfRow, note_type on the row type, noteType in the view, the six fields in ORGANIZATION_NOTE_FIELDS, and the builder's default check
+- packages/organizations/test/organization-note-types.test.ts (new)
+- packages/organizations/test/organization-note-types-mutations.mjs (new)
+- packages/organizations/test/organization-notes.test.ts: only the AC-05 exact key list
+- packages/db/migrations/0199_organization_note_types.sql (new)
+- packages/db/src/postgres-organization-notes-store.ts: only the noteType option and its uses above
+- packages/db/test/postgres-organization-note-types.test.ts (new)
+- packages/db/test/postgres-organization-notes.test.ts: only add noteType: organizationNoteTypeOf (imported from @studenthub/organizations alongside its existing imports) to the existing PostgresOrganizationNotesStore constructor call, which the required option would otherwise break
+- packages/db/test/postgres-authz-store.test.ts: only add "0199_organization_note_types" after "0198_organization_notes_refuse_delete" in both schema_migrations lists
+- apps/gateway/src/organization-notes.ts: only the request's field check
+- apps/gateway/src/login-runtime.ts: only the noteType option
+- apps/gateway/test/organization-notes-http.test.ts: only noteType in the expected list body
+- apps/gateway/test/organization-note-types-http.test.ts (new; calls the real handler: a typed preview and confirm, an unknown field refused with invalid_request, and a list showing noteType)
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/organization-note-types.test.js and dist/apps/gateway/test/organization-note-types-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-organization-note-types.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:organization-note-types:mutations script that runs the mutation script, and add " && npm run test:organization-note-types:mutations" as its own step right after "npm run test:catalogue-bank-payment-details:mutations" in test (if that step is absent, right after "npm run test:organization-notes:mutations" and any pay-contract steps that follow it). Never change dependencies.
+
+Out of scope: changing a note's type or text, deleting a note, notes on contacts, candidates or any other subject, filtering or paging the list by type, display labels or translations of the types (the API returns the codes), the follow-up CRM (OR-10), exports, any change to the notes decision, its operation name or its token and receipt indexes, the read model and directory in organizations.ts, any notification, any UI beyond what the routes need, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-325 is slice O8c: the per-company brand list of OR-23 (legacy brand rows
+// carry company_id). Catalogue brands stay the catalogue's; this card adds an
+// organization's links to them. A link is a plain audited write, like a grant,
+// not a safe write: there is no prior value to preview, and a repeated link is
+// a no-op rather than a second change.
+export const SHU325_PATHS = Object.freeze([
+  "packages/organizations/src/organization-brands.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/organization-brands.test.ts",
+  "packages/organizations/test/organization-brands-mutations.mjs",
+  "packages/db/migrations/0200_organization_brands.sql",
+  "packages/db/src/postgres-organization-brands-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-brands.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-brands.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-brands-http.test.ts",
+  "package.json",
+]);
+
+const SHU325_ACCEPTANCE = [
+  "(1) only a staff or admin grant that covers the organization (on the organization itself, or a subtree grant on an ancestor such as the operator organization) may link a brand to it, unlink one or list its brands; an org-owner, recruiter, finance, candidate or any other grant gets not_found, never 403, for all three, before any brand or link is read; an operator organization itself is never a target; the decision is one exported function the Postgres store calls inside each write's transaction and before a list, and accepting any role there makes the \"SHU-325/AC-01 employer-refused\" test fail;",
+  "(2) a brand belongs to at most one organization: linking an active catalogue brand already linked to another organization is refused with 409 brand_already_linked and changes nothing, through one exported link-outcome function the store calls on the link row it locked, backed by brand_id being the link table's primary key; letting that function relink a brand owned elsewhere makes the \"SHU-325/AC-02 owned-elsewhere-refused\" test fail; linking a brand already linked to the same organization answers 200 with changed false and writes nothing;",
+  "(3) unlinking removes only the organization's own link: unlinking a brand that is not linked to the named organization (unlinked, or linked to another) answers 404 brand_link_not_found and changes nothing, through one exported unlink-outcome function the store calls; letting it remove another organization's link makes the \"SHU-325/AC-03 unlink-own-link-only\" test fail;",
+  "(4) only an active catalogue item of type brand can be linked: an unknown id, a deleted brand or another catalogue type's item answers 404 brand_not_found (a malformed id 400 invalid_request); the list shows only the organization's brands that are still active in the catalogue, ordered by name then id, through one exported view function the gateway applies to the store's rows; keeping deleted brands in that view makes the \"SHU-325/AC-04 deleted-brand-hidden\" test fail;",
+  "(5) the list view carries exactly brandId and name for each brand and never the organization id, the link time or who linked it; copying the stored row into the view makes the \"SHU-325/AC-05 list-view-whitelist\" test fail;",
+  "(6) each link and unlink commits the link change and one audit row in one transaction, under the new operations organization.brand.link and organization.brand.unlink, with target_org_refs [organizationAuditRef(orgId)] and before and after summaries exactly { brandCount } (the organization's linked-brand count before and after), so no audit row carries a brand id, a brand name or a raw organization id; the catalogue's brand create, update and delete are unchanged; migration 0200 creates organization_brands and its trigger and otherwise only widens the audit constraints and authorization_audit_summary_valid, copied from the newest migration in the tree, still accepting every existing row and every operation earlier migrations added; \"0200_organization_brands\" follows \"0199_organization_note_types\" in both schema_migrations lists;",
+  "(7) packages/organizations/test/organization-brands-mutations.mjs applies mutations (1) to (5), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script's anchors still bind exactly once;",
+  "(8) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:organization-brands:mutations chained into test right after test:organization-note-types:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU325_BRIEF = `Card SHU-325: staff and admin keep an organization's brand list (slice O8c, the per-company brand list of OR-23).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-316 (organization notes), the third card queue (SHU-317 to SHU-320, migrations 0195 to 0197), SHU-323 (0198) and SHU-324 (0199). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: the brand row in section 2.2 (brand_uuid, company_id), section 4.3 (brands are hard-deleted in legacy with no dependency check), the Brand row in section 5 ("CRUD + per-company list" for staff) and the note under it (brands are scoped per company), row OR-23 in section 7 and slice O8 in section 11.
+- The catalogue's brands, which this card links to and does not change: packages/reference-catalogue/src/types.ts and catalogue.ts (brand is a CatalogueType; items are uuid ids, active or soft-deleted; UUID_PATTERN), packages/db/migrations/0146_reference_catalogue.sql (catalogue_items) and packages/db/src/postgres-catalogue-store.ts, and apps/gateway/src/catalogue-http.ts (the brand routes stay as they are).
+- The organization write this card copies for authorization, locking and HTTP: SHU-316's packages/organizations/src/organization-notes.ts (organizationNoteDecision, organizationNotesView), packages/db/src/postgres-organization-notes-store.ts (#grants, #ancestors, the advisory lock and FOR SHARE, list), apps/gateway/src/organization-notes.ts and its HTTP test, and the wiring in apps/gateway/src/login-runtime.ts and apps/gateway/src/index.ts.
+- The direct audited write this card copies for the audit row: packages/db/src/postgres-pay-contract-store.ts (its INSERT INTO authorization_mutation_audit with requestAuditRef, principalAuditRef and organizationAuditRef) and packages/db/src/authorization-audit.ts.
+- The newest migration in packages/db/migrations on your branch that redefines the audit constraints and authorization_audit_summary_valid (0199 once SHU-324 has landed): its text is the one you extend.
+
+Goal. Staff or an admin covering an organization can attach catalogue brands to it, detach them and see its brands, as legacy staff could with a brand's company. A brand is one organization's at most. The catalogue still owns brands (their names, their creation and soft deletion); this card owns only which organization a brand belongs to. Every link and unlink leaves an audit row.
+
+Contract choice (decided; do not reopen). A link is a direct audited write, as a grant is, not a safe write: there is no prior value to show in a preview, and the operations are idempotent in effect (linking an already-own brand is a no-op; unlinking needs the link). Each change writes one audit row in its own transaction under its own operation, and the summary is a closed count.
+
+Design:
+- packages/organizations/src/organization-brands.ts (new) exports:
+  - OrganizationBrandGrantRow ({ org_id, role, scope }) and organizationBrandDecision(rows, orgId, ancestors, operators = DEFAULT_OPERATOR_ORG_IDS): true only when operators does not include orgId and a grant with role staff or admin is on orgId itself or is a subtree grant on one of its ancestors. Write it in this file (as SHU-315 and SHU-316 did), not imported, so its mutation hits only this card;
+  - isOrganizationBrandId(value: unknown): a string matching the catalogue's UUID pattern;
+  - organizationBrandLinkOutcome(currentOrgId: string | null, orgId: string): "link" when currentOrgId is null, "unchanged" when it equals orgId, "owned_elsewhere" otherwise;
+  - organizationBrandUnlinkOutcome(currentOrgId: string | null, orgId: string): "unlink" only when currentOrgId equals orgId, else "not_linked";
+  - OrganizationBrandRow ({ brand_id, name, status, and whatever else the store selects }) and organizationBrandsView(rows): drops rows whose status is not "active", orders by name (localeCompare) then brand id, and returns for each exactly { brandId, name }, built from named fields (never a spread of the row).
+- Migration 0200_organization_brands.sql:
+  - CREATE TABLE organization_brands (brand_id uuid PRIMARY KEY REFERENCES catalogue_items(id), org_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, linked_by_ref char(64) NOT NULL CHECK (linked_by_ref ~ '^[0-9a-f]{64}$'), linked_at timestamptz NOT NULL DEFAULT clock_timestamp()) and an index on (org_id). The primary key is what makes a brand one organization's at most, including under a race.
+  - A BEFORE INSERT OR UPDATE row trigger that raises unless the referenced catalogue_items row has catalogue_type 'brand' (as SHU-320's bank trigger does for banks).
+  - The audit constraints, copied from the newest migration that defines them, with organization.brand.link and organization.brand.unlink added: to authorization_mutation_audit_operation_check; to the auth_audit_target_org_cardinality branch that requires cardinality(target_org_refs) = 1 (the branch pay_contract.create, pay_contract.update and pay_contract.remove are in); and to authorization_audit_summary_valid as a new branch accepting exactly a closed object { brandCount } whose value is a JSON number matching '^(0|[1-9][0-9]{0,17})$', as the pay_contract branch checks contractCount. They are not safe-write operations, so they go in neither auth_audit_safe_write_halves nor auth_audit_safe_write_self, and they need no token or receipt index. Drop nothing else.
+- packages/db/src/postgres-organization-brands-store.ts (new), PostgresOrganizationBrandsStore. Its constructor takes the pool or connection string, decision ((rows, orgId, ancestors) => boolean), linkOutcome and unlinkOutcome (the shapes above). Export ORGANIZATION_BRAND_LINK_OPERATION and ORGANIZATION_BRAND_UNLINK_OPERATION. Methods:
+  - link(principalId, orgId, brandId): BEGIN; pg_advisory_xact_lock(hashtextextended($1,325)) on orgId; the caller's grants FOR SHARE and the organization's ancestry; the decision (refused: { kind: "not_found" }); SELECT the catalogue item WHERE id = $1 AND catalogue_type = 'brand' AND status = 'active' FOR SHARE (none: { kind: "brand_not_found" }; FOR SHARE makes a concurrent catalogue soft delete wait); SELECT org_id FROM organization_brands WHERE brand_id = $1 FOR UPDATE; linkOutcome on that org_id or null ("unchanged": ROLLBACK and { kind: "unchanged" }; "owned_elsewhere": ROLLBACK and { kind: "owned_elsewhere" }); count the organization's links (brandCount before); INSERT the link with linked_by_ref principalAuditRef(principalId); INSERT the audit row (request_ref requestAuditRef of a fresh "organization_brand_" + randomUUID(), actor_principal_ref and target_principal_ref principalAuditRef(principalId), operation organization.brand.link, target_org_refs [organizationAuditRef(orgId)], before { brandCount: n }, after { brandCount: n + 1 }); COMMIT; { kind: "linked" }. A 23505 (another organization linked the same brand concurrently) rolls back and answers { kind: "owned_elsewhere" }.
+  - unlink(principalId, orgId, brandId): the same lock, grants, ancestry and decision; the link row FOR UPDATE; unlinkOutcome ("not_linked": { kind: "link_not_found" }); count; DELETE the link; the audit row under organization.brand.unlink with before n and after n - 1; COMMIT; { kind: "unlinked" }. Unlinking does not require the brand to be active, so a link to a brand the catalogue has since deleted can still be removed.
+  - list(principalId, orgId): grants, ancestry and the decision first (refused: null, before any link is read), then the organization's links joined to catalogue_items (brand_id, name, status), every row, for the view to filter.
+  - There is no other write method, and nothing writes catalogue_items.
+- HTTP (apps/gateway/src/organization-brands.ts, new): POST /organization/brands/link and POST /organization/brands/unlink take exactly orgId and brandId (a malformed body, an orgId outside the notes route's pattern or a brandId that is not isOrganizationBrandId answers 400 invalid_request); GET /organization/brands/{orgId} answers { brands } from organizationBrandsView, or 404 not_found when the store returns null. A link answers 200 { brandId, changed: true } or { brandId, changed: false }, 404 not_found or brand_not_found, or 409 brand_already_linked; an unlink answers 200 { brandId, changed: true }, 404 not_found or brand_link_not_found. Copy organization-notes.ts for the session cookie (401 without a session), the Origin and Sec-Fetch-Site checks on POST (403 origin_rejected), the content-type check, the no-store headers, the body limit (1024 bytes here) and the try/catch (an unexpected error answers 503 organization_brands_unavailable, as does a missing service). Export createOrganizationBrands(ports) and handleOrganizationBrands(req, res, service, origin).
+- Live wiring: login-runtime.ts constructs PostgresOrganizationBrandsStore from DATABASE_URL with organizationBrandDecision, organizationBrandLinkOutcome and organizationBrandUnlinkOutcome, closes it with the others, and builds the service whether or not the safe-write key is set (these are not safe writes). Mount handleOrganizationBrands in apps/gateway/src/index.ts right after SHU-317's handlePayContracts route (if that route is absent, right after the organization-notes route).
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs: the decision and both outcome functions reach the store through its constructor, the gateway applies organizationBrandsView on every list, and packages/db must not import packages/organizations; dependencies stay unchanged. The grants query selects the caller's grant rows without filtering by role or organization, and the ancestry query reads the organization chain, so the decision is the injected function's, not the SQL's.
+- Decide before reading: a refused caller is answered from grants and ancestry alone, so it cannot tell an unknown brand from a linked one. The HTTP test's fake store records calls and asserts a refused list reads no links.
+- One transaction: the link change and its audit row commit or roll back together, on the client the method opened. An "unchanged" or refused link writes no audit row.
+- Audit rows: { brandCount } only; the Postgres test asserts JSON.stringify of each audit row contains neither the brand id, the brand name nor the raw organization id.
+- Migration 0200: copy the audit constraints and authorization_audit_summary_valid from the newest migration in the tree that defines them at build time (never 0194's or another older copy), so every operation and branch the earlier cards added survives, and add only what is listed above. Add "0200_organization_brands" to both schema_migrations lists in postgres-authz-store.test.ts right after "0199_organization_note_types".
+- Mutation script: copy packages/organizations/test/organization-notes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$") and the environment-variable import (SHU325_TEST_MODULE for organization-brands.js). All five mutations target dist/organization-brands.js. Name each test "SHU-325/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Other cards' anchors: each mutation script counts its anchor in its own file, so \`row.role === "staff" || row.role === "admin"\` may appear in organization-brands.js, but do not change any other organizations source. packages/reference-catalogue/test/mutations.mjs and SHU-320's bank-payment-details-mutations.mjs anchor the catalogue's build: this card does not change packages/reference-catalogue or catalogue-http.ts. packages/observability/test/mutations.mjs anchors lines of apps/gateway/src/index.js (the response close, telemetry.record and inSpan lines): add one route line in index.ts and its import and touch none of those.
+- Test data: random ids and no TRUNCATE of organizations (SHU-323's trigger refuses it on organization_notes); make catalogue brand items with SQL INSERT INTO catalogue_items as packages/db/test/postgres-pay-contracts.test.ts makes its currency.
+- The Postgres test must exercise the store against the database (test:db): a staff link whose audit row has the new operation, the hashed organization reference and brandCount 0 then 1; an admin link through a subtree grant on the operator organization; the same brand linked to a second organization refused with owned_elsewhere and still the first organization's; a repeated link answering unchanged with no second audit row; a deleted brand, a currency item and an unknown id each brand_not_found; an INSERT INTO organization_brands naming a currency item refused by the trigger; an org-owner link, unlink and list refused; an unlink by the second organization's staff answering link_not_found and leaving the link; an unlink by the owner removing it with an organization.brand.unlink audit row; and a list that leaves out a brand the catalogue has soft-deleted.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/organization-brands-mutations.mjs that makes a named test fail.
+(1) Accept any role in organizationBrandDecision (anchor: \`row.role === "staff" || row.role === "admin"\` in organization-brands.js): "SHU-325/AC-01 employer-refused" fails. It drives an in-memory port that calls the decision, and checks org-owner, recruiter, finance and candidate grants on the organization, a self (not subtree) staff grant on the parent, and the operator organization as a target.
+(2) Make organizationBrandLinkOutcome return "link" for a brand owned elsewhere: "SHU-325/AC-02 owned-elsewhere-refused" fails. It also expects "unchanged" for the same organization and "link" for no owner.
+(3) Make organizationBrandUnlinkOutcome return "unlink" for any owner: "SHU-325/AC-03 unlink-own-link-only" fails. It expects "not_linked" for another organization's link and for no link.
+(4) Keep deleted brands in organizationBrandsView: "SHU-325/AC-04 deleted-brand-hidden" fails. It also checks the order with two brands of the same name.
+(5) Copy the stored row into the view (for example a spread of the row): "SHU-325/AC-05 list-view-whitelist" fails. It asserts the exact keys and that the organization id and the link time appear nowhere in JSON.stringify of the view.
+The script prints "5/5 SHU-325 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/organization-brands.ts (new)
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/organization-brands.test.ts (new)
+- packages/organizations/test/organization-brands-mutations.mjs (new)
+- packages/db/migrations/0200_organization_brands.sql (new)
+- packages/db/src/postgres-organization-brands-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-brands.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0200_organization_brands" after "0199_organization_note_types" in both schema_migrations lists
+- apps/gateway/src/organization-brands.ts (new)
+- apps/gateway/src/index.ts (one route line after the pay-contracts route, and its import)
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/organization-brands-http.test.ts (new; calls the real handler)
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/organization-brands.test.js and dist/apps/gateway/test/organization-brands-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-organization-brands.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:organization-brands:mutations script that runs the mutation script, and add " && npm run test:organization-brands:mutations" as its own step right after "npm run test:organization-note-types:mutations" in test. Never change dependencies.
+
+Out of scope: stores, malls and store-brand association (O7), brand logos, creating, renaming or deleting brands (the catalogue's routes stay as they are), employer or candidate views of brands, a history of past links beyond the audit rows, moving a brand between organizations in one step (unlink, then link), anything in packages/reference-catalogue or catalogue-http.ts, the read model and directory in organizations.ts, any notification, any UI beyond what the routes need, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-326 is slice O6a, the organization half of OR-11 (risk R3): an admin
+// soft-deletes an organization through the safe-write contract, refused while
+// live sub-organizations, live pay contracts or member grants remain. Store and
+// transfer guards wait for their tables (O7, F2); member removal is O4. The
+// guards run again inside the commit under a row lock on the organization,
+// which every new grant, contract or sub-organization's foreign key waits on.
+export const SHU326_PATHS = Object.freeze([
+  "packages/organizations/src/deletion-writes.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/deletion-writes.test.ts",
+  "packages/organizations/test/deletion-writes-mutations.mjs",
+  "packages/db/migrations/0201_organization_deletion.sql",
+  "packages/db/src/postgres-organization-deletion-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-deletion.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-deletion.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-deletion-http.test.ts",
+  "package.json",
+]);
+
+const SHU326_ACCEPTANCE = [
+  "(1) an organization is deleted only through preview, confirm and receipt on the existing safe-write contract, as the field \"deletion\" whose value is exactly \"deleted\" (preview before null); any other value is refused with invalid_value at preview and at confirm by an exported check the builder runs, and runSafeWriteConformance runs over the deletion write's own builder, so making that check accept anything makes the \"SHU-326/AC-01 conformance\" test fail;",
+  "(2) only an admin grant that covers the organization (on the organization itself, or a subtree grant on an ancestor such as the operator organization) may delete it; staff, org-owner, recruiter, finance, candidate or any other grant gets not_found, never 403; an operator organization is never a target, so it can never be deleted; an unknown or already deleted organization is not_found; the decision is one exported function the Postgres store calls inside its commit transaction, and accepting staff there makes the \"SHU-326/AC-02 admin-only\" test fail;",
+  "(3) the deletion is refused while the organization has a live sub-organization (a child organization with no deletion record), and the refusal names the blocker; dropping that guard from the exported blockers function makes the \"SHU-326/AC-03 live-sub-organizations-block\" test fail;",
+  "(4) it is refused while the organization has a live pay contract (company_org_id the organization, status other than deleted); dropping that guard makes the \"SHU-326/AC-04 live-pay-contracts-block\" test fail;",
+  "(5) it is refused while any grant row names the organization (any role, any scope; grants on its ancestors do not count); the guards are checked at preview, at confirm and again inside the commit transaction after the organization's row is locked FOR UPDATE, so a grant, contract or sub-organization added between preview and confirm makes the confirm answer state_changed and deletes nothing; dropping the grant guard makes the \"SHU-326/AC-05 member-grants-block\" test fail;",
+  "(6) a deleted organization reads as not_found in OrganizationRepository.read and listSubOrganizations for every audience, and a deleted sub-organization is left out of its parent's list; ignoring the deletion record there makes the \"SHU-326/AC-06 deleted-reads-not-found\" test fail;",
+  "(7) the staff and admin company directory leaves deleted organizations out and does not count deleted sub-organizations, reading deletion records with one call per list; ignoring them makes the \"SHU-326/AC-07 directory-hides-deleted\" test fail;",
+  "(8) a deletion is a record, never a removal: the organization row, its notes, its brand links, its ended contracts and every other row stay, no code path issues DELETE FROM organizations, and organization_deletions refuses UPDATE and DELETE; each deletion commits the record and its receipt audit row in one transaction under the new operation organization.deletion.safe_write with organizationAuditRef (never a raw id) and fields [\"deletion\"]; a repeated or racing confirm of one token returns token_already_used; migration 0201 creates organization_deletions and its trigger and otherwise only widens the audit constraints and authorization_audit_summary_valid, copied from the newest migration in the tree, still accepting every existing row and every operation earlier migrations added; \"0201_organization_deletion\" follows \"0200_organization_brands\" in both schema_migrations lists;",
+  "(9) packages/organizations/test/deletion-writes-mutations.mjs applies mutations (1) to (7), each makes its named test fail, the script passes on the unmutated code, and every existing mutation script, including mutations.mjs, directory-mutations.mjs, status-writes-mutations.mjs, status-batch-reads-mutations.mjs, commercial-terms-writes-mutations.mjs and approved-to-hire-writes-mutations.mjs, still binds each anchor exactly once and still passes;",
+  "(10) npm run typecheck and npm test pass, the new tests run from package.json's test and test:db commands, the mutation script runs as its own npm script test:organization-deletion:mutations chained into test right after test:organization-brands:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU326_BRIEF = `Card SHU-326: an admin soft-deletes an organization behind dependency guards (slice O6a, the organization half of OR-11; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-316 (organization notes), the third card queue (SHU-317 to SHU-320, migrations 0195 to 0197, among them the pay-contract writes), SHU-323 (0198), SHU-324 (0199) and SHU-325 (0200, organization brands). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Read first:
+- docs/parity/organizations-stores-and-contacts.md: section 4.3 (legacy admin Delete refuses while stores, transfers or sub-companies exist, then soft-deletes), row OR-11 in section 7, finding OR-F4 in section 9 (no deletion produced an audit receipt) and slice O6 in section 11.
+- SHU-305's status write and SHU-315's approved-to-hire write, the closest models (one field, safe write, a decision and an advisory lock): packages/organizations/src/status-writes.ts and approved-to-hire-writes.ts, their tests and mutation scripts, packages/db/src/postgres-organization-status-store.ts and postgres-organization-approved-to-hire-store.ts (forPrincipal, read, readMany, readReceipt, #grants, #ancestors, #commit), apps/gateway/src/organization-approved-to-hire.ts and its HTTP test, and their wiring in apps/gateway/src/login-runtime.ts and apps/gateway/src/index.ts.
+- packages/organizations/src/organizations.ts: OrganizationRepository (#authorize, read, listSubOrganizations, listOrganizations), the optional ports statusRecords and approvedToHire and their record types (the shape your port copies), DEFAULT_OPERATOR_ORG_IDS and companyParentOf.
+- The tables the guards read: packages/db/migrations/0001_create_authz_tables.sql (organizations.parent_org_id; grants.org_id references organizations with no cascade) and 0182_pay_contracts.sql (company_org_id, status active, inactive or deleted).
+- The newest migration in packages/db/migrations on your branch that redefines the audit constraints and authorization_audit_summary_valid (0200 once SHU-325 has landed): its text is the one you extend.
+
+Goal. An admin covering an organization can delete it, and the platform keeps every row: the deletion is a record that makes the organization read as not_found in the read model and the company directory. The admin previews the deletion, confirms it and gets a receipt, as with every other organization write. It is refused while the organization still has live sub-organizations, live pay contracts or any member grant, so a deletion never strands people, children or money. The operator organization can never be deleted.
+
+Contract mapping (decided; do not reopen):
+- The record is the organization: personRef is organizationDeletionRecordRef(orgId) (domain "organization-deletion-record"), the principal ref organizationDeletionPrincipalRef (domain "organization-deletion-principal"), sha256 refs in the "studenthub:<domain>:v1\\0" form organization-notes.ts uses.
+- One field, "deletion", whose only valid value is "deleted"; the policy is { allowed: ["deletion"], maxValueLength: 7 }. readField returns null for an organization with no deletion record, so the preview shows before null and after "deleted", and the commit refuses with state_changed if expectedBefore is not null. A deleted organization is not the caller's record any more (ownedRecord returns null), so a second delete is not_found.
+- Blockers are a closed list, in this order: "live_sub_organizations", "live_pay_contracts", "member_grants". Live sub-organizations are child organizations (parent_org_id the organization) with no deletion record; live pay contracts have company_org_id the organization and status other than deleted (active or inactive); member grants are grant rows whose org_id is the organization, of any role and scope. Store and transfer guards (legacy's other two) wait for their tables (O7, F2); say so in a comment, and do not invent them. Removing members is O4's audited grant revocation, not this card's.
+- Why the safe-write contract cannot carry the blocker: its refusal reasons are a closed vocabulary. So the gateway asks the store for the blockers before calling the builder and answers 409 { error: "deletion_blocked", blockers } with the list; the builder and the commit refuse on their own as well (invalid_value at preview and confirm, state_changed in the commit), so a caller that skips the gateway's pre-check still cannot delete.
+
+Design:
+- packages/organizations/src/deletion-writes.ts (new) exports:
+  - ORGANIZATION_DELETION_FIELDS (["deletion"]), ORGANIZATION_DELETION_POLICY, organizationDeletionRecordRef and organizationDeletionPrincipalRef;
+  - organizationDeletionValue(field, value): field === "deletion" && value === "deleted";
+  - OrganizationDeletionGrantRow ({ org_id, role, scope }) and organizationDeletionDecision(rows, orgId, ancestors, operators = DEFAULT_OPERATOR_ORG_IDS): true only when operators does not include orgId and a grant with role admin (anchor for mutation (2): \`row.role === "admin"\`) is on orgId itself or is a subtree grant on one of its ancestors. Write it in this file, not imported;
+  - ORGANIZATION_DELETION_BLOCKERS, OrganizationDeletionCounts ({ liveSubOrganizations, livePayContracts, memberGrants }) and organizationDeletionBlockers(counts): the blockers whose count is above zero, in the fixed order, each tested on its own line (anchors for mutations (3) to (5): \`counts.liveSubOrganizations > 0\`, \`counts.livePayContracts > 0\` and \`counts.memberGrants > 0\`);
+  - buildOrganizationDeletionWrite({ store, secret, policy?, clock?, tokenLifetimeMs?, check? }): wraps createSafeWrite as buildOrganizationApprovedToHireWrite does, awaiting the check (check?: (field, value) => boolean | Promise<boolean>, default organizationDeletionValue) at preview and at confirm and answering invalid_value when it is false;
+  - organizationDeletionGuardedCheck(counts: (orgId) => Promise<OrganizationDeletionCounts>, orgId): a check that is true only when organizationDeletionValue(field, value) is true and organizationDeletionBlockers(await counts(orgId)) is empty; the gateway passes it as check. A counts function that throws makes the request fail, not answer invalid_value.
+- packages/organizations/src/organizations.ts changes only in these ways:
+  - export OrganizationDeletionRecords { isDeleted(orgId): Promise<boolean>; deletedAmong(orgIds: readonly string[]): Promise<ReadonlySet<string>> } and give OrganizationRepository an optional constructor port deletions of that type, kept in a private field;
+  - in #authorize, immediately before its final \`return audience;\`, add one line that returns undefined when this.#deletions?.isDeleted(orgId) is true. read and listSubOrganizations both authorize through it, so a deleted organization is not_found for every audience and a deleted child is skipped in its parent's list;
+  - in listOrganizations, after covered is built and before shown is built, read the deletion records of the covered ids with one deletedAmong call (only when there are covered ids and the port is set) and remove those ids from covered, so a deleted organization is neither shown nor counted as a sub-organization;
+  - with no port, every existing organizations, directory, status, commercial-terms, approved-to-hire and status-batch test passes unchanged.
+- Migration 0201_organization_deletion.sql:
+  - CREATE TABLE organization_deletions (org_id text PRIMARY KEY REFERENCES organizations(id), receipt_ref text NOT NULL UNIQUE, deleted_at timestamptz NOT NULL DEFAULT clock_timestamp()). No ON DELETE clause: with a deletion record, a hard delete of the organization is refused by the foreign key. A BEFORE UPDATE OR DELETE row trigger raises (restoring is out of scope; the record is append-only, as SHU-323 made the notes).
+  - The audit constraints and authorization_audit_summary_valid copied from the newest migration that defines them, with organization.deletion.safe_write added wherever organization.note.safe_write appears: the operation check, the target_org_refs cardinality > 0 branch, the safe-write halves check, and the safe-write branch of authorization_audit_summary_valid with fields equal to ["deletion"]. Unique indexes on its token and its receipt, as 0192 to 0194 add. Drop nothing else.
+- packages/db/src/postgres-organization-deletion-store.ts (new), PostgresOrganizationDeletionStore, modelled on the approved-to-hire store. Constructor: the pool or connection string, decision ((rows, orgId, ancestors) => boolean), blockers ((counts) => readonly string[]), recordRef and principalRef. Export ORGANIZATION_DELETION_OPERATION. Methods:
+  - forPrincipal(principalId, orgId): a SafeWriteStore whose ownedRecord answers the record only when the principal matches, the organization exists, has no deletion record and the decision allows; readField returns null for "deletion"; commit runs #commit when the principal and record match (otherwise not_own_record);
+  - counts(orgId): the three counts, read without locks, for the builder's check;
+  - blockers(principalId, orgId): the grants, ancestry and decision first (refused, unknown or deleted: null), then the injected blockers function over counts(orgId);
+  - readReceipt(principalId, orgId, receiptRef), as the approved-to-hire store's, for the new operation and fields ["deletion"]; it keeps working after the deletion;
+  - isDeleted(orgId) and deletedAmong(orgIds) (one query with = ANY), the read model's port;
+  - #commit: BEGIN; pg_advisory_xact_lock(hashtextextended($1,326)) on the organization; SELECT id FROM organizations WHERE id = $1 FOR UPDATE (missing: not_own_record); a deletion record already present: not_own_record; the caller's grants FOR SHARE and the ancestry; the decision (not_own_record); the token reference in the audit table for organization.deletion.safe_write (token_already_used); expectedBefore must be null (state_changed); the counts read on this client after the row lock, and the injected blockers function (not empty: state_changed); INSERT the deletion record with the receipt's receiptRef; INSERT the receipt audit row (target_org_refs [organizationAuditRef(orgId)], before_summary { valuePresent: false }, after_summary the receipt shape with fields ["deletion"] and the tokenRef); COMMIT. 23505 becomes token_already_used.
+- Why FOR UPDATE on the organization row: inserting a grant, a pay contract or a child organization checks its foreign key to organizations with FOR KEY SHARE on that row, which waits for this lock, and a transaction that inserted one first holds FOR KEY SHARE, which this lock waits for. So the guards read under the lock see every dependent that will ever be committed before the deletion, and none can be added between the guard and the commit.
+- HTTP (apps/gateway/src/organization-deletion.ts, new): POST /organization/deletion/preview and /organization/deletion/confirm take exactly orgId, field ("deletion") and value (a string), plus token on confirm; GET /organization/deletion/{orgId}/receipts/{receiptRef} reads a receipt. Both POSTs first call store.blockers: null answers 404 not_found, a non-empty list 409 { error: "deletion_blocked", blockers }, and only an empty list goes on to the builder (built with check organizationDeletionGuardedCheck(store.counts, orgId)). Copy organization-approved-to-hire.ts for the session, Origin, content-type, headers, error mapping (state_changed and token errors 409) and the try/catch; body limit 8192 bytes. Export createOrganizationDeletion(ports) and handleOrganizationDeletion(req, res, service, origin). Mount it in index.ts right after SHU-325's handleOrganizationBrands route.
+- Live wiring: login-runtime.ts constructs the store from DATABASE_URL next to the other organization stores with organizationDeletionDecision, organizationDeletionBlockers and the two refs, passes it to OrganizationRepository as deletions whether or not the safe-write key is set (so live reads hide deleted organizations), closes it with the others, and builds the deletion service only when the key is set.
+
+Pitfalls earlier reviewers blocked. Avoid each one:
+- Mutations must hit the code production runs: the value check, the decision and the blockers function are exported from deletion-writes.ts and reach the store through its constructor or the gateway; the read model's checks are in organizations.ts, which the gateway's repository runs; packages/db must not import packages/organizations; dependencies stay unchanged. The grants query selects the caller's grant rows without filtering by role or organization, the ancestry query reads the organization chain, and the counts query returns plain counts, so every decision is the injected function's, not the SQL's.
+- Soft only: no DELETE FROM organizations, grants, notes, contracts or any other table anywhere in this card's code; the Postgres test asserts the organization row, its notes and its deleted pay contracts are still there after a deletion.
+- Existing mutation suites must still pass, and organizations.ts is where they are at risk. Keep each of these exactly once in dist/organizations.js and change your code's shape, never their scripts:
+  - mutations.mjs (SHU-159): \`"org-owner": "employer",\`, the parent-rate fallback line, \`const override = statusOverride(row);\`, \`if (override.state === "available")\`, \`if (parentOrgId !== null && children.length > 0)\`, the snapshot registry check, the #authorize resolution check \`if (resolution.kind !== "authorized" || resolution.context.orgId !== orgId\` with its continuation, and \`if (this.#operators.has(orgId))\` followed by \`return undefined;\`. Your #authorize line goes after these, before \`return audience;\`, and must not repeat them.
+  - directory-mutations.mjs: \`.filter((context) => context.role === request.role && within.has(context.orgId)\`, \`child.parentOrgId === org.id && covered.has(child.id)\`, the listOrganizations resolution check, \`if (companyParentOf(organizations, org.id, this.#operators) !== null)\` with its continue, \`availableValue(entry.status) !== filters.status\`, the search normalization, \`subOrganizationCount,\` immediately followed by \`legalName:\`, \`entries.slice(start, start + ORGANIZATION_DIRECTORY_PAGE_SIZE)\` and \`const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);\`. Remove deleted ids from covered in a separate statement; do not edit those lines.
+  - status-batch-reads-mutations.mjs: \`const batchRecords = shown.length > 0 && this.#statusRecords?.readMany\`, \`const batchRecords = visibleChildren.length > 0 && this.#statusRecords?.readMany\` and \`batchRecords.get(org.id) ?? { kind: "absent" }\`. Name your batch something that does not end in batchRecords (for example deletedIds).
+  - status-writes-mutations.mjs: \`if (record?.kind === "status")\`; commercial-terms-writes-mutations.mjs: \`const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience];\` and \`if (own.kind === "value")\`; approved-to-hire-writes-mutations.mjs: \`if (name === "approvedToHire" && approvedRecord?.kind === "value")\` and the directoryEntry approvedToHire line. Do not name anything record, own or approvedRecord.
+  - apps/gateway/test/company-directory-mutations.mjs and context-navigation-mutations.mjs anchor company-directory.js, context-navigation.js and web-ui.js: do not change them. packages/observability/test/mutations.mjs anchors lines of apps/gateway/src/index.js (the response close, telemetry.record and inSpan lines): add one route line in index.ts and its import and touch none of those.
+  Run every one of those scripts after npm run build, not only yours.
+- Migration 0201: copy the audit constraints and authorization_audit_summary_valid from the newest migration in the tree that defines them at build time (never 0194's or another older copy), so the operations and branches of every earlier card (the pay-contract safe writes, the note types, the brand links) survive. Add "0201_organization_deletion" to both schema_migrations lists in postgres-authz-store.test.ts right after "0200_organization_brands".
+- Conformance: run runSafeWriteConformance over buildOrganizationDeletionWrite with a check that accepts the suite's values, as SHU-315's test does.
+- Mutation script: copy packages/organizations/test/approved-to-hire-writes-mutations.mjs, including its --test-name-pattern form (a "^" prefix and a trailing space, not "$") and the environment-variable imports (SHU326_TEST_MODULE for deletion-writes.js, SHU326_ORG_MODULE for organizations.js). Mutations (1) to (5) target dist/deletion-writes.js and (6) and (7) dist/organizations.js. Name each test "SHU-326/AC-0N <name> " followed by a description. Check by hand that each mutant really fails its named test and that the script passes on the unmutated code.
+- Test data: random ids and no TRUNCATE of organizations (SHU-323's trigger refuses it); make pay contracts with SQL INSERTs and a currency catalogue item as packages/db/test/postgres-pay-contracts.test.ts does.
+- The Postgres test must exercise the store against the database (test:db): an admin, through a subtree grant on the operator organization, deletes a leaf organization with no dependents, after which the organization row is still there, isDeleted is true, the audit row has the new operation, the hashed organization reference and fields ["deletion"], the receipt reads back, and a second preview is not_own_record; a staff and an org-owner deletion refused; the operator organization refused; a parent with a live child blocked (live_sub_organizations), and allowed once the child is itself deleted; a live pay contract blocking (live_pay_contracts) while a deleted one does not; a member grant blocking (member_grants); a grant inserted between preview and confirm making the confirm answer state_changed with no deletion record; a duplicate confirm of one token; and an UPDATE or DELETE of an organization_deletions row, and a DELETE of a deleted organization, each refused.
+
+Acceptance. Each item is pinned by a mutation in packages/organizations/test/deletion-writes-mutations.mjs that makes a named test fail.
+(1) Make organizationDeletionValue accept any value: "SHU-326/AC-01 conformance" fails. It expects invalid_value for "yes", "Deleted" and the field "status", and runs the conformance suite.
+(2) Accept staff in the decision (anchor: \`row.role === "admin"\`, made \`(row.role === "admin" || row.role === "staff")\`): "SHU-326/AC-02 admin-only" fails. It drives the real builder through an in-memory SafeWriteStore whose ownedRecord and commit call the decision, and checks staff, org-owner, recruiter and finance grants on the organization, a self (not subtree) admin grant on the parent, and the operator organization as a target.
+(3) Drop \`counts.liveSubOrganizations > 0\` (made false): "SHU-326/AC-03 live-sub-organizations-block" fails.
+(4) Drop \`counts.livePayContracts > 0\`: "SHU-326/AC-04 live-pay-contracts-block" fails.
+(5) Drop \`counts.memberGrants > 0\`: "SHU-326/AC-05 member-grants-block" fails. It also previews with no dependents, adds a grant to the in-memory counts, confirms through a commit that calls organizationDeletionBlockers, and expects state_changed and no deletion.
+(6) Remove the deletion check from #authorize: "SHU-326/AC-06 deleted-reads-not-found" fails. It reads a deleted organization as staff, admin and org-owner, lists a parent whose child is deleted, and lists a deleted parent's sub-organizations.
+(7) Stop removing deleted ids from covered in listOrganizations: "SHU-326/AC-07 directory-hides-deleted" fails. It lists a directory with a deleted company and a live company whose one sub-organization is deleted (subOrganizationCount 0), and counts one deletedAmong call per list.
+The script prints "7/7 SHU-326 mutations killed". Use synthetic fixtures only.
+
+Your paths, and what each may hold:
+- packages/organizations/src/deletion-writes.ts (new)
+- packages/organizations/src/organizations.ts: only the OrganizationDeletionRecords port, its private field and constructor option, the #authorize line and the directory's deletedAmong read and covered removal
+- packages/organizations/src/index.ts (exports only)
+- packages/organizations/test/deletion-writes.test.ts (new)
+- packages/organizations/test/deletion-writes-mutations.mjs (new)
+- packages/db/migrations/0201_organization_deletion.sql (new)
+- packages/db/src/postgres-organization-deletion-store.ts (new)
+- packages/db/src/index.ts (exports only)
+- packages/db/test/postgres-organization-deletion.test.ts (new)
+- packages/db/test/postgres-authz-store.test.ts: only add "0201_organization_deletion" after "0200_organization_brands" in both schema_migrations lists
+- apps/gateway/src/organization-deletion.ts (new)
+- apps/gateway/src/index.ts (one route line after the organization-brands route, and its import)
+- apps/gateway/src/login-runtime.ts (wiring only)
+- apps/gateway/test/organization-deletion-http.test.ts (new; calls the real handler: 401, origin, 404 for a refused caller, 409 deletion_blocked with its blockers, a preview, confirm and receipt, and a stale confirm)
+- package.json: leave every existing script's text as it is. Append dist/packages/organizations/test/deletion-writes.test.js and dist/apps/gateway/test/organization-deletion-http.test.js at the END of the node --test list in test, and dist/packages/db/test/postgres-organization-deletion.test.js at the END of the node --test --test-concurrency=1 list in test:db; add a test:organization-deletion:mutations script that runs the mutation script, and add " && npm run test:organization-deletion:mutations" as its own step right after "npm run test:organization-brands:mutations" in test. Never change dependencies.
+
+Out of scope: restoring or purging a deleted organization, hard deletion of anything, deleting stores, contacts or memberships, removing members or revoking grants (O4), store and transfer guards (O7, F2: their tables do not exist), refusing later writes, grants or contracts that name a deleted organization (other routes do not consult deletion records yet; name this in your final message as a follow-up), hiding deleted organizations from workspace contexts or context navigation, the status-change email or any notification, any UI beyond what the routes need, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
@@ -1498,6 +1907,34 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU320_PATHS,
     acceptance: SHU320_ACCEPTANCE,
     brief: SHU320_BRIEF,
+  }),
+  "SHU-323": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU323_PATHS,
+    revision_paths: SHU323_PATHS,
+    acceptance: SHU323_ACCEPTANCE,
+    brief: SHU323_BRIEF,
+  }),
+  "SHU-324": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU324_PATHS,
+    revision_paths: SHU324_PATHS,
+    acceptance: SHU324_ACCEPTANCE,
+    brief: SHU324_BRIEF,
+  }),
+  "SHU-325": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU325_PATHS,
+    revision_paths: SHU325_PATHS,
+    acceptance: SHU325_ACCEPTANCE,
+    brief: SHU325_BRIEF,
+  }),
+  "SHU-326": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU326_PATHS,
+    revision_paths: SHU326_PATHS,
+    acceptance: SHU326_ACCEPTANCE,
+    brief: SHU326_BRIEF,
   }),
 });
 
