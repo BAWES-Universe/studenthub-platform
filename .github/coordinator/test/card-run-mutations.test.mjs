@@ -861,10 +861,10 @@ const CASES = [
     pattern: "SHU-86 0b: a configured limit",
   },
   {
-    name: "M129 run the tick's commands without a time limit",
+    name: "M129 run the tick's journal reads without a time limit",
     from: "  const bounded = { timeoutMs: limits.tickCallTimeoutMs ?? CARD_RUN_LIMITS.tickCallTimeoutMs };",
     to: "  const bounded = {}; // SHU86-M129",
-    pattern: "SHU-86 0b: a tick command",
+    pattern: "SHU-86 0b: a journal read",
   },
   {
     name: "M130 let a failed receipt read end the run",
@@ -872,6 +872,12 @@ const CASES = [
     from: "  } catch {\n    return null;\n  }",
     to: "  } catch (error) {\n    throw error; // SHU86-M130\n  }",
     pattern: "SHU-86 0b: a failed receipt read",
+  },
+  {
+    name: "M131 cut the coordinator start short with the tick time limit",
+    from: '  run(io, "systemctl", ["start", "shu-coordinator.service"]);',
+    to: '  run(io, "systemctl", ["start", "shu-coordinator.service"], bounded); // SHU86-M131',
+    pattern: "SHU-86 0b: a journal read",
   },
 ];
 

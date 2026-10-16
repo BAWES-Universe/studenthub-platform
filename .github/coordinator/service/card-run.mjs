@@ -93,8 +93,11 @@ export const CARD_RUN_LIMITS = Object.freeze({
   landRequestTimeoutMs: 30 * 1000,
   // SHU-321: each GitHub read of the queue config review's discovery.
   reviewRequestTimeoutMs: 30 * 1000,
-  // Self-watch 0b: each command a tick runs is bounded, so a hung systemctl
-  // or journalctl ends the run as an ERROR instead of holding it forever.
+  // Self-watch 0b: each journalctl read a tick runs is bounded, so a hung
+  // journal ends the run as an ERROR instead of holding it forever. The
+  // `systemctl start` itself is not: the coordinator unit runs with
+  // TimeoutStartSec=infinity so a tick is never cut midway, and killing only
+  // the client would leave that tick running while the run reverts.
   tickCallTimeoutMs: 10 * 60 * 1000,
   // Self-watch 0b: each read of the card's receipts.
   watchRequestTimeoutMs: 30 * 1000,
@@ -386,7 +389,7 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
 export function tick(io, limits = CARD_RUN_LIMITS) {
   const since = io.now().getTime();
   const bounded = { timeoutMs: limits.tickCallTimeoutMs ?? CARD_RUN_LIMITS.tickCallTimeoutMs };
-  run(io, "systemctl", ["start", "shu-coordinator.service"], bounded);
+  run(io, "systemctl", ["start", "shu-coordinator.service"]);
   run(io, "journalctl", ["--sync"], bounded);
   const raw = run(io, "journalctl", ["_SYSTEMD_UNIT=shu-coordinator.service", `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"], bounded);
   const entries = [];

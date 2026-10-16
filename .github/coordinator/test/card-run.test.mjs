@@ -1592,24 +1592,24 @@ test("SHU-86 0b: with observe off nothing is read and the claim's watch fields a
   assert.doesNotMatch(host.reports[0], /^Watch /m);
 });
 
-test("SHU-86 0b: a tick command that times out ends the run as an ERROR and the host is reverted", async () => {
+test("SHU-86 0b: a journal read that times out ends the run as an ERROR; the coordinator start is never cut short", async () => {
   const host = watchedHost();
   const exec = host.io.exec;
-  const bounds = [];
-  let starts = 0;
+  const starts = [];
+  const reads = [];
   host.io.exec = (file, args, options) => {
-    if (file === "systemctl" && args[0] === "start" && args[1] === "shu-coordinator.service") {
-      bounds.push(options?.timeoutMs);
-      starts += 1;
-      if (starts === 2) return { status: 1, stdout: "", stderr: "", timedOut: true };
+    if (file === "systemctl" && args[0] === "start" && args[1] === "shu-coordinator.service") starts.push(options?.timeoutMs);
+    if (file === "journalctl") {
+      reads.push(options?.timeoutMs);
+      if (args[0] === "--sync" && starts.length === 2) return { status: 1, stdout: "", stderr: "", timedOut: true };
     }
-    if (file === "journalctl") bounds.push(options?.timeoutMs);
     return exec(file, args, options);
   };
   const { output } = await main(["run"], host.io, PATHS);
   assert.equal(output.outcome, "ERROR");
-  assert.match(output.reason, /systemctl start shu-coordinator\.service timed out after 600000 ms/);
-  assert.ok(bounds.length >= 4 && bounds.every((ms) => ms === CARD_RUN_LIMITS.tickCallTimeoutMs), "every tick command is bounded");
+  assert.match(output.reason, /journalctl --sync timed out after 600000 ms/);
+  assert.ok(reads.length >= 3 && reads.every((ms) => ms === CARD_RUN_LIMITS.tickCallTimeoutMs), "every journal read is bounded");
+  assert.ok(starts.length >= 2 && starts.every((ms) => ms === undefined), "the coordinator start runs to its own end");
   reverted(host);
 });
 

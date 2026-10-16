@@ -2106,8 +2106,9 @@
     "SHU-86 mutation M126 count another run's receipts on the card as this run's progress",
     "SHU-86 mutation M127 never record that a configured stall limit was crossed",
     "SHU-86 mutation M128 record a stall while the heartbeat keeps moving",
-    "SHU-86 mutation M129 run the tick's commands without a time limit",
+    "SHU-86 mutation M129 run the tick's journal reads without a time limit",
     "SHU-86 mutation M130 let a failed receipt read end the run",
+    "SHU-86 mutation M131 cut the coordinator start short with the tick time limit",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2163,7 +2164,7 @@
     "SHU-86 0b: a failed receipt read is no progress and never ends the run",
     "SHU-86 0b: another run's receipts on the same card never count as this run's progress",
     "SHU-86 0b: with observe off nothing is read and the claim's watch fields are null",
-    "SHU-86 0b: a tick command that times out ends the run as an ERROR and the host is reverted",
+    "SHU-86 0b: a journal read that times out ends the run as an ERROR; the coordinator start is never cut short",
     "SHU-86 0c: the unit's time limit stays above the run window, a hung tick, worker grace, landing and its reports",
     "SHU-306 L2: an open pull request is reused, never opened twice",
     "SHU-306 L3: a lost answer to the open is read back, never sent again",
@@ -18139,11 +18140,15 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M129 run the tick's commands without a time limit",
+      "name": "SHU-86 mutation M129 run the tick's journal reads without a time limit",
       "capabilities": []
     },
     {
       "name": "SHU-86 mutation M130 let a failed receipt read end the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M131 cut the coordinator start short with the tick time limit",
       "capabilities": []
     },
     {
@@ -18367,7 +18372,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 0b: a tick command that times out ends the run as an ERROR and the host is reverted",
+      "name": "SHU-86 0b: a journal read that times out ends the run as an ERROR; the coordinator start is never cut short",
       "capabilities": []
     },
     {
