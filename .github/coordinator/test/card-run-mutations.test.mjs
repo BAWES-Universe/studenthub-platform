@@ -440,7 +440,7 @@ const CASES = [
   {
     name: "M67 read the tick before journald has flushed it",
     file: "service/card-run.mjs",
-    from: '  run(io, "journalctl", ["--sync"]);',
+    from: '  run(io, "journalctl", ["--sync"], bounded);',
     to: '  // SHU86-M67',
     pattern: "SHU-86 C41:",
   },
@@ -838,6 +838,40 @@ const CASES = [
     from: "        if (ticks.length === 1 && (outcome.eligible === 0 || targetExcluded.length > 0)) {",
     to: "        if ((ticks.length === 1 && outcome.eligible === 0) || targetExcluded.length > 0) { // SHU86-M125",
     pattern: "SHU-86 C11c:",
+  },
+  {
+    name: "M126 count another run's receipts on the card as this run's progress",
+    file: "service/card-watch.mjs",
+    from: "    if (receipt?.issue_id !== card || receipt?.episode_id !== activationId) continue;",
+    to: "    if (receipt?.issue_id !== card) continue; // SHU86-M126",
+    pattern: "SHU-86 0b: another run's receipts",
+  },
+  {
+    name: "M127 never record that a configured stall limit was crossed",
+    file: "service/card-watch.mjs",
+    from: "        } else if (firstDispatchAt !== null && stallLimit !== null && now - point > stallLimit) {",
+    to: "        } else if (false) { // SHU86-M127",
+    pattern: "SHU-86 0b: a configured limit",
+  },
+  {
+    name: "M128 record a stall while the heartbeat keeps moving",
+    file: "service/card-watch.mjs",
+    from: "        } else if (firstDispatchAt !== null && stallLimit !== null && now - point > stallLimit) {",
+    to: "        } else if (firstDispatchAt !== null && stallLimit !== null && now - armedAt > stallLimit) { // SHU86-M128",
+    pattern: "SHU-86 0b: a configured limit",
+  },
+  {
+    name: "M129 run the tick's commands without a time limit",
+    from: "  const bounded = { timeoutMs: limits.tickCallTimeoutMs ?? CARD_RUN_LIMITS.tickCallTimeoutMs };",
+    to: "  const bounded = {}; // SHU86-M129",
+    pattern: "SHU-86 0b: a tick command",
+  },
+  {
+    name: "M130 let a failed receipt read end the run",
+    file: "service/card-watch.mjs",
+    from: "  } catch {\n    return null;\n  }",
+    to: "  } catch (error) {\n    throw error; // SHU86-M130\n  }",
+    pattern: "SHU-86 0b: a failed receipt read",
   },
 ];
 

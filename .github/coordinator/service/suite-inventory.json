@@ -2103,6 +2103,11 @@
     "SHU-86 mutation M123 arm a card without a known repository label",
     "SHU-86 mutation M124 sit armed on a card the first tick excludes while other cards are eligible",
     "SHU-86 mutation M125 stop on the card's exclusion at any tick, not only the first",
+    "SHU-86 mutation M126 count another run's receipts on the card as this run's progress",
+    "SHU-86 mutation M127 never record that a configured stall limit was crossed",
+    "SHU-86 mutation M128 record a stall while the heartbeat keeps moving",
+    "SHU-86 mutation M129 run the tick's commands without a time limit",
+    "SHU-86 mutation M130 let a failed receipt read end the run",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2153,6 +2158,13 @@
     "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
     "SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head",
     "SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head",
+    "SHU-86 0b: the observe-only watch records first dispatch, last progress and the longest stretch without progress, and changes nothing else",
+    "SHU-86 0b: a configured limit only records would_stall; the run ends exactly as it would have",
+    "SHU-86 0b: a failed receipt read is no progress and never ends the run",
+    "SHU-86 0b: another run's receipts on the same card never count as this run's progress",
+    "SHU-86 0b: with observe off nothing is read and the claim's watch fields are null",
+    "SHU-86 0b: a tick command that times out ends the run as an ERROR and the host is reverted",
+    "SHU-86 0c: the unit's time limit stays above the run window, a hung tick, worker grace, landing and its reports",
     "SHU-306 L2: an open pull request is reused, never opened twice",
     "SHU-306 L3: a lost answer to the open is read back, never sent again",
     "SHU-306 L4: a pull request whose head is not the passed head stops before any check is read",
@@ -18115,6 +18127,26 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M126 count another run's receipts on the card as this run's progress",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M127 never record that a configured stall limit was crossed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M128 record a stall while the heartbeat keeps moving",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M129 run the tick's commands without a time limit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M130 let a failed receipt read end the run",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18312,6 +18344,34 @@
     },
     {
       "name": "SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: the observe-only watch records first dispatch, last progress and the longest stretch without progress, and changes nothing else",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: a configured limit only records would_stall; the run ends exactly as it would have",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: a failed receipt read is no progress and never ends the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: another run's receipts on the same card never count as this run's progress",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: with observe off nothing is read and the claim's watch fields are null",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: a tick command that times out ends the run as an ERROR and the host is reverted",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0c: the unit's time limit stays above the run window, a hung tick, worker grace, landing and its reports",
       "capabilities": []
     },
     {

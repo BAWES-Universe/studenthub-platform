@@ -56,6 +56,7 @@ import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
 import { landCard, readLandToken, boundedFetch, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 import { selfInstall } from "./card-install.mjs";
+import { createWatch, readProgress } from "./card-watch.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -92,6 +93,11 @@ export const CARD_RUN_LIMITS = Object.freeze({
   landRequestTimeoutMs: 30 * 1000,
   // SHU-321: each GitHub read of the queue config review's discovery.
   reviewRequestTimeoutMs: 30 * 1000,
+  // Self-watch 0b: each command a tick runs is bounded, so a hung systemctl
+  // or journalctl ends the run as an ERROR instead of holding it forever.
+  tickCallTimeoutMs: 10 * 60 * 1000,
+  // Self-watch 0b: each read of the card's receipts.
+  watchRequestTimeoutMs: 30 * 1000,
 });
 export const AUTO_TIMEOUT_START_MS = 8 * 60 * 60 * 1000;
 
@@ -308,8 +314,9 @@ function workerCount(io) {
   return result.stdout.split("\n").filter((line) => line.trim()).length;
 }
 
-function run(io, file, args) {
-  const result = io.exec(file, args);
+function run(io, file, args, options = undefined) {
+  const result = options ? io.exec(file, args, options) : io.exec(file, args);
+  if (result.timedOut) refuse("CARD_RUN_COMMAND", `${file} ${args.slice(0, 3).join(" ")} timed out after ${options.timeoutMs} ms`);
   if (result.status !== 0) refuse("CARD_RUN_COMMAND", `${file} ${args.slice(0, 3).join(" ")} exited ${result.status}`);
   return result.stdout;
 }
@@ -376,11 +383,12 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
 // otherwise null a field over 4096 bytes), and of those only the last
 // invocation's, which is this tick's. No line at all is a refusal, never an
 // earlier tick's output read as this one's.
-export function tick(io) {
+export function tick(io, limits = CARD_RUN_LIMITS) {
   const since = io.now().getTime();
-  run(io, "systemctl", ["start", "shu-coordinator.service"]);
-  run(io, "journalctl", ["--sync"]);
-  const raw = run(io, "journalctl", ["_SYSTEMD_UNIT=shu-coordinator.service", `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"]);
+  const bounded = { timeoutMs: limits.tickCallTimeoutMs ?? CARD_RUN_LIMITS.tickCallTimeoutMs };
+  run(io, "systemctl", ["start", "shu-coordinator.service"], bounded);
+  run(io, "journalctl", ["--sync"], bounded);
+  const raw = run(io, "journalctl", ["_SYSTEMD_UNIT=shu-coordinator.service", `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"], bounded);
   const entries = [];
   for (const line of raw.split("\n")) {
     let entry;
@@ -459,9 +467,13 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const ticks = [];
     let result;
     let armedAt = null;
+    let watch = null;
     try {
       const armed = arm(io, plan, revision, paths);
       armedAt = io.now().toISOString();
+      // Self-watch 0b, observe only: the committed config turns it on; it
+      // records progress and never changes how the run ends.
+      if (config.watch?.observe === true) watch = createWatch({ armedAt: Date.parse(armedAt), limits: config.watch });
       const deadline = Date.parse(plan.record.expires_at);
       for (;;) {
         // Never start a tick once the window has closed, including the first:
@@ -471,8 +483,12 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           break;
         }
         const startedAt = io.now().toISOString();
-        const outcome = tickOutcome(tick(io), plan.record.activation_id);
+        const outcome = tickOutcome(tick(io, limits), plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
+        if (watch) {
+          watch.observe(io.now().getTime(), await readProgress({ io, credentials, config, card: plan.id, activationId: plan.record.activation_id,
+            timeoutMs: limits.watchRequestTimeoutMs ?? CARD_RUN_LIMITS.watchRequestTimeoutMs }));
+        }
         if (outcome.ended) {
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
@@ -508,7 +524,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
       finished_at: finishedAt };
     summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
-      timing, ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}) };
+      timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}) };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
@@ -608,7 +624,10 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
       last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
       repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
-      reverted: result.revert?.reverted ?? null })}\n`, { mode: 0o600 });
+      reverted: result.revert?.reverted ?? null,
+      // Self-watch 0b: what the observe-only watch saw; null when it was off.
+      first_dispatch_at: result.watch?.first_dispatch_at ?? null, last_progress_at: result.watch?.last_progress_at ?? null,
+      max_progress_gap_ms: result.watch?.max_progress_gap_ms ?? null, would_stall: result.watch?.would_stall ?? null })}\n`, { mode: 0o600 });
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
 }
@@ -905,9 +924,10 @@ export const defaultIO = Object.freeze({
   now: () => new Date(),
   fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
-  exec: (file, args) => {
-    const result = spawnSync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  exec: (file, args, { timeoutMs } = {}) => {
+    const result = spawnSync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...(timeoutMs ? { timeout: timeoutMs, killSignal: "SIGKILL" } : {}) });
+    const timedOut = result.error?.code === "ETIMEDOUT";
+    return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(timedOut ? { timedOut } : {}) };
   },
 });
 

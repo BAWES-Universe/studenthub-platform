@@ -20,6 +20,7 @@
 // token only reads the branch back.
 import { sendLinear, resolveRepositoryOwnership } from "../reconcile.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
+import { watchLine } from "./card-watch.mjs";
 
 export const COORDINATOR_ENV = "/srv/shu/coordinator.env";
 export const COORDINATOR_USER = "shu-coordinator";
@@ -420,6 +421,7 @@ export function renderRunReport(result) {
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
   lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
+  if (result.watch) lines.push(watchLine(result.watch));
   if (result.land) lines.push(...landingLines(result.land));
   lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."
     : result.revert?.reverted ? "The host is reverted and idle."
