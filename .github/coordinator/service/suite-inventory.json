@@ -18307,6 +18307,14 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head",
+      "capabilities": []
+    },
+    {
       "name": "SHU-306 L2: an open pull request is reused, never opened twice",
       "capabilities": []
     },
