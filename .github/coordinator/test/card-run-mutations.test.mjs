@@ -893,6 +893,13 @@ const CASES = [
     to: "      if (pages === CARD_WATCH_MAX_PAGES) break; // SHU86-M133",
     pattern: "SHU-86 0b: a dispatch receipt behind a page",
   },
+  {
+    name: "M134 let a receipt read keep paging past its time limit",
+    file: "service/card-watch.mjs",
+    from: "      if (pages > 0 && io.now().getTime() - started >= timeoutMs) return null;",
+    to: "      // SHU86-M134",
+    pattern: "SHU-86 0b: a dispatch receipt behind a page",
+  },
 ];
 
 for (const mutation of CASES) {

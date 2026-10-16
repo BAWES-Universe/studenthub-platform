@@ -250,6 +250,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       if (query.includes("CardRunWatchReceipts")) {
         host.watchReads = (host.watchReads ?? 0) + 1;
         if (host.watchFails) throw new TypeError("fetch failed");
+        host.clock += host.watchSlowMs ?? 0;
         // Newest first, a hundred to a page, behind any newer comments.
         const all = [...(host.watchNewer ?? []), ...structuredClone(host.watchComments?.(host) ?? [])];
         const start = variables.after ? Number(variables.after) : 0;
@@ -1580,7 +1581,7 @@ test("SHU-86 0b: a failed receipt read is no progress and never ends the run", a
   reverted(host);
 });
 
-test("SHU-86 0b: a dispatch receipt behind a page of newer comments still counts, and an endless thread is a failed read", async () => {
+test("SHU-86 0b: a dispatch receipt behind a page of newer comments still counts; an endless or slow thread is a failed read", async () => {
   const host = watchedHost();
   host.watchNewer = Array.from({ length: 150 }, (_, i) => ({ body: `note ${i}`, createdAt: "2026-10-01T00:00:00.000Z", user: { id: "someone", displayName: "Someone" } }));
   const { output } = await main(["run"], host.io, PATHS);
@@ -1593,6 +1594,12 @@ test("SHU-86 0b: a dispatch receipt behind a page of newer comments still counts
   assert.equal(again.output.outcome, "PASS", "a read that never ends never ends the run");
   assert.equal(again.output.watch.receipt_read_failures, 5);
   assert.equal(again.output.watch.first_dispatch_at, null);
+  const slow = watchedHost();
+  slow.watchNewer = host.watchNewer;
+  slow.watchSlowMs = CARD_RUN_LIMITS.watchRequestTimeoutMs;
+  const late = await main(["run"], slow.io, PATHS);
+  assert.equal(late.output.outcome, "PASS");
+  assert.equal(late.output.watch.receipt_read_failures, 5, "a read still paging past its limit is a failed read");
 });
 
 test("SHU-86 0b: another run's receipts on the same card never count as this run's progress", async () => {
@@ -1634,7 +1641,7 @@ test("SHU-86 0b: a journal read that times out ends the run as an ERROR; the coo
 
 test("SHU-86 0c: the unit's time limit stays above the run window, a hung tick, worker grace, landing and its reports", () => {
   const need = CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.tickCallTimeoutMs + CARD_RUN_LIMITS.workerGraceMs + CARD_RUN_LIMITS.landWaitMs
-    + 4 * CARD_RUN_LIMITS.reportTimeoutMs;
+    + 4 * CARD_RUN_LIMITS.reportTimeoutMs + 2 * CARD_RUN_LIMITS.watchRequestTimeoutMs;
   assert.ok(AUTO_TIMEOUT_START_MS > need, `${AUTO_TIMEOUT_START_MS} must exceed ${need}`);
   assert.equal(AUTO_TIMEOUT_START_MS, 8 * 60 * 60 * 1000, "SHU-86 0c: the unit limit stays 8h");
 });
