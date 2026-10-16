@@ -9,6 +9,11 @@ CREATE TRIGGER organization_deletions_append_only BEFORE UPDATE OR DELETE ON org
 ALTER TABLE authorization_mutation_audit
  DROP CONSTRAINT authorization_mutation_audit_operation_check,
  ADD CONSTRAINT authorization_mutation_audit_operation_check CHECK (operation IN ('principal.register','grants.grant','grants.revoke','grants.clear','profile.safe_write','profile_record.create','profile_record.update','profile_record.remove','profile_record.restore','profile_record.replace','organization.profile.safe_write','organization.status.safe_write','organization.commercial_terms.safe_write','organization.approved_to_hire.safe_write','organization.note.safe_write','organization.deletion.safe_write','pay_contract.create.safe_write','pay_contract.update.safe_write','pay_contract.remove.safe_write','pay_contract.create','pay_contract.update','pay_contract.remove','candidate.bank_details.safe_write','organization.brand.link','organization.brand.unlink')),
+ DROP CONSTRAINT auth_audit_safe_write_halves,
+ ADD CONSTRAINT auth_audit_safe_write_halves CHECK (
+  operation NOT IN ('profile.safe_write','organization.profile.safe_write','organization.status.safe_write','organization.commercial_terms.safe_write','organization.approved_to_hire.safe_write','organization.note.safe_write','organization.deletion.safe_write','pay_contract.create.safe_write','pay_contract.update.safe_write','pay_contract.remove.safe_write','candidate.bank_details.safe_write')
+  OR (before_summary ? 'valuePresent' AND after_summary ? 'tokenRef')
+ ),
  DROP CONSTRAINT auth_audit_target_org_cardinality,
  ADD CONSTRAINT auth_audit_target_org_cardinality CHECK (
   (operation IN ('principal.register','grants.clear','profile.safe_write','profile_record.create','profile_record.update','profile_record.remove','profile_record.restore','profile_record.replace','candidate.bank_details.safe_write') AND cardinality(target_org_refs)=0) OR

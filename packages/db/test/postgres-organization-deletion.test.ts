@@ -71,4 +71,5 @@ test("SHU-326 postgres deletion records are append-only and prevent hard deletio
   await assert.rejects(pool.query("UPDATE organization_deletions SET deleted_at=clock_timestamp() WHERE org_id=$1", [id]), (e: unknown) => (e as { code?: string }).code === "23514");
   await assert.rejects(pool.query("DELETE FROM organization_deletions WHERE org_id=$1", [id]), (e: unknown) => (e as { code?: string }).code === "23514");
   await assert.rejects(pool.query("DELETE FROM organizations WHERE id=$1", [id]), (e: unknown) => (e as { code?: string }).code === "23503");
+  await assert.rejects(pool.query("INSERT INTO authorization_mutation_audit(request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary) VALUES($1,$1,'organization.deletion.safe_write',$1,ARRAY[$1]::text[],'{\"valuePresent\":false}','{\"valuePresent\":false}')", ["d".repeat(64)]), (e: unknown) => (e as { code?: string }).code === "23514", "a deletion audit row without its receipt half is refused");
 });
