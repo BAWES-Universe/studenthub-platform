@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Role } from "@studenthub/contracts";
+import { canWriteBankPaymentDetails, normalizeBankPaymentDetails, type BankPaymentDetails } from "./bank-payment-details.js";
 import {
   isCatalogueType, isSubmittableCatalogueType,
   type CatalogueActor, type CatalogueItem, type CatalogueItemInput,
@@ -148,6 +149,26 @@ export class ReferenceCatalogue {
     const item = await this.store.softDeleteItem(typeValue, id, actor.principalRef, this.now().toISOString());
     if (!item) throw new CatalogueError("catalogue_item_not_found", 404);
     return item;
+  }
+
+  async bankPaymentDetails(_actor: CatalogueActor, id: string): Promise<BankPaymentDetails> {
+    requireId(id);
+    const bank = await this.store.resolveById("bank", id);
+    if (!bank) throw new CatalogueError("catalogue_item_not_found", 404);
+    const details = await this.store.readBankPaymentDetails(id);
+    if (!details) throw new CatalogueError("bank_payment_details_not_found", 404);
+    return details;
+  }
+
+  async setBankPaymentDetails(actor: CatalogueActor, id: string, raw: unknown): Promise<BankPaymentDetails> {
+    if (!canWriteBankPaymentDetails(actor.role)) throw new CatalogueError("catalogue_write_forbidden", 403);
+    requireId(id);
+    const details = normalizeBankPaymentDetails(raw);
+    const bank = await this.store.resolveById("bank", id);
+    if (bank?.status !== "active") throw new CatalogueError("catalogue_item_not_found", 404);
+    const written = await this.store.writeBankPaymentDetails(id, { ...details, actorRef: actor.principalRef, now: this.now().toISOString() });
+    if (!written) throw new CatalogueError("catalogue_item_not_found", 404);
+    return written;
   }
 
   async submit(actor: CatalogueActor, typeValue: unknown, raw: unknown): Promise<CatalogueSubmission> {
