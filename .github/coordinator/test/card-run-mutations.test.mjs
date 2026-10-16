@@ -52,7 +52,7 @@ const CASES = [
   },
   {
     name: "M7 keep ticking a card that is not eligible",
-    from: "        if (ticks.length === 1 && outcome.eligible === 0) {",
+    from: "        if (ticks.length === 1 && (outcome.eligible === 0 || targetExcluded.length > 0)) {",
     to: "        if (false) { // SHU86-M7",
     pattern: "SHU-86 C11:",
   },
@@ -819,6 +819,25 @@ const CASES = [
     from: ' && claim.outcome === "PASS" && claim.ok === true\n        && claim.land',
     to: " /* SHU312-M122 */ && claim.land",
     pattern: "SHU-312 Q6:",
+  },
+  {
+    name: "M123 arm a card without a known repository label",
+    file: "service/card-prepare.mjs",
+    from: '  if (ownership.error) return { action: "refuse", code: "CARD_RUN_CARD_LABELS",',
+    to: '  if (false) return { action: "refuse", code: "CARD_RUN_CARD_LABELS", // SHU86-M123\n',
+    pattern: "SHU-86 C11d:",
+  },
+  {
+    name: "M124 sit armed on a card the first tick excludes while other cards are eligible",
+    from: "        if (ticks.length === 1 && (outcome.eligible === 0 || targetExcluded.length > 0)) {",
+    to: "        if (ticks.length === 1 && outcome.eligible === 0) { // SHU86-M124",
+    pattern: "SHU-86 C11b:",
+  },
+  {
+    name: "M125 stop on the card's exclusion at any tick, not only the first",
+    from: "        if (ticks.length === 1 && (outcome.eligible === 0 || targetExcluded.length > 0)) {",
+    to: "        if ((ticks.length === 1 && outcome.eligible === 0) || targetExcluded.length > 0) { // SHU86-M125",
+    pattern: "SHU-86 C11c:",
   },
 ];
 

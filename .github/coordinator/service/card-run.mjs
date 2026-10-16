@@ -475,8 +475,13 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
         }
-        if (ticks.length === 1 && outcome.eligible === 0) {
-          result = { ok: false, outcome: "NOT_ELIGIBLE", reason: outcome.excluded.join("; ") || "no eligible work" };
+        // On the first tick nothing has started yet, so the card being
+        // excluded is real and no later tick changes it: stop now rather than
+        // sit armed until the window closes, even while other cards are
+        // eligible but outside the run's scope.
+        const targetExcluded = outcome.excluded.filter((line) => line.startsWith(`EXCLUDED ${plan.id} `));
+        if (ticks.length === 1 && (outcome.eligible === 0 || targetExcluded.length > 0)) {
+          result = { ok: false, outcome: "NOT_ELIGIBLE", reason: (targetExcluded.length > 0 ? targetExcluded : outcome.excluded).join("; ") || "no eligible work" };
           break;
         }
         io.sleep(limits.tickIntervalMs);

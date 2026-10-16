@@ -18,7 +18,7 @@
 // build, as the coordinator user over its deploy-key remote
 // (SHU_PUSH_REMOTE_URL), with the broker's hardened git configuration. The
 // token only reads the branch back.
-import { sendLinear } from "../reconcile.mjs";
+import { sendLinear, resolveRepositoryOwnership } from "../reconcile.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 
 export const COORDINATOR_ENV = "/srv/shu/coordinator.env";
@@ -68,6 +68,7 @@ export const CARD_QUERY = `
       state { id name type }
       assignee { id }
       delegate { id }
+      labels { nodes { name } }
       team { id states(filter: { name: { eq: "${TODO_STATE}" } }, first: 2) { nodes { id name type } } }
     }
   }`;
@@ -87,6 +88,11 @@ async function readCard(io, credentials, id) {
 // What the card needs before the run, decided from its live state.
 export function cardAction(issue) {
   if (issue.assignee || issue.delegate) return { action: "refuse", code: "CARD_RUN_CARD_OWNED", detail: `${issue.identifier} has an assignee or a delegate; a person or agent owns it` };
+  // The coordinator never dispatches a card without exactly one known
+  // repo:<name> label (reconcile Rule 10). Refuse it here, before arming, so
+  // a run never sits armed on a card that can't be dispatched.
+  const ownership = resolveRepositoryOwnership((issue.labels?.nodes ?? []).map((label) => label?.name));
+  if (ownership.error) return { action: "refuse", code: "CARD_RUN_CARD_LABELS", detail: `${issue.identifier}: ${ownership.error}` };
   if (issue.state?.name === TODO_STATE && issue.state?.type === "unstarted") return { action: "none" };
   if (!MOVABLE_STATE_TYPES.includes(issue.state?.type)) {
     return { action: "refuse", code: "CARD_RUN_CARD_STATE", detail: `${issue.identifier} is ${issue.state?.name ?? "in an unknown state"}; only a card that has not started moves to ${TODO_STATE}` };

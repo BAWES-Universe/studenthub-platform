@@ -286,7 +286,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         return respond(200, { data: { issueUpdate: { success: true } } });
       }
       if (host.onCardRead) host.onCardRead(host, moveCard);
-      return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, updatedAt: new Date(host.linearClock).toISOString(), ...host.card,
+      return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, updatedAt: new Date(host.linearClock).toISOString(),
+        labels: { nodes: [{ name: "repo:platform" }] }, ...host.card,
         team: { id: "team", states: { nodes: [{ id: TODO_ID, name: "Todo", type: "unstarted" }] } } } } });
     }
     assert.equal(auth, "Bearer gh-secret-value");
@@ -651,6 +652,40 @@ test("SHU-86 C11: a run whose card is not eligible on the first tick stops and r
   assert.match(result.reason, /not in Todo/);
   assert.equal(result.ticks.length, 1);
   reverted(host);
+});
+
+test("SHU-86 C11b: a run whose card is excluded on the first tick stops even while other cards are eligible", async () => {
+  const host = fakeHost({ onTick: (h) => tickText(armed(armedId(h)), 4, [
+    "SHU-301 — repository ownership HOLD — missing repo:<name> ownership label",
+    "SHU-399 — outside trusted dispatch_scope",
+  ]) });
+  const result = await runCard({ io: host.io, paths: PATHS });
+  assert.equal(result.outcome, "NOT_ELIGIBLE");
+  assert.match(result.reason, /missing repo:<name> ownership label/);
+  assert.doesNotMatch(result.reason, /SHU-399/);
+  assert.equal(result.ticks.length, 1);
+  reverted(host);
+});
+
+test("SHU-86 C11c: a card excluded only after the first tick does not stop the run early", async () => {
+  const host = fakeHost({ onTick: (h) => (h.ticks === 1 ? tickText(armed(armedId(h))) : tickText(armed(armedId(h)), 0, ["SHU-301 — linked to an open PR"])) });
+  const result = await runCard({ io: host.io, paths: PATHS });
+  assert.notEqual(result.outcome, "NOT_ELIGIBLE");
+  assert.ok(result.ticks.length > 1);
+});
+
+test("SHU-86 C11d: a card without exactly one known repo label is refused before any write", async () => {
+  for (const [label, labels, pattern] of [
+    ["no repo label", [], /missing repo:<name> ownership label/],
+    ["two repo labels", [{ name: "repo:platform" }, { name: "repo:legacy" }], /multiple repository ownership labels/],
+    ["unknown repo label", [{ name: "repo:elsewhere" }], /unknown repository ownership label/],
+  ]) {
+    const host = fakeHost({ card: { state: { id: TODO_ID, name: "Todo", type: "unstarted" }, assignee: null, delegate: null, labels: { nodes: labels } }, branchHead: "" });
+    await assert.rejects(runCard({ io: host.io, paths: PATHS }), (error) => error.code === "CARD_RUN_CARD_LABELS" && pattern.test(error.message), label);
+    noArming(host);
+    assert.deepEqual(host.api, ["linear read"], `${label}: nothing is written`);
+    assert.equal(host.ticks, 0, `${label}: no tick runs`);
+  }
 });
 
 test("SHU-86 C12: a run that outlives its window stops at the window and reverts", async () => {

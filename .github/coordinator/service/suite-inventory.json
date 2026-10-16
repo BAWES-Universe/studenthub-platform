@@ -2100,6 +2100,9 @@
     "SHU-86 mutation M120 lose a failed claim write after the run",
     "SHU-86 mutation M121 take a landing from another card's or revision's claim",
     "SHU-86 mutation M122 take a landing from a claim with no passed run",
+    "SHU-86 mutation M123 arm a card without a known repository label",
+    "SHU-86 mutation M124 sit armed on a card the first tick excludes while other cards are eligible",
+    "SHU-86 mutation M125 stop on the card's exclusion at any tick, not only the first",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2111,6 +2114,9 @@
     "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
     "SHU-86 C10: a failed arm still reverts everything it wrote",
     "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
+    "SHU-86 C11b: a run whose card is excluded on the first tick stops even while other cards are eligible",
+    "SHU-86 C11c: a card excluded only after the first tick does not stop the run early",
+    "SHU-86 C11d: a card without exactly one known repo label is refused before any write",
     "SHU-86 C12: a run that outlives its window stops at the window and reverts",
     "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
     "SHU-86 C14: one run at a time, as root only",
@@ -18093,6 +18099,18 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M123 arm a card without a known repository label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M124 sit armed on a card the first tick excludes while other cards are eligible",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M125 stop on the card's exclusion at any tick, not only the first",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
       "capabilities": []
     },
@@ -18134,6 +18152,18 @@
     },
     {
       "name": "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C11b: a run whose card is excluded on the first tick stops even while other cards are eligible",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C11c: a card excluded only after the first tick does not stop the run early",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C11d: a card without exactly one known repo label is refused before any write",
       "capabilities": []
     },
     {
