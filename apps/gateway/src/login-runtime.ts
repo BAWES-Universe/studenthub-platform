@@ -24,7 +24,7 @@ import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organi
   organizationCommercialTermsDecision,organizationCommercialTermsStateDecision,organizationCommercialTermsRecordRef,organizationCommercialTermsPrincipalRef,
   organizationApprovedToHireDecision,organizationApprovedToHireStateDecision,organizationApprovedToHireRecordRef,organizationApprovedToHirePrincipalRef,
   organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import {payContractWriteDecision,payContractCreator,payContractCreateCheck,payContractCompanyRecordRef,payContractPrincipalRef} from "@studenthub/pay-contracts";
+import {payContractWriteDecision,payContractReadAccess,payContractCreator,payContractCreateCheck,payContractCompanyRecordRef,payContractPrincipalRef,payContractRecordRef,payContractChanger,payContractStateDecision,payContractEditableValue,payContractChangeCheck} from "@studenthub/pay-contracts";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
@@ -233,7 +233,8 @@ export function createRuntimeLoginFromEnv(
   const payContractReferences = new PostgresFinanceReferenceResolver({ connectionString: value("DATABASE_URL") });
   const payContractWrites = new PostgresPayContractSafeWriteStore({connectionString:value("DATABASE_URL"),
     decision:(rows,company,ancestors)=>payContractWriteDecision(rows,company,ancestors,DEFAULT_OPERATOR_ORG_IDS),
-    creator:payContractCreator(payContractReferences),recordRef:payContractCompanyRecordRef,principalRef:payContractPrincipalRef});
+    readDecision:(rows,company,ancestors)=>payContractReadAccess(rows,company,ancestors,DEFAULT_OPERATOR_ORG_IDS),
+    creator:payContractCreator(payContractReferences),changer:payContractChanger(payContractReferences),stateDecision:payContractStateDecision,editableValue:payContractEditableValue,recordRef:payContractCompanyRecordRef,contractRecordRef:payContractRecordRef,principalRef:payContractPrincipalRef});
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -280,8 +281,8 @@ export function createRuntimeLoginFromEnv(
       ...(safeWriteKey?{organizationCommercialTerms:createOrganizationCommercialTerms({sessions:loginStore.sessions,store:organizationCommercialTermsStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationApprovedToHire:createOrganizationApprovedToHire({sessions:loginStore.sessions,store:organizationApprovedToHireStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationNotes:createOrganizationNotes({sessions:loginStore.sessions,store:organizationNotesStore,secret:safeWriteKey})}:{}),
-      ...(safeWriteKey?{payContracts:createPayContracts({sessions:loginStore.sessions,store:payContractWrites,secret:safeWriteKey,
-        check:payContractCreateCheck({references:payContractReferences,contracts:payContracts,candidates:payContractWrites})})}:{}),
+      ...{payContracts:createPayContracts({sessions:loginStore.sessions,store:payContractWrites,contracts:payContracts,
+        ...(safeWriteKey?{secret:safeWriteKey,check:payContractCreateCheck({references:payContractReferences,contracts:payContracts,candidates:payContractWrites}),changeCheck:payContractChangeCheck({references:payContractReferences,contracts:payContracts})}: {})})},
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
