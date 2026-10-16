@@ -1,4 +1,5 @@
 import { CatalogueError, catalogueSortKey } from "./catalogue.js";
+import type { BankPaymentDetails } from "./bank-payment-details.js";
 import type {
   CatalogueItem, CatalogueItemInput, CatalogueSortKey, CatalogueStore,
   CatalogueSubmission, CatalogueType, SubmittableCatalogueType,
@@ -13,6 +14,7 @@ function afterKey(row: { readonly name?: string; readonly submittedAt?: string; 
 export class InMemoryCatalogueStore implements CatalogueStore {
   readonly #items = new Map<string, CatalogueItem>();
   readonly #submissions = new Map<string, CatalogueSubmission>();
+  readonly #bankPaymentDetails = new Map<string, BankPaymentDetails>();
 
   async listActive(type: CatalogueType, after: CatalogueSortKey | undefined, limit: number): Promise<readonly CatalogueItem[]> {
     return [...this.#items.values()].filter((item) => item.type === type && item.status === "active" && afterKey(item, after))
@@ -51,6 +53,17 @@ export class InMemoryCatalogueStore implements CatalogueStore {
     const next = Object.freeze({ ...current, status: "deleted" as const, deletedAt: now, updatedAt: now });
     this.#items.set(id, next);
     return next;
+  }
+
+  async readBankPaymentDetails(bankId: string): Promise<BankPaymentDetails | undefined> {
+    return this.#bankPaymentDetails.get(bankId);
+  }
+
+  async writeBankPaymentDetails(bankId: string, details: Omit<BankPaymentDetails, "bankId" | "updatedAt"> & { readonly actorRef: string; readonly now: string }): Promise<BankPaymentDetails | undefined> {
+    const { actorRef: _actorRef, now, ...values } = details;
+    const result = Object.freeze({ bankId, ...values, updatedAt: now });
+    this.#bankPaymentDetails.set(bankId, result);
+    return result;
   }
 
   async createSubmission(input: CatalogueSubmission & { readonly actorRef: string; readonly orgId: string }): Promise<CatalogueSubmission> {

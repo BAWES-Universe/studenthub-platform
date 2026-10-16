@@ -1,7 +1,7 @@
 import pg from "pg";
 import type { Pool as PgPool, PoolClient, PoolConfig } from "pg";
 import type {
-  CatalogueItem, CatalogueItemInput, CatalogueSortKey, CatalogueStore,
+  BankPaymentDetails, BankTransferType, CatalogueItem, CatalogueItemInput, CatalogueSortKey, CatalogueStore,
   CatalogueSubmission, CatalogueType, SubmittableCatalogueType,
 } from "@studenthub/reference-catalogue";
 import { catalogueSortKey } from "@studenthub/reference-catalogue";
@@ -14,6 +14,10 @@ interface SubmissionRow {
   id: string; catalogue_type: SubmittableCatalogueType; name: string; code: string | null;
   status: "pending" | "approved" | "rejected"; submitted_at: Date;
   moderated_at: Date | null; created_item_id: string | null;
+}
+interface BankPaymentDetailsRow {
+  bank_id: string; swift_code: string; iban_bank_code: string; abk_code: string;
+  transfer_type: BankTransferType; updated_at: Date;
 }
 
 export class PostgresCatalogueStore implements CatalogueStore {
@@ -73,6 +77,28 @@ export class PostgresCatalogueStore implements CatalogueStore {
        RETURNING id, catalogue_type, name, code, status, created_at, updated_at, deleted_at`,
       [type, id, actorRef, now]);
     return rows[0] && itemFromRow(rows[0]);
+  }
+
+  async readBankPaymentDetails(bankId: string): Promise<BankPaymentDetails | undefined> {
+    const { rows } = await this.#pool.query<BankPaymentDetailsRow>(
+      `SELECT bank_id,swift_code,iban_bank_code,abk_code,transfer_type,updated_at
+       FROM catalogue_bank_payment_details WHERE bank_id=$1`, [bankId]);
+    return rows[0] && bankPaymentDetailsFromRow(rows[0]);
+  }
+
+  async writeBankPaymentDetails(bankId: string, details: Omit<BankPaymentDetails, "bankId" | "updatedAt"> & { readonly actorRef: string; readonly now: string }): Promise<BankPaymentDetails | undefined> {
+    const { rows } = await this.#pool.query<BankPaymentDetailsRow>(
+      `INSERT INTO catalogue_bank_payment_details
+       (bank_id,swift_code,iban_bank_code,abk_code,transfer_type,created_by_ref,updated_by_ref,created_at,updated_at)
+       SELECT id,$2::text,$3::text,$4::text,$5::text,$6::char(64),$6::char(64),$7::timestamptz,$7::timestamptz FROM catalogue_items
+       WHERE id=$1 AND catalogue_type='bank' AND status='active'
+       ON CONFLICT (bank_id) DO UPDATE SET swift_code=EXCLUDED.swift_code,
+         iban_bank_code=EXCLUDED.iban_bank_code,abk_code=EXCLUDED.abk_code,
+         transfer_type=EXCLUDED.transfer_type,updated_by_ref=EXCLUDED.updated_by_ref,
+         updated_at=EXCLUDED.updated_at
+       RETURNING bank_id,swift_code,iban_bank_code,abk_code,transfer_type,updated_at`,
+      [bankId, details.swiftCode, details.ibanBankCode, details.abkCode, details.transferType, details.actorRef, details.now]);
+    return rows[0] && bankPaymentDetailsFromRow(rows[0]);
   }
 
   async createSubmission(input: CatalogueSubmission & { readonly actorRef: string; readonly orgId: string }): Promise<CatalogueSubmission> {
@@ -141,4 +167,8 @@ function submissionFromRow(row: SubmissionRow): CatalogueSubmission {
     status: row.status, submittedAt: row.submitted_at.toISOString(),
     ...(row.moderated_at === null ? {} : { moderatedAt: row.moderated_at.toISOString() }),
     ...(row.created_item_id === null ? {} : { createdItemId: row.created_item_id }) };
+}
+function bankPaymentDetailsFromRow(row: BankPaymentDetailsRow): BankPaymentDetails {
+  return { bankId: row.bank_id, swiftCode: row.swift_code, ibanBankCode: row.iban_bank_code,
+    abkCode: row.abk_code, transferType: row.transfer_type, updatedAt: row.updated_at.toISOString() };
 }
