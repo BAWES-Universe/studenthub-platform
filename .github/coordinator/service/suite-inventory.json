@@ -2149,6 +2149,8 @@
     "SHU-86 C41: a tick is read from the journal, flushed first, and only its own invocation counts",
     "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice",
     "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
+    "SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head",
+    "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
     "SHU-306 L2: an open pull request is reused, never opened twice",
     "SHU-306 L3: a lost answer to the open is read back, never sent again",
     "SHU-306 L4: a pull request whose head is not the passed head stops before any check is read",
@@ -18292,6 +18294,14 @@
     },
     {
       "name": "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
       "capabilities": []
     },
     {

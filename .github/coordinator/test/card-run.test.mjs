@@ -1437,6 +1437,41 @@ test("SHU-306 L1: a passed card opens its pull request, waits for green, hands o
   reverted(host);
 });
 
+test("SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head", async () => {
+  const host = landingHost();
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.deepEqual(Object.keys(claim), ["card", "revision", "claimed_at", "activation_id", "outcome", "ok", "land", "armed_at", "first_tick_at",
+    "last_tick_at", "finished_at", "repo", "pr", "reviewed_head", "reverted"]);
+  assert.equal(claim.outcome, "PASS");
+  assert.equal(claim.land, "MERGED");
+  assert.equal(claim.pr, 77);
+  assert.equal(claim.reviewed_head, PASSED);
+  assert.equal(claim.repo, COMMITTED.pilot_repo);
+  assert.equal(claim.reverted, true);
+  for (const field of ["claimed_at", "armed_at", "first_tick_at", "last_tick_at", "finished_at"]) {
+    assert.match(claim[field], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/, `SHU-86 0a: ${field} is a timestamp`);
+  }
+  assert.ok(claim.claimed_at <= claim.armed_at && claim.armed_at <= claim.first_tick_at && claim.first_tick_at <= claim.last_tick_at
+    && claim.last_tick_at <= claim.finished_at, "SHU-86 0a: the timestamps are in run order");
+});
+
+test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head", async () => {
+  const host = fakeHost({ branchHead: REV });
+  host.mainTip = HEAD;
+  const result = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(result.outcome, "NOT_STARTED", JSON.stringify(result));
+  const claim = JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text);
+  assert.match(claim.claimed_at, /^\d{4}-\d\d-\d\dT/);
+  assert.equal(claim.armed_at, null);
+  assert.equal(claim.first_tick_at, null);
+  assert.equal(claim.pr, null);
+  assert.equal(claim.reviewed_head, null);
+  assert.equal(claim.reverted, null);
+  assert.ok(claim.finished_at >= claim.claimed_at);
+});
+
 test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
   const host = landingHost({ existingPr: true });
   const result = await landRun(host);
