@@ -1472,6 +1472,25 @@ test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and re
   assert.equal(claim.finished_at, null, "SHU-86 0a: a run that never armed never finished");
 });
 
+test("SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head", async () => {
+  const host = landingHost({ existingPr: true, prHead: "9".repeat(40) });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.equal(claim.land, "LAND_HEAD_MISMATCH");
+  assert.equal(claim.pr, 77);
+  assert.equal(claim.reviewed_head, null, "SHU-86 0a: a head mismatch never records a reviewed head");
+});
+
+test("SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head", async () => {
+  const host = landingHost({ checks: ["pending", "red"] });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "PR_OPENED_CI_RED", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.equal(claim.pr, 77);
+  assert.equal(claim.reviewed_head, PASSED, "SHU-86 0a: a matched pull request records the head the review passed");
+});
+
 test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
   const host = landingHost({ existingPr: true });
   const result = await landRun(host);
@@ -1496,6 +1515,7 @@ test("SHU-306 L4: a pull request whose head is not the passed head stops before 
   assert.equal(result.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(result.land));
   assert.equal(host.land.checkReads, 0, "no wait on a head the review never passed");
   assert.equal(result.land.head, PASSED, "SHU-86 0a: a stopped landing still names the head the review passed");
+  assert.equal(result.land.reviewed_head, undefined, "SHU-86 0a: but never as the reviewed head of a pull request it did not match");
   noLandingWrites(host);
   assert.match(host.reports[0], /^Landing: LAND_HEAD_MISMATCH, /m);
 });

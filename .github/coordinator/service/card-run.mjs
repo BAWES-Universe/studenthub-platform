@@ -607,7 +607,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       outcome: result.outcome, ok: result.ok, land: result.land?.outcome ?? null,
       armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
       last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
-      repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.head ?? null,
+      repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
       reverted: result.revert?.reverted ?? null })}\n`, { mode: 0o600 });
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };

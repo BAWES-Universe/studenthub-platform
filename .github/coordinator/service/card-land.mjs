@@ -529,8 +529,11 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   const actorIds = config?.linear_receipt_actor_ids;
   let pr = null;
   // The head the run's terminal PASS reviewed, once read: every later outcome,
-  // an error included, carries it.
+  // an error included, carries it for diagnosis. reviewed_head is set only
+  // once the pull request is seen at that head, and never on a head mismatch,
+  // so a claim never names a head the pull request did not carry.
   let head = null;
+  let reviewedHead = null;
   try {
     if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
     policy = settlePolicy(config);
@@ -548,7 +551,8 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     if (!headMatches(pr, { repo, branch, head })) {
       stop("LAND_HEAD_MISMATCH", `pull request #${pr?.number} is at ${pr?.head?.sha ?? "an unknown head"}, not the passed ${head}`);
     }
-    const prFields = { pr: pr.number, opened: opened.opened, head };
+    reviewedHead = head;
+    const prFields = { pr: pr.number, opened: opened.opened, head, reviewed_head: head };
 
     // SHU-310: settles review bot threads only when every unresolved thread
     // is settleable and the run stays within its limit.
@@ -631,7 +635,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     }
     return result("MERGED", { ...prFields, merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented });
   } catch (error) {
-    return result(error.landOutcome ?? "LAND_ERROR", { ...(pr?.number ? { pr: pr.number } : {}), ...(head ? { head } : {}),
+    const outcome = error.landOutcome ?? "LAND_ERROR";
+    return result(outcome, { ...(pr?.number ? { pr: pr.number } : {}), ...(head ? { head } : {}),
+      ...(reviewedHead && outcome !== "LAND_HEAD_MISMATCH" ? { reviewed_head: reviewedHead } : {}),
       reason: String(error.message ?? error) });
   }
 }
