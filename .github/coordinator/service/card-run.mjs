@@ -458,8 +458,10 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const plan = prepared.branch ? onBase(planned, prepared.branch.head) : planned;
     const ticks = [];
     let result;
+    let armedAt = null;
     try {
       const armed = arm(io, plan, revision, paths);
+      armedAt = io.now().toISOString();
       const deadline = Date.parse(plan.record.expires_at);
       for (;;) {
         // Never start a tick once the window has closed, including the first:
@@ -490,6 +492,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     } catch (error) {
       result = { ok: false, outcome: "ERROR", reason: error.message, code: error.code ?? "CARD_RUN_ERROR" };
     }
+    // The run itself ends here; revert and landing are timed by their own steps.
+    const finishedAt = armedAt === null ? null : io.now().toISOString();
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
@@ -499,8 +503,12 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     if (plan.kind === "card" && result.outcome === "PASS" && reverted.reverted === true) {
       land = await landRun({ io, paths, limits, plan, config, credentials });
     }
+    // Self-watch 0a: when the run armed, ticked and finished, so real run
+    // lengths can be read back from the claims.
+    const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
+      finished_at: finishedAt };
     summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
-      ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}) };
+      timing, ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}) };
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }
@@ -563,8 +571,9 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   }
   if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
   const claim = autoClaim(paths, revision, plan.id);
+  const claimedAt = io.now().toISOString();
   try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt })}\n`, { flag: "wx", mode: 0o600 });
   } catch (error) {
     if (error.code === "EEXIST") return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
     throw error;
@@ -591,8 +600,15 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   // moved), so the failure is named in the output rather than lost.
   let claimError = null;
   try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, activation_id: result.activation_id, outcome: result.outcome, ok: result.ok,
-      land: result.land?.outcome ?? null })}\n`, { mode: 0o600 });
+    // Self-watch 0a: the final claim keeps its claimed_at, adds the run's
+    // timing, and records which pull request and which reviewed head a
+    // landing worked on. Nothing reads these fields to decide anything yet.
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, activation_id: result.activation_id,
+      outcome: result.outcome, ok: result.ok, land: result.land?.outcome ?? null,
+      armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
+      last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
+      repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
+      reverted: result.revert?.reverted ?? null })}\n`, { mode: 0o600 });
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
 }
