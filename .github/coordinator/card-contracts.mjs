@@ -1458,6 +1458,7 @@ export const SHU324_PATHS = Object.freeze([
   "packages/db/migrations/0199_organization_note_types.sql",
   "packages/db/src/postgres-organization-notes-store.ts",
   "packages/db/test/postgres-organization-note-types.test.ts",
+  "packages/db/test/postgres-organization-notes.test.ts",
   "packages/db/test/postgres-authz-store.test.ts",
   "apps/gateway/src/organization-notes.ts",
   "apps/gateway/src/login-runtime.ts",
@@ -1532,6 +1533,7 @@ Your paths, and what each may hold:
 - packages/db/migrations/0199_organization_note_types.sql (new)
 - packages/db/src/postgres-organization-notes-store.ts: only the noteType option and its uses above
 - packages/db/test/postgres-organization-note-types.test.ts (new)
+- packages/db/test/postgres-organization-notes.test.ts: only add noteType: organizationNoteTypeOf (imported from @studenthub/organizations alongside its existing imports) to the existing PostgresOrganizationNotesStore constructor call, which the required option would otherwise break
 - packages/db/test/postgres-authz-store.test.ts: only add "0199_organization_note_types" after "0198_organization_notes_refuse_delete" in both schema_migrations lists
 - apps/gateway/src/organization-notes.ts: only the request's field check
 - apps/gateway/src/login-runtime.ts: only the noteType option
