@@ -23,7 +23,7 @@ import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organi
   organizationStatusDecision, organizationStatusStateDecision, organizationStatusEvent, organizationStatusRecordRef, organizationStatusPrincipalRef,
   organizationCommercialTermsDecision,organizationCommercialTermsStateDecision,organizationCommercialTermsRecordRef,organizationCommercialTermsPrincipalRef,
   organizationApprovedToHireDecision,organizationApprovedToHireStateDecision,organizationApprovedToHireRecordRef,organizationApprovedToHirePrincipalRef,
-  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
+  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,organizationNoteTypeOf,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import {payContractWriteDecision,payContractReadAccess,payContractCreator,payContractCreateCheck,payContractCompanyRecordRef,payContractPrincipalRef,payContractRecordRef,payContractChanger,payContractStateDecision,payContractEditableValue,payContractChangeCheck} from "@studenthub/pay-contracts";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
@@ -225,7 +225,7 @@ export function createRuntimeLoginFromEnv(
     recordRef:organizationStatusRecordRef,principalRef:organizationStatusPrincipalRef});
   const organizationCommercialTermsStore=new PostgresOrganizationCommercialTermsStore({connectionString:value("DATABASE_URL"),decision:organizationCommercialTermsDecision,stateDecision:organizationCommercialTermsStateDecision,recordRef:organizationCommercialTermsRecordRef,principalRef:organizationCommercialTermsPrincipalRef});
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
-  const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef});
+  const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef,noteType:organizationNoteTypeOf});
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: value("DATABASE_URL") }) : undefined;
