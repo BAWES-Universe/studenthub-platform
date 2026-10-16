@@ -1469,7 +1469,7 @@ test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and re
   assert.equal(claim.pr, null);
   assert.equal(claim.reviewed_head, null);
   assert.equal(claim.reverted, null);
-  assert.ok(claim.finished_at >= claim.claimed_at);
+  assert.equal(claim.finished_at, null, "SHU-86 0a: a run that never armed never finished");
 });
 
 test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
@@ -1495,6 +1495,7 @@ test("SHU-306 L4: a pull request whose head is not the passed head stops before 
   const result = await landRun(host);
   assert.equal(result.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(result.land));
   assert.equal(host.land.checkReads, 0, "no wait on a head the review never passed");
+  assert.equal(result.land.head, PASSED, "SHU-86 0a: a stopped landing still names the head the review passed");
   noLandingWrites(host);
   assert.match(host.reports[0], /^Landing: LAND_HEAD_MISMATCH, /m);
 });

@@ -528,6 +528,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   const linearToken = credentials?.LINEAR_API_TOKEN;
   const actorIds = config?.linear_receipt_actor_ids;
   let pr = null;
+  // The head the run's terminal PASS reviewed, once read: every later outcome,
+  // an error included, carries it.
+  let head = null;
   try {
     if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
     policy = settlePolicy(config);
@@ -538,7 +541,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     if (!issue?.id || issue.identifier !== card || typeof issue.title !== "string") stop("LAND_ERROR", `${card} cannot be read from Linear`);
     const before = parseReceiptsFromComments(await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl }), actorIds);
     const { terminal } = passedTerminal(before, { card, repo, branch, activationId });
-    const head = terminal.target_sha;
+    head = terminal.target_sha;
 
     const opened = await findOrOpenPull(gh, { repo, branch, card, title: issue.title, activationId, head });
     pr = opened.pr;
@@ -628,6 +631,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     }
     return result("MERGED", { ...prFields, merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented });
   } catch (error) {
-    return result(error.landOutcome ?? "LAND_ERROR", { ...(pr?.number ? { pr: pr.number } : {}), reason: String(error.message ?? error) });
+    return result(error.landOutcome ?? "LAND_ERROR", { ...(pr?.number ? { pr: pr.number } : {}), ...(head ? { head } : {}),
+      reason: String(error.message ?? error) });
   }
 }
