@@ -63,7 +63,7 @@ test("SHU-326 postgres confirm rechecks dependencies and duplicate tokens", asyn
   assert.deepEqual(await w.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(stale), token: p.token }), { ok: false, reason: "state_changed" });
   assert.equal((await pool.query("SELECT count(*)::int n FROM organization_deletions WHERE org_id=$1", [stale])).rows[0].n, 0);
   const duplicate = await org(), dw = writer(admin, duplicate), dp = await preview(admin, duplicate); assert.ok(dp.ok); assert.ok((await dw.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(duplicate), token: dp.token })).ok);
-  assert.deepEqual(await dw.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(duplicate), token: dp.token }), { ok: false, reason: "not_own_record" });
+  assert.deepEqual(await dw.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(duplicate), token: dp.token }), { ok: false, reason: "token_already_used" });
 });
 
 test("SHU-326 postgres deletion records are append-only and prevent hard deletion", async () => {
