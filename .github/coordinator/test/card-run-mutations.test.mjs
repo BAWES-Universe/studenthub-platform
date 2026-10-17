@@ -956,6 +956,18 @@ const CASES = [
     pattern: "SHU-86 0e: the run keeps its status file",
   },
   {
+    name: "M144 leave the tick that ends the run unobserved",
+    from: "        if (watch && (seen !== null || !outcome.ended)) watch.observe(io.now().getTime(), seen);",
+    to: "        if (watch && !outcome.ended) watch.observe(io.now().getTime(), seen); // SHU86-M144",
+    pattern: "SHU-86 0e: the tick that ends the run is recorded too",
+  },
+  {
+    name: "M145 count the ending tick's missing watch line as a failed read",
+    from: "        if (watch && (seen !== null || !outcome.ended)) watch.observe(io.now().getTime(), seen);",
+    to: "        if (watch) watch.observe(io.now().getTime(), seen); // SHU86-M145",
+    pattern: "SHU-86 0b: the observe-only watch records",
+  },
+  {
     name: "M143 let a run whose revert did not finish go without an alert",
     file: "service/card-status.mjs",
     from: "  if (result?.revert?.reverted === false) return true;",

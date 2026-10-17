@@ -4353,7 +4353,10 @@
     "SHU-86 mutation M140 write the status file in place, where a reader can see half of it",
     "SHU-86 mutation M141 let a failed status write end the run",
     "SHU-86 mutation M142 stop writing the status after each tick",
-    "SHU-86 mutation M143 let a run whose revert did not finish go without an alert"
+    "SHU-86 mutation M143 let a run whose revert did not finish go without an alert",
+    "SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports",
+    "SHU-86 mutation M144 leave the tick that ends the run unobserved",
+    "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read"
   ],
   "requirements": [
     {
@@ -32198,6 +32201,18 @@
     },
     {
       "name": "SHU-86 mutation M143 let a run whose revert did not finish go without an alert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M144 leave the tick that ends the run unobserved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read",
       "capabilities": []
     }
   ],

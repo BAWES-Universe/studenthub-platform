@@ -497,6 +497,14 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         const output = tick(io, limits);
         const outcome = tickOutcome(output, plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
+        // Observing reads only the tick's own output: no request and no wait,
+        // so it never moves a tick, the window's end, revert or landing. Every
+        // tick is observed and recorded before the run decides whether it
+        // ends. A tick that ends the run no longer reports the activation
+        // armed and so prints no watch line; that is no failed read.
+        const seen = watch ? parseWatchLine(output, { card: plan.id, activationId: plan.record.activation_id }) : null;
+        if (watch && (seen !== null || !outcome.ended)) watch.observe(io.now().getTime(), seen);
+        status.write({ step: "ticking", ...progress() });
         if (outcome.ended) {
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
@@ -510,10 +518,6 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: false, outcome: "NOT_ELIGIBLE", reason: (targetExcluded.length > 0 ? targetExcluded : outcome.excluded).join("; ") || "no eligible work" };
           break;
         }
-        // Observing reads only the armed tick's own output: no request and no
-        // wait, so it never moves a tick, the window's end, revert or landing.
-        if (watch) watch.observe(io.now().getTime(), parseWatchLine(output, { card: plan.id, activationId: plan.record.activation_id }));
-        status.write({ step: "ticking", ...progress() });
         io.sleep(limits.tickIntervalMs);
       }
       result = { ...result, ...armed };

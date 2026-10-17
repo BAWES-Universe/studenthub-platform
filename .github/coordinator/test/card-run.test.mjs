@@ -1724,7 +1724,7 @@ test("SHU-86 0e: the run keeps its status file at every step, with no request of
   };
   const { output } = await main(["run"], host.io, PATHS);
   assert.equal(output.outcome, "PASS");
-  assert.deepEqual(log.map((s) => s.step), ["armed", "ticking", "ticking", "ticking", "ticking", "reverting", "landing", "finished"]);
+  assert.deepEqual(log.map((s) => s.step), ["armed", "ticking", "ticking", "ticking", "ticking", "ticking", "reverting", "landing", "finished"]);
   assert.ok(linearAt.every((n) => n === 0 || n === log.length), "no Linear request between arming and the end of the run");
   const last = log.at(-1);
   const { launch, heartbeat } = host.watched();
@@ -1749,6 +1749,36 @@ test("SHU-86 0e: the run keeps its status file at every step, with no request of
   reverted(host);
 });
 
+test("SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports", async () => {
+  const launch = new Date(START.getTime() + 90 * 1000).toISOString();
+  const host = fakeHost({
+    onTick: (h) => {
+      const id = armedId(h);
+      if (h.ticks === 1) return [tickText(armed(id)), `watch=SHU-301 episode=${id} first_dispatch=none latest=none`].join("\n");
+      // A tick that ends the run while still printing this run's line: its progress counts.
+      return [tickText(spent("SHU-301", "review PASS — the episode is complete"), 0),
+        `watch=SHU-301 episode=${id} first_dispatch=${launch} latest=${launch}`].join("\n");
+    },
+  });
+  const log = statusLog(host);
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.outcome, "PASS");
+  assert.deepEqual(log.filter((s) => s.step === "ticking").map((s) => s.ticks), [1, 2], "one ticking write per tick, the last one included");
+  assert.equal(log.find((s) => s.step === "ticking" && s.ticks === 2).first_dispatch_at, launch);
+  assert.equal(log.at(-1).first_dispatch_at, launch);
+  assert.equal(output.watch.first_dispatch_at, launch);
+  assert.equal(output.watch.receipt_reads, 2);
+  assert.equal(output.watch.receipt_read_failures, 0);
+  // A first tick that finds the card not eligible is recorded and observed as well.
+  const excluded = fakeHost({ onTick: (h) => [tickText(armed(armedId(h)), 0), `watch=SHU-301 episode=${armedId(h)} first_dispatch=none latest=none`].join("\n") });
+  const elog = statusLog(excluded);
+  const two = await main(["run"], excluded.io, PATHS);
+  assert.equal(two.output.outcome, "NOT_ELIGIBLE");
+  assert.deepEqual(elog.map((s) => s.step), ["armed", "ticking", "reverting", "finished"]);
+  assert.equal(two.output.watch.receipt_reads, 1);
+  reverted(host);
+});
+
 test("SHU-86 0e: a status file that cannot be written never changes the run", async () => {
   const plain = watchedHost();
   const ok = await main(["run"], plain.io, PATHS);
@@ -1762,7 +1792,7 @@ test("SHU-86 0e: a status file that cannot be written never changes the run", as
   assert.equal(code, ok.code);
   assert.equal(output.outcome, ok.output.outcome);
   assert.deepEqual(output.ticks, ok.output.ticks);
-  assert.equal(output.status_write_failures, 8, "every write failed, and each was only counted");
+  assert.equal(output.status_write_failures, 9, "every write failed, and each was only counted");
   assert.deepEqual(host.api, plain.api, "the same requests either way");
   reverted(host);
 });
