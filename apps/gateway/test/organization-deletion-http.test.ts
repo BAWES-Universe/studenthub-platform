@@ -45,6 +45,29 @@ test("SHU-326 HTTP real handler authenticates, checks origin and exposes the ful
   assert.deepEqual((await call(x.service, `/organization/deletion/${ORG}/receipts/${receipt.receiptRef}`, { method: "GET" })).body, { receipt });
   assert.equal((await call(x.service, "/organization/deletion/confirm", { body: { ...change, token: preview.body!.token } })).status, 409);
 });
+test("SHU-326 HTTP a replayed confirm after the deletion is 409 token_already_used; any other token on the deleted organization is 404", async () => {
+  let deleted = false; const spent = new Set<string>();
+  const store = {
+    blockers: async () => deleted ? null : [],
+    counts: async () => ({ liveSubOrganizations: 0, livePayContracts: 0, memberGrants: 0 }),
+    forPrincipal() { return {
+      ownedRecord: async (p: string) => !deleted && p === organizationDeletionPrincipalRef(PERSON) ? organizationDeletionRecordRef(ORG) : null,
+      readField: async () => null,
+      commit: async (input: CommitInput) => { if (deleted) return { ok: false, reason: "not_own_record" as const }; deleted = true; spent.add(input.tokenId); return { ok: true as const }; },
+      tokenSpent: async (id: string) => spent.has(id),
+    }; },
+    readReceipt: async () => null,
+  };
+  const sessions = { get: async (id: string) => id === SESSION ? { id, personId: PERSON } : undefined };
+  const service = createOrganizationDeletion({ sessions, store, secret: SECRET }), change = { orgId: ORG, field: "deletion", value: "deleted" };
+  const first = await call(service, "/organization/deletion/preview", { body: change }), second = await call(service, "/organization/deletion/preview", { body: change });
+  assert.equal((await call(service, "/organization/deletion/confirm", { body: { ...change, token: first.body!.token } })).status, 200);
+  const replay = await call(service, "/organization/deletion/confirm", { body: { ...change, token: first.body!.token } });
+  assert.deepEqual([replay.status, replay.body], [409, { error: "token_already_used" }]);
+  const other = await call(service, "/organization/deletion/confirm", { body: { ...change, token: second.body!.token } });
+  assert.deepEqual([other.status, other.body], [404, { error: "not_own_record" }]);
+  assert.equal((await call(service, "/organization/deletion/preview", { body: change })).status, 404);
+});
 test("SHU-326 HTTP real handler gates methods, content, size, receipt paths and configuration", async () => {
   const x = fixture(), change = { orgId: ORG, field: "deletion", value: "deleted" };
   assert.equal((await call(undefined, "/organization/deletion/preview", { body: change })).status, 503);
