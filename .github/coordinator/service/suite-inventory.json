@@ -32157,6 +32157,22 @@
       ]
     },
     {
+      "name": "SHU-86 0e: the run keeps its status file at every step, with no request of its own",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: a status file that cannot be written never changes the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: a run that needs the owner opens its report with one alert line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: a landed card raises no alert, a held landing does, and the status says which",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M137 let an errored run go without an alert",
       "capabilities": []
     },
