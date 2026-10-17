@@ -914,6 +914,47 @@ const CASES = [
     to: "  // SHU86-M136",
     pattern: "SHU-86 0b: an armed tick prints",
   },
+  {
+    name: "M137 let an errored run go without an alert",
+    file: "service/card-status.mjs",
+    from: 'new Set(["ERROR", "STALLED", "QUOTA_EXHAUSTED"])',
+    to: 'new Set(["STALLED", "QUOTA_EXHAUSTED"]) /* SHU86-M137 */',
+    pattern: "SHU-86 0e: a run that needs the owner",
+  },
+  {
+    name: "M138 let a landing that did not merge go without an alert",
+    file: "service/card-status.mjs",
+    from: '  return result?.land != null && result.land.outcome !== "MERGED";',
+    to: '  return false; // SHU86-M138',
+    pattern: "SHU-86 0e: a landed card raises no alert",
+  },
+  {
+    name: "M139 put any text in the report as the owner mention",
+    file: "service/card-status.mjs",
+    from: '  return typeof value === "string" && /^https:\\/\\/linear\\.app\\/[a-z0-9-]+\\/profiles\\/[A-Za-z0-9._-]+$/.test(value) ? value : null;',
+    to: '  return typeof value === "string" ? value : null; // SHU86-M139',
+    pattern: "SHU-86 0e: a run that needs the owner",
+  },
+  {
+    name: "M140 write the status file in place, where a reader can see half of it",
+    file: "service/card-status.mjs",
+    from: "        io.fs.renameSync(temporary, file);",
+    to: "        io.fs.writeFileSync(file, `${JSON.stringify(status)}\\n`, { mode: 0o600 }); // SHU86-M140",
+    pattern: "SHU-86 0e: the run keeps its status file",
+  },
+  {
+    name: "M141 let a failed status write end the run",
+    file: "service/card-status.mjs",
+    from: "        failures += 1;\n        return false;",
+    to: "        throw new Error(\"status\"); // SHU86-M141",
+    pattern: "SHU-86 0e: a status file that cannot be written",
+  },
+  {
+    name: "M142 stop writing the status after each tick",
+    from: '        status.write({ step: "ticking", ...progress() });',
+    to: "        // SHU86-M142",
+    pattern: "SHU-86 0e: the run keeps its status file",
+  },
 ];
 
 for (const mutation of CASES) {
