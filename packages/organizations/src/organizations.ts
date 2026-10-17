@@ -504,6 +504,8 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const [contexts, organizations] = await Promise.all([
         listEffectiveContexts(identity, this.#store), this.#store.listOrganizations(),
       ]);
+      // A deleted organization is never an active directory context, even under an ancestor's subtree grant.
+      if (await this.#deletions?.isDeleted(request.orgId)) return { kind: "not_found" };
       const within = new Set(descendantOrgIdsIncludingSelf(organizations, request.orgId));
       const covered = new Set(contexts
         .filter((context) => context.role === request.role && within.has(context.orgId)

@@ -66,6 +66,21 @@ test("SHU-326 postgres confirm rechecks dependencies and duplicate tokens", asyn
   assert.deepEqual(await dw.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(duplicate), token: dp.token }), { ok: false, reason: "token_already_used" });
 });
 
+test("SHU-326 postgres a replayed or racing confirm is token_already_used, even through a fresh writer", async () => {
+  const replay = await org(), p = await preview(admin, replay); assert.ok(p.ok);
+  const confirm = () => writer(admin, replay).confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(replay), token: p.token });
+  assert.ok((await confirm()).ok);
+  assert.deepEqual(await confirm(), { ok: false, reason: "token_already_used" }, "a new writer per request still sees the spent token");
+  const raced = await org(), r = await preview(admin, raced); assert.ok(r.ok);
+  const race = () => writer(admin, raced).confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(raced), token: r.token });
+  const outcomes = await Promise.all([race(), race(), race()]);
+  assert.equal(outcomes.filter((o) => o.ok).length, 1);
+  assert.deepEqual(outcomes.filter((o) => !o.ok), [{ ok: false, reason: "token_already_used" }, { ok: false, reason: "token_already_used" }]);
+  const other = await principal(); await authz.grantMany(other, [{ orgId: ROOT, role: "admin", scope: "subtree" }]);
+  const stolen = await writer(other, replay).confirm({ principalRef: organizationDeletionPrincipalRef(other), change: change(replay), token: p.token });
+  assert.ok(!stolen.ok && stolen.reason !== "token_already_used", "another admin learns nothing from someone else's token");
+});
+
 test("SHU-326 postgres deletion records are append-only and prevent hard deletion", async () => {
   const id = await org(); await remove(admin, id);
   await assert.rejects(pool.query("UPDATE organization_deletions SET deleted_at=clock_timestamp() WHERE org_id=$1", [id]), (e: unknown) => (e as { code?: string }).code === "23514");
