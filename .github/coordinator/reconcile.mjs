@@ -41,6 +41,7 @@ import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, report
 import { triageCoordinatorIncident } from "./incident-triage.mjs";
 import { settleCoordinatorIncident } from "./incident-settlement.mjs";
 import { coordinatorJournalDirectory } from "./push-broker.mjs";
+import { renderWatchLine } from "./watch-progress.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -2112,7 +2113,7 @@ export function loadSnapshot(file = path.join(__dirname, "test", "fixtures", "sn
   return { issues: raw.issues ?? [], openPRs: raw.openPRs ?? [], meta: raw.meta ?? {} };
 }
 
-function printReport({ config, source, eligibility, selection, dispatchEnabled, activation = null }) {
+function printReport({ config, source, eligibility, selection, dispatchEnabled, activation = null, watch = null }) {
   const lines = [];
   lines.push(`coordinator reconcile — ${dispatchEnabled ? "DISPATCH ENABLED" : "DRY-RUN (dispatch disabled, no writes)"}`);
   lines.push(`pilot_repo=${config.pilot_repo}  max_dispatch=${config.max_dispatch}  source=${source}`);
@@ -2121,6 +2122,7 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
     ? `dispatch_scope=${scope.valid ? [...scope.issueIds].join(",") : `INVALID (${scope.reason})`}`
     : "dispatch_scope=board-wide");
   lines.push(renderActivationLine(activation));
+  if (watch) lines.push(watch);
   lines.push(`eligible=${eligibility.ready.length}  excluded=${eligibility.excluded.length}`);
   for (const issue of eligibility.ready) {
     lines.push(`  READY    ${issue.id.padEnd(18)} ${issue.priority.padEnd(11)} ${issue.title}`);
@@ -2893,7 +2895,12 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       : singleRunActivation.review_only && singleRunActivation.target_issue_id
         ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.reviewer_lane]]) : null;
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes });
-  const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
+  // Self-watch 0b: the armed card's progress, from the receipts this tick
+  // already read (trusted writers only). Output only; nothing reads it here.
+  const watchActors = new Set(config.linear_receipt_actor_ids ?? []);
+  const watch = renderWatchLine(singleRunActivation, receipts.filter((r) => watchActors.has(receiptCommentActorId(r))),
+    { unread: unreadIssueIds.has(singleRunActivation.target_issue_id) });
+  const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation, watch });
   if (!singleRunActivation.requested) {
     const trustedReceiptActors = new Set(config.linear_receipt_actor_ids ?? []);
     for (const receipt of receipts.filter(r => r.handoff && trustedReceiptActors.has(receiptCommentActorId(r)))) {

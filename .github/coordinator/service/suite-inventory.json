@@ -2107,12 +2107,13 @@
     "SHU-86 mutation M127 never record that a configured stall limit was crossed",
     "SHU-86 mutation M128 record a stall while the heartbeat keeps moving",
     "SHU-86 mutation M129 run the tick's journal reads without a time limit",
-    "SHU-86 mutation M130 let a failed receipt read end the run",
     "SHU-86 mutation M131 cut the coordinator start short with the tick time limit",
-    "SHU-86 mutation M132 read only the newest page of receipts",
-    "SHU-86 mutation M133 read a thread past the page cap as complete",
-    "SHU-86 mutation M134 accept a receipt page that answered after the read's deadline",
-    "SHU-86 mutation M135 wait the full interval after a receipt read",
+    "SHU-86 mutation M130 count a receipt an untrusted writer posted as progress",
+    "SHU-86 mutation M132 report an unread thread as nothing dispatched yet",
+    "SHU-86 mutation M133 take another card's watch line as this run's",
+    "SHU-86 mutation M134 take another activation's watch line as this run's",
+    "SHU-86 mutation M135 read a malformed time as nothing dispatched yet",
+    "SHU-86 mutation M136 print no watch line from the tick",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2165,10 +2166,11 @@
     "SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head",
     "SHU-86 0b: the observe-only watch records first dispatch, last progress and the longest stretch without progress, and changes nothing else",
     "SHU-86 0b: a configured limit only records would_stall; the run ends exactly as it would have",
-    "SHU-86 0b: a failed receipt read is no progress and never ends the run",
-    "SHU-86 0b: a dispatch receipt behind a page of newer comments still counts; an endless or slow thread is a failed read",
-    "SHU-86 0b: observing never moves a tick, and the last tick is never followed by a read",
-    "SHU-86 0b: another run's receipts on the same card never count as this run's progress",
+    "SHU-86 0b: a tick that reports the thread unread, no line, or a malformed one is no progress and never ends the run",
+    "SHU-86 0b: observing makes no request of its own, so it cannot spend the budget the next tick needs",
+    "SHU-86 0b: another run's receipts or another card's line never count as this run's progress",
+    "SHU-86 0b: the tick's watch line round-trips, and only an armed activation prints one",
+    "SHU-86 0b: an armed tick prints its card's watch line from the receipts it already read",
     "SHU-86 0b: with observe off nothing is read and the claim's watch fields are null",
     "SHU-86 0b: a journal read that times out ends the run as an ERROR; the coordinator start is never cut short",
     "SHU-86 0c: the unit's time limit stays above the run window, a hung tick, worker grace, landing and its reports",
@@ -18150,27 +18152,31 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M130 let a failed receipt read end the run",
-      "capabilities": []
-    },
-    {
       "name": "SHU-86 mutation M131 cut the coordinator start short with the tick time limit",
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M132 read only the newest page of receipts",
+      "name": "SHU-86 mutation M130 count a receipt an untrusted writer posted as progress",
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M133 read a thread past the page cap as complete",
+      "name": "SHU-86 mutation M132 report an unread thread as nothing dispatched yet",
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M134 accept a receipt page that answered after the read's deadline",
+      "name": "SHU-86 mutation M133 take another card's watch line as this run's",
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M135 wait the full interval after a receipt read",
+      "name": "SHU-86 mutation M134 take another activation's watch line as this run's",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M135 read a malformed time as nothing dispatched yet",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M136 print no watch line from the tick",
       "capabilities": []
     },
     {
@@ -18382,19 +18388,23 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 0b: a failed receipt read is no progress and never ends the run",
+      "name": "SHU-86 0b: a tick that reports the thread unread, no line, or a malformed one is no progress and never ends the run",
       "capabilities": []
     },
     {
-      "name": "SHU-86 0b: a dispatch receipt behind a page of newer comments still counts; an endless or slow thread is a failed read",
+      "name": "SHU-86 0b: observing makes no request of its own, so it cannot spend the budget the next tick needs",
       "capabilities": []
     },
     {
-      "name": "SHU-86 0b: observing never moves a tick, and the last tick is never followed by a read",
+      "name": "SHU-86 0b: another run's receipts or another card's line never count as this run's progress",
       "capabilities": []
     },
     {
-      "name": "SHU-86 0b: another run's receipts on the same card never count as this run's progress",
+      "name": "SHU-86 0b: the tick's watch line round-trips, and only an armed activation prints one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: an armed tick prints its card's watch line from the receipts it already read",
       "capabilities": []
     },
     {

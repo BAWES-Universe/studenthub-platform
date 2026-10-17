@@ -1,9 +1,8 @@
 // Self-watch 0b, observe mode (SHU-86). A card run watches its own progress
-// and records what it saw; it never stops a run. The run's progress is the
-// card's own dispatch receipts for this activation: a worker's receipt moves
-// its heartbeat about once a minute while it works, so a long but healthy
-// build keeps moving, and a run that sits armed with nothing dispatched (as
-// SHU-323 did for six hours) does not.
+// and records what it saw; it never stops a run. The progress comes from the
+// watch line each coordinator tick prints from the receipts it already read
+// (../watch-progress.mjs), so watching makes no Linear request of its own and
+// cannot spend the budget the next tick needs.
 //
 // What it records, for setting the limits later from real runs:
 // - first_dispatch_at: the first launch (or reservation) of this activation;
@@ -12,47 +11,9 @@
 //   from arming and including the stretch still open when the run ends;
 // - would_stall: the first moment a configured limit would have stopped the
 //   run (null while no limit is configured, which is how this ships).
-// A read that fails or times out is no progress and never ends the run.
-import { sendLinear, parseReceiptsFromComments } from "../reconcile.mjs";
-import { boundedFetch } from "./card-land.mjs";
-
-// Linear answers newest first and a receipt comment is edited in place, so a
-// run's first dispatch can sit on an older page: every page is read (as
-// fetchIssueComments does), up to a cap that keeps the read bounded.
-export const CARD_WATCH_RECEIPTS_QUERY = `
-  query CardRunWatchReceipts($issueId: String!, $after: String) {
-    issue(id: $issueId) {
-      comments(first: 100, orderBy: createdAt, after: $after) {
-        nodes { body createdAt user { id displayName } }
-        pageInfo { hasNextPage endCursor }
-      }
-    }
-  }`;
-export const CARD_WATCH_MAX_PAGES = 20;
-
-const time = (value) => {
-  const ms = typeof value === "string" ? Date.parse(value) : NaN;
-  return Number.isFinite(ms) ? ms : null;
-};
-
-// The progress this activation's receipts show: when it first dispatched and
-// the newest moment any of its receipts moved. Other runs' receipts on the
-// same card never count.
-export function receiptProgress(receipts, { card, activationId }) {
-  let firstDispatch = null;
-  let latest = null;
-  for (const receipt of receipts ?? []) {
-    if (receipt?.issue_id !== card || receipt?.episode_id !== activationId) continue;
-    const stamps = receipt.timestamps ?? {};
-    const start = time(stamps.launch) ?? time(stamps.reserved);
-    if (start !== null && (firstDispatch === null || start < firstDispatch)) firstDispatch = start;
-    for (const value of [stamps.reserved, stamps.launch, stamps.heartbeat, stamps.terminal, receipt.last_activity]) {
-      const at = time(value);
-      if (at !== null && (latest === null || at > latest)) latest = at;
-    }
-  }
-  return { firstDispatch, latest };
-}
+// A tick that reports no progress for this run is a failed read and never
+// ends the run.
+export { receiptProgress, parseWatchLine } from "../watch-progress.mjs";
 
 // The configured limits, in minutes. Absent or invalid means not configured.
 function limitMs(value) {
@@ -100,40 +61,6 @@ export function createWatch({ armedAt, limits = {} }) {
       };
     },
   };
-}
-
-// One bounded read of the card's receipts, every page of them, all inside one
-// timeoutMs. Any failure, a bad cursor, more than CARD_WATCH_MAX_PAGES pages or
-// a read that outlasts timeoutMs answers null.
-export async function readProgress({ io, credentials, config, card, activationId, timeoutMs }) {
-  const token = credentials?.LINEAR_API_TOKEN;
-  const actors = config?.linear_receipt_actor_ids;
-  if (!token || !Array.isArray(actors) || actors.length === 0) return null;
-  try {
-    const nodes = [];
-    const seen = new Set();
-    const started = io.now().getTime();
-    // One deadline for the whole read: each page gets only what is left of it,
-    // and a page that answers after it is a failed read.
-    const left = () => timeoutMs - (io.now().getTime() - started);
-    let after = null;
-    for (let pages = 0; ; pages += 1) {
-      if (pages === CARD_WATCH_MAX_PAGES || left() <= 0) return null;
-      const fetchImpl = boundedFetch(io, left(), { attempts: 1, waitMs: 0 });
-      const data = await sendLinear(CARD_WATCH_RECEIPTS_QUERY, { issueId: card, after }, token, fetchImpl);
-      if (left() < 0) return null;
-      const page = data?.issue?.comments;
-      if (!Array.isArray(page?.nodes)) return null;
-      nodes.push(...page.nodes);
-      if (page.pageInfo?.hasNextPage !== true) break;
-      after = page.pageInfo.endCursor;
-      if (typeof after !== "string" || after.length === 0 || seen.has(after)) return null;
-      seen.add(after);
-    }
-    return receiptProgress(parseReceiptsFromComments(nodes, actors), { card, activationId });
-  } catch {
-    return null;
-  }
 }
 
 // The report's one line about the watch.
