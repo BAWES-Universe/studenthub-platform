@@ -4352,7 +4352,8 @@
     "SHU-86 mutation M139 put any text in the report as the owner mention",
     "SHU-86 mutation M140 write the status file in place, where a reader can see half of it",
     "SHU-86 mutation M141 let a failed status write end the run",
-    "SHU-86 mutation M142 stop writing the status after each tick"
+    "SHU-86 mutation M142 stop writing the status after each tick",
+    "SHU-86 mutation M143 let a run whose revert did not finish go without an alert"
   ],
   "requirements": [
     {
@@ -32177,6 +32178,10 @@
     },
     {
       "name": "SHU-86 mutation M142 stop writing the status after each tick",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M143 let a run whose revert did not finish go without an alert",
       "capabilities": []
     }
   ],

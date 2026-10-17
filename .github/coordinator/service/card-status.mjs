@@ -11,8 +11,9 @@
 // status comment from it, outside the run: a run itself never spends the
 // Linear budget its next tick needs on telling anyone how it is doing.
 //
-// The alert: a run that ended in ERROR, STALLED or QUOTA_EXHAUSTED, or whose
-// landing was anything but MERGED, needs the owner. Its report, already posted
+// The alert: a run that ended in ERROR, STALLED or QUOTA_EXHAUSTED, whose
+// revert did not finish, or whose landing was anything but MERGED, needs the
+// owner. Its report, already posted
 // once after the revert, opens with one "Alert:" line, and names the owner
 // when config.owner_mention holds a Linear profile link. That link must belong
 // to someone other than the coordinator's own Linear user: Linear does not
@@ -27,6 +28,8 @@ export const ALERT_OUTCOMES = Object.freeze(new Set(["ERROR", "STALLED", "QUOTA_
 // Whether a finished run needs the owner.
 export function needsOwner(result) {
   if (ALERT_OUTCOMES.has(result?.outcome)) return true;
+  // A revert that did not finish may leave the host armed, whatever the outcome.
+  if (result?.revert?.reverted === false) return true;
   return result?.land != null && result.land.outcome !== "MERGED";
 }
 

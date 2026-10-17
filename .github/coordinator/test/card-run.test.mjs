@@ -1777,6 +1777,12 @@ test("SHU-86 0e: a run that needs the owner opens its report with one alert line
   for (const land of ["PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "LAND_SKIPPED_NO_TOKEN", "LAND_ERROR", "THREADS_HELD"]) {
     assert.equal(needsOwner({ outcome: "PASS", land: { outcome: land } }), true, land);
   }
+  for (const outcome of ["EXPIRED", "STOPPED", "PASS", "NOT_ELIGIBLE"]) {
+    const unreverted = { ...base, outcome, revert: { reverted: false, code: "CARD_RUN_REVERT_READBACK" } };
+    assert.equal(needsOwner(unreverted), true, `an unfinished revert after ${outcome}`);
+    assert.equal(renderRunReport(unreverted).split("\n")[2], "Alert: this run needs the owner.", outcome);
+  }
+  assert.equal(needsOwner({ outcome: "NOT_STARTED", revert: null }), false, "nothing was armed, so nothing was left to revert");
   for (const quiet of [{ outcome: "PASS", land: { outcome: "MERGED" } }, { outcome: "REVIEW_PASS" }, { outcome: "STOPPED" }, { outcome: "NOT_ELIGIBLE" }]) {
     assert.equal(needsOwner(quiet), false, JSON.stringify(quiet));
     assert.doesNotMatch(renderRunReport({ ...base, ...quiet }), /^Alert:/m);

@@ -955,6 +955,13 @@ const CASES = [
     to: "        // SHU86-M142",
     pattern: "SHU-86 0e: the run keeps its status file",
   },
+  {
+    name: "M143 let a run whose revert did not finish go without an alert",
+    file: "service/card-status.mjs",
+    from: "  if (result?.revert?.reverted === false) return true;",
+    to: "  // SHU86-M143",
+    pattern: "SHU-86 0e: a run that needs the owner",
+  },
 ];
 
 for (const mutation of CASES) {
