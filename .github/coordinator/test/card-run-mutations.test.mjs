@@ -889,16 +889,22 @@ const CASES = [
   {
     name: "M133 read a thread past the page cap as complete",
     file: "service/card-watch.mjs",
-    from: "      if (pages === CARD_WATCH_MAX_PAGES) return null;",
-    to: "      if (pages === CARD_WATCH_MAX_PAGES) break; // SHU86-M133",
+    from: "      if (pages === CARD_WATCH_MAX_PAGES || left() <= 0) return null;",
+    to: "      if (pages === CARD_WATCH_MAX_PAGES) break; // SHU86-M133\n      if (left() <= 0) return null;",
     pattern: "SHU-86 0b: a dispatch receipt behind a page",
   },
   {
-    name: "M134 let a receipt read keep paging past its time limit",
+    name: "M134 accept a receipt page that answered after the read's deadline",
     file: "service/card-watch.mjs",
-    from: "      if (pages > 0 && io.now().getTime() - started >= timeoutMs) return null;",
+    from: "      if (left() < 0) return null;",
     to: "      // SHU86-M134",
     pattern: "SHU-86 0b: a dispatch receipt behind a page",
+  },
+  {
+    name: "M135 wait the full interval after a receipt read",
+    from: "          waitMs = Math.max(0, limits.tickIntervalMs - (io.now().getTime() - readAt));",
+    to: "          waitMs = limits.tickIntervalMs; // SHU86-M135",
+    pattern: "SHU-86 0b: observing never moves a tick",
   },
 ];
 

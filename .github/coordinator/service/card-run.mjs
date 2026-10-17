@@ -488,10 +488,6 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         const startedAt = io.now().toISOString();
         const outcome = tickOutcome(tick(io, limits), plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
-        if (watch) {
-          watch.observe(io.now().getTime(), await readProgress({ io, credentials, config, card: plan.id, activationId: plan.record.activation_id,
-            timeoutMs: limits.watchRequestTimeoutMs ?? CARD_RUN_LIMITS.watchRequestTimeoutMs }));
-        }
         if (outcome.ended) {
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
@@ -505,7 +501,18 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: false, outcome: "NOT_ELIGIBLE", reason: (targetExcluded.length > 0 ? targetExcluded : outcome.excluded).join("; ") || "no eligible work" };
           break;
         }
-        io.sleep(limits.tickIntervalMs);
+        // Observing happens only between ticks and inside the wait for the next
+        // one, so it never moves a tick, the window's end, revert or landing:
+        // the read's own time comes off the sleep, and a run's last tick is
+        // never followed by a read.
+        let waitMs = limits.tickIntervalMs;
+        if (watch) {
+          const readAt = io.now().getTime();
+          watch.observe(readAt, await readProgress({ io, credentials, config, card: plan.id, activationId: plan.record.activation_id,
+            timeoutMs: Math.min(limits.watchRequestTimeoutMs ?? CARD_RUN_LIMITS.watchRequestTimeoutMs, limits.tickIntervalMs) }));
+          waitMs = Math.max(0, limits.tickIntervalMs - (io.now().getTime() - readAt));
+        }
+        io.sleep(waitMs);
       }
       result = { ...result, ...armed };
     } catch (error) {

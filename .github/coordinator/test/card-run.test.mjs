@@ -1540,7 +1540,7 @@ test("SHU-86 0b: the observe-only watch records first dispatch, last progress an
   assert.equal(code, 0, JSON.stringify(output));
   assert.equal(output.outcome, "PASS");
   assert.equal(output.ticks.length, 5);
-  assert.equal(host.watchReads, 5, "one receipt read after every tick");
+  assert.equal(host.watchReads, 4, "one receipt read between each pair of ticks, none after the last");
   const { launch, heartbeat } = host.watched();
   assert.equal(output.watch.mode, "observe");
   assert.equal(output.watch.first_dispatch_at, launch);
@@ -1574,10 +1574,10 @@ test("SHU-86 0b: a failed receipt read is no progress and never ends the run", a
   host.watchFails = true;
   const { output } = await main(["run"], host.io, PATHS);
   assert.equal(output.outcome, "PASS");
-  assert.equal(output.watch.receipt_read_failures, 5);
+  assert.equal(output.watch.receipt_read_failures, 4);
   assert.equal(output.watch.receipt_reads, 0);
   assert.equal(output.watch.first_dispatch_at, null);
-  assert.match(host.reports[0], /5 receipt read\(s\) failed/);
+  assert.match(host.reports[0], /4 receipt read\(s\) failed/);
   reverted(host);
 });
 
@@ -1592,14 +1592,32 @@ test("SHU-86 0b: a dispatch receipt behind a page of newer comments still counts
   endless.watchEndless = true;
   const again = await main(["run"], endless.io, PATHS);
   assert.equal(again.output.outcome, "PASS", "a read that never ends never ends the run");
-  assert.equal(again.output.watch.receipt_read_failures, 5);
+  assert.equal(again.output.watch.receipt_read_failures, 4);
   assert.equal(again.output.watch.first_dispatch_at, null);
   const slow = watchedHost();
   slow.watchNewer = host.watchNewer;
   slow.watchSlowMs = CARD_RUN_LIMITS.watchRequestTimeoutMs;
   const late = await main(["run"], slow.io, PATHS);
   assert.equal(late.output.outcome, "PASS");
-  assert.equal(late.output.watch.receipt_read_failures, 5, "a read still paging past its limit is a failed read");
+  assert.equal(late.output.watch.receipt_read_failures, 4, "a read still paging past its limit is a failed read");
+  const overrun = watchedHost();
+  overrun.watchNewer = host.watchNewer;
+  overrun.watchSlowMs = (2 * CARD_RUN_LIMITS.watchRequestTimeoutMs) / 3;
+  const over = await main(["run"], overrun.io, PATHS);
+  assert.equal(over.output.watch.receipt_read_failures, 4, "a second page that answers after the one deadline is a failed read");
+});
+
+test("SHU-86 0b: observing never moves a tick, and the last tick is never followed by a read", async () => {
+  const plain = watchedHost({ config: configFor("SHU-301", (c) => { const { watch, ...rest } = c; return rest; }) });
+  const off = await main(["run"], plain.io, PATHS);
+  const slow = watchedHost();
+  slow.watchSlowMs = CARD_RUN_LIMITS.watchRequestTimeoutMs - 1000;
+  const on = await main(["run"], slow.io, PATHS);
+  assert.equal(on.output.outcome, off.output.outcome);
+  assert.deepEqual(on.output.ticks.map((t) => t.at), off.output.ticks.map((t) => t.at), "every tick starts when it would have with observe off");
+  assert.equal(on.output.timing.finished_at, off.output.timing.finished_at, "the run ends when it would have");
+  assert.equal(slow.watchReads, on.output.ticks.length - 1);
+  assert.ok(CARD_RUN_LIMITS.watchRequestTimeoutMs < CARD_RUN_LIMITS.tickIntervalMs, "a read always fits inside the wait between ticks");
 });
 
 test("SHU-86 0b: another run's receipts on the same card never count as this run's progress", async () => {

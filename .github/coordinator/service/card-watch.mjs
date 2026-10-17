@@ -102,24 +102,26 @@ export function createWatch({ armedAt, limits = {} }) {
   };
 }
 
-// One bounded read of the card's receipts, every page of them. Any failure,
-// a bad cursor, more than CARD_WATCH_MAX_PAGES pages or a read still paging
-// after timeoutMs answers null.
+// One bounded read of the card's receipts, every page of them, all inside one
+// timeoutMs. Any failure, a bad cursor, more than CARD_WATCH_MAX_PAGES pages or
+// a read that outlasts timeoutMs answers null.
 export async function readProgress({ io, credentials, config, card, activationId, timeoutMs }) {
   const token = credentials?.LINEAR_API_TOKEN;
   const actors = config?.linear_receipt_actor_ids;
   if (!token || !Array.isArray(actors) || actors.length === 0) return null;
   try {
-    const fetchImpl = boundedFetch(io, timeoutMs, { attempts: 1, waitMs: 0 });
     const nodes = [];
     const seen = new Set();
     const started = io.now().getTime();
+    // One deadline for the whole read: each page gets only what is left of it,
+    // and a page that answers after it is a failed read.
+    const left = () => timeoutMs - (io.now().getTime() - started);
     let after = null;
     for (let pages = 0; ; pages += 1) {
-      if (pages === CARD_WATCH_MAX_PAGES) return null;
-      // The whole read, not just each page, stays inside one request's limit.
-      if (pages > 0 && io.now().getTime() - started >= timeoutMs) return null;
+      if (pages === CARD_WATCH_MAX_PAGES || left() <= 0) return null;
+      const fetchImpl = boundedFetch(io, left(), { attempts: 1, waitMs: 0 });
       const data = await sendLinear(CARD_WATCH_RECEIPTS_QUERY, { issueId: card, after }, token, fetchImpl);
+      if (left() < 0) return null;
       const page = data?.issue?.comments;
       if (!Array.isArray(page?.nodes)) return null;
       nodes.push(...page.nodes);

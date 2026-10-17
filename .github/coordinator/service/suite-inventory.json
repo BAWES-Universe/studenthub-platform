@@ -2111,7 +2111,8 @@
     "SHU-86 mutation M131 cut the coordinator start short with the tick time limit",
     "SHU-86 mutation M132 read only the newest page of receipts",
     "SHU-86 mutation M133 read a thread past the page cap as complete",
-    "SHU-86 mutation M134 let a receipt read keep paging past its time limit",
+    "SHU-86 mutation M134 accept a receipt page that answered after the read's deadline",
+    "SHU-86 mutation M135 wait the full interval after a receipt read",
     "SHU-86 C1: a card run arms the committed card with its committed lanes at the installed revision",
     "SHU-86 C2: planning refuses anything but one committed card",
     "SHU-86 C3: a review run takes a listed reviewer outside the author's family and names no writer",
@@ -2166,6 +2167,7 @@
     "SHU-86 0b: a configured limit only records would_stall; the run ends exactly as it would have",
     "SHU-86 0b: a failed receipt read is no progress and never ends the run",
     "SHU-86 0b: a dispatch receipt behind a page of newer comments still counts; an endless or slow thread is a failed read",
+    "SHU-86 0b: observing never moves a tick, and the last tick is never followed by a read",
     "SHU-86 0b: another run's receipts on the same card never count as this run's progress",
     "SHU-86 0b: with observe off nothing is read and the claim's watch fields are null",
     "SHU-86 0b: a journal read that times out ends the run as an ERROR; the coordinator start is never cut short",
@@ -18164,7 +18166,11 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 mutation M134 let a receipt read keep paging past its time limit",
+      "name": "SHU-86 mutation M134 accept a receipt page that answered after the read's deadline",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M135 wait the full interval after a receipt read",
       "capabilities": []
     },
     {
@@ -18381,6 +18387,10 @@
     },
     {
       "name": "SHU-86 0b: a dispatch receipt behind a page of newer comments still counts; an endless or slow thread is a failed read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0b: observing never moves a tick, and the last tick is never followed by a read",
       "capabilities": []
     },
     {
