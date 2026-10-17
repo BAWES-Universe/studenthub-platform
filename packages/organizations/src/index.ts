@@ -8,3 +8,4 @@ export * from "./commercial-terms-writes.js";
 export * from "./approved-to-hire-writes.js";
 export * from "./organization-notes.js";
 export * from "./organization-brands.js";
+export * from "./deletion-writes.js";
