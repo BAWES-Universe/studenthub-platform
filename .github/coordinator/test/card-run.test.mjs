@@ -22,6 +22,7 @@ import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePoli
 import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { renderWatchLine, parseWatchLine } from "../watch-progress.mjs";
+import { statusPath, needsOwner, alertLine, ownerMention, nextStart } from "../service/card-status.mjs";
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
 
@@ -1699,6 +1700,148 @@ test("SHU-86 0c: the unit's time limit stays above the run window, a hung tick, 
     + 4 * CARD_RUN_LIMITS.reportTimeoutMs;
   assert.ok(AUTO_TIMEOUT_START_MS > need, `${AUTO_TIMEOUT_START_MS} must exceed ${need}`);
   assert.equal(AUTO_TIMEOUT_START_MS, 8 * 60 * 60 * 1000, "SHU-86 0c: the unit limit stays 8h");
+});
+
+// Every status the run wrote, in order, read back as the file held it.
+function statusLog(host) {
+  const log = [];
+  const rename = host.io.fs.renameSync;
+  host.io.fs.renameSync = (from, to) => {
+    rename(from, to);
+    if (to === statusPath(PATHS)) log.push(JSON.parse(host.files.get(to).text));
+  };
+  return log;
+}
+
+test("SHU-86 0e: the run keeps its status file at every step, with no request of its own", async () => {
+  const host = watchedHost();
+  const log = statusLog(host);
+  let linearAt = [];
+  const fetch = host.io.fetch;
+  host.io.fetch = async (url, options) => {
+    if (url === "https://api.linear.app/graphql") linearAt.push(log.length);
+    return fetch(url, options);
+  };
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.outcome, "PASS");
+  assert.deepEqual(log.map((s) => s.step), ["armed", "ticking", "ticking", "ticking", "ticking", "ticking", "reverting", "landing", "finished"]);
+  assert.ok(linearAt.every((n) => n === 0 || n === log.length), "no Linear request between arming and the end of the run");
+  const last = log.at(-1);
+  const { launch, heartbeat } = host.watched();
+  assert.equal(last.version, 1);
+  assert.equal(last.run_id, output.activation_id);
+  assert.equal(last.card, "SHU-301");
+  assert.deepEqual(last.queue, ["SHU-301"]);
+  assert.equal(last.ticks, 5);
+  assert.equal(last.outcome, "PASS");
+  assert.equal(last.reverted, true);
+  assert.equal(last.first_dispatch_at, launch);
+  assert.equal(last.last_progress_at, heartbeat);
+  assert.equal(last.paused, false);
+  assert.match(last.next_start, /^\d{4}-\d\d-\d\dT\d\d:(00|30):00\.000Z$/);
+  assert.ok(Date.parse(last.next_start) > Date.parse(last.updated_at));
+  assert.equal(log[1].ticks, 1);
+  assert.equal(log[1].outcome, undefined, "no outcome while the run is ticking");
+  assert.equal(host.files.get(statusPath(PATHS)).mode, 0o600);
+  assert.ok(!host.files.has(`${statusPath(PATHS)}.tmp`), "written by rename");
+  for (const status of log) assert.doesNotMatch(JSON.stringify(status), /secret-value/);
+  assert.equal(output.status_write_failures, 0);
+  reverted(host);
+});
+
+test("SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports", async () => {
+  const launch = new Date(START.getTime() + 90 * 1000).toISOString();
+  const host = fakeHost({
+    onTick: (h) => {
+      const id = armedId(h);
+      if (h.ticks === 1) return [tickText(armed(id)), `watch=SHU-301 episode=${id} first_dispatch=none latest=none`].join("\n");
+      // A tick that ends the run while still printing this run's line: its progress counts.
+      return [tickText(spent("SHU-301", "review PASS — the episode is complete"), 0),
+        `watch=SHU-301 episode=${id} first_dispatch=${launch} latest=${launch}`].join("\n");
+    },
+  });
+  const log = statusLog(host);
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.outcome, "PASS");
+  assert.deepEqual(log.filter((s) => s.step === "ticking").map((s) => s.ticks), [1, 2], "one ticking write per tick, the last one included");
+  assert.equal(log.find((s) => s.step === "ticking" && s.ticks === 2).first_dispatch_at, launch);
+  assert.equal(log.at(-1).first_dispatch_at, launch);
+  assert.equal(output.watch.first_dispatch_at, launch);
+  assert.equal(output.watch.receipt_reads, 2);
+  assert.equal(output.watch.receipt_read_failures, 0);
+  // A first tick that finds the card not eligible is recorded and observed as well.
+  const excluded = fakeHost({ onTick: (h) => [tickText(armed(armedId(h)), 0), `watch=SHU-301 episode=${armedId(h)} first_dispatch=none latest=none`].join("\n") });
+  const elog = statusLog(excluded);
+  const two = await main(["run"], excluded.io, PATHS);
+  assert.equal(two.output.outcome, "NOT_ELIGIBLE");
+  assert.deepEqual(elog.map((s) => s.step), ["armed", "ticking", "reverting", "finished"]);
+  assert.equal(two.output.watch.receipt_reads, 1);
+  reverted(host);
+});
+
+test("SHU-86 0e: a status file that cannot be written never changes the run", async () => {
+  const plain = watchedHost();
+  const ok = await main(["run"], plain.io, PATHS);
+  const host = watchedHost();
+  const rename = host.io.fs.renameSync;
+  host.io.fs.renameSync = (from, to) => {
+    if (to === statusPath(PATHS)) throw Object.assign(new Error("EROFS"), { code: "EROFS" });
+    return rename(from, to);
+  };
+  const { code, output } = await main(["run"], host.io, PATHS);
+  assert.equal(code, ok.code);
+  assert.equal(output.outcome, ok.output.outcome);
+  assert.deepEqual(output.ticks, ok.output.ticks);
+  assert.equal(output.status_write_failures, 9, "every write failed, and each was only counted");
+  assert.deepEqual(host.api, plain.api, "the same requests either way");
+  reverted(host);
+});
+
+test("SHU-86 0e: a run that needs the owner opens its report with one alert line", async () => {
+  const base = { card: "SHU-301", kind: "card", activation_id: "act-1", ticks: [], revert: { reverted: true }, prepared: null };
+  const profile = "https://linear.app/bawes/profiles/owner";
+  for (const outcome of ["ERROR", "STALLED", "QUOTA_EXHAUSTED"]) {
+    assert.equal(needsOwner({ outcome }), true, outcome);
+    assert.equal(renderRunReport({ ...base, outcome }).split("\n")[2], "Alert: this run needs the owner.", outcome);
+  }
+  for (const land of ["PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "LAND_SKIPPED_NO_TOKEN", "LAND_ERROR", "THREADS_HELD"]) {
+    assert.equal(needsOwner({ outcome: "PASS", land: { outcome: land } }), true, land);
+  }
+  for (const outcome of ["EXPIRED", "STOPPED", "PASS", "NOT_ELIGIBLE"]) {
+    const unreverted = { ...base, outcome, revert: { reverted: false, code: "CARD_RUN_REVERT_READBACK" } };
+    assert.equal(needsOwner(unreverted), true, `an unfinished revert after ${outcome}`);
+    assert.equal(renderRunReport(unreverted).split("\n")[2], "Alert: this run needs the owner.", outcome);
+  }
+  assert.equal(needsOwner({ outcome: "NOT_STARTED", revert: null }), false, "nothing was armed, so nothing was left to revert");
+  for (const quiet of [{ outcome: "PASS", land: { outcome: "MERGED" } }, { outcome: "REVIEW_PASS" }, { outcome: "STOPPED" }, { outcome: "NOT_ELIGIBLE" }]) {
+    assert.equal(needsOwner(quiet), false, JSON.stringify(quiet));
+    assert.doesNotMatch(renderRunReport({ ...base, ...quiet }), /^Alert:/m);
+  }
+  assert.equal(alertLine({ outcome: "ERROR", owner_mention: profile }), `Alert: this run needs the owner (${profile}).`);
+  for (const bad of ["@khalid", "https://evil.example/profiles/x", `${profile})\n<!-- x -->`, "javascript:alert(1)", 7]) {
+    assert.equal(ownerMention(bad), null, String(bad));
+    assert.equal(alertLine({ outcome: "ERROR", owner_mention: bad }), "Alert: this run needs the owner.");
+  }
+  assert.equal(nextStart(new Date("2026-10-17T19:05:12.000Z")), "2026-10-17T19:30:00.000Z");
+  assert.equal(nextStart(new Date("2026-10-17T19:45:00.000Z")), "2026-10-17T20:00:00.000Z");
+  assert.equal(nextStart(new Date("2026-10-17T23:59:59.000Z")), "2026-10-18T00:00:00.000Z");
+});
+
+test("SHU-86 0e: a landed card raises no alert, a held landing does, and the status says which", async () => {
+  const merged = landingHost();
+  const one = await landRun(merged);
+  assert.equal(one.land.outcome, "MERGED");
+  assert.equal(one.needs_owner, false);
+  assert.doesNotMatch(merged.reports[0], /^Alert:/m);
+  const finished = JSON.parse(merged.files.get(statusPath(LAND_PATHS)).text);
+  assert.equal(finished.land, "MERGED");
+  assert.equal(finished.needs_owner, false);
+  const red = landingHost({ checks: ["pending", "red"] });
+  const two = await landRun(red);
+  assert.equal(two.land.outcome, "PR_OPENED_CI_RED");
+  assert.equal(two.needs_owner, true);
+  assert.match(red.reports[0], /^Alert: this run needs the owner\.$/m);
+  assert.equal(JSON.parse(red.files.get(statusPath(LAND_PATHS)).text).needs_owner, true);
 });
 
 test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
