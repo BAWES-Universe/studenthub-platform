@@ -1437,6 +1437,60 @@ test("SHU-306 L1: a passed card opens its pull request, waits for green, hands o
   reverted(host);
 });
 
+test("SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head", async () => {
+  const host = landingHost();
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.deepEqual(Object.keys(claim), ["card", "revision", "claimed_at", "activation_id", "outcome", "ok", "land", "armed_at", "first_tick_at",
+    "last_tick_at", "finished_at", "repo", "pr", "reviewed_head", "reverted"]);
+  assert.equal(claim.outcome, "PASS");
+  assert.equal(claim.land, "MERGED");
+  assert.equal(claim.pr, 77);
+  assert.equal(claim.reviewed_head, PASSED);
+  assert.equal(claim.repo, COMMITTED.pilot_repo);
+  assert.equal(claim.reverted, true);
+  for (const field of ["claimed_at", "armed_at", "first_tick_at", "last_tick_at", "finished_at"]) {
+    assert.match(claim[field], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/, `SHU-86 0a: ${field} is a timestamp`);
+  }
+  assert.ok(claim.claimed_at <= claim.armed_at && claim.armed_at <= claim.first_tick_at && claim.first_tick_at <= claim.last_tick_at
+    && claim.last_tick_at <= claim.finished_at, "SHU-86 0a: the timestamps are in run order");
+});
+
+test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head", async () => {
+  const host = fakeHost({ branchHead: REV });
+  host.mainTip = HEAD;
+  const result = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(result.outcome, "NOT_STARTED", JSON.stringify(result));
+  const claim = JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text);
+  assert.match(claim.claimed_at, /^\d{4}-\d\d-\d\dT/);
+  assert.equal(claim.armed_at, null);
+  assert.equal(claim.first_tick_at, null);
+  assert.equal(claim.pr, null);
+  assert.equal(claim.reviewed_head, null);
+  assert.equal(claim.reverted, null);
+  assert.equal(claim.finished_at, null, "SHU-86 0a: a run that never armed never finished");
+});
+
+test("SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head", async () => {
+  const host = landingHost({ existingPr: true, prHead: "9".repeat(40) });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.equal(claim.land, "LAND_HEAD_MISMATCH");
+  assert.equal(claim.pr, 77);
+  assert.equal(claim.reviewed_head, null, "SHU-86 0a: a head mismatch never records a reviewed head");
+});
+
+test("SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head", async () => {
+  const host = landingHost({ checks: ["pending", "red"] });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "PR_OPENED_CI_RED", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.equal(claim.pr, 77);
+  assert.equal(claim.reviewed_head, PASSED, "SHU-86 0a: a matched pull request records the head the review passed");
+});
+
 test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
   const host = landingHost({ existingPr: true });
   const result = await landRun(host);
@@ -1460,6 +1514,8 @@ test("SHU-306 L4: a pull request whose head is not the passed head stops before 
   const result = await landRun(host);
   assert.equal(result.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(result.land));
   assert.equal(host.land.checkReads, 0, "no wait on a head the review never passed");
+  assert.equal(result.land.head, PASSED, "SHU-86 0a: a stopped landing still names the head the review passed");
+  assert.equal(result.land.reviewed_head, undefined, "SHU-86 0a: but never as the reviewed head of a pull request it did not match");
   noLandingWrites(host);
   assert.match(host.reports[0], /^Landing: LAND_HEAD_MISMATCH, /m);
 });
