@@ -21,6 +21,8 @@ import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
 import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePolicy, botSeverity, classifyThread, settleMarker } from "../service/card-land.mjs";
 import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
+import { renderWatchLine, parseWatchLine } from "../watch-progress.mjs";
+import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -245,6 +247,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         host.history.push({ createdAt: new Date(host.linearClock).toISOString(), fromState: { id: host.card.state.id }, toState: { id: state.id } });
         host.card.state = state;
       };
+      // Every request the run makes of Linear, whatever it is for.
+      host.linearCalls = (host.linearCalls ?? 0) + 1;
       if (query.includes("CardRunHistory")) {
         host.api.push("linear history");
         // Oldest first, two to a page, so the newest change is only on the last
@@ -1443,7 +1447,9 @@ test("SHU-86 0a: a timer run's final claim keeps claimed_at and records its timi
   assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
   const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
   assert.deepEqual(Object.keys(claim), ["card", "revision", "claimed_at", "activation_id", "outcome", "ok", "land", "armed_at", "first_tick_at",
-    "last_tick_at", "finished_at", "repo", "pr", "reviewed_head", "reverted"]);
+    "last_tick_at", "finished_at", "repo", "pr", "reviewed_head", "reverted", "first_dispatch_at", "last_progress_at", "max_progress_gap_ms", "would_stall"]);
+  assert.equal(typeof claim.max_progress_gap_ms, "number", "SHU-86 0b: the committed config watches every run");
+  assert.equal(claim.would_stall, null, "SHU-86 0b: no limit is configured, so nothing would have stopped it");
   assert.equal(claim.outcome, "PASS");
   assert.equal(claim.land, "MERGED");
   assert.equal(claim.pr, 77);
@@ -1489,6 +1495,210 @@ test("SHU-86 0a: a timer run stopped on red checks records the pull request at i
   const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
   assert.equal(claim.pr, 77);
   assert.equal(claim.reviewed_head, PASSED, "SHU-86 0a: a matched pull request records the head the review passed");
+});
+
+// Self-watch 0b: a receipt comment for this run's activation, as the
+// coordinator posts it.
+const watchReceipt = (episode, timestamps, extra = {}) => ({
+  body: receiptCommentBody({ receipt_version: "1.1.0", attempt_id: "00000000-0000-4000-8000-0000000000b0", issue_id: "SHU-301", episode_id: episode,
+    stage: "RUNNING", timestamps: { reserved: null, launch: null, heartbeat: null, terminal: null, ...timestamps }, last_activity: timestamps.heartbeat ?? null, ...extra }),
+  createdAt: timestamps.heartbeat ?? timestamps.launch, user: { id: COMMITTED.linear_receipt_actor_ids[0], displayName: "Coordinator" },
+});
+// Ticks 1 to 4 armed, tick 5 passes; the worker's heartbeat moves on the first
+// two ticks and then freezes. Each armed tick prints the watch line the real
+// tick renders from the receipts it read; `watchLine` replaces it.
+function watchedHost({ config, frozenAfter = 2, episode = null, receipts = true, watchLine = null } = {}) {
+  let launch = null;
+  let heartbeat = null;
+  const host = fakeHost({
+    ...(config ? { config } : {}),
+    onTick: (h) => {
+      if (h.ticks <= frozenAfter) {
+        launch ??= new Date(h.clock).toISOString();
+        heartbeat = new Date(h.clock).toISOString();
+      }
+      if (h.ticks < 5) {
+        const id = armedId(h);
+        const comments = receipts && launch ? [watchReceipt(episode ?? id, { launch, heartbeat })] : [];
+        const line = watchLine ? watchLine(h, id) : renderWatchLine({ state: "armed", target_issue_id: "SHU-301", activation_id: id },
+          parseReceiptsFromComments(comments, COMMITTED.linear_receipt_actor_ids));
+        return [tickText(armed(id)), ...(line ? [line] : [])].join("\n");
+      }
+      if (h.ticks === 5) return tickText(spent("SHU-301", "review PASS — the episode is complete"), 0);
+      return tickText("activation=absent (committed gates only)", 0);
+    },
+  });
+  host.watched = () => ({ launch, heartbeat });
+  return host;
+}
+const unwatched = () => configFor("SHU-301", (c) => { const { watch, ...rest } = c; return rest; });
+
+test("SHU-86 0b: the observe-only watch records first dispatch, last progress and the longest stretch without progress, and changes nothing else", async () => {
+  const host = watchedHost();
+  const { code, output } = await main(["run"], host.io, PATHS);
+  assert.equal(code, 0, JSON.stringify(output));
+  assert.equal(output.outcome, "PASS");
+  assert.equal(output.ticks.length, 5);
+  assert.equal(output.watch.receipt_reads, 4, "each armed tick's report is read; the ending tick is not");
+  const { launch, heartbeat } = host.watched();
+  assert.equal(output.watch.mode, "observe");
+  assert.equal(output.watch.first_dispatch_at, launch);
+  assert.equal(output.watch.last_progress_at, heartbeat);
+  assert.ok(output.watch.max_progress_gap_ms >= 3 * CARD_RUN_LIMITS.tickIntervalMs, "the frozen stretch to the end of the run counts");
+  assert.equal(output.watch.would_stall, null);
+  assert.equal(output.watch.receipt_read_failures, 0);
+  assert.match(host.reports[0], /^Watch \(observe only\): first dispatch .*; longest stretch without progress \d+ min; no limit set\.$/m);
+  reverted(host);
+});
+
+test("SHU-86 0b: a configured limit only records would_stall; the run ends exactly as it would have", async () => {
+  const stalled = watchedHost({ config: configFor("SHU-301", (c) => ({ ...c, watch: { observe: true, stall_minutes: 1 } })) });
+  const one = await main(["run"], stalled.io, PATHS);
+  assert.equal(one.output.outcome, "PASS", "observe mode never stops a run");
+  assert.equal(one.output.watch.would_stall?.kind, "no_progress");
+  assert.equal(one.output.watch.would_stall?.minutes, 1);
+  assert.match(stalled.reports[0], /a 1-minute no_progress limit would have stopped it at /);
+  const silent = watchedHost({ receipts: false, config: configFor("SHU-301", (c) => ({ ...c, watch: { observe: true, first_dispatch_minutes: 1 } })) });
+  const two = await main(["run"], silent.io, PATHS);
+  assert.equal(two.output.outcome, "PASS");
+  assert.equal(two.output.watch.would_stall?.kind, "no_first_dispatch");
+  assert.equal(two.output.watch.first_dispatch_at, null);
+  const healthy = watchedHost({ frozenAfter: 5, config: configFor("SHU-301", (c) => ({ ...c, watch: { observe: true, stall_minutes: 2, first_dispatch_minutes: 2 } })) });
+  const three = await main(["run"], healthy.io, PATHS);
+  assert.equal(three.output.watch.would_stall, null, "a heartbeat that keeps moving never would have stalled");
+});
+
+test("SHU-86 0b: a tick that reports the thread unread, no line, or a malformed one is no progress and never ends the run", async () => {
+  for (const [name, line] of [["unread", (h, id) => `watch=SHU-301 episode=${id} unread`], ["absent", () => null],
+    ["malformed", (h, id) => `watch=SHU-301 episode=${id} first_dispatch=yesterday latest=none`]]) {
+    const host = watchedHost({ watchLine: line });
+    const { output } = await main(["run"], host.io, PATHS);
+    assert.equal(output.outcome, "PASS", name);
+    assert.equal(output.watch.receipt_read_failures, 4, name);
+    assert.equal(output.watch.receipt_reads, 0, name);
+    assert.equal(output.watch.first_dispatch_at, null, name);
+    assert.match(host.reports[0], /4 receipt read\(s\) failed/, name);
+    reverted(host);
+  }
+});
+
+test("SHU-86 0b: observing makes no request of its own, so it cannot spend the budget the next tick needs", async () => {
+  const plain = watchedHost({ config: unwatched() });
+  const off = await main(["run"], plain.io, PATHS);
+  const host = watchedHost();
+  const on = await main(["run"], host.io, PATHS);
+  assert.equal(on.output.watch.receipt_reads, 4);
+  assert.equal(host.linearCalls, plain.linearCalls, "the same Linear requests with observe on and off");
+  assert.deepEqual(host.api, plain.api);
+  assert.equal(on.output.outcome, off.output.outcome);
+  assert.deepEqual(on.output.ticks, off.output.ticks, "every tick starts when it would have and reads as it would have");
+  assert.equal(on.output.timing.finished_at, off.output.timing.finished_at, "the run ends when it would have");
+  // A Linear budget with exactly the requests the observe-off run needed:
+  // the observed run fits inside it too.
+  let left = plain.linearCalls;
+  const budget = watchedHost();
+  const fetch = budget.io.fetch;
+  budget.io.fetch = async (url, options) => {
+    if (url === "https://api.linear.app/graphql" && left-- <= 0) throw new Error("the Linear budget is spent");
+    return fetch(url, options);
+  };
+  const tight = await main(["run"], budget.io, PATHS);
+  assert.equal(tight.output.outcome, off.output.outcome);
+  assert.deepEqual(tight.output.land, off.output.land);
+  assert.equal(left, 0);
+});
+
+test("SHU-86 0b: another run's receipts or another card's line never count as this run's progress", async () => {
+  const host = watchedHost({ episode: "shu-301-run-20261001T000000Z" });
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.watch.first_dispatch_at, null);
+  assert.equal(output.watch.last_progress_at, null);
+  const at = "2026-10-09T15:31:00.000Z";
+  for (const line of [(h, id) => `watch=SHU-301 episode=shu-301-run-20261001T000000Z first_dispatch=${at} latest=${at}`,
+    (h, id) => `watch=SHU-302 episode=${id} first_dispatch=${at} latest=${at}`]) {
+    const other = watchedHost({ watchLine: line });
+    const run = await main(["run"], other.io, PATHS);
+    assert.equal(run.output.watch.first_dispatch_at, null);
+    assert.equal(run.output.watch.receipt_read_failures, 4);
+  }
+});
+
+test("SHU-86 0b: the tick's watch line round-trips, and only an armed activation prints one", () => {
+  const activation = { state: "armed", target_issue_id: "SHU-301", activation_id: "shu-301-run-1" };
+  const comments = [watchReceipt("shu-301-run-1", { launch: "2026-10-09T15:31:00.000Z", heartbeat: "2026-10-09T15:40:00.000Z" }),
+    { ...watchReceipt("shu-301-run-1", { launch: "2026-10-09T15:00:00.000Z", heartbeat: "2026-10-09T16:00:00.000Z" }), user: { id: "someone-else", displayName: "X" } }];
+  const line = renderWatchLine(activation, parseReceiptsFromComments(comments, COMMITTED.linear_receipt_actor_ids));
+  assert.equal(line, "watch=SHU-301 episode=shu-301-run-1 first_dispatch=2026-10-09T15:31:00.000Z latest=2026-10-09T15:40:00.000Z");
+  assert.deepEqual(parseWatchLine(`x\n${line}\ny`, { card: "SHU-301", activationId: "shu-301-run-1" }),
+    { firstDispatch: Date.parse("2026-10-09T15:31:00.000Z"), latest: Date.parse("2026-10-09T15:40:00.000Z") });
+  assert.equal(renderWatchLine(activation, [], { unread: true }), "watch=SHU-301 episode=shu-301-run-1 unread");
+  assert.equal(renderWatchLine(activation, []), "watch=SHU-301 episode=shu-301-run-1 first_dispatch=none latest=none");
+  for (const state of ["absent", "refused", "spent"]) assert.equal(renderWatchLine({ ...activation, state }, []), null);
+});
+
+test("SHU-86 0b: an armed tick prints its card's watch line from the receipts it already read", async () => {
+  const h = createEpisodeHarness();
+  try {
+    const first = await h.runTick();
+    assert.equal(first.code, 0, first.text);
+    const id = h.record.activation_id;
+    assert.match(first.text, new RegExp(`^watch=${h.issueId} episode=${id} first_dispatch=none latest=none$`, "m"),
+      "the first tick read the card before anything dispatched");
+    const build = h.receipts().find((r) => r.issue_id === h.issueId && r.episode_id === id);
+    assert.ok(build?.timestamps?.launch, first.text);
+    // On the host the coordinator's own Linear user writes every receipt; a
+    // receipt anyone else wrote, however early, never counts.
+    for (const comment of h.comments) comment.user ??= { id: h.config.linear_receipt_actor_ids[0], displayName: "Coordinator" };
+    const forged = { ...build, attempt_id: "00000000-0000-4000-8000-0000000000f0",
+      timestamps: { ...build.timestamps, reserved: "2026-09-10T11:00:00.000Z", launch: "2026-09-10T11:00:00.000Z" } };
+    h.comments.push({ body: receiptCommentBody(forged), createdAt: "2026-09-10T11:00:00.000Z", user: { id: "someone-else", displayName: "X" } });
+    const second = await h.runTick();
+    const progress = parseWatchLine(second.text, { card: h.issueId, activationId: id });
+    assert.equal(progress?.firstDispatch, Date.parse(build.timestamps.launch), second.text);
+    assert.ok(progress.latest >= progress.firstDispatch);
+    const lines = second.text.split("\n");
+    assert.equal(lines.indexOf(lines.find((l) => l.startsWith("watch="))), lines.indexOf(lines.find((l) => l.startsWith("activation="))) + 1,
+      "the line sits right under the activation line");
+    fs.unlinkSync(h.activationPath);
+    const absent = await h.runTick();
+    assert.doesNotMatch(absent.text, /^watch=/m, "nothing armed, no line");
+  } finally { h.cleanup(); }
+});
+
+test("SHU-86 0b: with observe off nothing is read and the claim's watch fields are null", async () => {
+  const host = watchedHost({ config: unwatched() });
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.outcome, "PASS");
+  assert.equal(output.watch, undefined);
+  assert.doesNotMatch(host.reports[0], /^Watch /m);
+});
+
+test("SHU-86 0b: a journal read that times out ends the run as an ERROR; the coordinator start is never cut short", async () => {
+  const host = watchedHost();
+  const exec = host.io.exec;
+  const starts = [];
+  const reads = [];
+  host.io.exec = (file, args, options) => {
+    if (file === "systemctl" && args[0] === "start" && args[1] === "shu-coordinator.service") starts.push(options?.timeoutMs);
+    if (file === "journalctl") {
+      reads.push(options?.timeoutMs);
+      if (args[0] === "--sync" && starts.length === 2) return { status: 1, stdout: "", stderr: "", timedOut: true };
+    }
+    return exec(file, args, options);
+  };
+  const { output } = await main(["run"], host.io, PATHS);
+  assert.equal(output.outcome, "ERROR");
+  assert.match(output.reason, /journalctl --sync timed out after 600000 ms/);
+  assert.ok(reads.length >= 3 && reads.every((ms) => ms === CARD_RUN_LIMITS.tickCallTimeoutMs), "every journal read is bounded");
+  assert.ok(starts.length >= 2 && starts.every((ms) => ms === undefined), "the coordinator start runs to its own end");
+  reverted(host);
+});
+
+test("SHU-86 0c: the unit's time limit stays above the run window, a hung tick, worker grace, landing and its reports", () => {
+  const need = CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.tickCallTimeoutMs + CARD_RUN_LIMITS.workerGraceMs + CARD_RUN_LIMITS.landWaitMs
+    + 4 * CARD_RUN_LIMITS.reportTimeoutMs;
+  assert.ok(AUTO_TIMEOUT_START_MS > need, `${AUTO_TIMEOUT_START_MS} must exceed ${need}`);
+  assert.equal(AUTO_TIMEOUT_START_MS, 8 * 60 * 60 * 1000, "SHU-86 0c: the unit limit stays 8h");
 });
 
 test("SHU-306 L2: an open pull request is reused, never opened twice", async () => {
