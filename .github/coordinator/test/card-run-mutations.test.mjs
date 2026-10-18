@@ -1004,8 +1004,8 @@ const CASES = [
   {
     name: "M150 alert a run that ended again under its run id",
     file: "service/card-watchdog.mjs",
-    from: "    const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id));",
-    to: "    const entry = state.alerts.find((alert) => alert.key === stuck.key); // SHU86-M150",
+    from: "    const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)\n",
+    to: "    const entry = state.alerts.find((alert) => alert.key === stuck.key // SHU86-M150\n",
     pattern: "SHU-86 0d: a stale status with the unit running",
   },
   {
@@ -1084,6 +1084,34 @@ const CASES = [
     from: "    const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;",
     to: "    const pauseKept = Boolean(entry); // SHU86-M161",
     pattern: "SHU-86 0d: a pause file that could not be written",
+  },
+  {
+    name: "M162 match an alert by key or run id only",
+    file: "service/card-watchdog.mjs",
+    from: "      || (stuck.invocation !== null && alert.invocation === stuck.invocation));",
+    to: "      ); // SHU86-M162",
+    pattern: "SHU-86 0d: a run alerted stale before its first status write",
+  },
+  {
+    name: "M163 the run leaves its unit's invocation out of its status",
+    file: "service/card-run.mjs",
+    from: "      invocation: /^[0-9a-f]{32}$/.test(invocation ?? \"\") ? invocation : null, card: plan.id,",
+    to: "      invocation: null, card: plan.id, // SHU86-M163",
+    pattern: "SHU-86 0e: the run keeps its status file at every step",
+  },
+  {
+    name: "M164 the watch drops the status's invocation",
+    file: "service/card-watchdog.mjs",
+    from: "    invocation: INVOCATION_RE.test(raw.invocation ?? \"\") ? raw.invocation : null,",
+    to: "    invocation: null, // SHU86-M164",
+    pattern: "SHU-86 0d: a run alerted stale before its first status write",
+  },
+  {
+    name: "M165 a stale alert forgets the unit's invocation",
+    file: "service/card-watchdog.mjs",
+    from: "      invocation: unit.invocation ?? null, since: new Date(unit.since).toISOString(),",
+    to: "      invocation: null, since: new Date(unit.since).toISOString(), // SHU86-M165",
+    pattern: "SHU-86 0d: a run alerted stale before its first status write",
   },
 ];
 

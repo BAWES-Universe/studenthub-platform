@@ -85,6 +85,8 @@ function refuse(code, detail) {
 
 const CARD_RE = /^[A-Z][A-Z0-9]*-\d+$/;
 const RUN_ID_RE = /^[a-z0-9][A-Za-z0-9-]{0,80}$/;
+// systemd's id for one start of a unit (InvocationID, $INVOCATION_ID).
+const INVOCATION_RE = /^[0-9a-f]{32}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const iso = (value) => {
   const time = typeof value === "string" ? Date.parse(value) : NaN;
@@ -101,6 +103,7 @@ export function readStatus(io, paths) {
   const known = (value) => (typeof value === "string" && Object.hasOwn(RUN_OUTCOME_TEXT, value) ? value : null);
   return {
     run_id: raw.run_id,
+    invocation: INVOCATION_RE.test(raw.invocation ?? "") ? raw.invocation : null,
     card: CARD_RE.test(raw.card ?? "") ? raw.card : null,
     kind: raw.kind === "card" || raw.kind === "review" ? raw.kind : null,
     trigger: raw.trigger === "timer" || raw.trigger === "operator" ? raw.trigger : null,
@@ -125,35 +128,39 @@ export function readStatus(io, paths) {
 // between passes. A read that fails is null, and the watch then raises no
 // alert.
 export function readUnit(io, now) {
-  const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic", AUTO_SERVICE]);
+  const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic", "-p", "InvocationID", AUTO_SERVICE]);
   if (result.status !== 0) return null;
   const fields = Object.fromEntries(String(result.stdout).split("\n").map((line) => line.split("=")).filter((pair) => pair.length >= 2)
     .map(([key, ...rest]) => [key.trim(), rest.join("=").trim()]));
   if (!fields.ActiveState) return null;
   const running = RUNNING_STATES.has(fields.ActiveState);
-  if (!running) return { state: fields.ActiveState, running, since: null, start: null };
+  if (!running) return { state: fields.ActiveState, running, since: null, start: null, invocation: null };
   const exit = /^[1-9]\d{0,18}$/.test(fields.InactiveExitTimestampMonotonic ?? "") ? Number(fields.InactiveExitTimestampMonotonic) : null;
   const uptime = io.monotonicMs();
   if (exit === null || !Number.isFinite(uptime) || exit / 1000 > uptime) return null;
-  return { state: fields.ActiveState, running, since: Math.floor((now - (uptime - exit / 1000)) / 1000) * 1000, start: String(exit) };
+  return { state: fields.ActiveState, running, since: Math.floor((now - (uptime - exit / 1000)) / 1000) * 1000, start: String(exit),
+    invocation: INVOCATION_RE.test(fields.InvocationID ?? "") ? fields.InvocationID : null };
 }
 
 // Whether a run needs the owner now, and which run. A unit that is still
 // running is named by when it started, so a run that hangs before it writes a
 // status is still caught; a run that ended without finishing is named by its
-// run id. The alert records both, so one run is never alerted twice.
+// run id. Both carry the unit's invocation id, which the run also writes in
+// its status, so a run alerted stale before its first status write and ended
+// later is still matched to its alert: one run is never alerted twice.
 export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
   if (!unit) return null;
   if (unit.running) {
     const own = status && Date.parse(status.updated_at) >= unit.since;
     const last = own ? Date.parse(status.updated_at) : unit.since;
     if (now - last <= limits.staleMs) return null;
-    return { kind: "stale", key: `start-${unit.start}`, run_id: own ? status.run_id : null, since: new Date(unit.since).toISOString(),
+    return { kind: "stale", key: `start-${unit.start}`, run_id: own ? status.run_id : null,
+      invocation: unit.invocation ?? null, since: new Date(unit.since).toISOString(),
       last: new Date(last).toISOString(), status: own ? status : null };
   }
   if (!status || status.trigger !== "timer" || status.step === null || status.step === "finished") return null;
   if (now - Date.parse(status.updated_at) <= limits.endedMs) return null;
-  return { kind: "ended", key: status.run_id, run_id: status.run_id, since: null, last: status.updated_at, status };
+  return { kind: "ended", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
 }
 
 export function alertMarker(key) {
@@ -292,17 +299,23 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
 
   const stuck = stuckRun({ unit, status, now, limits });
   if (stuck) {
-    const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id));
+    const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)
+      || (stuck.invocation !== null && alert.invocation === stuck.invocation));
     // A pause file that could not be written is tried again on every pass
     // while the run is stuck, whether or not its alert is already posted.
     const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;
     const pause = pauseKept ? entry.pause : writePause(io, paths, stuck);
     if (entry?.posted) {
       entry.pause = pause;
+      // What a later pass learns about the run is kept, so every later read
+      // of it, by key, run id or invocation, still finds this alert.
+      entry.run_id = entry.run_id ?? stuck.run_id;
+      entry.invocation = entry.invocation ?? stuck.invocation;
       result.alert = { key: entry.key, kind: entry.kind, already: true, pause };
     } else {
       // A retried alert keeps the run id an earlier pass saw.
-      const record = { key: entry?.key ?? stuck.key, run_id: stuck.run_id ?? entry?.run_id ?? null, kind: entry?.kind ?? stuck.kind,
+      const record = { key: entry?.key ?? stuck.key, run_id: stuck.run_id ?? entry?.run_id ?? null,
+        invocation: stuck.invocation ?? entry?.invocation ?? null, kind: entry?.kind ?? stuck.kind,
         at: new Date(now).toISOString(), pause, posted: false };
       state.alerts = [...state.alerts.filter((alert) => alert !== entry), record].slice(-limits.keepAlerts);
       writeState(io, paths, state);

@@ -375,6 +375,9 @@ card run keeps (`service/card-status.mjs`), and:
   when the unit stopped while a timer run's status never reached `finished`.
   The alert writes `/etc/shu/card-run.paused` if no pause file is there, and
   posts one SHU-71 comment naming `config.owner_mention` when it is set.
+  An alert is matched to its run by the unit start, the run id and the
+  unit's invocation id, which the run writes in its status, so a run alerted
+  before its first status write and ended later is never alerted again.
 
 It never stops, kills or reverts a run, never removes the pause file or the
 lock, and records what it alerted and its comment in

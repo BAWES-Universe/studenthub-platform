@@ -4381,7 +4381,12 @@
     "SHU-86 mutation M159 read an unreadable unit as idle",
     "SHU-86 mutation M160 read a running unit whose start cannot be placed",
     "SHU-86 0d: a pause file that could not be written is tried again on every pass, and the alert is still posted once",
-    "SHU-86 mutation M161 never try a failed pause file again"
+    "SHU-86 mutation M161 never try a failed pause file again",
+    "SHU-86 0d: a run alerted stale before its first status write, that later writes one and ends unfinished, is alerted once",
+    "SHU-86 mutation M162 match an alert by key or run id only",
+    "SHU-86 mutation M163 the run leaves its unit's invocation out of its status",
+    "SHU-86 mutation M164 the watch drops the status's invocation",
+    "SHU-86 mutation M165 a stale alert forgets the unit's invocation"
   ],
   "requirements": [
     {
@@ -32338,6 +32343,26 @@
     },
     {
       "name": "SHU-86 mutation M161 never try a failed pause file again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: a run alerted stale before its first status write, that later writes one and ends unfinished, is alerted once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M162 match an alert by key or run id only",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M163 the run leaves its unit's invocation out of its status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M164 the watch drops the status's invocation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M165 a stale alert forgets the unit's invocation",
       "capabilities": []
     }
   ],
