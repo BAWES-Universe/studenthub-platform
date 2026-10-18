@@ -2940,6 +2940,38 @@ test("SHU-86 0d: an alert that cannot be posted is tried again on the next pass,
   assert.equal(alertsOf(host).length, 1);
 });
 
+test("SHU-86 0d: a pause file that could not be written is tried again on every pass, and the alert is still posted once", async () => {
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  const host = watchHost({ state: "activating", since, status: watchStatus(), now: since + 70 * MIN });
+  const write = host.fs.writeFileSync;
+  host.pauseFails = 2;
+  host.fs.writeFileSync = (file, text, options) => {
+    if (file === PATHS.pause && host.pauseFails > 0) {
+      host.pauseFails -= 1;
+      throw Object.assign(new Error("EROFS"), { code: "EROFS" });
+    }
+    return write(file, text, options);
+  };
+  const first = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(first.ok, false, "a stuck run left unpaused fails the pass");
+  assert.deepEqual(first.alert.pause, { written: false, held: false, code: "EROFS" });
+  assert.equal(first.alert.posted, true);
+  assert.match(alertsOf(host)[0].body, /\/etc\/shu\/card-run\.paused could not be written \(EROFS\)\./);
+  host.now += 10 * MIN;
+  const second = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(second.alert.already, true);
+  assert.equal(second.alert.pause.written, false);
+  assert.equal(host.files.has(PATHS.pause), false);
+  host.now += 10 * MIN;
+  const third = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(third.ok, true, JSON.stringify(third));
+  assert.deepEqual(third.alert.pause, { written: true });
+  assert.ok(host.files.has(PATHS.pause), "the retry paused the timer");
+  host.now += 10 * MIN;
+  assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).alert.pause, { written: true }, "a written pause is kept, never written again");
+  assert.equal(alertsOf(host).length, 1);
+});
+
 test("SHU-86 0d: the status the watch shows is built from validated fields only", () => {
   const host = watchHost({ status: watchStatus({ card: "SHU-301 <script>", queue: ["SHU-1", "x\n-->", 7], step: "hacked", outcome: "lin-secret-value",
     land: "MERGED\nAlert", revision: "nope", ticks: -1, last_tick_at: "soon", reason: "token lin-secret-value", needs_owner: "yes" }) });

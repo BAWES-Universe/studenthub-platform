@@ -4379,7 +4379,9 @@
     "SHU-86 mutation M157 post a new status comment when the state is lost",
     "SHU-86 mutation M158 show an unvalidated outcome",
     "SHU-86 mutation M159 read an unreadable unit as idle",
-    "SHU-86 mutation M160 read a running unit whose start cannot be placed"
+    "SHU-86 mutation M160 read a running unit whose start cannot be placed",
+    "SHU-86 0d: a pause file that could not be written is tried again on every pass, and the alert is still posted once",
+    "SHU-86 mutation M161 never try a failed pause file again"
   ],
   "requirements": [
     {
@@ -32328,6 +32330,14 @@
     },
     {
       "name": "SHU-86 mutation M160 read a running unit whose start cannot be placed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: a pause file that could not be written is tried again on every pass, and the alert is still posted once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M161 never try a failed pause file again",
       "capabilities": []
     }
   ],

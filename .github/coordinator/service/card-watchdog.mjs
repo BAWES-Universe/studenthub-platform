@@ -293,10 +293,14 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
   const stuck = stuckRun({ unit, status, now, limits });
   if (stuck) {
     const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id));
+    // A pause file that could not be written is tried again on every pass
+    // while the run is stuck, whether or not its alert is already posted.
+    const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;
+    const pause = pauseKept ? entry.pause : writePause(io, paths, stuck);
     if (entry?.posted) {
-      result.alert = { key: entry.key, kind: entry.kind, already: true };
+      entry.pause = pause;
+      result.alert = { key: entry.key, kind: entry.kind, already: true, pause };
     } else {
-      const pause = entry ? entry.pause : writePause(io, paths, stuck);
       // A retried alert keeps the run id an earlier pass saw.
       const record = { key: entry?.key ?? stuck.key, run_id: stuck.run_id ?? entry?.run_id ?? null, kind: entry?.kind ?? stuck.kind,
         at: new Date(now).toISOString(), pause, posted: false };
@@ -328,7 +332,8 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
     }
   }
   result.state_written = writeState(io, paths, state);
-  result.ok = result.state_written && result.unit_error === undefined && result.alert?.posted !== false && result.status_comment.posted !== false;
+  const paused = result.alert === null || result.alert.pause.written === true || result.alert.pause.held === true;
+  result.ok = result.state_written && result.unit_error === undefined && result.alert?.posted !== false && paused && result.status_comment.posted !== false;
   return result;
 }
 

@@ -1078,6 +1078,13 @@ const CASES = [
     to: "  // SHU86-M160",
     pattern: "SHU-86 0d: an unreadable card-run unit",
   },
+  {
+    name: "M161 never try a failed pause file again",
+    file: "service/card-watchdog.mjs",
+    from: "    const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;",
+    to: "    const pauseKept = Boolean(entry); // SHU86-M161",
+    pattern: "SHU-86 0d: a pause file that could not be written",
+  },
 ];
 
 for (const mutation of CASES) {
