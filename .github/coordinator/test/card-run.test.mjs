@@ -1245,10 +1245,15 @@ function cardLineage() {
 // token ("none" | "custody"), unprotectedOwner, threads (a human thread per
 // isResolved flag), botThreads (SHU-310: [[login, body, typename?]...] per
 // thread), settle (landing_thread_settle overrides), editOnReply, loseReply,
-// commentOnResolve, editOnMergeIntent.
+// commentOnResolve, editOnMergeIntent, statuses (commit statuses on the head),
+// mergeableState, external (external_checks override;
+// the settle cases name both review bots, so their threads hold).
 function landingHost(options = {}) {
-  const config = options.settle !== undefined
-    ? configFor("SHU-301", (c) => ({ ...c, landing_thread_settle: { ...c.landing_thread_settle, enabled: options.settle !== false, ...(options.settle || {}) } }))
+  const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
+  const config = options.settle !== undefined || external !== undefined
+    ? configFor("SHU-301", (c) => ({ ...c,
+      ...(options.settle !== undefined ? { landing_thread_settle: { ...c.landing_thread_settle, enabled: options.settle !== false, ...(options.settle || {}) } } : {}),
+      ...(external !== undefined ? { external_checks: external } : {}) }))
     : undefined;
   const host = fakeHost({ onTick: options.onTick ?? passOnFirstTick, workers: options.workers, ...(config ? { config } : {}) });
   if (options.token !== "none") {
@@ -1276,7 +1281,7 @@ function landingHost(options = {}) {
   land.resolves = 0;
   const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
   const pullDetail = () => ({ number: 77, state: land.merged ? "closed" : "open", merged: land.merged, merged_at: land.merged ? "2026-10-09T18:00:00Z" : null,
-    merge_commit_sha: land.merged ? MERGE_SHA : null, draft: false, mergeable: true, mergeable_state: "clean", labels: [],
+    merge_commit_sha: land.merged ? MERGE_SHA : null, draft: false, mergeable: true, mergeable_state: options.mergeableState ?? "clean", labels: [],
     head: { ref: "coordinator/SHU-301", sha: land.pr.head, repo: { full_name: REPO } }, base: { ref: "main", sha: REV, repo: { full_name: REPO } } });
   const delegate = host.io.fetch;
   host.io.fetch = async (url, request = {}) => {
@@ -1389,7 +1394,7 @@ function landingHost(options = {}) {
       }
       return respond(200, { total_count: runs.length, check_runs: runs });
     }
-    if (route === `/commits/${PASSED}/status?per_page=100`) return respond(200, { state: "success", statuses: [] });
+    if (route === `/commits/${PASSED}/status?per_page=100`) return respond(200, { state: "success", statuses: options.statuses ?? [] });
     if (route === `/commits/${PASSED}`) return respond(200, { commit: { tree: { sha: TREE } } });
     if (route === `/commits/${MERGE_SHA}`) return respond(200, { commit: { tree: { sha: TREE } } });
     if (route === "/branches/main") return respond(200, { protected: true, commit: { sha: REV } });
@@ -2090,6 +2095,40 @@ test("SHU-310 L17: a Minor CodeRabbit thread and a LOW Sentry thread are settled
   neverDone(host);
 });
 
+test("External checks: an advisory review bot never holds a card; its status and threads are only reported", async () => {
+  // The committed config names Sentry alone.
+  assert.deepEqual(COMMITTED.external_checks, { required: ["sentry"] });
+  for (const coderabbit of ["pending", "failure"]) {
+    const host = landingHost({ statuses: [{ context: "CodeRabbit", state: coderabbit }], mergeableState: "unstable",
+      botThreads: [[["coderabbitai", CR_MAJOR]]] });
+    const result = await landRun(host);
+    assert.equal(result.land.outcome, "MERGED", `${coderabbit}: ${JSON.stringify(result.land)}`);
+    assert.equal(result.land.advisory, `advisory, not waited on: CodeRabbit: ${coderabbit}, 1 unresolved advisory review thread(s)`);
+    const merged = host.land.comments.find((c) => c.body.includes("card-land-merged")).body;
+    assert.match(merged, /\nAdvisory, not waited on: CodeRabbit: (pending|failure), 1 unresolved advisory review thread\(s\)\.$/);
+    assert.equal(host.land.merges, 1);
+  }
+});
+
+test("External checks: own CI, a named service, a person's thread and a malformed policy still hold", async () => {
+  const cases = [
+    ["own CI red", { checks: ["red"] }, "PR_OPENED_CI_RED"],
+    ["a Sentry thread", { botThreads: [[["sentry", "Bug: this breaks.\nSeverity: HIGH"]]] }, "CI_TIMEOUT"],
+    ["a person's thread opened before a bot reply", { threads: [false] }, "CI_TIMEOUT"],
+    ["a named status pending", { statuses: [{ context: "sentry", state: "pending" }], mergeableState: "unstable" }, "CI_TIMEOUT"],
+    ["unstable from a named status", { statuses: [{ context: "Sentry", state: "failure" }], mergeableState: "unstable" }, "PR_OPENED_CI_RED"],
+    ["blocked by branch protection", { mergeableState: "blocked" }, "CI_TIMEOUT"],
+    ["a malformed policy", { external: { required: ["Bad Name"] } }, "LAND_ERROR"],
+    ["an unknown key", { external: { required: [], optional: ["x"] } }, "LAND_ERROR"],
+  ];
+  for (const [name, options, outcome] of cases) {
+    const host = landingHost(options);
+    const result = await landRun(host);
+    assert.equal(result.land.outcome, outcome, `${name}: ${JSON.stringify(result.land)}`);
+    assert.equal(host.land.merges, 0, name);
+  }
+});
+
 test("SHU-310 L18: any thread that is not a low-labelled review bot's holds everything, and nothing is written", async () => {
   const cases = [
     ["a human reply", [[["coderabbitai", CR_MINOR], ["khalid", "I disagree.", "User"]]]],
@@ -2101,7 +2140,8 @@ test("SHU-310 L18: any thread that is not a low-labelled review bot's holds ever
     ["one blocking beside one settleable", [[["coderabbitai", CR_MINOR]], [["coderabbitai", CR_MAJOR]]]],
   ];
   for (const [name, botThreads] of cases) {
-    const host = landingHost({ settle: {}, botThreads });
+    // copilot is named, so its thread holds; off the settle allowlist, it is never settled.
+    const host = landingHost({ settle: {}, botThreads, external: { required: ["coderabbitai", "copilot", "sentry"] } });
     const result = await landRun(host);
     assert.equal(result.land.outcome, "CI_TIMEOUT", `${name}: ${JSON.stringify(result.land)}`);
     assert.match(result.land.reason, /not settleable: https:\/\/github\.com\//, name);

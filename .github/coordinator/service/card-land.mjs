@@ -42,6 +42,7 @@
 import { sendLinear, fetchIssueComments, parseReceiptsFromComments, LINEAR_COMMENT_CREATE_MUTATION } from "../reconcile.mjs";
 import { writeHandoffReceipt, validHandoff, handoffReceipt } from "../durable-handoff.mjs";
 import { consumeMergeReadiness, parseMergeAttemptsFromComments } from "../merge-readiness.mjs";
+import { externalPolicy, holdsRun, holdsStatus, holdsThread, advisoryNote } from "./external-checks.mjs";
 
 export const CARD_LAND_ENV = "/srv/shu/card-land.env";
 export const LAND_TOKEN_KEY = "SHU_LAND_GITHUB_TOKEN";
@@ -423,13 +424,22 @@ function headMatches(pr, { repo, branch, head }) {
 // many to read in one page is not green, any completed run that is not green
 // or any failed status is red, nothing reported or anything still running is
 // not green yet.
-export function judgeChecks(runsResponse, runs, statusResponse, status) {
-  const checkRuns = runs?.check_runs;
-  const statuses = status?.statuses;
-  if (!runsResponse?.ok || !statusResponse?.ok || !Array.isArray(checkRuns) || !Array.isArray(statuses)
-      || (runs.total_count ?? 0) > 100 || statuses.length >= 100) {
+// With an external policy, only this repository's own CI and the outside
+// checks the committed config names are judged; the rest are advisory and
+// only reported (see external-checks.mjs).
+export function judgeChecks(runsResponse, runs, statusResponse, status, external = null) {
+  const allRuns = runs?.check_runs;
+  const allStatuses = status?.statuses;
+  if (!runsResponse?.ok || !statusResponse?.ok || !Array.isArray(allRuns) || !Array.isArray(allStatuses)
+      || (runs.total_count ?? 0) > 100 || allStatuses.length >= 100) {
     return { green: false, note: "the checks could not be read in full" };
   }
+  const checkRuns = external ? allRuns.filter((run) => holdsRun(run, external)) : allRuns;
+  const statuses = external ? allStatuses.filter((item) => holdsStatus(item, external)) : allStatuses;
+  const advisory = external ? {
+    runs: allRuns.filter((run) => !holdsRun(run, external) && !(run?.status === "completed" && GREEN.has(run?.conclusion))),
+    statuses: allStatuses.filter((item) => !holdsStatus(item, external) && item?.state !== "success"),
+  } : null;
   const red = [
     ...checkRuns.filter((run) => run?.status === "completed" && !GREEN.has(run?.conclusion)).map((run) => `${run?.name}: ${run?.conclusion}`),
     ...statuses.filter((item) => ["failure", "error"].includes(item?.state)).map((item) => `${item?.context}: ${item?.state}`),
@@ -438,7 +448,7 @@ export function judgeChecks(runsResponse, runs, statusResponse, status) {
   const pending = checkRuns.some((run) => run?.status !== "completed") || statuses.some((item) => item?.state !== "success");
   if (checkRuns.length + statuses.length === 0) return { green: false, note: "no check has reported yet" };
   if (pending) return { green: false, note: "checks are still running" };
-  return { green: true };
+  return { green: true, ...(advisory ? { advisory } : {}) };
 }
 
 // SHU-322: the same judgement of any commit, such as main's tip, read with
@@ -453,7 +463,7 @@ export async function readCommitChecks(gh, repo, sha) {
 }
 
 // One read of the head's checks and the pull request's own state.
-async function checkState(gh, { repo, number, head, branch, settled, policy }) {
+async function checkState(gh, { repo, number, head, branch, settled, policy, external }) {
   const [owner, name] = repo.split("/");
   const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
     gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
@@ -464,9 +474,12 @@ async function checkState(gh, { repo, number, head, branch, settled, policy }) {
   const [runs, status, pull, threads] = await Promise.all([runsResponse.json(), statusResponse.json(), pullResponse.json(), threadsResponse.json()]);
   if (pullResponse.ok && pull && !headMatches(pull, { repo, branch, head })) return { moved: true, sha: pull?.head?.sha ?? null };
   if (!pullResponse.ok) return { green: false, note: "the checks could not be read in full" };
-  const judged = judgeChecks(runsResponse, runs, statusResponse, status);
+  const judged = judgeChecks(runsResponse, runs, statusResponse, status, external);
   if (!judged.green) return judged;
-  if (pull.mergeable !== true || pull.mergeable_state !== "clean") return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}` };
+  // GitHub reads "unstable" when a check outside branch protection is not
+  // green; with everything that holds already green, that is only advisory.
+  const mergeable = pull.mergeable_state === "clean" || (external && pull.mergeable_state === "unstable");
+  if (pull.mergeable !== true || !mergeable) return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}` };
   // The SHU-259 consumer holds for good on any unresolved review thread, so a
   // thread (a review bot's included) keeps the run waiting before the handoff.
   const page = threads?.data?.repository?.pullRequest?.reviewThreads;
@@ -476,9 +489,11 @@ async function checkState(gh, { repo, number, head, branch, settled, policy }) {
   const viewer = threads.data.viewer?.login;
   for (const [id, expected] of settled ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
   if (policy) checkLandingResolved(page.nodes, viewer, policy);
-  const open = page.nodes.filter((thread) => thread?.isResolved !== true);
+  const unresolved = page.nodes.filter((thread) => thread?.isResolved !== true);
+  const open = external ? unresolved.filter((thread) => holdsThread(thread, external)) : unresolved;
   if (open.length) return { green: false, note: `${open.length} review thread(s) are unresolved`, open, viewer };
-  return { green: true };
+  const advisory = external ? advisoryNote({ ...judged.advisory, threads: unresolved.filter((thread) => !holdsThread(thread, external)) }) : null;
+  return { green: true, ...(advisory ? { advisory } : {}) };
 }
 
 // settle, when given, is handed the unresolved threads of a read on which
@@ -496,7 +511,7 @@ async function waitForGreen(io, gh, target, limits, settle) {
     if (state.moved) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${state.sha} after the review passed ${target.head}`);
     if (state.red) return { outcome: "PR_OPENED_CI_RED", reason: `red: ${state.red.join(", ")}` };
     streak = state.green ? streak + 1 : 0;
-    if (streak >= limits.greenReads) return { outcome: "GREEN" };
+    if (streak >= limits.greenReads) return { outcome: "GREEN", ...(state.advisory ? { advisory: state.advisory } : {}) };
     if (!state.green) last = state.note;
     if (state.open && settle) {
       const step = await settle(state.open, state.viewer);
@@ -537,6 +552,8 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   try {
     if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
     policy = settlePolicy(config);
+    const external = externalPolicy(config);
+    if (!external) stop("LAND_ERROR", "external_checks in the committed config is malformed");
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "") || !branch) stop("LAND_ERROR", "pilot_repo or the card branch is missing");
     if (config?.routine_merge_authority?.repo !== repo) stop("LAND_ERROR", "the committed merge authority does not name the pilot repository");
     if (!linearToken || !Array.isArray(actorIds) || actorIds.length === 0) stop("LAND_ERROR", "the coordinator's Linear token or trusted receipt actors are missing");
@@ -572,7 +589,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       for (const entry of entries) settled.set(entry.id, await settleThread(ctx, entry));
       return { note: `${entries.length} review bot thread(s) settled; green must hold again` };
     });
-    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy }, limits, settle || undefined);
+    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external }, limits, settle || undefined);
     if (checks.outcome !== "GREEN") return result(checks.outcome, { ...prFields, reason: checks.reason });
     audit.blocking = [];
 
@@ -606,6 +623,8 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       config: { ...config, routine_merge_authority: { ...config.routine_merge_authority, enabled: true } },
       env: { ENABLE_ROUTINE_MERGE: "true" },
       requireAllChecks: true,
+      // Only what holds the landing above holds the merge.
+      externalPolicy: external,
       // SHU-310: the consumer runs the thread check once more right before
       // its merge call, and holds on a failure.
       ...(policy ? { beforeMerge: async () => { await guardThreads(gh, { repo, number: pr.number }, settled, policy); return { ok: true }; } } : {}),
@@ -629,11 +648,13 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     const marker = mergeCommentMarker(record.attempt_id);
     let commented = thread.some((comment) => String(comment?.body ?? "").includes(marker));
     if (!commented) {
-      const body = [marker, `Merged by card run ${activationId}: pull request #${pr.number} landed on main as ${record.merge_commit_sha}.`].join("\n");
+      const body = [marker, `Merged by card run ${activationId}: pull request #${pr.number} landed on main as ${record.merge_commit_sha}.`,
+        ...(checks.advisory ? [`${checks.advisory[0].toUpperCase()}${checks.advisory.slice(1, 300)}.`] : [])].join("\n");
       const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
       commented = posted?.commentCreate?.success === true;
     }
-    return result("MERGED", { ...prFields, merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented });
+    return result("MERGED", { ...prFields, merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented,
+      ...(checks.advisory ? { advisory: checks.advisory } : {}) });
   } catch (error) {
     const outcome = error.landOutcome ?? "LAND_ERROR";
     return result(outcome, { ...(pr?.number ? { pr: pr.number } : {}), ...(head ? { head } : {}),

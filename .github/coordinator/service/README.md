@@ -384,3 +384,20 @@ It never stops, kills or reverts a run, never removes the pause file or the
 lock, and records what it alerted and its comment in
 `/srv/shu/state/card-watch.json`. `node card-watchdog.mjs install` puts the
 timer on the host and `remove` takes it off.
+
+## Card landing: outside checks are advisory
+
+An outside service never slows a card unless the committed config names it
+(`external_checks.required`, see `external-checks.mjs`). A card's landing, and
+the SHU-259 merge it hands to, wait only for:
+
+- every GitHub Actions check run (this repository's own CI);
+- a check run whose app, or a commit status whose context, is named;
+- an unresolved review thread opened by a person, or by a named bot.
+
+Everything else, such as CodeRabbit's status and threads, is reported on the
+card's merge comment and in the run's landing result, never waited on. GitHub's
+`unstable` merge state (a check outside branch protection not green) is
+accepted once everything that holds is green. The config names `sentry`, so
+Sentry's findings still hold a card. A named service is waited on only as
+long as the landing waits for CI, so it too has a timeout.
