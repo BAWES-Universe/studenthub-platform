@@ -10,6 +10,7 @@ import { reviewVerdictProvenanceValid } from './review-routing.mjs';
 import { LINEAR_COMMENT_CREATE_MUTATION, parseReceiptCommentBody, parseReceiptsFromComments,
   receiptCommentBody, sendLinear, validateReceipt } from './reconcile.mjs';
 import { validHandoff } from './durable-handoff.mjs';
+import { holdsRun, holdsStatus, holdsThread } from './service/external-checks.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -174,7 +175,7 @@ async function reviewThreads({ fetchImpl, token, owner, name, number }) {
   let after = null;
   const seen = new Set();
   do {
-    const query = `query MergeThreads($owner:String!,$name:String!,$number:Int!,$after:String) { repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100,after:$after) { nodes { isResolved comments(first:1) { nodes { isMinimized } } } pageInfo { hasNextPage endCursor } } } } }`;
+    const query = `query MergeThreads($owner:String!,$name:String!,$number:Int!,$after:String) { repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100,after:$after) { nodes { isResolved comments(first:1) { nodes { isMinimized author { __typename login } } } } pageInfo { hasNextPage endCursor } } } } }`;
     const result = await jsonRequest(fetchImpl, 'https://api.github.com/graphql', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables: { owner, name, number, after } }) });
     const page = result.body?.data?.repository?.pullRequest?.reviewThreads;
     if (!result.ok || result.body?.errors?.length || !page || !Array.isArray(page.nodes)) return { ok: false };
@@ -187,7 +188,11 @@ async function reviewThreads({ fetchImpl, token, owner, name, number }) {
 }
 
 // Every reported check and status, required or not, is finished and green.
-function allChecksGreen(statuses, checks) {
+function allChecksGreen(statuses, checks, external = null) {
+  if (external) {
+    statuses = (statuses ?? []).filter(status => holdsStatus(status, external));
+    checks = (checks ?? []).filter(run => holdsRun(run, external));
+  }
   if ((statuses ?? []).length + (checks ?? []).length === 0) return false;
   return (checks ?? []).every(run => run?.status === 'completed' && ['success', 'neutral', 'skipped'].includes(run?.conclusion))
     && (statuses ?? []).every(status => status?.state === 'success');
@@ -206,7 +211,7 @@ function requiredChecksGreen(protection, statuses, checks) {
   });
 }
 
-export async function fetchGitHubMergeSnapshot({ repo, branch, targetSha, token, fetchImpl = fetch }) {
+export async function fetchGitHubMergeSnapshot({ repo, branch, targetSha, token, fetchImpl = fetch, external = null }) {
   if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? '') || !branch || !SHA.test(targetSha ?? '')) {
     return { ok: false, code: 'AMBIGUOUS_GITHUB_RESPONSE', reason: 'GitHub merge authority input is incomplete' };
   }
@@ -262,9 +267,12 @@ export async function fetchGitHubMergeSnapshot({ repo, branch, targetSha, token,
   if (!threadsResult.ok) return { ok: false, code: 'AMBIGUOUS_GITHUB_RESPONSE', reason: 'review thread authority was unavailable or incomplete' };
   return { ok: true, merged: false, pr_number: number, head_sha: targetSha, tree_sha: treeSha, base_sha: baseLive, base_ref: pr.base.ref,
     required_checks_green: requiredGreen,
-    all_checks_green: allChecksGreen(statusResult.body.statuses, checksResult.body.check_runs),
-    blocking_threads: threadsResult.nodes.filter(thread => thread?.isResolved !== true).length,
-    protection_satisfied: pr.mergeable === true && pr.mergeable_state === 'clean' };
+    all_checks_green: allChecksGreen(statusResult.body.statuses, checksResult.body.check_runs, external),
+    blocking_threads: threadsResult.nodes.filter(thread => thread?.isResolved !== true && (!external || holdsThread(thread, external))).length,
+    // With an external policy, "unstable" (a check outside branch protection
+    // not green) is enough once everything that holds is green.
+    protection_satisfied: pr.mergeable === true && (pr.mergeable_state === 'clean'
+      || (external !== null && pr.mergeable_state === 'unstable' && allChecksGreen(statusResult.body.statuses, checksResult.body.check_runs, external))) };
 }
 
 async function fetchMergeIssue({ issueId, token, fetchImpl }) {
@@ -351,7 +359,7 @@ function snapshotPolicy(snapshot, requireAllChecks = false) {
   return { ok: true };
 }
 
-async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false }) {
+async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false, external = null }) {
   let issue;
   try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
   catch { return { ok: false, code: 'EXPLICIT_HOLD', reason: 'Linear merge authority could not be re-fetched' }; }
@@ -362,7 +370,7 @@ async function authorityNow({ source, linearIssueId, linearToken, githubToken, f
   const verdict = mergeVerdict(receipts, source.attempt_id, source.handoff.target_sha, source.issue_id, source.repo, source.branch);
   if (!verdict.ok) return { ok: false, code: 'INELIGIBLE_VERDICT', reason: verdict.reason };
   const snapshot = await fetchGitHubMergeSnapshot({ repo: source.repo, branch: source.branch,
-    targetSha: source.handoff.target_sha, token: githubToken, fetchImpl });
+    targetSha: source.handoff.target_sha, token: githubToken, fetchImpl, external });
   if (!snapshot.ok) return snapshot;
   if (!snapshot.merged) {
     const policy = snapshotPolicy(snapshot, requireAllChecks);
@@ -381,6 +389,10 @@ export async function consumeMergeReadiness({
   // a last check run right before the merge call; anything but { ok: true }
   // holds the merge as BLOCKING_REVIEW_THREAD.
   beforeMerge = null,
+  // Opt-in (the card-run landing passes it): only this repository's own CI
+  // and the outside checks the committed config names hold the merge; see
+  // service/external-checks.mjs.
+  externalPolicy = null,
 }) {
   if (!routineMergeEnabledFor(env, config)) return { writes: 0, merges: 0 };
   if (!linearToken || !githubToken) return { writes: 0, merges: 0, error: 'merge credentials unavailable' };
@@ -402,7 +414,7 @@ export async function consumeMergeReadiness({
     let existing = parsedAttempts.records.find(record => record.attempt_id === attemptId);
     if (existing?.state === 'COMPLETED' || existing?.state === 'HOLD') continue;
 
-    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks });
+    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy });
     if (!authorityCheck.ok) {
       const held = existing ? holdFrom(existing, authorityCheck.code, authorityCheck.reason, now()) : initialHoldRecord({ source, authorityRef: authority.authority_ref,
         code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now() });
@@ -435,7 +447,7 @@ export async function consumeMergeReadiness({
 
     // Immediate pre-merge re-fetch. No value from the earlier preflight is
     // authoritative here except the immutable values in the durable intent.
-    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks });
+    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy });
     if (!authorityCheck.ok) {
       const held = holdFrom(existing, authorityCheck.code, authorityCheck.reason, now());
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });

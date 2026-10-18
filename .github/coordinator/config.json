@@ -23,6 +23,11 @@
       }
     ]
   },
+  "external_checks": {
+    "required": [
+      "sentry"
+    ]
+  },
   "watch": {
     "observe": true
   },
