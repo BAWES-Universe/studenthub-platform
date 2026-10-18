@@ -23,6 +23,7 @@ import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { renderWatchLine, parseWatchLine } from "../watch-progress.mjs";
 import { statusPath, needsOwner, alertLine, ownerMention, nextStart } from "../service/card-status.mjs";
+import { watchOnce, stuckRun, readStatus, readUnit, renderStatus, installWatch, removeWatch, WATCH_LIMITS, STATUS_MARKER } from "../service/card-watchdog.mjs";
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
 
@@ -2735,4 +2736,261 @@ test("SHU-321 R8: a GitHub read that fails is a skip that claims nothing", async
   noCredentials.files.delete(PATHS.coordinatorEnv);
   assert.equal((await attempt(() => autoRun({ io: noCredentials.io, paths: PATHS }))).skipped, "REVIEW_UNREADABLE");
   notReviewed(noCredentials, "no credentials");
+});
+
+// Self-watch 0d: the outside watch, on its own small fake host. It reads the
+// card-run unit and the status file, keeps one SHU-71 status comment and
+// raises one alert per stuck run; it never touches the run itself.
+function watchHost({ state = "inactive", since = null, status = null, now = Date.parse("2026-10-18T08:00:00.000Z") } = {}) {
+  const files = new Map();
+  const host = { files, calls: [], comments: [], requests: [], unit: { state, since }, now, linearDown: false, showFails: false };
+  const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, ...extra });
+  put(PATHS.coordinatorEnv, "GITHUB_TOKEN=gh-secret-value\nLINEAR_API_TOKEN=lin-secret-value\n", { uid: 997, mode: 0o600 });
+  put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner" }));
+  if (status) put(statusPath(PATHS), `${JSON.stringify(status)}\n`, { mode: 0o600 });
+  host.put = put;
+  host.fs = {
+    existsSync: (file) => files.has(file),
+    lstatSync: (file) => {
+      if (!files.has(file)) throw Object.assign(new Error(`ENOENT ${file}`), { code: "ENOENT" });
+      return { isFile: () => true, isSymbolicLink: () => false, uid: files.get(file).uid ?? 0, mode: 0o100000 | files.get(file).mode };
+    },
+    readFileSync: (file) => {
+      if (!files.has(file)) throw Object.assign(new Error(`ENOENT ${file}`), { code: "ENOENT" });
+      return files.get(file).text;
+    },
+    writeFileSync: (file, text, options = {}) => {
+      if (options.flag === "wx" && files.has(file)) throw Object.assign(new Error(`EEXIST ${file}`), { code: "EEXIST" });
+      put(file, String(text), { mode: options.mode ?? 0o644 });
+    },
+    renameSync: (from, to) => { files.set(to, files.get(from)); files.delete(from); },
+    unlinkSync: (file) => { if (!files.delete(file)) throw Object.assign(new Error(`ENOENT ${file}`), { code: "ENOENT" }); },
+  };
+  host.exec = (file, args) => {
+    host.calls.push([file, ...args].join(" "));
+    if (file === "id") return { status: 0, stdout: "997\n", stderr: "" };
+    if (file === "systemctl" && args[0] === "show") {
+      if (host.showFails) return { status: 1, stdout: "", stderr: "Failed to connect to bus" };
+      const exit = host.unit.since === null ? "" : `@${host.unit.since / 1000}`;
+      return { status: 0, stdout: `ActiveState=${host.unit.state}\nInactiveExitTimestamp=${exit}\n`, stderr: "" };
+    }
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  host.fetch = async (url, options) => {
+    const { query, variables } = JSON.parse(options.body);
+    host.requests.push({ query, variables });
+    if (host.linearDown) return { ok: false, status: 500, headers: new Map(), json: async () => ({ errors: [{ message: "Linear is down" }] }) };
+    const answer = (data) => ({ ok: true, status: 200, headers: new Map(), json: async () => ({ data }) });
+    if (query.includes("CardRunReportIssue")) {
+      return answer({ issue: { id: "shu-71-id", identifier: "SHU-71", comments: { nodes: host.comments.filter((comment) => comment.body.includes(variables.marker)).slice(0, 1).map(({ id }) => ({ id })) } } });
+    }
+    if (query.includes("commentCreate")) {
+      const comment = { id: `comment-${host.comments.length + 1}`, body: variables.body };
+      host.comments.push(comment);
+      return answer({ commentCreate: { success: true, comment: { id: comment.id } } });
+    }
+    if (query.includes("commentUpdate")) {
+      const comment = host.comments.find(({ id }) => id === variables.id);
+      if (!comment) return { ok: false, status: 400, headers: new Map(), json: async () => ({ errors: [{ message: "Entity not found" }] }) };
+      comment.body = variables.body;
+      return answer({ commentUpdate: { success: true } });
+    }
+    throw new Error(`unexpected Linear request ${query}`);
+  };
+  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.now), sleep: () => {} };
+  return host;
+}
+
+const MIN = 60 * 1000;
+const watchStatus = (fields = {}) => ({ version: 1, run_id: "shu-301-run-20261018T070000Z", card: "SHU-301", kind: "card", trigger: "timer",
+  revision: REV, queue: ["SHU-301", "SHU-302"], step: "ticking", ticks: 4, last_tick_at: "2026-10-18T07:04:00.000Z", armed_at: "2026-10-18T07:00:30.000Z",
+  first_dispatch_at: "2026-10-18T07:02:00.000Z", last_progress_at: "2026-10-18T07:03:00.000Z", paused: false,
+  next_start: "2026-10-18T07:30:00.000Z", updated_at: "2026-10-18T07:04:00.000Z", ...fields });
+const alertsOf = (host) => host.comments.filter((comment) => comment.body.includes("card-run-report card-watch-"));
+const statusComments = (host) => host.comments.filter((comment) => comment.body.includes(STATUS_MARKER));
+const sideEffects = (host) => host.calls.filter((call) => !/^(id -u shu-coordinator|systemctl show -p ActiveState -p InactiveExitTimestamp --timestamp=unix shu-card-run\.service)$/.test(call));
+
+test("SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it changes", async () => {
+  const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }) });
+  const first = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.deepEqual(first.status_comment, { changed: true, posted: true });
+  assert.equal(statusComments(host).length, 1);
+  const body = statusComments(host)[0].body;
+  assert.ok(body.startsWith(`${STATUS_MARKER}\n`));
+  for (const line of ["shu-card-run.service: idle.", "Timer: next start 2026-10-18T08:30:00.000Z.", "Queue: SHU-301, SHU-302.",
+    "Latest run: SHU-301 (card, timer), step finished, 4 tick(s), last tick 2026-10-18T07:04:00.000Z.",
+    "Progress: first dispatch 2026-10-18T07:02:00.000Z, last progress 2026-10-18T07:03:00.000Z.", "Outcome: PASS, landing MERGED."]) {
+    assert.ok(body.split("\n").includes(line), `${line}\n${body}`);
+  }
+  assert.doesNotMatch(body, /secret|Alert/);
+  // Nothing changed: no request at all.
+  const before = host.requests.length;
+  host.now += 10 * MIN;
+  assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).status_comment, { changed: false });
+  assert.equal(host.requests.length, before);
+  // A new status edits the same comment in place.
+  host.put(statusPath(PATHS), JSON.stringify(watchStatus({ step: "ticking", run_id: "shu-302-run-20261018T080000Z", card: "SHU-302", updated_at: "2026-10-18T08:09:00.000Z" })));
+  host.unit = { state: "activating", since: Date.parse("2026-10-18T08:00:00.000Z") };
+  assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).status_comment, { changed: true, posted: true });
+  assert.equal(statusComments(host).length, 1);
+  assert.match(statusComments(host)[0].body, /shu-card-run\.service: running since 2026-10-18T08:00:00\.000Z\.\nTimer: next start/);
+  assert.match(statusComments(host)[0].body, /Latest run: SHU-302 \(card, timer\), step ticking/);
+  // A lost state file finds the comment by its marker instead of posting again.
+  host.files.delete(path.join(PATHS.stateDir, "card-watch.json"));
+  host.put(PATHS.pause, "paused by hand\n");
+  assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).status_comment, { changed: true, posted: true });
+  assert.equal(statusComments(host).length, 1);
+  assert.match(statusComments(host)[0].body, /Timer: paused \(the pause file is present\)\./);
+  assert.equal(host.files.get(PATHS.pause).text, "paused by hand\n", "the watch never touches a pause file it did not write");
+  assert.deepEqual(sideEffects(host), []);
+  assert.equal(host.files.get(path.join(PATHS.stateDir, "card-watch.json")).mode, 0o600);
+});
+
+test("SHU-86 0d: a stale status with the unit running pauses the timer and alerts once", async () => {
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  const host = watchHost({ state: "activating", since, status: watchStatus(), now: Date.parse("2026-10-18T08:04:00.000Z") });
+  // Exactly the limit since the last status write: not yet stale.
+  const fresh = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(fresh.alert, null);
+  assert.equal(host.files.has(PATHS.pause), false);
+  host.now += MIN;
+  const stale = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(stale.ok, true, JSON.stringify(stale));
+  assert.deepEqual(stale.alert, { key: `start-${since / 1000}`, kind: "stale", pause: { written: true }, posted: true });
+  assert.match(host.files.get(PATHS.pause)?.text ?? "", /^card-watch: stale run start-\d+\n$/);
+  assert.equal(alertsOf(host).length, 1);
+  const alert = alertsOf(host)[0].body.split("\n");
+  assert.equal(alert[1], "Alert: the card run on SHU-301 needs the owner (https://linear.app/bawes/profiles/owner).");
+  assert.match(alert[2], /running since 2026-10-18T07:00:00\.000Z, and the run's status was last written at 2026-10-18T07:04:00\.000Z \(step ticking\): nothing for more than 60 minutes\./);
+  assert.match(alert[3], /^Wrote \/etc\/shu\/card-run\.paused/);
+  assert.doesNotMatch(alertsOf(host)[0].body, /secret/);
+  // Later passes, stale or ended, never alert this run again.
+  for (const [state, extra] of [["activating", 10], ["failed", 30]]) {
+    host.unit = { state, since };
+    host.now += extra * MIN;
+    const again = await watchOnce({ io: host.io, paths: PATHS });
+    assert.equal(again.alert.already, true, JSON.stringify(again));
+  }
+  assert.equal(alertsOf(host).length, 1);
+  assert.deepEqual(sideEffects(host), [], "the watch never stops, kills or reverts a run");
+});
+
+test("SHU-86 0d: a run that hangs before it writes a status is still caught", async () => {
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  // The status is the previous run's, written before this start.
+  const host = watchHost({ state: "activating", since, now: since + 61 * MIN,
+    status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", updated_at: "2026-10-18T06:50:00.000Z" }) });
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.alert.kind, "stale");
+  assert.equal(result.alert.posted, true);
+  assert.match(alertsOf(host)[0].body, /Alert: the card run needs the owner/);
+  assert.match(alertsOf(host)[0].body, /no status was written since it started: nothing for more than 60 minutes\./);
+  assert.ok(host.files.has(PATHS.pause));
+  assert.equal(stuckRun({ unit: { running: true, since }, status: null, now: since + 60 * MIN }), null);
+  assert.equal(stuckRun({ unit: { running: true, since }, status: null, now: since + 61 * MIN }).key, `start-${since / 1000}`);
+});
+
+test("SHU-86 0d: a timer run that ended without finishing alerts once; a finished, operator or recent one never does", async () => {
+  const at = Date.parse("2026-10-18T07:04:00.000Z");
+  const unit = { state: "failed", running: false, since: null };
+  const read = (fields) => ({ ...watchStatus(fields), ...fields });
+  assert.equal(stuckRun({ unit, status: read({}), now: at + 10 * MIN }), null, "ten minutes is not yet ended");
+  assert.equal(stuckRun({ unit, status: read({}), now: at + 11 * MIN }).kind, "ended");
+  assert.equal(stuckRun({ unit, status: read({ step: "finished" }), now: at + 11 * MIN }), null);
+  assert.equal(stuckRun({ unit, status: read({ trigger: "operator" }), now: at + 11 * MIN }), null);
+  assert.equal(stuckRun({ unit: null, status: read({}), now: at + 11 * MIN }), null, "an unreadable unit raises nothing");
+  const host = watchHost({ state: "failed", status: watchStatus({ step: "reverting", outcome: "ERROR" }), now: at + 11 * MIN });
+  const ended = await watchOnce({ io: host.io, paths: PATHS });
+  assert.deepEqual(ended.alert, { key: "shu-301-run-20261018T070000Z", kind: "ended", pause: { written: true }, posted: true });
+  assert.match(alertsOf(host)[0].body, /is not running, but the run's status stopped at step reverting at 2026-10-18T07:04:00\.000Z and never reached finished/);
+  host.now += 10 * MIN;
+  assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert.already, true);
+  assert.equal(alertsOf(host).length, 1);
+});
+
+test("SHU-86 0d: an alert that cannot be posted is tried again on the next pass, never posted twice, and a pause file in place is kept", async () => {
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  const host = watchHost({ state: "activating", since, status: watchStatus(), now: since + 70 * MIN });
+  host.put(PATHS.pause, "card-install: held\n");
+  host.linearDown = true;
+  const failed = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.alert.posted, false);
+  assert.deepEqual(failed.alert.pause, { written: false, held: true });
+  assert.equal(failed.status_comment.posted, false);
+  assert.equal(host.files.get(PATHS.pause).text, "card-install: held\n");
+  host.linearDown = false;
+  host.now += 10 * MIN;
+  const retried = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(retried.ok, true, JSON.stringify(retried));
+  assert.equal(retried.alert.posted, true);
+  assert.match(alertsOf(host)[0].body, /\/etc\/shu\/card-run\.paused was already in place\./);
+  host.now += 10 * MIN;
+  assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert.already, true);
+  assert.equal(alertsOf(host).length, 1);
+  // A comment posted but not recorded (a crash after the post) is found by its
+  // marker and never posted again.
+  host.files.delete(path.join(PATHS.stateDir, "card-watch.json"));
+  host.now += 10 * MIN;
+  assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert.posted, true);
+  assert.equal(alertsOf(host).length, 1);
+});
+
+test("SHU-86 0d: the status the watch shows is built from validated fields only", () => {
+  const host = watchHost({ status: watchStatus({ card: "SHU-301 <script>", queue: ["SHU-1", "x\n-->", 7], step: "hacked", outcome: "lin-secret-value",
+    land: "MERGED\nAlert", revision: "nope", ticks: -1, last_tick_at: "soon", reason: "token lin-secret-value", needs_owner: "yes" }) });
+  const status = readStatus(host.io, PATHS);
+  assert.deepEqual({ card: status.card, queue: status.queue, step: status.step, outcome: status.outcome, land: status.land, revision: status.revision,
+    ticks: status.ticks, last_tick_at: status.last_tick_at, needs_owner: status.needs_owner },
+  { card: null, queue: ["SHU-1"], step: null, outcome: null, land: null, revision: null, ticks: null, last_tick_at: null, needs_owner: false });
+  assert.equal(Object.hasOwn(status, "reason"), false);
+  const body = renderStatus({ status, unit: { state: "inactive", running: false, since: null }, paused: false, now: new Date(host.now) });
+  assert.doesNotMatch(body, /secret|script|hacked|-->[\s\S]*-->/);
+  host.put(statusPath(PATHS), JSON.stringify(watchStatus({ version: 2 })));
+  assert.equal(readStatus(host.io, PATHS), null);
+  host.put(statusPath(PATHS), "{not json");
+  assert.equal(readStatus(host.io, PATHS), null);
+});
+
+test("SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass", async () => {
+  const host = watchHost({ status: watchStatus(), now: Date.parse("2026-10-18T09:30:00.000Z") });
+  host.showFails = true;
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.ok, false);
+  assert.equal(result.alert, null);
+  assert.equal(host.files.has(PATHS.pause), false);
+  assert.match(statusComments(host)[0].body, /shu-card-run\.service: state unknown\./);
+  for (const stdout of ["ActiveState=activating\nInactiveExitTimestamp=\n", "ActiveState=activating\nInactiveExitTimestamp=Sat 2026-10-18 07:00:00 UTC\n", "\n"]) {
+    assert.equal(readUnit({ exec: () => ({ status: 0, stdout, stderr: "" }) }), null, stdout);
+  }
+  assert.deepEqual(readUnit({ exec: () => ({ status: 0, stdout: "ActiveState=inactive\nInactiveExitTimestamp=\n", stderr: "" }) }), { state: "inactive", running: false, since: null });
+});
+
+test("SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly", () => {
+  const host = watchHost();
+  const enabled = { value: "disabled", active: "inactive" };
+  host.io.exec = (file, args) => {
+    host.calls.push([file, ...args].join(" "));
+    if (args[0] === "enable") Object.assign(enabled, { value: "enabled", active: "active" });
+    if (args[0] === "disable") Object.assign(enabled, { value: "disabled", active: "inactive" });
+    if (args[0] === "is-enabled") return { status: 0, stdout: `${enabled.value}\n`, stderr: "" };
+    if (args[0] === "is-active") return { status: 0, stdout: `${enabled.active}\n`, stderr: "" };
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const installed = installWatch(host.io, PATHS, { node: "/usr/bin/node", module: "/srv/shu/studenthub-platform/.github/coordinator/service/card-watchdog.mjs" });
+  assert.deepEqual(installed.units, ["/etc/systemd/system/shu-card-watch.service", "/etc/systemd/system/shu-card-watch.timer"]);
+  const service = host.files.get("/etc/systemd/system/shu-card-watch.service").text;
+  assert.match(service, /^Type=oneshot$/m);
+  assert.match(service, /^ExecStart=\/usr\/bin\/node \/srv\/shu\/studenthub-platform\/\.github\/coordinator\/service\/card-watchdog\.mjs check$/m);
+  assert.match(host.files.get("/etc/systemd/system/shu-card-watch.timer").text, /^OnCalendar=\*:05\/10$/m);
+  assert.deepEqual(host.calls, ["systemctl daemon-reload", "systemctl enable --now shu-card-watch.timer", "systemctl is-enabled shu-card-watch.timer", "systemctl is-active shu-card-watch.timer"]);
+  assert.equal(host.calls.some((call) => call.includes("shu-card-run")), false, "installing the watch never touches the card-run units");
+  // Installing again is a no-op; other content is refused.
+  installWatch(host.io, PATHS, { node: "/usr/bin/node", module: "/srv/shu/studenthub-platform/.github/coordinator/service/card-watchdog.mjs" });
+  host.put("/etc/systemd/system/shu-card-watch.timer", "[Timer]\nOnCalendar=minutely\n");
+  assert.throws(() => installWatch(host.io, PATHS, { node: "/usr/bin/node", module: "/x.mjs" }), /CARD_WATCH_TIMER/);
+  assert.deepEqual(removeWatch(host.io, PATHS), { removed: true });
+  assert.equal(host.files.has("/etc/systemd/system/shu-card-watch.service") || host.files.has("/etc/systemd/system/shu-card-watch.timer"), false);
+  assert.ok(WATCH_LIMITS.staleMs > Math.max(CARD_RUN_LIMITS.workerGraceMs, CARD_RUN_LIMITS.landWaitMs), "a healthy revert or landing never reads as stale");
 });

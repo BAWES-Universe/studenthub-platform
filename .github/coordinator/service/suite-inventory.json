@@ -4356,7 +4356,29 @@
     "SHU-86 mutation M143 let a run whose revert did not finish go without an alert",
     "SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports",
     "SHU-86 mutation M144 leave the tick that ends the run unobserved",
-    "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read"
+    "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read",
+    "SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it changes",
+    "SHU-86 0d: a stale status with the unit running pauses the timer and alerts once",
+    "SHU-86 0d: a run that hangs before it writes a status is still caught",
+    "SHU-86 0d: a timer run that ended without finishing alerts once; a finished, operator or recent one never does",
+    "SHU-86 0d: an alert that cannot be posted is tried again on the next pass, never posted twice, and a pause file in place is kept",
+    "SHU-86 0d: the status the watch shows is built from validated fields only",
+    "SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass",
+    "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
+    "SHU-86 mutation M146 never call a running unit's silent run stale",
+    "SHU-86 mutation M147 call a run stale at the limit itself",
+    "SHU-86 mutation M148 measure staleness from an earlier run's status",
+    "SHU-86 mutation M149 alert the same run on every pass",
+    "SHU-86 mutation M150 alert a run that ended again under its run id",
+    "SHU-86 mutation M151 alert without writing the pause file",
+    "SHU-86 mutation M152 replace a pause file already in place",
+    "SHU-86 mutation M153 call a finished run ended without finishing",
+    "SHU-86 mutation M154 call a just-started run ended",
+    "SHU-86 mutation M155 mark an alert posted before it is",
+    "SHU-86 mutation M156 edit the status comment on every pass",
+    "SHU-86 mutation M157 post a new status comment when the state is lost",
+    "SHU-86 mutation M158 show an unvalidated outcome",
+    "SHU-86 mutation M159 read an unreadable unit as idle"
   ],
   "requirements": [
     {
@@ -32213,6 +32235,94 @@
     },
     {
       "name": "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it changes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: a stale status with the unit running pauses the timer and alerts once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: a run that hangs before it writes a status is still caught",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: a timer run that ended without finishing alerts once; a finished, operator or recent one never does",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: an alert that cannot be posted is tried again on the next pass, never posted twice, and a pause file in place is kept",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: the status the watch shows is built from validated fields only",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M146 never call a running unit's silent run stale",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M147 call a run stale at the limit itself",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M148 measure staleness from an earlier run's status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M149 alert the same run on every pass",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M150 alert a run that ended again under its run id",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M151 alert without writing the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M152 replace a pause file already in place",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M153 call a finished run ended without finishing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M154 call a just-started run ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M155 mark an alert posted before it is",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M156 edit the status comment on every pass",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M157 post a new status comment when the state is lost",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M158 show an unvalidated outcome",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M159 read an unreadable unit as idle",
       "capabilities": []
     }
   ],

@@ -359,3 +359,24 @@ reason (created only, never replaced or removed by the timer) and reports
 prerequisites back. R is never reinstalled by the box: after a failure the
 checkout stays at N and the owner decides. Any coordinator code change stays a
 human install.
+
+## Card-run watch (SHU-86 self-watch 0d)
+
+`service/card-watchdog.mjs` runs from its own `shu-card-watch.timer` and
+`shu-card-watch.service` (root oneshot, `OnCalendar=*:05/10`), because no step
+inside `shu-card-run.service` runs while that oneshot is stuck. Each pass reads
+the card-run unit's state and `/srv/shu/state/card-run-status.json`, which each
+card run keeps (`service/card-status.mjs`), and:
+
+- keeps one SHU-71 status comment current, found by its
+  `<!-- card-run-status -->` marker and edited only when what it shows changed;
+- raises one alert per run when the unit is running but nothing was written
+  for more than an hour (longer than one revert or one landing can wait), or
+  when the unit stopped while a timer run's status never reached `finished`.
+  The alert writes `/etc/shu/card-run.paused` if no pause file is there, and
+  posts one SHU-71 comment naming `config.owner_mention` when it is set.
+
+It never stops, kills or reverts a run, never removes the pause file or the
+lock, and records what it alerted and its comment in
+`/srv/shu/state/card-watch.json`. `node card-watchdog.mjs install` puts the
+timer on the host and `remove` takes it off.
