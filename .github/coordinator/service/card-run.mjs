@@ -244,13 +244,15 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
   if (!queue.queue) return { id: null };
   if (!queue.ok) return { id: null, skipped: "NOT_READY", reason: `CARD_RUN_SCOPE: ${queue.reason}` };
   for (const id of queue.ids) {
-    if ((await cardLanded(io, paths, id, { ...(landing ?? {}), record })).landed) continue;
+    const landed = await cardLanded(io, paths, id, { ...(landing ?? {}), record });
+    if (landed.landed) continue;
     const claim = autoClaim(paths, revision, id);
     if (!io.fs.existsSync(claim)) return { id };
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
-    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}` };
+    const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
+    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}` };
   }
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }

@@ -2835,7 +2835,10 @@ test("Self-repair A: no other merge, claim or read counts a card as landed", asy
     const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => host.io.fetch(url, { method }) };
     const result = await cardLanded(host.io, PATHS, "SHU-301", { ...landing, record: true });
     assert.equal(result.landed, false, `${label}: ${JSON.stringify(result)}`);
-    assert.equal((await nextCard(host.io, PATHS, queueConfig(), REV, { landing, record: true })).skipped, "QUEUE_STOPPED", label);
+    const stopped = await nextCard(host.io, PATHS, queueConfig(), REV, { landing, record: true });
+    assert.equal(stopped.skipped, "QUEUE_STOPPED", label);
+    // The stop says why a hand merge was not proven, whenever GitHub was asked.
+    if (result.reason) assert.ok(stopped.reason.endsWith(`; hand landing not proven: ${result.reason}`), `${label}: ${stopped.reason}`);
     assert.equal(host.files.has(handLandRecord(PATHS, "SHU-301")), false, `${label}: nothing recorded`);
   }
   // A recorded hand landing must name its card and its proof.
