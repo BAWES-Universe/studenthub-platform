@@ -118,18 +118,24 @@ export function readStatus(io, paths) {
   };
 }
 
-// The card-run unit: whether it is running and since when. A read that fails
-// is null, and the watch then raises no alert.
-export function readUnit(io) {
-  const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestamp", "--timestamp=unix", AUTO_SERVICE]);
+// The card-run unit: whether it is running and since when. The start is read
+// as systemd's monotonic microseconds, which every systemd prints the same
+// way, and turned into wall time against this process's monotonic clock (the
+// same CLOCK_MONOTONIC). The raw value names the start, so it never moves
+// between passes. A read that fails is null, and the watch then raises no
+// alert.
+export function readUnit(io, now) {
+  const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic", AUTO_SERVICE]);
   if (result.status !== 0) return null;
   const fields = Object.fromEntries(String(result.stdout).split("\n").map((line) => line.split("=")).filter((pair) => pair.length >= 2)
     .map(([key, ...rest]) => [key.trim(), rest.join("=").trim()]));
   if (!fields.ActiveState) return null;
   const running = RUNNING_STATES.has(fields.ActiveState);
-  const since = /^@\d+$/.test(fields.InactiveExitTimestamp ?? "") ? Number(fields.InactiveExitTimestamp.slice(1)) * 1000 : null;
-  if (running && since === null) return null;
-  return { state: fields.ActiveState, running, since };
+  if (!running) return { state: fields.ActiveState, running, since: null, start: null };
+  const exit = /^[1-9]\d{0,18}$/.test(fields.InactiveExitTimestampMonotonic ?? "") ? Number(fields.InactiveExitTimestampMonotonic) : null;
+  const uptime = io.monotonicMs();
+  if (exit === null || !Number.isFinite(uptime) || exit / 1000 > uptime) return null;
+  return { state: fields.ActiveState, running, since: Math.floor((now - (uptime - exit / 1000)) / 1000) * 1000, start: String(exit) };
 }
 
 // Whether a run needs the owner now, and which run. A unit that is still
@@ -142,7 +148,7 @@ export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
     const own = status && Date.parse(status.updated_at) >= unit.since;
     const last = own ? Date.parse(status.updated_at) : unit.since;
     if (now - last <= limits.staleMs) return null;
-    return { kind: "stale", key: `start-${unit.since / 1000}`, run_id: own ? status.run_id : null, since: new Date(unit.since).toISOString(),
+    return { kind: "stale", key: `start-${unit.start}`, run_id: own ? status.run_id : null, since: new Date(unit.since).toISOString(),
       last: new Date(last).toISOString(), status: own ? status : null };
   }
   if (!status || status.trigger !== "timer" || status.step === null || status.step === "finished") return null;
@@ -275,7 +281,7 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
   const now = io.now().getTime();
   // The unit is read before the status, so a run that finishes in between is
   // read as running with a fresh status, never as ended without finishing.
-  const unit = readUnit(io);
+  const unit = readUnit(io, now);
   const status = readStatus(io, paths);
   const state = readState(io, paths);
   let credentials = null;
@@ -365,6 +371,8 @@ export const defaultIO = Object.freeze({
   fs,
   uid: () => process.getuid(),
   now: () => new Date(),
+  // CLOCK_MONOTONIC on Linux, the clock systemd's *Monotonic timestamps use.
+  monotonicMs: () => Number(process.hrtime.bigint() / 1000n) / 1000,
   fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   exec: (file, args) => {

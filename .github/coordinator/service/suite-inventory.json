@@ -4378,7 +4378,8 @@
     "SHU-86 mutation M156 edit the status comment on every pass",
     "SHU-86 mutation M157 post a new status comment when the state is lost",
     "SHU-86 mutation M158 show an unvalidated outcome",
-    "SHU-86 mutation M159 read an unreadable unit as idle"
+    "SHU-86 mutation M159 read an unreadable unit as idle",
+    "SHU-86 mutation M160 read a running unit whose start cannot be placed"
   ],
   "requirements": [
     {
@@ -32323,6 +32324,10 @@
     },
     {
       "name": "SHU-86 mutation M159 read an unreadable unit as idle",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M160 read a running unit whose start cannot be placed",
       "capabilities": []
     }
   ],

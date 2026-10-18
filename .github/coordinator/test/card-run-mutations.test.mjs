@@ -1068,7 +1068,14 @@ const CASES = [
     name: "M159 read an unreadable unit as idle",
     file: "service/card-watchdog.mjs",
     from: "  if (result.status !== 0) return null;",
-    to: "  if (result.status !== 0) return { state: \"inactive\", running: false, since: null }; // SHU86-M159",
+    to: "  if (result.status !== 0) return { state: \"inactive\", running: false, since: null, start: null }; // SHU86-M159",
+    pattern: "SHU-86 0d: an unreadable card-run unit",
+  },
+  {
+    name: "M160 read a running unit whose start cannot be placed",
+    file: "service/card-watchdog.mjs",
+    from: "  if (exit === null || !Number.isFinite(uptime) || exit / 1000 > uptime) return null;",
+    to: "  // SHU86-M160",
     pattern: "SHU-86 0d: an unreadable card-run unit",
   },
 ];

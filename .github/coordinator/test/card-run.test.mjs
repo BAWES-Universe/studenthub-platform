@@ -2771,8 +2771,8 @@ function watchHost({ state = "inactive", since = null, status = null, now = Date
     if (file === "id") return { status: 0, stdout: "997\n", stderr: "" };
     if (file === "systemctl" && args[0] === "show") {
       if (host.showFails) return { status: 1, stdout: "", stderr: "Failed to connect to bus" };
-      const exit = host.unit.since === null ? "" : `@${host.unit.since / 1000}`;
-      return { status: 0, stdout: `ActiveState=${host.unit.state}\nInactiveExitTimestamp=${exit}\n`, stderr: "" };
+      const exit = host.unit.since === null ? 0 : (host.unit.since - BOOT) * 1000;
+      return { status: 0, stdout: `ActiveState=${host.unit.state}\nInactiveExitTimestampMonotonic=${exit}\n`, stderr: "" };
     }
     return { status: 0, stdout: "", stderr: "" };
   };
@@ -2797,18 +2797,21 @@ function watchHost({ state = "inactive", since = null, status = null, now = Date
     }
     throw new Error(`unexpected Linear request ${query}`);
   };
-  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.now), sleep: () => {} };
+  host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.now), monotonicMs: () => host.now - BOOT, sleep: () => {} };
   return host;
 }
 
 const MIN = 60 * 1000;
+// The host booted here; systemd's monotonic stamps count from it.
+const BOOT = Date.parse("2026-10-17T00:00:00.000Z");
+const startKey = (since) => `start-${(since - BOOT) * 1000}`;
 const watchStatus = (fields = {}) => ({ version: 1, run_id: "shu-301-run-20261018T070000Z", card: "SHU-301", kind: "card", trigger: "timer",
   revision: REV, queue: ["SHU-301", "SHU-302"], step: "ticking", ticks: 4, last_tick_at: "2026-10-18T07:04:00.000Z", armed_at: "2026-10-18T07:00:30.000Z",
   first_dispatch_at: "2026-10-18T07:02:00.000Z", last_progress_at: "2026-10-18T07:03:00.000Z", paused: false,
   next_start: "2026-10-18T07:30:00.000Z", updated_at: "2026-10-18T07:04:00.000Z", ...fields });
 const alertsOf = (host) => host.comments.filter((comment) => comment.body.includes("card-run-report card-watch-"));
 const statusComments = (host) => host.comments.filter((comment) => comment.body.includes(STATUS_MARKER));
-const sideEffects = (host) => host.calls.filter((call) => !/^(id -u shu-coordinator|systemctl show -p ActiveState -p InactiveExitTimestamp --timestamp=unix shu-card-run\.service)$/.test(call));
+const sideEffects = (host) => host.calls.filter((call) => !/^(id -u shu-coordinator|systemctl show -p ActiveState -p InactiveExitTimestampMonotonic shu-card-run\.service)$/.test(call));
 
 test("SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it changes", async () => {
   const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }) });
@@ -2857,7 +2860,7 @@ test("SHU-86 0d: a stale status with the unit running pauses the timer and alert
   host.now += MIN;
   const stale = await watchOnce({ io: host.io, paths: PATHS });
   assert.equal(stale.ok, true, JSON.stringify(stale));
-  assert.deepEqual(stale.alert, { key: `start-${since / 1000}`, kind: "stale", pause: { written: true }, posted: true });
+  assert.deepEqual(stale.alert, { key: startKey(since), kind: "stale", pause: { written: true }, posted: true });
   assert.match(host.files.get(PATHS.pause)?.text ?? "", /^card-watch: stale run start-\d+\n$/);
   assert.equal(alertsOf(host).length, 1);
   const alert = alertsOf(host)[0].body.split("\n");
@@ -2887,13 +2890,13 @@ test("SHU-86 0d: a run that hangs before it writes a status is still caught", as
   assert.match(alertsOf(host)[0].body, /Alert: the card run needs the owner/);
   assert.match(alertsOf(host)[0].body, /no status was written since it started: nothing for more than 60 minutes\./);
   assert.ok(host.files.has(PATHS.pause));
-  assert.equal(stuckRun({ unit: { running: true, since }, status: null, now: since + 60 * MIN }), null);
-  assert.equal(stuckRun({ unit: { running: true, since }, status: null, now: since + 61 * MIN }).key, `start-${since / 1000}`);
+  assert.equal(stuckRun({ unit: { running: true, since, start: "42" }, status: null, now: since + 60 * MIN }), null);
+  assert.equal(stuckRun({ unit: { running: true, since, start: "42" }, status: null, now: since + 61 * MIN }).key, "start-42");
 });
 
 test("SHU-86 0d: a timer run that ended without finishing alerts once; a finished, operator or recent one never does", async () => {
   const at = Date.parse("2026-10-18T07:04:00.000Z");
-  const unit = { state: "failed", running: false, since: null };
+  const unit = { state: "failed", running: false, since: null, start: null };
   const read = (fields) => ({ ...watchStatus(fields), ...fields });
   assert.equal(stuckRun({ unit, status: read({}), now: at + 10 * MIN }), null, "ten minutes is not yet ended");
   assert.equal(stuckRun({ unit, status: read({}), now: at + 11 * MIN }).kind, "ended");
@@ -2945,7 +2948,7 @@ test("SHU-86 0d: the status the watch shows is built from validated fields only"
     ticks: status.ticks, last_tick_at: status.last_tick_at, needs_owner: status.needs_owner },
   { card: null, queue: ["SHU-1"], step: null, outcome: null, land: null, revision: null, ticks: null, last_tick_at: null, needs_owner: false });
   assert.equal(Object.hasOwn(status, "reason"), false);
-  const body = renderStatus({ status, unit: { state: "inactive", running: false, since: null }, paused: false, now: new Date(host.now) });
+  const body = renderStatus({ status, unit: { state: "inactive", running: false, since: null, start: null }, paused: false, now: new Date(host.now) });
   assert.doesNotMatch(body, /secret|script|hacked|-->[\s\S]*-->/);
   host.put(statusPath(PATHS), JSON.stringify(watchStatus({ version: 2 })));
   assert.equal(readStatus(host.io, PATHS), null);
@@ -2961,10 +2964,19 @@ test("SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass"
   assert.equal(result.alert, null);
   assert.equal(host.files.has(PATHS.pause), false);
   assert.match(statusComments(host)[0].body, /shu-card-run\.service: state unknown\./);
-  for (const stdout of ["ActiveState=activating\nInactiveExitTimestamp=\n", "ActiveState=activating\nInactiveExitTimestamp=Sat 2026-10-18 07:00:00 UTC\n", "\n"]) {
-    assert.equal(readUnit({ exec: () => ({ status: 0, stdout, stderr: "" }) }), null, stdout);
+  const unitIO = (stdout, uptime = 3600 * 1000) => ({ exec: () => ({ status: 0, stdout, stderr: "" }), monotonicMs: () => uptime });
+  const at = Date.parse("2026-10-18T08:00:00.000Z");
+  // A running unit whose start cannot be placed reads as unknown, never as idle.
+  for (const stdout of ["ActiveState=activating\nInactiveExitTimestampMonotonic=0\n", "ActiveState=activating\nInactiveExitTimestampMonotonic=Sat 2026-10-18 07:00:00 UTC\n",
+    "ActiveState=activating\nInactiveExitTimestampMonotonic=7200000000\n", "\n"]) {
+    assert.equal(readUnit(unitIO(stdout), at), null, stdout);
   }
-  assert.deepEqual(readUnit({ exec: () => ({ status: 0, stdout: "ActiveState=inactive\nInactiveExitTimestamp=\n", stderr: "" }) }), { state: "inactive", running: false, since: null });
+  assert.deepEqual(readUnit(unitIO("ActiveState=inactive\nInactiveExitTimestampMonotonic=0\n"), at), { state: "inactive", running: false, since: null, start: null });
+  // Started 1800 s after boot, read 3600 s after boot: half an hour ago, and
+  // the same start on every later pass.
+  assert.deepEqual(readUnit(unitIO("ActiveState=activating\nInactiveExitTimestampMonotonic=1800000000\n"), at),
+    { state: "activating", running: true, since: at - 30 * MIN, start: "1800000000" });
+  assert.equal(readUnit(unitIO("ActiveState=active\nInactiveExitTimestampMonotonic=1800000000\n", 4200 * 1000), at + 10 * MIN).start, "1800000000");
 });
 
 test("SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly", () => {
