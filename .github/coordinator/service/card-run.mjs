@@ -57,6 +57,7 @@ import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV 
 import { landCard, readLandToken, boundedFetch, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
+import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -469,12 +470,21 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     let result;
     let armedAt = null;
     let watch = null;
+    // Self-watch 0e: where the run is, in a local file only; see card-status.mjs.
+    const status = createStatus({ io, paths, run: { run_id: plan.record.activation_id, card: plan.id, kind: plan.kind, trigger, revision,
+      queue: (config.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } });
+    const progress = () => {
+      const seen = watch ? watch.summary(io.now().getTime()) : null;
+      return { ticks: ticks.length, last_tick_at: ticks.at(-1)?.at ?? null, armed_at: armedAt,
+        first_dispatch_at: seen?.first_dispatch_at ?? null, last_progress_at: seen?.last_progress_at ?? null };
+    };
     try {
       const armed = arm(io, plan, revision, paths);
       armedAt = io.now().toISOString();
       // Self-watch 0b, observe only: the committed config turns it on; it
       // records progress and never changes how the run ends.
       if (config.watch?.observe === true) watch = createWatch({ armedAt: Date.parse(armedAt), limits: config.watch });
+      status.write({ step: "armed", ...progress() });
       const deadline = Date.parse(plan.record.expires_at);
       for (;;) {
         // Never start a tick once the window has closed, including the first:
@@ -487,6 +497,14 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         const output = tick(io, limits);
         const outcome = tickOutcome(output, plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
+        // Observing reads only the tick's own output: no request and no wait,
+        // so it never moves a tick, the window's end, revert or landing. Every
+        // tick is observed and recorded before the run decides whether it
+        // ends. A tick that ends the run no longer reports the activation
+        // armed and so prints no watch line; that is no failed read.
+        const seen = watch ? parseWatchLine(output, { card: plan.id, activationId: plan.record.activation_id }) : null;
+        if (watch && (seen !== null || !outcome.ended)) watch.observe(io.now().getTime(), seen);
+        status.write({ step: "ticking", ...progress() });
         if (outcome.ended) {
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
@@ -500,9 +518,6 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: false, outcome: "NOT_ELIGIBLE", reason: (targetExcluded.length > 0 ? targetExcluded : outcome.excluded).join("; ") || "no eligible work" };
           break;
         }
-        // Observing reads only the armed tick's own output: no request and no
-        // wait, so it never moves a tick, the window's end, revert or landing.
-        if (watch) watch.observe(io.now().getTime(), parseWatchLine(output, { card: plan.id, activationId: plan.record.activation_id }));
         io.sleep(limits.tickIntervalMs);
       }
       result = { ...result, ...armed };
@@ -511,6 +526,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     }
     // The run itself ends here; revert and landing are timed by their own steps.
     const finishedAt = armedAt === null ? null : io.now().toISOString();
+    status.write({ step: "reverting", ...progress(), outcome: result.outcome });
     let reverted;
     try { reverted = revert(io, paths, limits); }
     catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
@@ -518,6 +534,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // once the revert has put the host back to dispatch off.
     let land = null;
     if (plan.kind === "card" && result.outcome === "PASS" && reverted.reverted === true) {
+      status.write({ step: "landing", ...progress(), outcome: result.outcome });
       land = await landRun({ io, paths, limits, plan, config, credentials });
     }
     // Self-watch 0a: when the run armed, ticked and finished, so real run
@@ -525,7 +542,12 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
       finished_at: finishedAt };
     summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
-      timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}) };
+      timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
+      owner_mention: ownerMention(config.owner_mention) };
+    summary.needs_owner = needsOwner(summary);
+    status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
+      reverted: reverted.reverted === true, needs_owner: summary.needs_owner });
+    summary.status_write_failures = status.failures();
   } finally {
     try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
   }

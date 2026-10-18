@@ -4342,7 +4342,21 @@
     "SHU-296 mutation: M9 install keeps the default timeout",
     "SHU-296 mutation: M10 install failure loses its fixed code",
     "SHU-296 mutation: M11 npm inherits the coordinator environment",
-    "SHU-296 mutation: M12 ignore rules drop an allowed path"
+    "SHU-296 mutation: M12 ignore rules drop an allowed path",
+    "SHU-86 0e: the run keeps its status file at every step, with no request of its own",
+    "SHU-86 0e: a status file that cannot be written never changes the run",
+    "SHU-86 0e: a run that needs the owner opens its report with one alert line",
+    "SHU-86 0e: a landed card raises no alert, a held landing does, and the status says which",
+    "SHU-86 mutation M137 let an errored run go without an alert",
+    "SHU-86 mutation M138 let a landing that did not merge go without an alert",
+    "SHU-86 mutation M139 put any text in the report as the owner mention",
+    "SHU-86 mutation M140 write the status file in place, where a reader can see half of it",
+    "SHU-86 mutation M141 let a failed status write end the run",
+    "SHU-86 mutation M142 stop writing the status after each tick",
+    "SHU-86 mutation M143 let a run whose revert did not finish go without an alert",
+    "SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports",
+    "SHU-86 mutation M144 leave the tick that ends the run unobserved",
+    "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read"
   ],
   "requirements": [
     {
@@ -32144,6 +32158,62 @@
           "name": "linux_proc"
         }
       ]
+    },
+    {
+      "name": "SHU-86 0e: the run keeps its status file at every step, with no request of its own",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: a status file that cannot be written never changes the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: a run that needs the owner opens its report with one alert line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: a landed card raises no alert, a held landing does, and the status says which",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M137 let an errored run go without an alert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M138 let a landing that did not merge go without an alert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M139 put any text in the report as the owner mention",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M140 write the status file in place, where a reader can see half of it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M141 let a failed status write end the run",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M142 stop writing the status after each tick",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M143 let a run whose revert did not finish go without an alert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0e: the tick that ends the run is recorded too, with any progress it reports",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M144 leave the tick that ends the run unobserved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M145 count the ending tick's missing watch line as a failed read",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [
