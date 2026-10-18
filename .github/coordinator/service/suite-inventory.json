@@ -4392,6 +4392,7 @@
     "SHU-86 mutation M167 read a failed unit as idle",
     "External checks: an advisory review bot never holds a card; its status and threads are only reported",
     "External checks: own CI, a named service, a person's thread and a malformed policy still hold",
+    "External checks: a named service's check run holds whether GitHub names its app by slug or by name",
     "SHU-86 mutation M168 hold on every thread, advisory or not",
     "SHU-86 mutation M169 let a bot-opened thread decide for a person's",
     "SHU-86 mutation M170 judge advisory checks too",
@@ -4400,7 +4401,8 @@
     "SHU-86 mutation M173 count advisory threads at the consumer",
     "SHU-86 mutation M174 accept a malformed external policy",
     "SHU-86 mutation M175 match named services by exact case",
-    "SHU-86 mutation M176 hold the consumer on advisory checks"
+    "SHU-86 mutation M176 hold the consumer on advisory checks",
+    "SHU-86 mutation M177 match a named service's check run by slug only"
   ],
   "requirements": [
     {
@@ -32400,6 +32402,10 @@
       "capabilities": []
     },
     {
+      "name": "External checks: a named service's check run holds whether GitHub names its app by slug or by name",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M168 hold on every thread, advisory or not",
       "capabilities": []
     },
@@ -32433,6 +32439,10 @@
     },
     {
       "name": "SHU-86 mutation M176 hold the consumer on advisory checks",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M177 match a named service's check run by slug only",
       "capabilities": []
     }
   ],

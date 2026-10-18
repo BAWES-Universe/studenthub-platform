@@ -392,7 +392,8 @@ An outside service never slows a card unless the committed config names it
 the SHU-259 merge it hands to, wait only for:
 
 - every GitHub Actions check run (this repository's own CI);
-- a check run whose app, or a commit status whose context, is named;
+- a check run whose app (by slug or by name) or own name is named, or a commit
+  status whose context is named;
 - an unresolved review thread opened by a person, or by a named bot.
 
 Everything else, such as CodeRabbit's status and threads, is reported on the

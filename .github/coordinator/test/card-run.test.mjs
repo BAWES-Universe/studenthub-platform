@@ -1246,7 +1246,8 @@ function cardLineage() {
 // isResolved flag), botThreads (SHU-310: [[login, body, typename?]...] per
 // thread), settle (landing_thread_settle overrides), editOnReply, loseReply,
 // commentOnResolve, editOnMergeIntent, statuses (commit statuses on the head),
-// mergeableState, external (external_checks override;
+// mergeableState, extraRuns ([{ after, run }]: a check run served once more than
+// `after` check reads were made), external (external_checks override;
 // the settle cases name both review bots, so their threads hold).
 function landingHost(options = {}) {
   const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
@@ -1392,6 +1393,7 @@ function landingHost(options = {}) {
       if (options.optionalRedAfter !== undefined && land.checkReads > options.optionalRedAfter) {
         runs.push({ name: "optional-lint", app: { id: 15368 }, status: "completed", conclusion: "failure" });
       }
+      for (const { after = 0, run } of options.extraRuns ?? []) if (land.checkReads > after) runs.push(run);
       return respond(200, { total_count: runs.length, check_runs: runs });
     }
     if (route === `/commits/${PASSED}/status?per_page=100`) return respond(200, { state: "success", statuses: options.statuses ?? [] });
@@ -2127,6 +2129,38 @@ test("External checks: own CI, a named service, a person's thread and a malforme
     assert.equal(result.land.outcome, outcome, `${name}: ${JSON.stringify(result.land)}`);
     assert.equal(host.land.merges, 0, name);
   }
+});
+
+test("External checks: a named service's check run holds whether GitHub names its app by slug or by name", async () => {
+  // Sentry reports a "Seer Code Review" run; its app may carry a slug other than the name the config uses.
+  const seer = (conclusion, app) => ({ name: "Seer Code Review", app, status: conclusion ? "completed" : "in_progress", conclusion });
+  for (const app of [{ id: 1, slug: "sentry", name: "Sentry" }, { id: 1, slug: "sentry-io", name: "Sentry" }]) {
+    const cases = [
+      ["failing in the wait", [{ run: seer("failure", app) }], "PR_OPENED_CI_RED"],
+      ["pending in the wait", [{ run: seer(null, app) }], "CI_TIMEOUT"],
+      ["failing at the merge consumer's re-fetch", [{ after: 2, run: seer("failure", app) }], "MERGE_HOLD"],
+    ];
+    for (const [name, extraRuns, outcome] of cases) {
+      const host = landingHost({ extraRuns, mergeableState: "unstable" });
+      const result = await landRun(host);
+      assert.equal(result.land.outcome, outcome, `${app.slug} ${name}: ${JSON.stringify(result.land)}`);
+      if (outcome === "MERGE_HOLD") assert.equal(result.land.hold_code, "REQUIRED_CHECKS_NOT_GREEN");
+      assert.equal(host.land.merges, 0, `${app.slug} ${name}`);
+    }
+  }
+  // An app the config does not name stays advisory, by slug and by name.
+  const other = { name: "Review", app: { id: 2, slug: "coderabbitai", name: "CodeRabbit" }, status: "completed", conclusion: "failure" };
+  const host = landingHost({ extraRuns: [{ run: other }], mergeableState: "unstable" });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.land.advisory, "advisory, not waited on: coderabbitai Review: failure");
+  // A long advisory list is cut with an ellipsis on the merge comment, never mid-entry without one.
+  const many = Array.from({ length: 12 }, (_, i) => ({ run: { ...other, name: `advisory-check-${i}-${"x".repeat(20)}` } }));
+  const long = landingHost({ extraRuns: many, mergeableState: "unstable" });
+  assert.equal((await landRun(long)).land.outcome, "MERGED");
+  const line = long.land.comments.find((c) => c.body.includes("card-land-merged")).body.split("\n").at(-1);
+  assert.match(line, /^Advisory, not waited on: .{250,}…\.$/);
+  assert.equal(line.length, 301);
 });
 
 test("SHU-310 L18: any thread that is not a low-labelled review bot's holds everything, and nothing is written", async () => {

@@ -1150,8 +1150,8 @@ const CASES = [
   {
     name: "M171 never read GitHub Actions as own CI",
     file: "service/external-checks.mjs",
-    from: "  return app?.id === OWN_CHECK_APP.id || app?.slug === OWN_CHECK_APP.slug || named(policy, app?.slug) || named(policy, run?.name);",
-    to: "  return named(policy, app?.slug) || named(policy, run?.name); // EXT-M171",
+    from: "  return app?.id === OWN_CHECK_APP.id || app?.slug === OWN_CHECK_APP.slug\n",
+    to: "  return false // EXT-M171\n",
     pattern: "External checks: own CI, a named service",
   },
   {
@@ -1188,6 +1188,13 @@ const CASES = [
     from: "      || (external !== null && pr.mergeable_state === 'unstable' && allChecksGreen(statusResult.body.statuses, checksResult.body.check_runs, external))) };",
     to: "      ) }; // EXT-M176",
     pattern: "External checks: an advisory review bot never holds a card",
+  },
+  {
+    name: "M177 match a named service's check run by slug only",
+    file: "service/external-checks.mjs",
+    from: "    || named(policy, app?.slug) || named(policy, app?.name) || named(policy, run?.name);",
+    to: "    || named(policy, app?.slug) || named(policy, run?.name); // EXT-M177",
+    pattern: "External checks: a named service's check run holds",
   },
 ];
 

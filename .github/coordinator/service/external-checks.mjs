@@ -7,7 +7,8 @@
 //
 // What holds a landing:
 //   - every GitHub Actions check run (this repository's own CI);
-//   - a check run whose app, or a commit status whose context, is named;
+//   - a check run whose app (by slug or by name) or own name is named, or a
+//     commit status whose context is named;
 //   - an unresolved review thread opened by a person, or by a named bot.
 // A named service is waited on only as long as the landing waits for CI
 // (LAND_LIMITS.waitMs), so even a required one has a timeout.
@@ -33,7 +34,8 @@ const named = (policy, name) => typeof name === "string" && policy.required.has(
 
 export function holdsRun(run, policy) {
   const app = run?.app;
-  return app?.id === OWN_CHECK_APP.id || app?.slug === OWN_CHECK_APP.slug || named(policy, app?.slug) || named(policy, run?.name);
+  return app?.id === OWN_CHECK_APP.id || app?.slug === OWN_CHECK_APP.slug
+    || named(policy, app?.slug) || named(policy, app?.name) || named(policy, run?.name);
 }
 
 export function holdsStatus(status, policy) {

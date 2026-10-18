@@ -649,7 +649,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     let commented = thread.some((comment) => String(comment?.body ?? "").includes(marker));
     if (!commented) {
       const body = [marker, `Merged by card run ${activationId}: pull request #${pr.number} landed on main as ${record.merge_commit_sha}.`,
-        ...(checks.advisory ? [`${checks.advisory[0].toUpperCase()}${checks.advisory.slice(1, 300)}.`] : [])].join("\n");
+        ...(checks.advisory ? [`${checks.advisory[0].toUpperCase()}${checks.advisory.length > 300 ? `${checks.advisory.slice(1, 299)}…` : checks.advisory.slice(1)}.`] : [])].join("\n");
       const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
       commented = posted?.commentCreate?.success === true;
     }
