@@ -471,7 +471,11 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     let armedAt = null;
     let watch = null;
     // Self-watch 0e: where the run is, in a local file only; see card-status.mjs.
-    const status = createStatus({ io, paths, run: { run_id: plan.record.activation_id, card: plan.id, kind: plan.kind, trigger, revision,
+    // The invocation id ties the status to the unit start the outside watch
+    // reads, so a run it alerted before this run wrote a status is matched.
+    const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+    const status = createStatus({ io, paths, run: { run_id: plan.record.activation_id,
+      invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: plan.id, kind: plan.kind, trigger, revision,
       queue: (config.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } });
     const progress = () => {
       const seen = watch ? watch.summary(io.now().getTime()) : null;
@@ -945,6 +949,8 @@ export const defaultIO = Object.freeze({
   fs,
   uid: () => process.getuid(),
   now: () => new Date(),
+  // systemd's id for this start of the unit; null outside a unit.
+  invocation: () => process.env.INVOCATION_ID ?? null,
   fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   exec: (file, args, { timeoutMs } = {}) => {
