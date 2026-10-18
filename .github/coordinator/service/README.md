@@ -402,3 +402,28 @@ card's merge comment and in the run's landing result, never waited on. GitHub's
 accepted once everything that holds is green. The config names `sentry`, so
 Sentry's findings still hold a card. A named service is waited on only as
 long as the landing waits for CI, so it too has a timeout.
+
+## Card queue: a card merged by hand counts as landed (self-repair A)
+
+A queued card counts as landed when a timer run merged it (its claim reads
+PASS, ok and MERGED), or when a person merged the run's own pull request
+(`service/card-landed.mjs`). A hand merge counts only when all of these hold:
+
+- the claim reads PASS and its landing stopped at `PR_OPENED_CI_RED`,
+  `CI_TIMEOUT`, `MERGE_HOLD` or `THREADS_HELD`, and it records the pilot
+  repository, its pull request and its reviewed head (claims written before
+  self-watch 0a never count);
+- GitHub, read with the coordinator's token and only with GET requests, shows
+  that pull request merged into `main` of the pilot repository at exactly the
+  reviewed head;
+- its merge commit is on main's first-parent history within the newest 300
+  commits.
+
+Any read that fails or is incomplete counts as not landed. A proven hand
+landing is recorded once in `/srv/shu/state/card-hand-landed-<card>.json`
+(0600, written exclusively), so a later failed read never un-lands it. The
+timer and the self-install use the same check; the read-only `plan` proves
+without recording, and marks a landed card's preparation `skipped: "LANDED"`
+instead of preparing it again. A branch a person changed after the review
+never counts: that card needs a re-arm.
+

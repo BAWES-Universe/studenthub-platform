@@ -231,7 +231,7 @@ function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), cha
   return host;
 }
 
-const deps = { busyReasons, landedByTimer: (io, paths, id) => io.fs.existsSync(autoClaim(paths, R, id)) };
+const deps = { busyReasons, cardLanded: async (io, paths, id) => io.fs.existsSync(autoClaim(paths, R, id)) };
 const install = (host, config = COMMITTED) => selfInstall({ io: host.io, paths: PATHS, config, revision: R, deps });
 const claimOf = (host) => JSON.parse(host.files.get(installClaim(PATHS, N))?.text ?? "{}");
 // Another start writes the claim just after this one looked for it.
