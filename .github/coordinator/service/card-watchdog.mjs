@@ -125,8 +125,9 @@ export function readStatus(io, paths) {
 // as systemd's monotonic microseconds, which every systemd prints the same
 // way, and turned into wall time against this process's monotonic clock (the
 // same CLOCK_MONOTONIC). The raw value names the start, so it never moves
-// between passes. A read that fails is null, and the watch then raises no
-// alert.
+// between passes. A failed unit keeps the start of the run that failed, so a
+// run that died before its first status write is still named; an idle one
+// has none. A read that fails is null, and the watch then raises no alert.
 export function readUnit(io, now) {
   const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic", "-p", "InvocationID", AUTO_SERVICE]);
   if (result.status !== 0) return null;
@@ -134,7 +135,7 @@ export function readUnit(io, now) {
     .map(([key, ...rest]) => [key.trim(), rest.join("=").trim()]));
   if (!fields.ActiveState) return null;
   const running = RUNNING_STATES.has(fields.ActiveState);
-  if (!running) return { state: fields.ActiveState, running, since: null, start: null, invocation: null };
+  if (!running && fields.ActiveState !== "failed") return { state: fields.ActiveState, running, since: null, start: null, invocation: null };
   const exit = /^[1-9]\d{0,18}$/.test(fields.InactiveExitTimestampMonotonic ?? "") ? Number(fields.InactiveExitTimestampMonotonic) : null;
   const uptime = io.monotonicMs();
   if (exit === null || !Number.isFinite(uptime) || exit / 1000 > uptime) return null;
@@ -150,6 +151,12 @@ export function readUnit(io, now) {
 // later is still matched to its alert: one run is never alerted twice.
 export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
   if (!unit) return null;
+  // A failed unit whose run wrote no status since it started died before its
+  // first write: its claim or lock may hold every later start.
+  if (unit.state === "failed" && !(status && Date.parse(status.updated_at) >= unit.since)) {
+    return { kind: "failed", key: `start-${unit.start}`, run_id: null, invocation: unit.invocation ?? null,
+      since: new Date(unit.since).toISOString(), last: null, status: null };
+  }
   if (unit.running) {
     const own = status && Date.parse(status.updated_at) >= unit.since;
     const last = own ? Date.parse(status.updated_at) : unit.since;
@@ -172,7 +179,9 @@ export function renderAlert({ stuck, mention, pause, paths = CARD_RUN_PATHS, lim
   const lines = [
     reportMarker(alertMarker(stuck.key)),
     `Alert: the card run${card ? ` on ${card}` : ""} needs the owner${mention ? ` (${mention})` : ""}.`,
-    stuck.kind === "stale"
+    stuck.kind === "failed"
+      ? `${AUTO_SERVICE} failed after starting at ${stuck.since}, before its run wrote any status: the run may have left its claim or ${paths.lock} in place, holding every later start.`
+      : stuck.kind === "stale"
       ? `${AUTO_SERVICE} has been running since ${stuck.since}, and ${stuck.status ? `the run's status was last written at ${stuck.last} (step ${stuck.status.step ?? "unknown"})` : "no status was written since it started"}: nothing for more than ${Math.round(limits.staleMs / 60000)} minutes.`
       : `${AUTO_SERVICE} is not running, but the run's status stopped at step ${stuck.status.step} at ${stuck.last} and never reached finished: the run ended without finishing, and may have left the host armed and ${paths.lock} in place.`,
     pause.written ? `Wrote ${paths.pause}, so no new card run starts until the owner removes it.`
@@ -197,7 +206,8 @@ function writePause(io, paths, stuck) {
 export function renderStatus({ status, unit, paused, now }) {
   const lines = [STATUS_MARKER, "Card-run status, kept by the card-run watch (every ten minutes, edited only when it changes)."];
   lines.push(unit === null ? `${AUTO_SERVICE}: state unknown.`
-    : unit.running ? `${AUTO_SERVICE}: running since ${new Date(unit.since).toISOString()}.` : `${AUTO_SERVICE}: idle.`);
+    : unit.running ? `${AUTO_SERVICE}: running since ${new Date(unit.since).toISOString()}.`
+      : unit.state === "failed" ? `${AUTO_SERVICE}: failed (last started ${new Date(unit.since).toISOString()}).` : `${AUTO_SERVICE}: idle.`);
   lines.push(paused ? "Timer: paused (the pause file is present)." : `Timer: next start ${nextStart(now)}.`);
   if (!status) {
     lines.push("No card run has written a status yet.");

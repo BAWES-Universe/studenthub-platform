@@ -1113,6 +1113,20 @@ const CASES = [
     to: "      invocation: null, since: new Date(unit.since).toISOString(), // SHU86-M165",
     pattern: "SHU-86 0d: a run alerted stale before its first status write",
   },
+  {
+    name: "M166 never alert a unit that failed before its run wrote a status",
+    file: "service/card-watchdog.mjs",
+    from: "  if (unit.state === \"failed\" && !(status && Date.parse(status.updated_at) >= unit.since)) {",
+    to: "  if (false) { // SHU86-M166",
+    pattern: "SHU-86 0d: a timer run whose unit failed before its first status write",
+  },
+  {
+    name: "M167 read a failed unit as idle",
+    file: "service/card-watchdog.mjs",
+    from: "  if (!running && fields.ActiveState !== \"failed\") return",
+    to: "  if (!running && fields.ActiveState !== \"SHU86-M167\") return",
+    pattern: "SHU-86 0d: a timer run whose unit failed before its first status write",
+  },
 ];
 
 for (const mutation of CASES) {

@@ -372,7 +372,8 @@ card run keeps (`service/card-status.mjs`), and:
   `<!-- card-run-status -->` marker and edited only when what it shows changed;
 - raises one alert per run when the unit is running but nothing was written
   for more than an hour (longer than one revert or one landing can wait), or
-  when the unit stopped while a timer run's status never reached `finished`.
+  when the unit stopped while a timer run's status never reached `finished`,
+  or when the unit failed before its run wrote any status.
   The alert writes `/etc/shu/card-run.paused` if no pause file is there, and
   posts one SHU-71 comment naming `config.owner_mention` when it is set.
   An alert is matched to its run by the unit start, the run id and the

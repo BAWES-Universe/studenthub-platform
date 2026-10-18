@@ -2914,14 +2914,14 @@ test("SHU-86 0d: a run alerted stale before its first status write, that later w
       assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert, null, "a resumed run is not stale");
     }
     host.put(statusPath(PATHS), JSON.stringify(ended()));
-    host.unit = { state: "failed", since: null };
+    host.unit = { state: "failed", since };
     host.now = Date.parse("2026-10-18T08:31:00.000Z");
     const again = await watchOnce({ io: host.io, paths: PATHS });
     assert.equal(again.alert?.already, true, JSON.stringify(again));
     assert.equal(alertsOf(host).length, 1, "one run, one alert");
   }
   // A different run that ends unfinished is still alerted.
-  const other = watchHost({ state: "failed", now: Date.parse("2026-10-18T08:31:00.000Z"),
+  const other = watchHost({ state: "failed", since: Date.parse("2026-10-18T08:00:00.000Z"), now: Date.parse("2026-10-18T08:31:00.000Z"),
     status: ended({ run_id: "shu-302-run-20261018T080000Z", invocation: "00000000000000000000000000000001" }) });
   other.put(path.join(PATHS.stateDir, "card-watch.json"), JSON.stringify({ alerts: [{ key: startKey(since), run_id: null, invocation, kind: "stale", posted: true, pause: { written: true } }] }));
   assert.equal((await watchOnce({ io: other.io, paths: PATHS })).alert.posted, true);
@@ -2936,13 +2936,31 @@ test("SHU-86 0d: a timer run that ended without finishing alerts once; a finishe
   assert.equal(stuckRun({ unit, status: read({ step: "finished" }), now: at + 11 * MIN }), null);
   assert.equal(stuckRun({ unit, status: read({ trigger: "operator" }), now: at + 11 * MIN }), null);
   assert.equal(stuckRun({ unit: null, status: read({}), now: at + 11 * MIN }), null, "an unreadable unit raises nothing");
-  const host = watchHost({ state: "failed", status: watchStatus({ step: "reverting", outcome: "ERROR" }), now: at + 11 * MIN });
+  const host = watchHost({ state: "failed", since: Date.parse("2026-10-18T07:00:00.000Z"), status: watchStatus({ step: "reverting", outcome: "ERROR" }), now: at + 11 * MIN });
   const ended = await watchOnce({ io: host.io, paths: PATHS });
   assert.deepEqual(ended.alert, { key: "shu-301-run-20261018T070000Z", kind: "ended", pause: { written: true }, posted: true });
   assert.match(alertsOf(host)[0].body, /is not running, but the run's status stopped at step reverting at 2026-10-18T07:04:00\.000Z and never reached finished/);
   host.now += 10 * MIN;
   assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert.already, true);
   assert.equal(alertsOf(host).length, 1);
+});
+
+test("SHU-86 0d: a timer run whose unit failed before its first status write alerts once; an idle unit never does", async () => {
+  const since = Date.parse("2026-10-18T08:00:00.000Z");
+  const previous = watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", updated_at: "2026-10-18T07:40:00.000Z" });
+  const host = watchHost({ state: "failed", since, now: since + 2 * MIN, status: previous });
+  const failed = await watchOnce({ io: host.io, paths: PATHS });
+  assert.deepEqual(failed.alert, { key: startKey(since), kind: "failed", pause: { written: true }, posted: true });
+  assert.match(alertsOf(host)[0].body, /shu-card-run\.service failed after starting at 2026-10-18T08:00:00\.000Z, before its run wrote any status/);
+  assert.match(statusComments(host)[0].body, /shu-card-run\.service: failed \(last started 2026-10-18T08:00:00\.000Z\)\./);
+  host.now += 10 * MIN;
+  assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert.already, true);
+  assert.equal(alertsOf(host).length, 1);
+  // The same unit idle, or failed after its run wrote a finished status: nothing.
+  for (const [state, status] of [["inactive", previous], ["failed", watchStatus({ step: "finished", outcome: "ERROR", updated_at: "2026-10-18T08:01:00.000Z" })]]) {
+    const quiet = watchHost({ state, since, now: since + 2 * MIN, status });
+    assert.equal((await watchOnce({ io: quiet.io, paths: PATHS })).alert, null, state);
+  }
 });
 
 test("SHU-86 0d: an alert that cannot be posted is tried again on the next pass, never posted twice, and a pause file in place is kept", async () => {

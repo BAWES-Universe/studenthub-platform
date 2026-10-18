@@ -4386,7 +4386,10 @@
     "SHU-86 mutation M162 match an alert by key or run id only",
     "SHU-86 mutation M163 the run leaves its unit's invocation out of its status",
     "SHU-86 mutation M164 the watch drops the status's invocation",
-    "SHU-86 mutation M165 a stale alert forgets the unit's invocation"
+    "SHU-86 mutation M165 a stale alert forgets the unit's invocation",
+    "SHU-86 0d: a timer run whose unit failed before its first status write alerts once; an idle unit never does",
+    "SHU-86 mutation M166 never alert a unit that failed before its run wrote a status",
+    "SHU-86 mutation M167 read a failed unit as idle"
   ],
   "requirements": [
     {
@@ -32363,6 +32366,18 @@
     },
     {
       "name": "SHU-86 mutation M165 a stale alert forgets the unit's invocation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 0d: a timer run whose unit failed before its first status write alerts once; an idle unit never does",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M166 never alert a unit that failed before its run wrote a status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M167 read a failed unit as idle",
       "capabilities": []
     }
   ],
