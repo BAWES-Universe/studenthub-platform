@@ -220,7 +220,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-323", "SHU-324", "SHU-326"], "SHU-224: the scope names the current card queue (SHU-312); SHU-325 landed by hand");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-327", "SHU-328", "SHU-329"], "SHU-224: the scope names the current card queue (SHU-312)");
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
   }

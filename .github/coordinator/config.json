@@ -33,9 +33,9 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-323",
-      "SHU-324",
-      "SHU-326"
+      "SHU-327",
+      "SHU-328",
+      "SHU-329"
     ]
   },
   "adapter_pause_map": {},
@@ -811,6 +811,79 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/organization-deletion-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-327",
+      "authorization_ref": "SHU-327",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the fifth committed card queue (SHU-312), a whole-tree card: slice O6b (organization writes refuse a deleted organization); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/src/organization-liveness.ts",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/src/postgres-organization-commercial-terms-store.ts",
+        "packages/db/src/postgres-organization-approved-to-hire-store.ts",
+        "packages/db/src/postgres-organization-notes-store.ts",
+        "packages/db/src/postgres-organization-brands-store.ts",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/src/postgres-organization-profile-store.ts",
+        "packages/db/test/postgres-organization-deletion-guards.test.ts",
+        "packages/db/test/organization-deletion-guards-mutations.mjs",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/db/src/organization-liveness.ts",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/src/postgres-organization-commercial-terms-store.ts",
+        "packages/db/src/postgres-organization-approved-to-hire-store.ts",
+        "packages/db/src/postgres-organization-notes-store.ts",
+        "packages/db/src/postgres-organization-brands-store.ts",
+        "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+        "packages/db/src/postgres-organization-profile-store.ts",
+        "packages/db/test/postgres-organization-deletion-guards.test.ts",
+        "packages/db/test/organization-deletion-guards-mutations.mjs",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-328",
+      "authorization_ref": "SHU-328",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the fifth committed card queue (SHU-312), a whole-tree card: slice O6c (workspace contexts leave out a deleted organization); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-329",
+      "authorization_ref": "SHU-329",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "third card of the fifth committed card queue (SHU-312), a whole-tree card: slice O6d (organization documents refuse a deleted organization); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/private-documents/src/index.ts",
+        "packages/private-documents/test/organization-deletion-mutations.mjs",
+        "apps/gateway/src/organization-documents-runtime.ts",
+        "apps/gateway/test/organization-documents-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/private-documents/src/index.ts",
+        "packages/private-documents/test/organization-deletion-mutations.mjs",
+        "apps/gateway/src/organization-documents-runtime.ts",
+        "apps/gateway/test/organization-documents-http.test.ts",
         "package.json"
       ]
     }

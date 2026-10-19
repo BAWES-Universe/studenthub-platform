@@ -1786,6 +1786,168 @@ Finish with npm run typecheck and npm test passing, run to the end. If a test ca
 // single-run episode. Both writer adapters say what each stage is for.
 export const WRITER_FINISH_RULE = "Finish the whole brief before you return. Unfinished work is never a reason to return: keep working until every acceptance item holds. Take the time the work needs; your run allows far more than a first pass. Use BLOCKED only for an in-scope blocker you cannot resolve, and FAILED only for a run failure outside your work, such as a broken toolchain; never use either for work you have not finished yet.";
 
+// SHU-327 to SHU-329 are the fifth committed card queue (SHU-312), the
+// follow-up to SHU-326 agreed with the independent reviewer on its pull
+// request. SHU-327 is slice O6b (risk R3): every organization-scoped write
+// refuses a soft-deleted organization, at preview and again in its commit
+// under a shared lock on the organization row. The commit check takes the row lock in
+// its own statement, before it reads the deletion records, because a row lock
+// that waits does not refresh a subquery's snapshot in the same statement.
+export const SHU327_PATHS = Object.freeze([
+  "packages/db/src/organization-liveness.ts",
+  "packages/db/src/postgres-organization-status-store.ts",
+  "packages/db/src/postgres-organization-commercial-terms-store.ts",
+  "packages/db/src/postgres-organization-approved-to-hire-store.ts",
+  "packages/db/src/postgres-organization-notes-store.ts",
+  "packages/db/src/postgres-organization-brands-store.ts",
+  "packages/db/src/postgres-pay-contract-safe-write-store.ts",
+  "packages/db/src/postgres-organization-profile-store.ts",
+  "packages/db/test/postgres-organization-deletion-guards.test.ts",
+  "packages/db/test/organization-deletion-guards-mutations.mjs",
+  "package.json",
+]);
+
+const SHU327_ACCEPTANCE = [
+  "(1) a new module packages/db/src/organization-liveness.ts exports organizationLive(client, orgId, lock = false): it reads the organization row (with FOR SHARE when lock is true) in one statement, answers false when the row is missing, and only then reads organization_deletions in a second statement, answering false when a record exists; it is not exported from packages/db/src/index.ts;",
+  "(2) each of the seven organization-scoped write stores (status, commercial terms, approved-to-hire, notes, brands, pay-contract creation and organization profile) refuses a deleted organization before any authorization decision is applied: the check that serves ownedRecord (or, for brands, link, unlink and list) calls organizationLive without the lock, so a preview, a link or an unlink of a deleted organization answers not_found exactly as an unknown organization does; each store has a named Postgres test \"SHU327_PG_<STORE>_PREVIEW\" that deletes the organization first and fails when that call is removed;",
+  "(3) each of the six safe-write commits (status, commercial terms, approved-to-hire, notes, pay-contract creation and organization profile), right after its existing advisory lock and before its decision, calls organizationLive(client, orgId, true) and refuses with not_own_record when it is false, so nothing is written; brands' link and unlink get the same refusal through their locked authorization check inside the transaction; each store has a named Postgres race test \"SHU327_PG_<STORE>_RACE\" in which a deletion is held open in another transaction while the write reaches its commit, and the write is refused with nothing written once the deletion commits; removing the store's commit check makes its race test fail;",
+  "(4) dropping FOR SHARE from organizationLive makes every race test fail, because the write then reads no deletion record, waits only on its foreign key and lands on the deleted organization;",
+  "(5) reads that already hid a deleted organization are unchanged, live organizations behave exactly as before in every store, and the existing Postgres tests of all seven stores and of SHU-326 pass unchanged; pay-contract changes (SHU-318) are untouched;",
+  "(6) packages/db/test/organization-deletion-guards-mutations.mjs applies one mutation for each check in (2) and (3) and for the lock in (4), each makes its named test fail by assertion, the script passes on the unmutated code, and bank-details-mutations.mjs and safe-write-mutations.mjs still bind each anchor exactly once and pass;",
+  "(7) npm run typecheck and npm test pass, the new Postgres test and the new mutation script run from test:db, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU327_BRIEF = `Card SHU-327: organization writes refuse a deleted organization (slice O6b, the follow-up to SHU-326; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-326 (migration 0201, organization_deletions, soft delete) and every earlier organization card. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. SHU-326 made a deleted organization read as not_found, but writes still authorize from grants and ancestry alone. An admin whose subtree grant sits above a deleted organization can still change its status, commercial terms or approved-to-hire flag, add notes, link or unlink brands, create a pay contract for it, and an owner can still edit its profile, by calling the endpoint directly.
+
+Read first:
+- packages/db/src/postgres-organization-deletion-store.ts: #allowed (the organization exists and has no deletion record), #commit (an advisory lock, then SELECT ... FOR UPDATE on the organization row, then the record) and isDeleted/deletedAmong.
+- The seven stores in this card's paths, each one's #allowed (or, for the profile store, #ownsOrganization) and #commit; the brands store's link and unlink, which authorize inside their own transaction through #allowed(c, principalId, orgId, true); the pay-contract store's #commit, which calls the injected creator. Leave #commitChange (contract changes) alone.
+- packages/db/test/postgres-organization-deletion.test.ts and each store's own Postgres test (postgres-organization-status, -commercial-terms, -approved-to-hire, -notes, -brands, -profile and postgres-pay-contract-safe-write): how each store is constructed, how fixtures are made with random ids, and how pay contracts need a currency catalogue item.
+- packages/db/test/bank-details-mutations.mjs: the Postgres mutation script pattern this card copies.
+
+Design:
+- packages/db/src/organization-liveness.ts (new): export async function organizationLive(c: pg.Pool | pg.PoolClient, orgId: string, lock = false): Promise<boolean>. First statement: SELECT id FROM organizations WHERE id = $1, with " FOR SHARE" appended when lock is true; no row is false. Second, separate statement: SELECT 1 FROM organization_deletions WHERE org_id = $1; a row is false. Keep them two statements: in READ COMMITTED a row lock that waits does not give a NOT EXISTS subquery in the same statement a fresh snapshot, so one statement would miss a deletion that committed while it waited. Say this in a comment.
+- In each store, the unlocked check: the method that answers ownedRecord (#allowed, or the profile store's #ownsOrganization) returns false at once when await organizationLive(c, orgId) is false, before reading grants. In the pay-contract store, #allowed also serves contract changes, which stay as they are: put the check in the create path's ownedRecord instead, before #allowed. In the brands store, #allowed passes its own lock argument through: organizationLive(c, orgId, lock), so link and unlink lock the row inside their transaction and list does not.
+- In each safe-write #commit, as its own line right after the existing pg_advisory_xact_lock call: if (!await organizationLive(client, orgId, true)) throw new Refusal("not_own_record"); (use each store's own names for the client and the organization; in the pay-contract store the organization is company). Nothing is inserted and the creator is never called for a deleted organization.
+- Why this is race-free: SHU-326's deletion commit locks the organization row FOR UPDATE before it inserts its record. A write that reaches its commit check first holds FOR SHARE until it commits, so the deletion waits for it; a write that arrives while a deletion holds the row waits, then reads the committed record in its second statement and refuses.
+- Error mapping is unchanged: not_own_record already answers 404 not_found through each gateway route.
+
+Tests:
+- packages/db/test/postgres-organization-deletion-guards.test.ts (new), run in test:db. Fixtures: an operator organization, a company under it and an admin with a subtree admin grant on the operator organization (the profile store needs an org-owner grant on the company instead; insert it directly and delete the organization by inserting its organization_deletions row, since SHU-326's guard refuses a deletion while a grant names it). Delete an organization by INSERT INTO organization_deletions (org_id, receipt_ref) with a random 64-hex receipt_ref.
+- For each store, "SHU327_PG_<STORE>_PREVIEW ..." (STORE one of STATUS, TERMS, APPROVED, NOTES, BRANDS, PAYCONTRACT, PROFILE): a write to a live company previews (or links) as before; after its deletion, the preview (or link and unlink) answers not_found and nothing is written.
+- For each store, "SHU327_PG_<STORE>_RACE ...": preview the write while the company is live; on a second client, BEGIN, lock the company row FOR UPDATE and insert its deletion record, without committing; start the confirm (or the link) without awaiting it; poll pg_stat_activity, bounded to 10 seconds, until a backend other than the test's own waits with wait_event_type 'Lock', and fail by assertion if none does; then COMMIT the second client, await the write, and assert it was refused (not_own_record, or not_found for brands) and that no row was written (no status override, terms, approved-to-hire row, note, brand link, pay contract or profile row, and no audit row for its token).
+- Name every test with its token first and a space after it, so the mutation script can select it with --test-name-pattern=^TOKEN followed by a space. Release every client and end every pool, even when a test fails.
+- packages/db/test/organization-deletion-guards-mutations.mjs (new): copy bank-details-mutations.mjs (DATABASE_URL required, the unmutated suite first, each mutation rewrites a built file under packages/db/dist in place, the named test must fail by assertion, the original restored before the next and in a finally). Mutations: for each store, remove the unlocked check (its PREVIEW test fails) and remove the commit check (its RACE test fails; for brands, the one call serves both, so its single mutation must fail BRANDS_PREVIEW and its lock argument made false must fail BRANDS_RACE); and in organization-liveness.js, drop " FOR SHARE" (STATUS_RACE fails). Take each anchor from the built JavaScript, not the TypeScript (tsc reprints the code), and assert it binds exactly once.
+- package.json: leave every existing script's text as it is, except append dist/packages/db/test/postgres-organization-deletion-guards.test.js at the END of the node --test --test-concurrency=1 list in test:db, and add " && node packages/db/test/organization-deletion-guards-mutations.mjs" right after "node packages/db/test/bank-details-mutations.mjs" in test:db. Never change dependencies.
+
+Out of scope: /workspace and context navigation (SHU-328), restoring or purging a deleted organization, any migration, pay-contract changes (SHU-318; a deleted organization has no live contracts), grant writes (O4, not built), store and transfer guards (O7, F2), the read model and directory in organizations.ts, the deletion store and its routes, any in-memory store, any UI, any change to packages/safe-write-contract, packages/contracts or the login code, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-328 is slice O6c (risk R2): /workspace leaves deleted organizations out
+// of its context list and refuses a deleted one as the active selection. An
+// admin's subtree grant above a deleted organization still reaches it through
+// listEffectiveContexts, because SHU-326 refuses a deletion only while a grant
+// names the organization itself.
+export const SHU328_PATHS = Object.freeze([
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+]);
+
+const SHU328_ACCEPTANCE = [
+  "(1) when an organization is selected and it is deleted, /workspace answers 403 context_forbidden, exactly as for a selection the person holds no grant for; removing that refusal makes \"SHU328_NAV_ACTIVE\" fail;",
+  "(2) the context list leaves deleted organizations out, reading deletion records with one deletedAmong call per request over the listed organizations and none when the list is empty; removing that filter makes \"SHU328_NAV_LIST\" fail;",
+  "(3) both tests reach the deleted organization through a subtree grant on its parent, and a live sibling under the same grant stays listed and selectable;",
+  "(4) with no deletions port, the navigation behaves exactly as before, and every existing navigation test passes unchanged; a deletions port that throws answers the existing 503 context_unavailable;",
+  "(5) context-navigation-mutations.mjs gains the two mutants for (1) and (2), each makes its named test fail by assertion, its existing mutants still bind exactly once and pass, and the script passes on the unmutated code;",
+  "(6) the live runtime passes the deletion store to the navigation; npm run typecheck and npm test pass; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU328_BRIEF = `Card SHU-328: workspace contexts leave out a deleted organization (slice O6c, a follow-up to SHU-326; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-326 (soft delete: organization_deletions, OrganizationDeletionRecords and PostgresOrganizationDeletionStore). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Why. SHU-326 refuses a deletion while any grant names the organization itself, but listEffectiveContexts (packages/contracts/src/authz/context.ts) fans a subtree grant out to every descendant. So an admin whose subtree grant sits above a deleted organization still sees it in /workspace and can select it. Everything opened from there already reads as not found, but the list and the selection should not offer it.
+
+Read first:
+- apps/gateway/src/context-navigation.ts, apps/gateway/test/context-navigation.test.ts (how it builds sessions, an in-memory AuthzStore and subtree grants) and apps/gateway/test/context-navigation-mutations.mjs.
+- OrganizationDeletionRecords in packages/organizations/src/organizations.ts (isDeleted and deletedAmong) and its export from @studenthub/organizations.
+- apps/gateway/src/login-runtime.ts: where organizationDeletionStore is built and where createContextNavigation is called.
+
+Design:
+- createContextNavigation(sessions, store, organizationReader?, deletions?: OrganizationDeletionRecords), the type imported from @studenthub/organizations.
+- When an organization is selected, after the existing organization lookup and before active is set: if the port is set and await deletions.isDeleted(org.id) is true, answer 403 context_forbidden.
+- After the contexts list is built and before the existing check that the active selection is still in it: if the port is set and the list is not empty, call deletions.deletedAmong once with the listed organization ids (each id once) and remove those contexts.
+- Errors from the port fall into the existing catch, which answers 503 context_unavailable.
+- login-runtime.ts passes organizationDeletionStore as the fourth argument and changes nothing else.
+
+Tests (apps/gateway/test/context-navigation.test.ts, with an in-memory deletions port that counts its calls):
+- "SHU328_NAV_ACTIVE ...": a parent with two children and an admin subtree grant on the parent; one child deleted. Selecting the deleted child answers 403 context_forbidden; selecting the live child works as before.
+- "SHU328_NAV_LIST ...": the same fixture lists the parent and the live child, not the deleted child, with exactly one deletedAmong call; with no grants at all, the list is empty and deletedAmong is not called.
+- One more test: a port whose deletedAmong throws answers 503 context_unavailable.
+- context-navigation-mutations.mjs: the "grants must be read again after revocation" mutant anchors the createContextNavigation signature line in the built file; update that one mutant's from and to for the new signature and change nothing else in it. Add two mutants in the same form: skip the isDeleted refusal (pattern SHU328_NAV_ACTIVE) and skip removing deleted contexts (pattern SHU328_NAV_LIST). Take each anchor from dist/apps/gateway/src/context-navigation.js, not the TypeScript, and check by hand that each mutant fails its test and that the script passes unmutated.
+
+Out of scope: the write guards in the Postgres stores (SHU-327), the read model and directory, listEffectiveContexts and anything in packages/contracts, the deletion store and its routes, web-ui.ts and any HTML change, package.json, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-329 is slice O6d (risk R3), found by Sentry on the pull request that
+// committed this queue: organization documents authorize through
+// resolveActiveContext alone, so an org-owner whose subtree grant sits above a
+// soft-deleted organization can still upload, replace, remove or copy its
+// logo and licence. Candidate documents are a different scope and stay as
+// they are.
+export const SHU329_PATHS = Object.freeze([
+  "packages/private-documents/src/index.ts",
+  "packages/private-documents/test/organization-deletion-mutations.mjs",
+  "apps/gateway/src/organization-documents-runtime.ts",
+  "apps/gateway/test/organization-documents-http.test.ts",
+  "package.json",
+]);
+
+const SHU329_ACCEPTANCE = [
+  "(1) PrivateDocumentOptions gains an optional port organizationDeleted?: (orgId: string) => Promise<boolean>; when it is set and the scope is an organization's own (no personId), authorize answers denied for a deleted organization after the existing context check, so upload, metadata, copy (both the source and the target), replace, remove, issueDelivery and deliver all refuse it with the same denied an unauthorized caller gets; removing that check makes \"SHU329_DOCS_DELETED\" fail;",
+  "(2) candidate-scoped documents (a personId in the scope) never consult the port, and with no port every operation behaves exactly as before; every existing private-documents, hardening, candidate-lifecycle and organization-documents test passes unchanged; a port that throws answers unavailable, never ok;",
+  "(3) the live runtime wires the port: createRuntimeOrganizationDocumentsFromEnv builds a PostgresOrganizationDeletionStore from DATABASE_URL (with organizationDeletionDecision, organizationDeletionBlockers and the two refs from @studenthub/organizations), passes organizationDeleted: (orgId) => deletions.isDeleted(orgId) to createOrganizationDocuments, and closes the store with the others;",
+  "(4) a new script packages/private-documents/test/organization-deletion-mutations.mjs applies the mutation for (1), which makes SHU329_DOCS_DELETED fail by assertion, the script passes on the unmutated code and restores the built file, and every existing private-documents and organization-documents mutation script still binds each anchor exactly once and passes;",
+  "(5) npm run typecheck and npm test pass, the new script runs from npm test right after npm run test:documents:hardening:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU329_BRIEF = `Card SHU-329: organization documents refuse a deleted organization (slice O6d, a follow-up to SHU-326; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-326 (soft delete: organization_deletions and PostgresOrganizationDeletionStore). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Why. PrivateDocuments.authorize checks only resolveActiveContext for the org-owner role. SHU-326 refuses a deletion while a grant names the organization itself, but a subtree org-owner grant on an ancestor still reaches a deleted child, so its owner can still change the deleted organization's logo, licence and other documents. Everything else about a deleted organization already reads as not found.
+
+Read first:
+- packages/private-documents/src/index.ts: PrivateDocumentOptions, run, authorize, find, and every public operation (upload, metadata, copy, replace, remove, issueDelivery, deliver). copy authorizes both the source document's scope and the target scope.
+- apps/gateway/test/organization-documents-http.test.ts: how it builds an InMemoryAuthzStore, org-owner grants and the service through createOrganizationDocuments; tests are named with a token first and a space.
+- packages/private-documents/test/hardening-mutations.mjs: the mutation pattern the new script copies (anchored on dist/packages/private-documents/src/index.js).
+- apps/gateway/src/organization-documents-runtime.ts: createOrganizationDocuments and createRuntimeOrganizationDocumentsFromEnv.
+- packages/db/src/postgres-organization-deletion-store.ts (isDeleted) and its constructor options; organizationDeletionDecision, organizationDeletionBlockers, organizationDeletionRecordRef and organizationDeletionPrincipalRef in @studenthub/organizations, and how apps/gateway/src/login-runtime.ts constructs the store.
+
+Design:
+- PrivateDocumentOptions gains organizationDeleted?: (orgId: string) => Promise<boolean>, with a one-line doc comment.
+- In authorize, after the existing resolveActiveContext check and the existing personId check, and only when scope.personId is undefined and the port is set: if await this.options.organizationDeleted(scope.orgId) is true, fail('denied'). Keep it one statement so its mutation is a single anchor. A thrown error from the port reaches run's catch and becomes unavailable.
+- createOrganizationDocuments takes an optional organizationDeleted in its ports and passes it through. createRuntimeOrganizationDocumentsFromEnv constructs the deletion store as login-runtime.ts does, pushes its close onto closers, and passes organizationDeleted: (orgId) => deletions.isDeleted(orgId).
+- Nothing else changes: no change to the store format, to delivery signing or to candidate documents.
+
+Tests (apps/gateway/test/organization-documents-http.test.ts, through createOrganizationDocuments with an in-memory port backed by a Set):
+- "SHU329_DOCS_DELETED ...": an org-owner with a subtree grant on a parent uploads a document for a child organization; after the child is marked deleted, upload, metadata, copy (to it and from it), replace, remove, issueDelivery and deliver each answer denied, and the stored state is unchanged; the live parent's documents still work.
+- "SHU329_DOCS_PORT ...": a port that throws makes the operation answer unavailable; with no port at all, the earlier behaviour holds.
+- packages/private-documents/test/organization-deletion-mutations.mjs (new): copy hardening-mutations.mjs's form, but run the built gateway test dist/apps/gateway/test/organization-documents-http.test.js with --test-name-pattern=^SHU329_DOCS_DELETED followed by a space. One mutation replaces the deletion check in dist/packages/private-documents/src/index.js with a no-op; restore the file in a finally. Take the anchor from the built JavaScript and check by hand that it fails the test and that the script passes unmutated.
+- package.json: add a test:documents:deletion:mutations script that runs it, chained into test as " && npm run test:documents:deletion:mutations" right after "npm run test:documents:hardening:mutations"; change no other script text and no dependency.
+
+Out of scope: the Postgres write guards (SHU-327), /workspace (SHU-328), purging or moving stored documents, candidate documents, organization-documents-http.ts and its routes, packages/db, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -1935,6 +2097,27 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU326_PATHS,
     acceptance: SHU326_ACCEPTANCE,
     brief: SHU326_BRIEF,
+  }),
+  "SHU-327": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU327_PATHS,
+    revision_paths: SHU327_PATHS,
+    acceptance: SHU327_ACCEPTANCE,
+    brief: SHU327_BRIEF,
+  }),
+  "SHU-328": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU328_PATHS,
+    revision_paths: SHU328_PATHS,
+    acceptance: SHU328_ACCEPTANCE,
+    brief: SHU328_BRIEF,
+  }),
+  "SHU-329": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU329_PATHS,
+    revision_paths: SHU329_PATHS,
+    acceptance: SHU329_ACCEPTANCE,
+    brief: SHU329_BRIEF,
   }),
 });
 
