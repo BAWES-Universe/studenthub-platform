@@ -1786,7 +1786,7 @@ Finish with npm run typecheck and npm test passing, run to the end. If a test ca
 // single-run episode. Both writer adapters say what each stage is for.
 export const WRITER_FINISH_RULE = "Finish the whole brief before you return. Unfinished work is never a reason to return: keep working until every acceptance item holds. Take the time the work needs; your run allows far more than a first pass. Use BLOCKED only for an in-scope blocker you cannot resolve, and FAILED only for a run failure outside your work, such as a broken toolchain; never use either for work you have not finished yet.";
 
-// SHU-327 and SHU-328 are the fifth committed card queue (SHU-312), the
+// SHU-327 to SHU-329 are the fifth committed card queue (SHU-312), the
 // follow-up to SHU-326 agreed with the independent reviewer on its pull
 // request. SHU-327 is slice O6b (risk R3): every organization-scoped write
 // refuses a soft-deleted organization, at preview and again in its commit
@@ -1894,6 +1894,57 @@ Tests (apps/gateway/test/context-navigation.test.ts, with an in-memory deletions
 - context-navigation-mutations.mjs: the "grants must be read again after revocation" mutant anchors the createContextNavigation signature line in the built file; update that one mutant's from and to for the new signature and change nothing else in it. Add two mutants in the same form: skip the isDeleted refusal (pattern SHU328_NAV_ACTIVE) and skip removing deleted contexts (pattern SHU328_NAV_LIST). Take each anchor from dist/apps/gateway/src/context-navigation.js, not the TypeScript, and check by hand that each mutant fails its test and that the script passes unmutated.
 
 Out of scope: the write guards in the Postgres stores (SHU-327), the read model and directory, listEffectiveContexts and anything in packages/contracts, the deletion store and its routes, web-ui.ts and any HTML change, package.json, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-329 is slice O6d (risk R3), found by Sentry on the pull request that
+// committed this queue: organization documents authorize through
+// resolveActiveContext alone, so an org-owner whose subtree grant sits above a
+// soft-deleted organization can still upload, replace, remove or copy its
+// logo and licence. Candidate documents are a different scope and stay as
+// they are.
+export const SHU329_PATHS = Object.freeze([
+  "packages/private-documents/src/index.ts",
+  "packages/private-documents/test/organization-deletion-mutations.mjs",
+  "apps/gateway/src/organization-documents-runtime.ts",
+  "apps/gateway/test/organization-documents-http.test.ts",
+  "package.json",
+]);
+
+const SHU329_ACCEPTANCE = [
+  "(1) PrivateDocumentOptions gains an optional port organizationDeleted?: (orgId: string) => Promise<boolean>; when it is set and the scope is an organization's own (no personId), authorize answers denied for a deleted organization after the existing context check, so upload, metadata, copy (both the source and the target), replace, remove, issueDelivery and deliver all refuse it with the same denied an unauthorized caller gets; removing that check makes \"SHU329_DOCS_DELETED\" fail;",
+  "(2) candidate-scoped documents (a personId in the scope) never consult the port, and with no port every operation behaves exactly as before; every existing private-documents, hardening, candidate-lifecycle and organization-documents test passes unchanged; a port that throws answers unavailable, never ok;",
+  "(3) the live runtime wires the port: createRuntimeOrganizationDocumentsFromEnv builds a PostgresOrganizationDeletionStore from DATABASE_URL (with organizationDeletionDecision, organizationDeletionBlockers and the two refs from @studenthub/organizations), passes organizationDeleted: (orgId) => deletions.isDeleted(orgId) to createOrganizationDocuments, and closes the store with the others;",
+  "(4) a new script packages/private-documents/test/organization-deletion-mutations.mjs applies the mutation for (1), which makes SHU329_DOCS_DELETED fail by assertion, the script passes on the unmutated code and restores the built file, and every existing private-documents and organization-documents mutation script still binds each anchor exactly once and passes;",
+  "(5) npm run typecheck and npm test pass, the new script runs from npm test right after npm run test:documents:hardening:mutations, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU329_BRIEF = `Card SHU-329: organization documents refuse a deleted organization (slice O6d, a follow-up to SHU-326; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-326 (soft delete: organization_deletions and PostgresOrganizationDeletionStore). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Why. PrivateDocuments.authorize checks only resolveActiveContext for the org-owner role. SHU-326 refuses a deletion while a grant names the organization itself, but a subtree org-owner grant on an ancestor still reaches a deleted child, so its owner can still change the deleted organization's logo, licence and other documents. Everything else about a deleted organization already reads as not found.
+
+Read first:
+- packages/private-documents/src/index.ts: PrivateDocumentOptions, run, authorize, find, and every public operation (upload, metadata, copy, replace, remove, issueDelivery, deliver). copy authorizes both the source document's scope and the target scope.
+- apps/gateway/test/organization-documents-http.test.ts: how it builds an InMemoryAuthzStore, org-owner grants and the service through createOrganizationDocuments; tests are named with a token first and a space.
+- packages/private-documents/test/hardening-mutations.mjs: the mutation pattern the new script copies (anchored on dist/packages/private-documents/src/index.js).
+- apps/gateway/src/organization-documents-runtime.ts: createOrganizationDocuments and createRuntimeOrganizationDocumentsFromEnv.
+- packages/db/src/postgres-organization-deletion-store.ts (isDeleted) and its constructor options; organizationDeletionDecision, organizationDeletionBlockers, organizationDeletionRecordRef and organizationDeletionPrincipalRef in @studenthub/organizations, and how apps/gateway/src/login-runtime.ts constructs the store.
+
+Design:
+- PrivateDocumentOptions gains organizationDeleted?: (orgId: string) => Promise<boolean>, with a one-line doc comment.
+- In authorize, after the existing resolveActiveContext check and the existing personId check, and only when scope.personId is undefined and the port is set: if await this.options.organizationDeleted(scope.orgId) is true, fail('denied'). Keep it one statement so its mutation is a single anchor. A thrown error from the port reaches run's catch and becomes unavailable.
+- createOrganizationDocuments takes an optional organizationDeleted in its ports and passes it through. createRuntimeOrganizationDocumentsFromEnv constructs the deletion store as login-runtime.ts does, pushes its close onto closers, and passes organizationDeleted: (orgId) => deletions.isDeleted(orgId).
+- Nothing else changes: no change to the store format, to delivery signing or to candidate documents.
+
+Tests (apps/gateway/test/organization-documents-http.test.ts, through createOrganizationDocuments with an in-memory port backed by a Set):
+- "SHU329_DOCS_DELETED ...": an org-owner with a subtree grant on a parent uploads a document for a child organization; after the child is marked deleted, upload, metadata, copy (to it and from it), replace, remove, issueDelivery and deliver each answer denied, and the stored state is unchanged; the live parent's documents still work.
+- "SHU329_DOCS_PORT ...": a port that throws makes the operation answer unavailable; with no port at all, the earlier behaviour holds.
+- packages/private-documents/test/organization-deletion-mutations.mjs (new): copy hardening-mutations.mjs's form, but run the built gateway test dist/apps/gateway/test/organization-documents-http.test.js with --test-name-pattern=^SHU329_DOCS_DELETED followed by a space. One mutation replaces the deletion check in dist/packages/private-documents/src/index.js with a no-op; restore the file in a finally. Take the anchor from the built JavaScript and check by hand that it fails the test and that the script passes unmutated.
+- package.json: add a test:documents:deletion:mutations script that runs it, chained into test as " && npm run test:documents:deletion:mutations" right after "npm run test:documents:hardening:mutations"; change no other script text and no dependency.
+
+Out of scope: the Postgres write guards (SHU-327), /workspace (SHU-328), purging or moving stored documents, candidate documents, organization-documents-http.ts and its routes, packages/db, the lockfile, and any network call, credential, staging or production access.
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
@@ -2060,6 +2111,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU328_PATHS,
     acceptance: SHU328_ACCEPTANCE,
     brief: SHU328_BRIEF,
+  }),
+  "SHU-329": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU329_PATHS,
+    revision_paths: SHU329_PATHS,
+    acceptance: SHU329_ACCEPTANCE,
+    brief: SHU329_BRIEF,
   }),
 });
 
