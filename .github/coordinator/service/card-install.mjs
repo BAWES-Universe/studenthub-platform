@@ -350,7 +350,8 @@ export async function selfInstall({ io, paths, config, revision, deps, limits = 
   let landed;
   let passes;
   try {
-    landed = scopeIds(facts.configs?.main).filter((id) => deps.landedByTimer(io, paths, id));
+    landed = [];
+    for (const id of scopeIds(facts.configs?.main)) if (await deps.cardLanded(io, paths, id)) landed.push(id);
     passes = reviewPasses(io, paths);
   } catch (error) {
     return { skipped: "INSTALL_UNREADABLE", reason: `the state directory cannot be read: ${error.message}` };

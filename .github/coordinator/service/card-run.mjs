@@ -54,7 +54,8 @@ import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS } from ".
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
-import { landCard, readLandToken, boundedFetch, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { cardLanded } from "./card-landed.mjs";
 import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
@@ -221,40 +222,37 @@ export function onBase(plan, base) {
   return { ...plan, record };
 }
 
-// The landing outcome a timer run recorded for this card at any installed
-// revision. Claims live in the root-owned state directory. A claim proves a
-// landing only when its content names this card, the revision in its own file
-// name, and a passed run that merged: a swapped or partial claim proves nothing.
-function landedByTimer(io, paths, id) {
-  const name = new RegExp(`^card-run-auto-([0-9a-f]{40})-${id}\\.json$`);
-  for (const file of io.fs.readdirSync(paths.stateDir)) {
-    const match = name.exec(file);
-    if (!match) continue;
-    try {
-      const claim = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"));
-      if (claim?.card === id && claim.revision === match[1] && claim.outcome === "PASS" && claim.ok === true
-        && claim.land === "MERGED") return true;
-    } catch { /* an unreadable claim proves nothing */ }
-  }
-  return false;
+// Whether a queued card landed: by a timer run's merge, or by a person's
+// merge of the run's own pull request at its reviewed head (self-repair A,
+// card-landed.mjs). GitHub is read with the coordinator's token, reads only;
+// without it only a timer landing or a recorded hand landing counts.
+export function landingReader(io, paths, config, limits = CARD_RUN_LIMITS) {
+  let credentials = null;
+  try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* no GitHub reads */ }
+  const gh = credentials?.GITHUB_TOKEN
+    ? github(boundedFetch(io, limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs), credentials.GITHUB_TOKEN) : null;
+  return { repo: config.pilot_repo ?? null, gh, now: () => io.now() };
 }
 
 // Which card this start runs, decided once. A single committed card is itself
 // (its once-per-revision claim is checked by the caller). A queue gives the
 // first card a timer run has not landed, unless that card already ran at this
 // revision: it did not land, so the queue stops there until a new install.
-export function nextCard(io, paths, config, revision) {
+// A hand landing is proven from GitHub and, with `record`, written down.
+export async function nextCard(io, paths, config, revision, { landing = null, record = false } = {}) {
   const queue = cardQueue(config);
   if (!queue.queue) return { id: null };
   if (!queue.ok) return { id: null, skipped: "NOT_READY", reason: `CARD_RUN_SCOPE: ${queue.reason}` };
   for (const id of queue.ids) {
-    if (landedByTimer(io, paths, id)) continue;
+    const landed = await cardLanded(io, paths, id, { ...(landing ?? {}), record });
+    if (landed.landed) continue;
     const claim = autoClaim(paths, revision, id);
     if (!io.fs.existsSync(claim)) return { id };
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
-    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}` };
+    const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
+    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}` };
   }
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }
@@ -601,7 +599,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   try {
     revision = installedRevision(io, paths);
     config = readConfig(io, paths);
-    const next = nextCard(io, paths, config, revision);
+    const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
     // SHU-321: only a done queue may go on to review a queue config pull
     // request; a stopped, invalid or paused one never does.
     if (next.skipped === "QUEUE_DONE") done = next;
@@ -732,7 +730,7 @@ export function assertQueueConfigReviewer(plan) {
   return plan;
 }
 
-// One claim per head, ever. The name never matches landedByTimer's, so a
+// One claim per head, ever. The name never matches a card's claim, so a
 // review can never read as a landed card.
 export const reviewClaim = (paths, pr, head) => path.join(paths.stateDir, `card-review-auto-pr${pr}-${head}.json`);
 const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
@@ -810,7 +808,8 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
 async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
   let install;
   try {
-    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons, landedByTimer } });
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons,
+      cardLanded: async (hostIo, hostPaths, id) => (await cardLanded(hostIo, hostPaths, id, { ...landingReader(hostIo, hostPaths, config, limits), record: true })).landed } });
   } catch (error) {
     install = { skipped: "INSTALL_UNREADABLE", reason: error.message };
   }
@@ -1000,9 +999,13 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
       // SHU-312: the card the next timer start would run, and a dry run of
       // every queued card's preparation from main as it is now.
       if (review) refuse("CARD_RUN_REVIEW_INPUT", "a review run never comes from a card queue");
-      const next = nextCard(io, paths, config, revision);
+      // Read only: a hand landing is proven here, never recorded.
+      const landing = landingReader(io, paths, config);
+      const next = await nextCard(io, paths, config, revision, { landing });
       const queued = [];
       for (const id of queue.ok ? queue.ids : []) {
+        // A landed card is never prepared again: its card is owned and done.
+        if ((await cardLanded(io, paths, id, landing)).landed) { queued.push({ id, prepare: { skipped: "LANDED" } }); continue; }
         const plan = planRun({ config, revision, now: io.now(), cardId: id });
         queued.push({ id, prepare: await dryPrepare(plan) });
       }

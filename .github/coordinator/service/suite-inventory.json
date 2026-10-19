@@ -4402,7 +4402,21 @@
     "SHU-86 mutation M174 accept a malformed external policy",
     "SHU-86 mutation M175 match named services by exact case",
     "SHU-86 mutation M176 hold the consumer on advisory checks",
-    "SHU-86 mutation M177 match a named service's check run by slug only"
+    "SHU-86 mutation M177 match a named service's check run by slug only",
+    "Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on",
+    "Self-repair A: no other merge, claim or read counts a card as landed",
+    "SHU-86 mutation M178 count a merge at any head",
+    "SHU-86 mutation M179 count a closed pull request",
+    "SHU-86 mutation M180 skip the first-parent walk",
+    "SHU-86 mutation M181 count a merge into any branch",
+    "SHU-86 mutation M182 never record a proven hand landing",
+    "SHU-86 mutation M183 record from the read-only plan",
+    "SHU-86 mutation M184 forget a recorded hand landing",
+    "SHU-86 mutation M185 count any landing outcome",
+    "SHU-86 mutation M186 count a run that did not pass",
+    "SHU-86 mutation M187 trust a record for another card",
+    "SHU-86 mutation M188 send the reader's method as given",
+    "SHU-86 mutation M189 prepare a landed card in the plan"
   ],
   "requirements": [
     {
@@ -32443,6 +32457,62 @@
     },
     {
       "name": "SHU-86 mutation M177 match a named service's check run by slug only",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair A: no other merge, claim or read counts a card as landed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M178 count a merge at any head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M179 count a closed pull request",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M180 skip the first-parent walk",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M181 count a merge into any branch",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M182 never record a proven hand landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M183 record from the read-only plan",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M184 forget a recorded hand landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M185 count any landing outcome",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M186 count a run that did not pass",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M187 trust a record for another card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M188 send the reader's method as given",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M189 prepare a landed card in the plan",
       "capabilities": []
     }
   ],

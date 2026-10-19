@@ -25,6 +25,7 @@ import { renderWatchLine, parseWatchLine } from "../watch-progress.mjs";
 import { statusPath, needsOwner, alertLine, ownerMention, nextStart } from "../service/card-status.mjs";
 import { watchOnce, stuckRun, readStatus, readUnit, renderStatus, installWatch, removeWatch, WATCH_LIMITS, STATUS_MARKER } from "../service/card-watchdog.mjs";
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
+import { cardLanded, handLandRecord, HAND_LAND_OUTCOMES } from "../service/card-landed.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -2437,7 +2438,7 @@ test("SHU-312 Q4: a card branch starts from main as it is now, only when main de
 
 test("SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land", async () => {
   const host = fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-301")(h) : tickText("activation=absent (committed gates only)")) });
-  assert.deepEqual(nextCard(host.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
+  assert.deepEqual(await nextCard(host.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
   // Selected once: the run is the card the timer picked, although the claim it
   // wrote first records no landing yet (GPT, SHU-312 design review).
   const first = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
@@ -2489,14 +2490,14 @@ test("SHU-312 Q6: a new install resumes the queue after the cards that already l
   // SHU-301 landed under the previous install; SHU-305 ran there and did not.
   claimFor(host, REV, "SHU-301", { outcome: "PASS", ok: true, land: "MERGED" });
   claimFor(host, REV, "SHU-305", { outcome: "PASS", ok: true, land: "CI_TIMEOUT" });
-  assert.deepEqual(nextCard(host.io, PATHS, queueConfig(), HEAD), { id: "SHU-305" }, "a new install re-arms the card that did not land, after the one that did");
+  assert.deepEqual(await nextCard(host.io, PATHS, queueConfig(), HEAD), { id: "SHU-305" }, "a new install re-arms the card that did not land, after the one that did");
   const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
   assert.equal(run.card, "SHU-305", JSON.stringify(run));
   // A landing outcome is read only from a well-formed claim file.
   const odd = fakeHost({ config: queueConfig() });
   odd.files.set(`${PATHS.stateDir}/card-run-auto-x-SHU-301.json`, { text: JSON.stringify({ land: "MERGED" }), mode: 0o600, uid: 0, gid: 0 });
   odd.files.set(`${PATHS.stateDir}/card-run-auto-${REV}-SHU-3010.json`, { text: JSON.stringify({ land: "MERGED" }), mode: 0o600, uid: 0, gid: 0 });
-  assert.deepEqual(nextCard(odd.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
+  assert.deepEqual(await nextCard(odd.io, PATHS, queueConfig(), REV), { id: "SHU-301" });
   // A landing is read only from a claim whose content matches its name and
   // records a passed run that merged: a swapped or partial claim proves nothing.
   const OTHER = "c".repeat(40);
@@ -2509,7 +2510,7 @@ test("SHU-312 Q6: a new install resumes the queue after the cards that already l
   ]) {
     const swapped = fakeHost({ config: queueConfig() });
     swapped.files.set(file, { text: JSON.stringify(fields), mode: 0o600, uid: 0, gid: 0 });
-    assert.deepEqual(nextCard(swapped.io, PATHS, queueConfig(), OTHER), { id: "SHU-301" }, label);
+    assert.deepEqual(await nextCard(swapped.io, PATHS, queueConfig(), OTHER), { id: "SHU-301" }, label);
   }
   // An invalid queue never runs.
   const bad = fakeHost({ config: queueConfig(["SHU-301", "SHU-304"]) });
@@ -2750,6 +2751,102 @@ test("SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause 
   notReviewed(late, "paused during discovery");
 });
 
+// Self-repair A: a card a person merged at the run's reviewed head.
+const HAND_PR = 77;
+const HAND_MERGE = "3".repeat(40);
+const handClaim = (fields = {}) => ({ outcome: "PASS", ok: false, land: "CI_TIMEOUT", repo: COMMITTED.pilot_repo, pr: HAND_PR, reviewed_head: PASSED, ...fields });
+// GitHub as a person left it: #77 merged at `head` into `base`, its merge
+// commit `onMain` as main's first parent (or only reachable as a second parent).
+function handGitHub(host, { merged = true, head = PASSED, base = "main", baseRepo = COMMITTED.pilot_repo, onMain = "first", fail = null } = {}) {
+  const api = `https://api.github.com/repos/${COMMITTED.pilot_repo}`;
+  const side = "4".repeat(40);
+  const commits = onMain === "first"
+    ? [{ sha: "5".repeat(40), parents: [{ sha: HAND_MERGE }] }, { sha: HAND_MERGE, parents: [{ sha: REV }] }, { sha: REV, parents: [] }]
+    : [{ sha: "5".repeat(40), parents: [{ sha: REV }, { sha: HAND_MERGE }] }, { sha: HAND_MERGE, parents: [{ sha: side }] }, { sha: REV, parents: [] }];
+  host.githubCalls = [];
+  const delegate = host.io.fetch;
+  host.io.fetch = async (url, options = {}) => {
+    const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
+    if (url === `${api}/pulls/${HAND_PR}` || url.startsWith(`${api}/commits?sha=main`)) {
+      host.githubCalls.push(`${options.method ?? "GET"} ${url}`);
+      if (fail && fail(url)) { if (fail(url) === "throw") throw new TypeError("fetch failed"); return respond(500, null); }
+      if (url.endsWith(`/pulls/${HAND_PR}`)) {
+        return respond(200, { number: HAND_PR, merged, merge_commit_sha: HAND_MERGE,
+          base: { ref: base, repo: { full_name: baseRepo } }, head: { ref: "coordinator/SHU-301", sha: head } });
+      }
+      return respond(200, url.endsWith("page=1") ? commits : []);
+    }
+    return delegate(url, options);
+  };
+  return host;
+}
+
+test("Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on", async () => {
+  const host = handGitHub(fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-305")(h) : tickText("activation=absent (committed gates only)")) }));
+  host.mainTip = HEAD;
+  claimFor(host, REV, "SHU-301", handClaim());
+  assert.deepEqual([...HAND_LAND_OUTCOMES].sort(), ["CI_TIMEOUT", "MERGE_HOLD", "PR_OPENED_CI_RED", "THREADS_HELD"]);
+  // Without GitHub, the claim alone stops the queue as before.
+  assert.equal((await nextCard(host.io, PATHS, queueConfig(), REV)).skipped, "QUEUE_STOPPED");
+  // The read-only plan proves it, prepares SHU-301 no more, and records nothing.
+  const { output } = await main(["plan"], host.io, PATHS);
+  assert.deepEqual(output.next, { id: "SHU-305" }, JSON.stringify(output));
+  assert.deepEqual(output.queued[0], { id: "SHU-301", prepare: { skipped: "LANDED" } });
+  assert.equal(host.files.has(handLandRecord(PATHS, "SHU-301")), false, "the plan records nothing");
+  // The timer proves it, records it, and runs the next card.
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(run.card, "SHU-305", JSON.stringify(run));
+  assert.ok(host.files.has(handLandRecord(PATHS, "SHU-301")), "the proven hand landing is recorded");
+  const record = JSON.parse(host.files.get(handLandRecord(PATHS, "SHU-301")).text);
+  assert.deepEqual({ ...record, recorded_at: null }, { card: "SHU-301", revision: REV, pr: HAND_PR, reviewed_head: PASSED, merge_commit: HAND_MERGE, recorded_at: null });
+  assert.equal(host.files.get(handLandRecord(PATHS, "SHU-301")).mode, 0o600);
+  assert.ok(host.githubCalls.length > 0 && host.githubCalls.every((call) => call.startsWith("GET ")), "GitHub is only read");
+  // Recorded, it stays landed when GitHub can no longer be read.
+  assert.deepEqual(await cardLanded(host.io, PATHS, "SHU-301"), { landed: true, by: "hand" });
+  // Every outcome that stopped at landing after a passed review qualifies.
+  for (const land of HAND_LAND_OUTCOMES) {
+    const other = handGitHub(fakeHost({ config: queueConfig() }));
+    claimFor(other, REV, "SHU-301", handClaim({ land }));
+    const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => other.io.fetch(url, { method }) };
+    assert.equal((await cardLanded(other.io, PATHS, "SHU-301", landing)).landed, true, land);
+  }
+});
+
+test("Self-repair A: no other merge, claim or read counts a card as landed", async () => {
+  const cases = [
+    ["a different head", {}, { head: "6".repeat(40) }],
+    ["closed, not merged", {}, { merged: false }],
+    ["merged into another branch", {}, { base: "release" }],
+    ["merged into another repository's main", {}, { baseRepo: "someone/fork" }],
+    ["a merge commit off main's first parents", {}, { onMain: "second" }],
+    ["a pull request that cannot be read", {}, { fail: (url) => url.includes("/pulls/") }],
+    ["a lost answer", {}, { fail: (url) => (url.includes("/pulls/") ? "throw" : null) }],
+    ["main's history that cannot be read", {}, { fail: (url) => url.includes("/commits?") }],
+    ["a legacy claim with no pull request", { pr: undefined, reviewed_head: undefined, repo: undefined }, {}],
+    ["a claim with no reviewed head", { reviewed_head: null }, {}],
+    ["a claim for another repository", { repo: "someone/fork" }, {}],
+    ["a run that did not pass", { outcome: "STOPPED" }, {}],
+    ["a landing that errored", { land: "LAND_ERROR" }, {}],
+    ["a head mismatch at landing", { land: "LAND_HEAD_MISMATCH" }, {}],
+  ];
+  for (const [label, claim, github] of cases) {
+    const host = handGitHub(fakeHost({ config: queueConfig() }), github);
+    claimFor(host, REV, "SHU-301", handClaim(claim));
+    const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => host.io.fetch(url, { method }) };
+    const result = await cardLanded(host.io, PATHS, "SHU-301", { ...landing, record: true });
+    assert.equal(result.landed, false, `${label}: ${JSON.stringify(result)}`);
+    const stopped = await nextCard(host.io, PATHS, queueConfig(), REV, { landing, record: true });
+    assert.equal(stopped.skipped, "QUEUE_STOPPED", label);
+    // The stop says why a hand merge was not proven, whenever GitHub was asked.
+    if (result.reason) assert.ok(stopped.reason.endsWith(`; hand landing not proven: ${result.reason}`), `${label}: ${stopped.reason}`);
+    assert.equal(host.files.has(handLandRecord(PATHS, "SHU-301")), false, `${label}: nothing recorded`);
+  }
+  // A recorded hand landing must name its card and its proof.
+  const forged = fakeHost({ config: queueConfig() });
+  forged.files.set(handLandRecord(PATHS, "SHU-301"), { text: JSON.stringify({ card: "SHU-305", pr: HAND_PR, reviewed_head: PASSED, merge_commit: HAND_MERGE }), mode: 0o600, uid: 0, gid: 0 });
+  assert.equal((await cardLanded(forged.io, PATHS, "SHU-301")).landed, false);
+});
+
 test("SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review", async () => {
   const { narrowQueueScope } = await import("../single-run-activation.mjs");
   const { resolveDispatchScope } = await import("../reconcile.mjs");
@@ -2791,7 +2888,7 @@ test("SHU-321 R7: the claim records the pull request, its head and base, the run
   });
   assert.equal(host.files.get(reviewClaim(PATHS, 240, PR_HEAD)).mode, 0o600);
   assert.doesNotMatch(path.basename(reviewClaim(PATHS, 240, PR_HEAD)), /^card-run-auto-/);
-  assert.equal(nextCard(host.io, PATHS, queueConfig(), REV).skipped, "QUEUE_DONE", "a review claim is never a card's landing");
+  assert.equal((await nextCard(host.io, PATHS, queueConfig(), REV)).skipped, "QUEUE_DONE", "a review claim is never a card's landing");
 });
 
 test("SHU-321 R8: a GitHub read that fails is a skip that claims nothing", async () => {
