@@ -1177,7 +1177,9 @@ export async function launchBuilder({
       ok: false };
   }
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
-    if (countActionItems(result.stdout) === 0) {
+    // A resumed process sees only its own stdout, not the actions the first
+    // process took, so only a fresh launch can show that nothing was tried.
+    if (!resume && countActionItems(result.stdout) === 0) {
       return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links,
         reason_code: "BUILDER_NO_ATTEMPT", reason: `BUILDER_NO_ATTEMPT: builder returned ${callback.stage} without running a command or changing a file`, ok: false };
     }
