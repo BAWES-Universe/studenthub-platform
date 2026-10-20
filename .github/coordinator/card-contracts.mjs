@@ -1784,7 +1784,7 @@ Finish with npm run typecheck and npm test passing, run to the end. If a test ca
 // SHU-71: the first whole-tree card's builder stopped after six of its 45
 // minutes with part of the brief done and returned FAILED, which ends a
 // single-run episode. Both writer adapters say what each stage is for.
-export const WRITER_FINISH_RULE = "Finish the whole brief before you return. Unfinished work is never a reason to return: keep working until every acceptance item holds. Take the time the work needs; your run allows far more than a first pass. Use BLOCKED only for an in-scope blocker you cannot resolve, and FAILED only for a run failure outside your work, such as a broken toolchain; never use either for work you have not finished yet. This run has no execution window or deadline: start by reading the files the brief names, and never return BLOCKED or FAILED before you have run a command; such an answer is recorded as no attempt.";
+export const WRITER_FINISH_RULE = "Finish the whole brief before you return. Unfinished work is never a reason to return: keep working until every acceptance item holds. Take the time the work needs; your run allows far more than a first pass. Use BLOCKED only for an in-scope blocker you cannot resolve, and FAILED only for a run failure outside your work, such as a broken toolchain; never use either for work you have not finished yet. This run has no execution window or deadline: start by reading the files the brief names with your tools, and never return BLOCKED or FAILED before you have used your tools on the work; such an answer is recorded as no attempt.";
 
 // SHU-327 to SHU-329 are the fifth committed card queue (SHU-312), the
 // follow-up to SHU-326 agreed with the independent reviewer on its pull
