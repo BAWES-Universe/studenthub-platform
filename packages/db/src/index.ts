@@ -40,5 +40,6 @@ export {PostgresOrganizationCommercialTermsStore,ORGANIZATION_COMMERCIAL_TERMS_O
 export {PostgresOrganizationApprovedToHireStore,ORGANIZATION_APPROVED_TO_HIRE_OPERATION,type PostgresOrganizationApprovedToHireStoreOptions} from "./postgres-organization-approved-to-hire-store.js";
 export {PostgresOrganizationNotesStore,ORGANIZATION_NOTES_OPERATION,type OrganizationNoteDbRow} from "./postgres-organization-notes-store.js";
 export {PostgresOrganizationBrandsStore,ORGANIZATION_BRAND_LINK_OPERATION,ORGANIZATION_BRAND_UNLINK_OPERATION} from "./postgres-organization-brands-store.js";
+export {PostgresOrganizationStoresStore,ORGANIZATION_STORE_CREATE_OPERATION,ORGANIZATION_STORE_UPDATE_OPERATION,ORGANIZATION_STORE_REMOVE_OPERATION,type OrganizationStoreInput,type OrganizationStoreRecord,type OrganizationStoreCreateResult,type OrganizationStoreUpdateResult,type OrganizationStoreRemoveResult} from "./postgres-organization-stores-store.js";
 export {PostgresOrganizationDeletionStore,ORGANIZATION_DELETION_OPERATION,type PostgresOrganizationDeletionStoreOptions} from "./postgres-organization-deletion-store.js";
 export {PostgresPayContractSafeWriteStore,PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATION,type PostgresPayContractSafeWriteStoreOptions} from "./postgres-pay-contract-safe-write-store.js";

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -23,7 +23,7 @@ import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organi
   organizationStatusDecision, organizationStatusStateDecision, organizationStatusEvent, organizationStatusRecordRef, organizationStatusPrincipalRef,
   organizationCommercialTermsDecision,organizationCommercialTermsStateDecision,organizationCommercialTermsRecordRef,organizationCommercialTermsPrincipalRef,
   organizationApprovedToHireDecision,organizationApprovedToHireStateDecision,organizationApprovedToHireRecordRef,organizationApprovedToHirePrincipalRef,
-  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,organizationNoteTypeOf,organizationBrandDecision,organizationBrandLinkOutcome,organizationBrandUnlinkOutcome,organizationDeletionDecision,organizationDeletionBlockers,organizationDeletionRecordRef,organizationDeletionPrincipalRef,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
+  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,organizationNoteTypeOf,organizationBrandDecision,organizationBrandLinkOutcome,organizationBrandUnlinkOutcome,organizationStoreWriteDecision,organizationStoreReadDecision,organizationDeletionDecision,organizationDeletionBlockers,organizationDeletionRecordRef,organizationDeletionPrincipalRef,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import {payContractWriteDecision,payContractReadAccess,payContractCreator,payContractCreateCheck,payContractCompanyRecordRef,payContractPrincipalRef,payContractRecordRef,payContractChanger,payContractStateDecision,payContractEditableValue,payContractChangeCheck} from "@studenthub/pay-contracts";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
@@ -34,6 +34,7 @@ import {createOrganizationCommercialTerms}from"./organization-commercial-terms.j
 import {createOrganizationApprovedToHire}from"./organization-approved-to-hire.js";
 import {createOrganizationNotes}from"./organization-notes.js";
 import {createOrganizationBrands}from"./organization-brands.js";
+import {createOrganizationStores}from"./organization-stores.js";
 import {createOrganizationDeletion}from"./organization-deletion.js";
 import {createPayContracts}from"./pay-contracts-http.js";
 import { createBankDetails } from "./bank-details.js";
@@ -229,6 +230,7 @@ export function createRuntimeLoginFromEnv(
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
   const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef,noteType:organizationNoteTypeOf});
   const organizationBrandsStore=new PostgresOrganizationBrandsStore({connectionString:value("DATABASE_URL"),decision:organizationBrandDecision,linkOutcome:organizationBrandLinkOutcome,unlinkOutcome:organizationBrandUnlinkOutcome});
+  const organizationStoresStore=new PostgresOrganizationStoresStore({connectionString:value("DATABASE_URL"),writeDecision:organizationStoreWriteDecision,readDecision:organizationStoreReadDecision});
   const organizationDeletionStore=new PostgresOrganizationDeletionStore({connectionString:value("DATABASE_URL"),decision:organizationDeletionDecision,blockers:organizationDeletionBlockers,recordRef:organizationDeletionRecordRef,principalRef:organizationDeletionPrincipalRef});
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
@@ -286,6 +288,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWriteKey?{organizationApprovedToHire:createOrganizationApprovedToHire({sessions:loginStore.sessions,store:organizationApprovedToHireStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationNotes:createOrganizationNotes({sessions:loginStore.sessions,store:organizationNotesStore,secret:safeWriteKey})}:{}),
       ...({organizationBrands:createOrganizationBrands({sessions:loginStore.sessions,store:organizationBrandsStore})} as {}),
+      ...({organizationStores:createOrganizationStores({sessions:loginStore.sessions,store:organizationStoresStore})} as {}),
       ...(safeWriteKey?{organizationDeletion:createOrganizationDeletion({sessions:loginStore.sessions,store:organizationDeletionStore,secret:safeWriteKey})}:{}),
       ...{payContracts:createPayContracts({sessions:loginStore.sessions,store:payContractWrites,contracts:payContracts,
         ...(safeWriteKey?{secret:safeWriteKey,check:payContractCreateCheck({references:payContractReferences,contracts:payContracts,candidates:payContractWrites}),changeCheck:payContractChangeCheck({references:payContractReferences,contracts:payContracts})}: {})})},
@@ -302,7 +305,7 @@ export function createRuntimeLoginFromEnv(
     },
     async close() {
       await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationNotesStore.close(),
-        organizationBrandsStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
+        organizationBrandsStore.close(),organizationStoresStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
     },
   };
 }
