@@ -2245,6 +2245,7 @@
     "callback validation: wrong attempt, wrong sha, missing stage, missing links, bad url all fail closed",
     "builder completion validates the resulting branch head, not the input checkout head",
     "BLOCKED/FAILED callbacks never complete; they surface HOLD with the builder evidence",
+    "BUILDER_NO_ATTEMPT: a BLOCKED/FAILED builder that ran no command says so; one that acted does not",
     "completed without a valid schema callback -> HOLD (never COMPLETED)",
     "stale-head guard: checkout mismatch refuses the launch before codex starts",
     "resume accepts builder commits descended from the bound input and rejects a diverged worktree",
@@ -18838,6 +18839,17 @@
     },
     {
       "name": "BLOCKED/FAILED callbacks never complete; they surface HOLD with the builder evidence",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "BUILDER_NO_ATTEMPT: a BLOCKED/FAILED builder that ran no command says so; one that acted does not",
       "capabilities": [
         {
           "name": "linux_proc"
