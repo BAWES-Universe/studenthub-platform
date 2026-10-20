@@ -4,7 +4,8 @@ import { runInNewContext } from "node:vm";
 import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
-import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES } from "@studenthub/organizations";
+import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
+  type OrganizationDeletionRecords } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation } from "../src/context-navigation.js";
 import type { BrowserLoginApplication } from "../src/web-ui.js";
@@ -47,6 +48,77 @@ async function fixture(t: TestContext) {
   });
   return { get, store, rig, login };
 }
+
+class CountingDeletions implements OrganizationDeletionRecords {
+  isDeletedCalls = 0;
+  deletedAmongCalls = 0;
+
+  constructor(readonly deleted: ReadonlySet<string>) {}
+
+  async isDeleted(orgId: string): Promise<boolean> {
+    this.isDeletedCalls++;
+    return this.deleted.has(orgId);
+  }
+
+  async deletedAmong(orgIds: readonly string[]): Promise<ReadonlySet<string>> {
+    this.deletedAmongCalls++;
+    assert.equal(new Set(orgIds).size, orgIds.length, "organization ids are queried once each");
+    return new Set(orgIds.filter((orgId) => this.deleted.has(orgId)));
+  }
+}
+
+async function deletionFixture(deletions: OrganizationDeletionRecords) {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.sessions.put({ id: SESSION, personId: "person-1" });
+  const store = new InMemoryAuthzStore({
+    principals: [{ id: "person-1", pbuuids: [] }],
+    organizations: [
+      { id: "parent", name: "Parent" },
+      { id: "deleted-child", name: "Deleted child", parentOrgId: "parent" },
+      { id: "live-child", name: "Live child", parentOrgId: "parent" },
+    ],
+  });
+  await store.grantMany("person-1", [{ orgId: "parent", role: "admin", scope: "subtree" }]);
+  return { navigation: createContextNavigation(rig.sessions, store, undefined, deletions), store };
+}
+
+test("SHU328_NAV_ACTIVE deleted subtree organization cannot be selected while a live sibling still works", async () => {
+  const deletions = new CountingDeletions(new Set(["deleted-child"]));
+  const { navigation } = await deletionFixture(deletions);
+  const deleted = await navigation.open(SESSION, new URLSearchParams({ org_id: "deleted-child", role: "admin" }));
+  assert.deepEqual(deleted, { status: 403, body: { error: "context_forbidden" } });
+  const live = await navigation.open(SESSION, new URLSearchParams({ org_id: "live-child", role: "admin" }));
+  assert.equal(live.status, 200);
+  if (live.status === 200) {
+    assert.deepEqual(live.body.active, { orgId: "live-child", role: "admin", organizationName: "Live child" });
+  }
+  assert.equal(deletions.isDeletedCalls, 2);
+});
+
+test("SHU328_NAV_LIST deleted subtree organization is omitted with one batch call and empty grants skip it", async () => {
+  const deletions = new CountingDeletions(new Set(["deleted-child"]));
+  const { navigation, store } = await deletionFixture(deletions);
+  const listed = await navigation.open(SESSION, new URLSearchParams());
+  assert.equal(listed.status, 200);
+  if (listed.status === 200) {
+    assert.deepEqual(listed.body.contexts.map(({ orgId }) => orgId), ["live-child", "parent"]);
+  }
+  assert.equal(deletions.deletedAmongCalls, 1);
+  await store.clearGrantsForPrincipal("person-1");
+  const empty = await navigation.open(SESSION, new URLSearchParams());
+  assert.deepEqual(empty, { status: 200, body: { contexts: [], active: null } });
+  assert.equal(deletions.deletedAmongCalls, 1, "an empty context list must not query deletions");
+});
+
+test("SHU328_NAV_LIST deletion lookup failures return context_unavailable", async () => {
+  const { navigation } = await deletionFixture({
+    async isDeleted() { return false; },
+    async deletedAmong() { throw new Error("private deletion store diagnostic"); },
+  });
+  assert.deepEqual(await navigation.open(SESSION, new URLSearchParams()), {
+    status: 503, body: { error: "context_unavailable" },
+  });
+});
 
 test("workspace lists only this session's granted contexts and never defaults to a privileged role", async (t) => {
   const f = await fixture(t);
