@@ -99,3 +99,50 @@ test('SHU-301 organization route rejects candidate documents ', async context =>
   }
   assert.deepEqual(await candidate.metadata(CANDIDATE, document.id), document);
 });
+
+test('SHU329_DOCS_DELETED deleted organization refuses every document operation ', async context => {
+  const dir = await mkdtemp(join(tmpdir(), 'shu329-')); context.after(() => rm(dir, { recursive: true, force: true }));
+  const store = await FileDocumentStore.create(join(dir, 'documents'));
+  const authz = new InMemoryAuthzStore({
+    organizations: [{ id: 'parent', name: 'Parent' }, { id: 'child', name: 'Child', parentOrgId: 'parent' }],
+    principals: [{ id: 'owner', pbuuids: [] }],
+  });
+  await authz.grantMany('owner', [{ orgId: 'parent', role: 'org-owner', scope: 'subtree' }]);
+  const deleted = new Set<string>();
+  const service = createOrganizationDocuments({
+    store, authz, sessions: new Sessions(), origin: 'https://documents.example.test', signingKey: randomBytes(32),
+    organizationDeleted: async orgId => deleted.has(orgId),
+  }).service;
+  const input = (orgId: string) => ({ scope: { orgId }, type: 'company-logo' as const, mime: 'image/png', bytes: png });
+  const child = await service.upload(OWNER, input('child'));
+  const parent = await service.upload(OWNER, input('parent'));
+  const delivery = await service.issueDelivery(OWNER, child.id);
+  deleted.add('child');
+  const before = await store.transaction(async state => structuredClone(state));
+  const denied = async (operation: Promise<unknown>) => assert.rejects(operation, (error: unknown) => error instanceof Error && 'code' in error && error.code === 'denied');
+  await denied(service.upload(OWNER, input('child')));
+  await denied(service.metadata(OWNER, child.id));
+  await denied(service.copy(OWNER, child.id, { orgId: 'parent' }));
+  await denied(service.copy(OWNER, parent.id, { orgId: 'child' }));
+  await denied(service.replace(OWNER, child.id, input('child')));
+  await denied(service.remove(OWNER, child.id));
+  await denied(service.issueDelivery(OWNER, child.id));
+  await denied(service.deliver(OWNER, delivery.url));
+  assert.deepEqual(await store.transaction(async state => structuredClone(state)), before);
+  assert.deepEqual(await service.metadata(OWNER, parent.id), parent);
+  assert.equal((await service.upload(OWNER, input('parent'))).type, 'company-logo');
+});
+
+test('SHU329_DOCS_PORT deletion port failure is unavailable and an omitted port preserves access ', async context => {
+  const dir = await mkdtemp(join(tmpdir(), 'shu329-port-')); context.after(() => rm(dir, { recursive: true, force: true }));
+  const store = await FileDocumentStore.create(join(dir, 'documents'));
+  const authz = new InMemoryAuthzStore({ organizations: [{ id: 'org-a', name: 'A' }], principals: [{ id: 'owner', pbuuids: [] }] });
+  await authz.grantMany('owner', [{ orgId: 'org-a', role: 'org-owner', scope: 'self' }]);
+  const common = { store, authz, sessions: new Sessions(), origin: 'https://documents.example.test', signingKey: randomBytes(32) };
+  const legacy = createOrganizationDocuments(common).service;
+  const input = { scope: { orgId: 'org-a' }, type: 'company-logo' as const, mime: 'image/png', bytes: png };
+  const document = await legacy.upload(OWNER, input);
+  assert.deepEqual(await legacy.metadata(OWNER, document.id), document);
+  const unavailable = createOrganizationDocuments({ ...common, organizationDeleted: async () => { throw new Error('database offline'); } }).service;
+  await assert.rejects(unavailable.metadata(OWNER, document.id), (error: unknown) => error instanceof Error && 'code' in error && error.code === 'unavailable');
+});
