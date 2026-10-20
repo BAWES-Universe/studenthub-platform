@@ -33,7 +33,6 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-327",
       "SHU-328",
       "SHU-329"
     ]
