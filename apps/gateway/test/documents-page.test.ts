@@ -86,6 +86,7 @@ test("JSON callers get the same own list without ids or versions", async (t) => 
 
 test("unconfigured documents report unavailable", async () => {
   assert.deepEqual(await readOwnDocuments(undefined, SESSION), { status: 503 });
+  assert.deepEqual(await readOwnDocuments(undefined, undefined), { status: 401 });
   assert.match(renderDocumentsPage({ status: 503 }, { navigation: false }), /Back to my profile/);
 });
 

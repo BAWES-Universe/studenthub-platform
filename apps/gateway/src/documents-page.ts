@@ -26,8 +26,9 @@ const LABELS: Record<CandidateDocumentType, { readonly title: string; readonly h
 const FORMATS: Readonly<Record<string, string>> = { "application/pdf": "PDF", "image/png": "PNG", "image/jpeg": "JPEG" };
 
 export async function readOwnDocuments(reader: DocumentsReader | undefined, sessionId: string | undefined): Promise<DocumentsPageResult> {
-  if (!reader) return { status: 503 };
+  // A missing session is always 401, whether or not the document service is configured.
   if (!sessionId) return { status: 401 };
+  if (!reader) return { status: 503 };
   try {
     const listed = await reader.list(sessionId);
     const documents: DocumentSlot[] = [];
