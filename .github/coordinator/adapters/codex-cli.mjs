@@ -344,6 +344,27 @@ export function parseThreadStarted(stdout) {
   return null;
 }
 
+// Items a Codex run produces only by acting: a command, a file change or a
+// tool call. A writer that answers BLOCKED or FAILED with none of them never
+// tried (SHU-327, 2026-10-19: FAILED in 10 seconds with zero tool calls), so its
+// HOLD says so instead of reading like a blocker it met.
+const ACTION_ITEM_TYPES = new Set(["command_execution", "file_change", "mcp_tool_call", "web_search"]);
+
+export function countActionItems(stdout) {
+  let count = 0;
+  if (typeof stdout !== "string") return 0;
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event?.type === "item.completed" && ACTION_ITEM_TYPES.has(event.item?.type)) count += 1;
+    } catch {
+      // ignore non-JSONL
+    }
+  }
+  return count;
+}
+
 export function parseFinalMessage(stdout) {
   // The model's FINAL agent message carries the schema-constrained callback.
   // JSONL events: item.completed with item.type "agent_message" — take the LAST.
@@ -1156,6 +1177,12 @@ export async function launchBuilder({
       ok: false };
   }
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
+    // A resumed process sees only its own stdout, not the actions the first
+    // process took, so only a fresh launch can show that nothing was tried.
+    if (!resume && countActionItems(result.stdout) === 0) {
+      return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links,
+        reason_code: "BUILDER_NO_ATTEMPT", reason: `BUILDER_NO_ATTEMPT: builder returned ${callback.stage} without running a command or changing a file`, ok: false };
+    }
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };
   }
   // Refuse before the broker: pushing a result whose stage the receipt will

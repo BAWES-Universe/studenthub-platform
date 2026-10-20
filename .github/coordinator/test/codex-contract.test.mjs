@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   launchBuilder,
+  countActionItems,
   monitorRun,
   externalRunId,
   threadIdFromRunId,
@@ -303,6 +304,36 @@ test("BLOCKED/FAILED callbacks never complete; they surface HOLD with the builde
     assert.equal(out.callback.stage, stage);
     assert.equal(out.evidence_links.length, 1);
   }
+});
+
+test("BUILDER_NO_ATTEMPT: a BLOCKED/FAILED builder that ran no command says so; one that acted does not", async () => {
+  const acted = (stage) => [
+    JSON.stringify({ type: "thread.started", thread_id: THREAD }),
+    JSON.stringify({ type: "item.completed", item: { id: "c1", type: "command_execution", command: "npm test", exit_code: 1 } }),
+    JSON.stringify({ type: "item.completed", item: { id: "i1", type: "agent_message", text: callbackJson(stage) } }),
+  ].join("\n");
+  for (const stage of ["BLOCKED", "FAILED"]) {
+    const idle = await launchBuilder({ ...launchInput(), execFileImpl: (_f, _a, _o, cb) => queueMicrotask(() => cb(null, jsonl({ finalText: callbackJson(stage) }), "")),
+      schemaFile: join(mkdtempSync(join(tmpdir(), "codex-")), "schema.json") });
+    assert.equal(idle.stage, "HOLD");
+    assert.equal(idle.reason_code, "BUILDER_NO_ATTEMPT", `${stage} with zero actions`);
+    assert.match(idle.reason, new RegExp(`returned ${stage} without running a command`));
+    const tried = await launchBuilder({ ...launchInput(), execFileImpl: (_f, _a, _o, cb) => queueMicrotask(() => cb(null, acted(stage), "")),
+      schemaFile: join(mkdtempSync(join(tmpdir(), "codex-")), "schema.json") });
+    assert.equal(tried.stage, "HOLD");
+    assert.equal(tried.reason_code, undefined, `${stage} after a command keeps the plain reason`);
+    assert.equal(tried.reason, `builder returned ${stage}`);
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-no-attempt-resume-"));
+    persistDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD, owner_host: "fixture-host", child_pid: 111, child_start: "100" });
+    const resumed = await launchBuilder({ ...launchInput(), resume: true, external_run_id: `codexrun_${THREAD}`,
+      execFileImpl: (_f, _a, _o, cb) => queueMicrotask(() => cb(null, jsonl({ finalText: callbackJson(stage) }), "")),
+      schemaFile: join(mkdtempSync(join(tmpdir(), "codex-")), "schema.json"),
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null } });
+    assert.equal(resumed.stage, "HOLD");
+    assert.equal(resumed.reason_code, undefined, `a resumed ${stage} cannot see the first process's actions, so it is never no-attempt`);
+    assert.equal(resumed.reason, `builder returned ${stage}`);
+  }
+  assert.equal(countActionItems(["not json", JSON.stringify({ type: "item.completed", item: { type: "reasoning" } }), JSON.stringify({ type: "item.completed", item: { type: "file_change" } })].join("\n")), 1);
 });
 
 test("completed without a valid schema callback -> HOLD (never COMPLETED)", async () => {
