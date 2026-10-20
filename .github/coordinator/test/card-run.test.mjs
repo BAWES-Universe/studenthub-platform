@@ -628,7 +628,8 @@ test("SHU-86 C43: a branch main already contains moves forward to main under a l
   assert.ok(left.api.includes(`git contains ${REV}`));
   assert.equal(left.api.filter((call) => call.startsWith("git push")).length, 1, "one push, no dry run, during a run");
   assert.ok(left.calls.some((call) => call.includes("--force-with-lease=refs/heads/coordinator/SHU-301:" + REV)), "the lease names the head read");
-  assert.match(result.report?.body ?? JSON.stringify(result.report ?? {}), /moved coordinator\/SHU-301 forward from a{40} to main at b{40}|^\{/);
+  assert.equal(left.reports.length, 1);
+  assert.match(left.reports[0], new RegExp(`^Before arming: .*moved coordinator/SHU-301 forward from ${REV} to main at ${HEAD}\\.$`, "m"));
   // Plan only dry-runs the same move.
   const planned = fakeHost({ branchHead: REV });
   planned.mainTip = HEAD;
