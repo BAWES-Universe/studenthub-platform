@@ -157,6 +157,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         assert.deepEqual(command.slice(-5), ["fetch", "--no-tags", "--no-recurse-submodules", PUSH_REMOTE, "refs/heads/main:refs/heads/card-base"]);
         host.api.push("git fetch main");
         host.fetchedMain = host.mainTip;
+        host.ancestryChecked = false;
         return host.fetchFails ? { status: 128, stdout: "", stderr: "fatal: could not read" } : ok();
       }
       if (verb === "rev-parse") {
@@ -164,6 +165,15 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         return ok(`${host.fetchedMain}\n`);
       }
       if (verb === "merge-base") {
+        // SHU-327: an existing branch main already contains moves forward.
+        // main's ancestry is checked first after each fetch; a second check is
+        // the existing branch's containment.
+        if (host.ancestryChecked) {
+          assert.deepEqual(command.slice(-4), ["merge-base", "--is-ancestor", host.branchHead, host.fetchedMain]);
+          host.api.push(`git contains ${host.branchHead}`);
+          return { status: host.branchContained === true ? 0 : 1, stdout: "", stderr: "" };
+        }
+        host.ancestryChecked = true;
         assert.deepEqual(command.slice(-4), ["merge-base", "--is-ancestor", host.head, host.fetchedMain]);
         return { status: host.mainDescends === false ? 1 : 0, stdout: "", stderr: "" };
       }
@@ -178,11 +188,14 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       // Someone creates the branch between the API read and the push. A
       // create-only lease is refused; a plain push would fast-forward it.
       if (host.raceBranchHead) host.branchHead = host.raceBranchHead;
+      const lease = args.find((arg) => arg.startsWith(`--force-with-lease=${ref}:`));
+      assert.ok(lease, "every branch push carries a lease");
       if (host.branchHead) {
-        if (args.includes(`--force-with-lease=${ref}:`)) return { status: 1, stdout: "", stderr: "! [rejected] (stale info)" };
+        if (lease !== `--force-with-lease=${ref}:${host.branchHead}`) return { status: 1, stdout: "", stderr: "! [rejected] (stale info)" };
         if (!dry) host.branchHead = sha;
         return ok();
       }
+      if (lease !== `--force-with-lease=${ref}:`) return { status: 1, stdout: "", stderr: "! [rejected] (stale info)" };
       if (host.pushFails) return { status: host.pushFails === "timeout" ? 124 : 128, stdout: "", stderr: `ERROR: read-only key for ${PUSH_REMOTE}` };
       if (!dry) host.branchHead = sha;
       return ok();
@@ -599,6 +612,50 @@ test("SHU-86 C42: a report that never reached Linear is tried again, a bounded n
   assert.equal(lost.reports.length, 1, "a committed report is never posted twice");
   assert.equal(lost.api.filter((call) => call === "linear report report-uuid").length, 1);
   assert.equal(lost.api.filter((call) => call === "linear report read SHU-71").length, 2);
+});
+
+test("SHU-86 C43: a branch main already contains moves forward to main under a lease on its head; one with its own commit never moves", async () => {
+  // SHU-327, 2026-10-20: the first run stopped without landing and left its
+  // branch at the main it started from; the next install re-armed the queue,
+  // and every start refused that branch.
+  const left = fakeHost({ branchHead: REV, onTick: passFor("SHU-301") });
+  left.mainTip = HEAD;
+  left.branchContained = true;
+  const result = await runCard({ io: left.io, paths: PATHS }).catch((error) => assert.fail(`the run refused: ${error.message}`));
+  assert.equal(result.outcome, "PASS");
+  assert.deepEqual(result.prepared.branch, { branch: "coordinator/SHU-301", head: HEAD, base: HEAD, action: "advance", from: REV });
+  assert.equal(left.branchHead, HEAD);
+  assert.ok(left.api.includes(`git contains ${REV}`));
+  assert.equal(left.api.filter((call) => call.startsWith("git push")).length, 1, "one push, no dry run, during a run");
+  assert.ok(left.calls.some((call) => call.includes("--force-with-lease=refs/heads/coordinator/SHU-301:" + REV)), "the lease names the head read");
+  assert.match(result.report?.body ?? JSON.stringify(result.report ?? {}), /moved coordinator\/SHU-301 forward from a{40} to main at b{40}|^\{/);
+  // Plan only dry-runs the same move.
+  const planned = fakeHost({ branchHead: REV });
+  planned.mainTip = HEAD;
+  planned.branchContained = true;
+  const out = (await main(["plan"], planned.io, PATHS)).output;
+  assert.deepEqual(out.prepare.branch, { branch: "coordinator/SHU-301", head: REV, base: HEAD, action: "advance", from: REV });
+  assert.equal(planned.branchHead, REV);
+  assert.deepEqual(planned.api.filter((call) => call.startsWith("git push")), [`git push dry-run refs/heads/coordinator/SHU-301 ${HEAD}`]);
+  // A branch with a commit main lacks is refused before anything is pushed.
+  const own = fakeHost({ branchHead: BASE });
+  own.mainTip = HEAD;
+  own.branchContained = false;
+  await assert.rejects(runCard({ io: own.io, paths: PATHS }), { code: "CARD_RUN_BRANCH_NOT_AT_TARGET" });
+  assert.equal(own.branchHead, BASE);
+  assert.ok(own.api.includes(`git contains ${BASE}`));
+  assert.equal(own.api.some((call) => call.startsWith("git push") || call.startsWith("linear todo")), false);
+  noArming(own);
+  // A branch someone moves after the read is refused by the lease, never moved.
+  const raced = fakeHost({ branchHead: REV });
+  raced.mainTip = HEAD;
+  raced.branchContained = true;
+  raced.raceBranchHead = BASE;
+  const error = await runCard({ io: raced.io, paths: PATHS }).then(() => null, (e) => e);
+  assert.equal(error?.code, "CARD_RUN_BRANCH_CREATE");
+  assert.equal(raced.branchHead, BASE);
+  noArming(raced);
+  assert.equal(raced.pushDirs.size, 0);
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {
@@ -2427,7 +2484,8 @@ test("SHU-312 Q4: a card branch starts from main as it is now, only when main de
     assert.equal(host.pushDirs.size, 0, `${label}: the push repository is removed`);
     noArming(host);
   }
-  // A branch left at the old install is never moved to the new main.
+  // A branch left at the old install that main does not contain is never
+  // moved to the new main (SHU-327: one main contains moves, see C43).
   const stale = fakeHost({ branchHead: REV });
   stale.mainTip = HEAD;
   await assert.rejects(runCard({ io: stale.io, paths: PATHS }), { code: "CARD_RUN_BRANCH_NOT_AT_TARGET" });

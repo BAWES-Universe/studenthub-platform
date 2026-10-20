@@ -34,8 +34,8 @@ const CASES = [
   {
     name: "M4 arm a card whose branch moved off the revision",
     file: "service/card-prepare.mjs",
-    from: '  if (head !== null) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET",',
-    to: '  if (false) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", // SHU86-M4\n',
+    from: '      if (contained.status !== 0) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET",',
+    to: '      if (false) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", // SHU86-M4\n',
     pattern: "SHU-86 C8:",
   },
   {
@@ -377,7 +377,7 @@ const CASES = [
   {
     name: "M58 write the branch with the read-only token",
     file: "service/card-prepare.mjs",
-    from: '    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(apply ? [] : ["--dry-run"]),',
+    from: '    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:${head ?? ""}`, ...(apply ? [] : ["--dry-run"]),',
     to: '    const push = { status: 0 }; if (apply) github(io, credentials, "POST", `https://api.github.com/repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: base }); void ([ // SHU86-M58\n',
     pattern: "SHU-86 C8:",
   },
@@ -433,7 +433,7 @@ const CASES = [
   {
     name: "M66 push without the create-only lease",
     file: "service/card-prepare.mjs",
-    from: '    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(apply ? [] : ["--dry-run"]),',
+    from: '    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:${head ?? ""}`, ...(apply ? [] : ["--dry-run"]),',
     to: '    const push = git(["push", "--no-verify", ...(apply ? [] : ["--dry-run"]), // SHU86-M66\n',
     pattern: "SHU-86 C40:",
   },
@@ -1282,6 +1282,20 @@ const CASES = [
     from: "        if ((await cardLanded(io, paths, id, landing)).landed) { queued.push",
     to: "        if (false) { queued.push",
     pattern: "Self-repair A: a card a person merged at the reviewed head counts as landed",
+  },
+  {
+    name: "M190 move an existing branch under a create-only lease",
+    file: "service/card-prepare.mjs",
+    from: '`--force-with-lease=refs/heads/${branch}:${head ?? ""}`',
+    to: '`--force-with-lease=refs/heads/${branch}:` /* SHU86-M190 */',
+    pattern: "SHU-86 C43:",
+  },
+  {
+    name: "M191 move an existing branch without checking main contains it",
+    file: "service/card-prepare.mjs",
+    from: '      const contained = git(["merge-base", "--is-ancestor", head, base]);',
+    to: '      const contained = { status: 0 }; // SHU86-M191',
+    pattern: "SHU-86 C43:",
   },
 ];
 
