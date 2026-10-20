@@ -37,6 +37,7 @@ import {handlePayContracts,type PayContractsCreate} from "./pay-contracts-http.j
 import {handleOrganizationBrands,type OrganizationBrands} from "./organization-brands.js";
 import {handleOrganizationDeletion,type OrganizationDeletion} from "./organization-deletion.js";
 import { handleBankDetails } from "./bank-details.js";
+import { DOCUMENTS_CSS, readOwnDocuments, renderDocumentsPage } from "./documents-page.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
@@ -202,7 +203,7 @@ export function createGatewayServer(
         "content-type": "text/css; charset=utf-8", "cache-control": "no-cache",
         "x-content-type-options": "nosniff",
       });
-      response.end(WEB_CSS + PROFILE_RECORDS_CSS);
+      response.end(WEB_CSS + PROFILE_RECORDS_CSS + DOCUMENTS_CSS);
       return;
     }
     if (request.method === "GET" && request.url === "/assets/workspace-history.js") {
@@ -218,6 +219,17 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
+      return;
+    }
+
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/profile/documents") {
+      // Own documents only: the session decides whose list is read, never a query.
+      const result = await readOwnDocuments(documents, cookieValue(request.headers.cookie, "__Host-studenthub_session"));
+      if (result.status === 503) fault = 'dependency_unavailable';
+      if (html) writeHtml(response, result.status, renderDocumentsPage(result, { navigation: Boolean(login?.navigation) }));
+      else writeBrowserResponseSafely(response, { status: result.status,
+        body: result.status === 200 ? { documents: result.documents } : { error: result.status === 401 ? "unauthorized" : "documents_unavailable" },
+        headers: { "cache-control": "no-store", vary: "Accept" } });
       return;
     }
 
@@ -341,7 +353,7 @@ export function createGatewayServer(
       }
       if (html) {
         try {
-          const page = await profileDocument(result, login);
+          const page = await profileDocument(result, login, Boolean(documents));
           writeHtml(response, page.status, page.html);
         } catch {
           fault = 'render_failure';
