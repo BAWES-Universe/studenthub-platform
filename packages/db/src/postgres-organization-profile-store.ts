@@ -3,6 +3,7 @@ import pg from "pg";
 import type { CommitInput, CommitOutcome, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { databaseUrl } from "./connection.js";
 import { organizationAuditRef } from "./authorization-audit.js";
+import { organizationLive } from "./organization-liveness.js";
 
 export const ORGANIZATION_PROFILE_OPERATION = "organization.profile.safe_write";
 const FIELDS = ["name_en", "name_ar", "description_en", "description_ar", "website"] as const;
@@ -70,6 +71,7 @@ export class PostgresOrganizationProfileStore {
     return rows;
   }
   async #ownsOrganization(client: pg.Pool | pg.PoolClient, principalId: string, orgId: string): Promise<boolean> {
+    if (!await organizationLive(client, orgId)) return false;
     return this.#options.ownerDecision(await this.#grants(client, principalId), orgId);
   }
   async #read(client: pg.Pool | pg.PoolClient, orgId: string, field: Field): Promise<string | null> {
@@ -82,6 +84,7 @@ export class PostgresOrganizationProfileStore {
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 300))", [orgId]);
+      if (!await organizationLive(client, orgId, true)) throw new Refusal("not_own_record");
       const grants = await this.#grants(client, principalId, true);
       if (!this.#options.ownerDecision(grants, orgId)) throw new Refusal("not_own_record");
       const used = await client.query("SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2", [ORGANIZATION_PROFILE_OPERATION, tokenRef(input.tokenId)]);

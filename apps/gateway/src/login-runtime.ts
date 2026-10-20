@@ -274,7 +274,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: {
       ...application,
-      navigation: createContextNavigation(loginStore.sessions, authzStore, organizations),
+      navigation: createContextNavigation(loginStore.sessions, authzStore, organizations, organizationDeletionStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations),
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }

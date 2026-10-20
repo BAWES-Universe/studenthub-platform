@@ -299,20 +299,29 @@ async function prepareBranch(io, credentials, repo, checkout, branch, revision, 
   const tip = inPushRepository(io, credentials, repo, checkout, (git) => {
     const base = mainTip(git, credentials, revision);
     if (head === base) return base;
-    if (head !== null) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", `${branch} is at ${head}, not main at ${base}; an existing branch is never moved`);
-    // An empty lease makes the push create-only: the remote applies it only
-    // while the branch does not exist, so a branch someone creates after the
-    // read above, even at an ancestor, is refused, never moved.
-    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:`, ...(apply ? [] : ["--dry-run"]),
+    // SHU-327, 2026-10-20: a card that stopped without landing leaves its
+    // branch at the main it started from, and the install that re-arms the
+    // queue then refused it on every start. A branch main already contains
+    // holds no commit main lacks, so it moves forward to main; one with a
+    // commit of its own is never moved.
+    if (head !== null) {
+      const contained = git(["merge-base", "--is-ancestor", head, base]);
+      if (contained.status !== 0) refuse("CARD_RUN_BRANCH_NOT_AT_TARGET", `${branch} is at ${head}, not main at ${base}, and main does not contain it; such a branch is never moved`);
+    }
+    // The lease names the head read above, or none: the remote applies the
+    // push only while the branch is still there (or still absent), so a branch
+    // someone creates or moves after the read is refused, never moved.
+    const push = git(["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:${head ?? ""}`, ...(apply ? [] : ["--dry-run"]),
       credentials.SHU_PUSH_REMOTE_URL, `${base}:refs/heads/${branch}`]);
     if (push.status !== 0) refuse("CARD_RUN_BRANCH_CREATE", `${branch} could not be ${apply ? "pushed" : "pushed in a dry run"} as ${COORDINATOR_USER} (${exitText(push.status)})`);
     return base;
   });
   if (head === tip) return { branch, head, base: tip, action: "none" };
-  if (!apply) return { branch, head: null, base: tip, action: "create" };
+  const action = head === null ? "create" : "advance";
+  if (!apply) return { branch, head, base: tip, action, ...(head === null ? {} : { from: head }) };
   const after = await branchHead(io, credentials, repo, branch);
   if (after !== tip) refuse("CARD_RUN_BRANCH_READBACK", `${branch} reads back at ${after}, not ${tip}`);
-  return { branch, head: after, base: tip, action: "create" };
+  return { branch, head: after, base: tip, action, ...(head === null ? {} : { from: head }) };
 }
 
 // Makes the planned card ready to run, or with apply false says what it would
@@ -421,6 +430,7 @@ export function renderRunReport(result) {
   const before = [
     card ? (card.action === "move-to-todo" ? `moved ${card.card} from ${plainReason(card.from)} to Todo` : `${card.card} was already in Todo`) : null,
     branch ? (branch.action === "create" ? `created ${branch.branch}${branch.base ? ` from main at ${branch.base}` : ""}`
+      : branch.action === "advance" ? `moved ${branch.branch} forward from ${branch.from} to main at ${branch.base}`
       : `${branch.branch} was already at ${branch.base ? `main at ${branch.base}` : "the revision"}`) : null,
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
