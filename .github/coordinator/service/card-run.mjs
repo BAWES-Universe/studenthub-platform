@@ -629,11 +629,8 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     }
     // Refused before arming: nothing was armed, and the claim stands, so the
     // owner hears about it once instead of on every timer start.
-    result = { ok: false, card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger: "timer", revision,
-      outcome: "NOT_STARTED", reason: error.message, code: error.code ?? "CARD_RUN_ERROR", ticks: [], revert: null };
-    let credentials = null;
-    try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
-    result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });
+    result = await notStarted({ io, paths, limits, error, config,
+      result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, revision } });
   }
   // The claim written before the run already stops a second run at this
   // revision. If this write fails, a queue never sees the card as landed and
@@ -867,7 +864,7 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
       const code = error.code === "CARD_RUN_LOCKED" ? "LOCKED" : "HOST_BUSY";
       return skip(code, error.message);
     }
-    result = await notStarted({ io, paths, limits, error,
+    result = await notStarted({ io, paths, limits, error, config,
       result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, review: { pr, head, base }, revision } });
   }
   let claimError = null;
@@ -881,9 +878,19 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
 }
 
 // A run refused before arming: the claim stands and the owner hears it once.
-async function notStarted({ io, paths, limits, error, result }) {
+async function notStarted({ io, paths, limits, error, config, result }) {
   const summary = { ok: false, ...result, trigger: "timer", outcome: "NOT_STARTED", reason: error.message,
     code: error.code ?? "CARD_RUN_ERROR", ticks: [], revert: null };
+  // SHU-327, 2026-10-20: a refusal comes before the run's first status write,
+  // and the watch reads a failed unit with no status since its start as a run
+  // that died early, and pauses the timer; that pause then held the starts of
+  // the install that fixed the refusal. The status says the run finished.
+  const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+  createStatus({ io, paths, run: { run_id: summary.activation_id,
+    invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: summary.card, kind: summary.kind, trigger: "timer",
+    revision: summary.revision, queue: (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } })
+    .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "NOT_STARTED", land: null,
+      reverted: false, needs_owner: needsOwner(summary) });
   let credentials = null;
   try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
   const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });
