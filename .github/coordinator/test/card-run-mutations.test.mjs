@@ -321,8 +321,8 @@ const CASES = [
   },
   {
     name: "M49 stay silent about a refusal before arming",
-    from: "    result.report = await postRunReport({ io, credentials, result, timeoutMs: limits.reportTimeoutMs });\n  }\n  // The claim written",
-    to: "  }\n  // SHU86-M49 The claim written",
+    from: "  const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });\n  return { ...summary, report };",
+    to: "  const report = undefined; // SHU86-M49\n  return { ...summary, report };",
     pattern: "SHU-86 C33:",
   },
   {
@@ -1296,6 +1296,13 @@ const CASES = [
     from: '      const contained = git(["merge-base", "--is-ancestor", head, base]);',
     to: '      const contained = { status: 0 }; // SHU86-M191',
     pattern: "SHU-86 C43:",
+  },
+  {
+    name: "M192 leave no status behind a refusal before arming",
+    file: "service/card-run.mjs",
+    from: '    .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "NOT_STARTED", land: null,',
+    to: '    .failures({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "NOT_STARTED", land: null, // SHU86-M192\n',
+    pattern: "SHU-86 C44:",
   },
 ];
 

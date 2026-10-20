@@ -1162,6 +1162,30 @@ test("SHU-86 C33: a refusal before arming spends the revision's run and is repor
   assert.equal(host.reports.length, 1, "reported once, not on every timer start");
 });
 
+test("SHU-86 C44: a refusal before arming writes a finished status, so the watch never reads it as a run that died", async () => {
+  // SHU-327, 2026-10-20: the 12:30 start refused before arming and wrote no
+  // status; the watch read the failed unit as a run that died before its first
+  // write and paused the timer, which then held the next install's starts.
+  const host = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
+  const started = host.io.now().getTime();
+  const { code, output } = await main(["auto"], host.io, PATHS);
+  assert.equal(code, 1);
+  assert.equal(output.outcome, "NOT_STARTED");
+  noArming(host);
+  const status = readStatus(host.io, PATHS);
+  assert.ok(status, "the status file is written and valid");
+  assert.equal(status.step, "finished");
+  assert.equal(status.outcome, "NOT_STARTED");
+  assert.equal(status.card, "SHU-301");
+  assert.equal(status.trigger, "timer");
+  assert.equal(status.run_id, output.activation_id);
+  assert.equal(status.needs_owner, false);
+  assert.equal(status.ticks, 0);
+  const unit = { state: "failed", running: false, since: Math.floor(started / 1000) * 1000, start: "42" };
+  assert.equal(stuckRun({ unit, status, now: started + 30 * 60 * 1000 }), null, "a refused run is not a run that died");
+  assert.equal(stuckRun({ unit, status: null, now: started + 30 * 60 * 1000 })?.kind, "failed", "without the status it would be");
+});
+
 test("SHU-86 C34: a run that finds the host taken after the claim gives the claim back", async () => {
   const host = fakeHost({ onTick: passOnFirstTick });
   const write = host.fs.writeFileSync;

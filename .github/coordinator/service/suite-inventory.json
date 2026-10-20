@@ -2150,6 +2150,7 @@
     "SHU-86 C31: the timer runs the committed card once per installed revision, and never again at that revision",
     "SHU-86 C32: a paused, locked, busy or not-ready host is skipped without touching the host or Linear",
     "SHU-86 C33: a refusal before arming spends the revision's run and is reported once",
+    "SHU-86 C44: a refusal before arming writes a finished status, so the watch never reads it as a run that died",
     "SHU-86 C34: a run that finds the host taken after the claim gives the claim back",
     "SHU-86 C35: the timer installs exact units, never replaces different ones, and is removed only between runs",
     "SHU-86 C36: the timer commands take no flags",
@@ -4420,7 +4421,8 @@
     "SHU-86 mutation M188 send the reader's method as given",
     "SHU-86 mutation M189 prepare a landed card in the plan",
     "SHU-86 mutation M190 move an existing branch under a create-only lease",
-    "SHU-86 mutation M191 move an existing branch without checking main contains it"
+    "SHU-86 mutation M191 move an existing branch without checking main contains it",
+    "SHU-86 mutation M192 leave no status behind a refusal before arming"
   ],
   "requirements": [
     {
@@ -18399,6 +18401,10 @@
     },
     {
       "name": "SHU-86 C33: a refusal before arming spends the revision's run and is reported once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C44: a refusal before arming writes a finished status, so the watch never reads it as a run that died",
       "capabilities": []
     },
     {
@@ -32540,6 +32546,10 @@
     },
     {
       "name": "SHU-86 mutation M191 move an existing branch without checking main contains it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M192 leave no status behind a refusal before arming",
       "capabilities": []
     }
   ],
