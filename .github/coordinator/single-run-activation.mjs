@@ -637,6 +637,17 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
 // The record
 // ---------------------------------------------------------------------------
 
+// Self-repair B1: a spent or expired landing repair keeps its validated repair
+// binding in the refusal, so the reporter decides the episode with the repair's
+// own one-round cap (and its passed head and lanes) exactly as the spend did,
+// rather than re-deciding it as an ordinary episode that would still route a
+// second revise and so report no stop.
+const REPAIR_REPORTING_KEYS = Object.freeze([...REPAIR_ACTIVATION_KEYS, "initial_target_sha", "writer_lane", "reviewer_lane"]);
+function repairReporting(source) {
+  if (!source || !REPAIR_ACTIVATION_KEYS.every((key) => Object.hasOwn(source, key))) return {};
+  return Object.fromEntries(REPAIR_REPORTING_KEYS.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]));
+}
+
 function refused(reason, reporting = null) {
   const safe = reporting &&
     typeof reporting.activation_id === "string" && ACTIVATION_ID_RE.test(reporting.activation_id) &&
@@ -656,6 +667,7 @@ function refused(reason, reporting = null) {
     coordinator_revision: safe?.coordinator_revision ?? null,
     expires_at: safe?.expires_at ?? null,
     reporting_exception: safe?.reporting_exception ?? null,
+    ...repairReporting(safe),
   };
 }
 
@@ -666,6 +678,7 @@ function reportingRefusal(record, reporting_exception) {
     coordinator_revision: record.coordinator_revision,
     expires_at: record.expires_at,
     reporting_exception,
+    ...repairReporting(record),
   };
 }
 

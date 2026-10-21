@@ -1409,6 +1409,30 @@ test("Self-repair B1: E5 the re-review's PASS ends the repair complete", () => {
   assert.deepEqual(b1Verdict([b1Build(), b1Pass()], { repair: null }), { ended: false, reason: "no attempt has been dispatched yet" });
 });
 
+test("Self-repair B1: E7 a spent or expired repair reports its stop with the repair's own cap", () => {
+  const revise = b1Revised();
+  const block = b1Receipt({ role: "review", worker: "claude-verifier", stage: "HOLD", verdict: "BLOCKED", minute: 4,
+    episode: B1_REPAIR, target: B1_NEXT, identity: "claude-verifier:session-2", scope: B1_REVIEW_SCOPE });
+  const receipts = [b1Build(), b1Pass(), revise, block];
+  const spent = b1Status(b1Record(), { receipts });
+  assert.equal(spent.state, "refused");
+  assert.equal(spent.reporting_exception, "spent", spent.reason);
+  for (const key of [...REPAIR_ACTIVATION_KEYS, "initial_target_sha", "writer_lane", "reviewer_lane"]) {
+    assert.deepEqual(spent[key], b1Record()[key], key);
+  }
+  // The reporter re-decides the episode from this status: with the binding it is
+  // the same exhausted stop the spend saw, not an ordinary episode's next revise.
+  const reported = b1Verdict(receipts, { repair: repairFromActivation(spent, B1_CONFIG) });
+  assert.equal(reported.ended, true, reported.reason);
+  assert.equal(reported.reason, "revision attempts exhausted — the episode is over");
+  const expired = b1Status(b1Record({ expires_at: new Date(NOW.getTime() - 60000).toISOString() }), { receipts });
+  assert.equal(expired.reporting_exception, "expired", expired.reason);
+  assert.notEqual(repairFromActivation(expired, B1_CONFIG), null);
+  // A refusal with no reporting exception, or a non-repair record, carries no repair field.
+  const plainSpent = b1Status(b1Without(b1Record(), ...REPAIR_ACTIVATION_KEYS), { receipts: [b1Build({ episode: B1_REPAIR }), b1Pass({ episode: B1_REPAIR })] });
+  for (const key of REPAIR_ACTIVATION_KEYS) assert.equal(Object.hasOwn(plainSpent, key), false, key);
+});
+
 test("Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own", () => {
   const first = b1Verdict([b1Build(), b1Pass()]);
   const laterId = "card-SHU-327-repair-0002";
