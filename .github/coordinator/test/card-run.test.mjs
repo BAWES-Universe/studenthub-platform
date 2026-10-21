@@ -16,6 +16,7 @@ import {
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
+import { cardAction, prepareRun, CARD_TODO_MUTATION } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
 import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePolicy, botSeverity, classifyThread, settleMarker } from "../service/card-land.mjs";
@@ -3346,4 +3347,82 @@ test("SHU-86 0d: the watch timer goes on beside the card-run timer and comes off
   assert.deepEqual(removeWatch(host.io, PATHS), { removed: true });
   assert.equal(host.files.has("/etc/systemd/system/shu-card-watch.service") || host.files.has("/etc/systemd/system/shu-card-watch.timer"), false);
   assert.ok(WATCH_LIMITS.staleMs > Math.max(CARD_RUN_LIMITS.workerGraceMs, CARD_RUN_LIMITS.landWaitMs), "a healthy revert or landing never reads as stale");
+});
+
+// ---------------------------------------------------------------------------
+// Self-repair B1: card-prepare's repair branch (B2 passes `repair`)
+// ---------------------------------------------------------------------------
+
+const B1_OWNER = "48918d3d-f843-483f-bb23-2ba6c7ace499";
+const B1_HEAD = "a".repeat(40);
+const B1_PREP_REPO = "BAWES-Universe/studenthub-platform";
+
+function b1Card(over = {}) {
+  return { id: "lin-327", identifier: "SHU-327", updatedAt: "2026-10-20T16:29:43.000Z",
+    state: { id: "ip", name: "In Progress", type: "started" }, assignee: { id: B1_OWNER }, delegate: null,
+    labels: { nodes: [{ name: "repo:platform" }] },
+    team: { id: "team", states: { nodes: [{ id: "todo", name: "Todo", type: "unstarted" }] } }, ...over };
+}
+
+function b1PrepPull(over = {}) {
+  return { number: 293, state: "open", title: "[SHU-327] organization writes refuse a deleted organization",
+    base: { ref: "main", repo: { full_name: B1_PREP_REPO } },
+    head: { ref: "coordinator/SHU-327", sha: B1_HEAD, repo: { full_name: B1_PREP_REPO } }, ...over };
+}
+
+function b1RepairInput(over = {}) {
+  return { repair: { repair_pr: 293, initial_target_sha: B1_HEAD }, owners: [B1_OWNER], repo: B1_PREP_REPO,
+    pulls: { complete: true, items: [b1PrepPull()] }, ...over };
+}
+
+test("Self-repair B1: C1 a repair plan answers with the repair predicate and never a move", () => {
+  assert.deepEqual(cardAction(b1Card(), b1RepairInput()), { action: "none" });
+  assert.deepEqual(cardAction(b1Card({ state: { id: "todo", name: "Todo", type: "unstarted" }, assignee: null }), b1RepairInput()), { action: "none" });
+  // A Backlog card that today's rule would move stays where it is under a repair.
+  const backlog = cardAction(b1Card({ state: { id: "b", name: "Backlog", type: "backlog" }, assignee: null }), b1RepairInput());
+  assert.equal(backlog.code, "CARD_RUN_REPAIR_INELIGIBLE");
+  for (const [label, card, input, why] of [
+    ["someone else", b1Card({ assignee: { id: "person" } }), b1RepairInput(), /assigned to someone other than the configured owner/],
+    ["delegated", b1Card({ delegate: { id: "agent" } }), b1RepairInput(), /delegated/],
+    ["incomplete read", b1Card(), b1RepairInput({ pulls: { complete: false, items: [] } }), /could not be read completely/],
+    ["other PR", b1Card(), b1RepairInput({ pulls: { complete: true, items: [b1PrepPull({ number: 300 })] } }), /not repair_pr #293/],
+    ["moved head", b1Card(), b1RepairInput({ pulls: { complete: true, items: [b1PrepPull({ head: { ...b1PrepPull().head, sha: "b".repeat(40) } })] } }), /not the bound head/],
+    ["Done", b1Card({ state: { id: "d", name: "Done", type: "completed" } }), b1RepairInput(), /not one of Todo, In Progress/],
+  ]) {
+    const decision = cardAction(card, input);
+    assert.equal(decision.action, "refuse", label);
+    assert.equal(decision.code, "CARD_RUN_REPAIR_INELIGIBLE", label);
+    assert.match(decision.detail, why, label);
+  }
+  const labels = cardAction(b1Card({ labels: { nodes: [] } }), b1RepairInput());
+  assert.equal(labels.code, "CARD_RUN_CARD_LABELS", "the repo label rule still applies");
+  // Without a repair, today's rule is unchanged: the owned card refuses.
+  assert.equal(cardAction(b1Card()).code, "CARD_RUN_CARD_OWNED");
+  assert.equal(cardAction(b1Card({ state: { id: "b", name: "Backlog", type: "backlog" }, assignee: null })).action, "move-to-todo");
+});
+
+test("Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves branch and card alone", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, body: init.body ?? null });
+    if (url === "https://api.linear.app/graphql") return { ok: true, status: 200, json: async () => ({ data: { issue: b1Card() } }) };
+    if (url.startsWith(`https://api.github.com/repos/${B1_PREP_REPO}/pulls?`)) {
+      const page = Number(new URL(url).searchParams.get("page"));
+      const items = page === 1 ? Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, title: "other", head: { ref: `feature/${i}` } })) : [b1PrepPull()];
+      return { ok: true, status: 200, json: async () => items };
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+  const io = { fetch: fetchImpl, exec: () => assert.fail("a repair runs no git and no command") };
+  const credentials = { GITHUB_TOKEN: "gh", LINEAR_API_TOKEN: "lin" };
+  const prepared = await prepareRun({ io, plan: { id: "SHU-327", branch: "coordinator/SHU-327" }, revision: "f".repeat(40),
+    repo: B1_PREP_REPO, checkout: "/srv/shu/checkout", credentials, repair: { repair_pr: 293, initial_target_sha: B1_HEAD, owners: [B1_OWNER] } });
+  assert.deepEqual(prepared, { branch: null, card: { card: "SHU-327", state: "In Progress", action: "none" } });
+  assert.equal(calls.some((c) => String(c.body).includes(CARD_TODO_MUTATION.trim().slice(0, 30))), false, "the card is never moved");
+  assert.equal(calls.filter((c) => c.url.includes("/pulls?")).length, 4, "both reads walk every page");
+
+  const short = async (url, init) => url.includes("/pulls?") ? { ok: false, status: 502, json: async () => null } : fetchImpl(url, init);
+  await assert.rejects(prepareRun({ io: { ...io, fetch: short }, plan: { id: "SHU-327", branch: "coordinator/SHU-327" }, revision: "f".repeat(40),
+    repo: B1_PREP_REPO, checkout: "/srv/shu/checkout", credentials, repair: { repair_pr: 293, initial_target_sha: B1_HEAD, owners: [B1_OWNER] } }),
+  (error) => error.code === "CARD_RUN_REPAIR_INELIGIBLE" && /could not be read completely/.test(error.message));
 });

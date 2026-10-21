@@ -18,7 +18,8 @@
 // build, as the coordinator user over its deploy-key remote
 // (SHU_PUSH_REMOTE_URL), with the broker's hardened git configuration. The
 // token only reads the branch back.
-import { sendLinear, resolveRepositoryOwnership } from "../reconcile.mjs";
+import { sendLinear, resolveRepositoryOwnership, pullRequestClaimsIssue } from "../reconcile.mjs";
+import { repairEligible, readOpenPulls } from "../repair-eligibility.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { watchLine } from "./card-watch.mjs";
 import { alertLine } from "./card-status.mjs";
@@ -88,7 +89,24 @@ async function readCard(io, credentials, id) {
 }
 
 // What the card needs before the run, decided from its live state.
-export function cardAction(issue) {
+//
+// Self-repair B1: `repair` ({ repair, owners, pulls, repo }) is given only for
+// a landing-repair plan (B2 wires it). Such a card was moved and assigned by
+// Linear's GitHub integration when its pull request opened, so the owned and
+// not-started rules are replaced by the coordinator's own repair predicate
+// (repair-eligibility.mjs), and the answer is never a move: a repair leaves
+// the card where it is. Without `repair` nothing below changes.
+export function cardAction(issue, repair = null) {
+  if (repair) {
+    const eligible = repairEligible({
+      issue: { id: issue.identifier, state: issue.state?.name ?? null, assignee: issue.assignee ?? null, delegate: issue.delegate ?? null },
+      repair: repair.repair, owners: repair.owners, pulls: repair.pulls, repo: repair.repo,
+    });
+    if (!eligible.ok) return { action: "refuse", code: "CARD_RUN_REPAIR_INELIGIBLE", detail: `${issue.identifier}: ${eligible.reason}` };
+    const owned = resolveRepositoryOwnership((issue.labels?.nodes ?? []).map((label) => label?.name));
+    if (owned.error) return { action: "refuse", code: "CARD_RUN_CARD_LABELS", detail: `${issue.identifier}: ${owned.error}` };
+    return { action: "none" };
+  }
   if (issue.assignee || issue.delegate) return { action: "refuse", code: "CARD_RUN_CARD_OWNED", detail: `${issue.identifier} has an assignee or a delegate; a person or agent owns it` };
   // The coordinator never dispatches a card without exactly one known
   // repo:<name> label (reconcile Rule 10). Refuse it here, before arming, so
@@ -104,9 +122,9 @@ export function cardAction(issue) {
   return { action: "move-to-todo", from: issue.state.name, stateId: todo[0].id };
 }
 
-async function checkCard(io, credentials, id) {
+async function checkCard(io, credentials, id, repair = null) {
   const issue = await readCard(io, credentials, id);
-  const decision = cardAction(issue);
+  const decision = cardAction(issue, repair);
   if (decision.action === "refuse") refuse(decision.code, decision.detail);
   return { issue, decision };
 }
@@ -146,8 +164,8 @@ async function stateChangesSince(io, credentials, id, since) {
 // history: the only state change since that read must be this run's own, from
 // the state it read to Todo. If anyone else moved the card in between, the
 // card goes back to the state they set and the run is refused.
-async function prepareCardState(io, credentials, id, apply) {
-  const { issue, decision } = await checkCard(io, credentials, id);
+async function prepareCardState(io, credentials, id, apply, repair = null) {
+  const { issue, decision } = await checkCard(io, credentials, id, repair);
   if (decision.action === "none" || !apply) return { card: id, state: issue.state.name, action: decision.action };
   const since = Date.parse(issue.updatedAt);
   if (!Number.isFinite(since)) refuse("CARD_RUN_CARD_UNREADABLE", `${id} has no readable updatedAt`);
@@ -324,13 +342,37 @@ async function prepareBranch(io, credentials, repo, checkout, branch, revision, 
   return { branch, head: after, base: tip, action, ...(head === null ? {} : { from: head }) };
 }
 
+// Self-repair B1: the repair predicate's input for card-prepare. Every open
+// pull request is read (all pages) as the coordinator, and only a complete
+// read can admit the card; the predicate refuses anything less.
+export async function repairCardInput(io, credentials, repo, id, repair) {
+  const read = await readOpenPulls({ repo, token: credentials.GITHUB_TOKEN, fetchImpl: io.fetch });
+  return {
+    repair,
+    owners: repair.owners ?? [],
+    repo,
+    pulls: { complete: read.complete === true, items: (read.items ?? []).filter((pr) => pullRequestClaimsIssue(pr, id)), reason: read.reason ?? null },
+  };
+}
+
 // Makes the planned card ready to run, or with apply false says what it would
 // do. Nothing is written until the card is known to be movable; then the
 // branch comes first, so a card is moved only once its branch is right, and
 // the card is read again just before it is moved.
-export async function prepareRun({ io, plan, revision, repo, checkout, credentials, apply = true }) {
+//
+// Self-repair B1: with `repair` (the record's repair_pr and initial_target_sha
+// plus the configured owners), the card must pass the repair predicate on both
+// reads and is never moved, and its branch is left alone: it holds the pull
+// request's head, which the repair revises in place. Today's callers pass no
+// repair and keep the path above unchanged.
+export async function prepareRun({ io, plan, revision, repo, checkout, credentials, apply = true, repair = null }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) refuse("CARD_RUN_CONFIG", "pilot_repo must name one GitHub repository");
   if (!String(checkout ?? "").startsWith("/")) refuse("CARD_RUN_CONFIG", "the installed checkout needs an absolute path");
+  if (repair) {
+    await checkCard(io, credentials, plan.id, await repairCardInput(io, credentials, repo, plan.id, repair));
+    const card = await prepareCardState(io, credentials, plan.id, apply, await repairCardInput(io, credentials, repo, plan.id, repair));
+    return { branch: null, card };
+  }
   await checkCard(io, credentials, plan.id);
   const branch = plan.branch ? await prepareBranch(io, credentials, repo, checkout, plan.branch, revision, apply) : null;
   const card = await prepareCardState(io, credentials, plan.id, apply);

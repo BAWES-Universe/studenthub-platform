@@ -589,6 +589,67 @@ export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
   return { ok: true };
 }
 
+// The completed order: role from the verdict + worker lane, outcome only for
+// review verdicts. target_sha is the head this attempt was bound to.
+function completedOrderFromTerminal(terminal, verdict, runtime) {
+  return {
+    version: WORK_ORDER_VERSION,
+    role: verdict.role,
+    runtime,
+    // The completed order's own lane. Routing uses it for two things: the
+    // revise goes back to the WRITER's lane, and the first-review bootstrap
+    // checks independence against the family of the lane that just wrote.
+    requested_worker: terminal.requested_worker,
+    issue_id: terminal.issue_id,
+    attempt_id: terminal.attempt_id,
+    target_sha: terminal.target_sha,
+    authorization_ref: terminal.authorization_ref ?? terminal.issue_id,
+    review_runtimes: RUNTIMES.filter((r) => RUNTIME_ROLE_SUPPORT[r]?.includes("review")),
+    outcome: verdict.outcome,
+    workspace_scope: terminal.workspace_scope ?? (verdict.role === "review" ? "full" : "full"),
+    scope_phase: terminal.scope_phase ?? (verdict.role === "review" ? "review" : "initial"),
+    allowed_paths: Array.isArray(terminal.allowed_paths) ? [...terminal.allowed_paths] : [],
+    scoped_base_sha: terminal.scoped_base_sha ?? null,
+  };
+}
+
+// Self-repair B1: the ONE revise a landing-repair activation starts with. The
+// passed episode ended at PASS, so routing has no BLOCK to revise from; this
+// mints the revise that a BLOCK at the passed head would have routed, from the
+// same pieces nextWorkOrder uses: the completed order rebuilt from the PASS
+// receipt, the active writer of the lineage it reviewed, that writer's revise
+// lane and the card's revision scope. Its attempt id is derived from the PASS
+// receipt's with a "repair" stage, so every tick names the same attempt and no
+// round of the routed loop can collide with it. The caller has already proven
+// the PASS (provenance, episode, head, branch); this only refuses what it
+// cannot mint. Returns { ok, order? , reason? }.
+export function repairReviseOrder({ pass, lineageReceipts = [], fixtureLane = null } = {}) {
+  if (!pass || typeof pass !== "object") return { ok: false, reason: "no passed review to repair from" };
+  const authority = resolveReceiptRoleAuthority(pass);
+  if (!authority.ok || authority.role !== "review") return { ok: false, reason: "the passed receipt has no review role authority" };
+  // The passed episode's own receipts, in durable order: the same lineage the
+  // routed revise of that episode would have been minted from.
+  if (typeof pass.episode_id !== "string" || !pass.episode_id) return { ok: false, reason: "the passed receipt names no episode" };
+  const entries = (lineageReceipts ?? []).filter((r) => r?.episode_id === pass.episode_id)
+    .map((r) => provenanceFromReceipt(r)).filter(Boolean);
+  const writer = activeWriter(entries);
+  if (!writer) return { ok: false, reason: "the passed lineage has no active writer to repair with" };
+  const writerLane = laneForRuntimeRole(writer.runtime, "revise");
+  if (!writerLane) return { ok: false, reason: `no writer lane exists for runtime ${String(writer.runtime)}` };
+  const requested = completedOrderFromTerminal(pass, outcomeForEvidenceStage("PASS"), authority.runtime);
+  return {
+    ok: true,
+    order: mintOrder(requested, {
+      role: "revise",
+      runtime: writer.runtime,
+      actor: writer.actor,
+      requested_worker: writerLane,
+      attempt_id: freshAttempt(pass.attempt_id, "repair", 1),
+      ...successorWorkspaceScope("revise", fixtureLane),
+    }),
+  };
+}
+
 // Route ONE terminal verdict-bearing receipt to its successor work order. This
 // is the reconcile-facing bridge over nextWorkOrder(): it rebuilds the lineage
 // from durable receipts and validates the verdict against the verified head.
@@ -688,27 +749,7 @@ export function routeSuccessorFromReceipts(state = {}) {
   if (entries.length === 0) {
     return { ok: false, reason: "no provenance entries — every receipt lacks worker identity (ambiguous authorship HOLDs routing)" };
   }
-  // The completed order: role from the verdict + worker lane, outcome only for
-  // review verdicts. target_sha is the head this attempt was bound to.
-  const requested = {
-    version: WORK_ORDER_VERSION,
-    role: verdict.role,
-    runtime: terminalAuthority.runtime,
-    // The completed order's own lane. Routing uses it for two things: the
-    // revise goes back to the WRITER's lane, and the first-review bootstrap
-    // checks independence against the family of the lane that just wrote.
-    requested_worker: terminal.requested_worker,
-    issue_id: terminal.issue_id,
-    attempt_id: terminal.attempt_id,
-    target_sha: terminal.target_sha,
-    authorization_ref: terminal.authorization_ref ?? terminal.issue_id,
-    review_runtimes: RUNTIMES.filter((r) => RUNTIME_ROLE_SUPPORT[r]?.includes("review")),
-    outcome: verdict.outcome,
-    workspace_scope: terminal.workspace_scope ?? (verdict.role === "review" ? "full" : "full"),
-    scope_phase: terminal.scope_phase ?? (verdict.role === "review" ? "review" : "initial"),
-    allowed_paths: Array.isArray(terminal.allowed_paths) ? [...terminal.allowed_paths] : [],
-    scoped_base_sha: terminal.scoped_base_sha ?? null,
-  };
+  const requested = completedOrderFromTerminal(terminal, verdict, terminalAuthority.runtime);
   if (!requested.runtime) {
     return { ok: false, reason: `cannot route from unknown worker lane ${String(terminal.requested_worker)}` };
   }

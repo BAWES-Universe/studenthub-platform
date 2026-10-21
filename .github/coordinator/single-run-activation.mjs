@@ -92,8 +92,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
-import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid, repairReviseOrder } from "./review-routing.mjs";
 // SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
 // the activation record's accepted lanes and the routing module's review
 // capability can never drift apart.
@@ -131,7 +132,16 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
 // all, and only on a committed review-only lane (step 3 below): the record picks
 // which PR head a standing review card judges, never which card runs.
 export const REVIEW_ONLY_ACTIVATION_KEYS = Object.freeze(["review_pr", "review_base_sha", "pr_author_family"]);
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane", ...REVIEW_ONLY_ACTIVATION_KEYS]);
+// Self-repair B1: a landing-repair run names the pull request whose checks went
+// red after a PASS, the passed episode it repairs, the CI findings its one
+// revision is given and their digest, and its round bound. The five come
+// together or not at all, never beside the review-only group, and only on a
+// committed card lane (step 3 below). The record binds which head is repaired
+// (initial_target_sha) and with which lanes; it never picks the card.
+export const REPAIR_ACTIVATION_KEYS = Object.freeze(["repair_pr", "repair_of", "repair_findings", "repair_evidence_digest", "max_rounds"]);
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane", ...REVIEW_ONLY_ACTIVATION_KEYS, ...REPAIR_ACTIVATION_KEYS]);
+// One repair round, and only one: the record says so, and anything else refuses.
+export const REPAIR_MAX_ROUNDS = 1;
 export const PR_AUTHOR_FAMILIES = Object.freeze([...new Set(Object.values(RUNTIME_FAMILY))]);
 export const MAX_REVIEW_PR = 9999999;
 
@@ -142,6 +152,29 @@ export const REVISION_RE = /^[0-9a-f]{40}$/;
 // variant are not restricted: a receipt may carry any real UUID.
 export const ATTEMPT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
+
+// Self-repair B1: the one JSON form a digest is taken over. Object keys are
+// sorted at every depth and nothing else is changed, so the same findings
+// always give the same bytes however they were written. Only JSON values are
+// accepted; anything else throws rather than being silently dropped the way
+// JSON.stringify drops undefined, so two different records never share a digest.
+export function canonicalJson(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("canonical JSON has no non-finite numbers");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  throw new Error(`canonical JSON cannot hold a ${typeof value}`);
+}
+
+// The sha256 hex of the canonical findings: what repair_evidence_digest binds.
+export function repairEvidenceDigest(findings) {
+  return createHash("sha256").update(canonicalJson(findings)).digest("hex");
+}
 
 // An expiry that reaches further than a day is not an expiry, it is a permanence.
 export const MAX_ACTIVATION_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -262,11 +295,82 @@ export function receiptInEpisodeScope(receipt, scope) {
   return !scope.supersedes.has(receipt.attempt_id);
 }
 
+// Self-repair B1: the repair facts episodeVerdict needs, from a validated
+// record or from the armed status (both carry the same names), or null when
+// the source is not a landing repair. Nothing else turns a repair on.
+export function repairFromActivation(source, config = {}) {
+  if (!source || typeof source !== "object" || !REPAIR_ACTIVATION_KEYS.every((key) => Object.hasOwn(source, key))) return null;
+  return Object.freeze({
+    repair_pr: source.repair_pr,
+    repair_of: source.repair_of,
+    repair_findings: source.repair_findings,
+    repair_evidence_digest: source.repair_evidence_digest,
+    max_rounds: source.max_rounds,
+    initial_target_sha: source.initial_target_sha ?? null,
+    writer_lane: source.writer_lane ?? null,
+    reviewer_lane: source.reviewer_lane ?? null,
+    branch: typeof source.target_issue_id === "string" ? `coordinator/${source.target_issue_id}` : null,
+    repo: config?.pilot_repo ?? null,
+  });
+}
+
+// Self-repair B1: the first step of a landing repair. Its episode has no
+// receipt yet, and routing has nothing to route from (the episode it repairs
+// ended at PASS), so the one revise is synthesized here, and only from a PASS
+// that may vouch for the head: the repaired episode's own exact-head PASS on
+// the card's branch, in the role-authority receipt version, from a review lane,
+// whose verifier is independent of the lineage it reviewed. Anything less ends
+// the repair with a named reason; it never falls back to a build.
+function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authoritativeHead }) {
+  const head = repair.initial_target_sha;
+  const branch = `coordinator/${targetIssueId}`;
+  const pass = issueReceipts
+    .filter((r) => r.episode_id === repair.repair_of && r.stage === "COMPLETED" && r.verdict_stage === "PASS"
+      && r.receipt_version === "1.1.0"
+      && verdictMatchesLane(r.requested_worker, r.verdict_stage)
+      && r.target_sha === head
+      && r.branch === branch
+      && (!Object.hasOwn(r, "repo") || r.repo === repair.repo)
+      && reviewVerdictProvenanceValid(r, issueReceipts).ok)
+    .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")))
+    .pop();
+  if (!pass) return { ended: true, reason: `repair has no trusted PASS of ${repair.repair_of} at ${head}` };
+  // The live head is only known on the dispatching pass; the pure status
+  // passes null. A branch that moved off the passed head is not this repair's.
+  if (authoritativeHead !== null && authoritativeHead !== head) {
+    return { ended: true, reason: `repair target moved: the branch is at ${authoritativeHead}, not the passed head ${head}` };
+  }
+  let minted;
+  try {
+    minted = repairReviseOrder({ pass, lineageReceipts: issueReceipts, fixtureLane: resolveFixtureLane(config, targetIssueId) });
+  } catch (err) {
+    return { ended: true, reason: `repair revise cannot be minted (${err?.message ?? "error"})` };
+  }
+  if (!minted.ok) return { ended: true, reason: `repair revise cannot be minted (${minted.reason})` };
+  if (minted.order.requested_worker !== repair.writer_lane) {
+    return { ended: true, reason: `repair revise lane ${minted.order.requested_worker} is not the record's writer_lane ${repair.writer_lane}` };
+  }
+  if (!validReviewFindings(repair.repair_findings) || repair.repair_findings.target_sha !== minted.order.target_sha) {
+    return { ended: true, reason: `repair findings are not bound to the passed head ${head}` };
+  }
+  return {
+    ended: false,
+    reason: `mid-episode: landing repair of #${repair.repair_pr} — the one revise is routable`,
+    successor: { ...minted.order, review_findings: repair.repair_findings },
+  };
+}
+
 // Decide whether the bound target's episode has ENDED, using the production
 // routing semantics. Returns { ended, reason, successor? } and NEVER throws: an
 // internal routing failure must surface as "cannot decide" (ongoing), not as a
 // crashed coordinator.
-export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null, episodeScope = null } = {}) {
+//
+// Self-repair B1: `repair` (repairFromActivation) makes this a landing-repair
+// episode. With no receipt of its own yet it synthesizes the one revise
+// (repairBootstrap); after that it routes exactly as any episode does, with
+// max_revise 0 for this call only, so the re-review's BLOCK (round 1) is
+// exhausted and its PASS ends it. Absent, nothing below changes.
+export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null, episodeScope = null, repair = null } = {}) {
   const issueReceipts = (receipts ?? []).filter((r) => r && r.issue_id === targetIssueId);
   // SHU-231: only the SPEND / TERMINAL / ROUTING inputs are episode-scoped. The
   // receipt list itself is never filtered for anything else.
@@ -281,7 +385,10 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   const failed = issueReceipts.filter((r) => r.stage === "FAILED").length;
   if (failed >= maxFailed) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` };
 
-  if (scopedReceipts.length === 0) return { ended: false, reason: "no attempt has been dispatched yet" };
+  if (scopedReceipts.length === 0) {
+    if (repair) return repairBootstrap({ repair, issueReceipts, targetIssueId, config, authoritativeHead });
+    return { ended: false, reason: "no attempt has been dispatched yet" };
+  }
 
   // HOLD is deliberately not retryable. A newer attempt that completed without
   // a coherent, bound verdict requires human review; routing again from an older
@@ -340,7 +447,9 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
       terminal,
       evidenceStage: terminal.verdict_stage,
       evidenceResultSha: terminal.result_sha ?? null,
-      max_revise: Number.isInteger(config?.max_revise) ? config.max_revise : DEFAULT_MAX_REVISE,
+      // Self-repair B1: one round. The synthesized revise is not a review, so
+      // the first re-review is round 1, and its BLOCK is past max_revise 0.
+      max_revise: repair ? 0 : Number.isInteger(config?.max_revise) ? config.max_revise : DEFAULT_MAX_REVISE,
       // main() re-runs this decision with the freshly fetched branch head before a
       // successor may enter selection. The activation-status call remains pure and
       // passes null; it can establish shape/spend state but never authorize launch.
@@ -639,6 +748,41 @@ export function validateActivationRecord(record) {
     const pairError = writerPairError(record.writer_lane, record.reviewer_lane);
     if (pairError) return { ok: false, reason: pairError };
   }
+  // Self-repair B1: the landing-repair group. It repairs one card lane's
+  // passed head, so it needs that head and both lanes, binds findings taken
+  // at that very head, and allows one round. Every refusal names its rule.
+  const repairKeys = REPAIR_ACTIVATION_KEYS.filter((key) => key in record);
+  if (repairKeys.length > 0) {
+    if (repairKeys.length !== REPAIR_ACTIVATION_KEYS.length) {
+      return { ok: false, reason: `a landing-repair activation needs ${REPAIR_ACTIVATION_KEYS.join(", ")} together (got ${repairKeys.join(", ")})` };
+    }
+    if (REVIEW_ONLY_ACTIVATION_KEYS.some((key) => key in record)) {
+      return { ok: false, reason: "a landing-repair activation cannot carry the review-only keys" };
+    }
+    if (record.max_rounds !== REPAIR_MAX_ROUNDS) return { ok: false, reason: `max_rounds must be ${REPAIR_MAX_ROUNDS}: a landing repair runs one round` };
+    if (!Number.isSafeInteger(record.repair_pr) || record.repair_pr < 1 || record.repair_pr > MAX_REVIEW_PR) {
+      return { ok: false, reason: "repair_pr must be a pull request number" };
+    }
+    if (typeof record.repair_of !== "string" || !ACTIVATION_ID_RE.test(record.repair_of)) {
+      return { ok: false, reason: "repair_of must be the passed episode's activation id" };
+    }
+    if (record.repair_of === record.activation_id) return { ok: false, reason: "repair_of must name another episode than this activation" };
+    if (!("initial_target_sha" in record)) return { ok: false, reason: "a landing-repair activation must name the head it repairs in initial_target_sha" };
+    if (typeof record.writer_lane !== "string" || typeof record.reviewer_lane !== "string") {
+      return { ok: false, reason: "a landing-repair activation must name its writer_lane and reviewer_lane" };
+    }
+    if (!validReviewFindings(record.repair_findings) || record.repair_findings.source !== "ci") {
+      return { ok: false, reason: "repair_findings must be valid CI findings (source \"ci\")" };
+    }
+    if (record.repair_findings.target_sha !== record.initial_target_sha) {
+      return { ok: false, reason: "repair_findings must be taken at initial_target_sha" };
+    }
+    let digest;
+    try { digest = repairEvidenceDigest(record.repair_findings); } catch { digest = null; }
+    if (typeof record.repair_evidence_digest !== "string" || record.repair_evidence_digest !== digest) {
+      return { ok: false, reason: "repair_evidence_digest is not the sha256 of the canonical repair_findings" };
+    }
+  }
   // SHU-303: the review-only group. A review-only run has no writer, reviews
   // the exact head the record approves, and its reviewer may not be of the
   // family that wrote the pull request.
@@ -852,6 +996,11 @@ export function singleRunActivationStatus({
     }
   }
 
+  // Self-repair B1: a landing repair revises a card's passed head, so it arms
+  // only a committed card lane; a review-only or fixture lane has no such head.
+  const landingRepair = "repair_pr" in record;
+  if (landingRepair && reviewLane) return refused(`activation names repair_pr but ${scopeIssue} is a review-only lane`);
+  if (landingRepair && !cardContract(scopeIssue)) return refused(`activation names repair_pr but ${scopeIssue} is not a committed card lane`);
   // SHU-303: a review-only lane runs only review-only records, with one of the
   // reviewers its committed lane lists; a review-only record runs nowhere else.
   if (reviewLane) {
@@ -899,6 +1048,8 @@ export function singleRunActivationStatus({
     // SHU-225: the record's own first-review lane is the ONLY source of a
     // bootstrap reviewer. Card labels and comment text are never consulted.
     bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
+    // Self-repair B1: null unless the record is a landing repair.
+    repair: repairFromActivation(record, config),
   });
   if (episode.ended) {
     return refused(
@@ -923,6 +1074,8 @@ export function singleRunActivationStatus({
     supersedes_attempt_ids: record.supersedes_attempt_ids ?? [],
     initial_target_sha: record.initial_target_sha ?? null,
     ...(reviewLane ? { review_only: true, review_pr: record.review_pr, review_base_sha: record.review_base_sha, pr_author_family: record.pr_author_family } : {}),
+    ...(landingRepair ? { landing_repair: true, repair_pr: record.repair_pr, repair_of: record.repair_of, repair_findings: record.repair_findings,
+      repair_evidence_digest: record.repair_evidence_digest, max_rounds: record.max_rounds } : {}),
     episode: episode.reason,
     // SHU-225: the episode's routable successor, when one exists. This is what
     // re-admits the issue to selection for the NEXT step of the SAME episode.
@@ -974,7 +1127,8 @@ export function renderActivationLine(activation) {
   if (activation.state === "armed") {
     const pair = activation.writer_lane ? ` writer=${activation.writer_lane} reviewer=${activation.reviewer_lane}`
       : activation.review_only ? ` review-only pr=#${activation.review_pr} head=${activation.initial_target_sha} base=${activation.review_base_sha} reviewer=${activation.reviewer_lane}` : "";
-    return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}${pair}`;
+    const repair = activation.landing_repair ? ` landing-repair pr=#${activation.repair_pr} head=${activation.initial_target_sha} of=${activation.repair_of}` : "";
+    return `activation=ARMED id=${activation.activation_id} target=${activation.target_issue_id} ref=${activation.authorization_ref} revision=${activation.coordinator_revision} slots=${activation.slots} expires=${activation.expires_at}${pair}${repair}`;
   }
   return `activation=REFUSED (${activation.reason})`;
 }

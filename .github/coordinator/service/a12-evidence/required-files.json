@@ -82,6 +82,7 @@
   ".github/coordinator/test/review-routing.test.mjs",
   ".github/coordinator/test/reviewer-evidence.test.mjs",
   ".github/coordinator/test/schema.test.mjs",
+  ".github/coordinator/test/self-repair-b1-mutations.test.mjs",
   ".github/coordinator/test/shu219-rule6-mutation.test.mjs",
   ".github/coordinator/test/shu224-dispatch-scope.test.mjs",
   ".github/coordinator/test/shu226-incident-reporting.test.mjs",
