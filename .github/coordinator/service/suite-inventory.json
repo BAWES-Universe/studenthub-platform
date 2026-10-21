@@ -3133,6 +3133,7 @@
     "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
     "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
     "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
+    "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
     "SHU-322 mutation M1 drop the path allowlist",
     "SHU-322 mutation M2 install a deleted coordinator file",
     "SHU-322 mutation M3 drop the contracts deletions check",
@@ -25029,6 +25030,10 @@
     },
     {
       "name": "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
       "capabilities": []
     },
     {

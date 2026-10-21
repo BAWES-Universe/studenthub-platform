@@ -663,3 +663,30 @@ test("SHU-322 B18: a failed install whose pause cannot be put in place keeps the
   assert.equal(held.result?.lock_kept, undefined);
   assert.equal(plain.files.has(PATHS.lock), false);
 });
+
+test("SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died", async () => {
+  // 2026-10-21: the 13:30 start refused to install 34f603f8 and wrote no status;
+  // the watch paused the timer on the failed unit, holding the queue installed by hand.
+  const { readStatus, stuckRun } = await import("../service/card-watchdog.mjs");
+  const host = fakeHost({ changes: [...CHANGES, { status: "M", path: ".github/coordinator/service/card-run.mjs" }] });
+  const started = host.io.now().getTime();
+  const out = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(out.outcome, "NEEDS_OWNER");
+  untouched(host);
+  const status = readStatus(host.io, PATHS);
+  assert.ok(status, "the status file is written and valid");
+  assert.equal(status.step, "finished");
+  assert.equal(status.run_id, out.activation_id);
+  assert.equal(status.trigger, "timer");
+  assert.equal(status.card, null);
+  assert.equal(status.revision, R);
+  assert.equal(status.needs_owner, true);
+  const unit = { state: "failed", running: false, since: Math.floor(started / 1000) * 1000, start: "42" };
+  assert.equal(stuckRun({ unit, status, now: started + 30 * 60 * 1000 }), null, "a refused install is not a run that died");
+  assert.equal(stuckRun({ unit, status: null, now: started + 30 * 60 * 1000 })?.kind, "failed", "without the status it would be");
+  assert.equal(host.files.has(PATHS.pause), false);
+  // An install that went through, or nothing to install, writes no such status.
+  const installs = fakeHost();
+  assert.equal((await autoRun({ io: installs.io, paths: PATHS })).outcome, "INSTALLED");
+  assert.equal(readStatus(installs.io, PATHS)?.outcome ?? null, null);
+});
