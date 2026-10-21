@@ -164,8 +164,8 @@ async function stateChangesSince(io, credentials, id, since) {
 // history: the only state change since that read must be this run's own, from
 // the state it read to Todo. If anyone else moved the card in between, the
 // card goes back to the state they set and the run is refused.
-async function prepareCardState(io, credentials, id, apply, repair = null) {
-  const { issue, decision } = await checkCard(io, credentials, id, repair);
+async function prepareCardState(io, credentials, id, apply) {
+  const { issue, decision } = await checkCard(io, credentials, id);
   if (decision.action === "none" || !apply) return { card: id, state: issue.state.name, action: decision.action };
   const since = Date.parse(issue.updatedAt);
   if (!Number.isFinite(since)) refuse("CARD_RUN_CARD_UNREADABLE", `${id} has no readable updatedAt`);
@@ -370,8 +370,11 @@ export async function prepareRun({ io, plan, revision, repo, checkout, credentia
   if (!String(checkout ?? "").startsWith("/")) refuse("CARD_RUN_CONFIG", "the installed checkout needs an absolute path");
   if (repair) {
     await checkCard(io, credentials, plan.id, await repairCardInput(io, credentials, repo, plan.id, repair));
-    const card = await prepareCardState(io, credentials, plan.id, apply, await repairCardInput(io, credentials, repo, plan.id, repair));
-    return { branch: null, card };
+    // Read again just before answering, as prepareCardState does. A repair's
+    // decision is never a move (cardAction returns "none" or refuses), so the
+    // card is only checked here, never written.
+    const { issue, decision } = await checkCard(io, credentials, plan.id, await repairCardInput(io, credentials, repo, plan.id, repair));
+    return { branch: null, card: { card: plan.id, state: issue.state.name, action: decision.action } };
   }
   await checkCard(io, credentials, plan.id);
   const branch = plan.branch ? await prepareBranch(io, credentials, repo, checkout, plan.branch, revision, apply) : null;

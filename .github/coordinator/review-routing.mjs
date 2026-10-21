@@ -632,17 +632,17 @@ export function repairReviseOrder({ pass, lineageReceipts = [], fixtureLane = nu
   if (typeof pass.episode_id !== "string" || !pass.episode_id) return { ok: false, reason: "the passed receipt names no episode" };
   const entries = (lineageReceipts ?? []).filter((r) => r?.episode_id === pass.episode_id)
     .map((r) => provenanceFromReceipt(r)).filter(Boolean);
-  const writer = activeWriter(entries);
-  if (!writer) return { ok: false, reason: "the passed lineage has no active writer to repair with" };
-  const writerLane = laneForRuntimeRole(writer.runtime, "revise");
-  if (!writerLane) return { ok: false, reason: `no writer lane exists for runtime ${String(writer.runtime)}` };
+  const repairWriter = activeWriter(entries);
+  if (!repairWriter) return { ok: false, reason: "the passed lineage has no active writer to repair with" };
+  const writerLane = laneForRuntimeRole(repairWriter.runtime, "revise");
+  if (!writerLane) return { ok: false, reason: `no writer lane exists for runtime ${String(repairWriter.runtime)}` };
   const requested = completedOrderFromTerminal(pass, outcomeForEvidenceStage("PASS"), authority.runtime);
   return {
     ok: true,
     order: mintOrder(requested, {
       role: "revise",
-      runtime: writer.runtime,
-      actor: writer.actor,
+      runtime: repairWriter.runtime,
+      actor: repairWriter.actor,
       requested_worker: writerLane,
       attempt_id: freshAttempt(pass.attempt_id, "repair", 1),
       ...successorWorkspaceScope("revise", fixtureLane),
