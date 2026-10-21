@@ -16,6 +16,16 @@
 //   4. only when the card's merge-attempt record reads COMPLETED it posts one
 //      comment on the card naming the pull request and the merge commit.
 //
+// Self-repair B2: a landing repair (plan.repair) lands differently in four
+// ways. It never finds or opens a pull request: it is handed the one it
+// repairs and reads that one by number. Its repo, base, head branch, open
+// state and head are checked before the wait, on every read during it, and
+// once more right before the merge, whose call carries the expected head.
+// Only check runs whose head_sha is the repaired head count. And before any
+// wait, the change from the failed head to the repaired head must pass the
+// weakening guard (card-repair.mjs), or the landing stops at
+// REPAIR_TEST_WEAKENED with nothing handed off or merged.
+//
 // It never moves the card: a merge never produces Done. Every network call has
 // its own deadline, and the wait is bounded, so the run stays inside its unit's
 // TimeoutStartSec. Nothing here throws: every stop is an outcome for the run
@@ -43,6 +53,7 @@ import { sendLinear, fetchIssueComments, parseReceiptsFromComments, LINEAR_COMME
 import { writeHandoffReceipt, validHandoff, handoffReceipt } from "../durable-handoff.mjs";
 import { consumeMergeReadiness, parseMergeAttemptsFromComments } from "../merge-readiness.mjs";
 import { externalPolicy, holdsRun, holdsStatus, holdsThread, advisoryNote } from "./external-checks.mjs";
+import { readTestWeakening, repairPullIdentity } from "./card-repair.mjs";
 
 export const CARD_LAND_ENV = "/srv/shu/card-land.env";
 export const LAND_TOKEN_KEY = "SHU_LAND_GITHUB_TOKEN";
@@ -61,6 +72,8 @@ export const LAND_OUTCOMES = Object.freeze([
   "MERGED", "PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "LAND_PAUSED", "LAND_SKIPPED_NO_TOKEN",
   "LAND_HEAD_MISMATCH", "LAND_ERROR", "THREADS_HELD",
 ]);
+// Self-repair B2: the one outcome only a landing repair has.
+export const REPAIR_LAND_OUTCOMES = Object.freeze(["REPAIR_TEST_WEAKENED"]);
 const SHA_RE = /^[0-9a-f]{40}$/;
 const GREEN = new Set(["success", "neutral", "skipped"]);
 const THREAD_FIELDS = "id isResolved comments(first:20) { nodes { id url body updatedAt author { __typename login } } pageInfo { hasNextPage } }";
@@ -427,8 +440,12 @@ function headMatches(pr, { repo, branch, head }) {
 // With an external policy, only this repository's own CI and the outside
 // checks the committed config names are judged; the rest are advisory and
 // only reported (see external-checks.mjs).
-export function judgeChecks(runsResponse, runs, statusResponse, status, external = null) {
-  const allRuns = runs?.check_runs;
+//
+// Self-repair B2: with `head`, only check runs whose head_sha is that head
+// count at all; a stale run is neither red nor green.
+export function judgeChecks(runsResponse, runs, statusResponse, status, external = null, { head = null } = {}) {
+  const listed = runs?.check_runs;
+  const allRuns = head && Array.isArray(listed) ? listed.filter((run) => run?.head_sha === head) : listed;
   const allStatuses = status?.statuses;
   if (!runsResponse?.ok || !statusResponse?.ok || !Array.isArray(allRuns) || !Array.isArray(allStatuses)
       || (runs.total_count ?? 0) > 100 || allStatuses.length >= 100) {
@@ -472,9 +489,13 @@ async function checkState(gh, { repo, number, head, branch, settled, policy, ext
     gh("POST", "https://api.github.com/graphql", { query: THREADS_QUERY, variables: { owner, name, number } }),
   ]);
   const [runs, status, pull, threads] = await Promise.all([runsResponse.json(), statusResponse.json(), pullResponse.json(), threadsResponse.json()]);
+  // Self-repair B2: a repair's pull request must stay the very one it repairs.
+  const binding = gh.repairBinding ?? null;
+  const wrong = binding && pullResponse.ok && pull ? repairPullIdentity(pull, { repo, number, branch }) : null;
+  if (wrong) return { identity: wrong };
   if (pullResponse.ok && pull && !headMatches(pull, { repo, branch, head })) return { moved: true, sha: pull?.head?.sha ?? null };
   if (!pullResponse.ok) return { green: false, note: "the checks could not be read in full" };
-  const judged = judgeChecks(runsResponse, runs, statusResponse, status, external);
+  const judged = judgeChecks(runsResponse, runs, statusResponse, status, external, binding ? { head } : undefined);
   if (!judged.green) return judged;
   // GitHub reads "unstable" when a check outside branch protection is not
   // green; with everything that holds already green, that is only advisory.
@@ -508,6 +529,7 @@ async function waitForGreen(io, gh, target, limits, settle) {
       if (error.landOutcome) throw error;
       state = { green: false, note: `a read failed: ${error.message}` };
     }
+    if (state.identity) stop("LAND_ERROR", `the repaired pull request changed during the wait: ${state.identity}`);
     if (state.moved) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${state.sha} after the review passed ${target.head}`);
     if (state.red) return { outcome: "PR_OPENED_CI_RED", reason: `red: ${state.red.join(", ")}` };
     streak = state.green ? streak + 1 : 0;
@@ -523,6 +545,38 @@ async function waitForGreen(io, gh, target, limits, settle) {
   }
 }
 
+// Self-repair B2: the repaired pull request, read by its number; never found
+// by branch and never opened.
+async function repairPull(gh, { repo, branch, number }) {
+  const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
+  const pull = await response.json();
+  if (!response.ok || !pull) stop("LAND_ERROR", `the repaired pull request #${number} cannot be read (HTTP ${response.status})`);
+  const wrong = repairPullIdentity(pull, { repo, number, branch });
+  if (wrong) stop("LAND_ERROR", `the repaired pull request is not the one repaired: ${wrong}`);
+  return { pr: pull, opened: false };
+}
+
+// Self-repair B2: the last look before the merge call. The pull request is
+// still the repaired one at the repaired head, and that head's own checks are
+// still green. Returns null, or what stops the merge.
+async function repairLastCheck(gh, { repo, number, branch, head, external }) {
+  const [pullResponse, runsResponse, statusResponse] = await Promise.all([
+    gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`),
+    gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
+    gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/status?per_page=100`),
+  ]);
+  const [pull, runs, status] = await Promise.all([pullResponse.json(), runsResponse.json(), statusResponse.json()]);
+  if (!pullResponse.ok || !pull) return { outcome: "LAND_ERROR", reason: `pull request #${number} cannot be read right before the merge` };
+  const wrong = repairPullIdentity(pull, { repo, number, branch });
+  if (wrong) return { outcome: "LAND_ERROR", reason: `right before the merge: ${wrong}` };
+  if (!headMatches(pull, { repo, branch, head })) {
+    return { outcome: "LAND_HEAD_MISMATCH", reason: `the pull request head moved to ${pull.head?.sha ?? "an unknown head"} right before the merge of ${head}` };
+  }
+  const judged = judgeChecks(runsResponse, runs, statusResponse, status, external, { head });
+  if (!judged.green) return { outcome: "MERGE_HOLD", reason: `right before the merge the checks of ${head} are not green: ${judged.red ? `red: ${judged.red.join(", ")}` : judged.note}` };
+  return null;
+}
+
 // The run's landing. Returns an outcome, never throws.
 export async function landCard({ io, plan, config, credentials, landToken, pausePath, limits = LAND_LIMITS }) {
   // SHU-310: what settling did, on every outcome, when it is on.
@@ -536,6 +590,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   const card = plan.id;
   const branch = plan.branch;
   const repo = config?.pilot_repo;
+  // Self-repair B2: the repair this landing finishes, or null.
+  const repair = plan.repair ?? null;
+  let repairHeld = null;
   const activationId = plan.record.activation_id;
   const paused = () => Boolean(pausePath) && io.fs.existsSync(pausePath);
   const fetchImpl = boundedFetch(io, limits.requestTimeoutMs, { attempts: limits.networkAttempts, waitMs: limits.networkRetryWaitMs });
@@ -563,13 +620,20 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     const { terminal } = passedTerminal(before, { card, repo, branch, activationId });
     head = terminal.target_sha;
 
-    const opened = await findOrOpenPull(gh, { repo, branch, card, title: issue.title, activationId, head });
+    const opened = repair ? await repairPull(gh, { repo, branch, number: repair.pr })
+      : await findOrOpenPull(gh, { repo, branch, card, title: issue.title, activationId, head });
+    if (repair) gh.repairBinding = { number: repair.pr };
     pr = opened.pr;
     if (!headMatches(pr, { repo, branch, head })) {
       stop("LAND_HEAD_MISMATCH", `pull request #${pr?.number} is at ${pr?.head?.sha ?? "an unknown head"}, not the passed ${head}`);
     }
     reviewedHead = head;
     const prFields = { pr: pr.number, opened: opened.opened, head, reviewed_head: head };
+    // Self-repair B2: the repaired head must not have weakened a test.
+    if (repair) {
+      const guard = await readTestWeakening(gh, { repo, base: repair.failed_head, head });
+      if (!guard.ok) return result("REPAIR_TEST_WEAKENED", { ...prFields, reason: guard.reason });
+    }
 
     // SHU-310: settles review bot threads only when every unresolved thread
     // is settleable and the run stays within its limit.
@@ -628,6 +692,12 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       // SHU-310: the consumer runs the thread check once more right before
       // its merge call, and holds on a failure.
       ...(policy ? { beforeMerge: async () => { await guardThreads(gh, { repo, number: pr.number }, settled, policy); return { ok: true }; } } : {}),
+      // Self-repair B2: a repair's last look, after the thread check when there is one.
+      ...(repair ? { beforeMerge: async () => {
+        if (policy !== null) await guardThreads(gh, { repo, number: pr.number }, settled, policy);
+        repairHeld = await repairLastCheck(gh, { repo, number: pr.number, branch, head, external });
+        return { ok: repairHeld === null };
+      } } : {}),
       fetchImpl,
       stdout: (line) => lines.push(line),
       now: () => io.now(),
@@ -641,6 +711,11 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     // Only a COMPLETED record is a merge; a HOLD is final for its attempt.
     const completed = record.state === "COMPLETED";
     if (!completed) {
+      // Self-repair B2: a merge the repair's last look stopped says why.
+      if (record.state === "HOLD" && repairHeld) {
+        if (repairHeld.outcome === "MERGE_HOLD") return result("MERGE_HOLD", { ...prFields, hold_code: record.hold_code, attempt_id: record.attempt_id, reason: repairHeld.reason });
+        stop(repairHeld.outcome, repairHeld.reason);
+      }
       if (record.state === "HOLD") return result("MERGE_HOLD", { ...prFields, hold_code: record.hold_code, attempt_id: record.attempt_id, reason: record.reason });
       stop("LAND_ERROR", `the merge attempt ${record.attempt_id} reads ${record.state}`);
     }

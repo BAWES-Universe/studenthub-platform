@@ -46,11 +46,19 @@
 // queue itself when main commits one inside the autopilot boundary
 // (service/card-install.mjs): reviewed queue data only, never coordinator
 // code. It reports and exits; the next start runs the new queue's first card.
+//
+// Self-repair B2: with the committed `landing_repair` switch on (absent or
+// false is today's behaviour), a card whose run passed and stopped on red
+// checks (PR_OPENED_CI_RED) is not a stopped queue on the next start: that
+// start runs one landing repair of its pull request (card-repair.mjs), once
+// per revision, recorded in card-repair-<rev>-<id>.json before arming. A
+// repair that merged lands the card (card-landed.mjs); any other ending stops
+// the queue as before, and a round that never finished is REPAIR_INTERRUPTED.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS } from "../single-run-activation.mjs";
+import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
@@ -59,6 +67,8 @@ import { cardLanded } from "./card-landed.mjs";
 import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
+import { landingRepairOn, repairCandidate, repairRecordPath, repairAlertPath, repairActivationId, readRound, claimRound, advanceRound,
+  repairSkip, readRepairPull, priorPass, readRepairEvidence, REPAIR_LIMITS } from "./card-repair.mjs";
 
 export const CARD_RUN_PATHS = Object.freeze({
   checkout: "/srv/shu/studenthub-platform",
@@ -222,6 +232,71 @@ export function onBase(plan, base) {
   return { ...plan, record };
 }
 
+// Self-repair B2: the record a landing repair arms. It is the card's own
+// record at this revision (the card lane's writer and reviewer, the run
+// window), with a deterministic id, the failed head as its approved input,
+// and the B1 repair keys: the pull request, the episode that passed, the
+// filtered CI findings and their digest, and one round.
+export function planRepair({ config, revision, now, limits = CARD_RUN_LIMITS, id, claim, evidence }) {
+  const base = planRun({ config, revision, now, limits, cardId: id });
+  if (base.kind !== "card") refuse("CARD_RUN_NOT_A_CARD", `${id} is not a card lane; only a card's landing is repaired`);
+  const record = { ...base.record, activation_id: repairActivationId(id, revision), initial_target_sha: claim.reviewed_head,
+    repair_pr: claim.pr, repair_of: claim.activation_id, repair_findings: evidence.findings,
+    repair_evidence_digest: evidence.digest, max_rounds: REPAIR_MAX_ROUNDS };
+  const shape = validateActivationRecord(record);
+  if (!shape.ok) refuse("CARD_RUN_RECORD", shape.reason);
+  return { ...base, record, repair: { pr: claim.pr, failed_head: claim.reviewed_head, repair_of: claim.activation_id,
+    check_runs: evidence.check_runs } };
+}
+
+// Self-repair B2: everything a repair does before its round record exists,
+// then the record. Each step that fails is a named skip that writes nothing:
+// the claim must still be this card's passed, red-stopped run; its pull
+// request must be the claimed one, open, at the head the review passed; the
+// PASS on the card must be that claim's episode at that head (prior-PASS
+// provenance); the failing checks' evidence must be readable and non-empty;
+// and the pause file is read again last. Only then is the record written,
+// exclusively, so a second round can never start at this revision.
+export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config, revision, id, claim, holder = null }) {
+  if (!landingRepairOn(config)) repairSkip("REPAIR_NOT_ELIGIBLE", "landing_repair is not on in the committed config");
+  const repo = config.pilot_repo ?? null;
+  if (!repairCandidate(claim, { id, revision, repo })) {
+    repairSkip("REPAIR_NOT_ELIGIBLE", `${id}'s claim at ${revision} is not a passed run of ${repo ?? "the pilot repository"} stopped on red checks`);
+  }
+  let credentials;
+  try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) {
+    repairSkip("REPAIR_UNREADABLE", `the coordinator's credentials cannot be read (${error.message})`);
+  }
+  const timeoutMs = limits.landRequestTimeoutMs ?? REPAIR_LIMITS.requestTimeoutMs;
+  const branch = `coordinator/${id}`;
+  await readRepairPull({ io, token: credentials.GITHUB_TOKEN, repo, number: claim.pr, branch, head: claim.reviewed_head, timeoutMs });
+  const pass = await priorPass({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials.LINEAR_API_TOKEN,
+    actorIds: config.linear_receipt_actor_ids, card: id, repo, claim });
+  const evidence = await readRepairEvidence({ io, token: credentials.GITHUB_TOKEN, repo, head: claim.reviewed_head,
+    limits: { ...REPAIR_LIMITS, requestTimeoutMs: timeoutMs } });
+  let plan;
+  try { plan = planRepair({ config, revision, now: io.now(), limits, id, claim, evidence }); } catch (error) {
+    repairSkip("REPAIR_NOT_ELIGIBLE", error.message);
+  }
+  // The owner may have paused while GitHub and Linear were read; the pause wins.
+  if (io.fs.existsSync(paths.pause)) repairSkip("PAUSED", `${paths.pause} exists`);
+  const round = claimRound(io, repairRecordPath(paths, revision, id), {
+    card: id, revision, activation_id: plan.record.activation_id, repair_of: claim.activation_id, repo, pr: claim.pr,
+    reviewed_head: claim.reviewed_head, pass_attempt_id: pass.attempt_id, check_runs: evidence.check_runs,
+    evidence_digest: evidence.digest, evidence_truncated: evidence.truncated, claimed_at: io.now().toISOString() });
+  if (holder) holder.round = round;
+  return plan;
+}
+
+// Self-repair B2: card-prepare's repair input. A repair's card is checked by
+// the coordinator's own repair predicate, never moved, and its branch is left
+// at the pull request's head.
+function repairPrepare(plan, config) {
+  if (!plan.repair) return {};
+  return { repair: { repair_pr: plan.record.repair_pr, initial_target_sha: plan.record.initial_target_sha,
+    owners: Array.isArray(config.linear_callback_actor_ids) ? config.linear_callback_actor_ids : [] } };
+}
+
 // Whether a queued card landed: by a timer run's merge, or by a person's
 // merge of the run's own pull request at its reviewed head (self-repair A,
 // card-landed.mjs). GitHub is read with the coordinator's token, reads only;
@@ -250,11 +325,31 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     if (!io.fs.existsSync(claim)) return { id };
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
+    // Self-repair B2: only with landing_repair on, and only for a passed run
+    // that stopped on red checks; otherwise nothing below differs from today.
+    const repair = landingRepairOn(config) && repairCandidate(ran, { id, revision, repo: config.pilot_repo ?? null })
+      ? repairStep(io, paths, revision, id, ran) : null;
+    if (repair?.next) return repair.next;
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
-    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}` };
+    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
   }
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
+}
+
+// Self-repair B2: what a repairable claim means for this start. No round
+// record yet: run the repair. A round that finished: no second one, the queue
+// stops as before. A round that never finished (a crash or a kill between its
+// claim and its end): REPAIR_INTERRUPTED, a terminal stop for the owner.
+function repairStep(io, paths, revision, id, claim) {
+  const file = repairRecordPath(paths, revision, id);
+  if (!io.fs.existsSync(file)) return { next: { id, repair: claim } };
+  const round = readRound(io, file);
+  if (round?.state !== "finished") {
+    return { next: { id: null, card: id, skipped: "REPAIR_INTERRUPTED", repair_record: file,
+      reason: `${id}'s landing repair at ${revision} never finished (${round ? `state ${round.state}` : "an unreadable record"}); it is never run again: ${file}` } };
+  }
+  return { note: `; its one landing repair finished (${round.outcome ?? "no outcome"}${round.land ? `, landing ${round.land}` : ""}): ${file}` };
 }
 
 // What one coordinator tick said about this run. The coordinator is the only
@@ -449,7 +544,12 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
 // coordinator ends the episode or the window closes, then revert.
-export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator", cardId = null }) {
+//
+// Self-repair B2: `repair` (the claim being repaired) makes this the landing
+// repair of that claim's pull request; `repairRound` receives its round record
+// as soon as it is written, so the caller can finish it whatever happens.
+export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator", cardId = null,
+  repair = null, repairRound = null }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -460,9 +560,11 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
     const config = readConfig(io, paths);
-    const planned = planRun({ config, revision, now: io.now(), review, limits, cardId });
+    const planned = repair ? await claimRepair({ io, paths, limits, config, revision, id: cardId, claim: repair, holder: repairRound })
+      : planRun({ config, revision, now: io.now(), review, limits, cardId });
     credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
-    const prepared = await prepareRun({ io, plan: planned, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials });
+    const prepared = await prepareRun({ io, plan: planned, revision, repo: config.pilot_repo, checkout: paths.checkout, credentials,
+      ...repairPrepare(planned, config) });
     const plan = prepared.branch ? onBase(planned, prepared.branch.head) : planned;
     const ticks = [];
     let result;
@@ -481,6 +583,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         first_dispatch_at: seen?.first_dispatch_at ?? null, last_progress_at: seen?.last_progress_at ?? null };
     };
     try {
+      // Self-repair B2: the round says it may be armed before anything is.
+      if (repairRound?.round) advanceRound(io, repairRound.round, "armed", { arming_at: io.now().toISOString() });
       const armed = arm(io, plan, revision, paths);
       armedAt = io.now().toISOString();
       // Self-watch 0b, observe only: the committed config turns it on; it
@@ -544,7 +648,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
       finished_at: finishedAt };
     summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
-      timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
+      timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}),
+      ...(plan.repair ? { repair: plan.repair } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
       owner_mention: ownerMention(config.owner_mention) };
     summary.needs_owner = needsOwner(summary);
     status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
@@ -596,6 +701,8 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   let plan;
   let config;
   let done = null;
+  let interrupted = null;
+  let repairNext = null;
   try {
     revision = installedRevision(io, paths);
     config = readConfig(io, paths);
@@ -603,7 +710,11 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // SHU-321: only a done queue may go on to review a queue config pull
     // request; a stopped, invalid or paused one never does.
     if (next.skipped === "QUEUE_DONE") done = next;
+    // Self-repair B2: an interrupted repair is reported once; a repairable
+    // card runs its one repair. Neither can come up with landing_repair off.
+    else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
     else if (next.skipped) return skip(next.skipped, next.reason);
+    else if (next.repair) repairNext = next;
     else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
   } catch (error) {
     // A review card needs its pull request from an operator, so the timer never
@@ -611,6 +722,8 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     return skip("NOT_READY", error.message);
   }
   if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
+  if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
+  if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
   const claim = autoClaim(paths, revision, plan.id);
   const claimedAt = io.now().toISOString();
   try {
@@ -652,6 +765,67 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       max_progress_gap_ms: result.watch?.max_progress_gap_ms ?? null, would_stall: result.watch?.would_stall ?? null })}\n`, { mode: 0o600 });
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
+}
+
+// Self-repair B2: the one landing repair of a card, on the timer. Before its
+// round record exists every stop is a skip that writes nothing, so the next
+// start reads again. Once the record exists the round is this revision's one
+// round, whatever happens: a refusal before arming is reported once, and the
+// record is finished with the outcome. A record left unfinished (the process
+// died) is REPAIR_INTERRUPTED on every later start.
+async function autoRepair({ io, paths, limits, config, revision, next, skip }) {
+  const id = next.id;
+  const holder = { round: null };
+  let result;
+  try {
+    result = await runCard({ io, paths, limits, trigger: "timer", cardId: id, repair: next.repair, repairRound: holder });
+  } catch (error) {
+    if (!holder.round) {
+      if (NOT_NOW.has(error.code)) return skip(error.code === "CARD_RUN_LOCKED" ? "LOCKED" : "HOST_BUSY", error.message);
+      if (error.repairSkip) return skip(error.code, error.message);
+      return skip("NOT_READY", error.message);
+    }
+    const record = holder.round.record;
+    result = await notStarted({ io, paths, limits, error, config,
+      result: { card: id, kind: "card", activation_id: record.activation_id, revision,
+        repair: { pr: record.pr, failed_head: record.reviewed_head, repair_of: record.repair_of, check_runs: record.check_runs } } });
+  }
+  let roundError = null;
+  try {
+    advanceRound(io, holder.round, "finished", { finished_at: io.now().toISOString(), outcome: result.outcome ?? null, ok: result.ok === true,
+      land: result.land?.outcome ?? null, repaired_head: result.land?.reviewed_head ?? null, merge_commit: result.land?.merge_commit ?? null,
+      armed_at: result.timing?.armed_at ?? null, reverted: result.revert?.reverted ?? null });
+  } catch (error) { roundError = error.code ?? "ROUND_WRITE_FAILED"; }
+  return { ...result, round: holder.round.file, ...(roundError ? { round_error: roundError } : {}) };
+}
+
+// Self-repair B2: a repair round that never finished. It is never run again;
+// the owner hears about it once, through the run report and the status file
+// the outside watch shows. The alert is recorded only once it is posted, so a
+// report that could not be posted is tried again on a later start.
+async function repairInterrupted({ io, paths, limits, config, revision, next, skip }) {
+  const alerted = repairAlertPath(paths, revision, next.card);
+  if (io.fs.existsSync(alerted)) return skip("REPAIR_INTERRUPTED", next.reason);
+  const summary = { ok: false, card: next.card, kind: "card", activation_id: `${repairActivationId(next.card, revision)}-interrupted`,
+    trigger: "timer", revision, outcome: "REPAIR_INTERRUPTED", reason: next.reason, ticks: [], revert: null,
+    owner_mention: ownerMention(config.owner_mention) };
+  summary.needs_owner = needsOwner(summary);
+  const invocation = typeof io.invocation === "function" ? io.invocation() : null;
+  createStatus({ io, paths, run: { run_id: summary.activation_id,
+    invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: next.card, kind: "card", trigger: "timer",
+    revision, queue: (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } })
+    .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "REPAIR_INTERRUPTED", land: null,
+      reverted: false, needs_owner: summary.needs_owner });
+  let credentials = null;
+  try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch { /* the report records the missing credentials */ }
+  const report = await postRunReport({ io, credentials, result: summary, timeoutMs: limits.reportTimeoutMs });
+  let alertError = null;
+  if (report.posted) {
+    try {
+      io.fs.writeFileSync(alerted, `${JSON.stringify({ card: next.card, revision, record: next.repair_record, alerted_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+    } catch (error) { alertError = error.code ?? "ALERT_WRITE_FAILED"; }
+  }
+  return { ...skip("REPAIR_INTERRUPTED", next.reason), needs_owner: summary.needs_owner, report, ...(alertError ? { alert_error: alertError } : {}) };
 }
 
 // SHU-321: once the committed queue is done, the timer may run the standing

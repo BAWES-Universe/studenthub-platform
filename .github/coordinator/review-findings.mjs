@@ -19,7 +19,7 @@ const TOKEN_SHAPE = /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|
 // example) can still leak as an assignment to a secret-named variable, bare
 // (PASSWORD=...) or prefixed (SHU_SUPERVISOR_SECRET=...), quoted or not.
 const SECRET_ASSIGNMENT = /\b(?:[A-Za-z_][A-Za-z0-9_]*)?(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL)[A-Za-z0-9_]*\s*[:=]\s*["']?[^\s"']{8,}/i;
-const secretShaped = (text) => TOKEN_SHAPE.test(text) || SECRET_ASSIGNMENT.test(text);
+export const secretShaped = (text) => TOKEN_SHAPE.test(text) || SECRET_ASSIGNMENT.test(text);
 
 // "<" is escaped so the reviewer's text can never close the quoting tag.
 function encodeFindings(summary, links) {
