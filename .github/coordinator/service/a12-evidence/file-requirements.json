@@ -809,6 +809,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/self-repair-b2-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/self-repair-b2-mutations.test.mjs:284"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/shu219-rule6-mutation.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

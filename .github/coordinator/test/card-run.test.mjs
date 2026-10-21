@@ -28,6 +28,10 @@ import { watchOnce, stuckRun, readStatus, readUnit, renderStatus, installWatch, 
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import { cardLanded, handLandRecord, HAND_LAND_OUTCOMES } from "../service/card-landed.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
+import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceText, readRepairEvidence, testWeakening, isTestPath, isTestConfigPath,
+  repairRecordPath, repairAlertPath, advanceRound, REPAIR_LIMITS, REPAIR_SKIPS } from "../service/card-repair.mjs";
+import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
+import { judgeChecks } from "../service/card-land.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
@@ -3425,4 +3429,636 @@ test("Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves br
   await assert.rejects(prepareRun({ io: { ...io, fetch: short }, plan: { id: "SHU-327", branch: "coordinator/SHU-327" }, revision: "f".repeat(40),
     repo: B1_PREP_REPO, checkout: "/srv/shu/checkout", credentials, repair: { repair_pr: 293, initial_target_sha: B1_HEAD, owners: [B1_OWNER] } }),
   (error) => error.code === "CARD_RUN_REPAIR_INELIGIBLE" && /could not be read completely/.test(error.message));
+});
+
+// Self-repair B2: the runner's half of one landing repair. A queue whose first
+// card passed and stopped on red checks (PR_OPENED_CI_RED) at FAILED; with
+// landing_repair on, the next start reads the failing checks' evidence,
+// records its one round, arms the repair (B1 keys), and the coordinator's
+// re-review passes PASSED, which the repair lands on the very same pull
+// request.
+const FAILED = "4".repeat(40);
+const B2_REPAIR_ID = `shu-301-repair-${REV}`;
+const B2_API = `https://api.github.com/repos/${REPO}`;
+const B2_CONFIG_FILE = `${PATHS.checkout}/.github/coordinator/config.json`;
+const B2_LOG = [
+  "2026-10-09T16:10:00.1000000Z \u001b[36m> @studenthub/db test\u001b[39m",
+  "2026-10-09T16:10:01.1000000Z \u001b[31m✖ organization writes refuse a deleted organization (12.5ms)\u001b[39m",
+  "2026-10-09T16:10:01.2000000Z   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:",
+  "2026-10-09T16:10:01.3000000Z       at TestContext.<anonymous> (/home/runner/work/studenthub-platform/studenthub-platform/packages/db/test/org.test.mjs:41:12)",
+  "2026-10-09T16:10:01.4000000Z       at async Test.run (node:internal/test_runner/test:935:25)",
+  "2026-10-09T16:10:01.5000000Z       at helper (/home/runner/work/studenthub-platform/studenthub-platform/node_modules/pg/lib/client.js:1:1)",
+  "2026-10-09T16:10:01.6000000Z   expected: 'refused'",
+  "2026-10-09T16:10:01.7000000Z   actual: 'written'",
+  "2026-10-09T16:10:01.8000000Z Error: connect failed for postgres://app:hunter2@localhost:5432/db",
+  "2026-10-09T16:10:01.9000000Z not ok 3 - organization writes refuse a deleted organization",
+  "2026-10-09T16:10:02.0000000Z ##[error]Process completed with exit code 1.",
+].join("\n");
+const B2_KEPT = [
+  "check run 9001:",
+  "✖ organization writes refuse a deleted organization (12.5ms)",
+  "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:",
+  "at TestContext.<anonymous> (packages/db/test/org.test.mjs:41:12)",
+  "expected: 'refused'",
+  "actual: 'written'",
+  "not ok 3 - organization writes refuse a deleted organization",
+  "##[error]Process completed with exit code 1.",
+].join("\n");
+
+function b2Receipt({ worker, target, attempt, episode, verdict, result = null, at }) {
+  const made = createReceipt({ issue_id: "SHU-301", authorization_ref: "SHU-301", repo: REPO, branch: "coordinator/SHU-301", episode_id: episode,
+    requested_worker: worker, target_sha: target, attempt_id: attempt });
+  assert.ok(made.ok, JSON.stringify(made.errors));
+  const receipt = { ...made.receipt, stage: "COMPLETED", verdict_stage: verdict, result_sha: result, external_run_id: `${worker.startsWith("codex") ? "codexrun" : "clauderun"}_${attempt.slice(-4)}`,
+    worker_identity: worker.startsWith("codex") ? "codex-author" : "claude-reviewer", adapter_status: "completed",
+    evidence_links: ["https://example.test/evidence"], last_activity: at, timestamps: { ...made.receipt.timestamps, launch: at, terminal: at } };
+  assert.equal(validateReceipt(receipt).valid, true, JSON.stringify(validateReceipt(receipt).errors));
+  return receipt;
+}
+const b2Original = () => [
+  b2Receipt({ worker: "codex-builder", target: REV, attempt: "00000000-0000-4000-8000-000000000401", episode: EPISODE, verdict: "BUILD_READY", result: FAILED, at: "2026-10-09T16:01:00.000Z" }),
+  b2Receipt({ worker: "claude-verifier", target: FAILED, attempt: "00000000-0000-4000-8000-000000000402", episode: EPISODE, verdict: "PASS", at: "2026-10-09T16:02:00.000Z" }),
+];
+const b2Repaired = () => [
+  b2Receipt({ worker: "codex-builder", target: FAILED, attempt: "00000000-0000-4000-8000-000000000403", episode: B2_REPAIR_ID, verdict: "BUILD_READY", result: PASSED, at: "2026-10-10T08:01:00.000Z" }),
+  b2Receipt({ worker: "claude-verifier", target: PASSED, attempt: "00000000-0000-4000-8000-000000000404", episode: B2_REPAIR_ID, verdict: "PASS", at: "2026-10-10T08:02:00.000Z" }),
+];
+const b2Claim = (fields = {}) => ({ card: "SHU-301", revision: REV, claimed_at: "2026-10-09T15:30:07.000Z", activation_id: EPISODE, outcome: "PASS", ok: true,
+  land: "PR_OPENED_CI_RED", repo: REPO, pr: 77, reviewed_head: FAILED, reverted: true, ...fields });
+const b2Round = (host) => host.files.has(b2RoundFile()) ? JSON.parse(host.files.get(b2RoundFile()).text) : null;
+const b2RoundFile = () => repairRecordPath(LAND_PATHS, REV, "SHU-301");
+const b2Ticks = (h) => {
+  if (h.ticks === 1) {
+    // The repair's one revise pushes PASSED, and its re-review passes it.
+    h.land.pr.head = PASSED;
+    for (const receipt of b2Repaired()) h.b2.comment(receiptCommentBody(receipt));
+    return tickText(armed(B2_REPAIR_ID));
+  }
+  if (h.ticks === 2) return tickText(spent("SHU-301", "review PASS — the episode is complete"));
+  return tickText("activation=absent (committed gates only)");
+};
+const b2Chunks = (text, size) => { const out = []; for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size)); return out; };
+// The repair's own reads: check runs, jobs and logs (Self-repair A's read of
+// #77 and main's history is a hand-landing check, not the repair's).
+const b2EvidenceReads = (host) => host.b2.gets.filter((get) => get.includes("/check-runs") || get.includes("/actions/"));
+const b2Respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
+
+// options: on (landing_repair: true, false or undefined for absent), runs,
+// jobs (id -> job or status), logs (id -> text), logStatus, chunk (log chunk
+// size), compare, contents ({ "path@ref": text }), pullEdit (coordinator view
+// of #77), staleRuns (the landing's check runs name another head),
+// movePullAt (the land-token read of #77 from which its head is MOVED), plus
+// any landingHost option.
+function b2Host(options = {}) {
+  const host = landingHost({ existingPr: true, prHead: FAILED, onTick: options.onTick ?? b2Ticks, ...options });
+  const config = { ...queueConfig(), ...(options.on === undefined ? {} : { landing_repair: options.on }) };
+  host.files.set(B2_CONFIG_FILE, { text: JSON.stringify(config), mode: 0o644, uid: 0, gid: 0 });
+  // Linear's GitHub integration moved and assigned the card when #77 opened.
+  host.card = { state: { id: "ip", name: "In Progress", type: "started" }, assignee: { id: ACTOR }, delegate: null };
+  host.files.set(autoClaim(LAND_PATHS, REV, "SHU-301"), { text: `${JSON.stringify(b2Claim(options.claim))}\n`, mode: 0o600, uid: 0, gid: 0 });
+  // Earlier than any comment the landing writes, so the order stays the real one.
+  let clock = Date.parse("2026-10-09T16:30:00.000Z");
+  host.land.comments = [];
+  const b2 = { gets: [], landGets: [], pullReads: 0, comment: (body) => {
+    clock += 1000;
+    host.land.comments.push({ body, createdAt: new Date(clock).toISOString(), user: { id: ACTOR, displayName: "Coordinator" } });
+  } };
+  host.b2 = b2;
+  for (const receipt of b2Original()) b2.comment(receiptCommentBody(receipt));
+  const runs = options.runs ?? [
+    { id: 9001, name: "test", status: "completed", conclusion: "failure", head_sha: FAILED, app: { slug: "github-actions" } },
+    { id: 9002, name: "lint", status: "completed", conclusion: "success", head_sha: FAILED, app: { slug: "github-actions" } },
+    { id: 9003, name: "sentry", status: "completed", conclusion: "failure", head_sha: FAILED, app: { slug: "sentry" } },
+  ];
+  const logs = options.logs ?? { 9001: B2_LOG };
+  const pullNow = () => ({ number: 77, state: "open", merged: false, title: "[SHU-301] Make the thing",
+    head: { ref: "coordinator/SHU-301", sha: host.land.pr.head, repo: { full_name: REPO } },
+    base: { ref: "main", sha: REV, repo: { full_name: REPO } }, ...(options.pullEdit ?? {}) });
+  const delegate = host.io.fetch;
+  host.io.fetch = async (url, request = {}) => {
+    const auth = request.headers?.Authorization;
+    if (auth === "Bearer gh-secret-value" && String(url).startsWith(B2_API)) {
+      const route = String(url).slice(B2_API.length);
+      b2.gets.push(`${request.method ?? "GET"} ${route}`);
+      assert.equal(request.method ?? "GET", "GET", "the repair only reads GitHub with the coordinator's token");
+      if (route === "/pulls/77") return b2Respond(200, pullNow());
+      if (route === "/pulls?state=open&per_page=100&page=1") return b2Respond(200, [pullNow()]);
+      if (route === `/commits/${FAILED}/check-runs?filter=latest&per_page=100`) return b2Respond(200, { total_count: runs.length, check_runs: runs });
+      const job = /^\/actions\/jobs\/(\d+)$/.exec(route);
+      if (job) {
+        const given = options.jobs?.[job[1]];
+        if (typeof given === "number") return b2Respond(given, { message: "Resource not accessible by integration" });
+        return b2Respond(200, given ?? { id: Number(job[1]), head_sha: FAILED, conclusion: "failure" });
+      }
+      const log = /^\/actions\/jobs\/(\d+)\/logs$/.exec(route);
+      if (log) {
+        if (options.logStatus) return { status: options.logStatus, ok: false, body: null, json: async () => null };
+        const chunks = b2Chunks(logs[log[1]] ?? "", options.chunk ?? 7).map((part) => new TextEncoder().encode(part));
+        return { status: 200, ok: true, body: (async function* () { yield* chunks; })(), json: async () => null };
+      }
+      return b2Respond(404, { message: "Not Found" });
+    }
+    if (auth === "Bearer land-secret-value" && String(url).startsWith(B2_API)) {
+      const route = String(url).slice(B2_API.length);
+      b2.landGets.push(`${request.method ?? "GET"} ${route}`);
+      if (route === `/compare/${FAILED}...${PASSED}?per_page=100`) {
+        return b2Respond(200, options.compare ?? { status: "ahead", behind_by: 0, merge_base_commit: { sha: FAILED },
+          files: [{ filename: "packages/db/src/org.ts", status: "modified", patch: "@@ -1,2 +1,2 @@\n-  return write(org);\n+  return org.deleted ? refuse() : write(org);\n context" }] });
+      }
+      const contents = /^\/contents\/(.+)\?ref=([0-9a-f]{40})$/.exec(route);
+      if (contents) {
+        const text = options.contents?.[`${decodeURIComponent(contents[1])}@${contents[2]}`];
+        return text === undefined ? b2Respond(404, { message: "Not Found" }) : b2Respond(200, { encoding: "base64", content: Buffer.from(text).toString("base64") });
+      }
+      if (route === "/pulls/77" && (request.method ?? "GET") === "GET") {
+        b2.pullReads += 1;
+        if (options.movePullAt !== undefined && b2.pullReads >= options.movePullAt) host.land.pr.head = "9".repeat(40);
+      }
+      if (route === `/commits/${PASSED}/check-runs?filter=latest&per_page=100`) {
+        const answer = await delegate(url, request);
+        const body = await answer.json();
+        body.check_runs = body.check_runs.map((run) => ({ ...run, head_sha: options.staleRuns ? FAILED : PASSED }));
+        return b2Respond(answer.status, body);
+      }
+    }
+    return delegate(url, request);
+  };
+  return host;
+}
+
+test("Self-repair B2: E1 evidence keeps only test-failure lines, cleaned of ANSI codes and timestamps", () => {
+  assert.equal(evidenceLine("2026-10-09T16:10:01.1000000Z \u001b[31m✖ a failing case\u001b[39m"), "✖ a failing case");
+  assert.equal(evidenceLine("  not ok 3 - a failing case"), "not ok 3 - a failing case");
+  assert.equal(evidenceLine("AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:"), "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:");
+  assert.equal(evidenceLine("TypeError: cannot read properties of undefined"), "TypeError: cannot read properties of undefined");
+  assert.equal(evidenceLine("    expected: 3"), "expected: 3");
+  assert.equal(evidenceLine("    actual: 4"), "actual: 4");
+  assert.equal(evidenceLine("at f (/home/runner/work/studenthub-platform/studenthub-platform/apps/web/src/a.ts:3:9)"), "at f (apps/web/src/a.ts:3:9)");
+  assert.equal(evidenceLine("at packages/db/test/org.test.mjs:41:12"), "at packages/db/test/org.test.mjs:41:12");
+  for (const line of ["at async Test.run (node:internal/test_runner/test:935:25)", "at x (/home/runner/work/a/a/node_modules/pg/lib/client.js:1:1)",
+    "at x (/usr/lib/node/x.js:1:1)", "at x (../../outside.js:1:1)", "> @studenthub/db test", "Run npm ci", "added 1200 packages in 30s",
+    "console.log: hello", "ok 2 - a passing case", "", "   "]) {
+    assert.equal(evidenceLine(line), null, line);
+  }
+});
+
+test("Self-repair B2: E2 a kept line carrying anything secret-shaped is dropped whole", () => {
+  for (const line of [
+    "AssertionError: TOKEN=abcdef123456",
+    "Error: password is wrong",
+    "Error: missing API key",
+    "Error: Bearer abc",
+    "Error: Authorization header refused",
+    "Error: \"SHU_SUPERVISOR_SECRET\": \"s3cr3t-value\"",
+    "Error: value is \\\"x\\\"=\\\"y\\\"",
+    "Error: DATABASE_URL=postgres://localhost/db",
+    "Error: a\\x3db",
+    "Error: a\\u003db",
+    "Error: a%3Db",
+    "Error: a&#61;b",
+    "Error: connect https://user:pw@example.com/x",
+    "Error: connect https://deploy@example.com/x",
+    "Error: connect //user:pw@example.com",
+    `Error: unexpected ${"a".repeat(40)}`,
+    "Error: blob QWxhZGRpbjpvcGVuIHNlc2FtZTEyMzQ1Njc4OTA=",
+    "Error: ghp_abcdefghijklmnopqrstuvwxyz0123",
+    "Error: lin_api_abcdefghijklmnopqrstuvwxyz",
+    "expected: 'sk-ant-abcdefghijklmnopqrstuvwxyz'",
+  ]) {
+    assert.equal(evidenceLine(line), null, line);
+    assert.equal(secretIndicator(line), true, line);
+  }
+  // Comparisons and arrows are not assignments.
+  assert.equal(evidenceLine("AssertionError: 1 !== 2"), "AssertionError: 1 !== 2");
+  assert.equal(evidenceLine("Error: a => b and a >= b"), "Error: a => b and a >= b");
+});
+
+test("Self-repair B2: E3 log lines are assembled across chunks before they are judged, and only a rolling tail is kept", async () => {
+  const secret = "AssertionError: leaked ghp_abcdefghijklmnopqrstuvwxyz0123 here";
+  const text = `not ok 1 - before\n${secret}\nnot ok 2 - after\n`;
+  for (const size of [1, 3, 7, 16]) {
+    const io = { fetch: async () => ({ status: 200, body: (async function* () { yield* b2Chunks(text, size).map((c) => new TextEncoder().encode(c)); })() }) };
+    const read = await readLogTail(io, "https://api.github.com/x/logs", "t");
+    assert.deepEqual(read.lines.map(evidenceLine).filter(Boolean), ["not ok 1 - before", "not ok 2 - after"], `chunk ${size}`);
+    // No fragment of the split secret survives on its own either.
+    assert.ok(read.lines.every((line) => !line.includes("ghp_") || line === secret), `chunk ${size}`);
+  }
+  // A multi-byte character split across chunks decodes whole.
+  const bytes = new TextEncoder().encode("✖ broken\n");
+  const split = { fetch: async () => ({ status: 200, body: (async function* () { yield bytes.slice(0, 1); yield bytes.slice(1); })() }) };
+  assert.deepEqual((await readLogTail(split, "u", "t")).lines, ["✖ broken"]);
+  // The tail rolls: only the last bytes of whole lines are held, and a line
+  // longer than the tail is dropped up to its end.
+  const tail = createLineTail(24);
+  tail.push("first line\nsecond line\nthird ");
+  tail.push("line\n");
+  assert.deepEqual(tail.end(), ["second line", "third line"]);
+  const long = createLineTail(12);
+  long.push("short\n0123456789abcdef");
+  long.push("ghijk\nafter\n");
+  assert.deepEqual(long.end(), ["short", "after"]);
+  assert.equal(REPAIR_LIMITS.logTailBytes, 2 * 1024 * 1024);
+});
+
+test("Self-repair B2: E4 evidence is capped at 4000 characters with the truncation marked", () => {
+  assert.equal(REPAIR_LIMITS.evidenceChars, 4000);
+  const lines = Array.from({ length: 200 }, (_, i) => `not ok ${i} - a failing case number ${i}`);
+  const { text, truncated } = evidenceText([{ id: 9001, lines }]);
+  assert.equal(truncated, true);
+  assert.ok(text.length <= 4000, String(text.length));
+  assert.match(text, /\n\[evidence truncated: \d+ characters cut to 4000\]$/);
+  assert.ok(text.startsWith("check run 9001:\nnot ok 0 - "), "the first failures are kept");
+  assert.ok(text.split("\n").slice(0, -1).every((line) => line === "check run 9001:" || lines.includes(line)), "whole lines only");
+  const short = evidenceText([{ id: 9001, lines: lines.slice(0, 2) }]);
+  assert.deepEqual(short, { text: `check run 9001:\n${lines[0]}\n${lines[1]}`, truncated: false });
+});
+
+test("Self-repair B2: E5 evidence binds failing Actions runs of the failed head by id and head_sha; a stale run never counts", async () => {
+  const read = (host) => readRepairEvidence({ io: host.io, token: "gh-secret-value", repo: REPO, head: FAILED });
+  const fresh = await read(b2Host({ on: true }));
+  assert.deepEqual(fresh.check_runs, [{ id: 9001, head_sha: FAILED }], "the green run and the outside app's run are not evidence");
+  assert.equal(fresh.findings.summary, B2_KEPT);
+  assert.deepEqual(fresh.findings, { verdict_stage: "BLOCKED", source: "ci", target_sha: FAILED, summary: B2_KEPT, links: [`check-run/9001@${FAILED}`] });
+  assert.equal(fresh.digest, repairEvidenceDigest(fresh.findings));
+  assert.doesNotMatch(JSON.stringify(fresh), /hunter2|postgres:|node_modules|node:internal|2026-10-09T|\u001b/);
+  // A failing run listed for another head, or a job that reads back at
+  // another head or as another run, is stale and never evidence.
+  const staleRun = b2Host({ on: true, runs: [{ id: 9001, status: "completed", conclusion: "failure", head_sha: PASSED, app: { slug: "github-actions" } }] });
+  await assert.rejects(read(staleRun), { code: "REPAIR_NO_EVIDENCE" });
+  assert.ok(!staleRun.b2.gets.some((get) => get.includes("/actions/jobs/")), "a stale run's job is never read");
+  await assert.rejects(read(b2Host({ on: true, jobs: { 9001: { id: 9001, head_sha: PASSED } } })), { code: "REPAIR_NO_EVIDENCE" });
+  await assert.rejects(read(b2Host({ on: true, jobs: { 9001: { id: 9009, head_sha: FAILED } } })), { code: "REPAIR_NO_EVIDENCE" });
+  const greenOnly = b2Host({ on: true, runs: [{ id: 9002, status: "completed", conclusion: "success", head_sha: FAILED, app: { slug: "github-actions" } }] });
+  await assert.rejects(read(greenOnly), { code: "REPAIR_NO_EVIDENCE" });
+  // Every read is a GET with the coordinator's token.
+  assert.ok(staleRun.b2.gets.every((get) => get.startsWith("GET ")));
+});
+
+test("Self-repair B2: E6 no Actions read permission, an unreadable log, or nothing surviving the filter is a named skip", async () => {
+  const read = (host) => readRepairEvidence({ io: host.io, token: "gh-secret-value", repo: REPO, head: FAILED });
+  await assert.rejects(read(b2Host({ on: true, jobs: { 9001: 403 } })), (error) => error.code === "REPAIR_NO_ACTIONS_READ" && /Actions: read/.test(error.message));
+  await assert.rejects(read(b2Host({ on: true, logStatus: 403 })), { code: "REPAIR_NO_ACTIONS_READ" });
+  await assert.rejects(read(b2Host({ on: true, logStatus: 410 })), { code: "REPAIR_UNREADABLE" });
+  await assert.rejects(read(b2Host({ on: true, logs: { 9001: "Run npm test\nPASSWORD=hunter2 not ok\nok 1 - fine\n" } })), { code: "REPAIR_NO_EVIDENCE" });
+  await assert.rejects(readRepairEvidence({ io: b2Host({ on: true }).io, token: null, repo: REPO, head: FAILED }), { code: "REPAIR_UNREADABLE" });
+  for (const code of ["REPAIR_NO_EVIDENCE", "REPAIR_NO_ACTIONS_READ", "REPAIR_UNREADABLE"]) assert.ok(REPAIR_SKIPS.has(code), code);
+});
+
+test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, removed or loosened test and any change to how tests run", async () => {
+  const judge = (files, extra = {}) => testWeakening({ compare: { status: "ahead", behind_by: 0, merge_base_commit: { sha: FAILED }, files, ...extra },
+    base: FAILED, head: PASSED, readFile: async (file, ref) => extra.contents?.[`${file}@${ref}`] ?? null });
+  const patch = (...lines) => `@@ -1,3 +1,3 @@\n${lines.join("\n")}`;
+  const ok = await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-a", "+b", " c") },
+    { filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }]);
+  assert.deepEqual(ok, { ok: true }, "fixing code and an assertion is fine");
+  const added = [
+    "test.skip('x', () => {})", "it.only('x', () => {})", "describe . skip ('x', () => {})", "test .todo ('x')", "t.skip()",
+    "xit('x', () => {})", "xdescribe('x', () => {})", "xtest('x', () => {})", "fit('x', () => {})",
+    "test('x', { skip: true }, () => {})", "test('x', { todo: true }, () => {})", "test('x', {skip}, () => {})", "test('x', { skip: 'later' })",
+  ];
+  for (const line of added) {
+    for (const filename of ["packages/db/test/org.test.mjs", "packages/db/src/helpers.ts"]) {
+      const verdict = await judge([{ filename, status: "modified", patch: patch(" a", `+${line}`) }]);
+      assert.equal(verdict.ok, false, `${filename}: ${line}`);
+      assert.match(verdict.reason, /adds a skipped, focused or postponed test/);
+    }
+  }
+  for (const line of ["test('x', () => {", "  it ('y', async () => {", "describe(\"z\", () => {", "test . each([1])('x', () => {"]) {
+    const verdict = await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch(`-${line}`, " b") }]);
+    assert.deepEqual(verdict.ok, false, line);
+    assert.match(verdict.reason, /removes a line that declares a test case/);
+  }
+  for (const [label, file, why] of [
+    ["deleted", { filename: "packages/db/test/org.test.mjs", status: "removed" }, /was deleted/],
+    ["renamed", { filename: "packages/db/test/org2.test.mjs", previous_filename: "packages/db/test/org.test.mjs", status: "renamed", patch: "" }, /renamed or moved/],
+    ["moved out", { filename: "packages/db/src/org.mjs", previous_filename: "packages/db/test/org.mjs", status: "renamed", patch: "" }, /renamed or moved/],
+    ["vitest config", { filename: "vitest.config.ts", status: "modified", patch: patch("-a", "+b") }, /decides which tests run/],
+    ["runner rc", { filename: "packages/db/.mocharc.json", status: "modified", patch: patch("-a", "+b") }, /decides which tests run/],
+    ["ignore file", { filename: ".gitignore", status: "modified", patch: patch("+x") }, /decides which tests run/],
+    ["tsconfig exclude", { filename: "packages/db/tsconfig.json", status: "modified", patch: patch("+x") }, /decides which tests run/],
+    ["workflow", { filename: ".github/workflows/ci.yml", status: "modified", patch: patch("+x") }, /decides which tests run/],
+    ["binary or huge", { filename: "packages/db/src/org.ts", status: "modified" }, /no readable diff/],
+    ["not a diff", { filename: "packages/db/src/org.ts", status: "modified", patch: "garbage line" }, /no readable diff/],
+    ["unknown status", { filename: "packages/db/src/org.ts", status: "copied", patch: patch("+x") }, /cannot read/],
+    ["no name", { status: "modified", patch: patch("+x") }, /has no name/],
+  ]) {
+    const verdict = await judge([file]);
+    assert.equal(verdict.ok, false, label);
+    assert.match(verdict.reason, why, label);
+  }
+  // package.json: its test scripts and runner keys must read the same at both heads.
+  const pkg = (scripts, extra = {}) => JSON.stringify({ name: "x", scripts, ...extra });
+  const pkgFile = { filename: "packages/db/package.json", status: "modified", patch: patch("-a", "+b") };
+  const pkgJudge = (before, after) => judge([pkgFile], { contents: { [`packages/db/package.json@${FAILED}`]: before, [`packages/db/package.json@${PASSED}`]: after } });
+  assert.deepEqual(await pkgJudge(pkg({ test: "node --test", build: "tsc" }), pkg({ test: "node --test", build: "tsc -b" })), { ok: true });
+  for (const [label, before, after] of [
+    ["test script", pkg({ test: "node --test" }), pkg({ test: "node --test --test-skip-pattern=org" })],
+    ["test:db script", pkg({ "test:db": "a" }), pkg({ "test:db": "true" })],
+    ["pretest added", pkg({ test: "a" }), pkg({ test: "a", pretest: "b" })],
+    ["jest key", pkg({ test: "jest" }, { jest: { testPathIgnorePatterns: [] } }), pkg({ test: "jest" }, { jest: { testPathIgnorePatterns: ["org"] } })],
+    ["unreadable", "{", pkg({ test: "a" })],
+    ["missing", null, pkg({ test: "a" })],
+  ]) {
+    const verdict = await pkgJudge(before ?? undefined, after);
+    assert.equal(verdict.ok, false, label);
+  }
+  // A head that does not build on the failed head, or a compare that cannot be read whole.
+  assert.equal((await judge([], { status: "diverged" })).ok, false);
+  assert.equal((await judge([], { behind_by: 1 })).ok, false);
+  assert.equal((await judge([], { merge_base_commit: { sha: REV } })).ok, false);
+  assert.equal((await judge(Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}`, status: "modified", patch: patch("+x") })))).ok, false);
+  assert.equal((await testWeakening({ compare: null, base: FAILED, head: PASSED, readFile: async () => null })).ok, false);
+  assert.equal(isTestPath("packages/db/test/helpers.mjs"), true);
+  assert.equal(isTestPath("apps/web/src/org.spec.tsx"), true);
+  assert.equal(isTestPath("apps/web/src/org.ts"), false);
+  assert.equal(isTestConfigPath("apps/web/playwright.config.ts"), true);
+  assert.equal(isTestConfigPath("apps/web/src/config.ts"), false);
+});
+
+test("Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before", async () => {
+  const expected = `SHU-301 ran at ${REV} and did not land (PASS, landing PR_OPENED_CI_RED): ${autoClaim(LAND_PATHS, REV, "SHU-301")}`;
+  const proven = `${expected}; hand landing not proven: #77 is not merged`;
+  const outputs = [];
+  for (const on of [undefined, false, "true", 1]) {
+    const host = b2Host({ on });
+    const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+    assert.deepEqual(await nextCard(host.io, LAND_PATHS, config, REV), { id: null, skipped: "QUEUE_STOPPED", reason: expected }, String(on));
+    const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+    assert.deepEqual(result, { ok: true, trigger: "timer", skipped: "QUEUE_STOPPED", reason: proven }, String(on));
+    outputs.push(JSON.stringify(result));
+    assert.equal(host.ticks, 0, "nothing is armed");
+    assert.equal(b2EvidenceReads(host).length, 0, "no check run, job or log is read");
+    assert.equal(host.files.has(b2RoundFile()), false, "no round record");
+    assert.equal(host.reports.length, 0);
+  }
+  assert.equal(new Set(outputs).size, 1, "absent and false give the same bytes");
+  // The committed configuration ships it off.
+  assert.equal(Object.hasOwn(COMMITTED, "landing_repair"), false);
+});
+
+test("Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on", async () => {
+  const host = b2Host({ on: true });
+  const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+  const next = await nextCard(host.io, LAND_PATHS, config, REV);
+  assert.deepEqual(next, { id: "SHU-301", repair: b2Claim() });
+  let armedRecord = null;
+  let roundAtArm = null;
+  const write = host.fs.writeFileSync;
+  host.fs.writeFileSync = (file, text, options = {}) => {
+    if (String(file).startsWith(`${LAND_PATHS.activation}.card-run-`)) { armedRecord = JSON.parse(text); roundAtArm = b2Round(host); }
+    return write(file, text, options);
+  };
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.outcome, "PASS", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  assert.equal(result.land.pr, 77);
+  assert.equal(result.land.opened, false);
+  assert.equal(result.land.reviewed_head, PASSED);
+  // The armed record: the card's lanes, a deterministic id, the failed head,
+  // and the B1 repair keys bound to the claim and the filtered evidence.
+  assert.equal(armedRecord.activation_id, B2_REPAIR_ID);
+  assert.equal(armedRecord.initial_target_sha, FAILED);
+  assert.equal(armedRecord.repair_pr, 77);
+  assert.equal(armedRecord.repair_of, EPISODE);
+  assert.equal(armedRecord.max_rounds, 1);
+  assert.equal(armedRecord.writer_lane, "codex-builder");
+  assert.equal(armedRecord.reviewer_lane, "claude-verifier");
+  assert.deepEqual(armedRecord.repair_findings, { verdict_stage: "BLOCKED", source: "ci", target_sha: FAILED, summary: B2_KEPT, links: [`check-run/9001@${FAILED}`] });
+  assert.equal(armedRecord.repair_evidence_digest, repairEvidenceDigest(armedRecord.repair_findings));
+  assert.equal(validateActivationRecord(armedRecord).ok, true);
+  // The round was claimed and marked armed before anything was armed.
+  assert.equal(roundAtArm.state, "armed");
+  // Its round record is finished with the outcome.
+  const round = b2Round(host);
+  assert.equal(round.state, "finished");
+  assert.equal(round.activation_id, B2_REPAIR_ID);
+  assert.equal(round.repair_of, EPISODE);
+  assert.equal(round.pr, 77);
+  assert.equal(round.reviewed_head, FAILED);
+  assert.equal(round.repaired_head, PASSED);
+  assert.equal(round.land, "MERGED");
+  assert.equal(round.merge_commit, MERGE_SHA);
+  assert.deepEqual(round.check_runs, [{ id: 9001, head_sha: FAILED }]);
+  assert.equal(host.files.get(b2RoundFile()).mode, 0o600);
+  // Exact-PR landing: never found or opened, merged with the expected head.
+  assert.equal(host.land.posts, 0, "no pull request was opened");
+  assert.ok(!host.land.log.includes("github list"), "the branch's pull requests are never searched to find one");
+  assert.equal(host.land.merges, 1);
+  assert.ok(host.b2.landGets.includes(`GET /compare/${FAILED}...${PASSED}?per_page=100`), "the weakening guard read the change");
+  assert.ok(host.b2.gets.every((get) => get.startsWith("GET ")));
+  neverDone(host);
+  reverted(host);
+  // The report names the repair, and no secret or log noise reaches it.
+  assert.match(host.reports[0], new RegExp(`^Landing repair of pull request #77: one revise of ${FAILED} after episode ${EPISODE}, from 1 failing check run\\(s\\)\\.$`, "m"));
+  assert.doesNotMatch(JSON.stringify(result) + host.reports.join("\n") + host.files.get(b2RoundFile()).text, /hunter2|land-secret-value|gh-secret-value|lin-secret-value/);
+  // The merged repair lands the card: the queue moves on, and never repairs again.
+  assert.deepEqual(await cardLanded(host.io, LAND_PATHS, "SHU-301"), { landed: true, by: "repair" });
+  assert.deepEqual(await nextCard(host.io, LAND_PATHS, config, REV), { id: "SHU-305" });
+});
+
+test("Self-repair B2: R2 each stop before the round record is a named skip that writes nothing and arms nothing", async () => {
+  const cases = [
+    ["no evidence", { logs: { 9001: "Run npm test\nok 1 - fine\n" } }, "REPAIR_NO_EVIDENCE"],
+    ["stale check runs", { runs: [{ id: 9001, status: "completed", conclusion: "failure", head_sha: PASSED, app: { slug: "github-actions" } }] }, "REPAIR_NO_EVIDENCE"],
+    ["no Actions read", { jobs: { 9001: 403 } }, "REPAIR_NO_ACTIONS_READ"],
+    ["the pull request moved", { pullEdit: { head: { ref: "coordinator/SHU-301", sha: "9".repeat(40), repo: { full_name: REPO } } } }, "REPAIR_NOT_ELIGIBLE"],
+    ["the pull request closed", { pullEdit: { state: "closed" } }, "REPAIR_NOT_ELIGIBLE"],
+    ["another base", { pullEdit: { base: { ref: "release", sha: REV, repo: { full_name: REPO } } } }, "REPAIR_NOT_ELIGIBLE"],
+    ["a claim naming another episode", { claim: { activation_id: "shu-301-run-20261009T000000Z" } }, "REPAIR_NOT_ELIGIBLE"],
+    ["a claim naming another head", { claim: { reviewed_head: "8".repeat(40) } }, "REPAIR_NOT_ELIGIBLE"],
+  ];
+  for (const [label, options, skipped] of cases) {
+    const host = b2Host({ on: true, ...options });
+    const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+    assert.equal(result.skipped, skipped, `${label}: ${JSON.stringify(result)}`);
+    assert.equal(host.files.has(b2RoundFile()), false, `${label}: no round record`);
+    assert.equal(host.ticks, 0, `${label}: nothing armed`);
+    noArming(host);
+    assert.equal(host.reports.length, 0, `${label}: a skip posts nothing`);
+    assert.equal(host.files.has(LAND_PATHS.lock), false, `${label}: the lock is released`);
+  }
+  // A claim the repair does not read as repairable (another card's, a legacy
+  // claim without its pull request) is never repaired at all.
+  for (const claim of [{ pr: null }, { reviewed_head: null }, { repo: "someone/fork" }, { ok: false }, { land: "CI_TIMEOUT" }]) {
+    const host = b2Host({ on: true, claim });
+    assert.equal((await autoRun({ io: host.io, paths: LAND_PATHS })).skipped, "QUEUE_STOPPED", JSON.stringify(claim));
+    assert.equal(b2EvidenceReads(host).length, 0);
+  }
+  // The pause wins when it appears while the evidence is read.
+  const paused = b2Host({ on: true });
+  const fetch = paused.io.fetch;
+  paused.io.fetch = async (url, request) => {
+    if (String(url).endsWith("/logs")) paused.files.set(LAND_PATHS.pause, { text: "", mode: 0o644, uid: 0, gid: 0 });
+    return fetch(url, request);
+  };
+  const result = await autoRun({ io: paused.io, paths: LAND_PATHS });
+  assert.equal(result.skipped, "PAUSED", JSON.stringify(result));
+  assert.equal(paused.files.has(b2RoundFile()), false);
+  noArming(paused);
+});
+
+test("Self-repair B2: R3 any round record means no second round, and one that never finished is REPAIR_INTERRUPTED, alerted once", async () => {
+  const roundText = (fields) => ({ text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, ...fields })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  for (const state of ["claimed", "armed", undefined]) {
+    const host = b2Host({ on: true });
+    host.files.set(b2RoundFile(), state === undefined ? { text: "{", mode: 0o600, uid: 0, gid: 0 } : roundText({ state }));
+    const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+    const next = await nextCard(host.io, LAND_PATHS, config, REV);
+    assert.equal(next.skipped, "REPAIR_INTERRUPTED", String(state));
+    assert.equal(next.id, null);
+    const first = await autoRun({ io: host.io, paths: LAND_PATHS });
+    assert.equal(first.skipped, "REPAIR_INTERRUPTED", JSON.stringify(first));
+    assert.equal(first.needs_owner, true);
+    assert.equal(host.ticks, 0, "never re-launched");
+    assert.equal(b2EvidenceReads(host).length, 0, "no evidence is read");
+    assert.equal(host.reports.length, 1, "the owner hears about it");
+    assert.match(host.reports[0], /^Card run on SHU-301 \(card\): REPAIR_INTERRUPTED, /m);
+    assert.match(host.reports[0], /^Alert: this run needs the owner/m);
+    const status = JSON.parse(host.files.get(statusPath(LAND_PATHS)).text);
+    assert.equal(status.step, "finished");
+    assert.equal(status.outcome, "REPAIR_INTERRUPTED");
+    assert.equal(status.needs_owner, true);
+    // Alerted once: later starts skip quietly, and still never re-launch.
+    const linearCalls = host.linearCalls;
+    const second = await autoRun({ io: host.io, paths: LAND_PATHS });
+    assert.equal(second.skipped, "REPAIR_INTERRUPTED");
+    assert.equal(second.report, undefined, "no second report is attempted");
+    assert.equal(host.linearCalls, linearCalls, "Linear is not asked again");
+    assert.equal(host.reports.length, 1);
+    assert.equal(host.ticks, 0);
+  }
+  // A finished round: no second round, the queue stops as before and says why.
+  const finished = b2Host({ on: true });
+  finished.files.set(b2RoundFile(), roundText({ state: "finished", outcome: "PASS", land: "PR_OPENED_CI_RED" }));
+  const stopped = await autoRun({ io: finished.io, paths: LAND_PATHS });
+  assert.equal(stopped.skipped, "QUEUE_STOPPED");
+  assert.ok(stopped.reason.endsWith(`; its one landing repair finished (PASS, landing PR_OPENED_CI_RED): ${b2RoundFile()}`), stopped.reason);
+  assert.equal(finished.ticks, 0);
+  // A report that could not be posted is tried again on a later start.
+  const offline = b2Host({ on: true });
+  offline.files.set(b2RoundFile(), roundText({ state: "armed" }));
+  offline.failReport = "read";
+  await autoRun({ io: offline.io, paths: LAND_PATHS });
+  assert.equal(offline.files.has(repairAlertPath(LAND_PATHS, REV, "SHU-301")), false);
+  offline.failReport = null;
+  await autoRun({ io: offline.io, paths: LAND_PATHS });
+  assert.equal(offline.reports.length, 1);
+  assert.ok(offline.files.has(repairAlertPath(LAND_PATHS, REV, "SHU-301")));
+});
+
+test("Self-repair B2: R4 crash windows: a round claimed then refused, or one whose end is never written, is never run twice", async () => {
+  // Refused after its claim (card-prepare finds another pull request claiming
+  // the card): the round is this revision's one round, finished NOT_STARTED.
+  const refused = b2Host({ on: true });
+  const fetch = refused.io.fetch;
+  refused.io.fetch = async (url, request = {}) => {
+    if (String(url) === `${B2_API}/pulls?state=open&per_page=100&page=1`) {
+      return b2Respond(200, [{ number: 78, state: "open", title: "[SHU-301] again", head: { ref: "coordinator/SHU-301", sha: FAILED, repo: { full_name: REPO } }, base: { ref: "main", repo: { full_name: REPO } } }]);
+    }
+    return fetch(url, request);
+  };
+  const result = await autoRun({ io: refused.io, paths: LAND_PATHS });
+  assert.equal(result.outcome, "NOT_STARTED", JSON.stringify(result));
+  assert.equal(result.code, "CARD_RUN_REPAIR_INELIGIBLE");
+  assert.equal(b2Round(refused).state, "finished");
+  assert.equal(b2Round(refused).outcome, "NOT_STARTED");
+  assert.equal(refused.ticks, 0);
+  noArming(refused);
+  assert.equal(refused.reports.length, 1);
+  assert.equal((await autoRun({ io: refused.io, paths: LAND_PATHS })).skipped, "QUEUE_STOPPED", "never a second round");
+  // The process dies after arming: the finished write never lands. The next
+  // start reads the armed round as REPAIR_INTERRUPTED and launches nothing.
+  const crashed = b2Host({ on: true });
+  const write = crashed.fs.writeFileSync;
+  crashed.fs.writeFileSync = (file, text, options = {}) => {
+    if (file === `${b2RoundFile()}.tmp` && JSON.parse(text).state === "finished") throw Object.assign(new Error("killed"), { code: "EIO" });
+    return write(file, text, options);
+  };
+  const lost = await autoRun({ io: crashed.io, paths: LAND_PATHS });
+  assert.equal(lost.round_error, "EIO");
+  assert.equal(b2Round(crashed).state, "armed");
+  crashed.fs.writeFileSync = write;
+  const ticks = crashed.ticks;
+  const after = await autoRun({ io: crashed.io, paths: LAND_PATHS });
+  assert.equal(after.skipped, "REPAIR_INTERRUPTED", JSON.stringify(after));
+  assert.equal(crashed.ticks, ticks, "never re-launched");
+  // A record written by someone else between the read and the claim: no round.
+  const raced = b2Host({ on: true });
+  const rwrite = raced.fs.writeFileSync;
+  raced.fs.writeFileSync = (file, text, options = {}) => {
+    if (file === b2RoundFile() && options.flag === "wx") rwrite(file, "{}", {});
+    return rwrite(file, text, options);
+  };
+  assert.equal((await autoRun({ io: raced.io, paths: LAND_PATHS })).skipped, "REPAIR_CLAIMED");
+  assert.equal(raced.ticks, 0);
+  // States only move forward.
+  const round = { file: "/x", record: { state: "armed" } };
+  assert.throws(() => advanceRound({ fs: { writeFileSync() {}, renameSync() {} } }, round, "claimed"), { code: "CARD_RUN_REPAIR_ROUND" });
+});
+
+test("Self-repair B2: L1 a repaired head that weakens a test is refused REPAIR_TEST_WEAKENED with nothing handed off or merged", async () => {
+  const host = b2Host({ on: true, compare: { status: "ahead", behind_by: 0, merge_base_commit: { sha: FAILED },
+    files: [{ filename: "packages/db/test/org.test.mjs", status: "modified", patch: "@@ -1 +1 @@\n-test('refuses a deleted organization', async () => {\n+test.skip('refuses a deleted organization', async () => {" }] } });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land.outcome, "REPAIR_TEST_WEAKENED", JSON.stringify(result.land));
+  assert.match(result.land.reason, /org\.test\.mjs/);
+  noLandingWrites(host);
+  assert.equal(host.land.checkReads, 0, "refused before any wait");
+  assert.equal(b2Round(host).land, "REPAIR_TEST_WEAKENED");
+  assert.match(host.reports[0], /^Alert: this run needs the owner/m);
+  assert.match(host.reports[0], /^Landing: REPAIR_TEST_WEAKENED, /m);
+  // Never counted as landed, by the timer or by hand.
+  assert.equal((await cardLanded(host.io, LAND_PATHS, "SHU-301")).landed, false);
+  // An unreadable change refuses too.
+  const unreadable = b2Host({ on: true, compare: { status: "ahead", behind_by: 0, merge_base_commit: { sha: FAILED }, files: [{ filename: "a.bin", status: "modified" }] } });
+  assert.equal((await autoRun({ io: unreadable.io, paths: LAND_PATHS })).land.outcome, "REPAIR_TEST_WEAKENED");
+  noLandingWrites(unreadable);
+});
+
+test("Self-repair B2: L2 the repaired pull request moving before the wait, during it, or right before the merge stops the landing", async () => {
+  // Learn where the last read of #77 before the merge falls.
+  const probe = b2Host({ on: true });
+  const reads = [];
+  const fetch = probe.io.fetch;
+  probe.io.fetch = async (url, request = {}) => {
+    if (String(url) === `${B2_API}/pulls/77` && request.headers?.Authorization === "Bearer land-secret-value") reads.push(probe.land.merges);
+    return fetch(url, request);
+  };
+  assert.equal((await autoRun({ io: probe.io, paths: LAND_PATHS })).land.outcome, "MERGED");
+  const lastBeforeMerge = reads.lastIndexOf(0) + 1;
+  // Before the wait: the first read of #77 sees another head.
+  const before = await autoRun({ io: b2Host({ on: true, movePullAt: 1 }).io, paths: LAND_PATHS });
+  assert.equal(before.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(before.land));
+  // During the wait.
+  const duringHost = b2Host({ on: true, movePullAt: 2 });
+  const during = await autoRun({ io: duringHost.io, paths: LAND_PATHS });
+  assert.equal(during.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(during.land));
+  assert.match(during.land.reason, /moved to 9{40}/);
+  noLandingWrites(duringHost);
+  // Right before the merge: the repair's last look stops it; nothing merges.
+  const lastHost = b2Host({ on: true, movePullAt: lastBeforeMerge });
+  const last = await autoRun({ io: lastHost.io, paths: LAND_PATHS });
+  assert.equal(last.land.outcome, "LAND_HEAD_MISMATCH", JSON.stringify(last.land));
+  assert.match(last.land.reason, /right before the merge/);
+  assert.equal(lastHost.land.merges, 0);
+  // The pull request closing during the wait is not this repair's any more.
+  const closing = b2Host({ on: true, onChecks: (h, read) => { if (read === 1) h.land.merged = true; } });
+  const closed = await autoRun({ io: closing.io, paths: LAND_PATHS });
+  assert.equal(closed.land.outcome, "LAND_ERROR", JSON.stringify(closed.land));
+  assert.match(closed.land.reason, /changed during the wait/);
+  assert.equal(closing.land.merges, 0);
+});
+
+test("Self-repair B2: L3 only check runs at the repaired head count toward landing it", async () => {
+  const stale = b2Host({ on: true, staleRuns: true });
+  const result = await autoRun({ io: stale.io, paths: LAND_PATHS });
+  assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
+  assert.match(result.land.reason, /no check has reported yet/);
+  noLandingWrites(stale);
+  // A stale red run is not red either: it does not count at all.
+  const runs = { check_runs: [{ name: "test", status: "completed", conclusion: "failure", head_sha: FAILED }, { name: "test", status: "completed", conclusion: "success", head_sha: PASSED }], total_count: 2 };
+  const status = { statuses: [] };
+  const okResponse = { ok: true };
+  assert.deepEqual(judgeChecks(okResponse, runs, okResponse, status, null, { head: PASSED }), { green: true });
+  assert.deepEqual(judgeChecks(okResponse, runs, okResponse, status), { red: ["test: failure"] }, "without a repair every run counts, as before");
 });
