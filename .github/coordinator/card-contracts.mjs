@@ -1948,6 +1948,127 @@ Out of scope: the Postgres write guards (SHU-327), /workspace (SHU-328), purging
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-164 and SHU-168 are the sixth committed card queue (SHU-312). SHU-164 is
+// slice O6e (risk R3), the store half of O6 now that SHU-165 (O7a, migration
+// 0202) gave organizations their stores: an organization with a live store
+// cannot be deleted, and a store write refuses a deleted organization under the
+// same race-free check SHU-327 gave every other organization write. SHU-165's
+// stores store checks liveness and takes its row lock in one statement, the
+// pattern SHU-327 replaced, so a store created while a deletion holds the row
+// can still land on the deleted organization. Restoring within a grace period,
+// the assignment and transfer guards (their tables do not exist) and the
+// audited member-removal route (O4) remain on the card.
+export const SHU164_PATHS = Object.freeze([
+  "packages/organizations/src/deletion-writes.ts",
+  "packages/organizations/test/deletion-writes.test.ts",
+  "packages/organizations/test/deletion-writes-mutations.mjs",
+  "packages/db/src/postgres-organization-deletion-store.ts",
+  "packages/db/src/postgres-organization-stores-store.ts",
+  "packages/db/test/postgres-organization-deletion.test.ts",
+  "packages/db/test/postgres-organization-deletion-guards.test.ts",
+  "packages/db/test/organization-deletion-guards-mutations.mjs",
+  "apps/gateway/test/organization-deletion-http.test.ts",
+]);
+
+const SHU164_ACCEPTANCE = [
+  "(1) OrganizationDeletionCounts (and the db store's DeletionCounts) gain liveStores, the organization's organization_stores rows with status 'active', read in the same counts statement as the other three; ORGANIZATION_DELETION_BLOCKERS becomes [\"live_sub_organizations\", \"live_pay_contracts\", \"member_grants\", \"live_stores\"] and organizationDeletionBlockers adds \"live_stores\" last, tested on its own line as counts.liveStores > 0; making that test false makes \"SHU164_STORES_BLOCK\" fail;",
+  "(2) on Postgres, an organization with an active store is blocked with exactly [\"live_stores\"], a removed (status 'deleted') store does not block, and a store created between preview and confirm makes the confirm answer state_changed with no deletion record (\"SHU164_PG_STORES_BLOCK\");",
+  "(3) PostgresOrganizationStoresStore's #allowed checks the organization with organizationLive(c, orgId, lock) from ./organization-liveness.js instead of its single-statement check, so create, update, remove and list of a deleted organization answer not_found (list null) as an unknown one does; removing that check makes \"SHU164_PG_STORES_PREVIEW\" fail;",
+  "(4) a store create that reaches its check while a deletion holds the organization row waits on the row, then reads the committed deletion record and answers not_found with no organization_stores row and no store audit row written; passing false instead of lock makes \"SHU164_PG_STORES_RACE\" fail;",
+  "(5) deletion-writes-mutations.mjs and organization-deletion-guards-mutations.mjs gain the mutants for (1), (3) and (4), each makes its named test fail by assertion, every existing mutant still binds exactly once and is still killed, and both scripts pass on the unmutated code;",
+  "(6) every existing deletion, deletion-guard, organization-stores and gateway deletion test passes, changed only where the brief says; npm run typecheck and npm test pass; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU164_BRIEF = `Card SHU-164: an organization with live stores cannot be deleted, and store writes refuse a deleted organization (slice O6e of O6, after SHU-326, SHU-327 and SHU-165; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-326 (migration 0201, organization_deletions and the deletion store), SHU-327 (organization-liveness.ts and the deletion write guards) and SHU-165 (migration 0202, organization_stores and its store). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Legacy refuses to delete a company that still has stores (docs/parity/organizations-stores-and-contacts.md section 4.3). SHU-326 could not guard stores because their table did not exist; SHU-165 has since added organization_stores, so today an admin can delete an organization that still has active stores and strand them. Separately, PostgresOrganizationStoresStore.#allowed checks "the organization exists and has no deletion record" in one statement with FOR SHARE OF o. Under READ COMMITTED a row lock that waits does not refresh the NOT EXISTS subquery's snapshot, so a store create that waits behind a deletion still sees no deletion record and inserts a store on the deleted organization. SHU-327 fixed exactly this for the other organization writes with organizationLive.
+
+Read first:
+- packages/organizations/src/deletion-writes.ts: ORGANIZATION_DELETION_BLOCKERS, OrganizationDeletionCounts, organizationDeletionBlockers (and its comment that store and transfer guards wait for their tables) and organizationDeletionGuardedCheck.
+- packages/db/src/postgres-organization-deletion-store.ts: DeletionCounts, counts(org, c) (one SELECT of three subqueries) and #commit, which reads the counts on its own client after SELECT ... FOR UPDATE on the organization row.
+- packages/db/src/postgres-organization-stores-store.ts: #allowed (the single statement to replace), #transaction (advisory lock 165 first), create, update, remove and list.
+- packages/db/src/organization-liveness.ts and its comment, and packages/db/migrations/0202_organization_stores.sql (status 'active' or 'deleted', created_by_ref and updated_by_ref 64 hex, removal is an UPDATE).
+- packages/organizations/test/deletion-writes.test.ts and deletion-writes-mutations.mjs; packages/db/test/postgres-organization-deletion.test.ts; packages/db/test/postgres-organization-deletion-guards.test.ts (its org() fixture and the SHU327_PG_BRANDS_RACE test, the closest model) and organization-deletion-guards-mutations.mjs; packages/db/test/postgres-organization-stores.test.ts (how the stores store is constructed with organizationStoreWriteDecision and organizationStoreReadDecision); apps/gateway/test/organization-deletion-http.test.ts (its two counts stubs).
+
+Design:
+- deletion-writes.ts: add liveStores to OrganizationDeletionCounts; append "live_stores" to ORGANIZATION_DELETION_BLOCKERS; in organizationDeletionBlockers add, after the member-grants line, its own line if (counts.liveStores > 0) result.push("live_stores"). Replace the comment's "Store and transfer dependency guards wait for their platform tables (O7 and F2)" with one saying only the transfer guard waits (F2). Keep the three existing tests (counts.liveSubOrganizations > 0, counts.livePayContracts > 0, counts.memberGrants > 0) exactly as they are: they are mutation anchors. The file is written on few long lines; keep its style and change only these places.
+- postgres-organization-deletion-store.ts: add liveStores to DeletionCounts and a fourth subquery to the counts statement, (SELECT count(*) FROM organization_stores s WHERE s.org_id=$1 AND s.status='active') live_stores, mapped to liveStores. #commit already reads counts on its locked client and refuses with state_changed when any blocker is present; change nothing else there. Why this is race-free: a store insert checks its foreign key to organizations with FOR KEY SHARE and the stores store will hold FOR SHARE (below), both of which conflict with the deletion's FOR UPDATE; so a store committed before the deletion's lock is counted, and one that arrives after waits and is refused.
+- postgres-organization-stores-store.ts: import organizationLive from "./organization-liveness.js" and replace the first two lines of #allowed's body (the live query and its "if (!live.rows.length) return false;") with one line: if (!await organizationLive(c, orgId, lock)) return false; keep the comment above it. Grants and ancestry are read after it, as now. Nothing else in the file changes.
+- No migration, no gateway source change: the gateway's 409 deletion_blocked already returns whatever list the store's blockers give.
+
+Tests (name every new test with its token first and a space after it):
+- packages/organizations/test/deletion-writes.test.ts: add liveStores: 0 to the fixture's counts object and to the blockers literal in the SHU-326/AC-03 to AC-05 loop, and add "SHU164_STORES_BLOCK ...": organizationDeletionBlockers({ ...zeros, liveStores: 1 }) is ["live_stores"], all four set give the four blockers in order, and through the fixture a preview with no dependents followed by set("liveStores") makes the confirm answer state_changed. Do not rename or reorder the existing tests.
+- packages/db/test/postgres-organization-deletion.test.ts: "SHU164_PG_STORES_BLOCK ...": insert an active store row directly (INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) with a random uuid and "a".repeat(64)) for a fresh org: store.blockers(admin, org) is ["live_stores"]; UPDATE it to status='deleted', deleted_at=clock_timestamp(): blockers is [] and the deletion succeeds; for a second org, preview the deletion, then insert an active store, then confirm: state_changed and no organization_deletions row.
+- packages/db/test/postgres-organization-deletion-guards.test.ts: construct new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision }) (the org() actor's subtree admin grant on root allows it). "SHU164_PG_STORES_PREVIEW ...": a store created on the live company lists; after deleted(company), list answers null and create, update and remove answer { kind: "not_found" }, with the earlier store row unchanged. "SHU164_PG_STORES_RACE ...": copy SHU327_PG_BRANDS_RACE: a second client BEGINs, locks the company row FOR UPDATE and inserts its deletion record; start store.create without awaiting; poll pg_stat_activity (bounded, as that test does) until another backend waits on a Lock in a query starting 'SELECT id FROM organizations', and fail by assertion if none does; COMMIT; the create answers { kind: "not_found" } and the company has no organization_stores row and no organization.store.create audit row. Release every client, even when the test fails.
+- packages/db/test/organization-deletion-guards-mutations.mjs: its run() selects ^SHU327_PG_<pattern> followed by a space. Change it to take the whole token: write each existing entry's pattern as "SHU327_PG_<pattern>" (the assert.match too), change nothing else in those entries, and add a stores file entry (dist/postgres-organization-stores-store.js) with two mutants: "if (!await organizationLive(c, orgId, lock))" made "if (false)" (SHU164_PG_STORES_PREVIEW) and "organizationLive(c, orgId, lock)" made "organizationLive(c, orgId, false)" (SHU164_PG_STORES_RACE). Restore the stores file in the same finally as the others.
+- packages/organizations/test/deletion-writes-mutations.mjs: add ["stores","SHU164_STORES_BLOCK","counts.liveStores > 0","false"] (it targets dist/deletion-writes.js like the other blocker mutants) and make the final line print "10/10".
+- apps/gateway/test/organization-deletion-http.test.ts: add liveStores: 0 to its two counts stubs; change nothing else.
+- Take every anchor from the built JavaScript after npm run build, not the TypeScript, assert each binds exactly once, and check by hand that each new mutant fails its named test.
+
+Out of scope: restoring a deleted organization within a grace period (organization_deletions is append-only by migration 0201; that needs its own decision and migration), the assignment and transfer guards (their tables do not exist), deleting a store while candidates are assigned, member removal and grant revocation routes (O4), any migration, the read model, directory and organizations.ts, the deletion store's other methods, the gateway sources, package.json (every touched test and script already runs from test or test:db), the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+// SHU-168 is slice O10a (risk R2): the company directory shows each company's
+// active store count, computed from organization_stores at read time with one
+// query per page and only for the companies the caller's grants cover. Nothing
+// stores a counter, so there is nothing to reconcile. Active-candidate and
+// open-request counts wait for the assignment and request tables (SHU-126).
+export const SHU168_PATHS = Object.freeze([
+  "packages/organizations/src/types.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/test/organization-directory.test.ts",
+  "packages/organizations/test/directory-mutations.mjs",
+  "packages/db/src/postgres-organization-stores-store.ts",
+  "packages/db/test/postgres-organization-stores.test.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/company-directory.test.ts",
+]);
+
+const SHU168_ACCEPTANCE = [
+  "(1) OrganizationDirectoryEntry gains storeCount: number | null, the company's own organization_stores rows with status 'active', read through a new optional OrganizationRepository port storeCounts (OrganizationStoreCounts, countMany(orgIds) => Promise<ReadonlyMap<string, number>>) on every listOrganizations call, so a store created or removed shows in the next list; a company the map omits counts 0, and with no port storeCount is null; skipping the port's value makes \"SHU168_STORE_COUNT\" fail;",
+  "(2) the count is grant-scoped: countMany is called once per list with exactly the ids of the covered top-level companies (each once), never with an uncovered, deleted or sub-organization id, and not at all when no company is shown; passing the registry's organizations instead makes \"SHU168_STORE_COUNT_SCOPE\" fail;",
+  "(3) PostgresOrganizationStoresStore.countMany(orgIds) answers from one GROUP BY query over active rows with = ANY, runs no query for an empty list, and reflects a create and a removal immediately (\"SHU168_PG_STORE_COUNTS\");",
+  "(4) no column, table, cache or job stores a store count, so no reconciliation exists or is needed; the audit rows' storeCount stays an audit summary and is never read back as a count;",
+  "(5) the live runtime passes the stores store as storeCounts; the staff and admin company page shows a Stores column with the count, or the existing Unavailable marker when it is null (\"SHU168_PAGE\"); the JSON list carries storeCount;",
+  "(6) directory-mutations.mjs gains the two mutants for (1) and (2), each makes its named test fail by assertion, its existing mutants and every other organizations.js and web-ui.js mutation script still bind each anchor exactly once and pass; the existing directory tests pass with storeCount added to ENTRY_KEYS and nothing else changed; npm run typecheck and npm test pass; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU168_BRIEF = `Card SHU-168: the company directory counts each company's stores at read time (slice O10a of O10, after SHU-165; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-163 (the staff and admin company directory), SHU-326 (deleted organizations leave the directory) and SHU-165 (migration 0202, organization_stores and PostgresOrganizationStoresStore). Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Legacy kept denormalised counters (total_candidate, store_total_candidates, no_of_active_requests) that a cron rewrote and that drift (docs/parity/organizations-stores-and-contacts.md section 10, the SHU-39 row on denormalised counters, slice O10 in section 11 and section 13). The platform stores no counter today: subOrganizationCount is already computed from the registry per request. Of the counts the card names, only stores now have a source table, so this slice adds the store count the same way, computed at read time and scoped by the caller's grants. Active-candidate and open-request counts wait for their tables.
+
+Read first:
+- packages/organizations/src/organizations.ts: listOrganizations (covered, deletedIds, shown, batchRecords, approvedBatch, children) and directoryEntry; the optional ports in the OrganizationRepository constructor (approvedToHire is the closest model: a readMany batch over shown).
+- packages/organizations/src/types.ts: OrganizationDirectoryEntry.
+- packages/organizations/test/organization-directory.test.ts (setup, STAFF, ENTRY_KEYS, the SHU-163/AC-01 SCOPE test) and directory-mutations.mjs (its mutants and SHU163_TEST_MODULE).
+- packages/db/src/postgres-organization-stores-store.ts and packages/db/test/postgres-organization-stores.test.ts.
+- apps/gateway/src/login-runtime.ts (organizationStoresStore is built before the OrganizationRepository), apps/gateway/src/web-ui.ts renderCompanyDirectory, and apps/gateway/test/company-directory.test.ts (its fixture builds an OrganizationRepository) with company-directory-mutations.mjs.
+
+Design:
+- organizations.ts: export interface OrganizationStoreCounts { countMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, number>> }; add an optional constructor option storeCounts kept in a private field #storeCounts. In listOrganizations, right after the approvedBatch line, add one statement: const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined; and pass storeTotals ? storeTotals.get(org.id) ?? 0 : null to directoryEntry as a new last parameter storeCount: number | null. In directoryEntry put storeCount as the last key of the object, after status. shown already holds only covered, live, top-level companies, so the count inherits the directory's grant scope; a port that throws reaches the existing catch and the list answers unavailable.
+- types.ts: add to OrganizationDirectoryEntry, after status: /** Active stores of this company, counted from source at read time; null when no store source is configured. */ readonly storeCount: number | null;
+- Existing mutation anchors in dist/organizations.js must still bind exactly once and keep their meaning: do not edit the subOrganizationCount, legalName, approvedToHire or status lines of directoryEntry, the batchRecords or approvedBatch lines, the covered filter, deletedIds, or the #authorize lines, and do not name anything ending in batchRecords, record, own or approvedRecord.
+- postgres-organization-stores-store.ts: add async countMany(orgIds: readonly string[]): Promise<Map<string, number>>: an empty list returns an empty map with no query; otherwise one query, SELECT org_id, count(*)::int AS count FROM organization_stores WHERE status='active' AND org_id = ANY($1::text[]) GROUP BY org_id. packages/db does not import packages/organizations; the port matches structurally.
+- login-runtime.ts: pass storeCounts: organizationStoresStore to the OrganizationRepository; change nothing else.
+- web-ui.ts renderCompanyDirectory: add a Stores column after Sub-companies, <th scope="col">Stores</th> in the header and, in the row, a cell with the number, or for null the same '<span class="missing" data-state="unavailable">Unavailable</span>' marker cell() uses. Keep \${escapeHtml(name)}</a>\${common} and every other line company-directory-mutations.mjs and context-navigation-mutations.mjs anchor exactly as they are.
+- No migration, no stored counter, no cache, no background job, no change to the audit rows.
+
+Tests (name every new test with its token first and a space after it):
+- organization-directory.test.ts: add "storeCount" to ENTRY_KEYS in sorted order. Give setup an optional storeCounts port. "SHU168_STORE_COUNT ...": with an in-memory port backed by a Map that records each call, staff list org-a with its count and org-b with 0 (absent from the map); after the map changes (as a create would), the next list shows the new count; without a port every entry's storeCount is null. "SHU168_STORE_COUNT_SCOPE ...": STAFF's list calls countMany once with exactly ["org-a", "org-b"] (in any order, each once), never with org-a1 or org-a2; staff-self-a's list calls it with ["org-a"] only; staff-self-root's empty list does not call it; a port that throws answers unavailable.
+- directory-mutations.mjs: add two mutants in its form: replace the storeTotals value passed to directoryEntry with null or 0 (SHU168_STORE_COUNT), and replace shown.map in the countMany call with organizations.map (SHU168_STORE_COUNT_SCOPE). Take both anchors from packages/organizations/dist/organizations.js, the built file the script reads, assert each binds once (the script prints its count from the list), and check by hand that each fails its named test.
+- postgres-organization-stores.test.ts: "SHU168_PG_STORE_COUNTS ...": two fresh organizations and a third with no stores; create two stores in the first and one in the second through store.create; countMany of all three gives { first: 2, second: 1 } with the third absent; after store.remove of one, the next countMany gives first 1; countMany([]) is an empty map.
+- company-directory.test.ts: let fixture take an optional storeCounts port and pass it to the OrganizationRepository. "SHU168_PAGE ...": with counts { "org-a": 3 }, the HTML page has the Stores header and the cells 3 and 0, and the JSON entries carry storeCount 3 and 0; with no port the cells show Unavailable. Change no existing test.
+
+Out of scope: active-candidate and open-request counts (no assignment or request tables), counts on the organization view, sub-organization lists or the stores page, any stored counter or reconciliation job, migrations, the stores store's writes and #allowed (SHU-164 changes it; do not touch it), the deletion store, package.json (all these tests already run from test, test:web and test:db), the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -2118,6 +2239,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU329_PATHS,
     acceptance: SHU329_ACCEPTANCE,
     brief: SHU329_BRIEF,
+  }),
+  "SHU-164": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU164_PATHS,
+    revision_paths: SHU164_PATHS,
+    acceptance: SHU164_ACCEPTANCE,
+    brief: SHU164_BRIEF,
+  }),
+  "SHU-168": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU168_PATHS,
+    revision_paths: SHU168_PATHS,
+    acceptance: SHU168_ACCEPTANCE,
+    brief: SHU168_BRIEF,
   }),
 });
 
