@@ -151,6 +151,8 @@ export interface OrganizationDirectoryEntry {
   readonly currencyCode: OrganizationField<string>;
   readonly approvedToHire: OrganizationField<boolean>;
   readonly status: OrganizationField<OrganizationStatus>;
+  /** Active stores of this company, counted from source at read time; null when no store source is configured. */
+  readonly storeCount: number | null;
 }
 
 export type OrganizationDirectoryResult =

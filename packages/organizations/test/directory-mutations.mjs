@@ -67,6 +67,14 @@ const mutations = [
     "const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);",
     "let row;\n                try { row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null); } catch { continue; }",
   ],
+  [
+    "discard source store counts", "SHU168_STORE_COUNT",
+    "storeTotals ? storeTotals.get(org.id) ?? 0 : null", "null",
+  ],
+  [
+    "count stores outside the shown grant scope", "SHU168_STORE_COUNT_SCOPE",
+    "this.#storeCounts.countMany(shown.map((org) => org.id))", "this.#storeCounts.countMany(organizations.map((org) => org.id))",
+  ],
 ];
 
 function run(pattern, module) {
