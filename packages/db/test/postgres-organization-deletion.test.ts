@@ -58,6 +58,20 @@ test("SHU-326 postgres dependency blockers are ordered and deleted dependencies 
   const memberOrg = await org(), member = await principal(); await authz.grantMany(member, [{ orgId: memberOrg, role: "staff", scope: "self" }]); assert.deepEqual(await store.blockers(admin, memberOrg), ["member_grants"]);
 });
 
+test("SHU164_PG_STORES_BLOCK active stores block deletion and stale confirmation", async () => {
+  const actorRef = "a".repeat(64), first = await org(), firstStore = randomUUID();
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,$3,$4,$4)", [firstStore, first, "Live store", actorRef]);
+  assert.deepEqual(await store.blockers(admin, first), ["live_stores"]);
+  await pool.query("UPDATE organization_stores SET status='deleted',deleted_at=clock_timestamp() WHERE id=$1", [firstStore]);
+  assert.deepEqual(await store.blockers(admin, first), []);
+  await remove(admin, first);
+
+  const second = await org(), w = writer(admin, second), p = await preview(admin, second); assert.ok(p.ok);
+  await pool.query("INSERT INTO organization_stores(id,org_id,name,created_by_ref,updated_by_ref) VALUES($1,$2,$3,$4,$4)", [randomUUID(), second, "Late store", actorRef]);
+  assert.deepEqual(await w.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(second), token: p.token }), { ok: false, reason: "state_changed" });
+  assert.equal((await pool.query("SELECT 1 FROM organization_deletions WHERE org_id=$1", [second])).rowCount, 0);
+});
+
 test("SHU-326 postgres confirm rechecks dependencies and duplicate tokens", async () => {
   const stale = await org(), w = writer(admin, stale), p = await preview(admin, stale); assert.ok(p.ok); const member = await principal(); await authz.grantMany(member, [{ orgId: stale, role: "staff", scope: "self" }]);
   assert.deepEqual(await w.confirm({ principalRef: organizationDeletionPrincipalRef(admin), change: change(stale), token: p.token }), { ok: false, reason: "state_changed" });
