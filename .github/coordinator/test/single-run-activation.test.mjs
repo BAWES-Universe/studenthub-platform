@@ -1343,7 +1343,7 @@ test("Self-repair B1: E1 the first step is a routed-shape revise on the writer l
   assert.equal(order.target_sha, B1_HEAD);
   assert.equal(order.scope_phase, "revision");
   assert.deepEqual(order.allowed_paths, B1_LANE.revision_paths);
-  assert.equal(order.attempt_id, freshAttempt(pass.attempt_id, "repair", 1));
+  assert.equal(order.attempt_id, freshAttempt(`${pass.attempt_id}:${B1_REPAIR}`, "repair", 1));
   assert.notEqual(order.attempt_id, routed.order.attempt_id);
   assert.deepEqual(review_findings, b1Findings());
   assert.deepEqual(b1Verdict([b1Build(), pass]).successor, order, "every tick names the same revise");
@@ -1407,4 +1407,18 @@ test("Self-repair B1: E5 the re-review's PASS ends the repair complete", () => {
   assert.equal(ended.reason, "review PASS — the episode is complete");
   // Without a repair the fresh episode is unchanged: it waits for its first step.
   assert.deepEqual(b1Verdict([b1Build(), b1Pass()], { repair: null }), { ended: false, reason: "no attempt has been dispatched yet" });
+});
+
+test("Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own", () => {
+  const first = b1Verdict([b1Build(), b1Pass()]);
+  const laterId = "card-SHU-327-repair-0002";
+  const later = b1Verdict([b1Build(), b1Pass()], { repair: repairFromActivation(b1Record({ activation_id: laterId }), B1_CONFIG) });
+  assert.equal(first.ended, false, first.reason);
+  assert.equal(later.ended, false, later.reason);
+  assert.equal(later.successor.attempt_id, freshAttempt(`${b1Pass().attempt_id}:${laterId}`, "repair", 1));
+  assert.notEqual(later.successor.attempt_id, first.successor.attempt_id, "a second repair never reuses the first repair's immutable attempt");
+  // A repair whose own id is unknown cannot bind its attempt, so it ends instead of guessing one.
+  const unbound = b1Verdict([b1Build(), b1Pass()], { repair: { ...repairFromActivation(b1Record(), B1_CONFIG), activation_id: null } });
+  assert.equal(unbound.ended, true);
+  assert.match(unbound.reason, /names no id to bind its attempt to/);
 });

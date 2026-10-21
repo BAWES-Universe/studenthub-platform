@@ -301,6 +301,7 @@ export function receiptInEpisodeScope(receipt, scope) {
 export function repairFromActivation(source, config = {}) {
   if (!source || typeof source !== "object" || !REPAIR_ACTIVATION_KEYS.every((key) => Object.hasOwn(source, key))) return null;
   return Object.freeze({
+    activation_id: typeof source.activation_id === "string" ? source.activation_id : null,
     repair_pr: source.repair_pr,
     repair_of: source.repair_of,
     repair_findings: source.repair_findings,
@@ -342,7 +343,7 @@ function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authori
   }
   let minted;
   try {
-    minted = repairReviseOrder({ pass, lineageReceipts: issueReceipts, fixtureLane: resolveFixtureLane(config, targetIssueId) });
+    minted = repairReviseOrder({ pass, repairId: repair.activation_id, lineageReceipts: issueReceipts, fixtureLane: resolveFixtureLane(config, targetIssueId) });
   } catch (err) {
     return { ended: true, reason: `repair revise cannot be minted (${err?.message ?? "error"})` };
   }

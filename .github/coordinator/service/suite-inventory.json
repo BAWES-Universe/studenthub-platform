@@ -3337,6 +3337,7 @@
     "Self-repair B1: E3 a branch that moved off the passed head ends the repair",
     "Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise",
     "Self-repair B1: E5 the re-review's PASS ends the repair complete",
+    "Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own",
     "SHU-250: real tick returns while a long-running supervised child executes",
     "SHU-250: concurrent ticks recover the same durable attempt with one launch",
     "SHU-250: crash after submission recovers once and ambiguous restart HOLDs",
@@ -26107,6 +26108,14 @@
     },
     {
       "name": "Self-repair B1: E5 the re-review's PASS ends the repair complete",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own",
       "capabilities": [
         {
           "name": "git"

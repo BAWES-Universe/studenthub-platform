@@ -896,7 +896,7 @@ test("Self-repair B1: D1 an armed landing repair dispatches its one revise on th
     assert.equal(launch.target_sha, SHA_INPUT);
     assert.equal(launch.scope_phase, "revision");
     assert.deepEqual(launch.allowed_paths, B1_LANE.revision_paths);
-    assert.equal(launch.attempt_id, routing.freshAttempt(pass.attempt_id, "repair", 1));
+    assert.equal(launch.attempt_id, routing.freshAttempt(`${pass.attempt_id}:${B1_REPAIR}`, "repair", 1));
     const revise = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
     assert.equal(revise.length, 1);
     assert.equal(revise[0].role, "revise");

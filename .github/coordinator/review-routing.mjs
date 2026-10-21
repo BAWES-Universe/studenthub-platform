@@ -619,12 +619,16 @@ function completedOrderFromTerminal(terminal, verdict, runtime) {
 // same pieces nextWorkOrder uses: the completed order rebuilt from the PASS
 // receipt, the active writer of the lineage it reviewed, that writer's revise
 // lane and the card's revision scope. Its attempt id is derived from the PASS
-// receipt's with a "repair" stage, so every tick names the same attempt and no
-// round of the routed loop can collide with it. The caller has already proven
-// the PASS (provenance, episode, head, branch); this only refuses what it
-// cannot mint. Returns { ok, order? , reason? }.
-export function repairReviseOrder({ pass, lineageReceipts = [], fixtureLane = null } = {}) {
+// receipt's and the repair activation's own id with a "repair" stage, so every
+// tick of one repair names the same attempt, no round of the routed loop can
+// collide with it, and a later repair of the same PASS (a new activation) gets
+// an attempt of its own instead of colliding with the earlier repair's
+// immutable receipt. The caller has already proven the PASS (provenance,
+// episode, head, branch); this only refuses what it cannot mint. Returns
+// { ok, order? , reason? }.
+export function repairReviseOrder({ pass, repairId, lineageReceipts = [], fixtureLane = null } = {}) {
   if (!pass || typeof pass !== "object") return { ok: false, reason: "no passed review to repair from" };
+  if (typeof repairId !== "string" || !repairId) return { ok: false, reason: "the repair activation names no id to bind its attempt to" };
   const authority = resolveReceiptRoleAuthority(pass);
   if (!authority.ok || authority.role !== "review") return { ok: false, reason: "the passed receipt has no review role authority" };
   // The passed episode's own receipts, in durable order: the same lineage the
@@ -644,7 +648,7 @@ export function repairReviseOrder({ pass, lineageReceipts = [], fixtureLane = nu
       runtime: repairWriter.runtime,
       actor: repairWriter.actor,
       requested_worker: writerLane,
-      attempt_id: freshAttempt(pass.attempt_id, "repair", 1),
+      attempt_id: freshAttempt(`${pass.attempt_id}:${repairId}`, "repair", 1),
       ...successorWorkspaceScope("revise", fixtureLane),
     }),
   };
