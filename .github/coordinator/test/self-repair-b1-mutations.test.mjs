@@ -180,6 +180,14 @@ const CASES = [
     tests: "card-run.test.mjs",
     pattern: "Self-repair B1: C1",
   },
+  {
+    name: "M22 publish a second revise directive for a repair",
+    file: "reconcile.mjs",
+    from: "      max_revise: landingRepair ? 0 : Number.isInteger(config.max_revise)",
+    to: "      max_revise: Number.isInteger(config.max_revise)",
+    tests: "shu246-episode-backfill.test.mjs",
+    pattern: "Self-repair B1: K1",
+  },
 ];
 
 for (const mutation of CASES) {

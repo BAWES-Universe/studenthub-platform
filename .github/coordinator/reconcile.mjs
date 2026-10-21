@@ -2001,6 +2001,9 @@ export async function backfillSuccessorDirectives({
   stdout = null,
   bootstrapByIssue = new Map(),
   episodeScope = null,
+  // Self-repair B1: a landing repair's one round, so a directive is never
+  // published for a second revise the episode itself would refuse.
+  landingRepair = false,
 }) {
   const out = stdout ?? ((s) => console.log(s));
   // Defense in depth: this is the only helper that publishes successor
@@ -2070,7 +2073,7 @@ export async function backfillSuccessorDirectives({
       terminal,
       evidenceStage: terminal.verdict_stage,
       evidenceResultSha: terminal.result_sha ?? null,
-      max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
+      max_revise: landingRepair ? 0 : Number.isInteger(config.max_revise) ? config.max_revise : 3,
       authoritativeHead,
       // SHU-225: the first-review bootstrap, and ONLY for the issue the armed
       // activation is bound to. Any other card's lineage routes exactly as it did
@@ -3050,6 +3053,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     stdout: io.stdout,
     bootstrapByIssue: episodeBootstrap,
     episodeScope,
+    landingRepair: Boolean(repairFromActivation(singleRunActivation, config)),
   });
   if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   // SHU-71 run 9: a reservation of this episode that an earlier tick wrote but

@@ -2778,6 +2778,7 @@
     "Self-repair B1: mutation M19 judge every card by the repair predicate",
     "Self-repair B1: mutation M20 drop the repair from the live-head episode decision",
     "Self-repair B1: mutation M21 let card-prepare judge a repair by today's rule",
+    "Self-repair B1: mutation M22 publish a second revise directive for a repair",
     "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
     "SHU-224: a higher-priority real card cannot beat the scoped fixture",
     "SHU-224: a missing or ineligible scoped target selects nothing and never falls back",
@@ -2954,6 +2955,7 @@
     "SHU-246 A3: no armed episode preserves global routing byte-for-byte",
     "SHU-246 A4 / Run #7: scoped writer and eligible terminal both come from the armed episode",
     "SHU-246 A5: main wires the armed episode boundary into backfill",
+    "Self-repair B1: K1 backfill publishes no second revise for a landing repair",
     "SHU-246 mutation M1 admit retired episode terminals",
     "SHU-246 mutation M2 restore issue-wide routing lineage",
     "SHU-246 mutation M3 select the Run #7 retired scoped writer",
@@ -22004,6 +22006,10 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B1: mutation M22 publish a second revise directive for a repair",
+      "capabilities": []
+    },
+    {
       "name": "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
       "capabilities": []
     },
@@ -23429,6 +23435,10 @@
     },
     {
       "name": "SHU-246 A5: main wires the armed episode boundary into backfill",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: K1 backfill publishes no second revise for a landing repair",
       "capabilities": []
     },
     {
