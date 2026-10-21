@@ -3161,6 +3161,7 @@
     "SHU-322 mutation M25 install from a stopped queue",
     "SHU-322 mutation M26 release the lock when the pause could not be written",
     "SHU-322 mutation M27 count anything at the pause path as a pause",
+    "SHU-322 mutation M28 refuse an install without a finished status",
     "SHU-322 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
@@ -25142,6 +25143,10 @@
     },
     {
       "name": "SHU-322 mutation M27 count anything at the pause path as a pause",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M28 refuse an install without a finished status",
       "capabilities": []
     },
     {

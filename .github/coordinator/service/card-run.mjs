@@ -810,15 +810,13 @@ async function afterQueueDone({ io, paths, limits, config, revision, done, skip 
   } catch (error) {
     install = { skipped: "INSTALL_UNREADABLE", reason: error.message };
   }
-  if (install.result) {
-    // 2026-10-21: the 13:30 start refused to install 34f603f8 (NEEDS_OWNER),
-    // changed nothing and exited 1 with no status of its own, so the watch read
-    // the failed unit as a run that died before its first write and paused the
-    // timer, which then held the queue the owner had just installed by hand.
-    // The status says this start finished, as a refused run's does (C44).
-    if (install.result.outcome === "NEEDS_OWNER") installRefusedStatus({ io, paths, config, result: install.result });
-    return install.result;
-  }
+  // 2026-10-21: the 13:30 start refused to install 34f603f8 (NEEDS_OWNER),
+  // changed nothing and exited 1 with no status of its own, so the watch read
+  // the failed unit as a run that died before its first write and paused the
+  // timer, which then held the queue the owner had just installed by hand.
+  // The status says this start finished, as a refused run's does (C44).
+  if (install.result?.outcome === "NEEDS_OWNER") installRefusedStatus({ io, paths, config, result: install.result });
+  if (install.result) return install.result;
   if (install.paused) return skip("PAUSED", install.reason);
   const review = await autoReview({ io, paths, limits, config, revision, done, skip });
   return install.skipped ? { ...review, install: { skipped: install.skipped, reason: install.reason } } : review;
