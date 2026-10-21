@@ -32,6 +32,7 @@ import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceTex
   repairRecordPath, repairAlertPath, advanceRound, REPAIR_LIMITS, REPAIR_SKIPS } from "../service/card-repair.mjs";
 import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
 import { judgeChecks } from "../service/card-land.mjs";
+import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
@@ -3711,12 +3712,8 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
   const ok = await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-a", "+b", " c") },
     { filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }]);
   assert.deepEqual(ok, { ok: true }, "fixing code and an assertion is fine");
-  const added = [
-    "test.skip('x', () => {})", "it.only('x', () => {})", "describe . skip ('x', () => {})", "test .todo ('x')", "t.skip()",
-    "xit('x', () => {})", "xdescribe('x', () => {})", "xtest('x', () => {})", "fit('x', () => {})",
-    "test('x', { skip: true }, () => {})", "test('x', { todo: true }, () => {})", "test('x', {skip}, () => {})", "test('x', { skip: 'later' })",
-  ];
-  for (const line of added) {
+  assert.equal(ADDED_WEAKENING_LINES.length, 13, "every refused form is still exercised");
+  for (const line of ADDED_WEAKENING_LINES) {
     for (const filename of ["packages/db/test/org.test.mjs", "packages/db/src/helpers.ts"]) {
       const verdict = await judge([{ filename, status: "modified", patch: patch(" a", `+${line}`) }]);
       assert.equal(verdict.ok, false, `${filename}: ${line}`);
