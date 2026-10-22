@@ -440,9 +440,10 @@ const ASSERT_RE = /\b(?:assert(?:\s*\.\s*\w+)?|expect|should|t\s*\.\s*(?:assert\
 // literals blanked, with state carried across lines, so an assertion moved
 // into a multi-line comment or a template string counts as dropped. A lexer
 // heuristic, not a parser: the independent re-review stays the real check.
+// A `/` after one of these words starts a regex, as after an operator.
+const REGEX_AFTER_WORD = /(?:^|[^\w$.])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
 export function executableText(text) {
   let out = "";
-  let prev = ""; // the last code character, to tell a regex from a division
   let i = 0;
   while (i < text.length) {
     const c = text[i];
@@ -461,11 +462,11 @@ export function executableText(text) {
       let j = i + 1;
       while (j < text.length && text[j] !== c && (c === "`" || text[j] !== "\n")) j += text[j] === "\\" ? 2 : 1;
       out += c + c;
-      prev = c;
       i = j + 1;
       continue;
     }
-    if (c === "/" && (prev === "" || "(,=:[!&|?{};+-*%<>~^".includes(prev))) {
+    const before = out.trimEnd();
+    if (c === "/" && (before === "" || "(,=:[!&|?{};+-*%<>~^".includes(before.at(-1)) || REGEX_AFTER_WORD.test(before))) {
       let j = i + 1;
       let inClass = false;
       while (j < text.length && text[j] !== "\n" && (inClass || text[j] !== "/")) {
@@ -475,12 +476,10 @@ export function executableText(text) {
         j += 1;
       }
       out += "/r/";
-      prev = "r";
       i = j + 1;
       continue;
     }
     out += c;
-    if (!/\s/.test(c)) prev = c;
     i += 1;
   }
   return out;

@@ -2809,6 +2809,7 @@
     "Self-repair B2: mutation M34 let a dropped should chain through",
     "Self-repair B2: mutation M35 count assertions inside comments and strings",
     "Self-repair B2: mutation M36 end a block comment at its line's end",
+    "Self-repair B2: mutation M37 read a regex after return as a division",
     "Self-repair B2: mutation M21 let a deleted or renamed test file through",
     "Self-repair B2: mutation M22 let a test script change through",
     "Self-repair B2: mutation M23 let a runner config change through",
@@ -22193,6 +22194,10 @@
     },
     {
       "name": "Self-repair B2: mutation M36 end a block comment at its line's end",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M37 read a regex after return as a division",
       "capabilities": []
     },
     {

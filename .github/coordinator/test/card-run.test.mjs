@@ -3735,6 +3735,8 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
     ["commented out by added lines only", ["+  /*", "   assert.ok(x);", "+  */"]],
     ["moved into a multi-line template", ["-  assert.ok(x);", "+  console.log(`", "+  assert.ok(x);", "+  `);"]],
     ["moved into a regex literal", ["-  assert.ok(x);", "+  const r = /assert.ok(x)/;"]],
+    ["moved into a regex after return", ["-  assert.ok(x);", "+  return /assert.ok(x)/.test(\"assert.ok(x)\");"]],
+    ["moved into a regex with a backtick after return", ["-  assert.ok(x);", "+  return /`/.test(s) && x;", "+  // assert.ok(x);"]],
     ["two dropped, one added", ["-  assert.ok(a); assert.ok(b);", "+  assert.ok(a);"]],
     ["commented out", ["-  assert.deepEqual(a, b);", "+  // assert . deepEqual(a, b) was here"]],
   ]) {
@@ -3756,6 +3758,9 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
   assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
     patch: patch(" const half = n / 2; const r = /[/]x/;", "-  assert.equal(half, 1);", "+  assert.equal(half, 2);") }]), { ok: true },
     "a division and a regex with a slash in a class still leave the assertion counted");
+  assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
+    patch: patch(" const half = x.return / 2 / 1;", "-  assert.equal(half, 1);", "+  assert.equal(half, 2);") }]), { ok: true },
+    "a division after a property named return stays a division");
   const unreadable = await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }],
     { contents: { [`packages/db/test/org.test.mjs@${FAILED}`]: null } });
   assert.equal(unreadable.ok, false, "a test file that cannot be read whole refuses");

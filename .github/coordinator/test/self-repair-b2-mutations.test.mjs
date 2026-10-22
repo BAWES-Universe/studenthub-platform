@@ -205,6 +205,14 @@ const CASES = [
     pattern: "Self-repair B2: G1",
   },
   {
+    name: "M37 read a regex after return as a division",
+    file: "service/card-repair.mjs",
+    from: " || REGEX_AFTER_WORD.test(before))) {",
+    to: ")) {",
+    tests: "card-run.test.mjs",
+    pattern: "Self-repair B2: G1",
+  },
+  {
     name: "M21 let a deleted or renamed test file through",
     file: "service/card-repair.mjs",
     from: "    if (names.some(isTestPath) && (file.status === \"removed\"",
