@@ -288,3 +288,31 @@ test("SHU-246 A5: main wires the armed episode boundary into backfill", async ()
     h.cleanup();
   }
 });
+
+test("Self-repair B1: K1 backfill publishes no second revise for a landing repair", async () => {
+  const run = async (landingRepair) => {
+    const bodies = [];
+    const lines = [];
+    await backfillSuccessorDirectives({
+      receipts: [review(), base()],
+      commentsByIssue: new Map([[ISSUE, []]]),
+      dispatchEnabled: true,
+      linearToken: "linear-token",
+      githubToken: "",
+      linearIdFor: new Map([[ISSUE, LINEAR_ID]]),
+      config: { ...config, max_revise: 3 },
+      fetchImpl: async (_url, init) => {
+        bodies.push(JSON.parse(init.body).variables.body);
+        return { ok: true, status: 200, json: async () => ({ data: { commentCreate: { success: true } } }) };
+      },
+      stdout: (line) => lines.push(line),
+      episodeScope: scope,
+      landingRepair,
+    });
+    return { revisions: ordersFrom(bodies).filter((order) => order.role === "revise"), lines };
+  };
+  const repair = await run(true);
+  assert.equal(repair.revisions.length, 0, "the repair's one round is spent by its first BLOCK");
+  assert.ok(repair.lines.some((line) => line.includes("revision attempts exhausted")), repair.lines.join("\n"));
+  assert.equal((await run(false)).revisions.length, 1, "any other episode keeps its configured rounds");
+});

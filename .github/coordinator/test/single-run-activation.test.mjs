@@ -35,6 +35,15 @@ import {
 } from "../single-run-activation.mjs";
 import { routeSuccessorFromReceipts } from "../review-routing.mjs";
 import {
+  MAX_REVIEW_PR,
+  REPAIR_ACTIVATION_KEYS,
+  canonicalJson,
+  repairEvidenceDigest,
+  repairFromActivation,
+} from "../single-run-activation.mjs";
+import { freshAttempt } from "../review-routing.mjs";
+import { laneForRuntimeRole, runtimeForLane } from "../launch-vocabulary.mjs";
+import {
   dispatchEnabledFor,
   main,
   terminalVerdictCoherent,
@@ -1131,4 +1140,312 @@ test("SHU-63 activation MUTATIONS: every binding, permission, expiry and gate gu
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Self-repair B1: a landing-repair activation (one round on a passed card)
+// ---------------------------------------------------------------------------
+
+const B1_RAW = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+const B1_CARD = "SHU-327";
+const B1_LANE = B1_RAW.card_lanes.find((lane) => lane.id === B1_CARD);
+const B1_CONFIG = { ...B1_RAW, max_dispatch: 1, dispatch_scope: { issue_ids: [B1_CARD] } };
+const B1_HEAD = "a".repeat(40);
+const B1_BASE = "b".repeat(40);
+const B1_NEXT = "c".repeat(40);
+const B1_PASSED = "card-SHU-327-passed-0001";
+const B1_REPAIR = "card-SHU-327-repair-0001";
+const B1_SCOPE = { episode_id: B1_REPAIR, supersedes: new Set() };
+const B1_REVIEW_SCOPE = { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null };
+
+function b1Findings(over = {}) {
+  return { verdict_stage: "BLOCKED", source: "ci", target_sha: B1_HEAD,
+    summary: "not ok 3 - organization writes refuse a deleted organization\n  expected: 409\n  actual: 200", links: [], ...over };
+}
+
+function b1Record(over = {}) {
+  const findings = Object.hasOwn(over, "repair_findings") ? over.repair_findings : b1Findings();
+  return {
+    activation_id: B1_REPAIR, target_issue_id: B1_CARD, authorization_ref: B1_CARD, coordinator_revision: REVISION, slots: 1,
+    expires_at: new Date(NOW.getTime() + 3600000).toISOString(),
+    writer_lane: B1_LANE.writer_lane, reviewer_lane: B1_LANE.reviewer_lane, initial_target_sha: B1_HEAD,
+    repair_pr: 293, repair_of: B1_PASSED, repair_findings: findings, repair_evidence_digest: repairEvidenceDigest(findings), max_rounds: 1,
+    ...over,
+  };
+}
+
+function b1Without(rec, ...keys) {
+  const copy = { ...rec };
+  for (const key of keys) delete copy[key];
+  return copy;
+}
+
+function b1Status(rec, { receipts = [], config = B1_CONFIG, initialTargetSha = B1_HEAD } = {}) {
+  const { dir, file } = makeFile(rec);
+  try {
+    return singleRunActivationStatus({ filePath: file, config, receipts, now: NOW, gitHead: REVISION, initialTargetSha });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A 1.1.0 receipt the coordinator itself would write, ordered by `minute`.
+function b1Receipt({ role, worker, stage, verdict, minute, episode = B1_PASSED, target = B1_HEAD, result = null,
+  identity, scope = {}, findings = null, branch = `coordinator/${B1_CARD}`, version = "1.1.0", repo = B1_RAW.pilot_repo }) {
+  const at = new Date(NOW.getTime() - 7200000 + minute * 60000).toISOString();
+  const made = createReceipt({ receipt_version: version, issue_id: B1_CARD, authorization_ref: B1_CARD, requested_worker: worker,
+    ...(version === "1.1.0" ? { role, runtime: runtimeForLane(worker) } : {}),
+    repo, branch, target_sha: target, episode_id: episode, review_findings: findings,
+    attempt_id: `00000000-0000-4000-8000-${String(9000 + minute).padStart(12, "0")}`, reserved_at: at, ...scope });
+  assert.ok(made.ok, JSON.stringify(made.errors));
+  return { ...made.receipt, stage, verdict_stage: verdict, worker_identity: identity,
+    external_run_id: `supervisor_${made.receipt.attempt_id}`, adapter_status: "completed",
+    ...(result ? { result_sha: result } : {}),
+    timestamps: { ...made.receipt.timestamps, launch: at, terminal: at }, last_activity: at };
+}
+
+// The passed episode: Codex built B1_HEAD from B1_BASE and Claude passed it.
+function b1Build(over = {}) {
+  return b1Receipt({ role: "build", worker: "codex-builder", stage: "COMPLETED", verdict: "BUILD_READY", minute: 1,
+    target: B1_BASE, result: B1_HEAD, identity: "codex-builder:session-1", ...over });
+}
+function b1Pass(over = {}) {
+  return b1Receipt({ role: "review", worker: "claude-verifier", stage: "COMPLETED", verdict: "PASS", minute: 2,
+    identity: "claude-verifier:session-1", scope: B1_REVIEW_SCOPE, ...over });
+}
+
+function b1Verdict(receipts, { authoritativeHead = null, repair = repairFromActivation(b1Record(), B1_CONFIG), config = B1_CONFIG } = {}) {
+  return episodeVerdict({ receipts, targetIssueId: B1_CARD, config, episodeScope: B1_SCOPE, authoritativeHead,
+    bootstrapReviewer: { lane: B1_LANE.reviewer_lane }, repair });
+}
+
+// The repair episode after its synthesized revise ran and wrote B1_NEXT.
+function b1Revised() {
+  const first = b1Verdict([b1Build(), b1Pass()]).successor;
+  assert.ok(first, "the repair starts with its revise");
+  return b1Receipt({ role: "revise", worker: first.requested_worker, stage: "COMPLETED", verdict: "REVISION_READY", minute: 3,
+    episode: B1_REPAIR, result: B1_NEXT, identity: "codex-builder:session-2", findings: first.review_findings,
+    scope: { workspace_scope: first.workspace_scope, scope_phase: first.scope_phase, allowed_paths: first.allowed_paths, scoped_base_sha: null } });
+}
+
+test("Self-repair B1: R1 the repair group comes whole, never beside the review-only keys, with one round", () => {
+  assert.deepEqual(validateActivationRecord(b1Record()), { ok: true, reason: null });
+  for (const key of REPAIR_ACTIVATION_KEYS) {
+    assert.match(validateActivationRecord(b1Without(b1Record(), key)).reason,
+      /landing-repair activation needs repair_pr, repair_of, repair_findings, repair_evidence_digest, max_rounds together/, key);
+  }
+  assert.match(validateActivationRecord(b1Record({ review_pr: 240, review_base_sha: B1_BASE, pr_author_family: "codex" })).reason,
+    /landing-repair activation cannot carry the review-only keys/);
+  assert.match(validateActivationRecord(b1Record({ review_pr: 240 })).reason, /landing-repair activation cannot carry the review-only keys/);
+  for (const rounds of [0, 2, "1", 1.5, null]) {
+    assert.match(validateActivationRecord(b1Record({ max_rounds: rounds })).reason, /max_rounds must be 1/, String(rounds));
+  }
+});
+
+test("Self-repair B1: R2 the bound pull request, passed episode and head are checked", () => {
+  for (const pr of [0, -1, "293", 1.5, MAX_REVIEW_PR + 1, Number.MAX_SAFE_INTEGER + 2]) {
+    assert.match(validateActivationRecord(b1Record({ repair_pr: pr })).reason, /repair_pr must be a pull request number/, String(pr));
+  }
+  assert.equal(validateActivationRecord(b1Record({ repair_pr: MAX_REVIEW_PR })).ok, true);
+  for (const of of ["short", "has space here", 42, "x".repeat(65)]) {
+    assert.match(validateActivationRecord(b1Record({ repair_of: of })).reason, /repair_of must be the passed episode's activation id/, String(of));
+  }
+  assert.match(validateActivationRecord(b1Record({ repair_of: B1_REPAIR })).reason, /repair_of must name another episode than this activation/);
+  assert.match(validateActivationRecord(b1Without(b1Record(), "initial_target_sha")).reason, /must name the head it repairs in initial_target_sha/);
+  assert.match(validateActivationRecord(b1Without(b1Record(), "writer_lane")).reason, /must name its writer_lane and reviewer_lane/);
+  assert.match(validateActivationRecord(b1Without(b1Record(), "writer_lane", "reviewer_lane")).reason, /must name its writer_lane and reviewer_lane/);
+  assert.equal(validateActivationRecord(b1Without(b1Record(), "reviewer_lane")).ok, false, "a writer without its reviewer refuses");
+});
+
+test("Self-repair B1: R3 the findings are valid CI findings at the head, bound by their canonical digest", () => {
+  const token = `ghp_${"a".repeat(36)}`;
+  for (const [label, findings] of [
+    ["reviewer findings", b1Without(b1Findings(), "source")],
+    ["unknown source", b1Findings({ source: "reviewer" })],
+    ["not a BLOCK", b1Findings({ verdict_stage: "PASS" })],
+    ["credential", b1Findings({ summary: `leaked ${token}` })],
+    ["no links array", b1Findings({ links: "x" })],
+    ["not an object", "ci failed"],
+  ]) {
+    assert.match(validateActivationRecord(b1Record({ repair_findings: findings })).reason, /repair_findings must be valid CI findings/, label);
+  }
+  assert.match(validateActivationRecord(b1Record({ repair_findings: b1Findings({ target_sha: B1_NEXT }) })).reason,
+    /repair_findings must be taken at initial_target_sha/);
+  assert.match(validateActivationRecord(b1Record({ repair_evidence_digest: "0".repeat(64) })).reason, /repair_evidence_digest is not the sha256/);
+  assert.match(validateActivationRecord(b1Record({ repair_evidence_digest: repairEvidenceDigest(b1Findings({ summary: "other" })) })).reason,
+    /repair_evidence_digest is not the sha256/);
+  assert.match(validateActivationRecord(b1Record({ repair_evidence_digest: 7 })).reason, /repair_evidence_digest is not the sha256/);
+  // Canonical: key order never changes the digest; any value change does.
+  const reordered = { links: [], summary: b1Findings().summary, target_sha: B1_HEAD, source: "ci", verdict_stage: "BLOCKED" };
+  assert.equal(repairEvidenceDigest(reordered), repairEvidenceDigest(b1Findings()));
+  assert.equal(validateActivationRecord(b1Record({ repair_findings: reordered })).ok, true);
+  assert.equal(canonicalJson({ b: [1, { d: null, c: "x" }], a: true }), '{"a":true,"b":[1,{"c":"x","d":null}]}');
+  assert.match(repairEvidenceDigest(b1Findings()), /^[0-9a-f]{64}$/);
+  for (const bad of [{ a: undefined }, { a: Infinity }, [() => 1], new Date(0)]) {
+    assert.throws(() => canonicalJson(bad), /canonical JSON/);
+  }
+});
+
+test("Self-repair B1: S1 the status arms only a card lane, exposes the binding and renders it", () => {
+  const armed = b1Status(b1Record(), { receipts: [b1Build(), b1Pass()] });
+  assert.equal(armed.state, "armed", armed.reason);
+  assert.equal(armed.landing_repair, true);
+  assert.equal(armed.repair_pr, 293);
+  assert.equal(armed.repair_of, B1_PASSED);
+  assert.deepEqual(armed.repair_findings, b1Findings());
+  assert.equal(armed.repair_evidence_digest, repairEvidenceDigest(b1Findings()));
+  assert.equal(armed.max_rounds, 1);
+  assert.equal(armed.initial_target_sha, B1_HEAD);
+  assert.equal(armed.successor?.role, "revise", armed.episode);
+  assert.match(renderActivationLine(armed), / writer=codex-builder reviewer=claude-verifier landing-repair pr=#293 head=a{40} of=card-SHU-327-passed-0001$/);
+  assert.deepEqual(repairFromActivation(armed, B1_CONFIG), repairFromActivation(b1Record(), B1_CONFIG), "status and record give one repair");
+
+  const desk = B1_RAW.review_lanes[0];
+  const onDesk = b1Status(b1Record({ target_issue_id: desk.id, authorization_ref: desk.id }),
+    { config: { ...B1_RAW, max_dispatch: 1, dispatch_scope: { issue_ids: [desk.id] } } });
+  assert.equal(onDesk.state, "refused");
+  assert.match(onDesk.reason, /names repair_pr but SHU-\d+ is a review-only lane/);
+  const fixture = B1_RAW.fixture_lane;
+  const onFixture = b1Status(b1Record({ target_issue_id: fixture.id, authorization_ref: fixture.authorization_ref }),
+    { config: { ...B1_RAW, max_dispatch: 1, dispatch_scope: { issue_ids: [fixture.id] } } });
+  assert.equal(onFixture.state, "refused");
+  assert.match(onFixture.reason, /names repair_pr but SHU-140 is not a committed card lane/);
+
+  const spent = b1Status(b1Record(), { receipts: [b1Build()] });
+  assert.equal(spent.state, "refused");
+  assert.match(spent.reason, /activation is spent: .*repair has no trusted PASS of card-SHU-327-passed-0001 at a{40}/);
+
+  // Nothing changes for a record without the repair keys.
+  const plain = b1Status(b1Without(b1Record(), ...REPAIR_ACTIVATION_KEYS));
+  assert.equal(plain.state, "armed", plain.reason);
+  for (const key of ["landing_repair", ...REPAIR_ACTIVATION_KEYS]) assert.equal(Object.hasOwn(plain, key), false, key);
+  assert.equal(plain.episode, "no attempt has been dispatched yet");
+  assert.doesNotMatch(renderActivationLine(plain), /landing-repair/);
+  assert.equal(repairFromActivation(plain, B1_CONFIG), null);
+});
+
+test("Self-repair B1: E1 the first step is a routed-shape revise on the writer lane within revision_paths", () => {
+  const pass = b1Pass();
+  const verdict = b1Verdict([b1Build(), pass]);
+  assert.equal(verdict.ended, false, verdict.reason);
+  const order = verdict.successor;
+  // The same order a BLOCK at the passed head would have routed in that episode.
+  const block = b1Pass({ stage: "HOLD", verdict: "BLOCKED" });
+  const routed = routeSuccessorFromReceipts({ issueReceipts: [b1Build(), block], terminal: block, evidenceStage: "BLOCKED",
+    max_revise: 3, fixtureLane: B1_LANE });
+  assert.ok(routed.ok && routed.order, routed.reason);
+  const { review_findings, ...shape } = order;
+  assert.deepEqual(Object.keys(shape).sort(), Object.keys(routed.order).sort());
+  assert.deepEqual({ ...shape, attempt_id: null }, { ...routed.order, attempt_id: null }, "every field but the attempt id is the routed revise's");
+  assert.equal(order.role, "revise");
+  assert.equal(order.requested_worker, laneForRuntimeRole("codex-cli", "revise"));
+  assert.equal(order.requested_worker, B1_LANE.writer_lane);
+  assert.equal(order.target_sha, B1_HEAD);
+  assert.equal(order.scope_phase, "revision");
+  assert.deepEqual(order.allowed_paths, B1_LANE.revision_paths);
+  assert.equal(order.attempt_id, freshAttempt(`${pass.attempt_id}:${B1_REPAIR}`, "repair", 1));
+  assert.notEqual(order.attempt_id, routed.order.attempt_id);
+  assert.deepEqual(review_findings, b1Findings());
+  assert.deepEqual(b1Verdict([b1Build(), pass]).successor, order, "every tick names the same revise");
+});
+
+test("Self-repair B1: E2 only a trusted exact-head PASS of the repaired episode may start the repair", () => {
+  const refused = (receipts, label) => {
+    const verdict = b1Verdict(receipts);
+    assert.equal(verdict.ended, true, label);
+    assert.equal(verdict.reason, `repair has no trusted PASS of ${B1_PASSED} at ${B1_HEAD}`, label);
+    assert.equal(verdict.successor, undefined, label);
+  };
+  refused([b1Build()], "no PASS");
+  refused([b1Build(), b1Pass({ episode: "card-SHU-327-other-0001" })], "another episode's PASS");
+  refused([b1Build({ result: B1_NEXT }), b1Pass({ target: B1_NEXT })], "a PASS at another head");
+  refused([b1Build(), b1Pass({ branch: "feature/elsewhere" })], "a PASS on another branch");
+  refused([b1Build(), b1Pass({ repo: "BAWES-Universe/other" })], "a PASS in another repository");
+  const repoless = b1Pass();
+  delete repoless.repo;
+  refused([b1Build(), repoless], "a PASS that names no repository");
+  refused([b1Build(), b1Pass({ identity: "codex-builder:session-1" })], "a PASS by an author of the lineage (untrusted actor)");
+  refused([b1Build(), b1Pass({ identity: null })], "a PASS without an observed verifier session");
+  refused([b1Build(), b1Pass({ stage: "HOLD", verdict: "BLOCKED" })], "a BLOCK is not a PASS");
+  refused([b1Build(), b1Pass({ stage: "HOLD" })], "a PASS that never completed");
+  refused([b1Build(), b1Pass({ worker: "codex-builder", role: "build", scope: {} })], "a PASS from a writer lane");
+  refused([b1Build({ version: "1.0.0" }), b1Pass({ version: "1.0.0" })], "a legacy-version PASS");
+  assert.equal(b1Verdict([b1Build(), b1Pass()]).ended, false, "the trusted PASS starts it");
+});
+
+test("Self-repair B1: E3 a branch that moved off the passed head ends the repair", () => {
+  const moved = b1Verdict([b1Build(), b1Pass()], { authoritativeHead: B1_NEXT });
+  assert.equal(moved.ended, true);
+  assert.match(moved.reason, /^repair target moved: the branch is at c{40}, not the passed head a{40}$/);
+  const live = b1Verdict([b1Build(), b1Pass()], { authoritativeHead: B1_HEAD });
+  assert.equal(live.ended, false, live.reason);
+  assert.equal(live.successor.role, "revise");
+});
+
+test("Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise", () => {
+  const config = structuredClone(B1_CONFIG);
+  const revise = b1Revised();
+  const toReview = b1Verdict([b1Build(), b1Pass(), revise], { config });
+  assert.equal(toReview.ended, false, toReview.reason);
+  assert.equal(toReview.successor.role, "review", "the revise is not a review round");
+  assert.equal(toReview.successor.target_sha, B1_NEXT);
+  const block = b1Receipt({ role: "review", worker: "claude-verifier", stage: "HOLD", verdict: "BLOCKED", minute: 4,
+    episode: B1_REPAIR, target: B1_NEXT, identity: "claude-verifier:session-2", scope: B1_REVIEW_SCOPE });
+  const ended = b1Verdict([b1Build(), b1Pass(), revise, block], { config });
+  assert.equal(ended.ended, true);
+  assert.equal(ended.reason, "revision attempts exhausted — the episode is over");
+  assert.equal(ended.successor, undefined);
+  assert.deepEqual(config, B1_CONFIG, "the committed config is never changed");
+  // The override is the repair's alone: without it the same BLOCK revises.
+  const ordinary = b1Verdict([b1Build(), b1Pass(), revise, block], { config, repair: null });
+  assert.equal(ordinary.successor?.role, "revise", ordinary.reason);
+});
+
+test("Self-repair B1: E5 the re-review's PASS ends the repair complete", () => {
+  const revise = b1Revised();
+  const pass = b1Receipt({ role: "review", worker: "claude-verifier", stage: "COMPLETED", verdict: "PASS", minute: 4,
+    episode: B1_REPAIR, target: B1_NEXT, identity: "claude-verifier:session-2", scope: B1_REVIEW_SCOPE });
+  const ended = b1Verdict([b1Build(), b1Pass(), revise, pass]);
+  assert.equal(ended.ended, true);
+  assert.equal(ended.reason, "review PASS — the episode is complete");
+  // Without a repair the fresh episode is unchanged: it waits for its first step.
+  assert.deepEqual(b1Verdict([b1Build(), b1Pass()], { repair: null }), { ended: false, reason: "no attempt has been dispatched yet" });
+});
+
+test("Self-repair B1: E7 a spent or expired repair reports its stop with the repair's own cap", () => {
+  const revise = b1Revised();
+  const block = b1Receipt({ role: "review", worker: "claude-verifier", stage: "HOLD", verdict: "BLOCKED", minute: 4,
+    episode: B1_REPAIR, target: B1_NEXT, identity: "claude-verifier:session-2", scope: B1_REVIEW_SCOPE });
+  const receipts = [b1Build(), b1Pass(), revise, block];
+  const spent = b1Status(b1Record(), { receipts });
+  assert.equal(spent.state, "refused");
+  assert.equal(spent.reporting_exception, "spent", spent.reason);
+  for (const key of [...REPAIR_ACTIVATION_KEYS, "initial_target_sha", "writer_lane", "reviewer_lane"]) {
+    assert.deepEqual(spent[key], b1Record()[key], key);
+  }
+  // The reporter re-decides the episode from this status: with the binding it is
+  // the same exhausted stop the spend saw, not an ordinary episode's next revise.
+  const reported = b1Verdict(receipts, { repair: repairFromActivation(spent, B1_CONFIG) });
+  assert.equal(reported.ended, true, reported.reason);
+  assert.equal(reported.reason, "revision attempts exhausted — the episode is over");
+  const expired = b1Status(b1Record({ expires_at: new Date(NOW.getTime() - 60000).toISOString() }), { receipts });
+  assert.equal(expired.reporting_exception, "expired", expired.reason);
+  assert.notEqual(repairFromActivation(expired, B1_CONFIG), null);
+  // A refusal with no reporting exception, or a non-repair record, carries no repair field.
+  const plainSpent = b1Status(b1Without(b1Record(), ...REPAIR_ACTIVATION_KEYS), { receipts: [b1Build({ episode: B1_REPAIR }), b1Pass({ episode: B1_REPAIR })] });
+  for (const key of REPAIR_ACTIVATION_KEYS) assert.equal(Object.hasOwn(plainSpent, key), false, key);
+});
+
+test("Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own", () => {
+  const first = b1Verdict([b1Build(), b1Pass()]);
+  const laterId = "card-SHU-327-repair-0002";
+  const later = b1Verdict([b1Build(), b1Pass()], { repair: repairFromActivation(b1Record({ activation_id: laterId }), B1_CONFIG) });
+  assert.equal(first.ended, false, first.reason);
+  assert.equal(later.ended, false, later.reason);
+  assert.equal(later.successor.attempt_id, freshAttempt(`${b1Pass().attempt_id}:${laterId}`, "repair", 1));
+  assert.notEqual(later.successor.attempt_id, first.successor.attempt_id, "a second repair never reuses the first repair's immutable attempt");
+  // A repair whose own id is unknown cannot bind its attempt, so it ends instead of guessing one.
+  const unbound = b1Verdict([b1Build(), b1Pass()], { repair: { ...repairFromActivation(b1Record(), B1_CONFIG), activation_id: null } });
+  assert.equal(unbound.ended, true);
+  assert.match(unbound.reason, /names no id to bind its attempt to/);
 });

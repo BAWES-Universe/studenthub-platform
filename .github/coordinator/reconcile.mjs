@@ -31,7 +31,8 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal } from "./single-run-activation.mjs";
+import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
+import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
@@ -296,7 +297,12 @@ function stateLabel(state) {
 // Exclusion rules are checked in a fixed order so the reported reason is stable.
 // writerLanes: issue id -> writer lane named by the armed activation (SHU-71).
 // It replaces only the card's worker label; every other rule is unchanged.
-export function computeEligibility({ issues, openPRs = [], config = {}, writerLanes = null }) {
+// repairCard (self-repair B1): { issueId, repair, owners, pulls, repo, head }
+// for the ONE card an armed landing-repair activation binds. For that card
+// alone, rules 2-5 (state, delegate, assignee, open PR) are replaced by
+// repairEligible (repair-eligibility.mjs); every other rule still applies, and
+// every other card, or a tick without a repair, is judged exactly as before.
+export function computeEligibility({ issues, openPRs = [], config = {}, writerLanes = null, repairCard = null }) {
   const openPRNumbers = new Set(openPRs.map((p) => (typeof p === "number" ? p : p.number)).filter((n) => n !== undefined));
   const pilotRepo = config.pilot_repo ?? "BAWES-Universe/studenthub-platform";
 
@@ -313,27 +319,36 @@ export function computeEligibility({ issues, openPRs = [], config = {}, writerLa
       exclude(`state ${stateLabel(issue.state)} — unknown/inaccessible (never invent backlog)`);
       continue;
     }
-    // Rule 2: state must be pickable.
-    if (!PICKABLE_STATES.includes(issue.state)) {
-      exclude(`state "${issue.state}" not in {${PICKABLE_STATES.join(", ")}}`);
-      continue;
-    }
-    // Rule 3: explicit delegation claim → another worker owns it.
-    if (issue.delegate && (issue.delegate.name || issue.delegate.id)) {
-      exclude(`delegated to ${issue.delegate.name ?? issue.delegate.id} (claim)`);
-      continue;
-    }
-    // Rule 4: active assignee claim.
-    if (issue.assignee && (issue.assignee.name || issue.assignee.id)) {
-      exclude(`assigned to ${issue.assignee.name ?? issue.assignee.id} (active claim)`);
-      continue;
-    }
-    // Rule 5: linked to an open PR (work in flight) — both normalized linkedPRs and
-    // live open-PR links are honored.
-    const openLinked = (issue.linkedPRs ?? []).some((pr) => String(pr.state).toUpperCase() === "OPEN" || openPRNumbers.has(pr.number));
-    if (openLinked) {
-      exclude("linked to an open PR");
-      continue;
+    if (repairCard && repairCard.issueId === id) {
+      // Self-repair B1: rules 2-5 for the bound repair card, as one predicate.
+      const repair = repairEligible({ issue, repair: repairCard.repair, owners: repairCard.owners, pulls: repairCard.pulls, repo: repairCard.repo, head: repairCard.head });
+      if (!repair.ok) {
+        exclude(`landing repair — ${repair.reason}`);
+        continue;
+      }
+    } else {
+      // Rule 2: state must be pickable.
+      if (!PICKABLE_STATES.includes(issue.state)) {
+        exclude(`state "${issue.state}" not in {${PICKABLE_STATES.join(", ")}}`);
+        continue;
+      }
+      // Rule 3: explicit delegation claim → another worker owns it.
+      if (issue.delegate && (issue.delegate.name || issue.delegate.id)) {
+        exclude(`delegated to ${issue.delegate.name ?? issue.delegate.id} (claim)`);
+        continue;
+      }
+      // Rule 4: active assignee claim.
+      if (issue.assignee && (issue.assignee.name || issue.assignee.id)) {
+        exclude(`assigned to ${issue.assignee.name ?? issue.assignee.id} (active claim)`);
+        continue;
+      }
+      // Rule 5: linked to an open PR (work in flight) — both normalized linkedPRs and
+      // live open-PR links are honored.
+      const openLinked = (issue.linkedPRs ?? []).some((pr) => String(pr.state).toUpperCase() === "OPEN" || openPRNumbers.has(pr.number));
+      if (openLinked) {
+        exclude("linked to an open PR");
+        continue;
+      }
     }
     // Rule 6: parent terminal-canceled → child must not run. Open or Done
     // parents are eligible — a sub-issue completes before its parent, and
@@ -1503,8 +1518,8 @@ export const LINEAR_ISSUES_QUERY = `
         state { name }
         priorityLabel
         labels { nodes { name } }
-        assignee { displayName }
-        delegate { displayName }
+        assignee { id displayName }
+        delegate { id displayName }
         parent { identifier state { name } }
         relations {
           nodes {
@@ -1551,6 +1566,15 @@ export const LINEAR_ISSUE_COMMENTS_PAGE_QUERY = `
     }
   }`;
 
+// A Linear user as the resolver sees it: { name, id } with only the fields
+// Linear returned, or null when it returned neither.
+function linearPerson(person) {
+  const name = typeof person?.displayName === "string" && person.displayName ? person.displayName : null;
+  const id = typeof person?.id === "string" && person.id ? person.id : null;
+  if (!name && !id) return null;
+  return { ...(name ? { name } : {}), ...(id ? { id } : {}) };
+}
+
 // normalizeLinearIssue — best-effort normalization of a Linear issue node into the
 // resolver's shape. Fields the API does not expose map to neutral values; the
 // resolver never invents backlog for a state it cannot see.
@@ -1572,8 +1596,10 @@ export function normalizeLinearIssue(node, _queriedRepo, repoLabelMap = DEFAULT_
     state: node.state?.name ?? null,
     priority: node.priorityLabel ?? "No priority",
     labels,
-    assignee: node.assignee?.displayName ? { name: node.assignee.displayName } : null,
-    delegate: node.delegate?.displayName ? { name: node.delegate.displayName } : null,
+    // Self-repair B1: the immutable user id is kept beside the display name,
+    // because a repair compares owners by id and never by name.
+    assignee: linearPerson(node.assignee),
+    delegate: linearPerson(node.delegate),
     linkedPRs: [],
     parent: node.parent ? { id: node.parent.identifier, state: node.parent.state?.name ?? null } : null,
     blockers,
@@ -1975,6 +2001,9 @@ export async function backfillSuccessorDirectives({
   stdout = null,
   bootstrapByIssue = new Map(),
   episodeScope = null,
+  // Self-repair B1: a landing repair's one round, so a directive is never
+  // published for a second revise the episode itself would refuse.
+  landingRepair = false,
 }) {
   const out = stdout ?? ((s) => console.log(s));
   // Defense in depth: this is the only helper that publishes successor
@@ -2044,7 +2073,7 @@ export async function backfillSuccessorDirectives({
       terminal,
       evidenceStage: terminal.verdict_stage,
       evidenceResultSha: terminal.result_sha ?? null,
-      max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
+      max_revise: landingRepair ? 0 : Number.isInteger(config.max_revise) ? config.max_revise : 3,
       authoritativeHead,
       // SHU-225: the first-review bootstrap, and ONLY for the issue the armed
       // activation is bound to. Any other card's lineage routes exactly as it did
@@ -2142,8 +2171,8 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
 
 // reconcileOnce — pure-ish orchestration shared by dry-run and dispatch paths.
 // Returns { report, plan } and performs NO I/O except what the caller injects.
-export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null }) {
-  const eligibility = computeEligibility({ issues, openPRs, config, writerLanes });
+export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set(), writerLanes = null, repairCard = null }) {
+  const eligibility = computeEligibility({ issues, openPRs, config, writerLanes, repairCard });
   const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   return { eligibility, selection };
 }
@@ -2169,6 +2198,31 @@ export function bindClaimingPullRequests(issues, openPRs) {
     if (claims.length) issue.linkedPRs = [...(issue.linkedPRs ?? []), ...claims];
   }
   return issues;
+}
+
+// Self-repair B1: the repair card's eligibility input for this tick, or null
+// when no landing-repair activation is armed. The open pull requests are read
+// again here, every page of them, because the board's one-page read cannot
+// prove a card has only one; an incomplete read makes the card ineligible.
+// The bound head is the step's own: the passed head for the synthesized
+// revise, the routed successor's head (the revise's output) for the re-review.
+export async function repairCardFor(activation, { config = {}, githubToken = "", fetchImpl = fetch, openPRsOverride } = {}) {
+  if (activation?.state !== "armed" || activation.landing_repair !== true || !activation.target_issue_id) return null;
+  const read = Array.isArray(openPRsOverride)
+    ? { complete: true, items: openPRsOverride, reason: null }
+    : await readOpenPulls({ repo: config.pilot_repo, token: githubToken, fetchImpl });
+  return {
+    issueId: activation.target_issue_id,
+    repair: repairFromActivation(activation, config),
+    owners: config.linear_callback_actor_ids ?? [],
+    repo: config.pilot_repo ?? null,
+    head: activation.successor?.target_sha ?? activation.initial_target_sha ?? null,
+    pulls: {
+      complete: read.complete === true,
+      items: (read.items ?? []).filter((pr) => pullRequestClaimsIssue(pr, activation.target_issue_id)),
+      reason: read.reason ?? null,
+    },
+  };
 }
 
 async function liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl = fetch, readComments = false }) {
@@ -2397,6 +2451,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         bootstrapReviewer: singleRunActivation.reviewer_lane ? { lane: singleRunActivation.reviewer_lane } : null,
         episodeScope: activationEpisodeScope,
         authoritativeHead: live.head,
+        repair: repairFromActivation(singleRunActivation, config),
       });
       if (verifiedEpisode.ended) {
         singleRunActivation = {
@@ -2510,6 +2565,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       config,
       bootstrapReviewer: singleRunActivation.reviewer_lane ? { lane: singleRunActivation.reviewer_lane } : null,
       episodeScope: reportScope,
+      repair: repairFromActivation(singleRunActivation, config),
     });
     const event = deriveIncidentEvent({ activation: singleRunActivation, receipts: reportReceipts, config, episodeDecision });
     const incident = await reportCoordinatorIncident({
@@ -2894,7 +2950,9 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       // SHU-303: a review-only run's first and only step is its reviewer.
       : singleRunActivation.review_only && singleRunActivation.target_issue_id
         ? new Map([[singleRunActivation.target_issue_id, singleRunActivation.reviewer_lane]]) : null;
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes });
+  // Self-repair B1: only an armed landing repair builds this; otherwise null.
+  const repairCard = await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride });
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds, writerLanes, repairCard });
   // Self-watch 0b: the armed card's progress, from the receipts this tick
   // already read (trusted writers only). Output only; nothing reads it here.
   const watchActors = new Set(config.linear_receipt_actor_ids ?? []);
@@ -2995,6 +3053,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     stdout: io.stdout,
     bootstrapByIssue: episodeBootstrap,
     episodeScope,
+    landingRepair: Boolean(repairFromActivation(singleRunActivation, config)),
   });
   if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   // SHU-71 run 9: a reservation of this episode that an earlier tick wrote but
@@ -3038,7 +3097,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${refreshedIssue.id} is not the activated target`);
       return 2;
     }
-    const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config, writerLanes });
+    // Self-repair B1: the repair card's pull requests are read again too, so
+    // the binding to repair_pr and its head is checked just before the claim.
+    const refreshedRepairCard = repairCard ? await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride }) : null;
+    const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config, writerLanes, repairCard: refreshedRepairCard });
     if (refreshedEligibility.ready.length !== 1) {
       const reason = refreshedEligibility.excluded[0]?.reason ?? "candidate is no longer eligible";
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${candidate.id}: ${reason}`);
@@ -3064,7 +3126,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     throw new Error(`dispatch refused: no contract-bound authorization_ref for ${candidate.id} (free text and unapproved fixture ids are rejected)`);
   }
   const repo = candidate.repo ?? config.pilot_repo;
-  let branch = (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
+  // Self-repair B1: a repair revises the passed episode's own branch, the head
+  // ref repair eligibility bound, never DISPATCH_BRANCH or another default.
+  const repairBranch = singleRunActivation.landing_repair === true ? `coordinator/${candidate.id}` : null;
+  let branch = repairBranch ?? (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
   // SHU-303: a review-only run reviews the pull request its activation names,
   // on that PR's own branch, and only while the PR is still what was approved.
   const reviewOnly = singleRunActivation.state === "armed" && singleRunActivation.review_only === true;
@@ -3228,6 +3293,14 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       return 2;
     };
     if (config.adapter_pause_map[adapter]) return held(`adapter ${adapter} is paused`);
+    // Self-repair B1: a repair's stranded reservation launches only while the
+    // card is still the repair's, read again now, at the reservation's own head.
+    if (repairCard) {
+      const card = await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride });
+      const still = card ? repairEligible({ issue, repair: card.repair, owners: card.owners, pulls: card.pulls, repo: card.repo, head: receipt.target_sha })
+        : { ok: false, reason: "the repair binding cannot be read" };
+      if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);
+    }
     if (role === ROLE_REVIEW && receipts.some((r) => r !== receipt && !TERMINAL_STAGES.includes(r.stage) && roleForReceipt(r) === ROLE_REVIEW)) {
       if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active`);
       return 0;

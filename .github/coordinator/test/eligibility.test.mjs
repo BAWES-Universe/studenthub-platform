@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { computeEligibility, requestedWorkerFor, compareIdentifiers, resolveAuthorizationRef, SAME_FAMILY_VERIFIERS, WORKER_FAMILIES } from "../reconcile.mjs";
+import { computeEligibility, requestedWorkerFor, compareIdentifiers, resolveAuthorizationRef, SAME_FAMILY_VERIFIERS, WORKER_FAMILIES, repairCardFor, normalizeLinearIssue } from "../reconcile.mjs";
+import { repairEligible, readOpenPulls, REPAIR_PULL_PAGE, REPAIR_PULL_MAX_PAGES } from "../repair-eligibility.mjs";
 
 const CONFIG = { pilot_repo: "BAWES-Universe/studenthub-platform", max_dispatch: 1, adapter_pause_map: {} };
 
@@ -455,4 +456,148 @@ test("fixture lane: exactly one card is the fixture card, and only it resolves t
     APPROVED_FIXTURE_CONTRACT,
     "a fixture card cannot override its configured contract ref",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Self-repair B1: the shared repair predicate, and its narrow use in eligibility
+// ---------------------------------------------------------------------------
+
+const B1_REPO = CONFIG.pilot_repo;
+const B1_OWNER = "48918d3d-f843-483f-bb23-2ba6c7ace499";
+const B1_HEAD = "a".repeat(40);
+const B1_REPAIR = { repair_pr: 293, initial_target_sha: B1_HEAD };
+
+function b1Pull(over = {}) {
+  return { number: 293, state: "open", title: "[SHU-327] organization writes refuse a deleted organization",
+    base: { ref: "main", repo: { full_name: B1_REPO } },
+    head: { ref: "coordinator/SHU-327", sha: B1_HEAD, repo: { full_name: B1_REPO } }, ...over };
+}
+
+function b1Input(over = {}) {
+  return {
+    issue: card({ id: "SHU-327", state: "In Progress", assignee: { name: "Khalid", id: B1_OWNER }, linkedPRs: [{ number: 293, state: "OPEN" }] }),
+    repair: B1_REPAIR, owners: [B1_OWNER], pulls: { complete: true, items: [b1Pull()] }, repo: B1_REPO, ...over,
+  };
+}
+
+test("Self-repair B1: P1 a repair admits only Todo or In Progress, undelegated, unassigned or owner-assigned by id", () => {
+  assert.deepEqual(repairEligible(b1Input()), { ok: true, reason: null });
+  assert.equal(repairEligible(b1Input({ issue: { ...b1Input().issue, state: "Todo", assignee: null } })).ok, true);
+  for (const state of ["Backlog", "In Review", "Done", "Canceled", null]) {
+    assert.match(repairEligible(b1Input({ issue: { ...b1Input().issue, state } })).reason, /is not one of Todo, In Progress/, String(state));
+  }
+  assert.match(repairEligible(b1Input({ issue: { ...b1Input().issue, delegate: { id: "agent-1" } } })).reason, /delegated/);
+  assert.match(repairEligible(b1Input({ issue: { ...b1Input().issue, delegate: { name: "Agent" } } })).reason, /delegated/);
+  for (const assignee of [{ name: "Khalid" }, { name: "Khalid", id: "someone-else" }, { id: "" }]) {
+    assert.match(repairEligible(b1Input({ issue: { ...b1Input().issue, assignee } })).reason,
+      /assigned to someone other than the configured owner \(compared by Linear user id\)/, JSON.stringify(assignee));
+  }
+  assert.match(repairEligible(b1Input({ owners: [] })).reason, /assigned to someone other/);
+  assert.match(repairEligible(b1Input({ owners: undefined })).reason, /assigned to someone other/);
+  assert.match(repairEligible(b1Input({ issue: { ...b1Input().issue, assignee: { name: B1_OWNER } } })).reason,
+    /assigned to someone other/, "a display name equal to an owner id is still a name");
+});
+
+test("Self-repair B1: P2 a repair needs a complete read with exactly one claiming PR, its repair_pr", () => {
+  for (const pulls of [undefined, null, { complete: false, items: [b1Pull()] }, { complete: "true", items: [b1Pull()] }, { complete: true }]) {
+    assert.match(repairEligible(b1Input({ pulls })).reason, /could not be read completely/, JSON.stringify(pulls));
+  }
+  assert.match(repairEligible(b1Input({ pulls: { complete: false, items: [], reason: "page cap" } })).reason, /\(page cap\)/);
+  assert.match(repairEligible(b1Input({ pulls: { complete: true, items: [] } })).reason, /0 open pull requests claim the card/);
+  assert.match(repairEligible(b1Input({ pulls: { complete: true, items: [b1Pull(), b1Pull({ number: 300 })] } })).reason, /2 open pull requests claim the card/);
+  assert.match(repairEligible(b1Input({ pulls: { complete: true, items: [b1Pull({ number: 300 })] } })).reason, /is #300, not repair_pr #293/);
+});
+
+test("Self-repair B1: P3 the repair PR is this repository's, from coordinator/<card> to main, open, at the bound head", () => {
+  const pr = b1Pull();
+  const with_ = (over) => repairEligible(b1Input({ pulls: { complete: true, items: [{ ...pr, ...over }] } }));
+  assert.match(with_({ base: { ...pr.base, repo: { full_name: "BAWES-Universe/other" } } }).reason, /is not a BAWES-Universe\/studenthub-platform pull request/);
+  assert.match(with_({ head: { ...pr.head, repo: { full_name: "fork/studenthub-platform" } } }).reason, /is not a BAWES-Universe\/studenthub-platform pull request/);
+  assert.match(repairEligible(b1Input({ repo: undefined })).reason, /is not a <unconfigured> pull request/);
+  assert.match(with_({ base: { ...pr.base, ref: "develop" } }).reason, /based on develop, not main/);
+  assert.match(with_({ head: { ...pr.head, ref: "coordinator/SHU-328" } }).reason, /from coordinator\/SHU-328, not coordinator\/SHU-327/);
+  assert.match(with_({ state: "closed" }).reason, /is closed, not open/);
+  assert.match(with_({ head: { ...pr.head, sha: "b".repeat(40) } }).reason, /head is b{40}, not the bound head a{40}/);
+  // A later step binds its own head (the revise's output) instead of the passed one.
+  assert.equal(repairEligible({ ...b1Input({ pulls: { complete: true, items: [{ ...pr, head: { ...pr.head, sha: "c".repeat(40) } }] } }), head: "c".repeat(40) }).ok, true);
+  assert.match(repairEligible(b1Input({ repair: { repair_pr: 293 } })).reason, /repair binding is incomplete/);
+  assert.match(repairEligible(b1Input({ repair: { ...B1_REPAIR, repair_pr: "293" } })).reason, /repair binding is incomplete/);
+  assert.match(repairEligible(b1Input({ issue: null })).reason, /cannot be read/);
+});
+
+test("Self-repair B1: P4 eligibility uses the repair predicate for the bound repair card only", () => {
+  const repairCard = { issueId: "SHU-327", repair: B1_REPAIR, owners: [B1_OWNER], repo: B1_REPO, head: B1_HEAD,
+    pulls: { complete: true, items: [b1Pull()] } };
+  const bound = b1Input().issue;
+  const other = card({ id: "SHU-328", state: "In Progress", assignee: { name: "Khalid", id: B1_OWNER }, linkedPRs: [{ number: 294, state: "OPEN" }] });
+  const todo = card({ id: "SHU-329" });
+  const { ready, excluded } = computeEligibility({ issues: [bound, other, todo], openPRs: [{ number: 293 }, { number: 294 }], config: CONFIG, repairCard });
+  assert.deepEqual(ready.map((i) => i.id), ["SHU-327", "SHU-329"]);
+  assert.deepEqual(excluded, [{ id: "SHU-328", reason: 'state "In Progress" not in {Todo}' }], "every other card keeps today's rules");
+  // Without the repair, the bound card is judged as before.
+  assert.deepEqual(computeEligibility({ issues: [bound], openPRs: [{ number: 293 }], config: CONFIG }).excluded,
+    [{ id: "SHU-327", reason: 'state "In Progress" not in {Todo}' }]);
+  const todoBound = { ...bound, state: "Todo" };
+  assert.deepEqual(computeEligibility({ issues: [todoBound], openPRs: [{ number: 293 }], config: CONFIG }).excluded,
+    [{ id: "SHU-327", reason: "assigned to Khalid (active claim)" }]);
+  // A refusal is named, and the later rules still apply to the bound card.
+  const refusedRepair = computeEligibility({ issues: [bound], openPRs: [], config: CONFIG, repairCard: { ...repairCard, pulls: { complete: false, items: [] } } });
+  assert.match(refusedRepair.excluded[0].reason, /^landing repair — the open pull requests claiming the card could not be read completely/);
+  const blocked = computeEligibility({ issues: [{ ...bound, blockers: [{ id: "SHU-1", state: "Todo" }] }], openPRs: [], config: CONFIG, repairCard });
+  assert.match(blocked.excluded[0].reason, /blocked by SHU-1/);
+  const foreignRepo = computeEligibility({ issues: [{ ...bound, repo: "BAWES-Universe/other" }], openPRs: [], config: CONFIG, repairCard });
+  assert.match(foreignRepo.excluded[0].reason, /outside pilot repo/);
+});
+
+test("Self-repair B1: P5 the board keeps assignee and delegate ids, and the repair card reads every PR page", async () => {
+  const node = { identifier: "SHU-327", id: "lin-1", title: "t", state: { name: "In Progress" }, labels: { nodes: [{ name: "repo:studenthub-platform" }] },
+    assignee: { id: B1_OWNER, displayName: "Khalid" }, delegate: { id: "agent-1" } };
+  const issue = normalizeLinearIssue(node);
+  assert.deepEqual(issue.assignee, { name: "Khalid", id: B1_OWNER });
+  assert.deepEqual(issue.delegate, { id: "agent-1" });
+  assert.deepEqual(normalizeLinearIssue({ ...node, assignee: { displayName: "Khalid" }, delegate: null }).assignee, { name: "Khalid" }, "a name-only node is as before");
+  assert.equal(normalizeLinearIssue({ ...node, assignee: null }).assignee, null);
+
+  const pages = (counts) => {
+    const urls = [];
+    const fetchImpl = async (url) => {
+      urls.push(url);
+      const page = Number(new URL(url).searchParams.get("page"));
+      const n = counts[page - 1] ?? 0;
+      const items = Array.from({ length: n }, (_, i) => (page === 2 && i === 0 ? b1Pull() : { number: page * 1000 + i, title: "other", head: { ref: `feature/${i}` } }));
+      return { ok: true, status: 200, json: async () => items };
+    };
+    return { urls, fetchImpl };
+  };
+  const two = pages([REPAIR_PULL_PAGE, 7]);
+  const read = await readOpenPulls({ repo: B1_REPO, token: "t", fetchImpl: two.fetchImpl });
+  assert.equal(read.complete, true);
+  assert.equal(read.items.length, REPAIR_PULL_PAGE + 7);
+  assert.equal(two.urls.length, 2);
+  assert.match(two.urls[0], /\/pulls\?state=open&per_page=100&page=1$/);
+  const capped = pages(Array(REPAIR_PULL_MAX_PAGES + 1).fill(REPAIR_PULL_PAGE));
+  const full = await readOpenPulls({ repo: B1_REPO, token: "t", fetchImpl: capped.fetchImpl });
+  assert.equal(full.complete, false, "a read that stops at its page cap is incomplete");
+  assert.match(full.reason, /page cap/);
+  assert.equal(capped.urls.length, REPAIR_PULL_MAX_PAGES);
+  assert.equal((await readOpenPulls({ repo: B1_REPO, token: "", fetchImpl: two.fetchImpl })).complete, false);
+  assert.equal((await readOpenPulls({ repo: B1_REPO, token: "t", fetchImpl: async () => ({ ok: false, status: 502 }) })).complete, false);
+  assert.equal((await readOpenPulls({ repo: B1_REPO, token: "t", fetchImpl: async () => { throw new TypeError("fetch failed"); } })).complete, false);
+  assert.equal((await readOpenPulls({ repo: B1_REPO, token: "t", fetchImpl: async () => ({ ok: true, json: async () => ({}) }) })).complete, false);
+
+  const armed = { state: "armed", landing_repair: true, target_issue_id: "SHU-327", initial_target_sha: B1_HEAD, writer_lane: "codex-builder",
+    reviewer_lane: "claude-verifier", repair_pr: 293, repair_of: "card-SHU-327-passed-0001", repair_findings: {}, repair_evidence_digest: "0".repeat(64), max_rounds: 1 };
+  const config = { ...CONFIG, linear_callback_actor_ids: [B1_OWNER] };
+  const built = await repairCardFor(armed, { config, githubToken: "t", fetchImpl: pages([REPAIR_PULL_PAGE, 7]).fetchImpl });
+  assert.equal(built.issueId, "SHU-327");
+  assert.equal(built.head, B1_HEAD);
+  assert.deepEqual(built.owners, [B1_OWNER]);
+  assert.equal(built.pulls.complete, true);
+  assert.deepEqual(built.pulls.items.map((pr) => pr.number), [293], "only the pull requests claiming the card are kept");
+  assert.equal(built.repair.repair_pr, 293);
+  assert.equal((await repairCardFor({ ...armed, successor: { target_sha: "c".repeat(40) } }, { config, githubToken: "t", fetchImpl: two.fetchImpl })).head, "c".repeat(40));
+  assert.equal((await repairCardFor(armed, { config, githubToken: "" })).pulls.complete, false);
+  for (const activation of [null, { ...armed, state: "refused" }, { ...armed, landing_repair: undefined }]) {
+    assert.equal(await repairCardFor(activation, { config, githubToken: "t", fetchImpl: () => assert.fail("no read without a repair") }), null);
+  }
 });

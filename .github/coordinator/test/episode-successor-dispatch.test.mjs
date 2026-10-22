@@ -836,3 +836,158 @@ test("SHU-225 I10: with no activation the successor path is unreachable and park
     h.cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Self-repair B1: an armed landing repair through the REAL main()
+// ---------------------------------------------------------------------------
+
+const B1_CARD = "SHU-327";
+const B1_PASSED = "card-SHU-327-passed-0001";
+const B1_REPAIR = "card-SHU-327-repair-0001";
+const B1_COMMITTED = JSON.parse(readFileSync(join(COORD, "config.json"), "utf8"));
+const B1_LANE = B1_COMMITTED.card_lanes.find((lane) => lane.id === B1_CARD);
+
+// The passed card as Linear and GitHub show it after its PR opened: In Progress,
+// assigned to the owner, one open PR at the passed head, and a build + PASS of
+// the passed episode on the card. `repair: false` arms the same card plainly.
+function b1RepairHarness({ repair = true } = {}) {
+  const h = createEpisodeHarness({ issueId: B1_CARD, authorizationRef: B1_CARD, activationId: B1_REPAIR, githubToken: "gh",
+    writerLane: B1_LANE.writer_lane, reviewerLane: B1_LANE.reviewer_lane, configOverrides: { fixture_lane: undefined, card_lanes: [B1_LANE] } });
+  h.nodes[0].state = { name: "In Progress" };
+  h.nodes[0].assignee = { id: h.config.linear_callback_actor_ids[0], displayName: "Owner" };
+  const findings = { verdict_stage: "BLOCKED", source: "ci", target_sha: SHA_INPUT, summary: "not ok 1 - a deleted organization refuses writes", links: [] };
+  if (repair) {
+    Object.assign(h.record, { initial_target_sha: SHA_INPUT, repair_pr: 293, repair_of: B1_PASSED, repair_findings: findings,
+      repair_evidence_digest: activation.repairEvidenceDigest(findings), max_rounds: 1 });
+  }
+  writeFileSync(h.activationPath, JSON.stringify(h.record));
+  chmodSync(h.activationPath, 0o600);
+  const seed = ({ worker, role, target, result = null, verdict, identity, attempt, at, scope = {} }) => {
+    const made = reconcile.createReceipt({ receipt_version: "1.1.0", issue_id: B1_CARD, authorization_ref: B1_CARD, requested_worker: worker,
+      role, runtime: worker.startsWith("codex") ? "codex-cli" : "claude-code", repo: h.config.pilot_repo, branch: `coordinator/${B1_CARD}`,
+      target_sha: target, episode_id: B1_PASSED, attempt_id: attempt, reserved_at: at, ...scope });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    const receipt = { ...made.receipt, stage: "COMPLETED", verdict_stage: verdict, worker_identity: identity, external_run_id: `supervisor_${attempt}`,
+      adapter_status: "completed", ...(result ? { result_sha: result } : {}), evidence_links: ["https://example.invalid/evidence"],
+      timestamps: { ...made.receipt.timestamps, launch: at, terminal: at }, last_activity: at };
+    h.comments.push({ user: { id: h.config.linear_receipt_actor_ids[0], displayName: "Worker" }, createdAt: at, body: reconcile.receiptCommentBody(receipt) });
+    return receipt;
+  };
+  seed({ worker: "codex-builder", role: "build", target: "e".repeat(40), result: SHA_INPUT, verdict: "BUILD_READY", identity: "codex-cli:session-1",
+    attempt: "00000000-0000-4000-8000-000000000327", at: "2026-09-10T10:00:00.000Z" });
+  const pass = seed({ worker: "claude-verifier", role: "review", target: SHA_INPUT, verdict: "PASS", identity: "claude-code:session-1",
+    attempt: "00000000-0000-4000-8000-000000000328", at: "2026-09-10T10:30:00.000Z",
+    scope: { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null } });
+  const pull = (over = {}) => ({ number: 293, state: "open", title: `[${B1_CARD}] organization writes refuse a deleted organization`,
+    base: { ref: "main", repo: { full_name: h.config.pilot_repo } },
+    head: { ref: `coordinator/${B1_CARD}`, sha: SHA_INPUT, repo: { full_name: h.config.pilot_repo } }, ...over });
+  return { h, pass, findings, pull };
+}
+
+test("Self-repair B1: D1 an armed landing repair dispatches its one revise on the owner's In Progress card", async () => {
+  const { h, pass, findings, pull } = b1RepairHarness();
+  try {
+    const tick = await h.runTick({ io: { openPRsOverride: [pull()] } });
+    assert.equal(tick.code, 0, tick.text);
+    assert.match(tick.text, /landing-repair pr=#293 head=a{40} of=card-SHU-327-passed-0001/);
+    assert.equal(h.launched.length, 1, tick.text);
+    const [launch] = h.launched;
+    assert.equal(launch.lane, "codex-cli");
+    assert.equal(launch.target_sha, SHA_INPUT);
+    assert.equal(launch.scope_phase, "revision");
+    assert.deepEqual(launch.allowed_paths, B1_LANE.revision_paths);
+    assert.equal(launch.attempt_id, routing.freshAttempt(`${pass.attempt_id}:${B1_REPAIR}`, "repair", 1));
+    const revise = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
+    assert.equal(revise.length, 1);
+    assert.equal(revise[0].role, "revise");
+    assert.equal(revise[0].requested_worker, B1_LANE.writer_lane);
+    assert.deepEqual(revise[0].review_findings, findings);
+    assert.equal(h.nodes[0].state.name, "In Progress", "the card is never moved");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says", async () => {
+  const { h, pull } = b1RepairHarness();
+  try {
+    const tick = await h.runTick({ env: { DISPATCH_BRANCH: "feature/elsewhere" }, io: { openPRsOverride: [pull()] } });
+    assert.equal(tick.code, 0, tick.text);
+    assert.equal(h.launched.length, 1, tick.text);
+    const revise = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
+    assert.equal(revise.length, 1);
+    assert.equal(revise[0].branch, `coordinator/${B1_CARD}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card", async () => {
+  for (const closed of [false, true]) {
+    const { h, pull } = b1RepairHarness();
+    try {
+      // The reservation is written, then Linear rate-limits the next read, so
+      // the tick ends before its launch intent (the SHU-71 run 9 shape).
+      let reservedWritten = false;
+      let tripped = false;
+      const strand = async (url, opts) => {
+        if (!tripped && !String(url).includes("api.github.com")) {
+          const { query, variables } = JSON.parse(opts.body);
+          if (query.includes("commentCreate") && String(variables.body ?? "").includes('"stage": "RESERVED"')) reservedWritten = true;
+          else if (reservedWritten && query.includes("CoordinatorIssueComments")) {
+            tripped = true;
+            return { status: 429, ok: false, headers: { get: () => null }, json: async () => ({ errors: [{ message: "rate limit exceeded" }] }) };
+          }
+        }
+        return h.fetchImpl(url, opts);
+      };
+      const first = await h.runTick({ io: { fetchImpl: strand, openPRsOverride: [pull()] } });
+      assert.equal(first.code, 0, first.text);
+      const [reserved] = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
+      assert.equal(reserved?.stage, "RESERVED", first.text);
+      assert.equal(h.launched.length, 0);
+      const later = await h.runTick({ now: new Date(NOW.getTime() + reconcile.STRANDED_RESERVATION_MS + 30_000),
+        io: { openPRsOverride: closed ? [] : [pull()] } });
+      if (closed) {
+        assert.equal(later.code, 2, later.text);
+        assert.match(later.text, new RegExp(`reservation ${reserved.attempt_id} on ${B1_CARD} not resumed — landing repair no longer eligible: 0 open pull requests claim the card`));
+        assert.equal(h.launched.length, 0, "a closed repair pull request launches nothing");
+        assert.equal(h.receiptFor(reserved.attempt_id).stage, "RESERVED", "the slot is held, never released early");
+      } else {
+        assert.match(later.text, new RegExp(`resuming reservation ${reserved.attempt_id} on ${B1_CARD}`));
+        assert.equal(h.launched.length, 1, later.text);
+        assert.equal(h.launched[0].attempt_id, reserved.attempt_id);
+      }
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test("Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR", async () => {
+  const plain = b1RepairHarness({ repair: false });
+  try {
+    const tick = await plain.h.runTick({ io: { openPRsOverride: [plain.pull()] } });
+    assert.equal(plain.h.launched.length, 0, "without the repair keys today's rule refuses the In Progress card");
+    assert.match(tick.text, /EXCLUDED SHU-327 +state "In Progress" not in \{Todo\}/);
+  } finally {
+    plain.h.cleanup();
+  }
+  const two = b1RepairHarness();
+  try {
+    const tick = await two.h.runTick({ io: { openPRsOverride: [two.pull(), two.pull({ number: 300, head: { ...two.pull().head, ref: "feature/SHU-327-other" } })] } });
+    assert.equal(two.h.launched.length, 0, tick.text);
+    assert.match(tick.text, /EXCLUDED SHU-327 +landing repair — 2 open pull requests claim the card; a repair needs exactly one/);
+  } finally {
+    two.h.cleanup();
+  }
+  const moved = b1RepairHarness();
+  try {
+    moved.h.branchHead.value = SHA_REVISED;
+    const tick = await moved.h.runTick({ io: { openPRsOverride: [moved.pull()] } });
+    assert.equal(moved.h.launched.length, 0, tick.text);
+    assert.match(tick.text, /repair target moved: the branch is at c{40}, not the passed head a{40}/);
+  } finally {
+    moved.h.cleanup();
+  }
+});

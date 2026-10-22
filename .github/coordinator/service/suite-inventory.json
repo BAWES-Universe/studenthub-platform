@@ -88,6 +88,7 @@
     ".github/coordinator/test/review-routing.test.mjs",
     ".github/coordinator/test/reviewer-evidence.test.mjs",
     ".github/coordinator/test/schema.test.mjs",
+    ".github/coordinator/test/self-repair-b1-mutations.test.mjs",
     ".github/coordinator/test/shu219-rule6-mutation.test.mjs",
     ".github/coordinator/test/shu224-dispatch-scope.test.mjs",
     ".github/coordinator/test/shu226-incident-reporting.test.mjs",
@@ -2351,6 +2352,11 @@
     "requestedWorkerFor: explicit worker label wins; default codex-builder",
     "snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)",
     "fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract",
+    "Self-repair B1: P1 a repair admits only Todo or In Progress, undelegated, unassigned or owner-assigned by id",
+    "Self-repair B1: P2 a repair needs a complete read with exactly one claiming PR, its repair_pr",
+    "Self-repair B1: P3 the repair PR is this repository's, from coordinator/<card> to main, open, at the bound head",
+    "Self-repair B1: P4 eligibility uses the repair predicate for the bound repair card only",
+    "Self-repair B1: P5 the board keeps assignee and delegate ids, and the repair card reads every PR page",
     "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode \u2014 all four launches, nothing seeded, nothing deleted",
     "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses \u2014 zero writes, zero launches",
     "SHU-231 A2 (unit): the spend check is the ONLY thing that changed \u2014 an unnamed retained terminal always spends",
@@ -2392,6 +2398,10 @@
     "SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review -> PASS with NO seeded successor receipts",
     "SHU-225 I7: replay at every boundary cannot duplicate a successor",
     "SHU-225 I10: with no activation the successor path is unreachable and parking is unchanged",
+    "Self-repair B1: D1 an armed landing repair dispatches its one revise on the owner's In Progress card",
+    "Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says",
+    "Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card",
+    "Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR",
     "SHU-230: future clock ticks, preserves explicit dates and reaches subprocesses",
     "SHU-230 mutation: literal fresh-claim date fails under future clock",
     "SHU-230 mutation: split process clocks fails under future clock",
@@ -2749,6 +2759,31 @@
     "machine never emits an invalid receipt across the happy path",
     "receipt comments round-trip (durable receipt on the Linear thread)",
     "all six stages are present and documented in STAGES",
+    "Self-repair B1: mutation M1 accept part of the repair group",
+    "Self-repair B1: mutation M2 let a repair carry the review-only keys",
+    "Self-repair B1: mutation M3 allow more than one round",
+    "Self-repair B1: mutation M4 let a repair name its own episode as the passed one",
+    "Self-repair B1: mutation M5 accept findings taken at another head",
+    "Self-repair B1: mutation M6 accept a digest that is not the findings'",
+    "Self-repair B1: mutation M7 arm a repair on a lane that is not a card",
+    "Self-repair B1: mutation M8 bootstrap from another episode's PASS",
+    "Self-repair B1: mutation M9 bootstrap from a PASS without trusted provenance",
+    "Self-repair B1: mutation M10 bootstrap from a PASS on another branch",
+    "Self-repair B1: mutation M11 repair a branch that moved",
+    "Self-repair B1: mutation M12 give a repair the configured revision rounds",
+    "Self-repair B1: mutation M13 accept findings of any source",
+    "Self-repair B1: mutation M14 render CI output as a reviewer's report",
+    "Self-repair B1: mutation M15 admit an assignee who is not an owner",
+    "Self-repair B1: mutation M16 trust an incomplete PR read",
+    "Self-repair B1: mutation M17 repair a PR whose head moved",
+    "Self-repair B1: mutation M18 call a capped PR read complete",
+    "Self-repair B1: mutation M19 judge every card by the repair predicate",
+    "Self-repair B1: mutation M20 drop the repair from the live-head episode decision",
+    "Self-repair B1: mutation M21 let card-prepare judge a repair by today's rule",
+    "Self-repair B1: mutation M22 publish a second revise directive for a repair",
+    "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
+    "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
+    "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
     "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
     "SHU-224: a higher-priority real card cannot beat the scoped fixture",
     "SHU-224: a missing or ineligible scoped target selects nothing and never falls back",
@@ -2925,6 +2960,7 @@
     "SHU-246 A3: no armed episode preserves global routing byte-for-byte",
     "SHU-246 A4 / Run #7: scoped writer and eligible terminal both come from the armed episode",
     "SHU-246 A5: main wires the armed episode boundary into backfill",
+    "Self-repair B1: K1 backfill publishes no second revise for a landing repair",
     "SHU-246 mutation M1 admit retired episode terminals",
     "SHU-246 mutation M2 restore issue-wide routing lineage",
     "SHU-246 mutation M3 select the Run #7 retired scoped writer",
@@ -2936,6 +2972,8 @@
     "review findings: the reviewer's BLOCK reaches the revise worker's task context through durable receipts",
     "review findings: only a bound review BLOCK is kept, and only a revision at that head receives it",
     "review findings: credential-shaped text is dropped and the summary is bounded",
+    "Self-repair B1: F1 findings accept source ci, and no other source",
+    "Self-repair B1: F2 CI findings render as CI output; reviewer findings render byte-for-byte as before",
     "SHU-247 mutation M1 restore the false rejection note",
     "SHU-247 mutation M2 classify a terminal verdict by callback presence instead of binding",
     "SHU-247 mutation M3 drop truthful FAILED verdict handling",
@@ -3100,6 +3138,7 @@
     "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
     "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
     "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
+    "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
     "SHU-322 mutation M1 drop the path allowlist",
     "SHU-322 mutation M2 install a deleted coordinator file",
     "SHU-322 mutation M3 drop the contracts deletions check",
@@ -3127,6 +3166,8 @@
     "SHU-322 mutation M25 install from a stopped queue",
     "SHU-322 mutation M26 release the lock when the pause could not be written",
     "SHU-322 mutation M27 count anything at the pause path as a pause",
+    "SHU-322 mutation M28 refuse an install without a finished status",
+    "SHU-322 mutation M29 read an install status as an unknown kind",
     "SHU-322 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
@@ -3295,6 +3336,17 @@
     "SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses (2020)",
     "SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses (2030)",
     "SHU-63 activation MUTATIONS: every binding, permission, expiry and gate guard is killed",
+    "Self-repair B1: R1 the repair group comes whole, never beside the review-only keys, with one round",
+    "Self-repair B1: R2 the bound pull request, passed episode and head are checked",
+    "Self-repair B1: R3 the findings are valid CI findings at the head, bound by their canonical digest",
+    "Self-repair B1: S1 the status arms only a card lane, exposes the binding and renders it",
+    "Self-repair B1: E1 the first step is a routed-shape revise on the writer lane within revision_paths",
+    "Self-repair B1: E2 only a trusted exact-head PASS of the repaired episode may start the repair",
+    "Self-repair B1: E3 a branch that moved off the passed head ends the repair",
+    "Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise",
+    "Self-repair B1: E5 the re-review's PASS ends the repair complete",
+    "Self-repair B1: E7 a spent or expired repair reports its stop with the repair's own cap",
+    "Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own",
     "SHU-250: real tick returns while a long-running supervised child executes",
     "SHU-250: concurrent ticks recover the same durable attempt with one launch",
     "SHU-250: crash after submission recovers once and ambiguous restart HOLDs",
@@ -4368,6 +4420,8 @@
     "SHU-86 0d: the status the watch shows is built from validated fields only",
     "SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass",
     "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
+    "Self-repair B1: C1 a repair plan answers with the repair predicate and never a move",
+    "Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves branch and card alone",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -19649,6 +19703,26 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B1: P1 a repair admits only Todo or In Progress, undelegated, unassigned or owner-assigned by id",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: P2 a repair needs a complete read with exactly one claiming PR, its repair_pr",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: P3 the repair PR is this repository's, from coordinator/<card> to main, open, at the bound head",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: P4 eligibility uses the repair predicate for the bound repair card only",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: P5 the board keeps assignee and delegate ids, and the repair card reads every PR page",
+      "capabilities": []
+    },
+    {
       "name": "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode \u2014 all four launches, nothing seeded, nothing deleted",
       "capabilities": []
     },
@@ -19898,6 +19972,38 @@
     },
     {
       "name": "SHU-225 I10: with no activation the successor path is unreachable and parking is unchanged",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: D1 an armed landing repair dispatches its one revise on the owner's In Progress card",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -21842,6 +21948,106 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B1: mutation M1 accept part of the repair group",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M2 let a repair carry the review-only keys",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M3 allow more than one round",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M4 let a repair name its own episode as the passed one",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M5 accept findings taken at another head",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M6 accept a digest that is not the findings'",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M7 arm a repair on a lane that is not a card",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M8 bootstrap from another episode's PASS",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M9 bootstrap from a PASS without trusted provenance",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M10 bootstrap from a PASS on another branch",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M11 repair a branch that moved",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M12 give a repair the configured revision rounds",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M13 accept findings of any source",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M14 render CI output as a reviewer's report",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M15 admit an assignee who is not an owner",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M16 trust an incomplete PR read",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M17 repair a PR whose head moved",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M18 call a capped PR read complete",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M19 judge every card by the repair predicate",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M20 drop the repair from the live-head episode decision",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M21 let card-prepare judge a repair by today's rule",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M22 publish a second revise directive for a repair",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
+      "capabilities": []
+    },
+    {
       "name": "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
       "capabilities": []
     },
@@ -23270,6 +23476,10 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B1: K1 backfill publishes no second revise for a landing repair",
+      "capabilities": []
+    },
+    {
       "name": "SHU-246 mutation M1 admit retired episode terminals",
       "capabilities": []
     },
@@ -23311,6 +23521,14 @@
     },
     {
       "name": "review findings: credential-shaped text is dropped and the summary is bounded",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: F1 findings accept source ci, and no other source",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: F2 CI findings render as CI output; reviewer findings render byte-for-byte as before",
       "capabilities": []
     },
     {
@@ -24850,6 +25068,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
+      "capabilities": []
+    },
+    {
       "name": "SHU-322 mutation M1 drop the path allowlist",
       "capabilities": []
     },
@@ -24955,6 +25177,14 @@
     },
     {
       "name": "SHU-322 mutation M27 count anything at the pause path as a pause",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M28 refuse an install without a finished status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M29 read an install status as an unknown kind",
       "capabilities": []
     },
     {
@@ -25855,6 +26085,94 @@
     },
     {
       "name": "SHU-63 activation MUTATIONS: every binding, permission, expiry and gate guard is killed",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: R1 the repair group comes whole, never beside the review-only keys, with one round",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: R2 the bound pull request, passed episode and head are checked",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: R3 the findings are valid CI findings at the head, bound by their canonical digest",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: S1 the status arms only a card lane, exposes the binding and renders it",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E1 the first step is a routed-shape revise on the writer lane within revision_paths",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E2 only a trusted exact-head PASS of the repaired episode may start the repair",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E3 a branch that moved off the passed head ends the repair",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E5 the re-review's PASS ends the repair complete",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E7 a spent or expired repair reports its stop with the repair's own cap",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own",
       "capabilities": [
         {
           "name": "git"
@@ -32330,6 +32648,14 @@
     },
     {
       "name": "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: C1 a repair plan answers with the repair predicate and never a move",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves branch and card alone",
       "capabilities": []
     },
     {

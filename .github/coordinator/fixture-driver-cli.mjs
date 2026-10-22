@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { main, sendLinear, fetchIssueComments, parseReceiptsFromComments, fetchBranchHead } from "./reconcile.mjs";
-import { episodeVerdict, episodeScopeFor, singleRunActivationStatus } from "./single-run-activation.mjs";
+import { episodeVerdict, episodeScopeFor, singleRunActivationStatus, repairFromActivation } from "./single-run-activation.mjs";
 import { runFixtureDriver, restoreFixture } from "./fixture-driver.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -45,7 +45,7 @@ if (command === "restore") {
       const head = latest ? await fetchBranchHead({ repo: latest.repo, branch: latest.branch, token: process.env.GITHUB_TOKEN }) : null;
       const verdict = episodeVerdict({ receipts, targetIssueId: record.target_issue_id, config,
         bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
-        authoritativeHead: head, episodeScope: episodeScopeFor(record) });
+        authoritativeHead: head, episodeScope: episodeScopeFor(record), repair: repairFromActivation(record, config) });
       return { terminal: Boolean(head) && verdict.ended };
     } });
 }
