@@ -412,6 +412,8 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   NOT_ELIGIBLE: "the card was not eligible on the first tick",
   ERROR: "the run failed",
   NOT_STARTED: "the run refused before arming",
+  // A done queue's timer start that refused to install main (SHU-322 Card B).
+  NEEDS_OWNER: "main changes more than a reviewed card queue, so a person installs it",
   // SHU-306: what landing a passed card came to.
   MERGED: "its pull request went green and the SHU-259 consumer merged it",
   PR_OPENED_CI_RED: "its pull request is open but a check is red; nothing was handed off or merged",

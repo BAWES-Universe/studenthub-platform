@@ -2400,6 +2400,8 @@
     "SHU-225 I7: replay at every boundary cannot duplicate a successor",
     "SHU-225 I10: with no activation the successor path is unreachable and parking is unchanged",
     "Self-repair B1: D1 an armed landing repair dispatches its one revise on the owner's In Progress card",
+    "Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says",
+    "Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card",
     "Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR",
     "SHU-230: future clock ticks, preserves explicit dates and reaches subprocesses",
     "SHU-230 mutation: literal fresh-claim date fails under future clock",
@@ -2780,6 +2782,9 @@
     "Self-repair B1: mutation M20 drop the repair from the live-head episode decision",
     "Self-repair B1: mutation M21 let card-prepare judge a repair by today's rule",
     "Self-repair B1: mutation M22 publish a second revise directive for a repair",
+    "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
+    "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
+    "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
     "Self-repair B2: mutation M1 turn the repair on unless it is switched off",
     "Self-repair B2: mutation M2 start a second round over an existing record",
     "Self-repair B2: mutation M3 re-launch a round that never finished",
@@ -3166,6 +3171,7 @@
     "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
     "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
     "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
+    "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
     "SHU-322 mutation M1 drop the path allowlist",
     "SHU-322 mutation M2 install a deleted coordinator file",
     "SHU-322 mutation M3 drop the contracts deletions check",
@@ -3193,6 +3199,8 @@
     "SHU-322 mutation M25 install from a stopped queue",
     "SHU-322 mutation M26 release the lock when the pause could not be written",
     "SHU-322 mutation M27 count anything at the pause path as a pause",
+    "SHU-322 mutation M28 refuse an install without a finished status",
+    "SHU-322 mutation M29 read an install status as an unknown kind",
     "SHU-322 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
@@ -20027,6 +20035,22 @@
       ]
     },
     {
+      "name": "Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR",
       "capabilities": [
         {
@@ -22057,6 +22081,18 @@
     },
     {
       "name": "Self-repair B1: mutation M22 publish a second revise directive for a repair",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
       "capabilities": []
     },
     {
@@ -25208,6 +25244,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
+      "capabilities": []
+    },
+    {
       "name": "SHU-322 mutation M1 drop the path allowlist",
       "capabilities": []
     },
@@ -25313,6 +25353,14 @@
     },
     {
       "name": "SHU-322 mutation M27 count anything at the pause path as a pause",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M28 refuse an install without a finished status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M29 read an install status as an unknown kind",
       "capabilities": []
     },
     {

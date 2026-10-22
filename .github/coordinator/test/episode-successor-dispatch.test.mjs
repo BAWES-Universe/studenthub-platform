@@ -908,6 +908,62 @@ test("Self-repair B1: D1 an armed landing repair dispatches its one revise on th
   }
 });
 
+test("Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says", async () => {
+  const { h, pull } = b1RepairHarness();
+  try {
+    const tick = await h.runTick({ env: { DISPATCH_BRANCH: "feature/elsewhere" }, io: { openPRsOverride: [pull()] } });
+    assert.equal(tick.code, 0, tick.text);
+    assert.equal(h.launched.length, 1, tick.text);
+    const revise = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
+    assert.equal(revise.length, 1);
+    assert.equal(revise[0].branch, `coordinator/${B1_CARD}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card", async () => {
+  for (const closed of [false, true]) {
+    const { h, pull } = b1RepairHarness();
+    try {
+      // The reservation is written, then Linear rate-limits the next read, so
+      // the tick ends before its launch intent (the SHU-71 run 9 shape).
+      let reservedWritten = false;
+      let tripped = false;
+      const strand = async (url, opts) => {
+        if (!tripped && !String(url).includes("api.github.com")) {
+          const { query, variables } = JSON.parse(opts.body);
+          if (query.includes("commentCreate") && String(variables.body ?? "").includes('"stage": "RESERVED"')) reservedWritten = true;
+          else if (reservedWritten && query.includes("CoordinatorIssueComments")) {
+            tripped = true;
+            return { status: 429, ok: false, headers: { get: () => null }, json: async () => ({ errors: [{ message: "rate limit exceeded" }] }) };
+          }
+        }
+        return h.fetchImpl(url, opts);
+      };
+      const first = await h.runTick({ io: { fetchImpl: strand, openPRsOverride: [pull()] } });
+      assert.equal(first.code, 0, first.text);
+      const [reserved] = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
+      assert.equal(reserved?.stage, "RESERVED", first.text);
+      assert.equal(h.launched.length, 0);
+      const later = await h.runTick({ now: new Date(NOW.getTime() + reconcile.STRANDED_RESERVATION_MS + 30_000),
+        io: { openPRsOverride: closed ? [] : [pull()] } });
+      if (closed) {
+        assert.equal(later.code, 2, later.text);
+        assert.match(later.text, new RegExp(`reservation ${reserved.attempt_id} on ${B1_CARD} not resumed — landing repair no longer eligible: 0 open pull requests claim the card`));
+        assert.equal(h.launched.length, 0, "a closed repair pull request launches nothing");
+        assert.equal(h.receiptFor(reserved.attempt_id).stage, "RESERVED", "the slot is held, never released early");
+      } else {
+        assert.match(later.text, new RegExp(`resuming reservation ${reserved.attempt_id} on ${B1_CARD}`));
+        assert.equal(h.launched.length, 1, later.text);
+        assert.equal(h.launched[0].attempt_id, reserved.attempt_id);
+      }
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
 test("Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR", async () => {
   const plain = b1RepairHarness({ repair: false });
   try {

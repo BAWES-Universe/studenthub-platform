@@ -3126,7 +3126,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     throw new Error(`dispatch refused: no contract-bound authorization_ref for ${candidate.id} (free text and unapproved fixture ids are rejected)`);
   }
   const repo = candidate.repo ?? config.pilot_repo;
-  let branch = (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
+  // Self-repair B1: a repair revises the passed episode's own branch, the head
+  // ref repair eligibility bound, never DISPATCH_BRANCH or another default.
+  const repairBranch = singleRunActivation.landing_repair === true ? `coordinator/${candidate.id}` : null;
+  let branch = repairBranch ?? (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
   // SHU-303: a review-only run reviews the pull request its activation names,
   // on that PR's own branch, and only while the PR is still what was approved.
   const reviewOnly = singleRunActivation.state === "armed" && singleRunActivation.review_only === true;
@@ -3290,6 +3293,14 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       return 2;
     };
     if (config.adapter_pause_map[adapter]) return held(`adapter ${adapter} is paused`);
+    // Self-repair B1: a repair's stranded reservation launches only while the
+    // card is still the repair's, read again now, at the reservation's own head.
+    if (repairCard) {
+      const card = await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride });
+      const still = card ? repairEligible({ issue, repair: card.repair, owners: card.owners, pulls: card.pulls, repo: card.repo, head: receipt.target_sha })
+        : { ok: false, reason: "the repair binding cannot be read" };
+      if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);
+    }
     if (role === ROLE_REVIEW && receipts.some((r) => r !== receipt && !TERMINAL_STAGES.includes(r.stage) && roleForReceipt(r) === ROLE_REVIEW)) {
       if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active`);
       return 0;

@@ -1361,6 +1361,9 @@ test("Self-repair B1: E2 only a trusted exact-head PASS of the repaired episode 
   refused([b1Build({ result: B1_NEXT }), b1Pass({ target: B1_NEXT })], "a PASS at another head");
   refused([b1Build(), b1Pass({ branch: "feature/elsewhere" })], "a PASS on another branch");
   refused([b1Build(), b1Pass({ repo: "BAWES-Universe/other" })], "a PASS in another repository");
+  const repoless = b1Pass();
+  delete repoless.repo;
+  refused([b1Build(), repoless], "a PASS that names no repository");
   refused([b1Build(), b1Pass({ identity: "codex-builder:session-1" })], "a PASS by an author of the lineage (untrusted actor)");
   refused([b1Build(), b1Pass({ identity: null })], "a PASS without an observed verifier session");
   refused([b1Build(), b1Pass({ stage: "HOLD", verdict: "BLOCKED" })], "a BLOCK is not a PASS");

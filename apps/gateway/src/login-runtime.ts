@@ -269,7 +269,7 @@ export function createRuntimeLoginFromEnv(
   // Organization snapshots stay unconfigured until an approved import exists:
   // the card and the company list show registry names and visibly unavailable fields.
   const organizations = new OrganizationRepository({
-    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,
+    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,storeCounts:organizationStoresStore,
   });
   return {
     application: {

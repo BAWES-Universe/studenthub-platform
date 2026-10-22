@@ -127,3 +127,16 @@ test("SHU-165 postgres a deleted organization answers not_found to every store c
   assert.equal(await store.list(owner, orgId), null);
   assert.equal(await store.list(staff, `shu165-unknown-${randomUUID()}`), null);
 });
+
+test("SHU168_PG_STORE_COUNTS batches active store totals from source at read time", async () => {
+  const first = await organization(), second = await organization(), third = await organization();
+  const firstStaff = await principal(first), secondStaff = await principal(second);
+  const firstStore = await store.create(firstStaff, first, fields({ name: "First one" }));
+  assert.equal(firstStore.kind, "created");
+  assert.equal((await store.create(firstStaff, first, fields({ name: "First two" }))).kind, "created");
+  assert.equal((await store.create(secondStaff, second, fields({ name: "Second one" }))).kind, "created");
+  assert.deepEqual(await store.countMany([first, second, third]), new Map([[first, 2], [second, 1]]));
+  assert.deepEqual(await store.remove(firstStaff, first, (firstStore as { storeId: string }).storeId), { kind: "removed" });
+  assert.deepEqual(await store.countMany([first, second, third]), new Map([[first, 1], [second, 1]]));
+  assert.deepEqual(await store.countMany([]), new Map());
+});

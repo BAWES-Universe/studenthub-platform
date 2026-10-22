@@ -188,6 +188,30 @@ const CASES = [
     tests: "shu246-episode-backfill.test.mjs",
     pattern: "Self-repair B1: K1",
   },
+  {
+    name: "M23 start a repair from a PASS that names no repository",
+    file: "single-run-activation.mjs",
+    from: "      && r.repo === repair.repo\n",
+    to: "      && (!Object.hasOwn(r, \"repo\") || r.repo === repair.repo)\n",
+    tests: "single-run-activation.test.mjs",
+    pattern: "Self-repair B1: E2",
+  },
+  {
+    name: "M24 run a repair's revise on DISPATCH_BRANCH",
+    file: "reconcile.mjs",
+    from: "  const repairBranch = singleRunActivation.landing_repair === true ? `coordinator/${candidate.id}` : null;\n",
+    to: "  const repairBranch = null; // B1-M24\n",
+    tests: "episode-successor-dispatch.test.mjs",
+    pattern: "Self-repair B1: D3",
+  },
+  {
+    name: "M25 resume a repair reservation without reading the card again",
+    file: "reconcile.mjs",
+    from: "      if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);\n",
+    to: "      // B1-M25\n",
+    tests: "episode-successor-dispatch.test.mjs",
+    pattern: "Self-repair B1: D4",
+  },
 ];
 
 for (const mutation of CASES) {
