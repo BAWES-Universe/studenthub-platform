@@ -3706,8 +3706,14 @@ test("Self-repair B2: E6 no Actions read permission, an unreadable log, or nothi
 });
 
 test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, removed or loosened test and any change to how tests run", async () => {
+  // A file reads at each head as its patch's two sides, unless the case gives it whole.
+  const side = (files, name, ref) => {
+    const lines = files.find((file) => file?.filename === name)?.patch?.split("\n").filter((line) => !line.startsWith("@@"));
+    const keep = ref === FAILED ? "-" : "+";
+    return lines ? lines.filter((line) => line.startsWith(" ") || line.startsWith(keep)).map((line) => line.slice(1)).join("\n") : null;
+  };
   const judge = (files, extra = {}) => testWeakening({ compare: { status: "ahead", behind_by: 0, merge_base_commit: { sha: FAILED }, files, ...extra },
-    base: FAILED, head: PASSED, readFile: async (file, ref) => extra.contents?.[`${file}@${ref}`] ?? null });
+    base: FAILED, head: PASSED, readFile: async (file, ref) => (extra.contents && `${file}@${ref}` in extra.contents ? extra.contents[`${file}@${ref}`] : side(files, file, ref)) ?? null });
   const patch = (...lines) => `@@ -1,3 +1,3 @@\n${lines.join("\n")}`;
   const ok = await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-a", "+b", " c") },
     { filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }]);
@@ -3725,6 +3731,10 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
     ["moved into an inline comment", ["-  assert.equal(result, \"refused\");", "+  console.log(result); // assert.equal(result, \"refused\");"]],
     ["moved into a block comment", ["-  assert.ok(row);", "+  void row; /* assert.ok(row); */"]],
     ["moved into a string", ["-  assert.equal(result, 1);", "+  console.log(\"assert.equal(result, 1)\", 'expect(x)', `should.exist(y)`);"]],
+    ["moved into a multi-line comment", ["-  assert.ok(x);", "+  void x; /*", "+  assert.ok(x);", "+  */"]],
+    ["commented out by added lines only", ["+  /*", "   assert.ok(x);", "+  */"]],
+    ["moved into a multi-line template", ["-  assert.ok(x);", "+  console.log(`", "+  assert.ok(x);", "+  `);"]],
+    ["moved into a regex literal", ["-  assert.ok(x);", "+  const r = /assert.ok(x)/;"]],
     ["two dropped, one added", ["-  assert.ok(a); assert.ok(b);", "+  assert.ok(a);"]],
     ["commented out", ["-  assert.deepEqual(a, b);", "+  // assert . deepEqual(a, b) was here"]],
   ]) {
@@ -3741,6 +3751,15 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
     "a string holding // and a trailing comment keep the assertion counted");
   assert.deepEqual(await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-  assert(x);", " b") }]), { ok: true },
     "source files may drop their own runtime asserts");
+  assert.deepEqual(await judge([{ filename: "packages/db/test/new.test.mjs", status: "added", patch: patch("+  assert.ok(x);") }]), { ok: true },
+    "a new test file has nothing to lose");
+  assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
+    patch: patch(" const half = n / 2; const r = /[/]x/;", "-  assert.equal(half, 1);", "+  assert.equal(half, 2);") }]), { ok: true },
+    "a division and a regex with a slash in a class still leave the assertion counted");
+  const unreadable = await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }],
+    { contents: { [`packages/db/test/org.test.mjs@${FAILED}`]: null } });
+  assert.equal(unreadable.ok, false, "a test file that cannot be read whole refuses");
+  assert.match(unreadable.reason, /cannot be read at both heads/);
   assert.equal(ADDED_WEAKENING_LINES.length, 13, "every refused form is still exercised");
   for (const line of ADDED_WEAKENING_LINES) {
     for (const filename of ["packages/db/test/org.test.mjs", "packages/db/src/helpers.ts"]) {
