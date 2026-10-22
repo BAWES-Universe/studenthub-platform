@@ -677,6 +677,9 @@ test("SHU-322 B19: a refused install writes a finished status, so the watch neve
   assert.ok(status, "the status file is written and valid");
   assert.equal(status.step, "finished");
   assert.equal(status.run_id, out.activation_id);
+  assert.equal(status.kind, "install");
+  assert.equal(status.outcome, "NEEDS_OWNER");
+  assert.equal(status.queue.length > 0, true);
   assert.equal(status.trigger, "timer");
   assert.equal(status.card, null);
   assert.equal(status.revision, R);

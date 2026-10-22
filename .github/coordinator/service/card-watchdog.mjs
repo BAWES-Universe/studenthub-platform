@@ -105,7 +105,7 @@ export function readStatus(io, paths) {
     run_id: raw.run_id,
     invocation: INVOCATION_RE.test(raw.invocation ?? "") ? raw.invocation : null,
     card: CARD_RE.test(raw.card ?? "") ? raw.card : null,
-    kind: raw.kind === "card" || raw.kind === "review" ? raw.kind : null,
+    kind: raw.kind === "card" || raw.kind === "review" || raw.kind === "install" ? raw.kind : null,
     trigger: raw.trigger === "timer" || raw.trigger === "operator" ? raw.trigger : null,
     revision: SHA_RE.test(raw.revision ?? "") ? raw.revision : null,
     queue: Array.isArray(raw.queue) ? raw.queue.filter((id) => CARD_RE.test(id ?? "")).slice(0, 10) : [],

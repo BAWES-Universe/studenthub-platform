@@ -331,7 +331,7 @@ function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authori
       && verdictMatchesLane(r.requested_worker, r.verdict_stage)
       && r.target_sha === head
       && r.branch === branch
-      && (!Object.hasOwn(r, "repo") || r.repo === repair.repo)
+      && r.repo === repair.repo
       && reviewVerdictProvenanceValid(r, issueReceipts).ok)
     .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")))
     .pop();

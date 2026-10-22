@@ -184,6 +184,13 @@ const CASES = [
     to: "  // SHU322-M28",
     pattern: "SHU-322 B19:",
   },
+  {
+    name: "M29 read an install status as an unknown kind",
+    file: "service/card-watchdog.mjs",
+    from: 'raw.kind === "review" || raw.kind === "install" ? raw.kind : null,',
+    to: 'raw.kind === "review" ? raw.kind : null, // SHU322-M29',
+    pattern: "SHU-322 B19:",
+  },
 ];
 
 for (const mutation of CASES) {

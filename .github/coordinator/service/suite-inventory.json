@@ -2779,6 +2779,7 @@
     "Self-repair B1: mutation M20 drop the repair from the live-head episode decision",
     "Self-repair B1: mutation M21 let card-prepare judge a repair by today's rule",
     "Self-repair B1: mutation M22 publish a second revise directive for a repair",
+    "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
     "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
     "SHU-224: a higher-priority real card cannot beat the scoped fixture",
     "SHU-224: a missing or ineligible scoped target selects nothing and never falls back",
@@ -3162,6 +3163,7 @@
     "SHU-322 mutation M26 release the lock when the pause could not be written",
     "SHU-322 mutation M27 count anything at the pause path as a pause",
     "SHU-322 mutation M28 refuse an install without a finished status",
+    "SHU-322 mutation M29 read an install status as an unknown kind",
     "SHU-322 mutation the unmutated suite passes",
     "bridge: role/runtime mapping covers the three worker lanes",
     "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
@@ -22014,6 +22016,10 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
+      "capabilities": []
+    },
+    {
       "name": "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
       "capabilities": []
     },
@@ -25147,6 +25153,10 @@
     },
     {
       "name": "SHU-322 mutation M28 refuse an install without a finished status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M29 read an install status as an unknown kind",
       "capabilities": []
     },
     {

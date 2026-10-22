@@ -188,6 +188,14 @@ const CASES = [
     tests: "shu246-episode-backfill.test.mjs",
     pattern: "Self-repair B1: K1",
   },
+  {
+    name: "M23 start a repair from a PASS that names no repository",
+    file: "single-run-activation.mjs",
+    from: "      && r.repo === repair.repo\n",
+    to: "      && (!Object.hasOwn(r, \"repo\") || r.repo === repair.repo)\n",
+    tests: "single-run-activation.test.mjs",
+    pattern: "Self-repair B1: E2",
+  },
 ];
 
 for (const mutation of CASES) {
