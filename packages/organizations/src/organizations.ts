@@ -161,6 +161,7 @@ export type OrganizationCommercialTermRecord={readonly kind:"absent"}|{readonly 
 export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}>}
 export type OrganizationApprovedToHireRecord={readonly kind:"absent"}|{readonly kind:"value";readonly value:boolean};
 export interface OrganizationApprovedToHireRecords{read(orgId:string):Promise<OrganizationApprovedToHireRecord>;readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationApprovedToHireRecord>>}
+export interface OrganizationStoreCounts { countMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, number>> }
 
 export function deriveOrganizationStatus(row: Row, record?:OrganizationStatusRecord): OrganizationField<OrganizationStatus> {
   if (record?.kind === "status") return available("status", record.status);
@@ -323,7 +324,7 @@ function matchesDirectoryFilters(entry: OrganizationDirectoryEntry, filters: Org
   return filters.currencyCode === undefined || availableValue(entry.currencyCode) === filters.currencyCode;
 }
 
-function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record?:OrganizationStatusRecord,approvedRecord?:OrganizationApprovedToHireRecord): OrganizationDirectoryEntry {
+function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record:OrganizationStatusRecord|undefined,approvedRecord:OrganizationApprovedToHireRecord|undefined,storeCount: number | null): OrganizationDirectoryEntry {
   const field = <T>(name: "legalName" | "commonNameEn" | "commonNameAr" | "currencyCode" | "approvedToHire") =>
     (row === undefined ? unavailable(name, "not_imported") : plainField(name, row)) as OrganizationField<T>;
   return Object.freeze({
@@ -336,6 +337,7 @@ function directoryEntry(org: Organization, row: Row | undefined, subOrganization
     currencyCode: field<string>("currencyCode"),
     approvedToHire: approvedRecord?.kind==="value"?available("approvedToHire",approvedRecord.value):field<boolean>("approvedToHire"),
     status: row === undefined && record?.kind !== "status" ? unavailable("status", "not_imported") : deriveOrganizationStatus(row ?? {},record),
+    storeCount,
   });
 }
 
@@ -376,6 +378,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #statusRecords?: OrganizationStatusRecords;
   readonly #commercialTerms?:OrganizationCommercialTermsRecords;
   readonly #approvedToHire?:OrganizationApprovedToHireRecords;
+  readonly #storeCounts?: OrganizationStoreCounts;
   readonly #deletions?:OrganizationDeletionRecords;
 
   constructor(options: {
@@ -385,6 +388,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly statusRecords?: OrganizationStatusRecords;
     readonly commercialTerms?:OrganizationCommercialTermsRecords;
     readonly approvedToHire?:OrganizationApprovedToHireRecords;
+    readonly storeCounts?: OrganizationStoreCounts;
     readonly deletions?:OrganizationDeletionRecords;
   }) {
     this.#store = options.store;
@@ -393,6 +397,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     this.#statusRecords = options.statusRecords;
     this.#commercialTerms=options.commercialTerms;
     this.#approvedToHire=options.approvedToHire;
+    this.#storeCounts = options.storeCounts;
     this.#deletions=options.deletions;
   }
 
@@ -524,6 +529,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         ? await this.#statusRecords.readMany(shown.map((org) => org.id))
         : undefined;
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
+      const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
       const entries: OrganizationDirectoryEntry[] = [];
       for (const org of shown) {
         // As in legacy (`filterParent`), the list holds top-level companies; sub-organizations open from their parent.
@@ -533,7 +539,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
           : await this.#statusRecords?.read(org.id);
         const children = organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length;
         const approvedRecord=approvedBatch?.get(org.id)??{kind:"absent" as const};
-        const entry = directoryEntry(org, row, children, statusRecord,approvedRecord);
+        const entry = directoryEntry(org, row, children, statusRecord,approvedRecord,storeTotals ? storeTotals.get(org.id) ?? 0 : null);
         if (matchesDirectoryFilters(entry, filters)) entries.push(entry);
       }
       entries.sort((a, b) => a.registryName.localeCompare(b.registryName) || a.orgId.localeCompare(b.orgId));

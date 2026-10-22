@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { databaseUrl } from "./connection.js";
 import { organizationAuditRef, principalAuditRef, requestAuditRef } from "./authorization-audit.js";
+import { organizationLive } from "./organization-liveness.js";
 
 // SHU-165 O7a: owners, staff and admin keep an organization's stores; recruiters
 // also read them. Every change is one transaction with one audit row carrying only
@@ -34,10 +35,18 @@ export class PostgresOrganizationStoresStore {
   }
   async close() { if (this.#owns) await this.#pool.end(); }
 
+  async countMany(orgIds: readonly string[]): Promise<Map<string, number>> {
+    if (orgIds.length === 0) return new Map();
+    const rows = await this.#pool.query<{ org_id: string; count: number }>(
+      "SELECT org_id, count(*)::int AS count FROM organization_stores WHERE status='active' AND org_id = ANY($1::text[]) GROUP BY org_id",
+      [orgIds],
+    );
+    return new Map(rows.rows.map((row) => [row.org_id, row.count]));
+  }
+
   async #allowed(c: Client, principalId: string, orgId: string, decision: Decision, lock = false): Promise<boolean> {
     // A missing or deleted organization answers exactly as a refused one.
-    const live = await c.query(`SELECT 1 FROM organizations o WHERE o.id=$1 AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id=o.id)${lock ? " FOR SHARE OF o" : ""}`, [orgId]);
-    if (!live.rows.length) return false;
+    if (!await organizationLive(c, orgId, lock)) return false;
     const [grants, ancestors] = await Promise.all([
       c.query<Grant>(`SELECT org_id,role,scope FROM grants WHERE principal_id=$1${lock ? " FOR SHARE" : ""}`, [principalId]),
       c.query<{ id: string }>("WITH RECURSIVE chain AS (SELECT id,parent_org_id FROM organizations WHERE id=$1 UNION ALL SELECT o.id,o.parent_org_id FROM organizations o JOIN chain c ON c.parent_org_id=o.id) SELECT id FROM chain WHERE id<>$1", [orgId]),

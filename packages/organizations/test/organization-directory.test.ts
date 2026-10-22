@@ -12,6 +12,7 @@ import {
   type OrganizationDirectoryEntry,
   type OrganizationDirectoryFilters,
   type OrganizationDirectoryResult,
+  type OrganizationStoreCounts,
 } from "../src/index.js";
 import * as builtIn from "../src/organizations.js";
 
@@ -30,6 +31,7 @@ const PEOPLE = [
 async function setup(options: {
   readonly source?: ApprovedOrganizationAdapter;
   readonly extraOrganizations?: readonly { id: string; name: string; parentOrgId?: string }[];
+  readonly storeCounts?: OrganizationStoreCounts;
 } = {}) {
   const store = new InMemoryAuthzStore({
     principals: PEOPLE,
@@ -56,7 +58,7 @@ async function setup(options: {
   const source = options.source ?? new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-a2", childA2], ["org-b", unrelatedB],
   ]));
-  return { store, repository: new OrganizationRepository({ store, source }) };
+  return { store, repository: new OrganizationRepository({ store, source, storeCounts: options.storeCounts }) };
 }
 
 function entries(result: OrganizationDirectoryResult): readonly OrganizationDirectoryEntry[] {
@@ -76,7 +78,7 @@ function value(entry: OrganizationDirectoryEntry, name: keyof OrganizationDirect
 const STAFF = { principalId: "staff", orgId: "root", role: "staff" } as const;
 const ENTRY_KEYS = [
   "approvedToHire", "commonNameAr", "commonNameEn", "currencyCode", "legalName", "orgId", "registryName", "status",
-  "subOrganizationCount",
+  "storeCount", "subOrganizationCount",
 ];
 const SENTINELS = /SENSITIVE-|company_auth_key|password|reset_token|commercial_licence|company_logo|staff_id|followup|hourly|commission|email|example\.invalid/i;
 
@@ -189,5 +191,38 @@ test("SHU-163/AC-06 UNAVAILABLE malformed or unreadable data refuses the list in
   ])) });
   assert.deepEqual(await mismatched.repository.listOrganizations(STAFF), { kind: "unavailable" });
   const failing = await setup({ source: { readSnapshot: async () => { throw new Error("source down"); } } });
+  assert.deepEqual(await failing.repository.listOrganizations(STAFF), { kind: "unavailable" });
+});
+
+test("SHU168_STORE_COUNT counts active stores from source on every directory read", async () => {
+  const totals = new Map([["org-a", 2]]);
+  const calls: string[][] = [];
+  const storeCounts: OrganizationStoreCounts = { countMany: async (orgIds) => {
+    calls.push([...orgIds]);
+    return new Map(orgIds.flatMap((id) => totals.has(id) ? [[id, totals.get(id)!] as const] : []));
+  } };
+  const { repository } = await setup({ storeCounts });
+  assert.deepEqual(entries(await repository.listOrganizations(STAFF)).map((entry) => [entry.orgId, entry.storeCount]), [["org-a", 2], ["org-b", 0]]);
+  totals.set("org-a", 3);
+  assert.deepEqual(entries(await repository.listOrganizations(STAFF)).map((entry) => [entry.orgId, entry.storeCount]), [["org-a", 3], ["org-b", 0]]);
+  assert.equal(calls.length, 2);
+  const unconfigured = await setup();
+  assert.deepEqual(entries(await unconfigured.repository.listOrganizations(STAFF)).map((entry) => entry.storeCount), [null, null]);
+});
+
+test("SHU168_STORE_COUNT_SCOPE batches only covered live top-level companies and propagates failure", async () => {
+  const calls: string[][] = [];
+  const storeCounts: OrganizationStoreCounts = { countMany: async (orgIds) => {
+    calls.push([...orgIds]);
+    return new Map();
+  } };
+  const { repository } = await setup({ storeCounts });
+  await repository.listOrganizations(STAFF);
+  assert.deepEqual(calls, [["org-a", "org-b"]]);
+  await repository.listOrganizations({ principalId: "staff-self-a", orgId: "org-a", role: "staff" });
+  assert.deepEqual(calls, [["org-a", "org-b"], ["org-a"]]);
+  await repository.listOrganizations({ principalId: "staff-self-root", orgId: "root", role: "staff" });
+  assert.equal(calls.length, 2);
+  const failing = await setup({ storeCounts: { countMany: async () => { throw new Error("store source down"); } } });
   assert.deepEqual(await failing.repository.listOrganizations(STAFF), { kind: "unavailable" });
 });

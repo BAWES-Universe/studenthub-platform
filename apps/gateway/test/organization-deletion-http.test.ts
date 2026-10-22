@@ -12,7 +12,7 @@ function fixture(initial: readonly string[] | null = []) {
   let blockers = initial, committed = false, saved: Receipt | null = null;
   const store = {
     blockers: async () => blockers,
-    counts: async () => ({ liveSubOrganizations: 0, livePayContracts: 0, memberGrants: 0 }),
+    counts: async () => ({ liveSubOrganizations: 0, livePayContracts: 0, memberGrants: 0, liveStores: 0 }),
     forPrincipal(): SafeWriteStore { return {
       ownedRecord: async p => p === organizationDeletionPrincipalRef(PERSON) ? organizationDeletionRecordRef(ORG) : null,
       readField: async () => null,
@@ -49,7 +49,7 @@ test("SHU-326 HTTP a replayed confirm after the deletion is 409 token_already_us
   let deleted = false; const spent = new Set<string>();
   const store = {
     blockers: async () => deleted ? null : [],
-    counts: async () => ({ liveSubOrganizations: 0, livePayContracts: 0, memberGrants: 0 }),
+    counts: async () => ({ liveSubOrganizations: 0, livePayContracts: 0, memberGrants: 0, liveStores: 0 }),
     forPrincipal() { return {
       ownedRecord: async (p: string) => !deleted && p === organizationDeletionPrincipalRef(PERSON) ? organizationDeletionRecordRef(ORG) : null,
       readField: async () => null,
