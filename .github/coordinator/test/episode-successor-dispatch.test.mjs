@@ -908,6 +908,20 @@ test("Self-repair B1: D1 an armed landing repair dispatches its one revise on th
   }
 });
 
+test("Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says", async () => {
+  const { h, pull } = b1RepairHarness();
+  try {
+    const tick = await h.runTick({ env: { DISPATCH_BRANCH: "feature/elsewhere" }, io: { openPRsOverride: [pull()] } });
+    assert.equal(tick.code, 0, tick.text);
+    assert.equal(h.launched.length, 1, tick.text);
+    const revise = h.receipts().filter((r) => r.episode_id === B1_REPAIR);
+    assert.equal(revise.length, 1);
+    assert.equal(revise[0].branch, `coordinator/${B1_CARD}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR", async () => {
   const plain = b1RepairHarness({ repair: false });
   try {

@@ -3126,7 +3126,10 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
     throw new Error(`dispatch refused: no contract-bound authorization_ref for ${candidate.id} (free text and unapproved fixture ids are rejected)`);
   }
   const repo = candidate.repo ?? config.pilot_repo;
-  let branch = (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
+  // Self-repair B1: a repair revises the passed episode's own branch, the head
+  // ref repair eligibility bound, never DISPATCH_BRANCH or another default.
+  const repairBranch = singleRunActivation.landing_repair === true ? `coordinator/${candidate.id}` : null;
+  let branch = repairBranch ?? (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
   // SHU-303: a review-only run reviews the pull request its activation names,
   // on that PR's own branch, and only while the PR is still what was approved.
   const reviewOnly = singleRunActivation.state === "armed" && singleRunActivation.review_only === true;

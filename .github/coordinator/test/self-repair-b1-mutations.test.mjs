@@ -196,6 +196,14 @@ const CASES = [
     tests: "single-run-activation.test.mjs",
     pattern: "Self-repair B1: E2",
   },
+  {
+    name: "M24 run a repair's revise on DISPATCH_BRANCH",
+    file: "reconcile.mjs",
+    from: "  const repairBranch = singleRunActivation.landing_repair === true ? `coordinator/${candidate.id}` : null;\n",
+    to: "  const repairBranch = null; // B1-M24\n",
+    tests: "episode-successor-dispatch.test.mjs",
+    pattern: "Self-repair B1: D3",
+  },
 ];
 
 for (const mutation of CASES) {
