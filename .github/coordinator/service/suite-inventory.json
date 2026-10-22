@@ -4469,6 +4469,7 @@
     "Self-repair B2: E6 no Actions read permission, an unreadable log, or nothing surviving the filter is a named skip",
     "Self-repair B2: G1 the weakening guard refuses every skipped, focused, removed or loosened test and any change to how tests run",
     "Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before",
+    "Self-repair B2: O2 the committed value itself takes the repair path on a passed run stopped on red checks",
     "Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on",
     "Self-repair B2: R2 each stop before the round record is a named skip that writes nothing and arms nothing",
     "Self-repair B2: R3 any round record means no second round, and one that never finished is REPAIR_INTERRUPTED, alerted once",
@@ -32894,6 +32895,10 @@
     },
     {
       "name": "Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: O2 the committed value itself takes the repair path on a passed run stopped on red checks",
       "capabilities": []
     },
     {

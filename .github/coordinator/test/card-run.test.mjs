@@ -3854,6 +3854,12 @@ test("Self-repair B2: O1 with landing_repair absent or false a passed run stoppe
   assert.equal(COMMITTED.landing_repair, true);
 });
 
+test("Self-repair B2: O2 the committed value itself takes the repair path on a passed run stopped on red checks", async () => {
+  const host = b2Host({ on: COMMITTED.landing_repair });
+  const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
+  assert.deepEqual(await nextCard(host.io, LAND_PATHS, config, REV), { id: "SHU-301", repair: b2Claim() });
+});
+
 test("Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on", async () => {
   const host = b2Host({ on: true });
   const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
