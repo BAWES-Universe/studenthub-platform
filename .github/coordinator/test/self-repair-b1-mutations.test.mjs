@@ -204,6 +204,14 @@ const CASES = [
     tests: "episode-successor-dispatch.test.mjs",
     pattern: "Self-repair B1: D3",
   },
+  {
+    name: "M25 resume a repair reservation without reading the card again",
+    file: "reconcile.mjs",
+    from: "      if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);\n",
+    to: "      // B1-M25\n",
+    tests: "episode-successor-dispatch.test.mjs",
+    pattern: "Self-repair B1: D4",
+  },
 ];
 
 for (const mutation of CASES) {

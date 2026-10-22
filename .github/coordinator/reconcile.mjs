@@ -3293,6 +3293,14 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       return 2;
     };
     if (config.adapter_pause_map[adapter]) return held(`adapter ${adapter} is paused`);
+    // Self-repair B1: a repair's stranded reservation launches only while the
+    // card is still the repair's, read again now, at the reservation's own head.
+    if (repairCard) {
+      const card = await repairCardFor(singleRunActivation, { config, githubToken, fetchImpl, openPRsOverride });
+      const still = card ? repairEligible({ issue, repair: card.repair, owners: card.owners, pulls: card.pulls, repo: card.repo, head: receipt.target_sha })
+        : { ok: false, reason: "the repair binding cannot be read" };
+      if (!still.ok) return held(`landing repair no longer eligible: ${still.reason}`);
+    }
     if (role === ROLE_REVIEW && receipts.some((r) => r !== receipt && !TERMINAL_STAGES.includes(r.stage) && roleForReceipt(r) === ROLE_REVIEW)) {
       if (io.stdout) io.stdout(`dispatch: reservation ${receipt.attempt_id} on ${receipt.issue_id} waits — another review is active`);
       return 0;

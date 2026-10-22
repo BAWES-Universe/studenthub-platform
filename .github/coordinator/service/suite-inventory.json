@@ -2400,6 +2400,7 @@
     "SHU-225 I10: with no activation the successor path is unreachable and parking is unchanged",
     "Self-repair B1: D1 an armed landing repair dispatches its one revise on the owner's In Progress card",
     "Self-repair B1: D3 a repair's revise runs on the passed episode's branch, whatever DISPATCH_BRANCH says",
+    "Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card",
     "Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR",
     "SHU-230: future clock ticks, preserves explicit dates and reaches subprocesses",
     "SHU-230 mutation: literal fresh-claim date fails under future clock",
@@ -2782,6 +2783,7 @@
     "Self-repair B1: mutation M22 publish a second revise directive for a repair",
     "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
     "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
+    "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
     "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
     "SHU-224: a higher-priority real card cannot beat the scoped fixture",
     "SHU-224: a missing or ineligible scoped target selects nothing and never falls back",
@@ -19993,6 +19995,14 @@
       ]
     },
     {
+      "name": "Self-repair B1: D4 a stranded repair reservation resumes only while its pull request still binds the card",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "Self-repair B1: D2 the repair's eligibility is the bound card's alone, and refuses an ambiguous PR",
       "capabilities": [
         {
@@ -22031,6 +22041,10 @@
     },
     {
       "name": "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
       "capabilities": []
     },
     {
