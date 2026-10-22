@@ -34,8 +34,9 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-164",
-      "SHU-168"
+      "SHU-331",
+      "SHU-332",
+      "SHU-333"
     ]
   },
   "adapter_pause_map": {},
@@ -943,6 +944,89 @@
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/src/web-ui.ts",
         "apps/gateway/test/company-directory.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-331",
+      "authorization_ref": "SHU-331",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the seventh committed card queue (SHU-312), a whole-tree card: slice O7b (a parent company reads its own and its sub-companies' stores in one list); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organization-stores.ts",
+        "packages/organizations/test/organization-stores.test.ts",
+        "packages/organizations/test/organization-stores-mutations.mjs",
+        "packages/db/src/postgres-organization-stores-store.ts",
+        "packages/db/test/postgres-organization-stores.test.ts",
+        "apps/gateway/src/organization-stores.ts",
+        "apps/gateway/test/organization-stores-http.test.ts"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organization-stores.ts",
+        "packages/organizations/test/organization-stores.test.ts",
+        "packages/organizations/test/organization-stores-mutations.mjs",
+        "packages/db/src/postgres-organization-stores-store.ts",
+        "packages/db/test/postgres-organization-stores.test.ts",
+        "apps/gateway/src/organization-stores.ts",
+        "apps/gateway/test/organization-stores-http.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-332",
+      "authorization_ref": "SHU-332",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the seventh committed card queue (SHU-312), a whole-tree card: slice O1b (the selected company's workspace lists its sub-companies); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-333",
+      "authorization_ref": "SHU-333",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "third card of the seventh committed card queue (SHU-312), a whole-tree card: slice O5e (staff and admin create a company or sub-company, migration 0203); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organization-creation.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/organization-creation.test.ts",
+        "packages/organizations/test/organization-creation-mutations.mjs",
+        "packages/db/migrations/0203_organization_creation.sql",
+        "packages/db/src/postgres-organization-creation-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-creation.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-creation.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-creation-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organization-creation.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/organization-creation.test.ts",
+        "packages/organizations/test/organization-creation-mutations.mjs",
+        "packages/db/migrations/0203_organization_creation.sql",
+        "packages/db/src/postgres-organization-creation-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-creation.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-creation.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-creation-http.test.ts",
+        "package.json"
       ]
     }
   ],
