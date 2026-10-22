@@ -3737,6 +3737,9 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
     ["moved into a regex literal", ["-  assert.ok(x);", "+  const r = /assert.ok(x)/;"]],
     ["moved into a regex after return", ["-  assert.ok(x);", "+  return /assert.ok(x)/.test(\"assert.ok(x)\");"]],
     ["moved into a regex with a backtick after return", ["-  assert.ok(x);", "+  return /`/.test(s) && x;", "+  // assert.ok(x);"]],
+    ["moved into a regex after an if condition", ["-  assert.ok(result);", "+  if (enabled) /assert.ok(result)/.test(source);"]],
+    ["moved into a regex after a nested while condition", ["-  assert.ok(result);", "+  while (f(a, (b))) /assert.ok(result)/.test(source);"]],
+    ["moved into a regex after a closed block", ["-  assert.ok(result);", "+  { x(); } /assert.ok(result)/.test(source);"]],
     ["two dropped, one added", ["-  assert.ok(a); assert.ok(b);", "+  assert.ok(a);"]],
     ["commented out", ["-  assert.deepEqual(a, b);", "+  // assert . deepEqual(a, b) was here"]],
   ]) {
@@ -3761,6 +3764,9 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
   assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
     patch: patch(" const half = x.return / 2 / 1;", "-  assert.equal(half, 1);", "+  assert.equal(half, 2);") }]), { ok: true },
     "a division after a property named return stays a division");
+  assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
+    patch: patch(" const avg = sum(a) / count(a) / 2; if (f(x) / 2) y();", "-  assert.equal(avg, 1);", "+  assert.equal(avg, 2);") }]), { ok: true },
+    "a division after a call's `)`, even inside an if condition, stays a division");
   const unreadable = await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }],
     { contents: { [`packages/db/test/org.test.mjs@${FAILED}`]: null } });
   assert.equal(unreadable.ok, false, "a test file that cannot be read whole refuses");

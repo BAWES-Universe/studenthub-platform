@@ -440,10 +440,16 @@ const ASSERT_RE = /\b(?:assert(?:\s*\.\s*\w+)?|expect|should|t\s*\.\s*(?:assert\
 // literals blanked, with state carried across lines, so an assertion moved
 // into a multi-line comment or a template string counts as dropped. A lexer
 // heuristic, not a parser: the independent re-review stays the real check.
-// A `/` after one of these words starts a regex, as after an operator.
+// A `/` after one of these words starts a regex, as after an operator, and
+// so does one after the `)` that closes an if, while, for or with condition.
+// Dead code (`if (false) assert.ok(x)`) still counts: semantics are the
+// re-review's to judge, the lexer only tells code from text.
 const REGEX_AFTER_WORD = /(?:^|[^\w$.])(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+const CONTROL_BEFORE_PAREN = /(?:^|[^\w$.])(?:if|while|for|with)$/;
 export function executableText(text) {
   let out = "";
+  const parens = []; // per open `(`: does it start a control condition
+  let controlCloseAt = -1; // out's length just after a `)` that closed one
   let i = 0;
   while (i < text.length) {
     const c = text[i];
@@ -465,8 +471,9 @@ export function executableText(text) {
       i = j + 1;
       continue;
     }
-    const before = out.trimEnd();
-    if (c === "/" && (before === "" || "(,=:[!&|?{};+-*%<>~^".includes(before.at(-1)) || REGEX_AFTER_WORD.test(before))) {
+    const before = c === "/" ? out.trimEnd() : "";
+    if (c === "/" && (before === "" || "(,=:[!&|?{};+-*%<>~^".includes(before.at(-1)) || REGEX_AFTER_WORD.test(before)
+        || (before.at(-1) === ")" && controlCloseAt === before.length))) {
       let j = i + 1;
       let inClass = false;
       while (j < text.length && text[j] !== "\n" && (inClass || text[j] !== "/")) {
@@ -479,7 +486,9 @@ export function executableText(text) {
       i = j + 1;
       continue;
     }
+    if (c === "(") parens.push(CONTROL_BEFORE_PAREN.test(out.trimEnd()));
     out += c;
+    if (c === ")" && parens.pop() === true) controlCloseAt = out.length;
     i += 1;
   }
   return out;

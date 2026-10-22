@@ -207,7 +207,15 @@ const CASES = [
   {
     name: "M37 read a regex after return as a division",
     file: "service/card-repair.mjs",
-    from: " || REGEX_AFTER_WORD.test(before))) {",
+    from: " || REGEX_AFTER_WORD.test(before)\n",
+    to: "\n",
+    tests: "card-run.test.mjs",
+    pattern: "Self-repair B2: G1",
+  },
+  {
+    name: "M38 read a regex after an if condition as a division",
+    file: "service/card-repair.mjs",
+    from: "\n        || (before.at(-1) === \")\" && controlCloseAt === before.length))) {",
     to: ")) {",
     tests: "card-run.test.mjs",
     pattern: "Self-repair B2: G1",
