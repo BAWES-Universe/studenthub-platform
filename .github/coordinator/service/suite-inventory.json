@@ -2805,6 +2805,7 @@
     "Self-repair B2: mutation M18 repair a PASS of another episode",
     "Self-repair B2: mutation M19 let a skip, only or todo form through",
     "Self-repair B2: mutation M20 let a removed test case through",
+    "Self-repair B2: mutation M33 let a dropped assertion through",
     "Self-repair B2: mutation M21 let a deleted or renamed test file through",
     "Self-repair B2: mutation M22 let a test script change through",
     "Self-repair B2: mutation M23 let a runner config change through",
@@ -22173,6 +22174,10 @@
     },
     {
       "name": "Self-repair B2: mutation M20 let a removed test case through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M33 let a dropped assertion through",
       "capabilities": []
     },
     {

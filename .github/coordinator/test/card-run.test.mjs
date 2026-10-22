@@ -3712,6 +3712,23 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
   const ok = await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-a", "+b", " c") },
     { filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch("-  assert.equal(x, 1);", "+  assert.equal(x, 2);") }]);
   assert.deepEqual(ok, { ok: true }, "fixing code and an assertion is fine");
+  // An assertion may be changed or moved, never dropped: deleting the one the
+  // failing output names is the smallest change that turns CI green.
+  for (const [label, lines] of [
+    ["dropped", ["-  assert.equal(result, \"refused\");", " b"]],
+    ["dropped expect", ["-  expect(x).toBe(1);", " b"]],
+    ["dropped t.equal", ["-  t.equal(a, b);", " b"]],
+    ["two dropped, one added", ["-  assert.ok(a); assert.ok(b);", "+  assert.ok(a);"]],
+    ["commented out", ["-  assert.deepEqual(a, b);", "+  // assert . deepEqual(a, b) was here"]],
+  ]) {
+    const verdict = await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified", patch: patch(...lines) }]);
+    assert.equal(verdict.ok, false, label);
+    assert.match(verdict.reason, /removes an assertion/, label);
+  }
+  assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
+    patch: patch("-  assert.equal(x, 1);", "+  assert.strictEqual(x, 1);", "+  assert.ok(y);") }]), { ok: true }, "more assertions is fine");
+  assert.deepEqual(await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-  assert(x);", " b") }]), { ok: true },
+    "source files may drop their own runtime asserts");
   assert.equal(ADDED_WEAKENING_LINES.length, 13, "every refused form is still exercised");
   for (const line of ADDED_WEAKENING_LINES) {
     for (const filename of ["packages/db/test/org.test.mjs", "packages/db/src/helpers.ts"]) {

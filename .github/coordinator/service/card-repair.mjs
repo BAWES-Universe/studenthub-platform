@@ -431,6 +431,12 @@ const WEAKENING_RES = Object.freeze([
 ]);
 // A line that declares a case.
 const CASE_RE = /\b(?:test|it|describe|suite|context|specify)\s*(?:\.\s*[A-Za-z_$][\w$]*\s*)*\(/;
+// An assertion call: node:assert, expect/should chains and t.* (tap, ava,
+// node:test's t.assert). A test file may change its assertions, never lose one.
+const ASSERT_RE = /\b(?:assert(?:\s*\.\s*\w+)?|expect|should|t\s*\.\s*(?:assert\s*\.\s*\w+|is|not|ok|notOk|equal|same|deepEqual|strictEqual|match|throws|rejects|true|false))\s*\(/g;
+// A commented-out line asserts nothing.
+const assertions = (lines) => lines.filter((line) => !/^\s*(?:\/\/|\/\*|\*)/.test(line))
+  .reduce((count, line) => count + (line.match(ASSERT_RE)?.length ?? 0), 0);
 
 // A unified diff's own lines, or null when it is not one.
 export function patchLines(patch) {
@@ -501,6 +507,7 @@ export async function testWeakening({ compare, base, head, readFile }) {
     const weakening = lines.added.find((line) => WEAKENING_RES.some((re) => re.test(line)));
     if (weakening !== undefined) return refuse(`${name} adds a skipped, focused or postponed test`);
     if (isTestPath(name) && lines.removed.some((line) => CASE_RE.test(line))) return refuse(`${name} removes a line that declares a test case`);
+    if (isTestPath(name) && assertions(lines.removed) > assertions(lines.added)) return refuse(`${name} removes an assertion`);
   }
   return { ok: true };
 }

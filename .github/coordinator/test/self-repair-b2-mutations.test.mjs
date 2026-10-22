@@ -173,6 +173,14 @@ const CASES = [
     pattern: "Self-repair B2: G1",
   },
   {
+    name: "M33 let a dropped assertion through",
+    file: "service/card-repair.mjs",
+    from: "    if (isTestPath(name) && assertions(lines.removed) > assertions(lines.added)) return refuse(",
+    to: "    if (false) return refuse(",
+    tests: "card-run.test.mjs",
+    pattern: "Self-repair B2: G1",
+  },
+  {
     name: "M21 let a deleted or renamed test file through",
     file: "service/card-repair.mjs",
     from: "    if (names.some(isTestPath) && (file.status === \"removed\"",
