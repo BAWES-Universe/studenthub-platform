@@ -436,9 +436,34 @@ const CASE_RE = /\b(?:test|it|describe|suite|context|specify)\s*(?:\.\s*[A-Za-z_
 // (`x.should.be.true`) or a call (`x.should.equal(1)`, `should.exist(x)`); a
 // chain counts once. A test file may change its assertions, never lose one.
 const ASSERT_RE = /\b(?:assert(?:\s*\.\s*\w+)?|expect|should|t\s*\.\s*(?:assert\s*\.\s*\w+|is|not|ok|notOk|equal|same|deepEqual|strictEqual|match|throws|rejects|true|false))\s*\(|\.\s*should\b|\bshould\s*\.\s*\w+/g;
+// The executable part of a line: string contents and comments assert nothing,
+// so an assertion moved into `// ...` or a logged string is a dropped one.
+const codeOf = (line) => {
+  let out = "";
+  let quote = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+    if (quote) {
+      if (c === "\\") i += 1;
+      else if (c === quote) { quote = null; out += c; }
+      continue;
+    }
+    if (c === "\"" || c === "'" || c === "`") { quote = c; out += c; continue; }
+    if (c === "/" && line[i + 1] === "/") break;
+    if (c === "/" && line[i + 1] === "*") {
+      const end = line.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+      out += " ";
+      continue;
+    }
+    out += c;
+  }
+  return out;
+};
 // A commented-out line asserts nothing.
 const assertions = (lines) => lines.filter((line) => !/^\s*(?:\/\/|\/\*|\*)/.test(line))
-  .reduce((count, line) => count + (line.match(ASSERT_RE)?.length ?? 0), 0);
+  .reduce((count, line) => count + (codeOf(line).match(ASSERT_RE)?.length ?? 0), 0);
 
 // A unified diff's own lines, or null when it is not one.
 export function patchLines(patch) {

@@ -189,6 +189,14 @@ const CASES = [
     pattern: "Self-repair B2: G1",
   },
   {
+    name: "M35 count assertions inside comments and strings",
+    file: "service/card-repair.mjs",
+    from: "count + (codeOf(line).match(ASSERT_RE)",
+    to: "count + (line.match(ASSERT_RE)",
+    tests: "card-run.test.mjs",
+    pattern: "Self-repair B2: G1",
+  },
+  {
     name: "M21 let a deleted or renamed test file through",
     file: "service/card-repair.mjs",
     from: "    if (names.some(isTestPath) && (file.status === \"removed\"",
