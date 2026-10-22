@@ -181,6 +181,14 @@ const CASES = [
     pattern: "Self-repair B2: G1",
   },
   {
+    name: "M34 let a dropped should chain through",
+    file: "service/card-repair.mjs",
+    from: "|\\.\\s*should\\b|\\bshould\\s*\\.\\s*\\w+/g;",
+    to: "/g;",
+    tests: "card-run.test.mjs",
+    pattern: "Self-repair B2: G1",
+  },
+  {
     name: "M21 let a deleted or renamed test file through",
     file: "service/card-repair.mjs",
     from: "    if (names.some(isTestPath) && (file.status === \"removed\"",

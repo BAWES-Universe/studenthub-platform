@@ -431,9 +431,11 @@ const WEAKENING_RES = Object.freeze([
 ]);
 // A line that declares a case.
 const CASE_RE = /\b(?:test|it|describe|suite|context|specify)\s*(?:\.\s*[A-Za-z_$][\w$]*\s*)*\(/;
-// An assertion call: node:assert, expect/should chains and t.* (tap, ava,
-// node:test's t.assert). A test file may change its assertions, never lose one.
-const ASSERT_RE = /\b(?:assert(?:\s*\.\s*\w+)?|expect|should|t\s*\.\s*(?:assert\s*\.\s*\w+|is|not|ok|notOk|equal|same|deepEqual|strictEqual|match|throws|rejects|true|false))\s*\(/g;
+// An assertion: a node:assert, expect, should or t.* call (tap, ava,
+// node:test's t.assert), or a Chai should chain, which may end in a property
+// (`x.should.be.true`) or a call (`x.should.equal(1)`, `should.exist(x)`); a
+// chain counts once. A test file may change its assertions, never lose one.
+const ASSERT_RE = /\b(?:assert(?:\s*\.\s*\w+)?|expect|should|t\s*\.\s*(?:assert\s*\.\s*\w+|is|not|ok|notOk|equal|same|deepEqual|strictEqual|match|throws|rejects|true|false))\s*\(|\.\s*should\b|\bshould\s*\.\s*\w+/g;
 // A commented-out line asserts nothing.
 const assertions = (lines) => lines.filter((line) => !/^\s*(?:\/\/|\/\*|\*)/.test(line))
   .reduce((count, line) => count + (line.match(ASSERT_RE)?.length ?? 0), 0);

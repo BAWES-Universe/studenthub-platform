@@ -3718,6 +3718,10 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
     ["dropped", ["-  assert.equal(result, \"refused\");", " b"]],
     ["dropped expect", ["-  expect(x).toBe(1);", " b"]],
     ["dropped t.equal", ["-  t.equal(a, b);", " b"]],
+    ["dropped should call", ["-  foo.should.equal(1);", " b"]],
+    ["dropped should property", ["-  result.should.be.true;", " b"]],
+    ["dropped should.exist", ["-  should.exist(row);", " b"]],
+    ["should chain swapped for a plain read", ["-  rows.should.have.length(2);", "+  rows.length;"]],
     ["two dropped, one added", ["-  assert.ok(a); assert.ok(b);", "+  assert.ok(a);"]],
     ["commented out", ["-  assert.deepEqual(a, b);", "+  // assert . deepEqual(a, b) was here"]],
   ]) {
@@ -3727,6 +3731,8 @@ test("Self-repair B2: G1 the weakening guard refuses every skipped, focused, rem
   }
   assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
     patch: patch("-  assert.equal(x, 1);", "+  assert.strictEqual(x, 1);", "+  assert.ok(y);") }]), { ok: true }, "more assertions is fine");
+  assert.deepEqual(await judge([{ filename: "packages/db/test/org.test.mjs", status: "modified",
+    patch: patch("-  foo.should.equal(1);", "+  foo.should.deep.equal(2);") }]), { ok: true }, "a should chain may change");
   assert.deepEqual(await judge([{ filename: "packages/db/src/org.ts", status: "modified", patch: patch("-  assert(x);", " b") }]), { ok: true },
     "source files may drop their own runtime asserts");
   assert.equal(ADDED_WEAKENING_LINES.length, 13, "every refused form is still exercised");
