@@ -3512,7 +3512,9 @@ const b2Respond = (status, json) => ({ status, ok: status < 300, headers: { get:
 // any landingHost option.
 function b2Host(options = {}) {
   const host = landingHost({ existingPr: true, prHead: FAILED, onTick: options.onTick ?? b2Ticks, ...options });
-  const config = { ...queueConfig(), ...(options.on === undefined ? {} : { landing_repair: options.on }) };
+  // `on` undefined means the key is absent, whatever the committed config says.
+  const { landing_repair: _committed, ...base } = queueConfig();
+  const config = { ...base, ...(options.on === undefined ? {} : { landing_repair: options.on }) };
   host.files.set(B2_CONFIG_FILE, { text: JSON.stringify(config), mode: 0o644, uid: 0, gid: 0 });
   // Linear's GitHub integration moved and assigned the card when #77 opened.
   host.card = { state: { id: "ip", name: "In Progress", type: "started" }, assignee: { id: ACTOR }, delegate: null };
@@ -3848,8 +3850,8 @@ test("Self-repair B2: O1 with landing_repair absent or false a passed run stoppe
     assert.equal(host.reports.length, 0);
   }
   assert.equal(new Set(outputs).size, 1, "absent and false give the same bytes");
-  // The committed configuration ships it off.
-  assert.equal(Object.hasOwn(COMMITTED, "landing_repair"), false);
+  // The committed configuration turns it on (the switch-on config change after B2); only exactly true counts.
+  assert.equal(COMMITTED.landing_repair, true);
 });
 
 test("Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on", async () => {
