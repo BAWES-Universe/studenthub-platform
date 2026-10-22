@@ -89,6 +89,7 @@
     ".github/coordinator/test/reviewer-evidence.test.mjs",
     ".github/coordinator/test/schema.test.mjs",
     ".github/coordinator/test/self-repair-b1-mutations.test.mjs",
+    ".github/coordinator/test/self-repair-b2-mutations.test.mjs",
     ".github/coordinator/test/shu219-rule6-mutation.test.mjs",
     ".github/coordinator/test/shu224-dispatch-scope.test.mjs",
     ".github/coordinator/test/shu226-incident-reporting.test.mjs",
@@ -2784,6 +2785,44 @@
     "Self-repair B1: mutation M23 start a repair from a PASS that names no repository",
     "Self-repair B1: mutation M24 run a repair's revise on DISPATCH_BRANCH",
     "Self-repair B1: mutation M25 resume a repair reservation without reading the card again",
+    "Self-repair B2: mutation M1 turn the repair on unless it is switched off",
+    "Self-repair B2: mutation M2 start a second round over an existing record",
+    "Self-repair B2: mutation M3 re-launch a round that never finished",
+    "Self-repair B2: mutation M4 count a failing run of another head as evidence",
+    "Self-repair B2: mutation M5 trust a job that reads back at another head",
+    "Self-repair B2: mutation M6 keep a failure line that carries a secret",
+    "Self-repair B2: mutation M7 judge each chunk on its own",
+    "Self-repair B2: mutation M8 carry the evidence uncapped",
+    "Self-repair B2: mutation M9 let an assignment through",
+    "Self-repair B2: mutation M10 let URL credentials through",
+    "Self-repair B2: mutation M11 read a missing Actions permission as an ordinary failure",
+    "Self-repair B2: mutation M12 claim the round without re-checking the pause",
+    "Self-repair B2: mutation M13 write the round record over an existing one",
+    "Self-repair B2: mutation M14 arm before the round says so",
+    "Self-repair B2: mutation M15 mint a new repair id every start",
+    "Self-repair B2: mutation M16 repair from the installed revision instead of the failed head",
+    "Self-repair B2: mutation M17 prepare a repair by today's card rule",
+    "Self-repair B2: mutation M18 repair a PASS of another episode",
+    "Self-repair B2: mutation M19 let a skip, only or todo form through",
+    "Self-repair B2: mutation M20 let a removed test case through",
+    "Self-repair B2: mutation M33 let a dropped assertion through",
+    "Self-repair B2: mutation M34 let a dropped should chain through",
+    "Self-repair B2: mutation M35 count assertions inside comments and strings",
+    "Self-repair B2: mutation M36 end a block comment at its line's end",
+    "Self-repair B2: mutation M37 read a regex after return as a division",
+    "Self-repair B2: mutation M38 read a regex after an if condition as a division",
+    "Self-repair B2: mutation M21 let a deleted or renamed test file through",
+    "Self-repair B2: mutation M22 let a test script change through",
+    "Self-repair B2: mutation M23 let a runner config change through",
+    "Self-repair B2: mutation M24 pass a change the guard cannot read",
+    "Self-repair B2: mutation M25 re-land a repair without the weakening guard",
+    "Self-repair B2: mutation M26 find or open a pull request for a repair",
+    "Self-repair B2: mutation M27 ignore the repaired pull request's identity during the wait",
+    "Self-repair B2: mutation M28 count check runs of another head",
+    "Self-repair B2: mutation M29 merge without the repair's last look",
+    "Self-repair B2: mutation M30 never count a merged repair as landed",
+    "Self-repair B2: mutation M31 an interrupted repair needs no owner",
+    "Self-repair B2: mutation M32 alert an interrupted repair on every start",
     "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
     "SHU-224: a higher-priority real card cannot beat the scoped fixture",
     "SHU-224: a missing or ineligible scoped target selects nothing and never falls back",
@@ -4422,6 +4461,21 @@
     "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
     "Self-repair B1: C1 a repair plan answers with the repair predicate and never a move",
     "Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves branch and card alone",
+    "Self-repair B2: E1 evidence keeps only test-failure lines, cleaned of ANSI codes and timestamps",
+    "Self-repair B2: E2 a kept line carrying anything secret-shaped is dropped whole",
+    "Self-repair B2: E3 log lines are assembled across chunks before they are judged, and only a rolling tail is kept",
+    "Self-repair B2: E4 evidence is capped at 4000 characters with the truncation marked",
+    "Self-repair B2: E5 evidence binds failing Actions runs of the failed head by id and head_sha; a stale run never counts",
+    "Self-repair B2: E6 no Actions read permission, an unreadable log, or nothing surviving the filter is a named skip",
+    "Self-repair B2: G1 the weakening guard refuses every skipped, focused, removed or loosened test and any change to how tests run",
+    "Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before",
+    "Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on",
+    "Self-repair B2: R2 each stop before the round record is a named skip that writes nothing and arms nothing",
+    "Self-repair B2: R3 any round record means no second round, and one that never finished is REPAIR_INTERRUPTED, alerted once",
+    "Self-repair B2: R4 crash windows: a round claimed then refused, or one whose end is never written, is never run twice",
+    "Self-repair B2: L1 a repaired head that weakens a test is refused REPAIR_TEST_WEAKENED with nothing handed off or merged",
+    "Self-repair B2: L2 the repaired pull request moving before the wait, during it, or right before the merge stops the landing",
+    "Self-repair B2: L3 only check runs at the repaired head count toward landing it",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -22048,6 +22102,158 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B2: mutation M1 turn the repair on unless it is switched off",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M2 start a second round over an existing record",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M3 re-launch a round that never finished",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M4 count a failing run of another head as evidence",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M5 trust a job that reads back at another head",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M6 keep a failure line that carries a secret",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M7 judge each chunk on its own",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M8 carry the evidence uncapped",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M9 let an assignment through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M10 let URL credentials through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M11 read a missing Actions permission as an ordinary failure",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M12 claim the round without re-checking the pause",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M13 write the round record over an existing one",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M14 arm before the round says so",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M15 mint a new repair id every start",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M16 repair from the installed revision instead of the failed head",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M17 prepare a repair by today's card rule",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M18 repair a PASS of another episode",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M19 let a skip, only or todo form through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M20 let a removed test case through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M33 let a dropped assertion through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M34 let a dropped should chain through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M35 count assertions inside comments and strings",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M36 end a block comment at its line's end",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M37 read a regex after return as a division",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M38 read a regex after an if condition as a division",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M21 let a deleted or renamed test file through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M22 let a test script change through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M23 let a runner config change through",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M24 pass a change the guard cannot read",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M25 re-land a repair without the weakening guard",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M26 find or open a pull request for a repair",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M27 ignore the repaired pull request's identity during the wait",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M28 count check runs of another head",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M29 merge without the repair's last look",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M30 never count a merged repair as landed",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M31 an interrupted repair needs no owner",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: mutation M32 alert an interrupted repair on every start",
+      "capabilities": []
+    },
+    {
       "name": "SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again",
       "capabilities": []
     },
@@ -32656,6 +32862,66 @@
     },
     {
       "name": "Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves branch and card alone",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: E1 evidence keeps only test-failure lines, cleaned of ANSI codes and timestamps",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: E2 a kept line carrying anything secret-shaped is dropped whole",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: E3 log lines are assembled across chunks before they are judged, and only a rolling tail is kept",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: E4 evidence is capped at 4000 characters with the truncation marked",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: E5 evidence binds failing Actions runs of the failed head by id and head_sha; a stale run never counts",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: E6 no Actions read permission, an unreadable log, or nothing surviving the filter is a named skip",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: G1 the weakening guard refuses every skipped, focused, removed or loosened test and any change to how tests run",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: R2 each stop before the round record is a named skip that writes nothing and arms nothing",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: R3 any round record means no second round, and one that never finished is REPAIR_INTERRUPTED, alerted once",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: R4 crash windows: a round claimed then refused, or one whose end is never written, is never run twice",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: L1 a repaired head that weakens a test is refused REPAIR_TEST_WEAKENED with nothing handed off or merged",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: L2 the repaired pull request moving before the wait, during it, or right before the merge stops the landing",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: L3 only check runs at the repaired head count toward landing it",
       "capabilities": []
     },
     {

@@ -24,10 +24,13 @@ export const STATUS_FILE = "card-run-status.json";
 export const statusPath = (paths) => path.join(paths.stateDir, STATUS_FILE);
 
 export const ALERT_OUTCOMES = Object.freeze(new Set(["ERROR", "STALLED", "QUOTA_EXHAUSTED"]));
+// Self-repair B2: a landing repair that never finished is a stop for the owner.
+export const REPAIR_ALERT_OUTCOMES = Object.freeze(new Set(["REPAIR_INTERRUPTED"]));
 
 // Whether a finished run needs the owner.
 export function needsOwner(result) {
   if (ALERT_OUTCOMES.has(result?.outcome)) return true;
+  if (REPAIR_ALERT_OUTCOMES.has(result?.outcome)) return true;
   // A revert that did not finish may leave the host armed, whatever the outcome.
   if (result?.revert?.reverted === false) return true;
   return result?.land != null && result.land.outcome !== "MERGED";

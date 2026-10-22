@@ -425,6 +425,9 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   LAND_ERROR: "landing failed",
   // SHU-310
   THREADS_HELD: "more review bot threads were settleable than one run may settle; nothing was handed off or merged",
+  // Self-repair B2
+  REPAIR_INTERRUPTED: "a landing repair round was claimed but never finished; it is never run again at this revision",
+  REPAIR_TEST_WEAKENED: "the repair skipped, removed or loosened a test, or changed how tests run; nothing was handed off or merged",
 });
 
 // How a held merge recovers: the attempt's HOLD is final, so only a new
@@ -471,6 +474,10 @@ export function renderRunReport(result) {
   if (result.trigger === "timer") lines.push(`Started by the card-run timer, once for revision ${result.revision}.`);
   // SHU-321: which pull request a review run judged, and at which head.
   if (result.kind === "review" && result.review) lines.push(`Reviewed pull request #${result.review.pr} at ${result.review.head}, from base ${result.review.base}.`);
+  // Self-repair B2: which pull request a landing repair worked on, and from what.
+  if (result.repair) {
+    lines.push(`Landing repair of pull request #${result.repair.pr}: one revise of ${result.repair.failed_head} after episode ${plainReason(result.repair.repair_of)}, from ${result.repair.check_runs?.length ?? 0} failing check run(s).`);
+  }
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
   const card = result.prepared?.card;
   const branch = result.prepared?.branch;
@@ -481,6 +488,10 @@ export function renderRunReport(result) {
       : `${branch.branch} was already at ${branch.base ? `main at ${branch.base}` : "the revision"}`) : null,
   ].filter(Boolean);
   if (before.length) lines.push(`Before arming: ${before.join("; ")}.`);
+  if (result.outcome === "REPAIR_INTERRUPTED") {
+    lines.push("Nothing was armed by this start; the interrupted repair is never run again at this revision.");
+    return lines.join("\n");
+  }
   lines.push(`Ticks: ${result.ticks?.length ?? 0}.`);
   if (result.watch) lines.push(watchLine(result.watch));
   if (result.land) lines.push(...landingLines(result.land));

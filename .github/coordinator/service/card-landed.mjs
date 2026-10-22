@@ -16,6 +16,12 @@
 // directory (written exclusively), so a later read failure, or main moving
 // past the pages read here, never un-lands it. The read-only plan proves
 // without recording.
+//
+// Self-repair B2: a landing repair's round record (card-repair-<rev>-<id>.json)
+// counts like a claim. A finished round whose repair passed and merged is the
+// timer's own landing. A finished round that passed and stopped at landing
+// may be proven hand-landed exactly as above, at the head the repair's own
+// review passed (repaired_head), never at the failed head.
 import path from "node:path";
 
 export const HAND_LAND_OUTCOMES = Object.freeze(new Set(["PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "THREADS_HELD"]));
@@ -42,6 +48,30 @@ function cardClaims(io, paths, id) {
   }
   return claims;
 }
+
+// Self-repair B2: every finished repair round for this card, at any revision,
+// that names this card and the revision in its own file name.
+function repairRounds(io, paths, id) {
+  const name = new RegExp(`^card-repair-([0-9a-f]{40})-${id}\\.json$`);
+  const rounds = [];
+  for (const file of io.fs.readdirSync(paths.stateDir)) {
+    const match = name.exec(file);
+    if (!match) continue;
+    try {
+      const round = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, file), "utf8"));
+      if (round?.card === id && round.revision === match[1] && round.state === "finished") rounds.push(round);
+    } catch { /* an unreadable round proves nothing */ }
+  }
+  return rounds;
+}
+
+const mergedByRepair = (round) => round.outcome === "PASS" && round.ok === true && round.land === "MERGED"
+  && Number.isSafeInteger(round.pr) && SHA_RE.test(round.repaired_head ?? "");
+
+// A finished repair round as the claim it stands for: the head its own review
+// passed is the head a hand landing must have merged.
+const roundAsClaim = (round) => ({ outcome: round.outcome, land: round.land, repo: round.repo, pr: round.pr,
+  reviewed_head: round.repaired_head ?? null, revision: round.revision });
 
 const mergedByTimer = (claim) => claim.outcome === "PASS" && claim.ok === true && claim.land === "MERGED";
 
@@ -105,8 +135,10 @@ export async function provenHandLanding(gh, { repo, pr, reviewedHead, pages = HA
 export async function cardLanded(io, paths, id, { repo = null, gh = null, record = false, now = () => new Date() } = {}) {
   const claims = cardClaims(io, paths, id);
   if (claims.some(mergedByTimer)) return { landed: true, by: "timer" };
+  const rounds = repairRounds(io, paths, id);
+  if (rounds.some(mergedByRepair)) return { landed: true, by: "repair" };
   if (recordedHandLanding(io, paths, id)) return { landed: true, by: "hand" };
-  const candidates = claims.filter((claim) => handLandCandidate(claim, repo));
+  const candidates = [...claims, ...rounds.map(roundAsClaim)].filter((claim) => handLandCandidate(claim, repo));
   if (!candidates.length || !gh) return { landed: false };
   let reason = null;
   for (const claim of candidates) {
