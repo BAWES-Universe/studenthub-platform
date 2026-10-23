@@ -593,6 +593,133 @@ test("SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push r
   }
 });
 
+// The SHU-304 shape, field for field from its durable comments: a codex-verifier
+// review at receipt_version 1.1.0 on the full, unscoped review checkout. A review
+// records no scoped base; the reviewer is checked out at exactly target_sha.
+const REVIEW_ATTEMPT = "6d944824-fb67-409e-8108-2869ac01758f";
+const REVIEW_TARGET = "715ae91d1a079d3e116ca9bfdd3e45ae4060f011";
+function reviewChain() {
+  const reserved = {
+    receipt_version: "1.1.0",
+    role: "review",
+    runtime: "codex-cli",
+    issue_id: "SHU-304",
+    attempt_id: REVIEW_ATTEMPT,
+    authorization_ref: "SHU-304",
+    episode_id: "shu-304-run-20261022T173008Z",
+    review_base_sha: "56d7f1d47780f52c8dcd3bba48c525bb1b403df2",
+    stage: "RESERVED",
+    requested_worker: "codex-verifier",
+    worker_identity: null,
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "claude/project-thread-alk8pq",
+    target_sha: REVIEW_TARGET,
+    workspace_scope: "full",
+    scope_phase: "review",
+    allowed_paths: [],
+    scoped_base_sha: null,
+    external_run_id: null,
+    adapter_status: null,
+    timestamps: { reserved: "2026-10-22T17:30:26.493Z", launch: null, heartbeat: null, terminal: null },
+    evidence_links: [],
+    last_activity: "2026-10-22T17:30:26.493Z",
+    notes: [`reserved (attempt ${REVIEW_ATTEMPT})`],
+  };
+  const launched = {
+    ...reserved,
+    stage: "LAUNCH_UNKNOWN",
+    timestamps: { ...reserved.timestamps, launch: "2026-10-22T17:30:26.657Z" },
+    last_activity: "2026-10-22T17:30:26.657Z",
+    notes: [...reserved.notes, "launch transport: supervisor 2.0.0", "launch sent; outcome unknown (LAUNCH_UNKNOWN) — slot held"],
+  };
+  assert.equal(validateReceipt(launched).valid, true, `the SHU-304 shape must validate: ${validateReceipt(launched).errors?.join("; ")}`);
+  // Posted twice, as the tick really did.
+  return [reserved, launched, { ...launched }];
+}
+
+// The recovery runs after the real chain was written, so its clock is later than
+// the chain's own timestamps and the terminal record really is the newest one.
+const REVIEW_NOW = "2026-10-23T02:30:00.000Z";
+const PROBES = ["readReceipts", "supervisorStatus", "workerProcesses", "workerLiveness", "worktree", "branchHead", "pushReceipt", "supervisorStore"];
+function reviewWorld(overrides = {}) {
+  const io = cleanWorld({
+    linearIssueId: "linear-issue-shu-304",
+    receiptsOnDisk: reviewChain(),
+    worktree: async () => ({ observed_at: NOW, root_configured: true, present: true, head: REVIEW_TARGET, porcelain: "" }),
+    branchHead: async () => ({ observed_at: NOW, ok: true, sha: REVIEW_TARGET }),
+    ...overrides,
+  });
+  io.readReceipts = async () => ({ observed_at: NOW, receipts: io.receiptsOnDisk, linearIdByAttempt: new Map([[REVIEW_ATTEMPT, "linear-issue-shu-304"]]) });
+  for (const name of PROBES) {
+    const probe = io[name];
+    io[name] = async (args) => ({ ...(await probe(args)), observed_at: REVIEW_NOW });
+  }
+  return io;
+}
+
+const runReview = (io) => reconcileDanglingAttempt({ attempt_id: REVIEW_ATTEMPT, env: {}, io, now: () => REVIEW_NOW });
+
+test("SHU-304 reconcile-dangling: a dangling review LAUNCH_UNKNOWN with no scoped base is measured against target_sha and terminalized to HOLD", async () => {
+  const io = reviewWorld();
+  assert.equal(resolveChain(io.receiptsOnDisk, REVIEW_ATTEMPT).stage, "LAUNCH_UNKNOWN");
+  assert.equal(activeSlots(io.receiptsOnDisk), 1, "the review chain holds the one slot before recovery");
+
+  const result = await runReview(io);
+
+  assert.equal(result.ok, true, `expected terminalization, got ${result.refusal ?? "?"} (${result.detail ?? ""})`);
+  assert.equal(result.stage, "HOLD");
+  assert.equal(result.receipt.attempt_id, REVIEW_ATTEMPT);
+  assert.equal(result.receipt.scoped_base_sha, null, "the review receipt keeps its null scoped base");
+  assert.ok(result.receipt.timestamps.terminal);
+  assert.equal(io.posted.length, 1);
+  assert.equal(io.posted[0].linearIssueId, "linear-issue-shu-304");
+  assert.equal(activeSlots([resolveChain(io.receiptsOnDisk, REVIEW_ATTEMPT)]), 0, "the slot must be released");
+  assert.deepEqual(io.supervisorRequests, [{ operation: "status", attempt_id: REVIEW_ATTEMPT }]);
+
+  // Only a receipt that is a review on EVERY count uses target_sha. Taking away
+  // any one of them leaves the scoped_base_sha rule, which has nothing to
+  // compare against and refuses.
+  const partial = [
+    ["a writer role", { role: "build", requested_worker: "codex-builder" }],
+    ["a scoped workspace", { workspace_scope: "scoped" }],
+    ["a non-review scope phase", { scope_phase: "initial" }],
+    ["an absent (not null) scoped base", { scoped_base_sha: undefined }],
+    ["an unresolvable role authority", { receipt_version: "9.9.9" }],
+  ];
+  for (const [label, change] of partial) {
+    const half = reviewWorld();
+    half.receiptsOnDisk = half.receiptsOnDisk.map((r) => {
+      const next = { ...r, ...change };
+      for (const [k, v] of Object.entries(change)) if (v === undefined) delete next[k];
+      return next;
+    });
+    const refused = await runReview(half);
+    assert.equal(refused.code, "EVIDENCE_MISSING", `${label}: got ${refused.code} (${refused.detail})`);
+    assert.match(refused.detail, /scoped_base_sha/, label);
+    assert.equal(half.posted.length, 0, `${label}: nothing may be written`);
+  }
+});
+
+test("SHU-304 reconcile-dangling: a review worktree off target_sha or dirty refuses WORKTREE_CHANGED and preserves the slot", async () => {
+  const cases = [
+    ["moved off target_sha", { head: "d".repeat(40), porcelain: "" }, /worktree HEAD d{40} != target_sha 715ae91d/],
+    ["at the review base, not the target", { head: "56d7f1d47780f52c8dcd3bba48c525bb1b403df2", porcelain: "" }, /!= target_sha/],
+    ["dirty", { head: REVIEW_TARGET, porcelain: " M packages/db/src/index.ts\n" }, /uncommitted changes/],
+  ];
+  for (const [label, measured, detail] of cases) {
+    const io = reviewWorld({ worktree: async () => ({ observed_at: NOW, root_configured: true, present: true, ...measured }) });
+    const result = await runReview(io);
+    assert.equal(result.code, "WORKTREE_CHANGED", `${label}: got ${result.code} (${result.detail})`);
+    assert.match(result.detail, detail, label);
+    assert.equal(io.posted.length, 0, `${label}: nothing may be written`);
+    assert.equal(activeSlots(io.receiptsOnDisk), 1, `${label}: the slot must be preserved`);
+  }
+  // The other guards are unchanged for a review: a moved branch still refuses.
+  const moved = reviewWorld({ branchHead: async () => ({ observed_at: NOW, ok: true, sha: "e".repeat(40) }) });
+  assert.equal((await runReview(moved)).code, "BRANCH_MOVED");
+  assert.equal(moved.posted.length, 0);
+});
+
 test("SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE", async () => {
   // MISSING: a probe that did not answer, a supervisor reply carrying no hold
   // code (a transport fault is not an absence of claim), an unreadable store,

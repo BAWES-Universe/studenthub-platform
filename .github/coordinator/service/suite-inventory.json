@@ -2600,6 +2600,8 @@
     "SHU-140 reconcile-dangling: a supervisor claim refuses SUPERVISOR_CLAIM_PRESENT and preserves the slot",
     "SHU-140 reconcile-dangling: a live worker process refuses WORKER_LIVE",
     "SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push receipt each refuse by name",
+    "SHU-304 reconcile-dangling: a dangling review LAUNCH_UNKNOWN with no scoped base is measured against target_sha and terminalized to HOLD",
+    "SHU-304 reconcile-dangling: a review worktree off target_sha or dirty refuses WORKTREE_CHANGED and preserves the slot",
     "SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE",
     "SHU-140 reconcile-dangling: a repeated invocation refuses ALREADY_TERMINAL, writes nothing and launches nothing",
     "SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree root is EVIDENCE_MISSING, never a measured-clean worktree",
@@ -4469,6 +4471,7 @@
     "Self-repair B2: E6 no Actions read permission, an unreadable log, or nothing surviving the filter is a named skip",
     "Self-repair B2: G1 the weakening guard refuses every skipped, focused, removed or loosened test and any change to how tests run",
     "Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before",
+    "Self-repair B2: O2 the committed value itself takes the repair path on a passed run stopped on red checks",
     "Self-repair B2: R1 the next start repairs the red pull request once, re-lands that exact pull request at the repaired head, and the queue moves on",
     "Self-repair B2: R2 each stop before the round record is a named skip that writes nothing and arms nothing",
     "Self-repair B2: R3 any round record means no second round, and one that never finished is REPAIR_INTERRUPTED, alerted once",
@@ -21166,6 +21169,14 @@
       "capabilities": []
     },
     {
+      "name": "SHU-304 reconcile-dangling: a dangling review LAUNCH_UNKNOWN with no scoped base is measured against target_sha and terminalized to HOLD",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-304 reconcile-dangling: a review worktree off target_sha or dirty refuses WORKTREE_CHANGED and preserves the slot",
+      "capabilities": []
+    },
+    {
       "name": "SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE",
       "capabilities": []
     },
@@ -32894,6 +32905,10 @@
     },
     {
       "name": "Self-repair B2: O1 with landing_repair absent or false a passed run stopped on red checks stops the queue exactly as before",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair B2: O2 the committed value itself takes the repair path on a passed run stopped on red checks",
       "capabilities": []
     },
     {

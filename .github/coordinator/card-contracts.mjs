@@ -2069,6 +2069,255 @@ Out of scope: active-candidate and open-request counts (no assignment or request
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// SHU-331, SHU-332 and SHU-333 are the seventh committed card queue (SHU-312),
+// the next organizations slices now that O6 and O7a have landed. SHU-331 is
+// slice O7b (risk R2): a parent company reads its own and its covered
+// sub-companies' stores in one list, each organization authorized by the stores
+// store's own list. SHU-332 is slice O1b (risk R2): the workspace of a selected
+// top-level company lists its sub-companies through the existing
+// listSubOrganizations. SHU-333 is slice O5e (risk R3): staff and admin with a
+// subtree grant create a company or a sub-company through one audited write,
+// migration 0203. The paths are disjoint and only SHU-333 has a migration, so the
+// read-only cards run first.
+export const SHU331_PATHS = Object.freeze([
+  "packages/organizations/src/organization-stores.ts",
+  "packages/organizations/test/organization-stores.test.ts",
+  "packages/organizations/test/organization-stores-mutations.mjs",
+  "packages/db/src/postgres-organization-stores-store.ts",
+  "packages/db/test/postgres-organization-stores.test.ts",
+  "apps/gateway/src/organization-stores.ts",
+  "apps/gateway/test/organization-stores-http.test.ts",
+]);
+
+const SHU331_ACCEPTANCE = [
+  "(1) organization-stores.ts exports organizationGroupStores(orgId, list, children). It calls list(orgId) first and answers null when that is null, without calling children. Then, for each id children(orgId) returns, it calls list(child) and includes that child only when the result is not null. Ignoring the parent's null makes SHU331_GROUP_REFUSED fail; including a child whose list is null makes SHU331_GROUP_SCOPE fail;",
+  "(2) Each entry is {orgId, storeId, name, location, brand, mall}, built from organizationStoresView per organization (removed stores and removed references stay hidden). The order is the parent's stores first, then each child's in the order children gave, and the keys are exact (SHU331_GROUP_VIEW);",
+  "(3) PostgresOrganizationStoresStore.childOrganizations(orgId) answers the ids of the organization's direct children ordered by id, in one query and never grandchildren. A deleted child is returned but its list is null, so it never shows (SHU331_PG_GROUP);",
+  "(4) GET /organization/stores/:orgId/group answers 200 {stores:[...]} or 404 not_found (unknown, deleted or refused parent), with the same session and method handling as the list route; GET /organization/stores/:orgId is unchanged (SHU331_HTTP);",
+  "(5) organization-stores-mutations.mjs gains the two mutants for item 1. Each fails its named test by assertion, the nine existing mutants still bind once and are killed, and the final line prints 11/11;",
+  "(6) Every existing stores, deletion-guard and directory test passes unchanged. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU331_BRIEF = `Card SHU-331: a parent company reads its own and its sub-companies' stores in one list (slice O7, after SHU-165; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-165 (migration 0202, organization_stores and PostgresOrganizationStoresStore), SHU-164 (store writes refuse a deleted organization) and SHU-168 (countMany). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Legacy employers see their company's stores together with their sub-companies' stores. StoreManager::getManagedStores() collects the parent id plus its children's ids and queries stores in that set (docs/parity/organizations-stores-and-contacts.md:16, :90, citing company/components/StoreManager.php:49-61 and company/models/Company.php:103-130). Enterprise clients run about four sub-companies of about thirty stores each (:22). The platform lists stores one organization at a time (apps/gateway/src/organization-stores.ts:9, :64-70), so a group owner must open every sub-company separately. Legacy also cached that list for 60 seconds on a plain timer (:90). This slice reads from source on each request and authorizes every organization in the group separately, so a sub-company the caller's grants do not cover never appears. A self grant on the parent therefore shows only the parent's stores, and a subtree grant shows the children too.
+
+Read first:
+- packages/organizations/src/organization-stores.ts: organizationStoreReadDecision (:53-57) and organizationStoresView (:86-98). The view deliberately has no org_id (organization-stores.test.ts:51-54).
+- packages/organizations/test/organization-stores-mutations.mjs: its nine anchors in dist/organization-stores.js, among them .map((row) => ({ (spread), .filter((row) => row.status === "active") and row.brand_status === "active" ?. Each must still bind exactly once after your change.
+- packages/db/src/postgres-organization-stores-store.ts: #allowed (:47-55) and list (:134-141, which returns null for a refused reader or a missing or deleted organization). Do not touch #allowed, the writes or countMany, and do not repeat the strings if (!await organizationLive(c, orgId, lock)) or organizationLive(c, orgId, lock), which packages/db/test/organization-deletion-guards-mutations.mjs anchors.
+- apps/gateway/src/organization-stores.ts, the whole file, and apps/gateway/test/organization-stores-http.test.ts (its in-memory store fake at :10-21).
+- packages/db/test/postgres-organization-stores.test.ts (fixtures :22-31, and SHU168_PG_STORE_COUNTS at :131).
+
+Design:
+- organization-stores.ts (packages/organizations):
+  - export interface OrganizationGroupStoreView extends OrganizationStoreView { readonly orgId: string }
+  - export async function organizationGroupStores(orgId: string, list: (orgId: string) => Promise<readonly OrganizationStoreRow[] | null>, children: (orgId: string) => Promise<readonly string[]>): Promise<OrganizationGroupStoreView[] | null>:
+    - const parent = await list(orgId); if (parent === null) return null;
+    - then, for each id of await children(orgId) in order, const rows = await list(child); if (rows === null) continue;
+    - and build each organization's entries as organizationStoresView(rows).map((store) => ({ orgId: id, ...store })).
+
+    Do not write a second .map((row) => ({ or .filter((row) => line in this file. Keep the two if statements on their own lines; they are the mutation anchors.
+  - The function decides nothing about grants: each list call is the store's own authorization, so the existing read decision and its mutants keep covering roles and subtree.
+- postgres-organization-stores-store.ts: add async childOrganizations(orgId: string): Promise<string[]>, one query, SELECT id FROM organizations WHERE parent_org_id=$1 ORDER BY id, on the pool. It is ids only and is called only after the parent's list authorized the caller. Nothing else in the file changes.
+- apps/gateway/src/organization-stores.ts:
+  - Add childOrganizations(orgId: string): Promise<readonly string[]> to the OrganizationStoresStore interface (the Postgres store satisfies it structurally, so login-runtime.ts does not change).
+  - Add group(session, orgId) to OrganizationStores. It needs a session (401), passes the id regex (400), calls organizationGroupStores(orgId, (o) => p.store.list(id, o), (o) => p.store.childOrganizations(o)), and answers 200 {stores} or 404 not_found.
+  - In handleOrganizationStores, add const GROUP = /^\\/organization\\/stores\\/([^/]+)\\/group$/, matched after LIST. It is GET only, a non-GET answers 404 like the list, and it uses the same decodeURIComponent guard. The new path has two segments after /stores/, so LIST never matches it.
+- No migration, no cache, no runtime change, no HTML page.
+
+Tests (name every new test with its token first and a space after it):
+- organization-stores.test.ts, through subject so the mutants apply:
+  - "SHU331_GROUP_REFUSED ...": a list that returns null for the parent makes the result null, and children is never called.
+  - "SHU331_GROUP_SCOPE ...": a parent with two children where list returns rows for the parent and child c1 but null for c2. The result holds the parent's and c1's stores only, with no orgId c2.
+  - "SHU331_GROUP_VIEW ...": the keys are exactly ["orgId","storeId","name","location","brand","mall"]; a removed store and a removed brand stay hidden; the parent comes first.
+- organization-stores-mutations.mjs: add ["group-parent", "SHU331_GROUP_REFUSED", "if (parent === null) return null;", "if (false) return null;"] and ["group-scope", "SHU331_GROUP_SCOPE", "if (rows === null) continue;", "if (false) continue;"] (the exact anchors depend on how tsc prints them: take them from dist/organization-stores.js after npm run build and assert each binds once). Change nothing else in the script except the count it prints, which follows from the list.
+- postgres-organization-stores.test.ts: "SHU331_PG_GROUP ...":
+  - Setup: a parent with two children and one grandchild under the first child (written with authz.upsertOrganization; the registry permits it, and the read model would refuse it later).
+  - childOrganizations(parent) is exactly the two children in id order; childOrganizations(child) is the grandchild; a leaf gives [].
+  - After inserting an organization_deletions row for one child, it is still listed, and store.list(subtreeStaff, thatChild) is null.
+- organization-stores-http.test.ts: add childOrganizations to the fake. "SHU331_HTTP ...":
+  - GET /organization/stores/org/group gives 200 with each store's orgId, where the fake returns one child, a refused child that is left out, and a parent store.
+  - A refused parent gives 404 and makes no childOrganizations call.
+  - A missing session gives 401, POST gives 404, and a bad id gives 400.
+
+  The existing two tests stay unchanged; extend the shared calls assertions only by adding new tests.
+
+Out of scope: writes, #allowed, countMany, the deletion store and guards, store managers (OR-21, I4), assignment requests (OR-22, SHU-126), any count or cache, the read model and directory, login-runtime.ts, index.ts, web-ui.ts, package.json (every touched test and script already runs from test or test:db), the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU332_PATHS = Object.freeze([
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+]);
+
+const SHU332_ACCEPTANCE = [
+  "(1) When /workspace reads the selected organization as found and its parentOrgId is null, the 200 body gains subOrganizations. It is {kind:\"found\", subOrganizations:[{orgId, registryName, status}]} from one organizationReader.listSubOrganizations call with the same principal, org and role as the read, or {kind:\"unavailable\"} when that answers unavailable. Skipping the call makes SHU332_NAV_SUBS fail;",
+  "(2) A sub-organization card, a not-applicable or unavailable card, no selection, and no reader leave subOrganizations absent and make no call. An unavailable list never hides or changes the company card; mapping unavailable to an empty list makes SHU332_NAV_SUBS_UNAVAILABLE fail;",
+  "(3) The list inherits the read model's scope: a self org-owner grant on the parent lists no children, a subtree grant lists the covered ones, and a deleted child is never listed (SHU332_NAV_SUBS);",
+  "(4) The workspace HTML shows a \"Sub-companies\" section under the company card. Each child is a link to /workspace?org_id=<child>&role=<active role> with its status, names are escaped, an empty list shows \"No sub-companies you can open\", and the unavailable state shows a retry notice. Dropping the escape makes SHU332_NAV_SUBS_HTML fail;",
+  "(5) context-navigation-mutations.mjs gains the three mutants. Each fails its named test by assertion, and every existing mutant (including the SHU91_HISTORY and company-directory-mutations.mjs anchors in web-ui.js) still binds once and is killed;",
+  "(6) Every existing navigation, web-ui and company-directory test passes unchanged. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU332_BRIEF = `Card SHU-332: the selected company's workspace lists its sub-companies (slice O1, row OR-02, after SHU-159, SHU-326 and SHU-328; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Why. OR-02 "View sub-organizations" is REQUIRED in slice O1 (docs/parity/organizations-stores-and-contacts.md:177), and legacy employers and managers have ListChild (:91). SHU-159 built OrganizationRepository.listSubOrganizations (packages/organizations/src/organizations.ts:458-492). It authorizes the parent, then each child separately through #authorize (:469), which also hides deleted organizations (:416), and returns sorted {orgId, registryName, status} summaries (packages/organizations/src/types.ts:76-80). Nothing calls it: createContextNavigation reads only organizationReader.read (apps/gateway/src/context-navigation.ts:93). The staff company list tells people to "Open one to see its details and sub-companies" (apps/gateway/src/web-ui.ts:199), and the workspace page cannot show them. This card wires the existing method into /workspace; it adds no read-model logic.
+
+Read first:
+- apps/gateway/src/context-navigation.ts, the whole file: NavigationResult (:20-26), ActiveOrganization (:15-18) and the read at :91-97.
+- apps/gateway/src/web-ui.ts: renderOrganization (:129-145) and renderWorkspace (:202-219, which calls renderOrganization(result.body.organization) inside its template at :217).
+- apps/gateway/test/context-navigation.test.ts: fixture (:16-49), deletionFixture (:70-83) and "SHU-159/AC-09 CARD ..." (:310-355, an OrganizationRepository over InMemoryAuthzStore with root, served through createGatewayServer).
+- apps/gateway/test/context-navigation-mutations.mjs. Its mutants anchor five lines of dist/apps/gateway/src/context-navigation.js: the session line, const selected = selection.size > 0;, the createContextNavigation signature line, the isDeleted line and the deleted.has(...) line. Three anchors in web-ui.js are covered by the SHU91_HISTORY loop: document.documentElement.hidden = true;, if (event.persisted) location.reload(); and /assets/workspace-history.js. apps/gateway/test/company-directory-mutations.mjs anchors if (!active || !login.companies || !DIRECTORY_ROLES.has(active.role)) and \${escapeHtml(name)}</a>\${common} in web-ui.js. None of these may be duplicated or changed; in particular, do not name your loop variable name next to </a>\${common}.
+
+Design:
+- context-navigation.ts:
+  - Export type SubOrganizationsPanel = { readonly kind: "found"; readonly subOrganizations: readonly SubOrganizationSummary[] } | { readonly kind: "unavailable" }, importing SubOrganizationSummary from @studenthub/organizations.
+  - Add readonly subOrganizations?: SubOrganizationsPanel to the 200 body.
+  - After the organization value is built (:94-96), and only when read.kind === "found" && read.organization.parentOrgId === null, call const children = await organizationReader.listSubOrganizations({ principalId: session.personId, orgId: active.orgId, role: active.role }); and map it: found gives {kind:"found", subOrganizations: children.subOrganizations}, unavailable gives {kind:"unavailable"}, and not_found gives no key.
+  - Return { contexts, active, organization, ...(panel ? { subOrganizations: panel } : {}) }. A throw falls into the existing catch (503), as every other dependency failure does.
+  - Keep the signature line unchanged; this card adds no parameter.
+- web-ui.ts:
+  - Add function renderSubOrganizations(panel, active), called right after \${renderOrganization(result.body.organization)} in renderWorkspace's template.
+  - It renders nothing when panel is undefined. For unavailable, render <section class="notice org-notice" role="status"><strong>Sub-companies couldn’t be loaded.</strong><p>Please try again in a moment.</p></section>.
+  - For found, render <section aria-labelledby="sub-title"><h2 id="sub-title">Sub-companies</h2>, then either a <nav class="context-list"> of <a class="context-option" href="\${escapeHtml(href)}"><span>\${escapeHtml(child.registryName)}</span><strong>\${status}</strong></a>, or <p class="empty-contexts">No sub-companies you can open.</p>.
+  - href is /workspace?\${new URLSearchParams({ org_id: child.orgId, role: active.role })}, and status uses the existing statusNames map (web-ui.ts:157) or the existing Unavailable marker.
+  - Add no CSS and no script, and change no other line.
+- The link is only a preference: selecting a child re-resolves its grant (:57-63), which is why the list may only hold covered children, as the read model already ensures.
+
+Tests (in context-navigation.test.ts, name each with its token first and a space after it; build on the AC-09 pattern, adding children org-a1 and org-a2 with parentOrgId: "org-a" and the childA1 snapshot from SYNTHETIC_ORGANIZATION_FIXTURES):
+- "SHU332_NAV_SUBS ...":
+  - An org-owner with a subtree grant on org-a gets subOrganizations.kind found, with org-a1 and org-a2 in name order.
+  - A self org-owner grant on org-a gets found with [].
+  - With a deletions port that marks org-a2 deleted, only org-a1 is listed.
+  - Selecting org-a1 (a sub-organization) and selecting a candidate role leave the key absent.
+  - No selection leaves both organization and subOrganizations absent.
+  - Use a wrapper reader that counts listSubOrganizations calls: exactly one per top-level card, none otherwise.
+- "SHU332_NAV_SUBS_UNAVAILABLE ...": a reader whose read delegates but whose listSubOrganizations answers unavailable gives subOrganizations {kind:"unavailable"}, while organization.kind stays found and its fields are unchanged; the HTML shows the retry notice and the company card.
+- "SHU332_NAV_SUBS_HTML ...": a child registered with the name <b>Sub & Co</b> renders escaped (&lt;b&gt;Sub &amp; Co&lt;/b&gt;) inside a link whose href holds org_id=org-a1&amp;role=org-owner, and an empty list renders "No sub-companies you can open".
+- context-navigation-mutations.mjs:
+  - Add two entries to the mutants array in its form: replace the listSubOrganizations call's result with { kind: "not_found" } (pattern SHU332_NAV_SUBS), and map unavailable to { kind: "found", subOrganizations: [] } (pattern SHU332_NAV_SUBS_UNAVAILABLE).
+  - Add a third, for web-ui.js, as a second small loop after the history loop and in its form: escapeHtml(child.registryName) becomes child.registryName, with the assertion /not ok .*SHU332_NAV_SUBS_HTML /.
+  - Take every anchor from the built files after npm run build, assert each binds once, and check by hand that each fails its test.
+
+Out of scope: store counts on sub-companies (a later O10 slice), the group store list (SHU-331), the read model and listSubOrganizations itself, the company directory and its page, sub-company creation (SHU-333), login-runtime.ts (the reader is already passed at :277), index.ts, package.json (these tests already run from test:web), CSS, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU333_PATHS = Object.freeze([
+  "packages/organizations/src/organization-creation.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/organization-creation.test.ts",
+  "packages/organizations/test/organization-creation-mutations.mjs",
+  "packages/db/migrations/0203_organization_creation.sql",
+  "packages/db/src/postgres-organization-creation-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-creation.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-creation.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-creation-http.test.ts",
+  "package.json",
+]);
+
+const SHU333_ACCEPTANCE = [
+  "(1) A new module packages/organizations/src/organization-creation.ts exports organizationCreationDecision(rows, parentId, ancestors), true only when a grant with role staff or admin **and scope subtree** is on the parent itself or on one of its ancestors; a self grant, an org-owner, recruiter, finance or candidate grant is refused. Accepting any role makes SHU333_DECISION fail; dropping the subtree requirement makes SHU333_DECISION fail;",
+  "(2) It exports organizationCreationParentAllowed(parentId, parentOfParent, operators = DEFAULT_OPERATOR_ORG_IDS): true when the parent is an operator organization (the new row is a top-level company) or the parent is a top-level company (its own parent is null or an operator), false for a sub-company parent, so the hierarchy stays one level deep. Making it always true makes SHU333_HIERARCHY fail;",
+  "(3) It exports parseOrganizationName(value): a string trimmed to 1..255 characters with no control characters, otherwise undefined. Removing the trim makes SHU333_NAME fail;",
+  "(4) PostgresOrganizationCreationStore.create(principalId, parentId, name) runs in one transaction under pg_advisory_xact_lock(hashtextextended(parentId,163)). It calls organizationLive(c, parentId, true), reads the caller's grants FOR SHARE and the parent's ancestry, then applies the decision, then the hierarchy rule, then refuses a live sibling with the same name (case-insensitive). Only then does it insert organizations(id,name,parent_org_id) with a new UUID id and one audit row. It answers created with the id, or not_found, hierarchy or name_taken with nothing written (SHU333_PG_CREATE, SHU333_PG_REFUSED, SHU333_PG_HIERARCHY, SHU333_PG_NAME_TAKEN);",
+  "(5) A create whose parent is being deleted waits on the parent row, reads the committed deletion record and answers not_found with no row and no audit (SHU333_PG_RACE). Passing false instead of true to organizationLive makes that test fail;",
+  "(6) The audit row has operation organization.create, target_org_refs = [organizationAuditRef(newId)] (never a raw id), target_principal_ref = actor, and before/after summaries { childCount }, the parent's live children before and after. Migration 0203 widens the operation check, the cardinality = 1 branch and authorization_audit_summary_valid from 0202's definitions, drops nothing else, and accepts every existing row. \"0203_organization_creation\" follows \"0202_organization_stores\" in both lists in postgres-authz-store.test.ts;",
+  "(7) POST /organization/create {parentOrgId, name} answers 200 {orgId, changed:true}. It answers 404 not_found for a refused caller and for an unknown or deleted parent, 409 hierarchy_too_deep or name_taken, and 400, 401, 403 origin_rejected or 503 like the stores route. The HTTP test calls the real handler (SHU333_HTTP);",
+  "(8) organization-creation-mutations.mjs applies the mutants for items 1-3, each fails its named test by assertion, and it passes unmutated. The Postgres mutations for items 4-5 are checked by hand and reported. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU333_BRIEF = `Card SHU-333: staff and admin create a company or a sub-company (slice O5, row OR-06; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. It includes SHU-326/327 (migration 0201, organization_deletions, organization-liveness.ts) and SHU-165 (migration 0202, the latest audit-constraint definitions). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Legacy staff and admin create a company directly, or a sub-company with parent (docs/parity/organizations-stores-and-contacts.md §4.1 line 105, row OR-06 line 181: REQUIRED, slice O5). Self-service onboarding (O3) is blocked on D-OR1 (§12 line 278), and the platform writes organization rows only through bootstrap-admin.ts:188 and PostgresAuthzStore.upsertOrganization (packages/db/src/postgres-authz-store.ts:309-361). Those are seed paths with no grant check and no audit. So no company can be added through the product. This card adds the smallest audited create: a name and a parent. Status, commercial terms, approved-to-hire and profile already have their own writes (SHU-305, SHU-314, SHU-315, SHU-300) and stay separate.
+
+Read first:
+- packages/organizations/src/organizations.ts: DEFAULT_OPERATOR_ORG_IDS (:351) and companyParentOf (:358-372, the one-level rule the read model enforces). In listOrganizations (:499-557), note that a company under an operator organization is a top-level directory entry.
+- packages/organizations/src/organization-stores.ts: covers and the two decisions (:44-57), and text() (:62-67), the name-parsing pattern to copy.
+- packages/db/src/postgres-organization-stores-store.ts, the closest model, a direct audited write that is not a safe write: #allowed (:47-55), #transaction (:70-89), create (:95-105) and #audit (:143-148).
+- packages/db/src/organization-liveness.ts:3-10 and the deletion store's counts (postgres-organization-deletion-store.ts:6). live_sub_organizations counts children with no deletion record, so a sub-company created before a deletion's FOR UPDATE blocks it.
+- packages/db/migrations/0202_organization_stores.sql: the ALTER TABLE authorization_mutation_audit block and authorization_audit_summary_valid. These are the latest definitions; start 0203 from their text.
+- apps/gateway/src/organization-stores.ts (service, handleOrganizationStores, cookie and body parsing) and apps/gateway/test/organization-stores-http.test.ts (its fake request/response).
+- apps/gateway/src/login-runtime.ts:233 (how the stores store is built), :271-277, :291 (the services object) and :307-308 (closers); apps/gateway/src/index.ts:194-195 (route mounts).
+- packages/organizations/test/organization-stores-mutations.mjs, the mutation script form to copy, with its SHU165_TEST_MODULE env import in organization-stores.test.ts:5-6.
+
+Design:
+- organization-creation.ts (new), exported from packages/organizations/src/index.ts:
+  - export interface OrganizationCreationGrantRow { readonly org_id: string; readonly role: string; readonly scope: string }
+  - organizationCreationDecision(rows, parentId, ancestors): boolean returns rows.some((row) => (row.role === "staff" || row.role === "admin") && row.scope === "subtree" && (row.org_id === parentId || ancestors.includes(row.org_id))). Require subtree, because a self grant would not cover the organization the caller just created, so they could not open it.
+  - organizationCreationParentAllowed(parentId: string, parentOfParent: string | null, operators: readonly string[] = DEFAULT_OPERATOR_ORG_IDS): boolean returns operators.includes(parentId) || parentOfParent === null || operators.includes(parentOfParent). Add a one-line comment: an operator parent makes a company, and a top-level company parent makes a sub-company.
+  - ORGANIZATION_NAME_MAX = 255 and parseOrganizationName(value: unknown): string | undefined (trim, 1..255, refuse [\\u0000-\\u001f\\u007f]). Write it in this file and do not import the stores' text.
+- packages/db/src/postgres-organization-creation-store.ts (new), exported from packages/db/src/index.ts with ORGANIZATION_CREATE_OPERATION = "organization.create". Its constructor takes { connectionString?, pool?, decision, parentAllowed } and owns its pool exactly as the stores store does (:30-36). packages/db must not import packages/organizations: the functions come in through the constructor.
+  - create(principalId, parentId, name) uses one transaction (copy #transaction), with the advisory lock pg_advisory_xact_lock(hashtextextended($1,163)) on parentId; key 163 is unused today, the keys in use are 165, 305, 314-318, 325 and 326. In order:
+    1. if (!await organizationLive(c, parentId, true)) returns not_found.
+    2. Read grants: SELECT org_id,role,scope FROM grants WHERE principal_id=$1 FOR SHARE, unfiltered.
+    3. Read the parent's ancestors with the recursive chain query from the stores store (:52).
+    4. If decision refuses, return not_found.
+    5. Read SELECT parent_org_id FROM organizations WHERE id=$1. If parentAllowed(parentId, parentOfParent) is false, return hierarchy.
+    6. Refuse with name_taken when SELECT 1 FROM organizations o WHERE o.parent_org_id=$1 AND lower(o.name)=lower($2) AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id=o.id) finds a row.
+    7. Count live children the same way.
+    8. Insert with randomUUID(), then write the audit with requestAuditRef("organization_create_" + randomUUID()), principalAuditRef(principalId) as actor and target principal, [organizationAuditRef(orgId)], and {childCount: n} / {childCount: n+1}.
+
+    Every refusal rolls back.
+  - Why it is race-free: a parent deletion locks the parent FOR UPDATE before counting children (postgres-organization-deletion-store.ts:10). A create that holds FOR SHARE first makes the deletion wait and then be blocked by the new child. A create that arrives second waits, then reads the committed deletion record in organizationLive's second statement. Say this in a comment.
+- 0203_organization_creation.sql (new): copy 0202's ALTER TABLE and add 'organization.create' to the operation check and to the cardinality(target_org_refs)=1 branch. CREATE OR REPLACE the summary function from 0202's text plus one branch, WHEN audit_operation='organization.create' THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['childCount'] AND summary-ARRAY['childCount']='{}'::jsonb AND jsonb_typeof(summary->'childCount')='number' AND summary->>'childCount' ~ '^(0|[1-9][0-9]{0,17})$'. Leave auth_audit_safe_write_halves and auth_audit_safe_write_self alone (both are NOT IN lists). No table, column or index change.
+- apps/gateway/src/organization-creation.ts (new): copy organization-stores.ts's structure for one write route, POST /organization/create. The body is exactly {parentOrgId, name}; parentOrgId passes the same id regex (organization-stores.ts:28) and name passes parseOrganizationName.
+  - Results: created gives 200 {orgId, changed:true}, not_found gives 404, hierarchy gives 409 {error:"hierarchy_too_deep"}, and name_taken gives 409 {error:"name_taken"}.
+  - The Origin, content-type, 4096-byte body and cookie checks are the stores route's. A missing service or origin answers 503 organization_creation_unavailable.
+- index.ts: one import and one line, if(await handleOrganizationCreation(...))return;, right after the handleOrganizationDeletion line (:195). Touch no other line; packages/observability/test/mutations.mjs anchors lines of index.js.
+- login-runtime.ts: build the store next to organizationStoresStore (:233) with decision: organizationCreationDecision and parentAllowed: (parent, grand) => organizationCreationParentAllowed(parent, grand, DEFAULT_OPERATOR_ORG_IDS). Add organizationCreation: createOrganizationCreation({sessions, store}) beside organizationStores (:291) and its close() to the closers (:307-308). Change nothing else.
+
+Tests (name every new test with its token first and a space after it):
+- packages/organizations/test/organization-creation.test.ts (import through process.env.SHU333_TEST_MODULE ?? "../src/organization-creation.js", as organization-stores.test.ts:5-6 does):
+  - "SHU333_DECISION ...": subtree staff and subtree admin on the parent or on root are allowed. A self staff grant on the parent, subtree org-owner, recruiter, finance and candidate are refused.
+  - "SHU333_HIERARCHY ...": allowed for parent root with parentOfParent null, for a company under root, and for a parentless company; refused for a sub-company whose parent is a company.
+  - "SHU333_NAME ...": "  Acme  " gives "Acme". Empty, 256 characters, a control character and a non-string all give undefined.
+- packages/organizations/test/organization-creation-mutations.mjs (new; copy organization-stores-mutations.mjs, env SHU333_TEST_MODULE, target ../dist/organization-creation.js). Mutants:
+  - (row.role === "staff" || row.role === "admin") becomes true, killed by SHU333_DECISION.
+  - row.scope === "subtree" &&  is removed, killed by SHU333_DECISION.
+  - || operators.includes(parentOfParent) becomes || true, killed by SHU333_HIERARCHY.
+  - const trimmed = value.trim(); becomes const trimmed = value;, killed by SHU333_NAME.
+
+  Take each anchor from the built JavaScript, assert it binds once, and print 4/4 SHU333 mutations killed.
+- packages/db/test/postgres-organization-creation.test.ts (new; fixtures as in postgres-organization-stores.test.ts:11-31; ensure a root organization exists with authz.upsertOrganization, which is idempotent):
+  - "SHU333_PG_CREATE ...": a principal with a subtree staff grant on root creates a company under root and then a sub-company under it. Both rows read back through authz.listOrganizations() with the right parent_org_id. Each has exactly one organization.create audit row whose target_org_refs is [organizationAuditRef(id)] and whose summaries are the child counts.
+  - "SHU333_PG_REFUSED ...": a self staff grant on root, a subtree org-owner and a subtree recruiter each answer not_found. An unknown parent, and a parent with an organization_deletions row, also answer not_found. No organization row or audit row is written.
+  - "SHU333_PG_HIERARCHY ...": creating under the sub-company answers hierarchy and writes nothing.
+  - "SHU333_PG_NAME_TAKEN ...": a second " acme "/"ACME" under the same parent answers name_taken. The same name under another parent is created.
+  - "SHU333_PG_RACE ...": copy SHU164_PG_STORES_RACE in postgres-organization-deletion-guards.test.ts. A second client BEGINs, locks the parent company FOR UPDATE and inserts its deletion record. Start create without awaiting it. Poll pg_stat_activity (bounded to 10 s) until another backend waits on a Lock, and fail by assertion if none does. COMMIT, then assert not_found, no child row and no audit row. Release every client, even on failure.
+  - In your final message, report by hand that organizationLive(c, parentId, false) makes SHU333_PG_RACE fail.
+- postgres-authz-store.test.ts: only add "0203_organization_creation" after "0202_organization_stores" at :1584 and :1637.
+- apps/gateway/test/organization-creation-http.test.ts: "SHU333_HTTP ...", with an in-memory store fake that records calls, through the real handler. It covers each status above, unknown body keys (400), a bad origin (403) and a missing session (401), and asserts that the origin, session and method refusals reach no store call.
+- package.json: leave every script's text as it is, with these additions:
+  - Append dist/packages/organizations/test/organization-creation.test.js and dist/apps/gateway/test/organization-creation-http.test.js at the END of the node --test list in test.
+  - Append dist/packages/db/test/postgres-organization-creation.test.js at the END of the test:db list.
+  - Add "test:organization-creation:mutations": "node packages/organizations/test/organization-creation-mutations.mjs", chained into test as  && npm run test:organization-creation:mutations right after npm run test:organization-stores:mutations.
+
+  Never change dependencies.
+
+Out of scope:
+- Setting status, approved-to-hire, terms, currency, profile, logo or licence at creation (each has its own write), and onboarding requests and approval (O3, D-OR1).
+- Granting anyone on the new organization (O4), moving or renaming an organization, and any UI or HTML.
+- PostgresAuthzStore.upsertOrganization and bootstrap-admin.
+- Any change to packages/contracts, packages/safe-write-contract or the login code, and the lockfile.
+- Any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -2253,6 +2502,27 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU168_PATHS,
     acceptance: SHU168_ACCEPTANCE,
     brief: SHU168_BRIEF,
+  }),
+  "SHU-331": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU331_PATHS,
+    revision_paths: SHU331_PATHS,
+    acceptance: SHU331_ACCEPTANCE,
+    brief: SHU331_BRIEF,
+  }),
+  "SHU-332": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU332_PATHS,
+    revision_paths: SHU332_PATHS,
+    acceptance: SHU332_ACCEPTANCE,
+    brief: SHU332_BRIEF,
+  }),
+  "SHU-333": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU333_PATHS,
+    revision_paths: SHU333_PATHS,
+    acceptance: SHU333_ACCEPTANCE,
+    brief: SHU333_BRIEF,
   }),
 });
 
