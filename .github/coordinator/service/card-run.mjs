@@ -61,7 +61,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
-import { prepareRun, postRunReport, readCoordinatorCredentials, COORDINATOR_ENV } from "./card-prepare.mjs";
+import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
 import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { selfInstall } from "./card-install.mjs";
@@ -579,7 +579,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       queue: (config.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } });
     const progress = () => {
       const seen = watch ? watch.summary(io.now().getTime()) : null;
-      return { ticks: ticks.length, last_tick_at: ticks.at(-1)?.at ?? null, armed_at: armedAt,
+      return { ticks: ticks.length, last_tick_at: ticks.at(-1)?.at ?? null, armed_at: armedAt, watching: watch !== null,
         first_dispatch_at: seen?.first_dispatch_at ?? null, last_progress_at: seen?.last_progress_at ?? null };
     };
     try {
@@ -686,9 +686,39 @@ const NOT_NOW = Object.freeze(new Set(["CARD_RUN_LOCKED", "CARD_RUN_HOST_BUSY"])
 
 export const autoClaim = (paths, revision, id) => path.join(paths.stateDir, `card-run-auto-${revision}-${id}.json`);
 
+// Self-heal: a timer start refused before arming on a read that may pass a
+// moment later (card-prepare's retryableRefusal) does not spend the card's run
+// at this revision: its claim is given back, so the next start tries again,
+// instead of the queue stopping until a person installs a new revision
+// (SHU-332, 2026-10-23: a GitHub ref-read lag held the queue 3.5 hours). Each
+// give-back is one file, written exclusively like the claim, and at most
+// REFUSED_START_RETRIES are ever written per card per revision; after that a
+// refusal spends the run as it always did. A give-back that cannot be written,
+// or a claim that cannot be removed, leaves the run spent.
+export const REFUSED_START_RETRIES = 3;
+export const refusedStartRecord = (paths, revision, id, n) => path.join(paths.stateDir, `card-run-retry-${revision}-${id}-${n}.json`);
+
+function giveBackRun(io, paths, revision, id, claim, error) {
+  if (!retryableRefusal(error)) return null;
+  for (let n = 1; n <= REFUSED_START_RETRIES; n += 1) {
+    try {
+      io.fs.writeFileSync(refusedStartRecord(paths, revision, id, n), `${JSON.stringify({ card: id, revision, attempt: n,
+        code: error.code ?? "CARD_RUN_ERROR", refused_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+    } catch (writeError) {
+      if (writeError.code === "EEXIST") continue;
+      return null;
+    }
+    try { io.fs.unlinkSync(claim); } catch { return null; }
+    return { attempt: n, of: REFUSED_START_RETRIES };
+  }
+  return null;
+}
+
 // What the timer starts. It runs the committed card at most once per installed
 // revision: the claim is written before the run starts, so a crash or a
-// refusal still counts as that revision's run and nothing loops. Every reason
+// refusal still counts as that revision's run and nothing loops (Self-heal:
+// except a retryable refusal before arming, given back a bounded number of
+// times; see giveBackRun). Every reason
 // not to run is a skip that touches neither the host nor Linear.
 export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
@@ -741,9 +771,12 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       return skip(error.code === "CARD_RUN_LOCKED" ? "LOCKED" : "HOST_BUSY", error.message);
     }
     // Refused before arming: nothing was armed, and the claim stands, so the
-    // owner hears about it once instead of on every timer start.
+    // owner hears about it once instead of on every timer start. Self-heal: a
+    // retryable refusal gives the run back instead, a bounded number of times.
+    const retry = giveBackRun(io, paths, revision, plan.id, claim, error);
     result = await notStarted({ io, paths, limits, error, config,
-      result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, revision } });
+      result: { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, revision, ...(retry ? { retry } : {}) } });
+    if (retry) return { ...result, claim: null };
   }
   // The claim written before the run already stops a second run at this
   // revision. If this write fails, a queue never sees the card as landed and

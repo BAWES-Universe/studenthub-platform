@@ -35,6 +35,64 @@ function refuse(code, detail) {
   throw Object.assign(new Error(`${code}: ${detail}`), { code });
 }
 
+// Self-heal: a refusal that names a read which may answer a moment later (a
+// network failure, a 5xx or a 429 that outlasted its retries). The card-run
+// timer gives such a start's run back, a bounded number of times.
+function refuseTransient(code, detail) {
+  throw Object.assign(new Error(`${code}: ${detail}`), { code, transient: true });
+}
+
+// Self-heal: every read card-prepare makes before arming (GitHub's branch and
+// pull request reads, Linear's card and history reads) is tried again when it
+// never reached its server (fetch's own TypeError) or was answered with a 5xx
+// or a 429, a bounded number of times with a short wait. Only reads: a GitHub
+// GET, or a Linear GraphQL query. A write (the Todo move, any mutation) goes
+// through exactly once, because one whose answer was lost may have committed.
+export const READ_ATTEMPTS = 3;
+export const READ_RETRY_WAIT_MS = 5 * 1000;
+const transientStatus = (status) => status === 429 || (Number.isInteger(status) && status >= 500);
+
+export function retryableRead(url, options = {}) {
+  const method = String(options.method ?? "GET").toUpperCase();
+  if (method === "GET") return true;
+  if (method !== "POST" || url !== "https://api.linear.app/graphql") return false;
+  let query;
+  try { query = JSON.parse(options.body).query; } catch { return false; }
+  return typeof query === "string" && /^\s*query\b/.test(query);
+}
+
+export function readRetrying(io) {
+  const fetchOnce = io.fetch;
+  return { ...io, fetch: async (url, options = {}) => {
+    if (!retryableRead(url, options)) return fetchOnce(url, options);
+    for (let attempt = 1; ; attempt += 1) {
+      let response;
+      try {
+        response = await fetchOnce(url, options);
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+        if (attempt >= READ_ATTEMPTS) throw Object.assign(error, { transient: true });
+        io.sleep(READ_RETRY_WAIT_MS);
+        continue;
+      }
+      if (!transientStatus(response?.status) || attempt >= READ_ATTEMPTS) return response;
+      io.sleep(READ_RETRY_WAIT_MS);
+    }
+  } };
+}
+
+// Self-heal: whether a refusal before arming may pass on a later start. Only
+// a read that failed transiently, or the branch read-back GitHub may still
+// lag on, and only while the card itself was not yet written: a definitive
+// answer (the card's labels, owner or state, a contract, a dirty checkout, a
+// branch with its own commit) never is.
+export function retryableRefusal(error) {
+  if (!error || error.afterCardWrite === true) return false;
+  if (error.transient === true) return true;
+  const code = String(error.code ?? "");
+  return code === "CARD_RUN_BRANCH_READBACK" || code === "LINEAR_RATE_LIMITED" || /^LINEAR_HTTP_(429|5\d\d)$/.test(code);
+}
+
 // The coordinator's GitHub and Linear tokens and its push remote, from its
 // own environment file.
 // The file must be a regular file owned by the coordinator user with no group
@@ -169,6 +227,16 @@ async function prepareCardState(io, credentials, id, apply) {
   if (decision.action === "none" || !apply) return { card: id, state: issue.state.name, action: decision.action };
   const since = Date.parse(issue.updatedAt);
   if (!Number.isFinite(since)) refuse("CARD_RUN_CARD_UNREADABLE", `${id} has no readable updatedAt`);
+  // Self-heal: from the move on the card may have changed, so no refusal
+  // after it gives the run back.
+  try {
+    return await moveCardToTodo(io, credentials, id, issue, decision, since);
+  } catch (error) {
+    throw Object.assign(error, { afterCardWrite: true });
+  }
+}
+
+async function moveCardToTodo(io, credentials, id, issue, decision, since) {
   await sendLinear(CARD_TODO_MUTATION, { id: issue.id, stateId: decision.stateId }, credentials.LINEAR_API_TOKEN, io.fetch);
   const changes = await stateChangesSince(io, credentials, issue.id, since);
   if (changes.length === 0) refuse("CARD_RUN_CARD_READBACK", `${id} did not move to ${TODO_STATE}`);
@@ -225,6 +293,7 @@ async function github(io, credentials, method, url, body) {
 async function branchHead(io, credentials, repo, branch) {
   const { status, json } = await github(io, credentials, "GET", `https://api.github.com/repos/${repo}/git/ref/heads/${branch}`);
   if (status === 404) return null;
+  if (transientStatus(status)) refuseTransient("CARD_RUN_BRANCH_UNREADABLE", `${branch} cannot be read (HTTP ${status})`);
   const sha = json?.object?.sha;
   if (status !== 200 || json?.ref !== `refs/heads/${branch}` || !SHA_RE.test(sha ?? "")) refuse("CARD_RUN_BRANCH_UNREADABLE", `${branch} cannot be read (HTTP ${status})`);
   return sha;
@@ -297,9 +366,17 @@ const exitText = (status) => (status === 124 ? `timed out after ${PUSH_TIMEOUT_S
 // Main as the remote has it now, refused unless it descends from the revision.
 // SHU-322: a main that does not descend is a definite answer, not a failed
 // read, so that refusal carries the tip and says so.
-export function mainTip(git, credentials, revision) {
-  const fetched = git(["fetch", "--no-tags", "--no-recurse-submodules", credentials.SHU_PUSH_REMOTE_URL, `refs/heads/main:${CARD_BASE_REF}`]);
-  if (fetched.status !== 0) refuse("CARD_RUN_BASE", `main could not be fetched as ${COORDINATOR_USER} (${exitText(fetched.status)})`);
+// Self-heal: with `sleep`, a fetch that failed but did not time out is tried
+// again (a read: it moves only this run's own scratch ref), and a fetch that
+// never succeeded is a transient refusal.
+export function mainTip(git, credentials, revision, sleep = null) {
+  const fetchMain = () => git(["fetch", "--no-tags", "--no-recurse-submodules", credentials.SHU_PUSH_REMOTE_URL, `refs/heads/main:${CARD_BASE_REF}`]);
+  let fetched = fetchMain();
+  for (let attempt = 1; sleep && fetched.status !== 0 && fetched.status !== 124 && attempt < READ_ATTEMPTS; attempt += 1) {
+    sleep(READ_RETRY_WAIT_MS);
+    fetched = fetchMain();
+  }
+  if (fetched.status !== 0) refuseTransient("CARD_RUN_BASE", `main could not be fetched as ${COORDINATOR_USER} (${exitText(fetched.status)})`);
   const read = git(["rev-parse", "--verify", `${CARD_BASE_REF}^{commit}`]);
   const tip = String(read.stdout ?? "").trim();
   if (read.status !== 0 || !SHA_RE.test(tip)) refuse("CARD_RUN_BASE", "the fetched main cannot be read");
@@ -318,7 +395,7 @@ export const BRANCH_READBACK_WAIT_MS = 2 * 1000;
 async function prepareBranch(io, credentials, repo, checkout, branch, revision, apply) {
   const head = await branchHead(io, credentials, repo, branch);
   const tip = inPushRepository(io, credentials, repo, checkout, (git) => {
-    const base = mainTip(git, credentials, revision);
+    const base = mainTip(git, credentials, revision, (ms) => io.sleep(ms));
     if (head === base) return base;
     // SHU-327, 2026-10-20: a card that stopped without landing leaves its
     // branch at the main it started from, and the install that re-arms the
@@ -378,6 +455,7 @@ export async function repairCardInput(io, credentials, repo, id, repair) {
 export async function prepareRun({ io, plan, revision, repo, checkout, credentials, apply = true, repair = null }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "")) refuse("CARD_RUN_CONFIG", "pilot_repo must name one GitHub repository");
   if (!String(checkout ?? "").startsWith("/")) refuse("CARD_RUN_CONFIG", "the installed checkout needs an absolute path");
+  io = readRetrying(io);
   if (repair) {
     await checkCard(io, credentials, plan.id, await repairCardInput(io, credentials, repo, plan.id, repair));
     // Read again just before answering, as prepareCardState does. A repair's
@@ -489,6 +567,10 @@ export function renderRunReport(result) {
     lines.push(`Landing repair of pull request #${result.repair.pr}: one revise of ${result.repair.failed_head} after episode ${plainReason(result.repair.repair_of)}, from ${result.repair.check_runs?.length ?? 0} failing check run(s).`);
   }
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
+  // Self-heal: a refused start whose run was given back says so.
+  if (Number.isInteger(result.retry?.attempt)) {
+    lines.push(`This refusal may pass on its own, so the card's run at this revision was given back (${result.retry.attempt} of ${result.retry.of}): the next timer start tries it again.`);
+  }
   const card = result.prepared?.card;
   const branch = result.prepared?.branch;
   const before = [
@@ -531,12 +613,12 @@ export const REPORT_RETRY_WAIT_MS = 15 * 1000;
 
 // SHU-322: the self-install reports through the same path with its own
 // renderer; the marker still comes from the result's activation_id.
-export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS, render = renderRunReport }) {
+export async function postRunReport({ io, credentials, result, timeoutMs = REPORT_TIMEOUT_MS, render = renderRunReport, marker: markerText = null }) {
   try {
     if (!credentials?.LINEAR_API_TOKEN) return { posted: false, issue: REPORT_ISSUE, code: "CARD_RUN_REPORT", reason: "no coordinator credentials" };
     const send = (query, variables) => bounded(sendLinear(query, variables, credentials.LINEAR_API_TOKEN, io.fetch), timeoutMs);
     const body = render(result);
-    const marker = reportMarker(result.activation_id);
+    const marker = markerText ?? reportMarker(result.activation_id);
     for (let attempt = 1; ; attempt += 1) {
       let posted;
       try {

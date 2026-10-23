@@ -2164,6 +2164,8 @@
     "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice",
     "SHU-86 C43: a branch main already contains moves forward to main under a lease on its head; one with its own commit never moves",
     "SHU-86 C45: a branch GitHub still reads at its old head after the push is read again, briefly; any other head refuses",
+    "SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most three times per revision; a definitive refusal spends it",
+    "SHU-86 C47: a read before arming that never reached its server or got a 5xx or 429 is tried again, briefly; a write never is",
     "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
     "SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head",
     "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
@@ -4470,6 +4472,7 @@
     "SHU-86 0d: an alert that cannot be posted is tried again on the next pass, never posted twice, and a pause file in place is kept",
     "SHU-86 0d: the status the watch shows is built from validated fields only",
     "SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass",
+    "SHU-86 0d: a running card with no progress for 30 minutes gets one stall comment; nothing is paused, stopped or reverted",
     "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
     "Self-repair B1: C1 a repair plan answers with the repair predicate and never a move",
     "Self-repair B1: C2 prepareRun with a repair reads every PR page, leaves branch and card alone",
@@ -4543,7 +4546,14 @@
     "SHU-86 mutation M189 prepare a landed card in the plan",
     "SHU-86 mutation M190 move an existing branch under a create-only lease",
     "SHU-86 mutation M191 move an existing branch without checking main contains it",
-    "SHU-86 mutation M192 leave no status behind a refusal before arming"
+    "SHU-86 mutation M192 leave no status behind a refusal before arming",
+    "SHU-86 mutation M193 give a run back after the card was moved",
+    "SHU-86 mutation M194 give a refused start back without a bound",
+    "SHU-86 mutation M195 give back a definitive refusal",
+    "SHU-86 mutation M196 send a write again",
+    "SHU-86 mutation M197 read a failing read only once",
+    "SHU-86 mutation M198 post a stall comment on every pass",
+    "SHU-86 mutation M199 flag a stall in a run without its watch"
   ],
   "requirements": [
     {
@@ -18570,6 +18580,14 @@
     },
     {
       "name": "SHU-86 C45: a branch GitHub still reads at its old head after the push is read again, briefly; any other head refuses",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most three times per revision; a definitive refusal spends it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C47: a read before arming that never reached its server or got a 5xx or 429 is tried again, briefly; a write never is",
       "capabilities": []
     },
     {
@@ -32914,6 +32932,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 0d: a running card with no progress for 30 minutes gets one stall comment; nothing is paused, stopped or reverted",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly",
       "capabilities": []
     },
@@ -33207,6 +33229,34 @@
     },
     {
       "name": "SHU-86 mutation M192 leave no status behind a refusal before arming",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M193 give a run back after the card was moved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M194 give a refused start back without a bound",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M195 give back a definitive refusal",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M196 send a write again",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M197 read a failing read only once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M198 post a stall comment on every pass",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M199 flag a stall in a run without its watch",
       "capabilities": []
     }
   ],

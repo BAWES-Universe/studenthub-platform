@@ -12,11 +12,12 @@ import {
   planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
-  reviewClaim, queueConfigPath, assertQueueConfigReviewer,
+  reviewClaim, queueConfigPath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
-import { cardAction, prepareRun, CARD_TODO_MUTATION, BRANCH_READBACK_ATTEMPTS, BRANCH_READBACK_WAIT_MS } from "../service/card-prepare.mjs";
+import { cardAction, prepareRun, CARD_TODO_MUTATION, BRANCH_READBACK_ATTEMPTS, BRANCH_READBACK_WAIT_MS, CARD_QUERY,
+  READ_ATTEMPTS, READ_RETRY_WAIT_MS, retryableRead, retryableRefusal } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
 import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePolicy, botSeverity, classifyThread, settleMarker } from "../service/card-land.mjs";
@@ -24,7 +25,8 @@ import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
 import { createReceipt, validateReceipt, receiptCommentBody, parseReceiptsFromComments } from "../reconcile.mjs";
 import { renderWatchLine, parseWatchLine } from "../watch-progress.mjs";
 import { statusPath, needsOwner, alertLine, ownerMention, nextStart } from "../service/card-status.mjs";
-import { watchOnce, stuckRun, readStatus, readUnit, renderStatus, installWatch, removeWatch, WATCH_LIMITS, STATUS_MARKER } from "../service/card-watchdog.mjs";
+import { watchOnce, stuckRun, readStatus, readUnit, renderStatus, installWatch, removeWatch, WATCH_LIMITS, STATUS_MARKER,
+  stalledRun, stallMarker, STALL_ALERT_MS } from "../service/card-watchdog.mjs";
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import { cardLanded, handLandRecord, HAND_LAND_OUTCOMES } from "../service/card-landed.mjs";
 import { brokerGitEnv } from "../push-broker.mjs";
@@ -164,7 +166,9 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         host.api.push("git fetch main");
         host.fetchedMain = host.mainTip;
         host.ancestryChecked = false;
-        return host.fetchFails ? { status: 128, stdout: "", stderr: "fatal: could not read" } : ok();
+        // A number fails that many fetches, then fetches again succeed.
+        if (typeof host.fetchFails === "number" && host.fetchFails > 0) { host.fetchFails -= 1; return { status: 128, stdout: "", stderr: "fatal: could not read" }; }
+        return host.fetchFails === true ? { status: 128, stdout: "", stderr: "fatal: could not read" } : ok();
       }
       if (verb === "rev-parse") {
         assert.deepEqual(command.slice(-3), ["rev-parse", "--verify", "refs/heads/card-base^{commit}"]);
@@ -275,6 +279,7 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       host.linearCalls = (host.linearCalls ?? 0) + 1;
       if (query.includes("CardRunHistory")) {
         host.api.push("linear history");
+        if (host.historyDown) return respond(503, null);
         // Oldest first, two to a page, so the newest change is only on the last
         // page and the reader must follow every page.
         const nodes = [...host.history];
@@ -306,6 +311,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       }
       host.api.push(query.includes("CardRunTodo") ? `linear todo ${variables.stateId}` : "linear read");
       if (query.includes("CardRunTodo")) {
+        // The move's answer lost on the way back: Linear may have committed it.
+        if (host.todoNetworkFailures > 0) { host.todoNetworkFailures -= 1; throw new TypeError("fetch failed"); }
         if (host.beforeTodo) { const hook = host.beforeTodo; host.beforeTodo = null; hook(host, moveCard); }
         if (host.failTodo) return respond(200, { data: { issueUpdate: { success: true } } });
         const states = { [TODO_ID]: { id: TODO_ID, name: "Todo", type: "unstarted" }, ...host.knownStates };
@@ -313,6 +320,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
         if (host.afterTodo) { const hook = host.afterTodo; host.afterTodo = null; hook(host, moveCard); }
         return respond(200, { data: { issueUpdate: { success: true } } });
       }
+      // A card read that never reaches Linear.
+      if (host.cardReadFailures > 0) { host.cardReadFailures -= 1; throw new TypeError("fetch failed"); }
       if (host.onCardRead) host.onCardRead(host, moveCard);
       return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, updatedAt: new Date(host.linearClock).toISOString(),
         labels: { nodes: [{ name: "repo:platform" }] }, ...host.card,
@@ -323,6 +332,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     const branch = /\/git\/ref\/heads\/(coordinator\/SHU-\d+)$/.exec(url)?.[1] ?? `coordinator/${id}`;
     if (url === `https://api.github.com/repos/${config.pilot_repo}/git/ref/heads/${branch}`) {
       host.api.push("github read");
+      // GitHub failing the read outright: a 5xx (or the given status) this many times.
+      if (host.branchReadDown > 0) { host.branchReadDown -= 1; return respond(host.branchReadStatus ?? 503, { message: "Service Unavailable" }); }
       if (host.lagLeft > 0) {
         host.lagLeft -= 1;
         if (host.lagLeft === 0) host.branchHead = host.lagMovedTo ?? host.lagHead;
@@ -700,6 +711,170 @@ test("SHU-86 C45: a branch GitHub still reads at its old head after the push is 
   assert.equal((await attempt(() => runCard({ io: moved.io, paths: PATHS }))).thrown, "CARD_RUN_BRANCH_READBACK");
   noArming(moved);
   assert.equal(githubReads(moved), 3, "the pre-push read, the lagging read, and the one that saw another head");
+});
+
+test("SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most three times per revision; a definitive refusal spends it", async () => {
+  const retries = (host) => [...host.files.keys()].filter((file) => file.startsWith(`${PATHS.stateDir}/card-run-retry-`)).sort();
+  const githubReads = (host) => host.api.filter((call) => call === "github read").length;
+  // GitHub answers the card's branch read with a 503 on every try (the
+  // SHU-332 kind of refusal): each start gives the run back, three times.
+  const down = fakeHost({ config: queueConfig(), onTick: passOnFirstTick });
+  down.branchReadDown = Infinity;
+  for (let n = 1; n <= REFUSED_START_RETRIES; n += 1) {
+    const reads = githubReads(down);
+    const result = await attempt(() => autoRun({ io: down.io, paths: PATHS }));
+    assert.equal(result.outcome, "NOT_STARTED", JSON.stringify(result));
+    assert.equal(result.code, "CARD_RUN_BRANCH_UNREADABLE");
+    assert.deepEqual(result.retry, { attempt: n, of: REFUSED_START_RETRIES });
+    assert.equal(result.claim, null);
+    assert.equal(githubReads(down) - reads, READ_ATTEMPTS, "the read itself is tried again first");
+    assert.equal(down.files.has(CLAIM), false, "the claim is given back");
+    assert.deepEqual(retries(down), Array.from({ length: n }, (_, i) => refusedStartRecord(PATHS, REV, "SHU-301", i + 1)));
+    assert.equal(down.files.get(refusedStartRecord(PATHS, REV, "SHU-301", n)).mode, 0o600);
+    assert.equal(JSON.parse(down.files.get(refusedStartRecord(PATHS, REV, "SHU-301", n)).text).code, "CARD_RUN_BRANCH_UNREADABLE");
+    assert.equal(down.reports.length, n, "each refused start is reported once");
+    assert.match(down.reports.at(-1), new RegExp(`given back \\(${n} of ${REFUSED_START_RETRIES}\\): the next timer start tries it again\\.$`, "m"));
+    assert.equal(readStatus(down.io, PATHS).step, "finished");
+    noArming(down);
+  }
+  // The fourth refusal spends the run as it always did, and the queue stops there.
+  const spentRun = await attempt(() => autoRun({ io: down.io, paths: PATHS }));
+  assert.equal(spentRun.outcome, "NOT_STARTED");
+  assert.equal(spentRun.retry, undefined);
+  assert.equal(spentRun.claim, CLAIM);
+  assert.equal(JSON.parse(down.files.get(CLAIM).text).outcome, "NOT_STARTED");
+  assert.equal(retries(down).length, REFUSED_START_RETRIES);
+  assert.doesNotMatch(down.reports.at(-1), /given back/);
+  const reports = down.reports.length;
+  const stopped = await attempt(() => autoRun({ io: down.io, paths: PATHS }));
+  assert.equal(stopped.skipped, "QUEUE_STOPPED");
+  assert.equal(down.reports.length, reports, "a stopped queue reports nothing again");
+  noArming(down);
+
+  // Linear unreachable for one whole start: the next start runs the card.
+  const blip = fakeHost({ config: queueConfig(), onTick: passOnFirstTick });
+  blip.cardReadFailures = READ_ATTEMPTS;
+  const first = await attempt(() => autoRun({ io: blip.io, paths: PATHS }));
+  assert.equal(first.outcome, "NOT_STARTED", JSON.stringify(first));
+  assert.deepEqual(first.retry, { attempt: 1, of: REFUSED_START_RETRIES });
+  noArming(blip);
+  const second = await attempt(() => autoRun({ io: blip.io, paths: PATHS }));
+  assert.equal(second.outcome, "PASS", JSON.stringify(second));
+  assert.equal(JSON.parse(blip.files.get(CLAIM).text).outcome, "PASS");
+
+  // The read-back refusal GitHub's lag can outlast is given back too.
+  const lagging = fakeHost({ branchHead: "" });
+  lagging.staleReads = BRANCH_READBACK_ATTEMPTS + 2;
+  const lagged = await attempt(() => autoRun({ io: lagging.io, paths: PATHS }));
+  assert.equal(lagged.code, "CARD_RUN_BRANCH_READBACK");
+  assert.deepEqual(lagged.retry, { attempt: 1, of: REFUSED_START_RETRIES });
+  assert.equal(lagging.files.has(CLAIM), false);
+
+  // A definitive refusal (the card is owned) spends the run and writes no give-back.
+  const owned = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
+  const refused = await attempt(() => autoRun({ io: owned.io, paths: PATHS }));
+  assert.equal(refused.code, "CARD_RUN_CARD_OWNED");
+  assert.equal(refused.retry, undefined);
+  assert.equal(JSON.parse(owned.files.get(CLAIM).text).outcome, "NOT_STARTED");
+  assert.deepEqual(retries(owned), []);
+
+  // Once the card was moved, a failed read after it never gives the run back:
+  // the card may have changed.
+  const moved = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  moved.historyDown = true;
+  const afterMove = await attempt(() => autoRun({ io: moved.io, paths: PATHS }));
+  assert.equal(afterMove.code, "LINEAR_HTTP_503", JSON.stringify(afterMove));
+  assert.equal(afterMove.retry, undefined);
+  assert.equal(moved.api.filter((call) => call.startsWith("linear todo")).length, 1);
+  assert.equal(JSON.parse(moved.files.get(CLAIM).text).outcome, "NOT_STARTED");
+  assert.deepEqual(retries(moved), []);
+
+  // A give-back that cannot be written leaves the run spent.
+  const full = fakeHost();
+  full.branchReadDown = Infinity;
+  const write = full.fs.writeFileSync;
+  full.fs.writeFileSync = (file, text, options = {}) => {
+    if (file.startsWith(`${PATHS.stateDir}/card-run-retry-`)) throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+    return write(file, text, options);
+  };
+  const unwritten = await attempt(() => autoRun({ io: full.io, paths: PATHS }));
+  assert.equal(unwritten.retry, undefined);
+  assert.equal(JSON.parse(full.files.get(CLAIM).text).outcome, "NOT_STARTED");
+
+  // Which refusals may pass on a later start.
+  for (const [error, want] of [
+    [{ code: "CARD_RUN_BRANCH_READBACK" }, true], [{ code: "LINEAR_HTTP_502" }, true], [{ code: "LINEAR_HTTP_429" }, true],
+    [{ code: "LINEAR_RATE_LIMITED" }, true], [Object.assign(new TypeError("fetch failed"), { transient: true }), true],
+    [{ code: "CARD_RUN_BASE", transient: true }, true], [{ code: "LINEAR_HTTP_503", afterCardWrite: true }, false],
+    [{ code: "LINEAR_HTTP_400" }, false], [new TypeError("x is undefined"), false], [{ code: "CARD_RUN_CARD_LABELS" }, false],
+    [{ code: "CARD_RUN_CARD_OWNED" }, false], [{ code: "CARD_RUN_CARD_STATE" }, false], [{ code: "CARD_RUN_CHECKOUT" }, false],
+    [{ code: "CARD_RUN_CONFIG" }, false], [{ code: "CARD_RUN_BRANCH_NOT_AT_TARGET" }, false], [{ code: "CARD_RUN_BASE", notDescendant: true }, false],
+    [{ code: "CARD_RUN_CREDENTIALS" }, false], [null, false],
+  ]) assert.equal(retryableRefusal(error), want, JSON.stringify(error));
+});
+
+test("SHU-86 C47: a read before arming that never reached its server or got a 5xx or 429 is tried again, briefly; a write never is", async () => {
+  const githubReads = (host) => host.api.filter((call) => call === "github read").length;
+  // GitHub's branch read answers 503 twice, then the branch.
+  const flaky = fakeHost({ onTick: passOnFirstTick });
+  flaky.branchReadDown = READ_ATTEMPTS - 1;
+  const start = flaky.clock;
+  const passed = await runCard({ io: flaky.io, paths: PATHS }).catch((error) => assert.fail(`the run refused: ${error.message}`));
+  assert.equal(passed.outcome, "PASS");
+  assert.equal(githubReads(flaky), READ_ATTEMPTS);
+  assert.ok(flaky.clock - start >= (READ_ATTEMPTS - 1) * READ_RETRY_WAIT_MS, "each read again waits first");
+  // A 429 is read again the same way.
+  const limited = fakeHost({ onTick: passOnFirstTick });
+  limited.branchReadDown = READ_ATTEMPTS - 1;
+  limited.branchReadStatus = 429;
+  assert.equal((await runCard({ io: limited.io, paths: PATHS })).outcome, "PASS");
+  // Bounded: still failing after the last try refuses, before anything is armed.
+  const down = fakeHost();
+  down.branchReadDown = READ_ATTEMPTS;
+  const refusal = await runCard({ io: down.io, paths: PATHS }).then(() => null, (error) => error);
+  assert.equal(refusal?.code, "CARD_RUN_BRANCH_UNREADABLE");
+  assert.equal(refusal.transient, true);
+  assert.equal(githubReads(down), READ_ATTEMPTS);
+  noArming(down);
+  // Any other answer is never asked again.
+  const missing = fakeHost();
+  missing.branchReadDown = 1;
+  missing.branchReadStatus = 401;
+  assert.equal((await attempt(() => runCard({ io: missing.io, paths: PATHS }))).thrown, "CARD_RUN_BRANCH_UNREADABLE");
+  assert.equal(githubReads(missing), 1);
+  // Linear's card read that never reached Linear is read again.
+  const linear = fakeHost({ onTick: passOnFirstTick });
+  linear.cardReadFailures = READ_ATTEMPTS - 1;
+  assert.equal((await runCard({ io: linear.io, paths: PATHS })).outcome, "PASS");
+  // Main fetched as the coordinator: a failed fetch is fetched again.
+  const fetched = fakeHost({ onTick: passOnFirstTick });
+  fetched.fetchFails = 1;
+  assert.equal((await runCard({ io: fetched.io, paths: PATHS })).outcome, "PASS");
+  assert.equal(fetched.api.filter((call) => call === "git fetch main").length, 2);
+  const unfetchable = fakeHost();
+  unfetchable.fetchFails = true;
+  const base = await runCard({ io: unfetchable.io, paths: PATHS }).then(() => null, (error) => error);
+  assert.equal(base?.code, "CARD_RUN_BASE");
+  assert.equal(base.transient, true);
+  assert.equal(unfetchable.api.filter((call) => call === "git fetch main").length, READ_ATTEMPTS);
+  // The Todo move is a write: its answer lost, it is never sent again, and
+  // the refusal never gives the run back.
+  const move = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: null, delegate: null } });
+  move.todoNetworkFailures = 1;
+  const lost = await runCard({ io: move.io, paths: PATHS }).then(() => null, (error) => error);
+  assert.ok(lost instanceof TypeError, String(lost));
+  assert.equal(move.api.filter((call) => call.startsWith("linear todo")).length, 1);
+  assert.equal(retryableRefusal(lost), false);
+  noArming(move);
+  // Only reads are retried.
+  const linearUrl = "https://api.linear.app/graphql";
+  assert.equal(retryableRead("https://api.github.com/repos/o/r/git/ref/heads/x"), true);
+  assert.equal(retryableRead("https://api.github.com/repos/o/r/git/ref/heads/x", { method: "GET" }), true);
+  assert.equal(retryableRead("https://api.github.com/repos/o/r/pulls", { method: "POST", body: "{}" }), false);
+  assert.equal(retryableRead(linearUrl, { method: "POST", body: JSON.stringify({ query: CARD_QUERY }) }), true);
+  assert.equal(retryableRead(linearUrl, { method: "POST", body: JSON.stringify({ query: CARD_TODO_MUTATION }) }), false);
+  assert.equal(retryableRead(linearUrl, { method: "POST", body: "not json" }), false);
+  assert.equal(retryableRead("https://example.com/graphql", { method: "POST", body: JSON.stringify({ query: CARD_QUERY }) }), false);
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {
@@ -3361,6 +3536,76 @@ test("SHU-86 0d: an unreadable card-run unit raises no alert and fails the pass"
     assert.equal(readUnit(unitIO(`ActiveState=activating\nInactiveExitTimestampMonotonic=1800000000\nInvocationID=${id}\n`), at).invocation, want, id);
   }
   assert.equal(readUnit(unitIO("ActiveState=active\nInactiveExitTimestampMonotonic=1800000000\n", 4200 * 1000), at + 10 * MIN).start, "1800000000");
+});
+
+test("SHU-86 0d: a running card with no progress for 30 minutes gets one stall comment; nothing is paused, stopped or reverted", async () => {
+  assert.equal(STALL_ALERT_MS, 30 * MIN);
+  assert.equal(WATCH_LIMITS.stallMs, STALL_ALERT_MS);
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  const runId = "shu-301-run-20261018T070000Z";
+  const stalls = (host) => host.comments.filter((comment) => comment.body.includes("<!-- card-run-stall "));
+  // The last progress was at 07:03: one second short of the limit is quiet.
+  const host = watchHost({ state: "activating", since, status: watchStatus({ watching: true }), now: Date.parse("2026-10-18T07:32:59.000Z") });
+  const early = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(early.stall, undefined);
+  assert.equal(stalls(host).length, 0);
+  host.now = Date.parse("2026-10-18T07:33:00.000Z");
+  const flagged = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(flagged.ok, true, JSON.stringify(flagged));
+  assert.deepEqual(flagged.stall, { run_id: runId, posted: true });
+  assert.equal(flagged.alert, null, "a stall is not a stuck run");
+  assert.equal(stalls(host).length, 1);
+  const body = stalls(host)[0].body.split("\n");
+  assert.equal(body[0], `<!-- card-run-stall ${runId} -->`);
+  assert.equal(body[0], stallMarker(runId));
+  assert.equal(body[1], `Stall: the card run on SHU-301 (${runId}) has shown no progress for 30 minutes, since 2026-10-18T07:03:00.000Z (https://linear.app/bawes/profiles/owner).`);
+  assert.equal(body[2], "It is still ticking, 4 tick(s), last tick 2026-10-18T07:04:00.000Z; first dispatch 2026-10-18T07:02:00.000Z.");
+  assert.match(body[3], /^Observe only: .* stops, reverts or pauses nothing\.$/);
+  assert.doesNotMatch(stalls(host)[0].body, /secret/);
+  assert.equal(host.files.has(PATHS.pause), false, "a stall never pauses the timer");
+  assert.deepEqual(sideEffects(host), [], "a stall never stops, kills or reverts a run");
+  assert.equal(alertsOf(host).length, 0);
+  // Later passes never post it again.
+  host.now += 10 * MIN;
+  assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).stall, { run_id: runId, already: true });
+  assert.equal(stalls(host).length, 1);
+
+  // A post that failed is tried again on the next pass, and posted once.
+  const down = watchHost({ state: "activating", since, status: watchStatus({ watching: true }), now: since + 40 * MIN });
+  down.linearDown = true;
+  const failed = await watchOnce({ io: down.io, paths: PATHS });
+  assert.equal(failed.stall.posted, false);
+  assert.equal(failed.ok, false);
+  down.linearDown = false;
+  down.now += 10 * MIN;
+  assert.deepEqual((await watchOnce({ io: down.io, paths: PATHS })).stall, { run_id: runId, posted: true });
+  down.now += 10 * MIN;
+  assert.equal((await watchOnce({ io: down.io, paths: PATHS })).stall.already, true);
+  assert.equal(stalls(down).length, 1);
+  assert.equal(down.files.has(PATHS.pause), false);
+
+  // Only a running card's own status, armed or ticking, with its watch on.
+  const read = (fields) => readStatus(watchHost({ status: watchStatus({ watching: true, ...fields }) }).io, PATHS);
+  const unit = { state: "activating", running: true, since, start: "42" };
+  const at = since + 40 * MIN;
+  assert.equal(stalledRun({ unit, status: read({}), now: at })?.since, "2026-10-18T07:03:00.000Z");
+  assert.equal(stalledRun({ unit, status: read({ step: "armed", first_dispatch_at: null, last_progress_at: null }), now: at })?.since,
+    "2026-10-18T07:00:30.000Z", "no dispatch at all counts from arming");
+  assert.equal(stalledRun({ unit, status: read({ last_progress_at: "2026-10-18T07:30:00.000Z" }), now: at }), null);
+  assert.equal(stalledRun({ unit, status: read({ watching: false }), now: at }), null, "a run without its watch has no progress to read");
+  assert.equal(stalledRun({ unit, status: readStatus(watchHost({ status: watchStatus() }).io, PATHS), now: at }), null);
+  for (const step of ["reverting", "landing", "finished"]) assert.equal(stalledRun({ unit, status: read({ step }), now: at }), null, step);
+  assert.equal(stalledRun({ unit: { ...unit, state: "inactive", running: false }, status: read({}), now: at }), null);
+  assert.equal(stalledRun({ unit, status: read({ updated_at: "2026-10-18T06:59:00.000Z" }), now: at }), null, "an earlier start's status");
+  assert.equal(stalledRun({ unit: null, status: read({}), now: at }), null);
+
+  // The run says in its status whether its watch is on.
+  const run = fakeHost({ onTick: passOnFirstTick });
+  await runCard({ io: run.io, paths: PATHS });
+  assert.equal(readStatus(run.io, PATHS).watching, true);
+  const unwatched = fakeHost({ config: configFor("SHU-301", (config) => ({ ...config, watch: { observe: false } })), onTick: passOnFirstTick });
+  await runCard({ io: unwatched.io, paths: PATHS });
+  assert.equal(readStatus(unwatched.io, PATHS).watching, false);
 });
 
 test("SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly", () => {

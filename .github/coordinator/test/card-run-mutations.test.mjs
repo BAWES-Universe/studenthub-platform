@@ -1304,6 +1304,55 @@ const CASES = [
     to: '    .failures({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "NOT_STARTED", land: null, // SHU86-M192\n',
     pattern: "SHU-86 C44:",
   },
+  {
+    name: "M193 give a run back after the card was moved",
+    file: "service/card-prepare.mjs",
+    from: "  if (!error || error.afterCardWrite === true) return false;",
+    to: "  if (!error) return false; // SHU86-M193",
+    pattern: "SHU-86 C46:",
+  },
+  {
+    name: "M194 give a refused start back without a bound",
+    file: "service/card-run.mjs",
+    from: "  for (let n = 1; n <= REFUSED_START_RETRIES; n += 1) {",
+    to: "  for (let n = 1; ; n += 1) { // SHU86-M194",
+    pattern: "SHU-86 C46:",
+  },
+  {
+    name: "M195 give back a definitive refusal",
+    file: "service/card-run.mjs",
+    from: "  if (!retryableRefusal(error)) return null;",
+    to: "  // SHU86-M195",
+    pattern: "SHU-86 C46:",
+  },
+  {
+    name: "M196 send a write again",
+    file: "service/card-prepare.mjs",
+    from: "    if (!retryableRead(url, options)) return fetchOnce(url, options);",
+    to: "    // SHU86-M196",
+    pattern: "SHU-86 C47:",
+  },
+  {
+    name: "M197 read a failing read only once",
+    file: "service/card-prepare.mjs",
+    from: "      if (!transientStatus(response?.status) || attempt >= READ_ATTEMPTS) return response;",
+    to: "      return response; // SHU86-M197",
+    pattern: "SHU-86 C47:",
+  },
+  {
+    name: "M198 post a stall comment on every pass",
+    file: "service/card-watchdog.mjs",
+    from: "    if (done?.posted === true) {",
+    to: "    if (false) { // SHU86-M198",
+    pattern: "SHU-86 0d: a running card with no progress",
+  },
+  {
+    name: "M199 flag a stall in a run without its watch",
+    file: "service/card-watchdog.mjs",
+    from: '  if (status.watching !== true || (status.step !== "armed" && status.step !== "ticking") || !status.armed_at) return null;',
+    to: '  if ((status.step !== "armed" && status.step !== "ticking") || !status.armed_at) return null; // SHU86-M199',
+    pattern: "SHU-86 0d: a running card with no progress",
+  },
 ];
 
 for (const mutation of CASES) {
