@@ -63,10 +63,21 @@ const profileRecords = {
   origin: process.env.PREVIEW_ORIGIN ?? `http://localhost:${port}`,
   options: async (type) => previewOptions[type] ?? [],
 };
-const gateway = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, undefined, undefined, profileRecords);
+// Synthetic own-document list for the My documents page: two of four on file, no bytes.
+const documents = {
+  async list(credential) {
+    if (credential !== session) throw Object.assign(new Error("denied"), { code: "denied" });
+    return [
+      { id: "preview-photo", version: "1", type: "personal-photo", mime: "image/jpeg", size: 184_320 },
+      { id: "preview-resume", version: "1", type: "resume", mime: "application/pdf", size: 412_672 },
+    ];
+  },
+  async principal() { throw Object.assign(new Error("denied"), { code: "denied" }); },
+};
+const gateway = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, documents, undefined, profileRecords);
 const own = await profiles.readOwn({ requesterPrincipalId: "person-preview", targetPersonId: "person-preview" });
 if (own.kind !== "found") throw new Error("synthetic profile fixture is unavailable");
-const ownPage = await profileDocument({ status: 200, body: own.profile }, login);
+const ownPage = await profileDocument({ status: 200, body: own.profile }, login, true);
 const attribute = (html) => html.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const preview = createServer(async (request, response) => {
   if (navigationJourney && request.url === "/__preview/controls") {
@@ -95,6 +106,10 @@ const preview = createServer(async (request, response) => {
   // unless a real session cookie is provided; HTTP tests exercise that boundary.
   if (request.url === "/__preview/profile") {
     request.url = "/profile";
+    request.headers.cookie = `__Host-studenthub_session=${session}`;
+  }
+  if (request.url === "/__preview/documents") {
+    request.url = "/profile/documents";
     request.headers.cookie = `__Host-studenthub_session=${session}`;
   }
   if (request.url?.split("?", 1)[0] === "/__preview/workspace") {
