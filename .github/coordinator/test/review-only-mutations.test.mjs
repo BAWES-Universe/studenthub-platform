@@ -199,7 +199,9 @@ const CASES = [
     file: "reconcile.mjs",
     from: "        if (!pull.ok || pull.branch !== receipt.branch) {\n          // SHU-304: the supervisor may already have finished this review.",
     to: "        if (false) { // SHU303-M27\n          // SHU-304: the supervisor may already have finished this review.",
-    pattern: "SHU-303 P5:",
+    // P8 proves the order: with the early check gone, a moved pull request
+    // reaches the activation contract and pauses the adapter.
+    pattern: "SHU-303 P8:",
   },
   {
     name: "M28 put the PR's branch name in a recovered reviewer's prompt",
