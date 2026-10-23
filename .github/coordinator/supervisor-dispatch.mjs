@@ -93,6 +93,16 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
     audit_notes: result.audit_notes };
 }
 
+// SHU-304: a review whose pull request moved can no longer be resumed, but the
+// supervisor may already hold its finished run. Returns COMPLETED or FAILED only
+// for a durable answer bound to this attempt and head; status() reports those
+// stages only with a validated completion. Every other answer returns null.
+export function finishedSupervisorStage(response, receipt) {
+  if (response?.version !== SUPERVISOR_PROTOCOL_VERSION || response.ok !== true || response.durable !== true) return null;
+  if (response.attempt_id !== receipt.attempt_id || response.target_sha !== receipt.target_sha) return null;
+  return ["COMPLETED", "FAILED"].includes(response.stage) ? response.stage : null;
+}
+
 export function supervisorAdapter(receipt, env, io = {}) {
   // The catch below never discards the cause. The reason string is the only place
   // a tick's transport fault becomes visible, and the bare label made a vanished
@@ -133,6 +143,10 @@ export function supervisorAdapter(receipt, env, io = {}) {
         stage: 'LAUNCH_UNKNOWN', status: 'UNLAUNCHED', hold_code: requireHoldCode(response.hold_code ?? 'MISSING_LAUNCH_RECEIPT'),
       };
       return { stage: "RUNNING", external_run_id: `supervisor_${receipt.attempt_id}`, adapter_status: "queued" };
+    },
+    // SHU-304: the raw durable answer, asked without submitting anything.
+    async status() {
+      return contact("status");
     },
     async monitorRun(options) {
       return carriedSupervisorOutcome(await contact("status"), receipt, options);

@@ -185,6 +185,16 @@ still checked as for any review-only run. The timer arms it only once the queue
 is done, on one labelled queue config pull request at its exact head, with
 `codex-verifier` reviewing a Claude-written change (`service/card-run.mjs`).
 
+A review whose launch is uncertain (`LAUNCH_UNKNOWN`) is resumed only while
+its pull request is still the approved one under an armed review-only record.
+That check comes before the activation contract, so a review that cannot be
+resumed never pauses its adapter. When the pull request moved, or the next
+card's run is a build, the coordinator asks the supervisor for `status` only
+(never `submit`). A durable `COMPLETED` or `FAILED` answer bound to the
+receipt's attempt and head ends the receipt as `HOLD` with no verdict applied
+and frees its slot (SHU-304); any other answer, or a pull request that cannot
+be read, leaves the slot held.
+
 Once such a change is on `main`, a done queue's timer start may install it
 itself (SHU-322, `service/card-install.mjs`): only when every coordinator
 change since the installed revision is queue data (`config.json` with only

@@ -34,7 +34,7 @@ import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDir
 import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
-import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext } from "./supervisor-dispatch.mjs";
+import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
@@ -2680,6 +2680,48 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       const linearIssueId = resolveLinearIssueId(receipt, "launch reconciliation");
       if (!linearIssueId) continue;
 
+      // SHU-303: a recovered review is still the one review its activation
+      // approved; the pull request is read again before any worker starts.
+      // SHU-304: it is read before the activation contract too. A review that
+      // can no longer be resumed must not pause its adapter, which a build
+      // card's run shares, over a contract it would never use.
+      if (receipt.review_base_sha) {
+        const pull = singleRunActivation.review_only === true
+          ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
+            base_sha: receipt.review_base_sha, githubToken, fetchImpl })
+          : { ok: false, code: "STALE_HEAD", reason: "no review-only activation is armed" };
+        if (!pull.ok || pull.branch !== receipt.branch) {
+          // SHU-304: the supervisor may already have finished this review. Only
+          // its durable terminal record, bound to this attempt and head, ends
+          // the receipt; the verdict is never applied and nothing is launched.
+          // An unreadable pull request is not a moved one, so it keeps waiting.
+          const moved = pull.ok || pull.code === "STALE_HEAD";
+          let finished = null;
+          if (moved && typeof adapterModule.status === "function") {
+            try {
+              finished = finishedSupervisorStage(await adapterModule.status(), receipt);
+            } catch {
+              finished = null;
+            }
+          }
+          if (finished) {
+            const held = nextReceiptState(receipt, { type: "hold",
+              reason: `review finished on the supervisor (${finished}) after its pull request moved or its review activation ended; verdict not applied` }, { now: io.now });
+            if (held.accepted) {
+              await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
+              lifecyclePersisted = true;
+              lifecycleSlotReleased = true;
+              const idx = receipts.indexOf(receipt);
+              if (idx >= 0) receipts[idx] = held.receipt;
+              if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> HOLD (attempt ${receipt.attempt_id}) — review finished on the supervisor (${finished}); verdict not applied; slot released`);
+              continue;
+            }
+          }
+          if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — review-only HOLD=${pull.ok ? "STALE_HEAD" : pull.code}: ${pull.ok ? "the pull request's branch changed" : pull.reason}; slot held`);
+          continue;
+        }
+      }
+
       // Recovery is a worker launch too. Rechecking only first dispatch lets a
       // later coordinator with missing credentials, wrong host, or ephemeral
       // state resume an existing Codex session around the activation contract.
@@ -2707,18 +2749,6 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       let launch;
       try {
         const options = await preparedLaunchOptions(adapter, receipt, env, io, { resume: true });
-        // SHU-303: a recovered review is still the one review its activation
-        // approved; the pull request is read again before any worker starts.
-        if (receipt.review_base_sha) {
-          const pull = singleRunActivation.review_only === true
-            ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
-              base_sha: receipt.review_base_sha, githubToken, fetchImpl })
-            : { ok: false, code: "STALE_HEAD", reason: "no review-only activation is armed" };
-          if (!pull.ok || pull.branch !== receipt.branch) {
-            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — review-only HOLD=${pull.ok ? "STALE_HEAD" : pull.code}: ${pull.ok ? "the pull request's branch changed" : pull.reason}; slot held`);
-            continue;
-          }
-        }
         launch = await adapterModule.launchBuilder({
           recovery: true, // host-local authorization required by Hermes recovery
           external_run_id: receipt.external_run_id ?? null, // codex-cli exact-id resume target (codexrun_<uuid>)

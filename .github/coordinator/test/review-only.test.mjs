@@ -26,6 +26,7 @@ import { REVIEW_ONLY_BRIEF, cardBrief, reviewOnlyCard } from "../card-contracts.
 import { buildCodexReviewPrompt } from "../adapters/codex-cli.mjs";
 import { buildClaudePrompt } from "../adapters/claude-code.mjs";
 import { supervisorOrder } from "../supervisor-dispatch.mjs";
+import { SUPERVISOR_PROTOCOL_VERSION } from "../supervisor.mjs";
 import { deriveIncidentEvent } from "../incident-reporting.mjs";
 
 const COORDINATOR_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -380,6 +381,139 @@ test("SHU-303 P5: an uncertain review launch is recovered only while the pull re
       }
     } finally { h.cleanup(); }
   }
+});
+
+// SHU-304: a review recovery whose pull request moved, or whose review-only
+// activation ended, asks the supervisor for status only. A finished run there
+// ends the receipt with no verdict; anything else keeps today's skip.
+const SUPERVISOR_SECRET = "s".repeat(48);
+
+function finishedHarness({ reviewOnly = true, pullChange = (pull) => { pull.state = "closed"; } } = {}) {
+  return import("./fixture/episode-harness.mjs").then(({ createEpisodeHarness }) => {
+    const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
+      activationId: "shu303-review-run-0007",
+      ...(reviewOnly
+        ? { reviewOnly: { pr: 240, baseSha: BASE, authorFamily: "claude" },
+          configOverrides: { fixture_lane: undefined, review_lanes: CONFIG.review_lanes } }
+        : { initialBranchHead: HEAD }) });
+    const made = createReceipt({ receipt_version: "1.1.0", issue_id: DESK, authorization_ref: DESK, requested_worker: "codex-verifier",
+      role: "review", runtime: "codex-cli", repo: REPO, branch: "feature/reviewed", target_sha: HEAD,
+      workspace_scope: "full", scope_phase: "review", episode_id: "shu303-review-run-0001", review_base_sha: BASE });
+    assert.ok(made.ok, JSON.stringify(made.errors));
+    const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+    if (reviewOnly && pullChange) pullChange(h.pull);
+    const operations = [];
+    const githubWrites = [];
+    const tick = (answer, io = {}) => h.runTick({
+      env: { SHU_SUPERVISOR_SECRET: SUPERVISOR_SECRET },
+      io: {
+        supervisorTransport: async ({ request }) => {
+          operations.push(request.operation);
+          return typeof answer === "function" ? answer(request.order) : answer;
+        },
+        fetchImpl: async (url, opts = {}) => {
+          if (String(url).includes("api.github.com") && (opts.method ?? "GET") !== "GET") githubWrites.push(String(url));
+          return h.fetchImpl(url, opts);
+        },
+        ...io,
+      },
+    });
+    return { h, unknown, operations, githubWrites, tick };
+  });
+}
+
+function supervisorAnswer(order, over = {}) {
+  return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true, attempt_id: order.attempt_id, target_sha: order.target_sha,
+    stage: "COMPLETED", launch_receipt: { attempt_id: order.attempt_id }, heartbeat: null,
+    result: { stage: "COMPLETED", worker_identity: "codex-verifier:session-9",
+      callback: { attempt_id: order.attempt_id, target_sha: order.target_sha, stage: "PASS", result_sha: order.target_sha, links: ["https://example.invalid/pass"] } },
+    ...over };
+}
+
+test("SHU-303 P6: a review the supervisor finished after its pull request moved or its activation ended is held, by status only, with no verdict", async () => {
+  const cases = [
+    ["a build card's run, COMPLETED with a PASS", { reviewOnly: false }, (order) => supervisorAnswer(order), "COMPLETED"],
+    ["a build card's run, FAILED", { reviewOnly: false }, (order) => supervisorAnswer(order, { stage: "FAILED", result: { stage: "FAILED", error_code: "WORKER_EXIT" } }), "FAILED"],
+    ["a merged pull request, COMPLETED with a PASS", { reviewOnly: true }, (order) => supervisorAnswer(order), "COMPLETED"],
+    ["a moved head, FAILED", { reviewOnly: true, pullChange: (pull) => { pull.headSha = "b".repeat(40); } },
+      (order) => supervisorAnswer(order, { stage: "FAILED", result: null }), "FAILED"],
+  ];
+  for (const [label, setup, answer, stage] of cases) {
+    const { h, unknown, operations, githubWrites, tick } = await finishedHarness(setup);
+    try {
+      const run = await tick(answer);
+      const held = h.receiptFor(unknown.attempt_id);
+      assert.equal(held.stage, "HOLD", `${label}\n${run.text}`);
+      assert.ok(held.timestamps.terminal, label);
+      assert.ok(held.notes.some((n) => n === `held: review finished on the supervisor (${stage}) after its pull request moved or its review activation ended; verdict not applied`), `${label}: ${JSON.stringify(held.notes)}`);
+      assert.equal(held.verdict_stage ?? null, null, `${label}: the verdict is never applied`);
+      assert.equal(held.callback ?? null, null, `${label}: no callback is folded`);
+      assert.deepEqual(operations, ["status"], `${label}: only status is asked, never submit`);
+      assert.equal(h.launched.length, 0, `${label}: nothing is launched`);
+      assert.deepEqual(githubWrites, [], `${label}: nothing is written to the pull request`);
+      assert.deepEqual(h.pauses, [], `${label}: no adapter is paused`);
+      assert.match(run.text, new RegExp(`lifecycle: SHU-304 LAUNCH_UNKNOWN -> HOLD \\(attempt ${unknown.attempt_id}\\) — review finished on the supervisor \\(${stage}\\); verdict not applied; slot released`), label);
+      assert.doesNotMatch(run.text, /review-only HOLD=STALE_HEAD/, label);
+    } finally { h.cleanup(); }
+  }
+});
+
+test("SHU-303 P7: any other supervisor answer, or a pull request that cannot be read, keeps the slot and writes nothing", async () => {
+  const thrown = async () => { throw new Error("socket vanished"); };
+  const cases = [
+    ["RUNNING", {}, (order) => supervisorAnswer(order, { stage: "RUNNING", result: null })],
+    ["ACCEPTED", {}, (order) => supervisorAnswer(order, { stage: "ACCEPTED", result: null })],
+    ["supervisor HOLD", {}, (order) => supervisorAnswer(order, { stage: "HOLD", result: null, detail_code: "OUTPUT_CAP" })],
+    ["not ok MISSING_CLAIM", {}, () => ({ ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" })],
+    ["target mismatch", {}, (order) => supervisorAnswer(order, { target_sha: "b".repeat(40) })],
+    ["attempt mismatch", {}, (order) => supervisorAnswer(order, { attempt_id: "44444444-4444-4444-8444-444444444404" })],
+    ["not durable", {}, (order) => supervisorAnswer(order, { durable: false })],
+    ["another protocol version", {}, (order) => supervisorAnswer(order, { version: "1.0.0" })],
+    ["transport throw", {}, thrown],
+  ];
+  for (const [label, setup, answer] of cases) {
+    const { h, unknown, operations, githubWrites, tick } = await finishedHarness(setup);
+    try {
+      const before = h.comments.length;
+      const run = await tick(answer);
+      assert.equal(h.receiptFor(unknown.attempt_id).stage, "LAUNCH_UNKNOWN", `${label}\n${run.text}`);
+      assert.equal(h.comments.length, before, `${label}: no receipt is written`);
+      assert.deepEqual(operations, ["status"], `${label}: only status is asked`);
+      assert.equal(h.launched.length, 0, label);
+      assert.deepEqual(githubWrites, [], label);
+      assert.deepEqual(h.pauses, [], label);
+      assert.match(run.text, /launch reconciliation for SHU-304 SKIPPED — review-only HOLD=STALE_HEAD: pull request #240 is not open; slot held/, label);
+    } finally { h.cleanup(); }
+  }
+  const { h, unknown, operations, tick } = await finishedHarness({ pullChange: (pull) => { pull.readable = false; } });
+  try {
+    const before = h.comments.length;
+    const run = await tick((order) => supervisorAnswer(order));
+    assert.equal(h.receiptFor(unknown.attempt_id).stage, "LAUNCH_UNKNOWN", run.text);
+    assert.equal(h.comments.length, before);
+    assert.deepEqual(operations, [], "an unreadable pull request is not a moved one: the supervisor is not asked");
+    assert.match(run.text, /review-only HOLD=UNREADABLE_HEAD: pull request #240 could not be read/);
+  } finally { h.cleanup(); }
+});
+
+test("SHU-303 P8: a review whose pull request moved is not paused by an activation contract it would never use", async () => {
+  const preflightFails = { skipActivationPreflight: false, codexStateDir: join(tmpdir(), "shu303-no-such-codex-state") };
+  const moved = await finishedHarness({ reviewOnly: true });
+  try {
+    const run = await moved.tick((order) => supervisorAnswer(order, { stage: "RUNNING", result: null }), preflightFails);
+    assert.deepEqual(moved.h.pauses, [], run.text);
+    assert.doesNotMatch(run.text, /activation contract unmet/);
+    assert.match(run.text, /review-only HOLD=STALE_HEAD: pull request #240 is not open; slot held/);
+  } finally { moved.h.cleanup(); }
+  // The same unmet contract still pauses a review that would resume.
+  const approved = await finishedHarness({ reviewOnly: true, pullChange: null });
+  try {
+    const run = await approved.tick((order) => supervisorAnswer(order, { stage: "RUNNING", result: null }), preflightFails);
+    assert.match(run.text, /activation contract unmet for codex-cli/);
+    assert.deepEqual(approved.h.pauses, ["coordinator-pause: codex-cli"]);
+    assert.deepEqual(approved.operations, [], "nothing is asked of the supervisor before the contract holds");
+  } finally { approved.h.cleanup(); }
 });
 
 // ---------------------------------------------------------------------------
