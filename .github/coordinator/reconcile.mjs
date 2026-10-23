@@ -2749,6 +2749,19 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       let launch;
       try {
         const options = await preparedLaunchOptions(adapter, receipt, env, io, { resume: true });
+        // SHU-303: the pull request can move while the contract is checked and
+        // the workspace is prepared, so it is read once more right before the
+        // reviewer resumes. This late check only skips; nothing is folded here.
+        if (receipt.review_base_sha) {
+          const pull = singleRunActivation.review_only === true
+            ? await verifyReviewOnlyPull({ repo: receipt.repo, pr: singleRunActivation.review_pr, head_sha: receipt.target_sha,
+              base_sha: receipt.review_base_sha, githubToken, fetchImpl })
+            : { ok: false, code: "STALE_HEAD", reason: "no review-only activation is armed" };
+          if (!pull.ok || pull.branch !== receipt.branch) {
+            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — final review-only check HOLD=${pull.ok ? "STALE_HEAD" : pull.code}: ${pull.ok ? "the pull request's branch changed" : pull.reason}; slot held`);
+            continue;
+          }
+        }
         launch = await adapterModule.launchBuilder({
           recovery: true, // host-local authorization required by Hermes recovery
           external_run_id: receipt.external_run_id ?? null, // codex-cli exact-id resume target (codexrun_<uuid>)

@@ -236,6 +236,13 @@ const CASES = [
     to: "          if (false) { // SHU303-M32",
     pattern: "SHU-303 P6:",
   },
+  {
+    name: "M33 resume a recovered review without reading the pull request right before it starts",
+    file: "reconcile.mjs",
+    from: "          if (!pull.ok || pull.branch !== receipt.branch) {\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — final review-only check",
+    to: "          if (false) { // SHU303-M33\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — final review-only check",
+    pattern: "SHU-303 P9:",
+  },
 ];
 
 for (const mutation of CASES) {

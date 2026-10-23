@@ -516,6 +516,21 @@ test("SHU-303 P8: a review whose pull request moved is not paused by an activati
   } finally { approved.h.cleanup(); }
 });
 
+test("SHU-303 P9: a pull request that moves while a recovered review is prepared stops the reviewer before it resumes", async () => {
+  for (const change of [(pull) => { pull.headSha = "b".repeat(40); }, (pull) => { pull.headRef = "feature/renamed"; }]) {
+    const { h, unknown, operations, tick } = await finishedHarness({ reviewOnly: true, pullChange: null });
+    try {
+      // The early recovery read sees the approved pull request; it moves before the late read.
+      h.pull.onRead = (reads) => { if (reads === 2) change(h.pull); };
+      const run = await tick((order) => supervisorAnswer(order, { stage: "RUNNING", result: null }), { supervisorTransport: undefined });
+      assert.equal(h.launched.length, 0, run.text);
+      assert.equal(h.receiptFor(unknown.attempt_id).stage, "LAUNCH_UNKNOWN");
+      assert.deepEqual(operations, []);
+      assert.match(run.text, /launch reconciliation for SHU-304 SKIPPED — final review-only check HOLD=STALE_HEAD/);
+    } finally { h.cleanup(); }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // What the reviewer is told
 // ---------------------------------------------------------------------------
