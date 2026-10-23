@@ -197,9 +197,11 @@ const CASES = [
   {
     name: "M27 recover an uncertain review launch without reading the pull request again",
     file: "reconcile.mjs",
-    from: "          if (!pull.ok || pull.branch !== receipt.branch) {\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation",
-    to: "          if (false) { // SHU303-M27\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation",
-    pattern: "SHU-303 P5:",
+    from: "        if (!pull.ok || pull.branch !== receipt.branch) {\n          // SHU-304: the supervisor may already have finished this review.",
+    to: "        if (false) { // SHU303-M27\n          // SHU-304: the supervisor may already have finished this review.",
+    // P8 proves the order: with the early check gone, a moved pull request
+    // reaches the activation contract and pauses the adapter.
+    pattern: "SHU-303 P8:",
   },
   {
     name: "M28 put the PR's branch name in a recovered reviewer's prompt",
@@ -207,6 +209,41 @@ const CASES = [
     from: "          task_context: orderTaskContext(receipt),\n",
     to: "          task_context: `on ${receipt.branch}`, // SHU303-M28\n",
     pattern: "SHU-303 P5:",
+  },
+  {
+    name: "M29 fold a review the supervisor has not finished",
+    file: "supervisor-dispatch.mjs",
+    from: '  return ["COMPLETED", "FAILED"].includes(response.stage) ? response.stage : null;',
+    to: "  return response.stage ?? null; // SHU303-M29",
+    pattern: "SHU-303 P7:",
+  },
+  {
+    name: "M30 fold a finished review bound to another attempt or head",
+    file: "supervisor-dispatch.mjs",
+    from: "  if (response.attempt_id !== receipt.attempt_id || response.target_sha !== receipt.target_sha) return null;",
+    to: "  // SHU303-M30",
+    pattern: "SHU-303 P7:",
+  },
+  {
+    name: "M31 fold a finished review while its pull request cannot be read",
+    file: "reconcile.mjs",
+    from: '          const moved = pull.ok || pull.code === "STALE_HEAD";',
+    to: "          const moved = true; // SHU303-M31",
+    pattern: "SHU-303 P7:",
+  },
+  {
+    name: "M32 never fold a finished review whose pull request moved",
+    file: "reconcile.mjs",
+    from: '          if (moved && typeof adapterModule.status === "function") {',
+    to: "          if (false) { // SHU303-M32",
+    pattern: "SHU-303 P6:",
+  },
+  {
+    name: "M33 resume a recovered review without reading the pull request right before it starts",
+    file: "reconcile.mjs",
+    from: "          if (!pull.ok || pull.branch !== receipt.branch) {\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — final review-only check",
+    to: "          if (false) { // SHU303-M33\n            if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — final review-only check",
+    pattern: "SHU-303 P9:",
   },
 ];
 

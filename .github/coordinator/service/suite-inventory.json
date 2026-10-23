@@ -2704,6 +2704,15 @@
     "SHU-303 mutation M28 put the PR's branch name in a recovered reviewer's prompt",
     "SHU-303 P5: an uncertain review launch is recovered only while the pull request is still the approved one",
     "SHU-303 P4: a pull request that moves while the workspace is prepared stops the run before the reviewer launches",
+    "SHU-303 mutation M29 fold a review the supervisor has not finished",
+    "SHU-303 mutation M30 fold a finished review bound to another attempt or head",
+    "SHU-303 mutation M31 fold a finished review while its pull request cannot be read",
+    "SHU-303 mutation M32 never fold a finished review whose pull request moved",
+    "SHU-303 mutation M33 resume a recovered review without reading the pull request right before it starts",
+    "SHU-303 P6: a review the supervisor finished after its pull request moved or its activation ended is held, by status only, with no verdict",
+    "SHU-303 P7: any other supervisor answer, or a pull request that cannot be read, keeps the slot and writes nothing",
+    "SHU-303 P8: a review whose pull request moved is not paused by an activation contract it would never use",
+    "SHU-303 P9: a pull request that moves while a recovered review is prepared stops the reviewer before it resumes",
     "work order: all three roles are valid on runtimes that support them",
     "work order: unknown role / unknown runtime / bad sha fail closed",
     "capabilities: review is read-only (no commit/push), build/revise are write roles",
@@ -21694,6 +21703,42 @@
     },
     {
       "name": "SHU-303 P4: a pull request that moves while the workspace is prepared stops the run before the reviewer launches",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M29 fold a review the supervisor has not finished",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M30 fold a finished review bound to another attempt or head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M31 fold a finished review while its pull request cannot be read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M32 never fold a finished review whose pull request moved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 mutation M33 resume a recovered review without reading the pull request right before it starts",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P6: a review the supervisor finished after its pull request moved or its activation ended is held, by status only, with no verdict",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P7: any other supervisor answer, or a pull request that cannot be read, keeps the slot and writes nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P8: a review whose pull request moved is not paused by an activation contract it would never use",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-303 P9: a pull request that moves while a recovered review is prepared stops the reviewer before it resumes",
       "capabilities": []
     },
     {
