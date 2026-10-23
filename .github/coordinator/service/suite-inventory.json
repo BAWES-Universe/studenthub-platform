@@ -4553,7 +4553,8 @@
     "SHU-86 mutation M196 send a write again",
     "SHU-86 mutation M197 read a failing read only once",
     "SHU-86 mutation M198 post a stall comment on every pass",
-    "SHU-86 mutation M199 flag a stall in a run without its watch"
+    "SHU-86 mutation M199 flag a stall in a run without its watch",
+    "SHU-86 mutation M200 read a cut-off body only once"
   ],
   "requirements": [
     {
@@ -33257,6 +33258,10 @@
     },
     {
       "name": "SHU-86 mutation M199 flag a stall in a run without its watch",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M200 read a cut-off body only once",
       "capabilities": []
     }
   ],

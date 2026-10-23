@@ -75,8 +75,30 @@ export function readRetrying(io) {
         io.sleep(READ_RETRY_WAIT_MS);
         continue;
       }
-      if (!transientStatus(response?.status) || attempt >= READ_ATTEMPTS) return response;
-      io.sleep(READ_RETRY_WAIT_MS);
+      if (transientStatus(response?.status) && attempt < READ_ATTEMPTS) {
+        io.sleep(READ_RETRY_WAIT_MS);
+        continue;
+      }
+      if (typeof response?.json !== "function") return response;
+      // The body is part of the read: an answer cut off mid-body is the same
+      // blip, so it is read here and tried again too. Anything else the body
+      // throws (not JSON) is handed to the caller as before.
+      let body;
+      let failure = null;
+      try {
+        body = await response.json();
+      } catch (error) {
+        if (error instanceof TypeError) {
+          if (attempt >= READ_ATTEMPTS) throw Object.assign(error, { transient: true });
+          io.sleep(READ_RETRY_WAIT_MS);
+          continue;
+        }
+        failure = error;
+      }
+      return { ok: response.ok, status: response.status, headers: response.headers, json: async () => {
+        if (failure) throw failure;
+        return body;
+      } };
     }
   } };
 }

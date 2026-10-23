@@ -322,6 +322,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       }
       // A card read that never reaches Linear.
       if (host.cardReadFailures > 0) { host.cardReadFailures -= 1; throw new TypeError("fetch failed"); }
+      // A card read whose answer is cut off mid-body.
+      if (host.cardBodyCuts > 0) { host.cardBodyCuts -= 1; return { ...respond(200, null), json: async () => { throw new TypeError("terminated"); } }; }
       if (host.onCardRead) host.onCardRead(host, moveCard);
       return respond(200, { data: { issue: { id: "issue-uuid", identifier: variables.id, updatedAt: new Date(host.linearClock).toISOString(),
         labels: { nodes: [{ name: "repo:platform" }] }, ...host.card,
@@ -334,6 +336,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       host.api.push("github read");
       // GitHub failing the read outright: a 5xx (or the given status) this many times.
       if (host.branchReadDown > 0) { host.branchReadDown -= 1; return respond(host.branchReadStatus ?? 503, { message: "Service Unavailable" }); }
+      // GitHub's answer cut off mid-body.
+      if (host.branchBodyCuts > 0) { host.branchBodyCuts -= 1; return { ...respond(200, null), json: async () => { throw new TypeError("terminated"); } }; }
       if (host.lagLeft > 0) {
         host.lagLeft -= 1;
         if (host.lagLeft === 0) host.branchHead = host.lagMovedTo ?? host.lagHead;
@@ -846,6 +850,19 @@ test("SHU-86 C47: a read before arming that never reached its server or got a 5x
   const linear = fakeHost({ onTick: passOnFirstTick });
   linear.cardReadFailures = READ_ATTEMPTS - 1;
   assert.equal((await runCard({ io: linear.io, paths: PATHS })).outcome, "PASS");
+  // An answer cut off mid-body is read again, GitHub's and Linear's alike.
+  const cut = fakeHost({ onTick: passOnFirstTick });
+  cut.branchBodyCuts = READ_ATTEMPTS - 1;
+  cut.cardBodyCuts = READ_ATTEMPTS - 1;
+  const cutRun = await runCard({ io: cut.io, paths: PATHS }).catch((error) => assert.fail(`the cut-off read refused: ${error.message}`));
+  assert.equal(cutRun.outcome, "PASS");
+  assert.equal(githubReads(cut), READ_ATTEMPTS);
+  const severed = fakeHost();
+  severed.branchBodyCuts = READ_ATTEMPTS;
+  const lostBody = await runCard({ io: severed.io, paths: PATHS }).then(() => null, (error) => error);
+  assert.ok(lostBody instanceof TypeError, String(lostBody));
+  assert.equal(retryableRefusal(lostBody), true, "a body still cut off after the last try gives the run back");
+  noArming(severed);
   // Main fetched as the coordinator: a failed fetch is fetched again.
   const fetched = fakeHost({ onTick: passOnFirstTick });
   fetched.fetchFails = 1;

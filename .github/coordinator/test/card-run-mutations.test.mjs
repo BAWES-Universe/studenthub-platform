@@ -1335,8 +1335,8 @@ const CASES = [
   {
     name: "M197 read a failing read only once",
     file: "service/card-prepare.mjs",
-    from: "      if (!transientStatus(response?.status) || attempt >= READ_ATTEMPTS) return response;",
-    to: "      return response; // SHU86-M197",
+    from: "      if (transientStatus(response?.status) && attempt < READ_ATTEMPTS) {",
+    to: "      if (false) { // SHU86-M197",
     pattern: "SHU-86 C47:",
   },
   {
@@ -1352,6 +1352,13 @@ const CASES = [
     from: '  if (status.watching !== true || (status.step !== "armed" && status.step !== "ticking") || !status.armed_at) return null;',
     to: '  if ((status.step !== "armed" && status.step !== "ticking") || !status.armed_at) return null; // SHU86-M199',
     pattern: "SHU-86 0d: a running card with no progress",
+  },
+  {
+    name: "M200 read a cut-off body only once",
+    file: "service/card-prepare.mjs",
+    from: "        if (error instanceof TypeError) {",
+    to: "        if (false) { // SHU86-M200",
+    pattern: "SHU-86 C47:",
   },
 ];
 
