@@ -2444,6 +2444,7 @@ Design:
   - Add history(principalId: string, orgId: string): Promise<readonly OrganizationStatusEventRow[] | null> to the OrganizationStatusStore interface. The Postgres store satisfies it structurally, so login-runtime.ts does not change.
   - Add history(session, orgId) to OrganizationStatus: 401 without a person, 200 {history: organizationStatusHistoryView(rows)} when the store answers rows, and 404 {error:"not_found"} for null.
   - In handleOrganizationStatus, add HISTORY = /^\\/organization\\/status\\/([^/]+)\\/history$/ next to RECEIPT, include it in the early return false check, and handle it before the POST branch: GET only (any other method answers 404 not_found), with the same decodeURIComponent guard (400 invalid_request) and the same headers.
+  - The history route belongs to the status service, so it has that service's availability: without SAFE_WRITE_SIGNING_KEY the service is not built and history answers 503 safe_write_unavailable, exactly like the status receipts route today. Keep that (it is the existing !service check, reached before HISTORY is matched); making the read keyless needs login-runtime.ts and is a later card.
 - No migration, no change to the write, the event insert, the audit or the safe-write contract, and nothing sent.
 
 Tests (name every new test with its token first and a space after it):
@@ -2600,7 +2601,7 @@ Out of scope:
 - The staff "my companies" list (AssignedList) and any directory filter or column for the account manager (a later card), showing the manager on the workspace card or any HTML, and notifying the manager.
 - Assigning several managers, follow-up fields (OR-10, D-OR3), and grants or membership (O4).
 - The read model, approved-to-hire, status and every other write.
-- Any change to packages/contracts, packages/safe-write-contract or the login code, and the lockfile.
+- Any change to packages/contracts, packages/safe-write-contract, the login and session flow (login-application.ts, the session store and the auth middleware), and the lockfile. login-runtime.ts and index.ts are in scope only for the wiring the Design section names, and nothing else in them changes.
 - Any network call, credential, staging or production access.
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
