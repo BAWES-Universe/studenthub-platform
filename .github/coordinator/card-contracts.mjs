@@ -2318,6 +2318,290 @@ Out of scope:
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+export const SHU334_PATHS = Object.freeze([
+  "packages/organizations/src/types.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/test/organizations.test.ts",
+  "packages/organizations/test/mutations.mjs",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+]);
+
+const SHU334_ACCEPTANCE = [
+  "(1) OrganizationRepository.readCounts(request) answers {kind:\"found\", counts:{stores, subOrganizations}} only when #authorize resolves the caller to the admin audience at request.orgId; an employer, a staff caller, an operator organization, an unknown or a deleted organization answers not_found, and any throw answers unavailable. Letting any audience through makes SHU334_COUNTS_SCOPE fail;",
+  "(2) subOrganizations counts the organization's direct children that #authorize lets the same caller open, so an uncovered child and a deleted child are never counted. Counting every child makes SHU334_COUNTS_CHILDREN fail;",
+  "(3) stores is the storeCounts port's countMany([orgId]) value for that one organization (0 when the map has no entry), and null when the repository has no storeCounts port, never 0. Answering 0 without a port, or counting another set, makes SHU334_COUNTS_STORES fail;",
+  "(4) OrganizationReader gains the optional readCounts; read, listSubOrganizations, the directory and every view key are unchanged, so every existing organizations, directory and status-batch test passes unchanged;",
+  "(5) /workspace adds counts only for an admin context whose card reads as found: {kind:\"found\", counts} from one readCounts call with the same principal, org and role as the read, or {kind:\"unavailable\"}. Other roles, a not-applicable or unavailable card, no selection and a reader without readCounts leave the key absent and make no call (SHU334_NAV_COUNTS, SHU334_NAV_COUNTS_UNAVAILABLE);",
+  "(6) The workspace HTML shows the two counts under the company card, a null store count as the Unavailable marker, and the unavailable panel as a retry notice that leaves the company card in place (SHU334_NAV_COUNTS_HTML);",
+  "(7) mutations.mjs and context-navigation-mutations.mjs gain the mutants for items 1-3 and 5-6. Each fails its named test by assertion, every existing mutant (including directory-mutations.mjs, status-batch-reads-mutations.mjs, approved-to-hire-writes-mutations.mjs and company-directory-mutations.mjs anchors) still binds once and is killed. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU334_BRIEF = `Card SHU-334: an admin sees a company's store and sub-company counts on its workspace card (slice O10b of O10, after SHU-168 and SHU-332; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-168 (the directory's read-time store counts) and SHU-332 (the workspace lists sub-companies). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Why. Legacy admin sees four counters on a company: total_candidates, total_subcompanies, total_stores and total_suggestions; staff see only the candidate and suggestion counters, and employers none (docs/parity/organizations-stores-and-contacts.md:82, §3). Candidates and suggestions belong to other clusters, but stores and sub-companies are this cluster's. SHU-168 counts stores at read time for the directory only (packages/organizations/src/organizations.ts:532, through the OrganizationStoreCounts port at :164, which login-runtime.ts:274 already passes as storeCounts), and the directory's subOrganizationCount (:327-342) is likewise directory-only. An admin who opens one company in the workspace gets the card from read() (:420-456), which has neither count. This card adds a separate admin-only read of the two counts and shows it under the card. It adds no counter column and no cache: both numbers are derived on each request from the same sources the directory uses.
+
+Read first:
+- packages/organizations/src/organizations.ts: OrganizationStoreCounts (:164), the constructor (:384-402), #authorize (:405-419, which also hides deleted organizations through the deletions port), read (:420-456) and listSubOrganizations (:458-492), whose per-child #authorize loop is the scope rule to copy.
+- packages/organizations/src/types.ts: OrganizationReadResult, SubOrganizationListResult and OrganizationReader (:103-116).
+- packages/organizations/test/organizations.test.ts: setup (:27-56, an InMemoryAuthzStore with staff and admin subtree grants on root) and the SHU159_TEST_MODULE import (:14-17).
+- packages/organizations/test/mutations.mjs, the script your organization mutants join. Anchors in dist/organizations.js that other scripts own and you must not duplicate: directory-mutations.mjs (among them child.parentOrgId === org.id && covered.has(child.id), storeTotals ? storeTotals.get(org.id) ?? 0 : null and this.#storeCounts.countMany(shown.map((org) => org.id))), status-batch-reads-mutations.mjs (batchRecords.get(org.id) ?? { kind: "absent" } and the two const batchRecords = lines), approved-to-hire-writes-mutations.mjs (the approvedToHire lines) and mutations.mjs itself (among them if (parentOrgId !== null && children.length > 0) and the #authorize resolution check).
+- apps/gateway/src/context-navigation.ts:85-115 (the read at :98 and the SHU-332 panel at :102-111) and NavigationResult (:23-30).
+- apps/gateway/src/web-ui.ts: renderOrganization (:129-145), renderSubOrganizations (:159-174) and the renderWorkspace template at :234.
+- apps/gateway/test/context-navigation.test.ts: shu332Rig (:361-390) and the three SHU332 tests (:392-480); apps/gateway/test/context-navigation-mutations.mjs, its mutants array and its two web-ui.js loops.
+
+Design:
+- types.ts:
+  - export interface OrganizationCounts { readonly stores: number | null; readonly subOrganizations: number }
+  - export type OrganizationCountsResult = { readonly kind: "found"; readonly counts: OrganizationCounts } | { readonly kind: "not_found" } | { readonly kind: "unavailable" }
+  - Add readCounts?(request: OrganizationReadRequest): Promise<OrganizationCountsResult> to OrganizationReader. It is optional, so the test readers that implement OrganizationReader (context-navigation.test.ts:395, :445) still compile.
+- organizations.ts, a new method on OrganizationRepository after listSubOrganizations:
+  - async readCounts(request) { try { const audience = await this.#authorize(request, request.orgId); if (audience !== "admin") return { kind: "not_found" }; ... } catch { return { kind: "unavailable" }; } }
+  - const organizations = await this.#store.listOrganizations(); then let subOrganizations = 0; and for each child of organizations.filter((org) => org.parentOrgId === request.orgId), if (await this.#authorize(request, child.id) !== undefined) subOrganizations++;
+  - const totals = this.#storeCounts ? await this.#storeCounts.countMany([request.orgId]) : undefined;
+  - return { kind: "found", counts: Object.freeze({ stores: totals ? totals.get(request.orgId) ?? 0 : null, subOrganizations }) };
+  - Keep the three expressions audience !== "admin", this.#authorize(request, child.id) !== undefined and totals ? totals.get(request.orgId) ?? 0 : null exactly as written: they are the mutation anchors. Do not name the variable storeTotals, and do not touch read, listSubOrganizations, listOrganizations, directoryEntry or any projection.
+- context-navigation.ts:
+  - Export type OrganizationCountsPanel = { readonly kind: "found"; readonly counts: OrganizationCounts } | { readonly kind: "unavailable" }, importing OrganizationCounts from @studenthub/organizations, and add readonly counts?: OrganizationCountsPanel to the 200 body.
+  - After the organization value is built and before the SHU-332 panel, only when read.kind === "found" && active.role === "admin" && organizationReader.readCounts, call const tally = await organizationReader.readCounts({ principalId: session.personId, orgId: active.orgId, role: active.role }); and map it: found gives {kind:"found", counts: tally.counts}, unavailable gives {kind:"unavailable"}, and not_found gives no key.
+  - Return { contexts, active, organization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}) }. A throw falls into the existing catch (503).
+  - Keep the signature line and every existing mutation anchor unchanged; this card adds no parameter.
+- web-ui.ts: add function renderOrganizationCounts(panel: OrganizationCountsPanel | undefined), called right after \${renderOrganization(result.body.organization)} and before \${renderSubOrganizations(...)} in renderWorkspace's template.
+  - It renders nothing when panel is undefined. For unavailable, render <section class="notice org-notice" role="status"><strong>Company counts couldn’t be loaded.</strong><p>Please try again in a moment.</p></section>.
+  - For found, write const stores = panel.counts.stores === null ? '<span class="missing" data-state="unavailable">Unavailable</span>' : String(panel.counts.stores); and render <section aria-labelledby="counts-title"><h2 id="counts-title">At a glance</h2><dl class="profile-fields"><div><dt>Stores</dt><dd>\${stores}</dd></div><div><dt>Sub-companies</dt><dd>\${panel.counts.subOrganizations}</dd></div></dl></section>.
+  - Add no CSS and no script, and change no other line.
+- No migration, no runtime change (login-runtime.ts already passes storeCounts and the deletions port to the repository), no counter column and no cache.
+
+Tests (name every new test with its token first and a space after it):
+- organizations.test.ts, through implementation so the mutants apply. Build each repository with new OrganizationRepository({ store, source, storeCounts, deletions }) over setup's store, where storeCounts is a fake that records the ids it was asked for:
+  - "SHU334_COUNTS_SCOPE ...": admin (subtree on root) reading org-a gets found. Staff reading org-a, owner-a and recruiter-a1 reading their organizations, admin reading root, an unknown organization, and org-a after the deletions port marks it deleted all answer not_found. A storeCounts that throws answers unavailable.
+  - "SHU334_COUNTS_CHILDREN ...": admin reading org-a gets subOrganizations 2; with the deletions port marking org-a2 deleted it gets 1; an admin with only a self grant on org-a gets 0; a sub-company (org-a1) gets 0.
+  - "SHU334_COUNTS_STORES ...": the fake answers 3 for org-a, so stores is 3 and countMany was called with exactly ["org-a"]; a fake whose map has no entry gives 0; a repository with no storeCounts port gives stores null.
+- mutations.mjs: add four entries in its form:
+  - "let any audience read counts", SHU334_COUNTS_SCOPE: audience !== "admin" becomes audience === undefined.
+  - "count every child", SHU334_COUNTS_CHILDREN: this.#authorize(request, child.id) !== undefined becomes true.
+  - "store count without a port", SHU334_COUNTS_STORES: totals ? totals.get(request.orgId) ?? 0 : null becomes totals ? totals.get(request.orgId) ?? 0 : 0.
+  - "count the wrong set", SHU334_COUNTS_STORES: countMany([request.orgId]) becomes countMany([]).
+
+  The exact anchors depend on how tsc prints them: take them from dist/organizations.js after npm run build and assert each binds once. Change nothing else in the script; the count it prints follows from the list.
+- context-navigation.test.ts, on a rig like shu332Rig where person-1 also holds an admin subtree grant on root and the repository has a storeCounts fake answering 4 for org-a:
+  - "SHU334_NAV_COUNTS ...": selecting org-a as admin gives counts {kind:"found", counts:{stores:4, subOrganizations:2}}; selecting org-a as org-owner, and selecting no context, leave the key absent. Use a wrapper reader that counts readCounts calls: exactly one for the admin card, none otherwise. A reader without readCounts leaves the key absent.
+  - "SHU334_NAV_COUNTS_UNAVAILABLE ...": a reader whose read delegates but whose readCounts answers unavailable gives counts {kind:"unavailable"} while organization.kind stays found; the HTML shows "Company counts couldn’t be loaded" and the company card.
+  - "SHU334_NAV_COUNTS_HTML ...": the found panel renders "At a glance", "Stores" with 4 and "Sub-companies" with 2; a panel with stores null renders the Unavailable marker inside the counts section and never "null".
+- context-navigation-mutations.mjs:
+  - Add two entries to the mutants array in its form: replace the readCounts call's result with { kind: "not_found" } (pattern SHU334_NAV_COUNTS), and map unavailable to { kind: "found", counts: { stores: 0, subOrganizations: 0 } } (pattern SHU334_NAV_COUNTS_UNAVAILABLE).
+  - Add a third, for web-ui.js, as one more small loop in the form of the sub-company loop: panel.counts.stores === null ? becomes false ?, with the assertion /not ok .*SHU334_NAV_COUNTS_HTML /.
+  - Take every anchor from the built files after npm run build, assert each binds once, and check by hand that each fails its test.
+
+Out of scope: candidate and suggestion counters (other clusters), counts for staff or employers, any change to read(), listSubOrganizations or the directory and its page, any stored counter, cache or migration, the stores package and its Postgres store, login-runtime.ts and index.ts, package.json (every touched test and script already runs from test and test:web), CSS, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU335_PATHS = Object.freeze([
+  "packages/organizations/src/status-writes.ts",
+  "packages/organizations/test/status-events.test.ts",
+  "packages/organizations/test/status-events-mutations.mjs",
+  "packages/db/src/postgres-organization-status-store.ts",
+  "packages/db/test/postgres-organization-status.test.ts",
+  "apps/gateway/src/organization-status.ts",
+  "apps/gateway/test/organization-status-http.test.ts",
+]);
+
+const SHU335_ACCEPTANCE = [
+  "(1) status-writes.ts exports ORGANIZATION_STATUS_HISTORY_LIMIT = 50 and organizationStatusHistoryView(rows), which maps each row to exactly {from, to, occurredAt} (occurredAt an ISO string), orders newest first and keeps at most 50. Leaking a row field makes SHU335_HISTORY_VIEW fail, reversing the order makes SHU335_HISTORY_VIEW fail, and dropping the cap makes SHU335_HISTORY_LIMIT fail;",
+  "(2) PostgresOrganizationStatusStore.history(principalId, orgId) answers null unless the existing #allowed admits the caller (staff or admin covering a live organization, by the status write's own decision), and otherwise the organization's events from organization_status_events, newest first, at most 50, in one query. It never returns receipt_ref, delivered_at, ids or anything from the audit table (SHU335_PG_HISTORY, SHU335_PG_REFUSED);",
+  "(3) GET /organization/status/:orgId/history answers 200 {history:[...]} or 404 not_found for a refused caller, an unknown or a deleted organization, 401 without a session, 400 for a malformed id, and 404 for any other method; the preview, confirm and receipt routes are unchanged (SHU335_HTTP);",
+  "(4) status-events-mutations.mjs gains the three mutants for item 1. Each fails its named test, the three SHU-313 mutants and every status-writes-mutations.mjs and organization-deletion-guards-mutations.mjs anchor still bind once and are killed, and the final line prints 6/6;",
+  "(5) Every existing status, status-event and deletion-guard test passes unchanged. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU335_BRIEF = `Card SHU-335: staff and admin read a company's status history (slice O5g of O5, row OR-08, after SHU-305 and SHU-313; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-305 (the staff and admin status write) and SHU-313 (migration 0191, organization_status_events, one durable event per committed change). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. OR-08 "Change status / approve to hire" is REQUIRED "with the notification" (docs/parity/organizations-stores-and-contacts.md:183). Legacy ChangeStatus only logs a Yii::info line (:109), and leaving under review sends an account-live email to the company (:110, :161). SHU-313 writes exactly one organization_status_events row per committed change, in the same transaction as the change (packages/db/src/postgres-organization-status-store.ts:39). Its delivered_at column is waiting for a later delivery card, and mail delivery belongs to SHU-189/C4 (docs/parity/platform-ops-and-integrations.md:137). Nothing reads those events today, so staff cannot see when a company went live or who should be told. This card adds the read: staff and admin list a company's status changes, newest first. It sends nothing.
+
+Read first:
+- packages/organizations/src/status-writes.ts, the whole file: organizationStatusEvent (:10-14) and organizationStatusDecision (:17-22).
+- packages/organizations/test/status-events.test.ts (the SHU313_TEST_MODULE import at :4-6) and packages/organizations/test/status-events-mutations.mjs. Anchors in dist/status-writes.js that you must not duplicate: from status-events-mutations.mjs, if (from === to), return { from, to }; and value === "none" ? null : value; from status-writes-mutations.mjs, row.role === "staff" || row.role === "admin", return current === expected; and the return { preview: implementation.preview, confirm: implementation.confirm }; line.
+- packages/db/migrations/0191_organization_status_events.sql (the columns) and packages/db/src/postgres-organization-status-store.ts: read (:22), readReceipt (:29) and #allowed (:32). #allowed already refuses a deleted organization through organizationLive and applies the status decision. packages/db/test/organization-deletion-guards-mutations.mjs anchors if (!await organizationLive(c, org)) and if (!await organizationLive(client, org, true)) in this file, so call #allowed and do not write either string again.
+- packages/db/test/postgres-organization-status.test.ts, especially "SHU-313 postgres status events are exactly-once ..." (:10), which shows how to drive real writes.
+- apps/gateway/src/organization-status.ts, the whole file, and apps/gateway/test/organization-status-http.test.ts (its in-memory store at :11 and its fake request/response).
+
+Design:
+- status-writes.ts:
+  - export interface OrganizationStatusEventRow { readonly from_status: string | null; readonly to_status: string | null; readonly occurred_at: Date | string }
+  - export interface OrganizationStatusHistoryEntry { readonly from: OrganizationStatus | null; readonly to: OrganizationStatus | null; readonly occurredAt: string }
+  - export const ORGANIZATION_STATUS_HISTORY_LIMIT = 50;
+  - export function organizationStatusHistoryView(rows: readonly OrganizationStatusEventRow[]): OrganizationStatusHistoryEntry[]: map each row with ({ from: row.from_status as OrganizationStatus | null, to: row.to_status as OrganizationStatus | null, occurredAt: new Date(row.occurred_at).toISOString() }), then .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)) (a stable sort, so equal times keep the store's order), then .slice(0, ORGANIZATION_STATUS_HISTORY_LIMIT).
+  - Keep the object literal, the comparator and the slice call written as above: they are the mutation anchors.
+- postgres-organization-status-store.ts: add async history(principalId: string, orgId: string): Promise<OrganizationStatusEventRow-shaped rows | null>. If !await this.#allowed(this.#pool, principalId, orgId) return null; otherwise run SELECT from_status,to_status,occurred_at FROM organization_status_events WHERE org_id=$1 ORDER BY occurred_at DESC, id DESC LIMIT 50 and return its rows. Declare the row type locally; packages/db must not import packages/organizations. Nothing else in the file changes.
+- organization-status.ts (gateway):
+  - Add history(principalId: string, orgId: string): Promise<readonly OrganizationStatusEventRow[] | null> to the OrganizationStatusStore interface. The Postgres store satisfies it structurally, so login-runtime.ts does not change.
+  - Add history(session, orgId) to OrganizationStatus: 401 without a person, 200 {history: organizationStatusHistoryView(rows)} when the store answers rows, and 404 {error:"not_found"} for null.
+  - In handleOrganizationStatus, add HISTORY = /^\\/organization\\/status\\/([^/]+)\\/history$/ next to RECEIPT, include it in the early return false check, and handle it before the POST branch: GET only (any other method answers 404 not_found), with the same decodeURIComponent guard (400 invalid_request) and the same headers.
+- No migration, no change to the write, the event insert, the audit or the safe-write contract, and nothing sent.
+
+Tests (name every new test with its token first and a space after it):
+- status-events.test.ts, through subject so the mutants apply:
+  - "SHU335_HISTORY_VIEW ...": three rows given oldest first (under_review to active, active to inactive, inactive to null) come back newest first, each with keys exactly ["from","occurredAt","to"]. A Date and an ISO string both give the same ISO occurredAt, and an extra row field such as receipt_ref never appears.
+  - "SHU335_HISTORY_LIMIT ...": 60 rows give exactly 50, the newest 50.
+- status-events-mutations.mjs: add three entries in its form:
+  - ["leak row fields", "SHU335_HISTORY_VIEW", "({ from: row.from_status", "({ ...row, from: row.from_status"]
+  - ["oldest first", "SHU335_HISTORY_VIEW", "b.occurredAt.localeCompare(a.occurredAt)", "a.occurredAt.localeCompare(b.occurredAt)"]
+  - ["no cap", "SHU335_HISTORY_LIMIT", ".slice(0, ORGANIZATION_STATUS_HISTORY_LIMIT)", ""]
+
+  The exact anchors depend on how tsc prints them: take them from dist/status-writes.js after npm run build and assert each binds once. Change nothing else in the script except the line it prints, which becomes "6/6 SHU-313 and SHU-335 mutations killed".
+- postgres-organization-status.test.ts, appended, on its own fresh organization under ROOT:
+  - "SHU335_PG_HISTORY ...": a staff person commits under_review, then active, then clears with "none" through the real writer. history(staff, org) answers three rows newest first with from_status/to_status (null, under_review), (under_review, active), (active, null) in reverse order, and the row keys are exactly from_status, to_status and occurred_at. An admin with a grant on ROOT and scope subtree reads the same rows.
+  - "SHU335_PG_REFUSED ...": an org-owner of the organization, a staff person whose grant is on another organization, and an unknown principal each get null. After inserting an organization_deletions row for the organization, the staff person gets null too.
+- organization-status-http.test.ts: add history to the in-memory store (it answers rows for ORG and null otherwise, and records its calls). "SHU335_HTTP ...":
+  - GET /organization/status/org-a/history gives 200 with newest-first entries and the nosniff and no-store headers.
+  - An unknown organization gives 404, a missing session gives 401 and makes no store call, POST to the history path gives 404, and a malformed id gives 400.
+
+  The existing four tests stay unchanged.
+
+Out of scope: sending or queuing any notification, delivered_at and its updates, the account-live email and its recipients (SHU-189/C4), who made each change (audit actor refs stay out of the response), any HTML page, the write, its decision and its event insert, the approved-to-hire history, migrations, login-runtime.ts, index.ts, package.json (every touched test and script already runs from test or test:db), the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU336_PATHS = Object.freeze([
+  "packages/organizations/src/account-manager-writes.ts",
+  "packages/organizations/src/index.ts",
+  "packages/organizations/test/account-manager-writes.test.ts",
+  "packages/organizations/test/account-manager-writes-mutations.mjs",
+  "packages/db/migrations/0204_organization_account_managers.sql",
+  "packages/db/src/postgres-organization-account-manager-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-account-manager.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-account-manager.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+  "package.json",
+]);
+
+const SHU336_ACCEPTANCE = [
+  "(1) A new module packages/organizations/src/account-manager-writes.ts exports organizationAccountManagerDecision(rows, orgId, ancestors, operators), true only for an admin grant on the organization or a subtree admin grant on an ancestor, never for an operator organization; staff, org-owner and every other role are refused (SHU336_DECISION);",
+  "(2) It exports organizationAccountManagerReadDecision with the same shape for staff or admin, used both for who may read the manager and for who may be assigned (SHU336_ELIGIBLE), organizationAccountManagerValue (field account_manager, value \"none\" or a principal id of 1..128 characters from [A-Za-z0-9._:-], SHU336_VALUE), organizationAccountManagerStateDecision (current === expected, SHU336_STALE), the record and principal refs, and buildOrganizationAccountManagerWrite, which refuses a malformed value or an assignee its required eligible port rejects with invalid_value at both preview and confirm before the safe write runs (SHU336_BUILDER). The builder passes runSafeWriteConformance;",
+  "(3) Migration 0204 creates organization_account_managers (org_id primary key referencing organizations on delete cascade, principal_id not null referencing principals on delete cascade, updated_at) and admits organization.account_manager.safe_write to the operation check, the cardinality > 0 branch, auth_audit_safe_write_halves and the safe-write branch of authorization_audit_summary_valid with fields [\"account_manager\"], plus its token and receipt unique indexes, starting from the latest definitions (0203 for the operation check, cardinality and summary function, 0201 for the halves) and accepting every existing row. \"0204_organization_account_managers\" follows \"0203_organization_creation\" in both lists in postgres-authz-store.test.ts;",
+  "(4) PostgresOrganizationAccountManagerStore commits under pg_advisory_xact_lock(hashtextextended(org,336)) with organizationLive(client, org, true), the caller's grants FOR SHARE and the writer decision, the token check, the state compare, and then the assignee's grants FOR SHARE: an assignee who no longer qualifies answers state_changed with nothing written. It upserts the row (\"none\" deletes it) and writes one audit row with target_org_refs [organizationAuditRef(org)] and fields [\"account_manager\"], never a raw id (SHU336_PG_ASSIGN, SHU336_PG_REFUSED, SHU336_PG_STALE, SHU336_PG_DELETED);",
+  "(5) POST /organization/account-manager/preview and /confirm and GET /organization/account-manager/:orgId/receipts/:ref follow the approved-to-hire route exactly, and GET /organization/account-manager/:orgId answers 200 {accountManager: null | {principalId, displayName}} to staff and admin covering a live organization, 404 not_found otherwise and 401 without a session (SHU336_HTTP);",
+  "(6) account-manager-writes-mutations.mjs applies the mutants for items 1-2, each fails its named test by assertion, and it passes unmutated; the Postgres mutations for item 4 are checked by hand and reported. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU336_BRIEF = `Card SHU-336: an admin assigns a company's account manager, and staff and admin read who it is (slice O5f of O5, row OR-09, after SHU-315, SHU-326/327 and SHU-333; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. It includes SHU-315 (migration 0193, the approved-to-hire safe write this card copies), SHU-326/327 (migration 0201, organization_deletions, organization-liveness.ts) and SHU-333 (migration 0203, the latest operation check, cardinality and summary function). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Every legacy company has an owning account manager, company.staff_id (docs/parity/organizations-stores-and-contacts.md:31), set only by admin UpdateStaff (admin/.../CompanyController.php:655). Row OR-09 "Assign account manager" is REQUIRED in slice O5 (:184), and §8 lists it among the untested legacy behaviour (:227). Staff's AssignedList filters companies by it (:92), which a later card builds on this one. Nothing on the platform records it: there is no account-manager column, table, store or route. This card adds it as a single-field admin safe write on an existing company, preview → confirm → receipt, the same shape as approved-to-hire (SHU-315). In the platform, staff are principals with staff or admin grants, so the assignee is a principal, and only one who can actually open the company may be assigned.
+
+Read first:
+- packages/organizations/src/approved-to-hire-writes.ts, the whole file: the decision, value check, state decision, refs and the builder wrapper that refuses invalid_value before createSafeWrite runs. packages/organizations/src/commercial-terms-writes.ts:9 is the admin-only decision to copy.
+- packages/organizations/test/approved-to-hire-writes.test.ts (fixture, conformance at AC-01) and approved-to-hire-writes-mutations.mjs, the test and mutation-script forms to copy (env SHU315_TEST_MODULE, --test-name-pattern with a "^" prefix and a trailing space).
+- packages/db/src/postgres-organization-approved-to-hire-store.ts, the whole file: forPrincipal, readReceipt, #allowed, #value and #commit (advisory lock, organizationLive(client, org, true), grants FOR SHARE, token check, state compare, upsert, audit).
+- packages/db/migrations/0193_organization_approved_to_hire.sql (table plus the two unique indexes), 0201_organization_deletion.sql:12-16 (the latest auth_audit_safe_write_halves) and 0203_organization_creation.sql (the latest operation check, cardinality check and authorization_audit_summary_valid; start 0204 from their text).
+- packages/db/test/postgres-organization-approved-to-hire.test.ts, the Postgres test form, and postgres-authz-store.test.ts:1584 and :1637 (the two migration lists).
+- apps/gateway/src/organization-approved-to-hire.ts, the whole file, and apps/gateway/test/organization-approved-to-hire-http.test.ts.
+- apps/gateway/src/login-runtime.ts:231 (how the approved-to-hire store is built), :290 (its service, behind safeWriteKey) and :310-311 (closers); apps/gateway/src/index.ts:191 and :197 (route mounts). packages/observability/test/mutations.mjs anchors lines of index.js, so touch no other line there.
+- packages/organizations/src/index.ts and packages/db/src/index.ts:40 (the export form).
+
+Design:
+- account-manager-writes.ts (new), exported from packages/organizations/src/index.ts:
+  - ORGANIZATION_ACCOUNT_MANAGER_FIELDS = ["account_manager"] and ORGANIZATION_ACCOUNT_MANAGER_POLICY with maxValueLength 128.
+  - export interface OrganizationAccountManagerGrantRow { readonly org_id: string; readonly role: string; readonly scope: string }
+  - A private covers(row, orgId, ancestors) helper: row.org_id === orgId || (row.scope === "subtree" && ancestors.includes(row.org_id)).
+  - organizationAccountManagerDecision(rows, orgId, ancestors, operators = DEFAULT_OPERATOR_ORG_IDS) returns !operators.includes(orgId) && rows.some((row) => row.role === "admin" && covers(row, orgId, ancestors)).
+  - organizationAccountManagerReadDecision(rows, orgId, ancestors, operators = DEFAULT_OPERATOR_ORG_IDS) returns !operators.includes(orgId) && rows.some((row) => (row.role === "staff" || row.role === "admin") && covers(row, orgId, ancestors)). It decides both who may read the manager and whom an admin may assign.
+  - organizationAccountManagerValue(field, value) returns field === "account_manager" && (value === "none" || /^[A-Za-z0-9._:-]{1,128}$/.test(value)).
+  - organizationAccountManagerStateDecision(current, expected) returns current === expected.
+  - organizationAccountManagerRecordRef and organizationAccountManagerPrincipalRef over the domains organization-account-manager-record and organization-account-manager-principal.
+  - buildOrganizationAccountManagerWrite(input) takes { store, secret, eligible: (principalId: string) => Promise<boolean>, policy?, clock?, tokenLifetimeMs?, check? }. As approved-to-hire's builder, it refuses a value check failure with invalid_value. Then, in both preview and confirm, if (value !== "none" && !(await input.eligible(value))) it answers { ok: false, reason: "invalid_value" }; only then does it call the safe write.
+  - Write the role tests and that if statement exactly as above: they are the mutation anchors.
+- 0204_organization_account_managers.sql (new):
+  - CREATE TABLE organization_account_managers (org_id text PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE, principal_id text NOT NULL REFERENCES principals(id) ON DELETE CASCADE, updated_at timestamptz NOT NULL DEFAULT clock_timestamp()).
+  - Copy 0203's ALTER TABLE: add 'organization.account_manager.safe_write' to the operation check and to the cardinality(target_org_refs)>0 branch, and copy 0201's auth_audit_safe_write_halves with the new operation added to its NOT IN list.
+  - CREATE OR REPLACE authorization_audit_summary_valid from 0203's text with the operation added to the safe-write IN list and one more fields branch: OR (audit_operation='organization.account_manager.safe_write' AND summary->'fields'='["account_manager"]'::jsonb).
+  - Add the two unique indexes in 0193's form, ..._organization_account_manager_token on (after_summary->>'tokenRef') and ..._organization_account_manager_receipt on request_ref, each WHERE operation='organization.account_manager.safe_write'.
+  - Leave auth_audit_safe_write_self alone. Change no other table, column or index.
+- packages/db/src/postgres-organization-account-manager-store.ts (new), exported from packages/db/src/index.ts with ORGANIZATION_ACCOUNT_MANAGER_OPERATION = "organization.account_manager.safe_write". Copy the approved-to-hire store. Its constructor takes { connectionString?, pool?, decision, readDecision, stateDecision, recordRef, principalRef }; packages/db must not import packages/organizations.
+  - forPrincipal and readReceipt as in approved-to-hire, with the field account_manager. #value reads principal_id or null.
+  - async eligible(orgId, principalId): true when organizationLive(this.#pool, orgId) holds and readDecision(that principal's grants, orgId, ancestors) holds. An unknown principal has no grants, so it is false.
+  - async manager(principalId, orgId) answers null when the caller fails readDecision on a live organization (the same #grants/#ancestors reads). Otherwise it answers { manager: null } or { manager: { principalId, displayName } }, from one join of organization_account_managers to principals (display_name, or null).
+  - #commit runs in one transaction:
+    1. SELECT pg_advisory_xact_lock(hashtextextended($1,336)) on org (key 336 is unused; the keys in use are 163, 165, 300, 305, 314-318, 325, 326 and 5959).
+    2. if (!await organizationLive(client, org, true)) refuses not_own_record.
+    3. Read the caller's grants FOR SHARE and the ancestors, then apply decision (not_own_record).
+    4. Run the token check (token_already_used), then the state compare (state_changed).
+    5. For a value other than "none", read the assignee's grants FOR SHARE. If readDecision refuses, return state_changed: the assignee changed since preview.
+    6. Upsert the row, or DELETE it for "none".
+    7. Write the audit row exactly as approved-to-hire does: {valuePresent} before, the receipt shape and tokenRef after, fields [input.field], target_org_refs [organizationAuditRef(org)].
+
+    Every refusal rolls back, and 23505 answers token_already_used.
+- apps/gateway/src/organization-account-manager.ts (new): copy organization-approved-to-hire.ts.
+  - Paths are /organization/account-manager/preview, /confirm and /:orgId/receipts/:ref, plus READ = /^\\/organization\\/account-manager\\/([^/]+)$/ for GET. The exact preview and confirm paths are POST only and never reach READ.
+  - The body is exactly {orgId, field:"account_manager", value}, with value "none" or a principal id matching the value check.
+  - The store interface is forPrincipal, readReceipt, eligible(orgId, principalId) and manager(principalId, orgId). The writer passes eligible: (value) => ports.store.eligible(r.orgId, value).
+  - read(session, orgId) answers 401, 404 not_found for null, or 200 {accountManager}.
+  - Refusal mapping, headers, origin, content-type, the 4096-byte body and 503 safe_write_unavailable are approved-to-hire's.
+- index.ts: one import and one line, if(await handleOrganizationAccountManager(...))return;, right after the handleOrganizationCreation line (:197).
+- login-runtime.ts: build the store next to the approved-to-hire store (:231) with the four functions and the two refs, add organizationAccountManager: createOrganizationAccountManager({sessions, store, secret}) behind safeWriteKey beside organizationApprovedToHire (:290), and add its close() to the closers (:310-311). Change nothing else.
+
+Tests (name every new test with its token first and a space after it):
+- packages/organizations/test/account-manager-writes.test.ts (import through process.env.SHU336_TEST_MODULE ?? "../src/account-manager-writes.js", as approved-to-hire-writes.test.ts does), with a fixture store like approved-to-hire's and an eligible fake that records its calls:
+  - "SHU336_DECISION ...": admin self on the organization and subtree admin on an ancestor are allowed. Staff (self or subtree), org-owner, recruiter, finance and candidate are refused, and so is an admin grant when the organization is the operator root.
+  - "SHU336_ELIGIBLE ...": the read decision allows staff and admin, self or covering subtree, and refuses org-owner, recruiter, finance, candidate, an uncovered staff grant and the operator root.
+  - "SHU336_VALUE ...": "none", a UUID and "staff.one:2" pass. "", 129 characters, "a b", "x/y", a wrong field and a non-string fail. A malformed value previews as invalid_value without calling eligible.
+  - "SHU336_BUILDER ...": an assignee the eligible fake rejects previews and confirms as invalid_value and never commits; "none" never calls eligible; an eligible assignee commits. runSafeWriteConformance passes with check: () => true and eligible: async () => true.
+  - "SHU336_STALE ...": a confirm after the stored value changes is state_changed.
+- packages/organizations/test/account-manager-writes-mutations.mjs (new; copy approved-to-hire-writes-mutations.mjs, env SHU336_TEST_MODULE, target ../dist/account-manager-writes.js). Mutants:
+  - row.role === "admin" && covers( becomes true && covers(, killed by SHU336_DECISION.
+  - !operators.includes(orgId) && rows.some((row) => row.role === "admin" becomes rows.some((row) => row.role === "admin", killed by SHU336_DECISION (the operator-root case). The read decision's line differs after rows.some, so this anchor binds once.
+  - (row.role === "staff" || row.role === "admin") && covers( becomes true && covers(, killed by SHU336_ELIGIBLE.
+  - the value check's return becomes return true;, killed by SHU336_VALUE.
+  - value !== "none" && !(await input.eligible(value)) becomes false, killed by SHU336_BUILDER. If it appears once for preview and once for confirm, mutate both in one mutant and check both bind.
+  - return current === expected; becomes return true;, killed by SHU336_STALE.
+
+  The exact anchors depend on how tsc prints them: take each from dist/account-manager-writes.js after npm run build, assert it binds once (or as stated), and print 6/6 SHU336 mutations killed.
+- packages/db/test/postgres-organization-account-manager.test.ts (new; fixtures as in postgres-organization-approved-to-hire.test.ts, a ROOT operator and a company ORG under it):
+  - "SHU336_PG_ASSIGN ...":
+    - An admin (subtree on ROOT) previews and confirms a staff principal who holds a staff grant on ORG. manager(admin, ORG) gives that principalId and displayName, and a staff reader gets the same answer.
+    - The single audit row has operation ORGANIZATION_ACCOUNT_MANAGER_OPERATION, target_org_refs [organizationAuditRef(ORG)] and fields ["account_manager"], and its summaries contain neither principal id.
+    - Clearing with "none" gives { manager: null } and a second audit row.
+  - "SHU336_PG_REFUSED ...":
+    - A staff writer and an org-owner writer preview as not_own_record.
+    - An org-owner reader gets null from manager.
+    - eligible is false for an org-owner of ORG, a staff person whose grant is on another company, and an unknown principal.
+    - An assignee whose staff grant is revoked between preview and confirm makes confirm answer invalid_value through the builder's eligible check. Then build a second writer with eligible: async () => true, so only the store's own re-check stands: the same revocation makes confirm answer state_changed. Both leave no row and no audit row.
+  - "SHU336_PG_STALE ...": a stale confirm is state_changed and a second confirm of one token is token_already_used, each leaving the row and the audit count unchanged.
+  - "SHU336_PG_DELETED ...": on its own fresh company, the admin previews an assignment, then an organization_deletions row is inserted for that company. The confirm answers not_own_record with no row and no audit row, a new preview is not_own_record, and manager answers null.
+  - In your final message, report by hand that dropping the assignee re-check (step 5 of #commit) makes the second revocation case in SHU336_PG_REFUSED fail.
+- postgres-authz-store.test.ts: only add "0204_organization_account_managers" after "0203_organization_creation" at :1584 and :1637.
+- apps/gateway/test/organization-account-manager-http.test.ts: "SHU336_HTTP ...", with an in-memory store fake that records calls, through the real handler.
+  - It covers preview and confirm, a receipt, an ineligible assignee (400 invalid_value), a refused writer (404) and a stale confirm (409).
+  - It covers GET of the manager (200 with null and with a manager, 404 for a refused reader), unknown body keys (400), a bad origin (403) and a missing session (401).
+  - It asserts that the origin, session and method refusals reach no store call.
+- package.json: leave every script's text as it is, with these additions:
+  - Append dist/packages/organizations/test/account-manager-writes.test.js and dist/apps/gateway/test/organization-account-manager-http.test.js at the END of the node --test list in test.
+  - Append dist/packages/db/test/postgres-organization-account-manager.test.js at the END of the test:db list.
+  - Add "test:organization-account-manager:mutations": "node packages/organizations/test/account-manager-writes-mutations.mjs", chained into test as  && npm run test:organization-account-manager:mutations right after npm run test:organization-creation:mutations.
+
+  Never change dependencies.
+
+Out of scope:
+- The staff "my companies" list (AssignedList) and any directory filter or column for the account manager (a later card), showing the manager on the workspace card or any HTML, and notifying the manager.
+- Assigning several managers, follow-up fields (OR-10, D-OR3), and grants or membership (O4).
+- The read model, approved-to-hire, status and every other write.
+- Any change to packages/contracts, packages/safe-write-contract or the login code, and the lockfile.
+- Any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -2523,6 +2807,27 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU333_PATHS,
     acceptance: SHU333_ACCEPTANCE,
     brief: SHU333_BRIEF,
+  }),
+  "SHU-334": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU334_PATHS,
+    revision_paths: SHU334_PATHS,
+    acceptance: SHU334_ACCEPTANCE,
+    brief: SHU334_BRIEF,
+  }),
+  "SHU-335": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU335_PATHS,
+    revision_paths: SHU335_PATHS,
+    acceptance: SHU335_ACCEPTANCE,
+    brief: SHU335_BRIEF,
+  }),
+  "SHU-336": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU336_PATHS,
+    revision_paths: SHU336_PATHS,
+    acceptance: SHU336_ACCEPTANCE,
+    brief: SHU336_BRIEF,
   }),
 });
 

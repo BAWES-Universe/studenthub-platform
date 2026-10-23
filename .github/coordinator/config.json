@@ -34,9 +34,9 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-331",
-      "SHU-332",
-      "SHU-333"
+      "SHU-334",
+      "SHU-335",
+      "SHU-336"
     ]
   },
   "adapter_pause_map": {},
@@ -1026,6 +1026,97 @@
         "apps/gateway/src/index.ts",
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/organization-creation-http.test.ts",
+        "package.json"
+      ]
+    },
+    {
+      "id": "SHU-334",
+      "authorization_ref": "SHU-334",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the eighth committed card queue (SHU-312), a whole-tree card: slice O10b (an admin sees a company's store and sub-company counts on its workspace card); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/types.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/test/organizations.test.ts",
+        "packages/organizations/test/mutations.mjs",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/types.ts",
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/test/organizations.test.ts",
+        "packages/organizations/test/mutations.mjs",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-335",
+      "authorization_ref": "SHU-335",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the eighth committed card queue (SHU-312), a whole-tree card: slice O5g (staff and admin read a company's status history); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/status-writes.ts",
+        "packages/organizations/test/status-events.test.ts",
+        "packages/organizations/test/status-events-mutations.mjs",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "apps/gateway/src/organization-status.ts",
+        "apps/gateway/test/organization-status-http.test.ts"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/status-writes.ts",
+        "packages/organizations/test/status-events.test.ts",
+        "packages/organizations/test/status-events-mutations.mjs",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "apps/gateway/src/organization-status.ts",
+        "apps/gateway/test/organization-status-http.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-336",
+      "authorization_ref": "SHU-336",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "third card of the eighth committed card queue (SHU-312), a whole-tree card: slice O5f (an admin assigns a company's account manager through safe write, migration 0204); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/account-manager-writes.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/account-manager-writes.test.ts",
+        "packages/organizations/test/account-manager-writes-mutations.mjs",
+        "packages/db/migrations/0204_organization_account_managers.sql",
+        "packages/db/src/postgres-organization-account-manager-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-account-manager.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-account-manager.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-account-manager-http.test.ts",
+        "package.json"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/account-manager-writes.ts",
+        "packages/organizations/src/index.ts",
+        "packages/organizations/test/account-manager-writes.test.ts",
+        "packages/organizations/test/account-manager-writes-mutations.mjs",
+        "packages/db/migrations/0204_organization_account_managers.sql",
+        "packages/db/src/postgres-organization-account-manager-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-organization-account-manager.test.ts",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "apps/gateway/src/organization-account-manager.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-account-manager-http.test.ts",
         "package.json"
       ]
     }
