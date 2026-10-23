@@ -128,6 +128,17 @@ test("SHU-165 postgres a deleted organization answers not_found to every store c
   assert.equal(await store.list(staff, `shu165-unknown-${randomUUID()}`), null);
 });
 
+test("SHU331_PG_GROUP returns direct children in order and leaves authorization to store reads", async () => {
+  const parent = await organization(), child1 = await organization(parent), child2 = await organization(parent), grandchild = await organization(child1);
+  const subtreeStaff = await principal(parent, "staff", parent, "subtree");
+  assert.deepEqual(await store.childOrganizations(parent), [child1, child2].sort());
+  assert.deepEqual(await store.childOrganizations(child1), [grandchild]);
+  assert.deepEqual(await store.childOrganizations(child2), []);
+  await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [child2, `shu331-${randomUUID()}`]);
+  assert.deepEqual(await store.childOrganizations(parent), [child1, child2].sort(), "deleted direct children remain discoverable for per-child authorization");
+  assert.equal(await store.list(subtreeStaff, child2), null);
+});
+
 test("SHU168_PG_STORE_COUNTS batches active store totals from source at read time", async () => {
   const first = await organization(), second = await organization(), third = await organization();
   const firstStaff = await principal(first), secondStaff = await principal(second);

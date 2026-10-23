@@ -17,6 +17,7 @@ const service = createOrganizationStores({
       calls.push(`list:${o}`);
       return o === "refused" ? null : [{ store_id: STORE, org_id: "private", name: "Avenues", location: null, status: "active", brand_id: null, brand_name: null, brand_status: null, mall_id: null, mall_name: null, mall_status: null, created_by_ref: "f".repeat(64) }];
     },
+    childOrganizations: async (o) => { calls.push(`children:${o}`); return o === "org" ? ["child", "refused"] : []; },
   },
 });
 
@@ -54,4 +55,26 @@ test("SHU-165 organization stores HTTP refuses without exposing stores", async (
   assert.deepEqual(await call("/organization/stores/create", { orgId: "org", store: { name: "A" } }, "POST", { cookie: "" }), { status: 401, body: { error: "unauthorized" } });
   assert.deepEqual(await call("/organization/stores/create", undefined, "GET"), { status: 404, body: { error: "not_found" } });
   assert.deepEqual(calls, ["list:refused", "create:refused:A"], "origin, session and method refusals reach no store operation");
+});
+
+test("SHU331_HTTP group lists authorized organizations and validates all request boundaries", async () => {
+  calls.length = 0;
+  assert.deepEqual(await call("/organization/stores/org/group", undefined, "GET"), {
+    status: 200,
+    body: { stores: [
+      { orgId: "org", storeId: STORE, name: "Avenues", location: null, brand: null, mall: null },
+      { orgId: "child", storeId: STORE, name: "Avenues", location: null, brand: null, mall: null },
+    ] },
+  });
+  assert.deepEqual(calls, ["list:org", "children:org", "list:child", "list:refused"]);
+
+  calls.length = 0;
+  assert.deepEqual(await call("/organization/stores/refused/group", undefined, "GET"), { status: 404, body: { error: "not_found" } });
+  assert.deepEqual(calls, ["list:refused"], "a refused parent does not load children");
+
+  calls.length = 0;
+  assert.deepEqual(await call("/organization/stores/org/group", undefined, "GET", { cookie: "" }), { status: 401, body: { error: "unauthorized" } });
+  assert.deepEqual(await call("/organization/stores/org/group"), { status: 404, body: { error: "not_found" } });
+  assert.deepEqual(await call("/organization/stores/%20/group", undefined, "GET"), { status: 400, body: { error: "invalid_request" } });
+  assert.deepEqual(calls, [], "invalid requests reach no store operation");
 });
