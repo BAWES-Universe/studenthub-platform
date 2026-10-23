@@ -2,7 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { OrganizationDeletionRecords, OrganizationReader, OrganizationView } from "@studenthub/organizations";
+import type { OrganizationDeletionRecords, OrganizationReader, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -17,11 +17,16 @@ export type ActiveOrganization =
   | { readonly kind: "not_applicable" }
   | { readonly kind: "unavailable" };
 
+export type SubOrganizationsPanel =
+  | { readonly kind: "found"; readonly subOrganizations: readonly SubOrganizationSummary[] }
+  | { readonly kind: "unavailable" };
+
 export type NavigationResult =
   | { readonly status: 200; readonly body: {
     readonly contexts: readonly WorkspaceContext[];
     readonly active: WorkspaceContext | null;
     readonly organization?: ActiveOrganization;
+    readonly subOrganizations?: SubOrganizationsPanel;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
 
@@ -94,7 +99,16 @@ export function createContextNavigation(
         const organization: ActiveOrganization = read.kind === "found"
           ? { kind: "found", view: read.organization }
           : read.kind === "not_found" ? { kind: "not_applicable" } : { kind: "unavailable" };
-        return { status: 200, body: { contexts, active, organization } };
+        let panel: SubOrganizationsPanel | undefined;
+        if (read.kind === "found" && read.organization.parentOrgId === null) {
+          const children = await organizationReader.listSubOrganizations({
+            principalId: session.personId, orgId: active.orgId, role: active.role,
+          });
+          panel = children.kind === "found"
+            ? { kind: "found", subOrganizations: children.subOrganizations }
+            : children.kind === "unavailable" ? { kind: "unavailable" } : undefined;
+        }
+        return { status: 200, body: { contexts, active, organization, ...(panel ? { subOrganizations: panel } : {}) } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }

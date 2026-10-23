@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
-import type { ContextNavigation, NavigationResult, WorkspaceContext } from "./context-navigation.js";
+import type { ContextNavigation, NavigationResult, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
 import type { BankDetailsService } from "./bank-details.js";
 import {
@@ -156,6 +156,23 @@ function companiesLink(active: WorkspaceContext | null, login: BrowserLoginAppli
 
 const statusNames: Readonly<Record<string, string>> = { active: "Active", under_review: "Under review", inactive: "Inactive" };
 
+function renderSubOrganizations(panel: SubOrganizationsPanel | undefined, active: WorkspaceContext): string {
+  if (!panel) return "";
+  if (panel.kind === "unavailable") {
+    return `<section class="notice org-notice" role="status"><strong>Sub-companies couldn’t be loaded.</strong><p>Please try again in a moment.</p></section>`;
+  }
+  const links = panel.subOrganizations.map((child) => {
+    const href = `/workspace?${new URLSearchParams({ org_id: child.orgId, role: active.role })}`;
+    const status = child.status.state === "available"
+      ? escapeHtml(statusNames[child.status.value] ?? child.status.value)
+      : '<span class="missing" data-state="unavailable">Unavailable</span>';
+    return `<a class="context-option" href="${escapeHtml(href)}"><span>${escapeHtml(child.registryName)}</span><strong>${status}</strong></a>`;
+  }).join("");
+  return `<section aria-labelledby="sub-title"><h2 id="sub-title">Sub-companies</h2>${links
+    ? `<nav class="context-list">${links}</nav>`
+    : '<p class="empty-contexts">No sub-companies you can open.</p>'}</section>`;
+}
+
 /** Staff and admin company list. Every value comes from the directory's closed entry. */
 export function renderCompanyDirectory(result: CompanyDirectoryResult, login: BrowserLoginApplication): string {
   if (result.status !== 200) {
@@ -214,7 +231,7 @@ export function renderWorkspace(result: NavigationResult, login: BrowserLoginApp
   const intro = active
     ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
     : "Choose the organization and role you want to use. You can switch without signing in again.";
-  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a>${companiesLink(active, login)}</nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a>${companiesLink(active, login)}</nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization)}${renderSubOrganizations(result.body.subOrganizations, active)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderLanding(login?: BrowserLoginApplication): string {

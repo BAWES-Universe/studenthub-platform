@@ -56,6 +56,20 @@ try {
       from: "if (deleted.has(contexts[index].orgId))",
       to: "if (false && deleted.has(contexts[index].orgId))",
     },
+    {
+      name: "top-level cards must request sub-companies",
+      pattern: "SHU332_NAV_SUBS",
+      from: `const children = await organizationReader.listSubOrganizations({
+                        principalId: session.personId, orgId: active.orgId, role: active.role,
+                    });`,
+      to: 'const children = { kind: "not_found" };',
+    },
+    {
+      name: "unavailable sub-companies must not look empty",
+      pattern: "SHU332_NAV_SUBS_UNAVAILABLE",
+      from: ': children.kind === "unavailable" ? { kind: "unavailable" } : undefined;',
+      to: ': children.kind === "unavailable" ? { kind: "found", subOrganizations: [] } : undefined;',
+    },
   ];
   for (const mutant of mutants) {
     assert.equal(original.split(mutant.from).length - 1, 1, `${mutant.name}: unique anchor`);
@@ -89,6 +103,21 @@ try {
     assert.match(result.stdout, /not ok .*SHU91_HISTORY:/);
     assert.match(result.stdout, /ERR_ASSERTION/);
     console.log(`KILLED (applied + SHU91_HISTORY assertion verified): ${name}`);
+    writeFileSync(historyFile, historyOriginal);
+  }
+  for (const [name, from, to] of [
+    ["sub-company names must be escaped", "escapeHtml(child.registryName)", "child.registryName"],
+  ]) {
+    assert.equal(historyOriginal.split(from).length - 1, 1, `${name}: unique anchor`);
+    writeFileSync(historyFile, historyOriginal.replace(from, to));
+    assert.notEqual(readFileSync(historyFile, "utf8"), historyOriginal, "sub-company mutation applied");
+    const result = run();
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /not ok .*SHU332_NAV_SUBS_HTML /);
+    assert.match(result.stdout, /ERR_ASSERTION/);
+    console.log(`KILLED (applied + SHU332_NAV_SUBS_HTML assertion verified): ${name}`);
     writeFileSync(historyFile, historyOriginal);
   }
   const restored = run();
