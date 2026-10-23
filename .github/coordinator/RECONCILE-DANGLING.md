@@ -47,7 +47,7 @@ at run time, never a cached snapshot:
 | probe | required result |
 | --- | --- |
 | process table | no live worker process for the attempt |
-| attempt worktree | `SHU_WORKTREE_ROOT` configured and listed, and if the attempt's worktree exists, `HEAD` equals the receipt's `scoped_base_sha` and `git status --porcelain` is empty |
+| attempt worktree | `SHU_WORKTREE_ROOT` configured and listed, and if the attempt's worktree exists, `HEAD` equals the receipt's `scoped_base_sha` (for a review attempt — role `review`, `workspace_scope` `full`, `scope_phase` `review` and `scoped_base_sha` null — its `target_sha`, where the reviewer is checked out) and `git status --porcelain` is empty |
 | remote branch | branch head still equals the order's `target_sha` |
 | push/commit receipts | the workspace state dir listed, and no push receipt for the attempt |
 | supervisor store | all four of `orders`/`runs`/`launches`/`completions` listed, and no record for the attempt |
@@ -194,7 +194,8 @@ none of which is weakened:
   from sighting 1 comes *from* such a record, so a stale supervisor record can
   never release the slot: the store guard necessarily refuses
   `SUPERVISOR_CLAIM_PRESENT` first;
-- the attempt **worktree** measured at its recorded `scoped_base_sha` and clean,
+- the attempt **worktree** measured at its recorded `scoped_base_sha` (a review
+  attempt's `target_sha`) and clean,
   with an unconfigured root refusing `EVIDENCE_MISSING` rather than reading as
   absent;
 - the **remote branch head** still equal to `target_sha`;

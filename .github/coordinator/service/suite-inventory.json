@@ -2600,6 +2600,8 @@
     "SHU-140 reconcile-dangling: a supervisor claim refuses SUPERVISOR_CLAIM_PRESENT and preserves the slot",
     "SHU-140 reconcile-dangling: a live worker process refuses WORKER_LIVE",
     "SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push receipt each refuse by name",
+    "SHU-304 reconcile-dangling: a dangling review LAUNCH_UNKNOWN with no scoped base is measured against target_sha and terminalized to HOLD",
+    "SHU-304 reconcile-dangling: a review worktree off target_sha or dirty refuses WORKTREE_CHANGED and preserves the slot",
     "SHU-140 reconcile-dangling: missing or stale evidence refuses EVIDENCE_MISSING or EVIDENCE_STALE",
     "SHU-140 reconcile-dangling: a repeated invocation refuses ALREADY_TERMINAL, writes nothing and launches nothing",
     "SHU-140 reconcile-dangling probe: an unconfigured or unreadable worktree root is EVIDENCE_MISSING, never a measured-clean worktree",
@@ -21164,6 +21166,14 @@
     },
     {
       "name": "SHU-140 reconcile-dangling: a changed worktree, a moved branch or a push receipt each refuse by name",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-304 reconcile-dangling: a dangling review LAUNCH_UNKNOWN with no scoped base is measured against target_sha and terminalized to HOLD",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-304 reconcile-dangling: a review worktree off target_sha or dirty refuses WORKTREE_CHANGED and preserves the slot",
       "capabilities": []
     },
     {

@@ -57,6 +57,7 @@ import {
 } from "./reconcile.mjs";
 import { signedSupervisorRequest, submitToSupervisor } from "./supervisor.mjs";
 import { supervisorOrder } from "./supervisor-dispatch.mjs";
+import { resolveReceiptRoleAuthority } from "./launch-vocabulary.mjs";
 import { supervisorTransportSecret } from "./service/credential-delivery.mjs";
 import { coordinatorJournalDirectory, prePushRecordPath } from "./push-broker.mjs";
 
@@ -79,7 +80,7 @@ export const RECONCILE_REFUSAL_CODES = Object.freeze([
   "WORKER_LIVE",             // a worker process for this attempt is CONFIRMED still running
   "WORKER_STALE_RECORD",     // a sighted pid is provably not that process any more (gone, or a different start token)
   "WORKER_UNVERIFIED",       // a sighted pid is still there but its identity could not be established
-  "WORKTREE_CHANGED",        // the attempt's worktree moved off its recorded scoped base
+  "WORKTREE_CHANGED",        // the attempt's worktree moved off its recorded scoped base (target_sha for a review)
   "BRANCH_MOVED",            // the branch's remote head no longer equals the order's target_sha
   "PUSH_RECEIPT_PRESENT",    // a push/commit receipt exists: an external effect may have landed
   "EVIDENCE_MISSING",        // a required probe did not answer
@@ -800,7 +801,13 @@ export async function reconcileDanglingAttempt({
   const worktreeTaken = await take("attempt worktree", io.worktree ?? defaultWorktree, { receipt, env });
   if (worktreeTaken.refused) return worktreeTaken.refused;
   const worktree = worktreeTaken.value;
-  if (typeof receipt.scoped_base_sha !== "string" || !receipt.scoped_base_sha) {
+  // The commit the worktree must still sit on. A writer is checked out at its
+  // scoped_base_sha; a reviewer is checked out at exactly target_sha
+  // (attempt-workspace.mjs) and records no scoped base, so only a receipt that
+  // is a review on every count is measured against target_sha. Anything else
+  // without a scoped_base_sha still has nothing to compare against.
+  const expected = worktreeBaseOf(receipt);
+  if (!expected) {
     return refusal("EVIDENCE_MISSING", "the receipt records no scoped_base_sha to compare the worktree against");
   }
   // The worktree root must have been configured, or the worktree was never
@@ -812,8 +819,8 @@ export async function reconcileDanglingAttempt({
     if (typeof worktree.head !== "string" || typeof worktree.porcelain !== "string") {
       return refusal("EVIDENCE_MISSING", "the worktree could not be measured");
     }
-    if (worktree.head !== receipt.scoped_base_sha) {
-      return refusal("WORKTREE_CHANGED", `worktree HEAD ${worktree.head} != scoped_base_sha ${receipt.scoped_base_sha}`);
+    if (worktree.head !== expected.sha) {
+      return refusal("WORKTREE_CHANGED", `worktree HEAD ${worktree.head} != ${expected.field} ${expected.sha}`);
     }
     if (worktree.porcelain !== "") return refusal("WORKTREE_CHANGED", "worktree has uncommitted changes");
   }
@@ -851,6 +858,25 @@ export async function reconcileDanglingAttempt({
     return refusal("WRITE_UNCONFIRMED", `the terminal HOLD comment did not confirm: ${error?.message ?? "write failed"}`);
   }
   return { ok: true, action: "TERMINALIZED", attempt_id, stage: terminal.receipt.stage, receipt: terminal.receipt, linearIssueId };
+}
+
+// A review attempt, for this purpose, is one whose authoritative role is review
+// AND whose workspace is the full, unscoped review checkout AND which records
+// no scoped base at all. Every one of those must hold; a receipt that is only
+// partly a review keeps the scoped_base_sha rule.
+export function isReviewAttempt(receipt) {
+  const authority = resolveReceiptRoleAuthority(receipt);
+  return authority.ok === true && authority.role === "review" &&
+    receipt.workspace_scope === "full" && receipt.scope_phase === "review" &&
+    receipt.scoped_base_sha === null;
+}
+
+export function worktreeBaseOf(receipt) {
+  if (isReviewAttempt(receipt)) {
+    return typeof receipt.target_sha === "string" && receipt.target_sha ? { field: "target_sha", sha: receipt.target_sha } : null;
+  }
+  if (typeof receipt.scoped_base_sha !== "string" || !receipt.scoped_base_sha) return null;
+  return { field: "scoped_base_sha", sha: receipt.scoped_base_sha };
 }
 
 // The reviewed state machine performs the transition. LAUNCH_UNKNOWN -> HOLD is
