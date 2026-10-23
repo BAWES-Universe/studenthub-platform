@@ -312,6 +312,9 @@ export function mainTip(git, credentials, revision) {
   return tip;
 }
 
+export const BRANCH_READBACK_ATTEMPTS = 6;
+export const BRANCH_READBACK_WAIT_MS = 2 * 1000;
+
 async function prepareBranch(io, credentials, repo, checkout, branch, revision, apply) {
   const head = await branchHead(io, credentials, repo, branch);
   const tip = inPushRepository(io, credentials, repo, checkout, (git) => {
@@ -337,7 +340,14 @@ async function prepareBranch(io, credentials, repo, checkout, branch, revision, 
   if (head === tip) return { branch, head, base: tip, action: "none" };
   const action = head === null ? "create" : "advance";
   if (!apply) return { branch, head, base: tip, action, ...(head === null ? {} : { from: head }) };
-  const after = await branchHead(io, credentials, repo, branch);
+  // SHU-332, 2026-10-23: GitHub's ref API can still answer with the head from
+  // before an accepted push for a few seconds, and the run refused a branch it
+  // had just created. Only that lag is waited out; any other head refuses now.
+  let after = await branchHead(io, credentials, repo, branch);
+  for (let read = 1; after === head && read < BRANCH_READBACK_ATTEMPTS; read += 1) {
+    io.sleep(BRANCH_READBACK_WAIT_MS);
+    after = await branchHead(io, credentials, repo, branch);
+  }
   if (after !== tip) refuse("CARD_RUN_BRANCH_READBACK", `${branch} reads back at ${after}, not ${tip}`);
   return { branch, head: after, base: tip, action, ...(head === null ? {} : { from: head }) };
 }

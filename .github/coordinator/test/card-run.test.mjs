@@ -16,7 +16,7 @@ import {
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
-import { cardAction, prepareRun, CARD_TODO_MUTATION } from "../service/card-prepare.mjs";
+import { cardAction, prepareRun, CARD_TODO_MUTATION, BRANCH_READBACK_ATTEMPTS, BRANCH_READBACK_WAIT_MS } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
 import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePolicy, botSeverity, classifyThread, settleMarker } from "../service/card-land.mjs";
@@ -203,6 +203,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       }
       if (lease !== `--force-with-lease=${ref}:`) return { status: 1, stdout: "", stderr: "! [rejected] (stale info)" };
       if (host.pushFails) return { status: host.pushFails === "timeout" ? 124 : 128, stdout: "", stderr: `ERROR: read-only key for ${PUSH_REMOTE}` };
+      // GitHub's ref API lagging an accepted push: the next reads still answer 404.
+      if (!dry && host.staleReads) { host.lagLeft = host.staleReads; host.lagHead = sha; return ok(); }
       if (!dry) host.branchHead = sha;
       return ok();
     }
@@ -321,6 +323,11 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     const branch = /\/git\/ref\/heads\/(coordinator\/SHU-\d+)$/.exec(url)?.[1] ?? `coordinator/${id}`;
     if (url === `https://api.github.com/repos/${config.pilot_repo}/git/ref/heads/${branch}`) {
       host.api.push("github read");
+      if (host.lagLeft > 0) {
+        host.lagLeft -= 1;
+        if (host.lagLeft === 0) host.branchHead = host.lagMovedTo ?? host.lagHead;
+        return respond(404, { message: "Not Found" });
+      }
       return host.branchHead ? respond(200, { ref: `refs/heads/${branch}`, object: { sha: host.branchHead } }) : respond(404, { message: "Not Found" });
     }
     // The coordinator's token is read-only: GitHub refuses any write with it.
@@ -663,6 +670,36 @@ test("SHU-86 C43: a branch main already contains moves forward to main under a l
   assert.equal(raced.branchHead, BASE);
   noArming(raced);
   assert.equal(raced.pushDirs.size, 0);
+});
+
+test("SHU-86 C45: a branch GitHub still reads at its old head after the push is read again, briefly; any other head refuses", async () => {
+  const pass = () => tickText(spent("SHU-301", "review PASS — the episode is complete"));
+  const githubReads = (host) => host.api.filter((call) => call === "github read").length;
+
+  // The lag seen on SHU-332: the push landed, the next reads still answer 404.
+  const lagging = fakeHost({ branchHead: "", onTick: pass });
+  lagging.staleReads = 3;
+  const start = lagging.clock;
+  const result = await runCard({ io: lagging.io, paths: PATHS }).catch((error) => assert.fail(`the run refused: ${error.message}`));
+  assert.equal(result.outcome, "PASS");
+  assert.deepEqual(result.prepared.branch, { branch: "coordinator/SHU-301", head: REV, base: REV, action: "create" });
+  assert.equal(lagging.api.filter((call) => call.startsWith("git push")).length, 1, "the branch is pushed once, never again");
+  assert.ok(lagging.clock - start >= 3 * BRANCH_READBACK_WAIT_MS, "each read again waits first");
+
+  // A lag that outlasts the bound still refuses, before anything is armed.
+  const stuck = fakeHost({ branchHead: "" });
+  stuck.staleReads = BRANCH_READBACK_ATTEMPTS + 2;
+  assert.equal((await attempt(() => runCard({ io: stuck.io, paths: PATHS }))).thrown, "CARD_RUN_BRANCH_READBACK");
+  noArming(stuck);
+  assert.equal(githubReads(stuck), 1 + BRANCH_READBACK_ATTEMPTS, "one read before the push, then the bounded read-backs");
+
+  // A head that is neither the old one nor the pushed one is refused at once.
+  const moved = fakeHost({ branchHead: "" });
+  moved.staleReads = 1;
+  moved.lagMovedTo = HEAD;
+  assert.equal((await attempt(() => runCard({ io: moved.io, paths: PATHS }))).thrown, "CARD_RUN_BRANCH_READBACK");
+  noArming(moved);
+  assert.equal(githubReads(moved), 3, "the pre-push read, the lagging read, and the one that saw another head");
 });
 
 test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts", async () => {

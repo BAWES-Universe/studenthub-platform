@@ -2163,6 +2163,7 @@
     "SHU-86 C41: a tick is read from the journal, flushed first, and only its own invocation counts",
     "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice",
     "SHU-86 C43: a branch main already contains moves forward to main under a lease on its head; one with its own commit never moves",
+    "SHU-86 C45: a branch GitHub still reads at its old head after the push is read again, briefly; any other head refuses",
     "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
     "SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head",
     "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
@@ -18565,6 +18566,10 @@
     },
     {
       "name": "SHU-86 C43: a branch main already contains moves forward to main under a lease on its head; one with its own commit never moves",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 C45: a branch GitHub still reads at its old head after the push is read again, briefly; any other head refuses",
       "capabilities": []
     },
     {
