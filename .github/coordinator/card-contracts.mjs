@@ -2606,6 +2606,266 @@ Out of scope:
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+export const SHU338_PATHS = Object.freeze([
+  "packages/organizations/src/account-manager-writes.ts",
+  "packages/organizations/test/account-manager-writes.test.ts",
+  "packages/organizations/test/account-manager-writes-mutations.mjs",
+  "packages/db/src/postgres-organization-account-manager-store.ts",
+  "packages/db/test/postgres-organization-account-manager.test.ts",
+  "apps/gateway/src/organization-account-manager.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+]);
+
+const SHU338_ACCEPTANCE = [
+  "(1) account-manager-writes.ts exports ORGANIZATION_ASSIGNED_COMPANIES_LIMIT = 50 and organizationAssignedCompaniesView(rows), which maps each row to exactly {orgId, name}, sorts by name and then orgId, and keeps at most 50. Leaking a row field or reversing the order makes SHU338_ASSIGNED_VIEW fail, and dropping the cap makes SHU338_ASSIGNED_LIMIT fail;",
+  "(2) PostgresOrganizationAccountManagerStore.assigned(principalId) answers only the companies whose organization_account_managers row names the caller, never a company with an organization_deletions row, and never one where organizationAccountManagerReadDecision refuses the caller's current grants (staff or admin coverage lost, or the operator root); rows are sorted by name and then id, at most 50, keys exactly org_id and name, and a caller with none gets [] (SHU338_PG_ASSIGNED, SHU338_PG_ASSIGNED_REFUSED, SHU338_PG_ASSIGNED_LIMIT);",
+  "(3) GET /organization/assigned-companies answers 200 {companies:[...]} (200 {companies:[]} when there are none) with the nosniff and no-store headers, also when SAFE_WRITE_SIGNING_KEY is unset; 401 without a session and with no store call; 404 not_found for any other method; and 503 {error:\"unavailable\"} when the store throws. GET /organization/account-manager/:orgId and every write route are unchanged (SHU338_HTTP);",
+  "(4) account-manager-writes-mutations.mjs gains the three mutants for item 1. Each fails its named test, the six SHU-336 mutants still bind once and are killed, and the final line prints 9/9; the Postgres mutations for item 2 are checked by hand and reported;",
+  "(5) Every existing account-manager test passes unchanged. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU338_BRIEF = `Card SHU-338: staff see the companies they manage (slice O5h of O5, row OR-05, after SHU-336 and SHU-335; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (migration 0204, organization_account_managers, and the admin account-manager safe write) and SHU-335 (the status-history read whose shape this card copies). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Legacy staff have an AssignedList: the companies whose staff_id is the caller (docs/parity/organizations-stores-and-contacts.md:92), one of the actions of row OR-05 "Staff/admin list, search, filter organizations", REQUIRED in slice O5 (:180). SHU-336 records each company's account manager in organization_account_managers (packages/db/migrations/0204_organization_account_managers.sql:1), but its store only reads one company's manager at a time (packages/db/src/postgres-organization-account-manager-store.ts:6, manager), so a staff member cannot ask which companies are theirs. This card adds that read: GET /organization/assigned-companies answers the caller's own managed companies that are live and that they can still open, sorted by name, at most 50. It writes nothing and adds no page.
+
+Read first:
+- packages/organizations/src/account-manager-writes.ts, the whole file. organizationAccountManagerReadDecision (:9) decides who may read a company's manager, and this card applies it to each listed company. account-manager-writes-mutations.mjs anchors these strings in dist/account-manager-writes.js, so write none of them again: row.role === "admin" && covers(, the !operators.includes(orgId) && rows.some((row) => row.role === "admin" line, (row.role === "staff" || row.role === "admin") && covers(, the value check's return line, value !== "none" && (await input.eligible(value)) === "ineligible" and return current === expected;.
+- Commit 143681c (SHU-335), the pattern to copy: organizationStatusHistoryView and ORGANIZATION_STATUS_HISTORY_LIMIT in packages/organizations/src/status-writes.ts, history() in packages/db/src/postgres-organization-status-store.ts (a guard, then one query) and the HISTORY route in apps/gateway/src/organization-status.ts.
+- packages/db/src/postgres-organization-account-manager-store.ts: #grants and #ancestors (:5) and manager (:6).
+- apps/gateway/src/organization-account-manager.ts: the OrganizationAccountManagerStore and OrganizationAccountManager interfaces (:2), read in createOrganizationAccountManager (:4), the path constants (:5; READ is /^\\/organization\\/account-manager\\/([^/]+)$/) and handleOrganizationAccountManager (:6), whose READ branch has no catch.
+- packages/organizations/test/account-manager-writes.test.ts (subject through SHU336_TEST_MODULE) and account-manager-writes-mutations.mjs; packages/db/test/postgres-organization-account-manager.test.ts (its ROOT, org() and person() fixtures and the real writer); apps/gateway/test/organization-account-manager-http.test.ts (its in-memory store, calls array and call helper).
+
+Design:
+- account-manager-writes.ts, appended:
+  - export interface OrganizationAssignedCompanyRow { readonly org_id: string; readonly name: string }
+  - export interface OrganizationAssignedCompany { readonly orgId: string; readonly name: string }
+  - export const ORGANIZATION_ASSIGNED_COMPANIES_LIMIT = 50;
+  - export function organizationAssignedCompaniesView(rows: readonly OrganizationAssignedCompanyRow[]): OrganizationAssignedCompany[]: rows.map((row) => ({ orgId: row.org_id, name: row.name })), then .sort((a, b) => a.name.localeCompare(b.name) || a.orgId.localeCompare(b.orgId)), then .slice(0, ORGANIZATION_ASSIGNED_COMPANIES_LIMIT).
+  - Keep the object literal, the comparator and the slice call as written: they are the mutation anchors. packages/organizations/src/index.ts already exports the whole module, so it does not change.
+- postgres-organization-account-manager-store.ts: add async assigned(principalId: string): Promise<{org_id: string; name: string}[]>, declaring the row type locally (packages/db must not import packages/organizations).
+  - Read the caller's grants once with this.#grants(this.#pool, principalId).
+  - Run one query: SELECT m.org_id,o.name FROM organization_account_managers m JOIN organizations o ON o.id=m.org_id WHERE m.principal_id=$1 AND NOT EXISTS (SELECT 1 FROM organization_deletions d WHERE d.org_id=m.org_id) ORDER BY o.name,m.org_id.
+  - Keep a row only when this.#o.readDecision(grants, row.org_id, await this.#ancestors(this.#pool, row.org_id)) holds, so a company whose staff or admin coverage the caller has lost, or the operator root, is never listed. This per-company decision is the read's guard, as #allowed is for history(). Stop once 50 rows are kept.
+  - Return the kept rows; a caller with no assignments gets []. Nothing else in the file changes.
+- organization-account-manager.ts (gateway):
+  - Add assigned(principalId: string): Promise<readonly OrganizationAssignedCompanyRow[]> to OrganizationAccountManagerStore. The Postgres store satisfies it structurally, so login-runtime.ts does not change.
+  - Add assigned(session) to OrganizationAccountManager and to createOrganizationAccountManager: 401 {error:"unauthorized"} without a person (no store call), otherwise 200 {companies: organizationAssignedCompaniesView(rows)}. Like read, it never needs the signing key.
+  - Add ASSIGNED = "/organization/assigned-companies" beside the path constants. It is deliberately not under /organization/account-manager/, where READ would take the last segment as an organization id.
+  - In handleOrganizationAccountManager, before the READ branch, handle path === ASSIGNED with the same four headers: any method other than GET answers 404 not_found; a missing service answers 503 {error:"unavailable"}; otherwise send(await service.assigned(cookie(req.headers.cookie))) inside a try whose catch answers 503 {error:"unavailable"}, so a session-store or store failure never escapes.
+  - Change no other route, refusal mapping or header. apps/gateway/src/index.ts already mounts this handler, so it does not change.
+- No migration and no write.
+
+Tests (name every new test with its token first and a space after it):
+- account-manager-writes.test.ts, through subject so the mutants apply:
+  - "SHU338_ASSIGNED_VIEW ...": rows given as (b, "Beta"), (a2, "Alpha"), (a1, "Alpha") come back as a1, a2, b, each with keys exactly ["name","orgId"]; an extra row field such as principal_id never appears.
+  - "SHU338_ASSIGNED_LIMIT ...": 60 rows give exactly 50, the first 50 by name.
+- account-manager-writes-mutations.mjs: add three entries in its form:
+  - ["leak row fields", "SHU338_ASSIGNED_VIEW", "({ orgId: row.org_id", "({ ...row, orgId: row.org_id"]
+  - ["reverse order", "SHU338_ASSIGNED_VIEW", "a.name.localeCompare(b.name)", "b.name.localeCompare(a.name)"]
+  - ["no cap", "SHU338_ASSIGNED_LIMIT", ".slice(0, ORGANIZATION_ASSIGNED_COMPANIES_LIMIT)", ""]
+
+  The exact anchors depend on how tsc prints them: take them from dist/account-manager-writes.js after npm run build and assert each binds once. Change nothing else in the script except the line it prints, which becomes "9/9 SHU336 and SHU338 mutations killed".
+- postgres-organization-account-manager.test.ts, appended, each test on its own fresh companies under ROOT:
+  - "SHU338_PG_ASSIGNED ...": a staff person S holds staff grants on four fresh companies whose names sort differently from their creation order. An admin (subtree on ROOT) assigns S to all four through the real writer. Then insert an organization_deletions row for the third and delete S's grant on the fourth. assigned(S) answers exactly the first two, in name order, with row keys exactly org_id and name. An admin assigned to a company through the writer sees it in assigned(admin) too.
+  - "SHU338_PG_ASSIGNED_REFUSED ...": another staff person with grants on the same companies but no assignment, an org-owner of one of them and an unknown principal each get [].
+  - "SHU338_PG_ASSIGNED_LIMIT ...": S holds a subtree staff grant on a fresh company P, and 51 fresh children of P each name S as manager through direct INSERTs into organization_account_managers. assigned(S) answers exactly 50 rows.
+  - In your final message, report by hand that dropping the NOT EXISTS clause, and separately dropping the readDecision filter, each make SHU338_PG_ASSIGNED fail.
+- organization-account-manager-http.test.ts: add assigned to the in-memory store (it answers configurable rows, records "assigned" in calls, and throws when a flag is set). "SHU338_HTTP ...":
+  - GET /organization/assigned-companies gives 200 with companies in name order and keys exactly orgId and name, plus the nosniff and no-store headers; the same through a service built without a secret.
+  - No rows give 200 {companies:[]}. A missing session gives 401 and no assigned call. POST to the path gives 404. A throwing store gives 503 {error:"unavailable"}.
+  - GET /organization/account-manager/org-a still answers from read (a manager call, no assigned call).
+
+  The existing SHU336_HTTP test stays unchanged.
+
+Out of scope:
+- An HTML page or workspace link for the list, any directory filter or column for the manager (SHU-339), follow-ups, and notifying anyone.
+- Any change to the account-manager safe write, its decisions, value check, receipt, eligible and manager reads, and its migration.
+- Migrations, login-runtime.ts, apps/gateway/src/index.ts, packages/organizations/src/index.ts, packages/db/src/index.ts, package.json (every touched test and mutation script already runs from test or test:db), the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU339_PATHS = Object.freeze([
+  "packages/organizations/src/types.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/test/organization-directory.test.ts",
+  "packages/organizations/test/directory-mutations.mjs",
+  "packages/db/src/postgres-organization-account-manager-reads.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-organization-account-manager-reads.test.ts",
+  "apps/gateway/src/company-directory.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/company-directory.test.ts",
+  "apps/gateway/test/company-directory-mutations.mjs",
+  "package.json",
+]);
+
+const SHU339_ACCEPTANCE = [
+  "(1) OrganizationDirectoryFilters gains accountManager (a principal id of 1..128 characters from [A-Za-z0-9._:-]); any other value answers {kind:\"invalid\"} with no port call (SHU339_FILTER_INVALID);",
+  "(2) With the filter, listOrganizations keeps only shown companies whose account manager, read through the new OrganizationAccountManagerRecords port in one readMany call over exactly the shown company ids, equals the filter. A company without a manager never matches, the filter combines with query, status, approved-to-hire and currency, and total and pages count only matching companies. Without the filter the port is never called and every existing result is unchanged (SHU339_FILTER, SHU339_FILTER_SCOPE);",
+  "(3) A manager filter on a repository without the port, or a port that throws, answers {kind:\"unavailable\"}, never a silently unfiltered list; a caller who may not list still gets not_found first (SHU339_FILTER_UNAVAILABLE);",
+  "(4) PostgresOrganizationAccountManagerReads.readMany(orgIds) answers a map from organization id to manager principal id for exactly the given ids that have a manager, an empty map for [] with no query, is exported from packages/db and wired as accountManagers into the gateway's OrganizationRepository with its close() among the closers (SHU339_PG_READS);",
+  "(5) /workspace/companies accepts manager=<principalId> or manager=me (resolved to the session's principal before the repository is called and echoed resolved); a malformed or repeated manager answers 400 invalid_directory_query, an empty one means any, a missing port answers 503 directory_unavailable, and the HTML filter form carries the value and the paging links keep it (SHU339_PAGE, SHU339_PAGE_UNAVAILABLE);",
+  "(6) directory-mutations.mjs and company-directory-mutations.mjs gain the mutants for items 1-3 and 5. Each fails its named test by assertion, and every existing mutant of mutations.mjs, directory-mutations.mjs, status-batch-reads-mutations.mjs, approved-to-hire-writes-mutations.mjs, commercial-terms-writes-mutations.mjs and company-directory-mutations.mjs still binds once and is killed. npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU339_BRIEF = `Card SHU-339: staff and admin filter the company directory by account manager (slice O5i of O5, row OR-05, after SHU-163, SHU-168 and SHU-336; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-163 (the staff and admin company directory), SHU-168 (its batched store counts) and SHU-336 (migration 0204, organization_account_managers). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Every legacy company has an owning account manager, company.staff_id (docs/parity/organizations-stores-and-contacts.md:31), and legacy staff narrow their company list to it through AssignedList (:92), part of row OR-05 "Staff/admin list, search, filter organizations", REQUIRED in slice O5 (:180). SHU-336 records the manager (packages/db/migrations/0204_organization_account_managers.sql:1), but the directory's filters are a closed set of q, status, approved and currency: the query vocabulary (apps/gateway/src/company-directory.ts:22, parsed at :33-64), the filter type (packages/organizations/src/types.ts:136-142), and validation and matching (packages/organizations/src/organizations.ts:297-326). This card adds manager=<principalId> and manager=me. The manager is read once per page of shown companies through a batch port, like the approved-to-hire and store-count ports (organizations.ts:164-165, used at :551-552), from a new read-only Postgres class. It adds no column and does not show the manager.
+
+Read first:
+- packages/organizations/src/organizations.ts: OrganizationApprovedToHireRecords and OrganizationStoreCounts (:164-165), the constructor (:385-403), validDirectoryFilters and matchesDirectoryFilters (:297-326), and listOrganizations (:519-577): the role check (:521), the invalid answer (:524), the deletion check (:533), the batch reads (:548-552) and the loop over shown (:554-564).
+- Anchors in dist/organizations.js that other scripts own and you must not duplicate or break: directory-mutations.mjs (among them if (Object.keys(rest).length > 0) followed by return false;, availableValue(entry.status) !== filters.status, the slice of the page, const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);, storeTotals ? storeTotals.get(org.id) ?? 0 : null and this.#storeCounts.countMany(shown.map((org) => org.id))), status-batch-reads-mutations.mjs (the two const batchRecords = lines), approved-to-hire-writes-mutations.mjs (the approvedToHire lines), commercial-terms-writes-mutations.mjs (const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience]; and if (own.kind === "value")) and mutations.mjs. Note that this.#statusRecords.readMany(shown.map((org) => org.id)) already exists, so your new call needs its own prefix to bind once.
+- packages/organizations/src/types.ts:132-142 (OrganizationDirectoryFilters and its comment).
+- packages/organizations/test/organization-directory.test.ts: setup (:31-62), its people and grants, and the SHU168 tests (:197, :213); packages/organizations/test/directory-mutations.mjs, its form and the line it prints.
+- packages/db/src/postgres-organization-stores-store.ts:30-45 (a pool-owning class with a batched ANY($1::text[]) read, the form to copy) and packages/db/src/index.ts:47 (the export form).
+- apps/gateway/src/company-directory.ts, the whole file, especially open (:72-97); apps/gateway/src/web-ui.ts renderCompanyDirectory (:186-226: the query object at :196-200 that the paging links reuse, and the form at :221).
+- apps/gateway/src/login-runtime.ts: the @studenthub/db import (:5), the account-manager store (:234), the OrganizationRepository (:276-278) and the closers (:313-315).
+- apps/gateway/test/company-directory.test.ts: fixture (:19-55) and "SHU-163/AC-07 PAGE filters reach the directory and survive paging links" (:84); apps/gateway/test/company-directory-mutations.mjs and its mutants array.
+
+Design:
+- types.ts: add readonly accountManager?: string; to OrganizationDirectoryFilters, with a one-line comment: the principal id of the company's account manager (SHU-336); a company without one never matches.
+- organizations.ts:
+  - Next to OrganizationStoreCounts, export interface OrganizationAccountManagerRecords { readMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, string>> }, mapping an organization id to its manager's principal id; an organization without a manager has no entry.
+  - Add readonly accountManagers?: OrganizationAccountManagerRecords to the constructor options and keep it in a private #accountManagers.
+  - validDirectoryFilters: destructure accountManager with the others, and before the final return add if (accountManager !== undefined && (typeof accountManager !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager))) return false;. Leave the rest line and the currency return line as they are.
+  - In listOrganizations, right after the deletion check (:533): if (filters.accountManager !== undefined && !this.#accountManagers) return { kind: "unavailable" }; so a manager filter is refused rather than silently ignored, while a caller who may not list still gets not_found first.
+  - After the storeTotals line (:552): const managers = filters.accountManager !== undefined && shown.length > 0 ? await this.#accountManagers?.readMany(shown.map((org) => org.id)) : undefined;
+  - As the first statement of the loop over shown: if (filters.accountManager !== undefined && managers?.get(org.id) !== filters.accountManager) continue;. It runs before the snapshot read, so total and pages count only matching companies, and matchesDirectoryFilters still applies q, status, approved and currency to what remains.
+  - Keep !this.#accountManagers, this.#accountManagers?.readMany(shown.map((org) => org.id)), managers?.get(org.id) !== filters.accountManager and !/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager) exactly as written: they are the mutation anchors. Do not touch directoryEntry or the entry keys, read, readCounts or listSubOrganizations.
+- packages/db/src/postgres-organization-account-manager-reads.ts (new): export class PostgresOrganizationAccountManagerReads, constructor(options: { connectionString?: string; pool?: pg.Pool }) owning its pool like PostgresOrganizationStoresStore, close(), and async readMany(orgIds: readonly string[]): Promise<Map<string, string>>, which returns new Map() for [] without a query and otherwise runs SELECT org_id,principal_id FROM organization_account_managers WHERE org_id = ANY($1::text[]). It decides no access: the repository passes only the covered, live, shown companies. It is a new file so that this card stays disjoint from postgres-organization-account-manager-store.ts (SHU-338). Export it from packages/db/src/index.ts with one line after :47.
+- login-runtime.ts: add PostgresOrganizationAccountManagerReads to the @studenthub/db import, build const organizationAccountManagerReads=new PostgresOrganizationAccountManagerReads({connectionString:value("DATABASE_URL")}); next to the account-manager store (:234), pass accountManagers:organizationAccountManagerReads to the OrganizationRepository (:277), and add its close() to the closers. Change nothing else.
+- company-directory.ts:
+  - Add "manager" to PARAMETERS (:22), and accountManager?: string to the local filters type (:40).
+  - In parseCompanyDirectoryQuery, after the currency block: const manager = query.get("manager"); if (manager) { if (manager !== "me" && !/^[A-Za-z0-9._:-]{1,128}$/.test(manager)) return { ok: false }; filters.accountManager = manager; }. An empty field means any, like the other filters.
+  - In open, after a successful parse: const filters = parsed.filters.accountManager === "me" ? Object.freeze({ ...parsed.filters, accountManager: session.personId }) : parsed.filters; pass filters to listOrganizations and return it as the 200 body's filters, so the page and its links carry the resolved id. Add a one-line comment that "me" always means the caller, so a principal whose id is exactly "me" cannot be named.
+  - The existing mapping already answers 400 invalid_directory_query for invalid and 503 directory_unavailable for unavailable; keep it.
+- web-ui.ts renderCompanyDirectory: add ...(filters.accountManager ? { manager: filters.accountManager } : {}) to the query object (:196-200) so paging links keep it, and after the Currency label in the form add <label>Account manager<input name="manager" maxlength="128" value="\${escapeHtml(filters.accountManager ?? "")}" placeholder="Any, or me"></label>. Change no other line, and add no CSS and no script.
+
+Tests (name every new test with its token first and a space after it):
+- organization-directory.test.ts: give setup optional accountManagers and deletions options passed to the repository, leaving every existing caller unchanged. Use a fake that records each call's ids and answers org-a → "staff-self-a" and org-b → "admin".
+  - "SHU339_FILTER ...": staff listing root with {accountManager:"staff-self-a"} gets [org-a] with total 1, {accountManager:"admin"} gets [org-b], and {accountManager:"nobody"} gets [] with total 0. A top-level company added through extraOrganizations, which has no manager, never matches. {accountManager:"staff-self-a", query:"Organization"} still gives [org-a], and a status or currency filter org-a does not match gives []. Without the filter every company is listed and the fake is never called.
+  - "SHU339_FILTER_SCOPE ...": with the filter the fake is called exactly once with exactly the shown top-level covered ids, never root or a sub-company; with a deletions port marking org-b deleted, the call carries only org-a.
+  - "SHU339_FILTER_INVALID ...": "", "a b", "x/y", 129 characters and a non-string each answer {kind:"invalid"} with no port call.
+  - "SHU339_FILTER_UNAVAILABLE ...": a repository without the port answers {kind:"unavailable"} to a valid manager filter, while the same request without it is found; a port that throws answers unavailable; an org-owner caller with the filter still gets not_found.
+- directory-mutations.mjs: add five entries in its form:
+  - "ignore the manager filter", SHU339_FILTER: managers?.get(org.id) !== filters.accountManager becomes false.
+  - "unmanaged company matches", SHU339_FILTER: the same anchor becomes (managers?.get(org.id) ?? filters.accountManager) !== filters.accountManager.
+  - "read every organization's manager", SHU339_FILTER_SCOPE: this.#accountManagers?.readMany(shown.map((org) => org.id)) becomes this.#accountManagers?.readMany(organizations.map((org) => org.id)).
+  - "accept any manager", SHU339_FILTER_INVALID: !/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager) becomes false.
+  - "ignore a missing port", SHU339_FILTER_UNAVAILABLE: !this.#accountManagers becomes false.
+
+  The exact anchors depend on how tsc prints them: take them from dist/organizations.js after npm run build and assert each binds once. Change nothing else in the script; the count it prints follows from the list.
+- packages/db/test/postgres-organization-account-manager-reads.test.ts (new; fixtures as in postgres-organization-account-manager.test.ts: runMigrations, a fresh operator root, fresh companies and principals): "SHU339_PG_READS ...": two companies whose managers are inserted directly into organization_account_managers and one without a manager. readMany of the three gives exactly the two entries with the right principal ids, a company outside the list never appears, and readMany([]) gives an empty map.
+- company-directory.test.ts: give fixture an optional accountManagers option passed to the repository.
+  - "SHU339_PAGE ...": with a fake answering org-a → "person-1", the JSON for ?manager=me lists only org-a with filters.accountManager "person-1", ?manager=person-1 gives the same, and ?manager=other lists none. ?manager=a%20b and a repeated manager parameter answer 400 invalid_directory_query, and an empty manager= lists every company. The HTML form has an input named manager carrying the resolved value.
+  - "SHU339_PAGE_UNAVAILABLE ...": a fixture without accountManagers answers 503 directory_unavailable to ?manager=me and 200 without it.
+- company-directory-mutations.mjs: add two entries to the mutants array in its form:
+  - ["company-directory.js", "the manager filter is dropped", "SHU339_PAGE", "filters.accountManager = manager;", ""]
+  - ["company-directory.js", "me is not resolved", "SHU339_PAGE", "accountManager: session.personId", 'accountManager: "me"']
+
+  Take each anchor from dist/apps/gateway/src/company-directory.js after npm run build and assert it binds once.
+- package.json: leave every script's text as it is, except that dist/packages/db/test/postgres-organization-account-manager-reads.test.js is appended at the END of the first node --test list in test:db, right after dist/packages/db/test/postgres-organization-account-manager.test.js. Never change dependencies.
+
+Out of scope:
+- Showing the manager or its name in the directory, on the workspace card or anywhere else, sorting by manager, and the staff "my companies" read (SHU-338).
+- Any change to the account-manager safe write, its decisions and postgres-organization-account-manager-store.ts (SHU-338's file), and the company currency write (SHU-340).
+- Migrations, apps/gateway/src/index.ts, packages/organizations/src/index.ts (it already exports types.js and organizations.js), CSS, the lockfile, and any network call, credential, staging or production access. login-runtime.ts and package.json are in scope only for the changes the Design and Tests sections name.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+export const SHU340_PATHS = Object.freeze([
+  "packages/organizations/src/commercial-terms-writes.ts",
+  "packages/organizations/test/commercial-terms-writes.test.ts",
+  "packages/organizations/test/commercial-terms-writes-mutations.mjs",
+  "packages/db/migrations/0205_organization_currency.sql",
+  "packages/db/src/postgres-organization-commercial-terms-store.ts",
+  "packages/db/test/postgres-organization-commercial-terms.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "apps/gateway/src/organization-commercial-terms.ts",
+  "apps/gateway/test/organization-commercial-terms-http.test.ts",
+]);
+
+const SHU340_ACCEPTANCE = [
+  "(1) commercial-terms-writes.ts exports ORGANIZATION_CURRENCY_FIELD = \"currency_code\" and organizationCurrencyValue(field, value), true only for currency_code with \"none\" or an uppercase three-letter code; ORGANIZATION_COMMERCIAL_TERMS_FIELDS stays the two decimal fields, so a decimal never passes for currency_code and a code never passes for a rate (SHU340_VALUE);",
+  "(2) buildOrganizationCommercialTermsWrite answers invalid_value at both preview and confirm for a currency code its currencyKnown port does not know, and for any currency code when it has no port; \"none\" never calls the port. Staff answer not_own_record and a stale confirm state_changed, as for the other terms (SHU340_CATALOGUE, SHU340_STAFF);",
+  "(3) Migration 0205 widens organization_commercial_terms' field and value checks to admit currency_code with NULL or ^[A-Z]{3}$ (and nothing else for it), keeps the decimal rule for the two rates, and widens authorization_audit_summary_valid's commercial-terms field list to include currency_code, starting from 0204's text and accepting every existing row. \"0205_organization_currency\" follows \"0204_organization_account_managers\" in both lists in postgres-authz-store.test.ts;",
+  "(4) PostgresOrganizationCommercialTermsStore accepts currency_code, exposes currencyKnown(code) over active catalogue currencies, re-checks the code FOR SHARE in #commit (state_changed when it is gone), writes one audit row with fields [\"currency_code\"], clears with \"none\", and read() still returns only hourlyRate and bonusCommission, never a currency row (SHU340_PG_CURRENCY, SHU340_PG_REFUSED, SHU340_PG_CHECKS);",
+  "(5) POST /organization/commercial-terms/preview and /confirm accept field currency_code: a known code commits (200), a lowercase or unknown code answers 400 invalid_value, any other shape 400 invalid_request, a stale confirm 409, and \"none\" clears; the rate fields and the receipt route are unchanged (SHU340_HTTP);",
+  "(6) commercial-terms-writes-mutations.mjs gains the three mutants for items 1-2, each fails its named test, the five SHU-314 mutants and every organization-deletion-guards-mutations.mjs anchor in the store still bind once and are killed, and the final line prints 8/8; the Postgres mutation for item 4 is checked by hand and reported. Every existing commercial-terms test passes unchanged, npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU340_BRIEF = `Card SHU-340: an admin sets a company's currency (slice O5j of O5, row OR-07, after SHU-314, SHU-326/327 and SHU-336; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. It includes SHU-314 (migration 0192, the admin commercial-terms safe write this card extends), SHU-166 (migration 0146, the reference catalogue with its currencies), SHU-326/327 (organization_deletions and organization-liveness.ts) and SHU-336 (migration 0204, the latest authorization_audit_summary_valid). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. Row OR-07 "Update commercial terms (rate, commission, currency)" is REQUIRED as an admin-only capability through legacy admin Update (docs/parity/organizations-stores-and-contacts.md:182), and every legacy company carries a currency_code (:31). SHU-314 built the admin safe write for the rate and the commission only: the table admits only those two fields with a decimal value (packages/db/migrations/0192_organization_commercial_terms.sql:3-4), the field list, value check and builder accept only them (packages/organizations/src/commercial-terms-writes.ts:4-15), and the audit summary admits only those field names (0204_organization_account_managers.sql:20, the latest authorization_audit_summary_valid). Currencies already live in the reference catalogue as catalogue_items of type currency (0146_reference_catalogue.sql:4). This card adds currency_code as a third field of the same admin safe write: an uppercase three-letter code that exists as an active catalogue currency, or "none" to clear. It shows the currency nowhere.
+
+Read first:
+- packages/organizations/src/commercial-terms-writes.ts, the whole file. commercial-terms-writes-mutations.mjs anchors three strings in dist/commercial-terms-writes.js that must still bind once: the value check's return line (return ORGANIZATION_COMMERCIAL_TERMS_FIELDS.includes(field) && (value === "none" || ...)), row.role === "admin" and return current === expected;. Leave the first line as it is and write neither of the other two again. Its two other anchors are in dist/organizations.js, which this card does not touch.
+- packages/organizations/test/commercial-terms-writes.test.ts (subject through SHU314_TEST_MODULE, its fixture and the conformance test, which passes check: () => true) and commercial-terms-writes-mutations.mjs (its isOrg list names the two organizations.js mutants).
+- packages/db/src/postgres-organization-commercial-terms-store.ts, the whole file: FIELDS (:2), read (:4, which today puts every row that is not hourly_rate into bonusCommission), forPrincipal, readReceipt, #value and #commit (:4-11). packages/db/test/organization-deletion-guards-mutations.mjs anchors if (!await organizationLive(c, org)) and if (!await organizationLive(client, org, true)) in this file, so write neither again.
+- packages/db/migrations/0192_organization_commercial_terms.sql:1-7 (the table; its two column checks carry Postgres's default names organization_commercial_terms_field_check and organization_commercial_terms_value_check), 0204_organization_account_managers.sql:15-27 (the function to start 0205's from) and 0146_reference_catalogue.sql:1-15 (catalogue_items: catalogue_type, code, status). packages/db/test/postgres-bank-details.test.ts:40-46 shows how a test inserts a catalogue item.
+- packages/db/test/postgres-organization-commercial-terms.test.ts, the Postgres test form, and postgres-authz-store.test.ts:1584 and :1637 (the two migration lists).
+- apps/gateway/src/organization-commercial-terms.ts, the whole file, especially request (:17-22) and writer (:27), and apps/gateway/test/organization-commercial-terms-http.test.ts (its in-memory store and call helper).
+
+Design:
+- commercial-terms-writes.ts:
+  - export const ORGANIZATION_CURRENCY_FIELD = "currency_code"; ORGANIZATION_COMMERCIAL_TERMS_FIELDS and OrganizationCommercialTermsField stay the two decimal fields.
+  - ORGANIZATION_COMMERCIAL_TERMS_POLICY allows [...ORGANIZATION_COMMERCIAL_TERMS_FIELDS, ORGANIZATION_CURRENCY_FIELD]; maxValueLength stays 17.
+  - export function organizationCurrencyValue(field: string, value: string): boolean { return field === ORGANIZATION_CURRENCY_FIELD && (value === "none" || /^[A-Z]{3}$/.test(value)); }
+  - OrganizationCommercialTermsBuildInput gains readonly currencyKnown?: (code: string) => Promise<boolean>.
+  - In buildOrganizationCommercialTermsWrite, the default check becomes (field, value) => organizationCommercialTermsValue(field, value) || organizationCurrencyValue(field, value); an explicit input.check still replaces it.
+  - Add const known = async (request: PreviewRequest | ConfirmRequest) => request.change.field !== ORGANIZATION_CURRENCY_FIELD || request.change.value === "none" || (input.currencyKnown !== undefined && await input.currencyKnown(request.change.value));. Preview and confirm answer { ok: false, reason: "invalid_value" } unless valid(request) && await known(request), checked in that order. Without the port every currency code is refused: fail closed.
+  - Keep /^[A-Z]{3}$/ and input.currencyKnown !== undefined && await input.currencyKnown(request.change.value) as written: they are the mutation anchors.
+- packages/db/migrations/0205_organization_currency.sql (new; check that 0204 is still the highest migration):
+  - ALTER TABLE organization_commercial_terms DROP CONSTRAINT organization_commercial_terms_field_check, DROP CONSTRAINT organization_commercial_terms_value_check, ADD CONSTRAINT organization_commercial_terms_field_check CHECK (field IN ('hourly_rate','bonus_commission','currency_code')), ADD CONSTRAINT organization_commercial_terms_value_check CHECK (value IS NULL OR (field IN ('hourly_rate','bonus_commission') AND value ~ '^[0-9]{1,10}(\\.[0-9]{1,6})?$') OR (field='currency_code' AND value ~ '^[A-Z]{3}$')). Every existing row passes.
+  - CREATE OR REPLACE FUNCTION authorization_audit_summary_valid from 0204's text with one change: the commercial-terms branch becomes summary->'fields'->>0 IN ('hourly_rate','bonus_commission','currency_code').
+  - No new operation, no change to the operation, cardinality, halves or self checks, and no new index: the write stays organization.commercial_terms.safe_write, which 0192's token and receipt indexes already cover.
+- postgres-organization-commercial-terms-store.ts:
+  - FIELDS gains "currency_code", so readField, readReceipt and #commit accept it.
+  - read(org) keeps its {hourlyRate, bonusCommission} shape and skips currency_code rows.
+  - Add async currencyKnown(code: string): Promise<boolean>, true when SELECT 1 FROM catalogue_items WHERE catalogue_type='currency' AND status='active' AND code=$1 LIMIT 1 finds a row.
+  - In #commit, after the state compare: for field currency_code and a value other than "none", run the same query with FOR SHARE on the transaction's client; no row throws Refusal("state_changed") (the currency was deleted after preview). Nothing else in #commit changes; its upsert already stores NULL for "none".
+- organization-commercial-terms.ts (gateway):
+  - OrganizationCommercialTermsStore gains currencyKnown(code: string): Promise<boolean>. The Postgres store satisfies it structurally, so login-runtime.ts does not change.
+  - request() also accepts field currency_code with value "none" or /^[A-Za-z]{3}$/, so a lowercase code reaches the builder and answers 400 invalid_value. The two rate fields keep their value check, and every other shape stays 400 invalid_request.
+  - writer passes currencyKnown: (code) => ports.store.currencyKnown(code). Routes, refusal mapping, headers and origin rules are unchanged.
+
+Tests (name every new test with its token first and a space after it):
+- commercial-terms-writes.test.ts, through subject so the mutants apply. Let the fixture take an optional currencyKnown (knowing "KWD" and "USD", and recording its calls) and pass it to the builder; existing callers are unchanged.
+  - "SHU340_VALUE ...": organizationCurrencyValue accepts "KWD" and "none" for currency_code and refuses "kwd", "KW", "KWDX", "4.25" and the field hourly_rate; organizationCommercialTermsValue refuses currency_code. A writer previews currency_code "kwd" and "4.25", and hourly_rate "KWD", as invalid_value.
+  - "SHU340_CATALOGUE ...": an admin previews and confirms currency_code "KWD" with the port; "XYZ" previews and confirms as invalid_value and never commits; a writer built without currencyKnown refuses "KWD" as invalid_value; "none" commits without calling the port.
+  - "SHU340_STAFF ...": a staff fixture previews currency_code "KWD" as not_own_record, and an admin confirm after the stored value changes is state_changed.
+- commercial-terms-writes-mutations.mjs: add three entries in its form, none of them in the isOrg list:
+  - ["lowercase currency", "SHU340_VALUE", "/^[A-Z]{3}$/", "/^[A-Za-z]{3}$/"]
+  - ["skip the catalogue", "SHU340_CATALOGUE", "input.currencyKnown !== undefined && await input.currencyKnown(request.change.value)", "true"]
+  - ["no port allows", "SHU340_CATALOGUE", "input.currencyKnown !== undefined &&", "input.currencyKnown === undefined ||"]
+
+  The exact anchors depend on how tsc prints them: take them from dist/commercial-terms-writes.js after npm run build and assert each binds once. Change nothing else in the script except the line it prints, which becomes "8/8 SHU-314 and SHU-340 mutations killed".
+- postgres-organization-commercial-terms.test.ts, appended. Insert active catalogue currencies with code "KWD" and a fresh name each run, and build writers with currencyKnown: (code) => store.currencyKnown(code).
+  - "SHU340_PG_CURRENCY ...": an admin previews and confirms currency_code "KWD" on a fresh company. The row holds 'KWD', exactly one new audit row has operation organization.commercial_terms.safe_write, target_org_refs [organizationAuditRef(company)] and fields ["currency_code"], and read(company) still gives hourlyRate and bonusCommission absent. Clearing with "none" stores NULL and adds a second audit row.
+  - "SHU340_PG_REFUSED ...": a staff writer previews as not_own_record. "XYZ", with no active currency of that code, previews as invalid_value. A second confirm of one token is token_already_used and a stale confirm is state_changed. With a writer whose currencyKnown is always true, marking deleted the only active currency of a fresh code (three random uppercase letters that no active catalogue row has yet) (status 'deleted', deleted_at set) between preview and confirm makes confirm answer state_changed, leaving the row and the audit count unchanged.
+  - "SHU340_PG_CHECKS ...": direct INSERTs of (company, 'currency_code', 'kwd'), (company, 'currency_code', '12.5') and (company, 'hourly_rate', 'KWD') each fail with code 23514, and (company, 'currency_code', 'KWD') succeeds.
+  - In your final message, report by hand that dropping the catalogue re-check in #commit makes the deleted-currency case in SHU340_PG_REFUSED fail.
+- postgres-authz-store.test.ts: only add "0205_organization_currency" after "0204_organization_account_managers" at :1584 and :1637.
+- organization-commercial-terms-http.test.ts: add currencyKnown to the in-memory store (it knows "KWD"). "SHU340_HTTP ...":
+  - Preview and confirm of currency_code "KWD" give 200 and set the stored value, and "none" gives 200 and clears it.
+  - "kwd" and "XYZ" give 400 invalid_value, "KW" and "K1D" give 400 invalid_request, and a confirm after the stored value changes gives 409 state_changed.
+
+  The existing SHU-314 test stays unchanged.
+
+Out of scope:
+- Showing or projecting the currency anywhere (the directory, the workspace card, organizations.ts and the read model; organizations.ts belongs to SHU-339 in this queue), and any directory filter change.
+- Editing, importing or rating the currency catalogue (D-OR4), the company country, pay-contract currencies, staff writes, and the two rate fields' behaviour.
+- login-runtime.ts, apps/gateway/src/index.ts, packages/db/src/index.ts, packages/organizations/src/index.ts, package.json (every touched test and mutation script already runs from test or test:db), packages/safe-write-contract, the lockfile, and any network call, credential, staging or production access.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -2832,6 +3092,27 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU336_PATHS,
     acceptance: SHU336_ACCEPTANCE,
     brief: SHU336_BRIEF,
+  }),
+  "SHU-338": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU338_PATHS,
+    revision_paths: SHU338_PATHS,
+    acceptance: SHU338_ACCEPTANCE,
+    brief: SHU338_BRIEF,
+  }),
+  "SHU-339": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU339_PATHS,
+    revision_paths: SHU339_PATHS,
+    acceptance: SHU339_ACCEPTANCE,
+    brief: SHU339_BRIEF,
+  }),
+  "SHU-340": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU340_PATHS,
+    revision_paths: SHU340_PATHS,
+    acceptance: SHU340_ACCEPTANCE,
+    brief: SHU340_BRIEF,
   }),
 });
 

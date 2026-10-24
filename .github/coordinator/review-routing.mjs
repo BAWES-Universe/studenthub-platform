@@ -530,13 +530,25 @@ export function verdictMatchesLane(requestedWorker, evidenceStage) {
 // SHU-140 made a Codex review of Claude's build look like self-review). An
 // untagged review keeps the whole issue as its lineage.
 const LINEAGE_SHA_RE = /^[0-9a-f]{40}$/;
+//
+// The review's own attempt is never part of what it reviews. A fold reads the
+// lineage from the start of its tick, so a review that is acknowledged and
+// completes within one tick still finds its own copy from before the ack, with
+// no worker_identity, and would read as unreadable provenance (SHU-304 on #308
+// and #314: a review-only run has no other receipt in its episode). Only a copy
+// whose trusted role is review is left out: a write carrying the same attempt
+// id stays in the lineage and is judged as an author.
+const ownReviewCopy = (own, r) => typeof own === "string" && own.length > 0 && r?.attempt_id === own
+  && (() => { const authority = resolveReceiptRoleAuthority(r); return authority.ok && authority.role === "review"; })();
 export function reviewedLineage(receipt, lineageReceipts = []) {
+  const own = receipt?.attempt_id;
+  const pool = (lineageReceipts ?? []).filter((r) => !ownReviewCopy(own, r));
   const episode = receipt?.episode_id;
-  if (typeof episode !== "string" || episode.length === 0) return lineageReceipts;
-  const lineage = lineageReceipts.filter((r) => r?.episode_id === episode);
+  if (typeof episode !== "string" || episode.length === 0) return pool;
+  const lineage = pool.filter((r) => r?.episode_id === episode);
   const heads = new Set([receipt.target_sha, ...lineage.flatMap((r) => [r.target_sha, r.result_sha])]
     .filter((sha) => typeof sha === "string" && LINEAGE_SHA_RE.test(sha)));
-  const others = lineageReceipts.filter((r) => r && typeof r === "object" && r.episode_id !== episode && r !== receipt);
+  const others = pool.filter((r) => r && typeof r === "object" && r.episode_id !== episode && r !== receipt);
   for (let grew = true; grew;) {
     grew = false;
     for (const r of others) {

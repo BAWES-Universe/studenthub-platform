@@ -4376,6 +4376,8 @@
     "SHU71_LINEAGE_UNRECORDED: an earlier write that started from this head and recorded no result still counts",
     "SHU71_LINEAGE_UNTAGGED: a review outside any episode keeps the whole issue as its lineage",
     "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds",
+    "SHU71_LINEAGE_OWN_ATTEMPT: a review's own pre-ack copy is not an unreadable author",
+    "SHU71_LINEAGE_OWN_ATTEMPT mutation: keeping the review's own copy in its lineage holds the verdict",
     "SHU71_RECEIPT_ORDER: receipts come back oldest first whatever order Linear returns comments in",
     "SHU71_RECEIPT_ORDER_ROUTE: a Codex BLOCK or FAILED review of a Claude build revises with Claude, not the card's oldest writer",
     "SHU71_REVIEW_CHANGE_BASE: the change is the broker's commits on the bound head, its base the commit below them",
@@ -32178,6 +32180,14 @@
     },
     {
       "name": "SHU71_LINEAGE_EPISODE: the episode routes a Codex BLOCK to the Claude reviser despite older Codex builds",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_OWN_ATTEMPT: a review's own pre-ack copy is not an unreadable author",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_LINEAGE_OWN_ATTEMPT mutation: keeping the review's own copy in its lineage holds the verdict",
       "capabilities": []
     },
     {
