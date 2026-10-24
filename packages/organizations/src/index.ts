@@ -11,3 +11,4 @@ export * from "./organization-brands.js";
 export * from "./organization-stores.js";
 export * from "./organization-creation.js";
 export * from "./deletion-writes.js";
+export * from "./account-manager-writes.js";
