@@ -19,6 +19,10 @@ const mutations = [
     "if (await this.#authorize(request, child.id) !== undefined)", "if (true)",
   ],
   [
+    "count a nested hierarchy", "SHU334_COUNTS_NESTED",
+    "!== null && children.length > 0) {\n", "!== null && false) {\n",
+  ],
+  [
     "store count without a port", "SHU334_COUNTS_STORES",
     "stores: totals ? totals.get(request.orgId) ?? 0 : null,", "stores: totals ? totals.get(request.orgId) ?? 0 : 0,",
   ],

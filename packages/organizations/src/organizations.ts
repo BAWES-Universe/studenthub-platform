@@ -497,8 +497,14 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const audience = await this.#authorize(request, request.orgId);
       if (audience !== "admin") return { kind: "not_found" };
       const organizations = await this.#store.listOrganizations();
+      const children = organizations.filter((org) => org.parentOrgId === request.orgId);
+      // As in listSubOrganizations: a sub-organization lists no sub-organizations,
+      // so data that claims some is refused rather than counted.
+      if (companyParentOf(organizations, request.orgId, this.#operators) !== null && children.length > 0) {
+        throw new HierarchyViolation("nested sub-organizations");
+      }
       let subOrganizations = 0;
-      for (const child of organizations.filter((org) => org.parentOrgId === request.orgId)) {
+      for (const child of children) {
         if (await this.#authorize(request, child.id) !== undefined) subOrganizations++;
       }
       const totals = this.#storeCounts ? await this.#storeCounts.countMany([request.orgId]) : undefined;
