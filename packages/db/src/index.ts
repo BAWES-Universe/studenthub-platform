@@ -44,3 +44,4 @@ export {PostgresOrganizationStoresStore,ORGANIZATION_STORE_CREATE_OPERATION,ORGA
 export {PostgresOrganizationCreationStore,ORGANIZATION_CREATE_OPERATION,type OrganizationCreateResult} from "./postgres-organization-creation-store.js";
 export {PostgresOrganizationDeletionStore,ORGANIZATION_DELETION_OPERATION,type PostgresOrganizationDeletionStoreOptions} from "./postgres-organization-deletion-store.js";
 export {PostgresPayContractSafeWriteStore,PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATION,type PostgresPayContractSafeWriteStoreOptions} from "./postgres-pay-contract-safe-write-store.js";
+export {PostgresOrganizationAccountManagerStore,ORGANIZATION_ACCOUNT_MANAGER_OPERATION,type PostgresOrganizationAccountManagerStoreOptions} from "./postgres-organization-account-manager-store.js";

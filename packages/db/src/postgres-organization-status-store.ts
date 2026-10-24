@@ -7,6 +7,7 @@ import {organizationLive} from "./organization-liveness.js";
 
 export const ORGANIZATION_STATUS_OPERATION="organization.status.safe_write";
 type Grant={readonly org_id:string;readonly role:string;readonly scope:string};
+type OrganizationStatusEventRow={readonly from_status:string|null;readonly to_status:string|null;readonly occurred_at:Date|string};
 type RecordValue={readonly kind:"absent"}|{readonly kind:"cleared"}|{readonly kind:"status";readonly status:"active"|"under_review"|"inactive"};
 export type OrganizationStatusDecision=(rows:readonly Grant[],orgId:string,ancestors:readonly string[])=>boolean;
 export type OrganizationStatusStateDecision=(current:string|null,expected:string|null)=>boolean;
@@ -27,6 +28,7 @@ export class PostgresOrganizationStatusStore {
   commit:async input=>input.principalRef===principal&&input.personRef===record?this.#commit(principalId,orgId,input):{ok:false,reason:"not_own_record"},
  }}
  async readReceipt(principalId:string,orgId:string,receiptRef:string):Promise<Receipt|null>{if(!reference.test(receiptRef))return null;const {rows}=await this.#pool.query<{actor_principal_ref:string;after_summary:Record<string,unknown>}>(`SELECT actor_principal_ref,after_summary FROM authorization_mutation_audit WHERE operation=$1 AND request_ref=$2 AND actor_principal_ref=$3 AND target_org_refs=$4::text[]`,[ORGANIZATION_STATUS_OPERATION,receiptRef,this.#o.principalRef(principalId),[organizationAuditRef(orgId)]]);const a=rows[0]?.after_summary;if(!a)return null;const receipt={contractVersion:a.contractVersion,receiptRef,personRef:a.personRef,principalRef:rows[0]!.actor_principal_ref,changeSetDigest:a.changeSetDigest,fields:a.fields,committedAt:a.committedAt} as Receipt;if(receipt.personRef!==this.#o.recordRef(orgId)||JSON.stringify(receipt.fields)!=='["status"]')throw new Error("malformed organization status receipt");return receipt}
+ async history(principalId:string,orgId:string):Promise<OrganizationStatusEventRow[]|null>{if(!await this.#allowed(this.#pool,principalId,orgId))return null;const {rows}=await this.#pool.query<OrganizationStatusEventRow>("SELECT from_status,to_status,occurred_at FROM organization_status_events WHERE org_id=$1 ORDER BY occurred_at DESC, id DESC LIMIT 50",[orgId]);return rows}
  async #grants(c:pg.Pool|pg.PoolClient,id:string,lock=false){return (await c.query<Grant>(`SELECT org_id,role,scope FROM grants WHERE principal_id=$1${lock?" FOR SHARE":""}`,[id])).rows}
  async #ancestors(c:pg.Pool|pg.PoolClient,orgId:string):Promise<string[]>{const {rows}=await c.query<{id:string}>(`WITH RECURSIVE chain AS (SELECT id,parent_org_id FROM organizations WHERE id=$1 UNION ALL SELECT o.id,o.parent_org_id FROM organizations o JOIN chain c ON c.parent_org_id=o.id) SELECT id FROM chain WHERE id<>$1`,[orgId]);return rows.map(x=>x.id)}
  async #allowed(c:pg.Pool|pg.PoolClient,id:string,org:string){if(!await organizationLive(c,org))return false;const [g,a]=await Promise.all([this.#grants(c,id),this.#ancestors(c,org)]);return this.#o.decision(g,org,a)}
