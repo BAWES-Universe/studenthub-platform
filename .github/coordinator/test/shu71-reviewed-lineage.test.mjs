@@ -152,7 +152,9 @@ test("SHU71_LINEAGE_OWN_ATTEMPT mutation: keeping the review's own copy in its l
         { current_head: r.target_sha, expected_head: r.target_sha, lineage: [${JSON.stringify(stale)}], now: () => new Date("2026-10-01T05:01:00.000Z") });
       console.log(JSON.stringify({ stage: out.receipt.stage }));
     `;
-    const child = spawnSync(process.execPath, ["--input-type=module", "-e", scenario], { encoding: "utf8", timeout: 30_000 });
+    // The child must not report through this file's test protocol.
+    const { NODE_TEST_CONTEXT: _nestedTestContext, ...env } = process.env;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", scenario], { encoding: "utf8", timeout: 30_000, env });
     assert.equal(child.status, 0, `mutant scenario crashed: ${child.stderr}`);
     assert.equal(JSON.parse(child.stdout.trim().split("\n").at(-1)).stage, "HOLD", "without the filter the review-only verdict is held");
   } finally {
