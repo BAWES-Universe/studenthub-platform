@@ -119,6 +119,13 @@ test("SHU334_COUNTS_CHILDREN counts only authorized live direct children", async
   assert.equal((await repository.readCounts({ principalId: "admin", orgId: "org-a1", role: "admin" }) as any).counts.subOrganizations, 0);
 });
 
+test("SHU334_COUNTS_NESTED a sub-organization that claims children is unavailable, never counted", async () => {
+  const { repository } = await setup({ extraOrganizations: [{ id: "org-a1x", name: "Organization A1X", parentOrgId: "org-a1" }] });
+  assert.deepEqual(await repository.readCounts({ principalId: "admin", orgId: "org-a1", role: "admin" }), { kind: "unavailable" });
+  assert.deepEqual(await repository.listSubOrganizations({ principalId: "admin", orgId: "org-a1", role: "admin" }), { kind: "unavailable" });
+  assert.equal((await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }) as any).counts.subOrganizations, 2);
+});
+
 test("SHU334_COUNTS_STORES reads one company and distinguishes zero from unavailable", async () => {
   const { store } = await setup();
   const source = new InMemoryApprovedOrganizationAdapter(new Map());
