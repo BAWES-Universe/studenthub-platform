@@ -2,14 +2,16 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
 import type { ActionToken, Receipt, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { buildOrganizationStatusWrite, ORGANIZATION_STATUS_FIELDS, ORGANIZATION_STATUS_POLICY,
-  organizationStatusPrincipalRef, organizationStatusRecordRef, type OrganizationStatusValue } from "@studenthub/organizations";
+  organizationStatusHistoryView, organizationStatusPrincipalRef, organizationStatusRecordRef,
+  type OrganizationStatusEventRow, type OrganizationStatusValue } from "@studenthub/organizations";
 
 export interface OrganizationStatusStore {
   forPrincipal(principalId: string, orgId: string): SafeWriteStore;
   readReceipt(principalId: string, orgId: string, receiptRef: string): Promise<Receipt | null>;
+  history(principalId: string, orgId: string): Promise<readonly OrganizationStatusEventRow[] | null>;
 }
 type Result = { readonly status: 200; readonly body: unknown } | { readonly status: 400|401|403|404|409|503; readonly body: { readonly error: string } };
-export interface OrganizationStatus { preview(session: string|undefined, body: unknown): Promise<Result>; confirm(session: string|undefined, body: unknown): Promise<Result>; receipt(session: string|undefined, orgId: string, ref: string): Promise<Result> }
+export interface OrganizationStatus { preview(session: string|undefined, body: unknown): Promise<Result>; confirm(session: string|undefined, body: unknown): Promise<Result>; receipt(session: string|undefined, orgId: string, ref: string): Promise<Result>; history(session: string|undefined, orgId: string): Promise<Result> }
 const TOKEN_KEYS = ["changeSetDigest","expectedBeforeDigest","expiresAt","issuedAt","mac","principalRef","tokenId"];
 function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> { return object(value) && Object.keys(value).sort().join() === [...keys].sort().join(); }
@@ -32,17 +34,19 @@ export function createOrganizationStatus(ports:{sessions:Pick<SessionStore,"get"
       const r=request(Object.fromEntries(Object.entries(body).filter(([k])=>k!=="token")));const t=token(body.token);if(!r)return {status:400,body:{error:"invalid_request"}};if(!t)return refused("token_not_issued");
       const out=await writer(person,r.orgId).confirm({principalRef:organizationStatusPrincipalRef(person),token:t,change:{personRef:organizationStatusRecordRef(r.orgId),field:r.field,value:r.value}});return out.ok?{status:200,body:{receipt:out.receipt}}:refused(out.reason);},
     async receipt(session,orgId,ref){const person=await principal(session);if(!person)return {status:401,body:{error:"unauthorized"}};const receipt=await ports.store.readReceipt(person,orgId,ref);return receipt?{status:200,body:{receipt}}:{status:404,body:{error:"receipt_not_found"}};},
+    async history(session,orgId){const person=await principal(session);if(!person)return {status:401,body:{error:"unauthorized"}};const rows=await ports.store.history(person,orgId);return rows?{status:200,body:{history:organizationStatusHistoryView(rows)}}:{status:404,body:{error:"not_found"}};},
   };
 }
 
-const PREVIEW="/organization/status/preview", CONFIRM="/organization/status/confirm", RECEIPT=/^\/organization\/status\/([^/]+)\/receipts\/([0-9a-f]{64})$/;
+const PREVIEW="/organization/status/preview", CONFIRM="/organization/status/confirm", RECEIPT=/^\/organization\/status\/([^/]+)\/receipts\/([0-9a-f]{64})$/, HISTORY=/^\/organization\/status\/([^/]+)\/history$/;
 const BODY_LIMIT=4096;
 function cookie(header:string|undefined):string|undefined { for(const item of header?.split(";")??[]){const [key,...parts]=item.trim().split("=");const value=parts.join("=");if(key==="__Host-studenthub_session"&&/^[A-Za-z0-9_-]{43}$/.test(value))return value;}return undefined; }
 async function json(req:IncomingMessage):Promise<{ok:true;value:unknown}|{ok:false}>{if(Number(req.headers["content-length"])>BODY_LIMIT){req.resume();return {ok:false};}const chunks:Buffer[]=[];let n=0;for await(const c of req.iterator({destroyOnReturn:false})){const bytes=Buffer.from(c);n+=bytes.length;if(n>BODY_LIMIT){req.resume();return {ok:false};}chunks.push(bytes);}try{return {ok:true,value:JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown};}catch{return {ok:false};}}
 export async function handleOrganizationStatus(req:IncomingMessage,res:ServerResponse,service:OrganizationStatus|undefined,origin:string|undefined):Promise<boolean>{
-  const path=new URL(req.url??"/","http://invalid").pathname, match=RECEIPT.exec(path);if(path!==PREVIEW&&path!==CONFIRM&&!match)return false;
+  const path=new URL(req.url??"/","http://invalid").pathname, match=RECEIPT.exec(path), history=HISTORY.exec(path);if(path!==PREVIEW&&path!==CONFIRM&&!match&&!history)return false;
   const send=(r:Result)=>{res.writeHead(r.status,{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});res.end(JSON.stringify(r.body));};
   try {if(!service||!origin){send({status:503,body:{error:"safe_write_unavailable"}});return true;}const session=cookie(req.headers.cookie);
+    if(history){if(req.method!=="GET"){send({status:404,body:{error:"not_found"}});return true;}let orgId:string;try{orgId=decodeURIComponent(history[1]!);}catch{send({status:400,body:{error:"invalid_request"}});return true;}send(await service.history(session,orgId));return true;}
     if(match){if(req.method!=="GET"){send({status:404,body:{error:"not_found"}});return true;}let orgId:string;try{orgId=decodeURIComponent(match[1]!);}catch{send({status:400,body:{error:"invalid_request"}});return true;}send(await service.receipt(session,orgId,match[2]!));return true;}
     if(req.method!=="POST"){send({status:404,body:{error:"not_found"}});return true;}if(req.headers.origin!==origin||req.headers["sec-fetch-site"]==="cross-site"){req.resume();send({status:403,body:{error:"origin_rejected"}});return true;}
     if(req.headers["content-type"]!=="application/json"){req.resume();send({status:400,body:{error:"invalid_request"}});return true;}const body=await json(req);if(!body.ok){send({status:400,body:{error:"invalid_request"}});return true;}send(path===PREVIEW?await service.preview(session,body.value):await service.confirm(session,body.value));
