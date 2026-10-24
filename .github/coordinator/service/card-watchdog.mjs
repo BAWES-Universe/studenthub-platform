@@ -14,6 +14,10 @@
 //   status never reached "finished". It then writes the card-run pause file,
 //   so no new run starts, and posts one alert comment on SHU-71.
 //
+// - Self-heal: when a running card has shown no progress for STALL_ALERT_MS
+//   (the run's own watch measure, written to its status), it posts one stall
+//   comment on SHU-71 for that run. Observe only: it writes no pause file.
+//
 // It never stops, kills or reverts a run, never removes the pause file or the
 // lock, and alerts at most once per run, recorded in its own state file. Every
 // line it posts is built from validated status fields only, never from logs,
@@ -35,11 +39,15 @@ export const WATCH_SCHEDULE = "*:05/10";
 export const WATCH_STATE = "card-watch.json";
 export const watchStatePath = (paths) => path.join(paths.stateDir, WATCH_STATE);
 
+// Self-heal: a run armed this long with no new progress gets one stall comment.
+export const STALL_ALERT_MS = 30 * 60 * 1000;
+
 // The longest a healthy run goes without writing its status is one revert
 // (waiting out its workers) or one landing (waiting for checks); each starts
 // right after a status write. Half an hour more covers the report and the
 // steps around them, so a run silent for longer is stuck.
 export const WATCH_LIMITS = Object.freeze({
+  stallMs: STALL_ALERT_MS,
   staleMs: Math.max(CARD_RUN_LIMITS.workerGraceMs, CARD_RUN_LIMITS.landWaitMs) + 30 * 60 * 1000,
   // A unit that is no longer running with a status that never reached
   // "finished" is a run that died; this long a wait keeps a run that is just
@@ -112,6 +120,8 @@ export function readStatus(io, paths) {
     step: STATUS_STEPS.has(raw.step) ? raw.step : null,
     ticks: count(raw.ticks),
     last_tick_at: iso(raw.last_tick_at),
+    armed_at: iso(raw.armed_at),
+    watching: raw.watching === true,
     first_dispatch_at: iso(raw.first_dispatch_at),
     last_progress_at: iso(raw.last_progress_at),
     outcome: known(raw.outcome),
@@ -168,6 +178,35 @@ export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
   if (!status || status.trigger !== "timer" || status.step === null || status.step === "finished") return null;
   if (now - Date.parse(status.updated_at) <= limits.endedMs) return null;
   return { kind: "ended", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
+}
+
+// Self-heal: whether the running card has shown no progress for the stall
+// limit. Progress is the run's own watch measure: the newest progress the
+// watch saw, or arming when it saw none, exactly where the watch's longest
+// stretch without progress counts from. Only this start's status, only while
+// the run is armed and ticking, and only when the watch was on: a run without
+// it has no progress to read.
+export function stalledRun({ unit, status, now, limits = WATCH_LIMITS }) {
+  if (!unit?.running || !status || Date.parse(status.updated_at) < unit.since) return null;
+  if (status.watching !== true || (status.step !== "armed" && status.step !== "ticking") || !status.armed_at) return null;
+  const point = Math.max(Date.parse(status.armed_at), status.last_progress_at ? Date.parse(status.last_progress_at) : 0);
+  const limit = limits.stallMs ?? STALL_ALERT_MS;
+  if (now - point < limit) return null;
+  return { run_id: status.run_id, status, since: new Date(point).toISOString(), minutes: Math.floor((now - point) / 60000), limit };
+}
+
+export function stallMarker(runId) {
+  return `<!-- card-run-stall ${runId} -->`;
+}
+
+export function renderStall({ stalled, mention }) {
+  const status = stalled.status;
+  return [
+    stallMarker(stalled.run_id),
+    `Stall: the card run on ${status.card ?? "an unknown card"} (${stalled.run_id}) has shown no progress for ${stalled.minutes} minutes, since ${stalled.since}${mention ? ` (${mention})` : ""}.`,
+    `It is still ${status.step}, ${status.ticks ?? 0} tick(s)${status.last_tick_at ? `, last tick ${status.last_tick_at}` : ""}; ${status.first_dispatch_at ? `first dispatch ${status.first_dispatch_at}` : "no dispatch seen"}.`,
+    `Observe only: the watch flags a run with no progress for ${Math.round(stalled.limit / 60000)} minutes once, and stops, reverts or pauses nothing.`,
+  ].join("\n");
 }
 
 export function alertMarker(key) {
@@ -264,10 +303,11 @@ function readState(io, paths) {
   try {
     const raw = JSON.parse(io.fs.readFileSync(watchStatePath(paths), "utf8"));
     return { alerts: Array.isArray(raw.alerts) ? raw.alerts.filter((entry) => typeof entry?.key === "string") : [],
+      stalls: Array.isArray(raw.stalls) ? raw.stalls.filter((entry) => typeof entry?.run_id === "string") : [],
       status_comment: typeof raw.status_comment === "string" ? raw.status_comment : null,
       status_body: typeof raw.status_body === "string" ? raw.status_body : null };
   } catch {
-    return { alerts: [], status_comment: null, status_body: null };
+    return { alerts: [], stalls: [], status_comment: null, status_body: null };
   }
 }
 
@@ -337,6 +377,25 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
     }
   }
 
+  // Self-heal: one stall comment per run, recorded before it is posted so a
+  // post that fails is tried again; the marker keeps a retry from posting twice.
+  const stalled = stalledRun({ unit, status, now, limits });
+  if (stalled) {
+    const done = state.stalls.find((stall) => stall.run_id === stalled.run_id);
+    if (done?.posted === true) {
+      result.stall = { run_id: done.run_id, already: true };
+    } else {
+      const stall = { run_id: stalled.run_id, at: new Date(now).toISOString(), posted: false };
+      state.stalls = [...state.stalls.filter((kept) => kept !== done), stall].slice(-limits.keepAlerts);
+      writeState(io, paths, state);
+      const mention = readOwnerMention(io, paths);
+      const report = await postRunReport({ io, credentials, result: { activation_id: stalled.run_id }, timeoutMs: limits.requestTimeoutMs,
+        marker: stallMarker(stalled.run_id), render: () => renderStall({ stalled, mention }) });
+      stall.posted = report.posted === true;
+      result.stall = { run_id: stall.run_id, posted: stall.posted, ...(report.posted ? {} : { reason: report.reason }) };
+    }
+  }
+
   const body = renderStatus({ status, unit, paused: io.fs.existsSync(paths.pause), now: new Date(now) });
   if (body === state.status_body) {
     result.status_comment = { changed: false };
@@ -356,7 +415,7 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
   }
   result.state_written = writeState(io, paths, state);
   const paused = result.alert === null || result.alert.pause.written === true || result.alert.pause.held === true;
-  result.ok = result.state_written && result.unit_error === undefined && result.alert?.posted !== false && paused && result.status_comment.posted !== false;
+  result.ok = result.state_written && result.unit_error === undefined && result.alert?.posted !== false && result.stall?.posted !== false && paused && result.status_comment.posted !== false;
   return result;
 }
 
