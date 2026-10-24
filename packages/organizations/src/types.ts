@@ -105,6 +105,16 @@ export type OrganizationReadResult =
   | { readonly kind: "not_found" }
   | { readonly kind: "unavailable" };
 
+export interface OrganizationCounts {
+  readonly stores: number | null;
+  readonly subOrganizations: number;
+}
+
+export type OrganizationCountsResult =
+  | { readonly kind: "found"; readonly counts: OrganizationCounts }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "unavailable" };
+
 export type SubOrganizationListResult =
   | { readonly kind: "found"; readonly subOrganizations: readonly SubOrganizationSummary[] }
   | { readonly kind: "not_found" }
@@ -113,6 +123,7 @@ export type SubOrganizationListResult =
 export interface OrganizationReader {
   read(request: OrganizationReadRequest): Promise<OrganizationReadResult>;
   listSubOrganizations(request: OrganizationReadRequest): Promise<SubOrganizationListResult>;
+  readCounts?(request: OrganizationReadRequest): Promise<OrganizationCountsResult>;
 }
 
 export const ORGANIZATION_DIRECTORY_VERSION = "studenthub.organization-directory.v1" as const;

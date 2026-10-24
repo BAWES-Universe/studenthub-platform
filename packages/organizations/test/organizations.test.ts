@@ -84,6 +84,55 @@ test("SHU-159/parity-contract two organizations, conflicting status fields, self
   assert.doesNotMatch(JSON.stringify(employer), SENTINELS);
 });
 
+test("SHU334_COUNTS_SCOPE counts are admin-only and failures are concealed", async () => {
+  const { store } = await setup();
+  const source = new InMemoryApprovedOrganizationAdapter(new Map());
+  const deleted = new Set<string>();
+  const deletions = { async isDeleted(id: string) { return deleted.has(id); }, async deletedAmong(ids: readonly string[]) { return new Set(ids.filter((id) => deleted.has(id))); } };
+  const storeCounts = { async countMany(ids: readonly string[]) { return new Map(ids.map((id) => [id, 1])); } };
+  const repository = new OrganizationRepository({ store, source, storeCounts, deletions });
+  assert.equal((await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" })).kind, "found");
+  for (const request of [
+    { principalId: "staff", orgId: "org-a", role: "staff" },
+    { principalId: "owner-a", orgId: "org-a", role: "org-owner" },
+    { principalId: "recruiter-a1", orgId: "org-a1", role: "recruiter" },
+    { principalId: "admin", orgId: "root", role: "admin" },
+    { principalId: "admin", orgId: "missing", role: "admin" },
+  ]) assert.deepEqual(await repository.readCounts(request), { kind: "not_found" });
+  deleted.add("org-a");
+  assert.deepEqual(await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }), { kind: "not_found" });
+  const broken = new OrganizationRepository({ store, source, storeCounts: { async countMany() { throw new Error("down"); } } });
+  assert.deepEqual(await broken.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }), { kind: "unavailable" });
+});
+
+test("SHU334_COUNTS_CHILDREN counts only authorized live direct children", async () => {
+  const { store } = await setup();
+  const source = new InMemoryApprovedOrganizationAdapter(new Map());
+  const deleted = new Set<string>();
+  const deletions = { async isDeleted(id: string) { return deleted.has(id); }, async deletedAmong(ids: readonly string[]) { return new Set(ids.filter((id) => deleted.has(id))); } };
+  const repository = new OrganizationRepository({ store, source, deletions });
+  assert.deepEqual(await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }), { kind: "found", counts: { stores: null, subOrganizations: 2 } });
+  deleted.add("org-a2");
+  assert.equal((await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }) as any).counts.subOrganizations, 1);
+  await store.grantMany("nobody", [{ orgId: "org-a", role: "admin" }]);
+  assert.equal((await repository.readCounts({ principalId: "nobody", orgId: "org-a", role: "admin" }) as any).counts.subOrganizations, 0);
+  assert.equal((await repository.readCounts({ principalId: "admin", orgId: "org-a1", role: "admin" }) as any).counts.subOrganizations, 0);
+});
+
+test("SHU334_COUNTS_STORES reads one company and distinguishes zero from unavailable", async () => {
+  const { store } = await setup();
+  const source = new InMemoryApprovedOrganizationAdapter(new Map());
+  const calls: readonly string[][] = [];
+  const requested: string[][] = calls as string[][];
+  const repository = new OrganizationRepository({ store, source, storeCounts: { async countMany(ids) { requested.push([...ids]); return new Map([["org-a", 3]]); } } });
+  assert.deepEqual(await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }), { kind: "found", counts: { stores: 3, subOrganizations: 2 } });
+  assert.deepEqual(calls, [["org-a"]]);
+  const zero = new OrganizationRepository({ store, source, storeCounts: { async countMany() { return new Map(); } } });
+  assert.equal((await zero.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }) as any).counts.stores, 0);
+  const absent = new OrganizationRepository({ store, source });
+  assert.equal((await absent.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }) as any).counts.stores, null);
+});
+
 test("SHU-159/AC-01 STATUS status is derived from one source for every audience", async () => {
   const { repository } = await setup();
   const audiences = [["owner-a-subtree", "org-owner"], ["staff", "staff"], ["admin", "admin"]] as const;

@@ -2,7 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { OrganizationDeletionRecords, OrganizationReader, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
+import type { OrganizationCounts, OrganizationDeletionRecords, OrganizationReader, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -21,11 +21,16 @@ export type SubOrganizationsPanel =
   | { readonly kind: "found"; readonly subOrganizations: readonly SubOrganizationSummary[] }
   | { readonly kind: "unavailable" };
 
+export type OrganizationCountsPanel =
+  | { readonly kind: "found"; readonly counts: OrganizationCounts }
+  | { readonly kind: "unavailable" };
+
 export type NavigationResult =
   | { readonly status: 200; readonly body: {
     readonly contexts: readonly WorkspaceContext[];
     readonly active: WorkspaceContext | null;
     readonly organization?: ActiveOrganization;
+    readonly counts?: OrganizationCountsPanel;
     readonly subOrganizations?: SubOrganizationsPanel;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
@@ -99,6 +104,13 @@ export function createContextNavigation(
         const organization: ActiveOrganization = read.kind === "found"
           ? { kind: "found", view: read.organization }
           : read.kind === "not_found" ? { kind: "not_applicable" } : { kind: "unavailable" };
+        let counts: OrganizationCountsPanel | undefined;
+        if (read.kind === "found" && active.role === "admin" && organizationReader.readCounts) {
+          const tally = await organizationReader.readCounts({ principalId: session.personId, orgId: active.orgId, role: active.role });
+          counts = tally.kind === "found"
+            ? { kind: "found", counts: tally.counts }
+            : tally.kind === "unavailable" ? { kind: "unavailable" } : undefined;
+        }
         let panel: SubOrganizationsPanel | undefined;
         if (read.kind === "found" && read.organization.parentOrgId === null) {
           const children = await organizationReader.listSubOrganizations({
@@ -108,7 +120,7 @@ export function createContextNavigation(
             ? { kind: "found", subOrganizations: children.subOrganizations }
             : children.kind === "unavailable" ? { kind: "unavailable" } : undefined;
         }
-        return { status: 200, body: { contexts, active, organization, ...(panel ? { subOrganizations: panel } : {}) } };
+        return { status: 200, body: { contexts, active, organization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}) } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }

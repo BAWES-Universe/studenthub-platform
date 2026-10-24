@@ -16,6 +16,7 @@ import {
   type ApprovedOrganizationAdapter,
   type ApprovedOrganizationSnapshot,
   type OrganizationAudience,
+  type OrganizationCountsResult,
   type OrganizationDirectory,
   type OrganizationDirectoryEntry,
   type OrganizationDirectoryFilters,
@@ -486,6 +487,25 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       }
       summaries.sort((a, b) => a.registryName.localeCompare(b.registryName) || a.orgId.localeCompare(b.orgId));
       return { kind: "found", subOrganizations: Object.freeze(summaries) };
+    } catch {
+      return { kind: "unavailable" };
+    }
+  }
+
+  async readCounts(request: OrganizationReadRequest): Promise<OrganizationCountsResult> {
+    try {
+      const audience = await this.#authorize(request, request.orgId);
+      if (audience !== "admin") return { kind: "not_found" };
+      const organizations = await this.#store.listOrganizations();
+      let subOrganizations = 0;
+      for (const child of organizations.filter((org) => org.parentOrgId === request.orgId)) {
+        if (await this.#authorize(request, child.id) !== undefined) subOrganizations++;
+      }
+      const totals = this.#storeCounts ? await this.#storeCounts.countMany([request.orgId]) : undefined;
+      return { kind: "found", counts: Object.freeze({
+        stores: totals ? totals.get(request.orgId) ?? 0 : null,
+        subOrganizations,
+      }) };
     } catch {
       return { kind: "unavailable" };
     }
