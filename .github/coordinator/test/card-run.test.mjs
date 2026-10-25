@@ -35,6 +35,7 @@ import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceTex
 import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
 import { judgeChecks } from "../service/card-land.mjs";
 import { judgingLane, threadReviewer, REVIEW_LIMITS } from "../service/card-threads.mjs";
+import { readVelocity, velocityLine } from "../service/card-velocity.mjs";
 import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1794,7 +1795,7 @@ test("SHU-86 0a: a timer run's final claim keeps claimed_at and records its timi
   assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
   const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
   assert.deepEqual(Object.keys(claim), ["card", "revision", "claimed_at", "activation_id", "outcome", "ok", "land", "armed_at", "first_tick_at",
-    "last_tick_at", "finished_at", "repo", "pr", "reviewed_head", "reverted", "first_dispatch_at", "last_progress_at", "max_progress_gap_ms", "would_stall"]);
+    "last_tick_at", "finished_at", "landed_at", "repo", "pr", "reviewed_head", "reverted", "first_dispatch_at", "last_progress_at", "max_progress_gap_ms", "would_stall"]);
   assert.equal(typeof claim.max_progress_gap_ms, "number", "SHU-86 0b: the committed config watches every run");
   assert.equal(claim.would_stall, null, "SHU-86 0b: no limit is configured, so nothing would have stopped it");
   assert.equal(claim.outcome, "PASS");
@@ -1823,6 +1824,66 @@ test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and re
   assert.equal(claim.reviewed_head, null);
   assert.equal(claim.reverted, null);
   assert.equal(claim.finished_at, null, "SHU-86 0a: a run that never armed never finished");
+  assert.equal(claim.landed_at, null, "Velocity: a run that never landed records no landing time");
+});
+
+test("Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended", async () => {
+  const host = landingHost();
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.match(claim.landed_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.ok(claim.finished_at <= claim.landed_at, "the landing is written down after the run finished");
+  assert.deepEqual(result.velocity.day, { unattended: 1, hand: 0 }, "this run counts before its final claim is written");
+  assert.equal(result.velocity.cycles, 1);
+  assert.match(host.reports[0], /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\. Median \d+ min from claim to merge \(1 card\)\.$/m);
+  const lines = host.reports[0].split("\n");
+  assert.equal(lines.at(-1), "The host is reverted and idle.", "the velocity line comes before the host line");
+});
+
+test("Velocity V2: the box's own records give unattended and hand landings, by window, with each card counted once", () => {
+  const now = new Date("2026-10-25T22:00:00.000Z");
+  const ago = (hours) => new Date(now.getTime() - hours * 3600 * 1000).toISOString();
+  const dir = "/srv/shu/state";
+  const rev = "a".repeat(40);
+  const files = new Map([
+    [`card-run-auto-${rev}-SHU-1.json`, { card: "SHU-1", land: "MERGED", claimed_at: ago(2), landed_at: ago(1.5) }],
+    [`card-run-auto-${rev}-SHU-2.json`, { card: "SHU-2", land: "MERGED", claimed_at: ago(30), landed_at: ago(29) }],
+    [`card-run-auto-${rev}-SHU-3.json`, { card: "SHU-3", land: "CI_TIMEOUT", claimed_at: ago(3) }],
+    [`card-hand-landed-SHU-3.json`, { card: "SHU-3", recorded_at: ago(2) }],
+    [`card-run-auto-${rev}-SHU-4.json`, { card: "SHU-4", land: "MERGED", claimed_at: ago(5) }],
+    [`card-hand-landed-SHU-4.json`, { card: "SHU-4", recorded_at: ago(4) }],
+    [`card-repair-${rev}-SHU-5.json`, { card: "SHU-5", state: "finished", land: "MERGED", finished_at: ago(6) }],
+    [`card-repair-${rev}-SHU-5.alerted.json`, { card: "SHU-5" }],
+    [`card-run-auto-${rev}-SHU-6.json`, { card: "SHU-6", land: "MERGED", claimed_at: ago(200), landed_at: ago(199) }],
+    [`card-run-auto-${rev}-SHU-7.json`, { card: "SHU-8", land: "MERGED", claimed_at: ago(1), landed_at: ago(1) }],
+    [`card-run-auto-${rev}-SHU-9.json`, null],
+    [`card-review-auto-pr9-${rev}.json`, { land: "MERGED", claimed_at: ago(1) }],
+  ]);
+  const io = { now: () => now, fs: {
+    readdirSync: (d) => { assert.equal(d, dir); return [...files.keys()]; },
+    readFileSync: (file) => { const v = files.get(path.basename(file)); if (v === null) return "{not json"; return JSON.stringify(v); } } };
+  const v = readVelocity(io, dir);
+  assert.deepEqual(v.day, { unattended: 2, hand: 2 }, "SHU-1 and the SHU-5 repair unattended; SHU-3 and SHU-4 by hand");
+  assert.deepEqual(v.week, { unattended: 3, hand: 2 }, "SHU-2 is a day old; SHU-6 is past the week; a misnamed or unreadable file is skipped");
+  assert.equal(v.cycles, 2, "only claims with a landing time give a cycle, and a hand landing gives none");
+  assert.equal(v.median_cycle_ms, 45 * 60 * 1000, "the median of 30 and 60 minutes");
+  const withCurrent = readVelocity(io, dir, { current: { card: "SHU-10", landed: true, claimed_at: ago(0.5) } });
+  assert.deepEqual(withCurrent.day, { unattended: 3, hand: 2 });
+  assert.equal(withCurrent.median_cycle_ms, 30 * 60 * 1000);
+  assert.deepEqual(readVelocity(io, dir, { current: { card: "SHU-10", landed: false, claimed_at: ago(0.5) } }).day, v.day,
+    "a run that did not land is not counted");
+  assert.equal(velocityLine(v), "Velocity: 2 card(s) landed unattended and 2 by hand in the last 24 hours; 3 and 2 in the last 7 days, 60% unattended. Median 45 min from claim to merge (2 cards).");
+  assert.equal(velocityLine({ day: { unattended: 0, hand: 0 }, week: { unattended: 0, hand: 0 }, median_cycle_ms: null, cycles: 0 }),
+    "Velocity: 0 card(s) landed unattended and 0 by hand in the last 24 hours; 0 and 0 in the last 7 days.");
+});
+
+test("Velocity V3: a report renders the velocity line only when the run carries one, and an unreadable state directory throws for the run to catch", () => {
+  const base = { card: "SHU-301", kind: "card", activation_id: "a", outcome: "PASS", ticks: [], revert: { reverted: true } };
+  assert.doesNotMatch(renderRunReport(base), /^Velocity:/m);
+  const velocity = { day: { unattended: 1, hand: 0 }, week: { unattended: 1, hand: 0 }, median_cycle_ms: null, cycles: 0 };
+  assert.match(renderRunReport({ ...base, velocity }), /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\.$/m);
+  assert.throws(() => readVelocity({ now: () => new Date(), fs: { readdirSync: () => { throw new Error("EACCES"); } } }, "/x"));
 });
 
 test("SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head", async () => {

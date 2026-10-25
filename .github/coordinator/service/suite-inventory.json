@@ -2170,6 +2170,9 @@
     "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
     "SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head",
     "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
+    "Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended",
+    "Velocity V2: the box's own records give unattended and hand landings, by window, with each card counted once",
+    "Velocity V3: a report renders the velocity line only when the run carries one, and an unreadable state directory throws for the run to catch",
     "SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head",
     "SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head",
     "SHU-86 0b: the observe-only watch records first dispatch, last progress and the longest stretch without progress, and changes nothing else",
@@ -4594,7 +4597,11 @@
     "SHU-86 mutation M197 read a failing read only once",
     "SHU-86 mutation M198 post a stall comment on every pass",
     "SHU-86 mutation M199 flag a stall in a run without its watch",
-    "SHU-86 mutation M200 read a cut-off body only once"
+    "SHU-86 mutation M200 read a cut-off body only once",
+    "SHU-86 mutation M201 count a card landed by hand as unattended too",
+    "SHU-86 mutation M202 leave the run being reported out of its own velocity",
+    "SHU-86 mutation M203 never write down when a merged landing happened",
+    "SHU-86 mutation M204 drop the velocity line from the report"
   ],
   "requirements": [
     {
@@ -18641,6 +18648,18 @@
     },
     {
       "name": "SHU-86 0a: a claim for a run refused before arming keeps claimed_at and records no timing, pull request or head",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity V2: the box's own records give unattended and hand landings, by window, with each card counted once",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity V3: a report renders the velocity line only when the run carries one, and an unreadable state directory throws for the run to catch",
       "capabilities": []
     },
     {
@@ -33458,6 +33477,22 @@
     },
     {
       "name": "SHU-86 mutation M200 read a cut-off body only once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M201 count a card landed by hand as unattended too",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M202 leave the run being reported out of its own velocity",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M203 never write down when a merged landing happened",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M204 drop the velocity line from the report",
       "capabilities": []
     }
   ],

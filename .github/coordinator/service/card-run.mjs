@@ -68,6 +68,7 @@ import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
+import { readVelocity } from "./card-velocity.mjs";
 import { landingRepairOn, repairCandidate, repairRecordPath, repairAlertPath, repairActivationId, readRound, claimRound, advanceRound,
   repairSkip, readRepairPull, priorPass, readRepairEvidence, REPAIR_LIMITS } from "./card-repair.mjs";
 
@@ -550,7 +551,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 // repair of that claim's pull request; `repairRound` receives its round record
 // as soon as it is written, so the caller can finish it whatever happens.
 export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator", cardId = null,
-  repair = null, repairRound = null }) {
+  repair = null, repairRound = null, claimedAt = null }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -653,6 +654,12 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       ...(plan.repair ? { repair: plan.repair } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
       owner_mention: ownerMention(config.owner_mention) };
     summary.needs_owner = needsOwner(summary);
+    // Velocity: what the box has landed lately, this run included. Best
+    // effort: a state directory that cannot be read leaves it out.
+    try {
+      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card"
+        ? { card: plan.id, landed: land?.outcome === "MERGED", claimed_at: claimedAt } : null });
+    } catch { /* the report goes out without it */ }
     status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
       reverted: reverted.reverted === true, needs_owner: summary.needs_owner });
     summary.status_write_failures = status.failures();
@@ -768,7 +775,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   }
   let result;
   try {
-    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id });
+    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       io.fs.unlinkSync(claim);
@@ -795,6 +802,8 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       outcome: result.outcome, ok: result.ok, land: result.land?.outcome ?? null,
       armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
       last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
+      // Velocity: when a merged landing was written down, for claim-to-merge times.
+      landed_at: result.land?.outcome === "MERGED" ? io.now().toISOString() : null,
       repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
       reverted: result.revert?.reverted ?? null,
       // Self-watch 0b: what the observe-only watch saw; null when it was off.
