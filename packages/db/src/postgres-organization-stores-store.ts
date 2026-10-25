@@ -24,7 +24,7 @@ export interface OrganizationStoreRecord {
 type ReferenceRefusal = { kind: "brand_not_found" | "mall_not_found" };
 export type OrganizationStoreCreateResult = { kind: "created"; storeId: string } | { kind: "not_found" } | ReferenceRefusal;
 export type OrganizationStoreUpdateResult = { kind: "updated" | "unchanged" | "not_found" | "store_not_found" } | ReferenceRefusal;
-export type OrganizationStoreRemoveResult = { kind: "removed" | "not_found" | "store_not_found" };
+export type OrganizationStoreRemoveResult = { kind: "removed" | "not_found" | "store_not_found" | "store_in_use" };
 
 export class PostgresOrganizationStoresStore {
   readonly #pool: pg.Pool;
@@ -131,6 +131,8 @@ export class PostgresOrganizationStoresStore {
       if (!await this.#allowed(c, principalId, orgId, this.options.writeDecision, true)) return { rollback: { kind: "not_found" } };
       const current = await c.query("SELECT 1 FROM organization_stores WHERE id=$1 AND org_id=$2 AND status='active' FOR UPDATE", [storeId, orgId]);
       if (!current.rows.length) return { rollback: { kind: "store_not_found" } };
+      const inUse = await c.query("SELECT 1 FROM pay_contracts WHERE lower(store_id)=$1 AND status<>'deleted' LIMIT 1 FOR SHARE", [storeId]);
+      if (inUse.rows.length) return { rollback: { kind: "store_in_use" } };
       const count = await this.#count(c, orgId);
       await c.query("UPDATE organization_stores SET status='deleted',deleted_at=clock_timestamp(),updated_by_ref=$3,updated_at=clock_timestamp() WHERE id=$1 AND org_id=$2", [storeId, orgId, principalAuditRef(principalId)]);
       await this.#audit(c, principalId, orgId, ORGANIZATION_STORE_REMOVE_OPERATION, count, count - 1);
