@@ -1834,6 +1834,7 @@ test("Velocity V1: a merged timer run records landed_at and its report counts it
   const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
   assert.match(claim.landed_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
   assert.ok(claim.finished_at <= claim.landed_at, "the landing is written down after the run finished");
+  assert.equal(claim.landed_at, result.timing.landed_at, "the claim keeps the time the landing returned, not the time the report went out");
   assert.deepEqual(result.velocity.day, { unattended: 1, hand: 0 }, "this run counts before its final claim is written");
   assert.equal(result.velocity.cycles, 1);
   assert.match(host.reports[0], /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\. Median \d+ min from claim to merge \(1 card\)\.$/m);
@@ -1855,7 +1856,9 @@ test("Velocity V2: the box's own records give unattended and hand landings, by w
     [`card-run-auto-${rev}-SHU-2.json`, { card: "SHU-2", land: "MERGED", claimed_at: ago(30), landed_at: ago(29) }],
     [`card-run-auto-${rev}-SHU-3.json`, { card: "SHU-3", land: "CI_TIMEOUT", claimed_at: ago(3) }],
     [`card-hand-landed-SHU-3.json`, { card: "SHU-3", recorded_at: ago(2) }],
-    [`card-run-auto-${rev}-SHU-4.json`, { card: "SHU-4", land: "MERGED", claimed_at: ago(5) }],
+    [`card-run-auto-${rev}-SHU-4.json`, { card: "SHU-4", land: "MERGED", claimed_at: ago(5), finished_at: ago(4.5) }],
+    [`card-run-auto-${rev}-SHU-11.json`, { card: "SHU-11", land: "MERGED", claimed_at: ago(25), finished_at: ago(23.5) }],
+    [`card-run-auto-${rev}-SHU-12.json`, { card: "SHU-12", land: "MERGED", claimed_at: ago(3) }],
     [`card-hand-landed-SHU-4.json`, { card: "SHU-4", recorded_at: ago(4) }],
     [`card-repair-${rev}-SHU-5.json`, { card: "SHU-5", state: "finished", land: "MERGED", finished_at: ago(6) }],
     [`card-repair-${rev}-SHU-5.alerted.json`, { card: "SHU-5" }],
@@ -1868,16 +1871,18 @@ test("Velocity V2: the box's own records give unattended and hand landings, by w
     readdirSync: (d) => { assert.equal(d, dir); return [...files.keys()]; },
     readFileSync: (file) => { const v = files.get(path.basename(file)); if (v === null) return "{not json"; return JSON.stringify(v); } } };
   const v = readVelocity(io, dir);
-  assert.deepEqual(v.day, { unattended: 2, hand: 2 }, "SHU-1 and the SHU-5 repair unattended; SHU-3 and SHU-4 by hand");
-  assert.deepEqual(v.week, { unattended: 3, hand: 2 }, "SHU-2 is a day old; SHU-6 is past the week; a misnamed or unreadable file is skipped");
-  assert.equal(v.cycles, 2, "only claims with a landing time give a cycle, and a hand landing gives none");
+  assert.deepEqual(v.day, { unattended: 3, hand: 2 },
+    "SHU-1, the SHU-5 repair and SHU-11 (an older claim timed by its run's end, not its claim) unattended; SHU-3 and SHU-4 by hand");
+  assert.deepEqual(v.week, { unattended: 4, hand: 2 },
+    "SHU-2 is a day old; SHU-6 is past the week; a claim with no landing or finish time, a misnamed or an unreadable file is skipped");
+  assert.equal(v.cycles, 2, "only claims with a landing time give a cycle; an older claim or a hand landing gives none");
   assert.equal(v.median_cycle_ms, 45 * 60 * 1000, "the median of 30 and 60 minutes");
   const withCurrent = readVelocity(io, dir, { current: { card: "SHU-10", landed: true, claimed_at: ago(0.5) } });
-  assert.deepEqual(withCurrent.day, { unattended: 3, hand: 2 });
+  assert.deepEqual(withCurrent.day, { unattended: 4, hand: 2 });
   assert.equal(withCurrent.median_cycle_ms, 30 * 60 * 1000);
   assert.deepEqual(readVelocity(io, dir, { current: { card: "SHU-10", landed: false, claimed_at: ago(0.5) } }).day, v.day,
     "a run that did not land is not counted");
-  assert.equal(velocityLine(v), "Velocity: 2 card(s) landed unattended and 2 by hand in the last 24 hours; 3 and 2 in the last 7 days, 60% unattended. Median 45 min from claim to merge (2 cards).");
+  assert.equal(velocityLine(v), "Velocity: 3 card(s) landed unattended and 2 by hand in the last 24 hours; 4 and 2 in the last 7 days, 67% unattended. Median 45 min from claim to merge (2 cards).");
   assert.equal(velocityLine({ day: { unattended: 0, hand: 0 }, week: { unattended: 0, hand: 0 }, median_cycle_ms: null, cycles: 0 }),
     "Velocity: 0 card(s) landed unattended and 0 by hand in the last 24 hours; 0 and 0 in the last 7 days.");
 });

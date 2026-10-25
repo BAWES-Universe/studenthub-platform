@@ -4602,7 +4602,8 @@
     "SHU-86 mutation M202 leave the run being reported out of its own velocity",
     "SHU-86 mutation M203 never write down when a merged landing happened",
     "SHU-86 mutation M204 drop the velocity line from the report",
-    "SHU-86 mutation M205 count an operator run as landed unattended"
+    "SHU-86 mutation M205 count an operator run as landed unattended",
+    "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end"
   ],
   "requirements": [
     {
@@ -33498,6 +33499,10 @@
     },
     {
       "name": "SHU-86 mutation M205 count an operator run as landed unattended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end",
       "capabilities": []
     }
   ],

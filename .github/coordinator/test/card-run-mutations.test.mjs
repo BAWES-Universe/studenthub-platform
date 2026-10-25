@@ -1376,8 +1376,8 @@ const CASES = [
   },
   {
     name: "M203 never write down when a merged landing happened",
-    from: '      landed_at: result.land?.outcome === "MERGED" ? io.now().toISOString() : null,',
-    to: "      landed_at: null, // SHU86-M203",
+    from: '    const landedAt = land?.outcome === "MERGED" ? io.now().toISOString() : null;',
+    to: "    const landedAt = null; // SHU86-M203",
     pattern: "Velocity V",
   },
   {
@@ -1392,6 +1392,13 @@ const CASES = [
     from: '      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" && trigger === "timer"',
     to: '      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" // SHU86-M205',
     pattern: "Velocity V1",
+  },
+  {
+    name: "M206 time an older merged claim by its claim instead of its run's end",
+    file: "service/card-velocity.mjs",
+    from: "      const at = time(record.landed_at) ?? time(record.finished_at);",
+    to: "      const at = time(record.landed_at) ?? time(record.claimed_at); // SHU86-M206",
+    pattern: "Velocity V2",
   },
 ];
 

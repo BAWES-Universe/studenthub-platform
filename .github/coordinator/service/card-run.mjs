@@ -645,10 +645,12 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       status.write({ step: "landing", ...progress(), outcome: result.outcome });
       land = await landRun({ io, paths, limits, plan, config, credentials });
     }
+    // Velocity: the merge time, taken as the landing returns, before the report.
+    const landedAt = land?.outcome === "MERGED" ? io.now().toISOString() : null;
     // Self-watch 0a: when the run armed, ticked and finished, so real run
     // lengths can be read back from the claims.
     const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
-      finished_at: finishedAt };
+      finished_at: finishedAt, landed_at: landedAt };
     summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
       timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}),
       ...(plan.repair ? { repair: plan.repair } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
@@ -804,7 +806,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
       last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
       // Velocity: when a merged landing was written down, for claim-to-merge times.
-      landed_at: result.land?.outcome === "MERGED" ? io.now().toISOString() : null,
+      landed_at: result.timing?.landed_at ?? null,
       repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
       reverted: result.revert?.reverted ?? null,
       // Self-watch 0b: what the observe-only watch saw; null when it was off.

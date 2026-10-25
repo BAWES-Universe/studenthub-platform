@@ -7,6 +7,9 @@
 // Read only, from the root-owned state directory:
 // - card-run-auto-<rev>-<id>.json: a timer run's final claim. land "MERGED"
 //   is an unattended landing; landed_at (written since this change) times it.
+//   An older claim without landed_at is timed by finished_at, the run's end,
+//   which comes before its merge by at most the landing bound; it gives no
+//   cycle time.
 // - card-repair-<rev>-<id>.json: a landing repair round that merged is also an
 //   unattended landing, at its finished_at.
 // - card-hand-landed-<id>.json: a landing a person did, at its recorded_at.
@@ -51,7 +54,7 @@ export function readVelocity(io, stateDir, { now = io.now(), current = null } = 
     } else if (AUTO_RE.test(file)) {
       if (record?.land !== "MERGED") continue;
       const claimed = time(record.claimed_at);
-      const at = time(record.landed_at) ?? claimed;
+      const at = time(record.landed_at) ?? time(record.finished_at);
       if (at === null) continue;
       unattended.set(id, Math.max(at, unattended.get(id) ?? at));
       const landed = time(record.landed_at);
