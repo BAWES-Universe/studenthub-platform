@@ -3065,6 +3065,272 @@ Out of scope:
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
+// The eleventh committed card queue (SHU-312) is the first written to the
+// M10b template, from the 10-25 audit of SHU-334 to SHU-340: each contract
+// states outcomes and guards and leaves the code shape to the writer, every
+// card carries the two standing acceptance lines below, and every card ends
+// in something a person sees in the app.
+const QUEUE11_STANDING = "Standing lines, held by every card of this queue: (S1) for every value this card writes or changes, say in your final message where it is read and shown to a person, and a test proves it shows there; (S2) no request makes one query or port call per row: a read over many companies, assignments or events costs a fixed number of reads whatever their count, and every new lookup column is indexed.";
+
+const QUEUE11_FINISH = `Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed, how each acceptance item is pinned, and answer S1 for each value you write or change.`;
+
+const QUEUE11_CONTEXT = `Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request. Earlier cards of this queue may have landed before you: re-read any line this brief names, and take the next free migration number from packages/db/migrations and the two schema_migrations lists in packages/db/test/postgres-authz-store.test.ts.
+
+How this brief is written. It states what must be true and what must never happen. It does not prescribe the code: choose the shape, the queries and the helpers yourself, following the patterns of the files it names. When a guard and the code you would naturally write disagree, the guard wins; when the brief and the code at the bound head disagree, say so in your final message rather than forcing either.`;
+
+export const SHU9901_PATHS = Object.freeze([
+  "packages/db/src/postgres-organization-commercial-terms-store.ts",
+  "packages/db/test/postgres-organization-commercial-terms.test.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/test/organizations.test.ts",
+  "packages/organizations/test/organization-directory.test.ts",
+  "packages/organizations/test/mutations.mjs",
+  "packages/organizations/test/directory-mutations.mjs",
+  "apps/gateway/src/organization-commercial-terms.ts",
+  "apps/gateway/test/organization-commercial-terms-http.test.ts",
+  "apps/gateway/src/company-directory.ts",
+  "apps/gateway/test/company-directory.test.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU9901_ACCEPTANCE = [
+  "(1) A currency an admin confirmed through the commercial-terms write shows as the company's currencyCode on the company card for the employer, staff and admin audiences, in place of the snapshot value and also when the snapshot is unconfigured; a currency an admin cleared shows unavailable:not_recorded, never the snapshot value; a company with no written currency keeps exactly today's result; a sub-company shows only its own written currency (SHU9901_CARD_CURRENCY);",
+  "(2) The Companies directory shows the same value for each listed company, and the currency filter matches a written currency (a cleared or absent one never matches); reading the currencies of a directory page costs a fixed number of reads whatever the number of companies, proved with a counting fake (SHU9901_DIRECTORY_CURRENCY);",
+  "(3) The commercial-terms preview and confirm accept a currency code in any letter case and store it upper case (usd stores USD); an unknown code still answers 400 invalid_value; the directory's currency query parameter is matched case-insensitively; the two rate fields keep their exact behaviour (SHU9901_CASE);",
+  "(4) S1: the rendered workspace HTML of a company with a written currency shows that code on its company card, and the rendered directory shows it in the company's row (SHU9901_SHOWN); S2 holds (no per-company currency read);",
+  "(5) Each of items 1-3 has a mutant in the matching existing mutation script that dies by assertion in its named test; every existing mutant of mutations.mjs, directory-mutations.mjs and commercial-terms-writes-mutations.mjs still binds once and is killed; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU9901_BRIEF = `Card SHU-9901: a currency an admin sets shows on the company card and in the directory (audit follow-up 1 to SHU-340; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-340 (migration 0205: an admin writes a company's currency_code through the commercial-terms safe write) and SHU-342 (the card shows the stored profile). ${QUEUE11_CONTEXT}
+
+Why. SHU-340 built the currency write, but nothing reads it: PostgresOrganizationCommercialTermsStore.read skips currency_code (packages/db/src/postgres-organization-commercial-terms-store.ts, read), and both the company card (projectOrganizationFields) and the directory (directoryEntry) take currencyCode from the import snapshot alone (packages/organizations/src/organizations.ts). The snapshot adapter is unconfigured in production, so a saved currency never appears and the directory's currency filter can never match it. The 10-25 audit rated this the highest follow-up. Approved-to-hire already overrides the snapshot with its written record in both places; currency must behave the same way.
+
+Read first:
+- packages/organizations/src/organizations.ts: the OrganizationCommercialTermsRecords port, projectOrganizationFields (the approvedToHire override), directoryEntry, matchesDirectoryFilters, validDirectoryFilters and OrganizationRepository.read and listOrganizations (where approvedToHire is read one company at a time for the card and in one batch for the directory).
+- packages/db/src/postgres-organization-commercial-terms-store.ts (read, and how currency_code is stored), and migration 0205.
+- apps/gateway/src/organization-commercial-terms.ts (request() and the field checks) and apps/gateway/src/company-directory.ts (parseCompanyDirectoryQuery).
+- apps/gateway/src/web-ui.ts renderOrganization and renderCompanyDirectory, which already print currencyCode, and apps/gateway/test/context-navigation.test.ts and company-directory.test.ts for how a rendered page is checked.
+
+Outcomes:
+- The card and the directory show the written currency, by the rule in acceptance items 1 and 2.
+- An admin who types "usd" gets USD stored, as acceptance item 3 says.
+
+Guards:
+- No caller learns more than today: the card reads the record only after the caller is authorized, and a refused caller still gets not_found with no record read.
+- The currency write, its refusals, its audit and migration 0205 do not change; no new migration.
+- The catalogue check stays: a code the catalogue does not know is refused whatever its case.
+- Currency does not inherit from the parent company.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU9901_CARD_CURRENCY, SHU9901_DIRECTORY_CURRENCY, SHU9901_CASE, SHU9901_SHOWN), in the test files of the card's paths; a Postgres test proves the store answers the written and the cleared currency.
+
+Out of scope: exchange rates and money formatting, currency details (SHU-344), pay-contract currencies, any other field, CSS, apps/gateway/src/index.ts, package.json (the touched tests and mutation scripts already run), the lockfile, and any network call, credential, staging or production access. login-runtime.ts is in scope only if wiring a new read needs it.
+
+${QUEUE11_FINISH}`;
+
+export const SHU9902_PATHS = Object.freeze([
+  "packages/db/src/postgres-organization-account-manager-store.ts",
+  "packages/db/test/postgres-organization-account-manager.test.ts",
+  "packages/db/migrations/0207_organization_account_managers_principal_index.sql",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/organizations/src/account-manager-writes.ts",
+  "packages/organizations/test/account-manager-writes.test.ts",
+  "packages/organizations/test/account-manager-writes-mutations.mjs",
+  "apps/gateway/src/organization-account-manager.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/web-ui.test.ts",
+]);
+
+const SHU9902_ACCEPTANCE = [
+  "(1) The assigned-companies read answers the companies the person manages and may still read (live, and covered by their staff or admin grant), sorted by name and then org id exactly as the view sorts them, at most 50; when more than 50 qualify, the 50 kept are the first 50 of the whole sorted list, so the cap never comes before the sort or the grant check (SHU9902_ORDER_AND_CAP);",
+  "(2) The read costs a fixed number of database round trips whatever the number of assignments (a Postgres test with 60 assignments counts the queries the store sends and finds the same number as with 1), and a new migration indexes organization_account_managers by principal_id (SHU9902_PG_SCALE);",
+  "(3) A staff or admin person whose workspace is selected sees a \"My companies\" link in the workspace sidebar, and it opens an HTML page listing their managed companies by name, each linking where the Companies directory links that company; an empty list says so plainly, a failed read shows a retry notice, the page is private (no-store, the same CSP as the workspace), and employer, candidate and signed-out visitors get no link and no list (SHU9902_PAGE);",
+  "(4) S1: the page test renders companies assigned through the real store's view and finds each name; S2 holds for the read and the page;",
+  "(5) Items 1 and 3 each have a mutant that dies by assertion in its named test, item 2's Postgres mutant is checked by hand and reported; GET /organization/assigned-companies keeps its JSON shape; every existing account-manager test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU9902_BRIEF = `Card SHU-9902: My companies works at any size and has its own page (audit follow-up 2 to SHU-338; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write, migration 0204) and SHU-338 (GET /organization/assigned-companies). ${QUEUE11_CONTEXT}
+
+Why. Row OR-09 lets staff see the companies they manage. SHU-338 built it as a JSON route only, and the 10-25 audit found three defects in its read (PostgresOrganizationAccountManagerStore.assigned): one ancestor query per assignment, a cap of 50 applied in database collation order before the view re-sorts by localeCompare (so the wrong 50 can be kept), and no index on organization_account_managers(principal_id). Sentry and CodeRabbit flagged the first two on #315 and were waved off because the old card contract prescribed that shape; this card replaces the shape with outcomes. Staff also cannot reach the list in the app: there is no page and no link.
+
+Read first:
+- packages/db/src/postgres-organization-account-manager-store.ts (assigned, #grants, #ancestors) and migration 0204.
+- packages/organizations/src/account-manager-writes.ts (organizationAssignedCompaniesView, ORGANIZATION_ASSIGNED_COMPANIES_LIMIT, organizationAccountManagerReadDecision).
+- apps/gateway/src/organization-account-manager.ts (assigned) and its HTTP test.
+- apps/gateway/src/web-ui.ts (renderWorkspace, renderCompanyDirectory, companiesLink and the sidebar nav) and apps/gateway/src/index.ts (how /workspace/companies is routed and served as HTML).
+- packages/db/test/postgres-organization-account-manager.test.ts (SHU338_PG_ASSIGNED and its fixtures).
+
+Outcomes: acceptance items 1 to 3. Which companies qualify does not change: live, assigned to the person, and readable by them through a staff or admin grant (organizationAccountManagerReadDecision).
+
+Guards:
+- One rule decides who may read a company, shared with the write: do not write a second copy of it.
+- The page is read-only and makes no write; it shows only names and links, never principal ids.
+- The JSON route's body, headers and failures stay as they are.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU9902_ORDER_AND_CAP, SHU9902_PG_SCALE, SHU9902_PAGE, SHU9902_SHOWN). A query-count check may wrap the pool the store is given; it must fail if one query per assignment comes back. Register any new test file in the package.json lists that run its neighbours, appending at the end.
+
+Out of scope: who counts as a current manager elsewhere (the card read and the directory filter belong to SHU-9903), manager history (SHU-9904), assigning from the app, the directory, CSS beyond reusing existing classes, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU9903_PATHS = Object.freeze([
+  "packages/db/src/postgres-organization-account-manager-store.ts",
+  "packages/db/src/postgres-organization-account-manager-reads.ts",
+  "packages/db/test/postgres-organization-account-manager.test.ts",
+  "packages/db/test/postgres-organization-account-manager-reads.test.ts",
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/src/account-manager-writes.ts",
+  "packages/organizations/test/organization-directory.test.ts",
+  "packages/organizations/test/account-manager-writes.test.ts",
+  "packages/organizations/test/directory-mutations.mjs",
+  "packages/organizations/test/account-manager-writes-mutations.mjs",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/company-directory.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/company-directory.test.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+]);
+
+const SHU9903_ACCEPTANCE = [
+  "(1) One rule says who is a company's current account manager: the assigned person while they hold a staff or admin grant that covers the company; a person whose grant was revoked, narrowed away or never covered it is not current. The assignment row stays, so a person whose covering grant comes back is current again (SHU9903_RULE);",
+  "(2) The rule holds in every place a manager is shown or matched: GET /organization/account-manager/:orgId answers accountManager null for a non-current assignment; the directory's manager filter (an id or me) matches only a current manager; My companies already lists only current ones and keeps doing so (SHU9903_EVERYWHERE);",
+  "(3) The workspace company card shows an \"Account manager\" line with the current manager's display name (or \"None\") to staff and admin audiences only, and the Companies directory shows a Manager column with the current manager's display name for each row; employer audiences see neither; reading the managers of a directory page costs a fixed number of reads (SHU9903_SHOWN);",
+  "(4) S1: the rendered card and directory of a company whose manager lost their grant show None, and show the name again once the grant is restored (SHU9903_SHOWN_GRANT); S2 holds;",
+  "(5) Items 1 to 3 each have a mutant that dies by assertion in its named test; the account-manager write, its decisions and its refusals are unchanged; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU9903_BRIEF = `Card SHU-9903: the account manager staff see is always a current one (audit follow-up 3 to SHU-336, SHU-338 and SHU-339; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write), SHU-338 (My companies), SHU-339 (the directory's manager filter) and, possibly, SHU-9902 of this queue. ${QUEUE11_CONTEXT}
+
+Why. The 10-25 audit found three cards giving three answers for a manager who loses their staff grant: GET /organization/account-manager/:orgId still names them, the directory filter manager=<id> still matches them, and My companies drops the company. This card decides one rule and applies it everywhere. The decision, recorded here: hide a non-current assignment rather than delete it on revoke. Revocation lives in the authorization store and its audit, which this card must not touch, and keeping the row means a restored grant restores the manager without a new write.
+
+Read first:
+- packages/organizations/src/account-manager-writes.ts (organizationAccountManagerReadDecision, which already decides who may read and be assigned).
+- packages/db/src/postgres-organization-account-manager-store.ts (manager, assigned, eligible) and postgres-organization-account-manager-reads.ts (readMany, used by the directory filter).
+- packages/organizations/src/organizations.ts (the OrganizationAccountManagerRecords port and the manager filter in listOrganizations).
+- apps/gateway/src/context-navigation.ts and web-ui.ts (renderOrganization, renderCompanyDirectory) for where the card and the directory are built.
+
+Outcomes: acceptance items 1 to 3.
+
+Guards:
+- One rule, written once, used by every reader; the write's eligibility check keeps using the same decision.
+- No principal id is printed in HTML: the card and the directory show display names (or a neutral "Unnamed staff member" when a person has none).
+- A refused caller still learns nothing: the card line and the column appear only for staff and admin audiences, after the existing authorization.
+- Revocation, grants, the authorization audit and the account-manager write are unchanged; no migration.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU9903_RULE, SHU9903_EVERYWHERE, SHU9903_SHOWN, SHU9903_SHOWN_GRANT); a Postgres test revokes the manager's grant through the real store and checks the read, the filter and My companies, then restores it.
+
+Out of scope: manager history (SHU-9904), assigning from the app (a later card), sorting or filtering by manager name, CSS beyond existing classes, apps/gateway/src/index.ts unless a route needs it, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU9904_PATHS = Object.freeze([
+  "packages/db/migrations/0208_organization_account_manager_events.sql",
+  "packages/db/src/postgres-organization-account-manager-store.ts",
+  "packages/db/test/postgres-organization-account-manager.test.ts",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/organizations/src/account-manager-writes.ts",
+  "packages/organizations/test/account-manager-writes.test.ts",
+  "packages/organizations/test/account-manager-writes-mutations.mjs",
+  "apps/gateway/src/organization-account-manager.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+]);
+
+const SHU9904_ACCEPTANCE = [
+  "(1) Every confirmed account-manager change (assign, replace, clear) records one history event in the same transaction as the change: the company, the person before (or none), the person after (or none) and when; a refused, stale or replayed confirm records nothing, and a confirm that rolls back leaves no event (SHU9904_PG_EVENTS);",
+  "(2) GET /organization/account-manager/:orgId/history answers the company's events newest first, at most 50, each with the before and after person as {principalId, displayName} or null and the time, to callers who may read the company's manager; everyone else, an unknown or a deleted company answers 404 not_found exactly as the manager read does; the events are indexed for this read (SHU9904_HISTORY);",
+  "(3) An event outlives the people in it: removing a principal keeps its events and shows that side as a removed person, never a dangling id (SHU9904_PG_REMOVED);",
+  "(4) The workspace company card shows staff and admin the last five changes under the account manager (\"from → to, date\", names only), and nothing to employer audiences (SHU9904_SHOWN); S1 and S2 hold (one read for the panel, whatever the number of events);",
+  "(5) Items 1, 2 and 4 each have a mutant that dies by assertion in its named test, item 3's Postgres mutant is checked by hand and reported; the account-manager write's audit row, refusals and receipts are unchanged; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU9904_BRIEF = `Card SHU-9904: who managed a company, and when, is answerable (audit follow-up 4 to SHU-336; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write, migration 0204), SHU-313 (organization_status_events, the pattern for an events table) and, possibly, SHU-9902 and SHU-9903 of this queue. ${QUEUE11_CONTEXT}
+
+Why. The account-manager write audits that something changed, but its audit row names the actor as the target and the SHU-336 tests assert the assignee appears nowhere, so the trail cannot say who was assigned (the 10-25 audit, finding 3). Status changes got an events table for exactly this question (migration 0191); the account manager did not. This card adds that history and shows it where staff look.
+
+Read first:
+- packages/db/migrations/0191_organization_status_events.sql and the status store's history read (packages/db/src/postgres-organization-status-store.ts, history) as the pattern.
+- packages/db/src/postgres-organization-account-manager-store.ts (#commit, manager) and migration 0204.
+- apps/gateway/src/organization-account-manager.ts (the read route and its refusals) and apps/gateway/src/organization-status.ts (the history route's shape).
+- apps/gateway/src/context-navigation.ts and web-ui.ts renderOrganization (where the card is built).
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- The event is written inside the change's transaction, never after it; nothing else in #commit changes.
+- The authorization audit keeps its references only: no principal id goes into authorization_mutation_audit.
+- The history read uses the same who-may-read rule as the manager read, after the same liveness check.
+- No principal id is printed in HTML.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU9904_PG_EVENTS, SHU9904_HISTORY, SHU9904_PG_REMOVED, SHU9904_SHOWN). Register any new test file in the package.json lists that run its neighbours, appending at the end. Add the new migration to both schema_migrations lists of postgres-authz-store.test.ts.
+
+Out of scope: backfilling history from the audit (it holds no assignee), the status history panel, assigning from the app, CSS beyond existing classes, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU352_PATHS = Object.freeze([
+  "packages/organizations/src/profile-writes.ts",
+  "packages/organizations/test/profile-writes.test.ts",
+  "packages/organizations/test/profile-writes-mutations.mjs",
+  "packages/organizations/test/organizations.test.ts",
+  "apps/gateway/src/organization-profile.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+]);
+
+const SHU352_ACCEPTANCE = [
+  "(1) The owner's profile write and the company card agree on the longest common name: a name_en or name_ar of exactly 255 characters saves and reads back available on the card, unchanged, for the employer, staff and admin audiences (SHU352_NAME_FITS);",
+  "(2) A name_en or name_ar of 256 characters is refused at preview and again at confirm with a field-level refusal the caller can show, and nothing is stored (SHU352_NAME_TOO_LONG);",
+  "(3) description_en, description_ar and website keep their current write limit and read behaviour, the snapshot parsers for imported values are unchanged, and the existing SHU342_ tests pass unchanged (SHU352_OTHERS_UNCHANGED);",
+  "(4) S1: the rendered workspace card of a company whose owner saved a 255-character name shows that name (SHU352_SHOWN); S2 holds (no new read);",
+  "(5) Items 1 and 2 each have a mutant that dies by assertion in its named test; every existing profile-writes and mutations.mjs mutant still binds once and is killed; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU352_BRIEF = `Card SHU-352: a company name its owner saved shows on the card at any length the profile accepts (slice O2d of O2, follow-up to SHU-342; risk R1).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-300 (the owner's profile safe write) and SHU-342 (the card shows the stored profile). ${QUEUE11_CONTEXT}
+
+Why. The profile write accepts name_en and name_ar up to 2,000 characters (packages/organizations/src/profile-writes.ts, ORGANIZATION_PROFILE_POLICY.maxValueLength), but the card reads a stored name through the 255-character common-name parser (packages/organizations/src/organizations.ts, PARSERS.commonNameEn and commonNameAr), and storedProfileField turns a refusal into unavailable:not_recorded. So a name saved at 256 to 2,000 characters shows as "Unavailable" and hides the imported name too. Sentry and CodeRabbit both found it on #320. The decision, recorded here: cap the two names at 255 on write, which is the length the legacy company table and the card both use; do not widen the card's parser.
+
+Read first:
+- packages/organizations/src/profile-writes.ts (the policy, the builder and its value checks) and its tests and mutation script.
+- packages/organizations/src/organizations.ts (PARSERS, storedProfileField) and the SHU342_ tests in organizations.test.ts.
+- apps/gateway/src/organization-profile.ts (how a refusal reaches the caller).
+
+Outcomes: acceptance items 1 and 2.
+
+Guards:
+- Only the two names change limit; every other field keeps its limit and checks.
+- The imported-value parsers do not change.
+- The refusal happens before any write, at preview and again at confirm.
+- No migration, no new route.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU352_NAME_FITS, SHU352_NAME_TOO_LONG, SHU352_OTHERS_UNCHANGED, SHU352_SHOWN).
+
+Out of scope: an owner profile form in the app, existing stored names over 255 characters (they keep showing unavailable:not_recorded, as SHU-342 decided), the legal name, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -3333,6 +3599,40 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU344_PATHS,
     acceptance: SHU344_ACCEPTANCE,
     brief: SHU344_BRIEF,
+  }),  "SHU-9901": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU9901_PATHS,
+    revision_paths: SHU9901_PATHS,
+    acceptance: SHU9901_ACCEPTANCE,
+    brief: SHU9901_BRIEF,
+  }),
+  "SHU-9902": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU9902_PATHS,
+    revision_paths: SHU9902_PATHS,
+    acceptance: SHU9902_ACCEPTANCE,
+    brief: SHU9902_BRIEF,
+  }),
+  "SHU-9903": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU9903_PATHS,
+    revision_paths: SHU9903_PATHS,
+    acceptance: SHU9903_ACCEPTANCE,
+    brief: SHU9903_BRIEF,
+  }),
+  "SHU-9904": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU9904_PATHS,
+    revision_paths: SHU9904_PATHS,
+    acceptance: SHU9904_ACCEPTANCE,
+    brief: SHU9904_BRIEF,
+  }),
+  "SHU-352": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU352_PATHS,
+    revision_paths: SHU352_PATHS,
+    acceptance: SHU352_ACCEPTANCE,
+    brief: SHU352_BRIEF,
   }),
 });
 
