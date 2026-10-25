@@ -38,6 +38,13 @@ async function audits(orgId: string) {
   return (await pool.query("SELECT operation,target_org_refs,before_summary,after_summary FROM authorization_mutation_audit WHERE operation=ANY($1) AND target_org_refs=$2::text[] ORDER BY occurred_at,id",
     [[ORGANIZATION_STORE_CREATE_OPERATION, ORGANIZATION_STORE_UPDATE_OPERATION, ORGANIZATION_STORE_REMOVE_OPERATION], [organizationAuditRef(orgId)]])).rows;
 }
+async function contract(companyOrgId: string, storeId: string, status: "active" | "inactive" | "deleted") {
+  const id = randomUUID(), candidate = `shu343-person-${randomUUID()}`, currency = await item("currency"), deleted = status === "deleted";
+  await authz.registerPrincipal(createPrincipal({ id: candidate, pbuuids: [], email: `${candidate}@example.invalid` }));
+  await pool.query(`INSERT INTO pay_contracts(id,candidate_principal_id,company_org_id,store_id,pay_model,start_date,currency_id,transfer_cost,auto_generate,status,candidate_hourly_rate,company_hourly_rate,created_at,updated_at,deleted_at)
+    VALUES($1,$2,$3,$4,'hourly','2026-01-01',$5,0,false,$6,1,2,clock_timestamp(),clock_timestamp(),$7)`, [id, candidate, companyOrgId, storeId, currency.id, status, deleted ? new Date() : null]);
+  return id;
+}
 const fields = (over: Partial<{ name: string; location: string | null; brandId: string | null; mallId: string | null }> = {}) => ({ name: "Avenues", location: null, brandId: null, mallId: null, ...over });
 
 test("SHU-165 postgres staff creates, edits and removes a store; audits carry only counts", async () => {
@@ -150,4 +157,35 @@ test("SHU168_PG_STORE_COUNTS batches active store totals from source at read tim
   assert.deepEqual(await store.remove(firstStaff, first, (firstStore as { storeId: string }).storeId), { kind: "removed" });
   assert.deepEqual(await store.countMany([first, second, third]), new Map([[first, 1], [second, 1]]));
   assert.deepEqual(await store.countMany([]), new Map());
+});
+
+test("SHU343_PG_STORE_IN_USE live active and inactive pay contracts prevent store removal", async () => {
+  const orgId = await organization(), other = await organization(), staff = await principal(orgId);
+  const first = await store.create(staff, orgId, fields({ name: "S1" })), second = await store.create(staff, orgId, fields({ name: "S2" }));
+  assert.equal(first.kind, "created"); assert.equal(second.kind, "created");
+  const firstId = (first as { storeId: string }).storeId, secondId = (second as { storeId: string }).storeId;
+  const active = await contract(other, firstId.toUpperCase(), "active"), inactive = await contract(orgId, secondId, "inactive");
+  const before = await audits(orgId);
+
+  assert.deepEqual(await store.remove(staff, orgId, firstId), { kind: "store_in_use" }, "a cross-company contract and case-insensitive store id still block");
+  assert.deepEqual(await store.remove(staff, orgId, secondId), { kind: "store_in_use" });
+  assert.deepEqual((await store.list(staff, orgId))?.map((row) => row.store_id).sort(), [firstId, secondId].sort());
+  assert.deepEqual(await audits(orgId), before, "refused removals write no audit rows");
+
+  await pool.query("UPDATE pay_contracts SET status='deleted',deleted_at=clock_timestamp() WHERE id=ANY($1::uuid[])", [[active, inactive]]);
+  assert.deepEqual(await store.remove(staff, orgId, firstId), { kind: "removed" });
+  assert.deepEqual(await store.remove(staff, orgId, secondId), { kind: "removed" });
+  const after = await audits(orgId);
+  assert.equal(after.filter((row) => row.operation === ORGANIZATION_STORE_REMOVE_OPERATION).length, 2);
+});
+
+test("SHU343_PG_STORE_IN_USE_ORDER authorization and store existence precede the in-use check", async () => {
+  const orgId = await organization(), staff = await principal(orgId), recruiter = await principal(orgId, "recruiter");
+  const created = await store.create(staff, orgId, fields()), storeId = (created as { storeId: string }).storeId;
+  await contract(orgId, storeId, "active");
+  assert.deepEqual(await store.remove(recruiter, orgId, storeId), { kind: "not_found" });
+  assert.deepEqual(await store.remove(staff, orgId, randomUUID()), { kind: "store_not_found" });
+  await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [orgId, `shu343-${randomUUID()}`]);
+  assert.deepEqual(await store.remove(staff, orgId, storeId), { kind: "not_found" });
+  assert.equal((await pool.query("SELECT status FROM organization_stores WHERE id=$1", [storeId])).rows[0]?.status, "active");
 });

@@ -7,12 +7,13 @@ import { createOrganizationStores, handleOrganizationStores } from "../src/organ
 const ORIGIN = "https://studenthub.example.invalid", SESSION = "d".repeat(43);
 const STORE = "123e4567-e89b-42d3-a456-426614174000", BRAND = "223e4567-e89b-42d3-a456-426614174000";
 const calls: string[] = [];
+let responseHeaders: Record<string, string> = {};
 const service = createOrganizationStores({
   sessions: { get: async (id) => (id === SESSION ? { id, personId: "staff" } : undefined) },
   store: {
     create: async (_p, o, f) => { calls.push(`create:${o}:${f.name}`); return o === "refused" ? { kind: "not_found" } : f.brandId ? { kind: "brand_not_found" } : { kind: "created", storeId: STORE }; },
     update: async (_p, o, s, f) => { calls.push(`update:${o}:${s}`); return o === "missing" ? { kind: "store_not_found" } : f.name === "Same" ? { kind: "unchanged" } : { kind: "updated" }; },
-    remove: async (_p, o, s) => { calls.push(`remove:${o}:${s}`); return o === "missing" ? { kind: "store_not_found" } : { kind: "removed" }; },
+    remove: async (_p, o, s) => { calls.push(`remove:${o}:${s}`); return o === "busy" ? { kind: "store_in_use" } : o === "refused" ? { kind: "not_found" } : o === "missing" ? { kind: "store_not_found" } : { kind: "removed" }; },
     list: async (_p, o) => {
       calls.push(`list:${o}`);
       return o === "refused" ? null : [{ store_id: STORE, org_id: "private", name: "Avenues", location: null, status: "active", brand_id: null, brand_name: null, brand_status: null, mall_id: null, mall_name: null, mall_status: null, created_by_ref: "f".repeat(64) }];
@@ -26,7 +27,8 @@ async function call(path: string, body?: unknown, method = "POST", headers: Reco
   req.url = path; req.method = method;
   req.headers = { origin: ORIGIN, "content-type": "application/json", cookie: `__Host-studenthub_session=${SESSION}`, ...headers };
   let status = 0, payload = "";
-  const fake = { headersSent: false, writeHead(code: number) { status = code; fake.headersSent = true; return fake; }, end(chunk?: string) { payload = chunk ?? ""; return fake; }, destroy() { return fake; } };
+  responseHeaders = {};
+  const fake = { headersSent: false, writeHead(code: number, headers: Record<string, string>) { status = code; responseHeaders = headers; fake.headersSent = true; return fake; }, end(chunk?: string) { payload = chunk ?? ""; return fake; }, destroy() { return fake; } };
   assert.equal(await handleOrganizationStores(req, fake as unknown as ServerResponse, service, ORIGIN), true);
   return { status, body: JSON.parse(payload) };
 }
@@ -77,4 +79,15 @@ test("SHU331_HTTP group lists authorized organizations and validates all request
   assert.deepEqual(await call("/organization/stores/org/group"), { status: 404, body: { error: "not_found" } });
   assert.deepEqual(await call("/organization/stores/%20/group", undefined, "GET"), { status: 400, body: { error: "invalid_request" } });
   assert.deepEqual(calls, [], "invalid requests reach no store operation");
+});
+
+test("SHU343_HTTP store-in-use removal is a conflict and existing outcomes remain stable", async () => {
+  calls.length = 0;
+  assert.deepEqual(await call("/organization/stores/remove", { orgId: "busy", storeId: STORE }), { status: 409, body: { error: "store_in_use" } });
+  assert.equal(responseHeaders["x-content-type-options"], "nosniff");
+  assert.equal(responseHeaders["cache-control"], "no-store");
+  assert.deepEqual(await call("/organization/stores/remove", { orgId: "org", storeId: STORE }), { status: 200, body: { storeId: STORE, changed: true } });
+  assert.deepEqual(await call("/organization/stores/remove", { orgId: "refused", storeId: STORE }), { status: 404, body: { error: "not_found" } });
+  assert.deepEqual(await call("/organization/stores/remove", { orgId: "missing", storeId: STORE }), { status: 404, body: { error: "store_not_found" } });
+  assert.deepEqual(calls, [`remove:busy:${STORE}`, `remove:org:${STORE}`, `remove:refused:${STORE}`, `remove:missing:${STORE}`]);
 });
