@@ -227,5 +227,5 @@ test("SHU-322 mutation the unmutated suite passes", () => {
   const run = spawnSync(process.execPath, ["--test", "--test-name-pattern=SHU-322 B", path.join(HERE, "shu322-card-install.test.mjs")],
     { cwd: COORDINATOR, env: childEnv, encoding: "utf8", timeout: 60_000 });
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, /^# pass 19$/m);
+  assert.match(run.stdout, /^# pass 20$/m);
 });

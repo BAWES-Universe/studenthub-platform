@@ -3599,7 +3599,8 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU344_PATHS,
     acceptance: SHU344_ACCEPTANCE,
     brief: SHU344_BRIEF,
-  }),  "SHU-353": Object.freeze({
+  }),
+  "SHU-353": Object.freeze({
     workspace_mode: "repo",
     initial_build_paths: SHU353_PATHS,
     revision_paths: SHU353_PATHS,

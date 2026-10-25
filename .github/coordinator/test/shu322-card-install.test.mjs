@@ -693,3 +693,9 @@ test("SHU-322 B19: a refused install writes a finished status, so the watch neve
   assert.equal((await autoRun({ io: installs.io, paths: PATHS })).outcome, "INSTALLED");
   assert.equal(readStatus(installs.io, PATHS)?.outcome ?? null, null);
 });
+
+test("SHU-322 B20: every card in the committed queue has a contract entry Card B can read", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
+  const entries = contractEntries(CONTRACTS_TEXT);
+  for (const id of config.dispatch_scope.issue_ids) assert.ok(entries.has(id), `${id} has a contract entry on its own line`);
+});
