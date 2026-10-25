@@ -2866,7 +2866,7 @@ Out of scope:
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
-export const SHU341_PATHS = Object.freeze([
+export const SHU342_PATHS = Object.freeze([
   "packages/organizations/src/organizations.ts",
   "packages/organizations/test/organizations.test.ts",
   "packages/organizations/test/mutations.mjs",
@@ -2876,15 +2876,15 @@ export const SHU341_PATHS = Object.freeze([
   "apps/gateway/src/login-runtime.ts",
 ]);
 
-const SHU341_ACCEPTANCE = [
-  "(1) organizations.ts exports ORGANIZATION_PROFILE_SOURCES (commonNameEn → name_en, commonNameAr → name_ar, descriptionEn → description_en, descriptionAr → description_ar, website → website), the OrganizationProfileRecord type and the OrganizationProfileRecords port; with the port, read() shows each stored profile value in its field for the employer, staff and admin audiences, also when the snapshot is unconfigured, while every field without a stored value keeps exactly today's result (SHU341_PROFILE_STORED);",
-  "(2) read() calls the port once, with exactly the organization being read and only after the caller is authorized: a refused caller gets not_found with no port call, and a sub-company never shows its parent's stored profile (SHU341_PROFILE_SCOPE);",
-  "(3) a stored value the field's own parser refuses (for example a 256-character common name) makes only that field unavailable with reason not_recorded and leaves the rest of the view found; a port that throws makes the read unavailable; without the port every existing result is unchanged, and listOrganizations, listSubOrganizations and readCounts never call it (SHU341_PROFILE_INVALID);",
-  "(4) PostgresOrganizationProfileReads.read(orgId) answers exactly the non-null stored profile columns of that organization keyed by their column names, {} for an organization with no row, owns its pool like PostgresOrganizationStoresStore, is exported from packages/db and is wired as profiles into the gateway's OrganizationRepository, built whether or not SAFE_WRITE_SIGNING_KEY is set, with its close() among the closers (SHU341_PG_PROFILE_READS);",
+const SHU342_ACCEPTANCE = [
+  "(1) organizations.ts exports ORGANIZATION_PROFILE_SOURCES (commonNameEn → name_en, commonNameAr → name_ar, descriptionEn → description_en, descriptionAr → description_ar, website → website), the OrganizationProfileRecord type and the OrganizationProfileRecords port; with the port, read() shows each stored profile value in its field for the employer, staff and admin audiences, also when the snapshot is unconfigured, while every field without a stored value keeps exactly today's result (SHU342_PROFILE_STORED);",
+  "(2) read() calls the port once, with exactly the organization being read and only after the caller is authorized: a refused caller gets not_found with no port call, and a sub-company never shows its parent's stored profile (SHU342_PROFILE_SCOPE);",
+  "(3) a stored value the field's own parser refuses (for example a 256-character common name) makes only that field unavailable with reason not_recorded and leaves the rest of the view found; a port that throws makes the read unavailable; without the port every existing result is unchanged, and listOrganizations, listSubOrganizations and readCounts never call it (SHU342_PROFILE_INVALID);",
+  "(4) PostgresOrganizationProfileReads.read(orgId) answers exactly the non-null stored profile columns of that organization keyed by their column names, {} for an organization with no row, owns its pool like PostgresOrganizationStoresStore, is exported from packages/db and is wired as profiles into the gateway's OrganizationRepository, built whether or not SAFE_WRITE_SIGNING_KEY is set, with its close() among the closers (SHU342_PG_PROFILE_READS);",
   "(5) mutations.mjs gains the three mutants for items 1-3. Each fails its named test by assertion, and every existing mutant of mutations.mjs, directory-mutations.mjs, status-batch-reads-mutations.mjs, approved-to-hire-writes-mutations.mjs and commercial-terms-writes-mutations.mjs still binds once and is killed; the Postgres mutation for item 4 is checked by hand and reported. Every existing organizations and profile test passes unchanged, npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU341_BRIEF = `Card SHU-341: the company card shows the profile its owner wrote (slice O2c of O2, rows OR-01 and OR-03, after SHU-300 and SHU-159; risk R2).
+const SHU342_BRIEF = `Card SHU-342: the company card shows the profile its owner wrote (slice O2c of O2, rows OR-01 and OR-03, after SHU-300 and SHU-159; risk R2).
 
 You are working in the StudentHub platform monorepo at the bound head, which includes SHU-300 (migration 0150, organization_profiles and the owner's profile safe write) and SHU-159 (the organization read model). The SHU-338, SHU-339 and SHU-340 cards of the previous queue may have landed before you, so cite by symbol and re-read any line this brief names. Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
 
@@ -2914,18 +2914,18 @@ Design:
 
 Tests (name every new test with its token first and a space after it):
 - organizations.test.ts: give setup an optional profiles option passed to the repository, leaving every existing caller unchanged. Use a fake that records each call's org id and answers per org id.
-  - "SHU341_PROFILE_STORED ...": with org-a answering {name_en: "Stored Retail", website: "https://stored.example.invalid"}, owner-a (org-owner), staff and admin reads of org-a show commonNameEn "Stored Retail" and the stored website, while commonNameAr, descriptionEn and descriptionAr keep their snapshot values and every other field equals the same read without the port. With setup({ unconfigured: true, profiles }) the two stored fields are available and every other profile field stays unavailable:not_imported. Each view's field keys still equal ORGANIZATION_FIELDS_BY_AUDIENCE for its audience.
-  - "SHU341_PROFILE_SCOPE ...": one read of org-a calls the port exactly once with "org-a"; a read of org-a1 by owner-a-subtree calls it with "org-a1" only and, with only org-a holding a stored name, shows org-a1's snapshot common name; candidate-a, finance-a and nobody get not_found with no port call.
-  - "SHU341_PROFILE_INVALID ...": a stored name_en of 256 characters makes commonNameEn unavailable:not_recorded while the read stays found and the stored website shows; a port that throws makes read answer {kind:"unavailable"}; listOrganizations, listSubOrganizations and readCounts make no port call.
+  - "SHU342_PROFILE_STORED ...": with org-a answering {name_en: "Stored Retail", website: "https://stored.example.invalid"}, owner-a (org-owner), staff and admin reads of org-a show commonNameEn "Stored Retail" and the stored website, while commonNameAr, descriptionEn and descriptionAr keep their snapshot values and every other field equals the same read without the port. With setup({ unconfigured: true, profiles }) the two stored fields are available and every other profile field stays unavailable:not_imported. Each view's field keys still equal ORGANIZATION_FIELDS_BY_AUDIENCE for its audience.
+  - "SHU342_PROFILE_SCOPE ...": one read of org-a calls the port exactly once with "org-a"; a read of org-a1 by owner-a-subtree calls it with "org-a1" only and, with only org-a holding a stored name, shows org-a1's snapshot common name; candidate-a, finance-a and nobody get not_found with no port call.
+  - "SHU342_PROFILE_INVALID ...": a stored name_en of 256 characters makes commonNameEn unavailable:not_recorded while the read stays found and the stored website shows; a port that throws makes read answer {kind:"unavailable"}; listOrganizations, listSubOrganizations and readCounts make no port call.
 - mutations.mjs: add three entries in its form:
-  - "ignore the stored profile", SHU341_PROFILE_STORED: the new branch's condition becomes false.
-  - "read the parent's profile", SHU341_PROFILE_SCOPE: this.#profiles?.read(org.id) becomes this.#profiles?.read(parentOrgId ?? org.id).
-  - "trust an unparsed stored value", SHU341_PROFILE_INVALID: storedProfileField's try body returns available(name, value) without the parser.
+  - "ignore the stored profile", SHU342_PROFILE_STORED: the new branch's condition becomes false.
+  - "read the parent's profile", SHU342_PROFILE_SCOPE: this.#profiles?.read(org.id) becomes this.#profiles?.read(parentOrgId ?? org.id).
+  - "trust an unparsed stored value", SHU342_PROFILE_INVALID: storedProfileField's try body returns available(name, value) without the parser.
 
   The exact anchors depend on how tsc prints them: take them from dist/organizations.js after npm run build and assert each binds once. Change nothing else in the script; the count it prints follows from the list.
 - postgres-organization-profile.test.ts, appended:
-  - "SHU341_PG_PROFILE_READS ...": an owner confirms name_en and website on ORG through the real writer; a PostgresOrganizationProfileReads on the same pool reads ORG as exactly {name_en, website} with the confirmed values (keys exactly those two), OTHER, which has no row, as {}, and an organization that has a row with only description_ar as exactly {description_ar}.
-  - In your final message, report by hand that returning the whole row (nulls included) makes SHU341_PG_PROFILE_READS fail.
+  - "SHU342_PG_PROFILE_READS ...": an owner confirms name_en and website on ORG through the real writer; a PostgresOrganizationProfileReads on the same pool reads ORG as exactly {name_en, website} with the confirmed values (keys exactly those two), OTHER, which has no row, as {}, and an organization that has a row with only description_ar as exactly {description_ar}.
+  - In your final message, report by hand that returning the whole row (nulls included) makes SHU342_PG_PROFILE_READS fail.
 
 Out of scope:
 - Any change to the profile safe write, its store, its route or migration 0150; owner, staff or admin editing of other fields; the legal name; the company email and country.
@@ -2934,21 +2934,21 @@ Out of scope:
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
-export const SHU342_PATHS = Object.freeze([
+export const SHU343_PATHS = Object.freeze([
   "packages/db/src/postgres-organization-stores-store.ts",
   "packages/db/test/postgres-organization-stores.test.ts",
   "apps/gateway/src/organization-stores.ts",
   "apps/gateway/test/organization-stores-http.test.ts",
 ]);
 
-const SHU342_ACCEPTANCE = [
-  "(1) PostgresOrganizationStoresStore.remove answers {kind:\"store_in_use\"} and changes nothing (the store stays active, no audit row is written) while any pay contract whose status is not deleted names the store (lower(store_id) equals the store id), whatever company the contract names; a store whose contracts are all deleted, or that no contract names, is removed and audited as before (SHU342_PG_STORE_IN_USE);",
-  "(2) the in-use check runs inside the remove transaction after the store row is locked, reads the contracts FOR SHARE, and comes after the authorization and store_not_found answers, so a refused caller still gets not_found and an unknown store store_not_found with no contract read deciding either (SHU342_PG_STORE_IN_USE_ORDER);",
-  "(3) POST /organization/stores/remove answers 409 {error:\"store_in_use\"} for that result with the existing headers; removed, not_found, store_not_found and every create, update, list and group answer are unchanged (SHU342_HTTP);",
+const SHU343_ACCEPTANCE = [
+  "(1) PostgresOrganizationStoresStore.remove answers {kind:\"store_in_use\"} and changes nothing (the store stays active, no audit row is written) while any pay contract whose status is not deleted names the store (lower(store_id) equals the store id), whatever company the contract names; a store whose contracts are all deleted, or that no contract names, is removed and audited as before (SHU343_PG_STORE_IN_USE);",
+  "(2) the in-use check runs inside the remove transaction after the store row is locked, reads the contracts FOR SHARE, and comes after the authorization and store_not_found answers, so a refused caller still gets not_found and an unknown store store_not_found with no contract read deciding either (SHU343_PG_STORE_IN_USE_ORDER);",
+  "(3) POST /organization/stores/remove answers 409 {error:\"store_in_use\"} for that result with the existing headers; removed, not_found, store_not_found and every create, update, list and group answer are unchanged (SHU343_HTTP);",
   "(4) every existing stores test passes unchanged, every organization-deletion-guards-mutations.mjs anchor in the stores store still binds once, the Postgres mutations for items 1-2 are checked by hand and reported, npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU342_BRIEF = `Card SHU-342: a store that a live pay contract names is not removed (slice O7b of O7, row OR-20, after SHU-165, SHU-317 and SHU-327; risk R2).
+const SHU343_BRIEF = `Card SHU-343: a store that a live pay contract names is not removed (slice O7c of O7, row OR-20, after SHU-165, SHU-317 and SHU-327; risk R2).
 
 You are working in the StudentHub platform monorepo at the bound head, which includes SHU-165 (migration 0202, organization_stores and its remove), SHU-317/318 (pay contracts) and SHU-327 (the deletion write guards). Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
 
@@ -2971,10 +2971,10 @@ Design:
 
 Tests (name every new test with its token first and a space after it):
 - postgres-organization-stores.test.ts, appended, each on fresh companies:
-  - "SHU342_PG_STORE_IN_USE ...": staff create stores S1 and S2 on a fresh company. An active pay contract naming S1 (store_id is S1's id) makes remove(S1) answer store_in_use: S1 is still listed and audits() is unchanged. An inactive contract naming S2 refuses it too. After both contracts are marked deleted (status 'deleted', deleted_at set), both stores are removed and each remove writes one organization.store.remove audit row. A contract on another company naming S1's id in upper case still refuses S1 while it is live.
-  - "SHU342_PG_STORE_IN_USE_ORDER ...": with a live contract naming the store, a recruiter of the company gets not_found, a random uuid store gets store_not_found, and a deleted company gets not_found, each with the store still active.
-  - In your final message, report by hand that dropping the in-use check, and separately matching status='active' only, each make SHU342_PG_STORE_IN_USE fail.
-- organization-stores-http.test.ts: let the in-memory remove answer store_in_use for one org id (for example "busy"). "SHU342_HTTP ...": POST /organization/stores/remove for that org answers 409 {error:"store_in_use"} with the nosniff and no-store headers, the calls array records the remove, and removed, not_found and store_not_found still answer 200, 404 and 404. The existing SHU-165 and SHU331 tests stay unchanged.
+  - "SHU343_PG_STORE_IN_USE ...": staff create stores S1 and S2 on a fresh company. An active pay contract naming S1 (store_id is S1's id) makes remove(S1) answer store_in_use: S1 is still listed and audits() is unchanged. An inactive contract naming S2 refuses it too. After both contracts are marked deleted (status 'deleted', deleted_at set), both stores are removed and each remove writes one organization.store.remove audit row. A contract on another company naming S1's id in upper case still refuses S1 while it is live.
+  - "SHU343_PG_STORE_IN_USE_ORDER ...": with a live contract naming the store, a recruiter of the company gets not_found, a random uuid store gets store_not_found, and a deleted company gets not_found, each with the store still active.
+  - In your final message, report by hand that dropping the in-use check, and separately matching status='active' only, each make SHU343_PG_STORE_IN_USE fail.
+- organization-stores-http.test.ts: let the in-memory remove answer store_in_use for one org id (for example "busy"). "SHU343_HTTP ...": POST /organization/stores/remove for that org answers 409 {error:"store_in_use"} with the nosniff and no-store headers, the calls array records the remove, and removed, not_found and store_not_found still answer 200, 404 and 404. The existing SHU-165 and SHU331 tests stay unchanged.
 
 Out of scope:
 - Changing pay contracts: validating their store_id against organization_stores, refusing a contract for a removed store, or any pay-contract write or read.
@@ -2983,7 +2983,7 @@ Out of scope:
 
 Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
 
-export const SHU343_PATHS = Object.freeze([
+export const SHU344_PATHS = Object.freeze([
   "packages/reference-catalogue/src/currency-details.ts",
   "packages/reference-catalogue/src/types.ts",
   "packages/reference-catalogue/src/catalogue.ts",
@@ -3000,16 +3000,16 @@ export const SHU343_PATHS = Object.freeze([
   "package.json",
 ]);
 
-const SHU343_ACCEPTANCE = [
-  "(1) normalizeCurrencyDetails accepts exactly the keys decimalPlaces and symbol; symbol is NFKC-normalized and trimmed, 1 to 8 characters with no control or format characters, and decimalPlaces is an integer number from 0 to 4; any other shape answers invalid_currency_details, a bad symbol invalid_currency_symbol and a bad decimal count invalid_currency_decimal_places, all 400 (SHU343_SYMBOL, SHU343_DECIMALS, SHU343_CLOSED_INPUT);",
-  "(2) only an admin writes currency details (canWriteCurrencyDetails), and only on an active currency item: staff and every other role get catalogue_write_forbidden 403, and a deleted currency, a bank item or an unknown id gets catalogue_item_not_found 404 with nothing written (SHU343_ADMIN_ONLY, SHU343_ACTIVE_ONLY);",
-  "(3) any authorized actor reads a currency's details as exactly {currencyId, symbol, decimalPlaces, updatedAt}; a currency without details answers currency_details_not_found 404 and an unknown id catalogue_item_not_found 404 (SHU343_READ);",
-  "(4) migration 0206 adds catalogue_currency_details with a primary key on currency_id referencing catalogue_items, checks for the symbol (trimmed, 1 to 8 characters) and decimal_places (0 to 4), actor references and timestamps, and a trigger refusing a row whose item is not a currency; PostgresCatalogueStore reads and upserts it only for an active currency, and \"0206_catalogue_currency_details\" follows the highest migration in both lists in postgres-authz-store.test.ts (SHU343_PG_DETAILS, SHU343_PG_CHECKS);",
-  "(5) PUT and GET /catalogue/currency/:id/details answer as in items 1-3 behind the actor assertion: 401 without one, 403 for a non-admin PUT, 200 with the details, and the bank payment-details and every other catalogue route are unchanged (SHU343_HTTP);",
+const SHU344_ACCEPTANCE = [
+  "(1) normalizeCurrencyDetails accepts exactly the keys decimalPlaces and symbol; symbol is NFKC-normalized and trimmed, 1 to 8 characters with no control or format characters, and decimalPlaces is an integer number from 0 to 4; any other shape answers invalid_currency_details, a bad symbol invalid_currency_symbol and a bad decimal count invalid_currency_decimal_places, all 400 (SHU344_SYMBOL, SHU344_DECIMALS, SHU344_CLOSED_INPUT);",
+  "(2) only an admin writes currency details (canWriteCurrencyDetails), and only on an active currency item: staff and every other role get catalogue_write_forbidden 403, and a deleted currency, a bank item or an unknown id gets catalogue_item_not_found 404 with nothing written (SHU344_ADMIN_ONLY, SHU344_ACTIVE_ONLY);",
+  "(3) any authorized actor reads a currency's details as exactly {currencyId, symbol, decimalPlaces, updatedAt}; a currency without details answers currency_details_not_found 404 and an unknown id catalogue_item_not_found 404 (SHU344_READ);",
+  "(4) migration 0206 adds catalogue_currency_details with a primary key on currency_id referencing catalogue_items, checks for the symbol (trimmed, 1 to 8 characters) and decimal_places (0 to 4), actor references and timestamps, and a trigger refusing a row whose item is not a currency; PostgresCatalogueStore reads and upserts it only for an active currency, and \"0206_catalogue_currency_details\" follows the highest migration in both lists in postgres-authz-store.test.ts (SHU344_PG_DETAILS, SHU344_PG_CHECKS);",
+  "(5) PUT and GET /catalogue/currency/:id/details answer as in items 1-3 behind the actor assertion: 401 without one, 403 for a non-admin PUT, 200 with the details, and the bank payment-details and every other catalogue route are unchanged (SHU344_HTTP);",
   "(6) currency-details-mutations.mjs applies the five mutants for items 1-3, each fails its named test by assertion, the script passes on the unmutated code and runs as test:catalogue-currency-details:mutations chained into test; every existing catalogue and bank payment-details test and mutant still passes and is killed, npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU343_BRIEF = `Card SHU-343: an admin records a currency's symbol and decimal places (slice O8d of O8, row OR-25, after SHU-166 and SHU-320; risk R3).
+const SHU344_BRIEF = `Card SHU-344: an admin records a currency's symbol and decimal places (slice O8d of O8, row OR-25, after SHU-166 and SHU-320; risk R3).
 
 You are working in the StudentHub platform monorepo at the bound head, which includes SHU-166 (migration 0146, the reference catalogue with its currency items) and SHU-320 (migration 0197, the bank payment details this card copies). SHU-340 (migration 0205) may have landed before you; check the highest migration and the two lists in postgres-authz-store.test.ts first. Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
 
@@ -3037,25 +3037,25 @@ Design:
 
 Tests (name every new test with its token first and a space after it):
 - packages/reference-catalogue/test/currency-details.test.ts (new; fixture as in bank-payment-details.test.ts with an active "Kuwaiti Dinar" currency item, code KWD):
-  - "SHU343_SYMBOL ...": " KD " gives "KD", "د.ك" and "$" pass; "", "   ", nine characters and a symbol with U+200B each give invalid_currency_symbol.
-  - "SHU343_DECIMALS ...": 0, 3 and 4 pass; -1, 5, 2.5, "3" and null each give invalid_currency_decimal_places.
-  - "SHU343_CLOSED_INPUT ...": an extra key, a missing key, an array and null each give invalid_currency_details.
-  - "SHU343_ADMIN_ONLY ...": an admin writes {symbol:"KD", decimalPlaces:3}; staff, recruiter, org-owner and candidate actors each get catalogue_write_forbidden and the stored details are unchanged.
-  - "SHU343_ACTIVE_ONLY ...": writing on a soft-deleted currency, on a bank item and on an unknown uuid each give catalogue_item_not_found and store nothing.
-  - "SHU343_READ ...": the read answers exactly the keys currencyId, decimalPlaces, symbol and updatedAt with the written values; a currency without details gives currency_details_not_found; a soft-deleted currency that had details still reads them.
+  - "SHU344_SYMBOL ...": " KD " gives "KD", "د.ك" and "$" pass; "", "   ", nine characters and a symbol with U+200B each give invalid_currency_symbol.
+  - "SHU344_DECIMALS ...": 0, 3 and 4 pass; -1, 5, 2.5, "3" and null each give invalid_currency_decimal_places.
+  - "SHU344_CLOSED_INPUT ...": an extra key, a missing key, an array and null each give invalid_currency_details.
+  - "SHU344_ADMIN_ONLY ...": an admin writes {symbol:"KD", decimalPlaces:3}; staff, recruiter, org-owner and candidate actors each get catalogue_write_forbidden and the stored details are unchanged.
+  - "SHU344_ACTIVE_ONLY ...": writing on a soft-deleted currency, on a bank item and on an unknown uuid each give catalogue_item_not_found and store nothing.
+  - "SHU344_READ ...": the read answers exactly the keys currencyId, decimalPlaces, symbol and updatedAt with the written values; a currency without details gives currency_details_not_found; a soft-deleted currency that had details still reads them.
 - packages/reference-catalogue/test/currency-details-mutations.mjs (new; copy bank-payment-details-mutations.mjs, its form and its output check), five mutants:
-  - "open input object", SHU343_CLOSED_INPUT: the keys check made false.
-  - "longer symbol", SHU343_SYMBOL: the code-point length bound widened from 8 to 16.
-  - "any decimal count", SHU343_DECIMALS: the Number.isInteger condition made true.
-  - "staff currency writer", SHU343_ADMIN_ONLY: canWriteCurrencyDetails's return role === "admin"; becomes return role === "admin" || role === "staff";.
-  - "inactive currency write", SHU343_ACTIVE_ONLY: the status check in setCurrencyDetails made false.
+  - "open input object", SHU344_CLOSED_INPUT: the keys check made false.
+  - "longer symbol", SHU344_SYMBOL: the code-point length bound widened from 8 to 16.
+  - "any decimal count", SHU344_DECIMALS: the Number.isInteger condition made true.
+  - "staff currency writer", SHU344_ADMIN_ONLY: canWriteCurrencyDetails's return role === "admin"; becomes return role === "admin" || role === "staff";.
+  - "inactive currency write", SHU344_ACTIVE_ONLY: the status check in setCurrencyDetails made false.
 
-  Take each anchor from dist/currency-details.js or dist/catalogue.js after npm run build and assert each binds once. The script prints "5/5 SHU-343 mutations killed".
+  Take each anchor from dist/currency-details.js or dist/catalogue.js after npm run build and assert each binds once. The script prints "5/5 SHU-344 mutations killed".
 - packages/db/test/postgres-catalogue-currency-details.test.ts (new; copy postgres-catalogue-bank-payment-details.test.ts's fixtures):
-  - "SHU343_PG_DETAILS ...": an admin writes a currency's details through ReferenceCatalogue over PostgresCatalogueStore; a second store instance reads them back; a second write updates them in place (one row, newer updatedAt). Writing on a deleted currency and on a bank item answers catalogue_item_not_found and inserts no row.
-  - "SHU343_PG_CHECKS ...": direct INSERTs with decimal_places 5, symbol ' KD' and a nine-character symbol each fail with code 23514, and a row for a bank item fails with 23514 from the trigger.
+  - "SHU344_PG_DETAILS ...": an admin writes a currency's details through ReferenceCatalogue over PostgresCatalogueStore; a second store instance reads them back; a second write updates them in place (one row, newer updatedAt). Writing on a deleted currency and on a bank item answers catalogue_item_not_found and inserts no row.
+  - "SHU344_PG_CHECKS ...": direct INSERTs with decimal_places 5, symbol ' KD' and a nine-character symbol each fail with code 23514, and a row for a bank item fails with 23514 from the trigger.
 - packages/db/test/postgres-authz-store.test.ts: only add "0206_catalogue_currency_details" after the last entry of both schema_migrations lists (:1584 and :1637).
-- apps/gateway/test/catalogue-currency-details-http.test.ts (new; copy catalogue-bank-payment-details-http.test.ts): "SHU343_HTTP ...": GET without an assertion gives 401; an admin PUT gives 200 with exactly {currencyId, symbol, decimalPlaces, updatedAt} and the GET returns the same; a staff PUT gives 403 catalogue_write_forbidden; a malformed body gives 400 invalid_currency_details; GET of a currency without details gives 404 currency_details_not_found.
+- apps/gateway/test/catalogue-currency-details-http.test.ts (new; copy catalogue-bank-payment-details-http.test.ts): "SHU344_HTTP ...": GET without an assertion gives 401; an admin PUT gives 200 with exactly {currencyId, symbol, decimalPlaces, updatedAt} and the GET returns the same; a staff PUT gives 403 catalogue_write_forbidden; a malformed body gives 400 invalid_currency_details; GET of a currency without details gives 404 currency_details_not_found.
 - package.json: leave every script's text as it is, except: append dist/packages/reference-catalogue/test/currency-details.test.js and dist/apps/gateway/test/catalogue-currency-details-http.test.js at the END of the node --test list in test; append dist/packages/db/test/postgres-catalogue-currency-details.test.js at the END of the first node --test list in test:db; add "test:catalogue-currency-details:mutations": "node packages/reference-catalogue/test/currency-details-mutations.mjs"; and add " && npm run test:catalogue-currency-details:mutations" right after "npm run test:catalogue-bank-payment-details:mutations" in test. Never change dependencies.
 
 Out of scope:
@@ -3313,13 +3313,6 @@ export const CARD_CONTRACTS = Object.freeze({
     acceptance: SHU340_ACCEPTANCE,
     brief: SHU340_BRIEF,
   }),
-  "SHU-341": Object.freeze({
-    workspace_mode: "repo",
-    initial_build_paths: SHU341_PATHS,
-    revision_paths: SHU341_PATHS,
-    acceptance: SHU341_ACCEPTANCE,
-    brief: SHU341_BRIEF,
-  }),
   "SHU-342": Object.freeze({
     workspace_mode: "repo",
     initial_build_paths: SHU342_PATHS,
@@ -3333,6 +3326,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU343_PATHS,
     acceptance: SHU343_ACCEPTANCE,
     brief: SHU343_BRIEF,
+  }),
+  "SHU-344": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU344_PATHS,
+    revision_paths: SHU344_PATHS,
+    acceptance: SHU344_ACCEPTANCE,
+    brief: SHU344_BRIEF,
   }),
 });
 

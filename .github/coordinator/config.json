@@ -34,9 +34,9 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-341",
       "SHU-342",
-      "SHU-343"
+      "SHU-343",
+      "SHU-344"
     ]
   },
   "adapter_pause_map": {},
@@ -1212,8 +1212,8 @@
       ]
     },
     {
-      "id": "SHU-341",
-      "authorization_ref": "SHU-341",
+      "id": "SHU-342",
+      "authorization_ref": "SHU-342",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "first card of the tenth committed card queue (SHU-312), a whole-tree card: slice O2c (the company card shows the profile its owner wrote, read from organization_profiles); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
@@ -1237,11 +1237,11 @@
       ]
     },
     {
-      "id": "SHU-342",
-      "authorization_ref": "SHU-342",
+      "id": "SHU-343",
+      "authorization_ref": "SHU-343",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
-      "note": "second card of the tenth committed card queue (SHU-312), a whole-tree card: slice O7b (a store that a live pay contract names is not removed); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "note": "second card of the tenth committed card queue (SHU-312), a whole-tree card: slice O7c (a store that a live pay contract names is not removed); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "packages/db/src/postgres-organization-stores-store.ts",
         "packages/db/test/postgres-organization-stores.test.ts",
@@ -1256,8 +1256,8 @@
       ]
     },
     {
-      "id": "SHU-343",
-      "authorization_ref": "SHU-343",
+      "id": "SHU-344",
+      "authorization_ref": "SHU-344",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "third card of the tenth committed card queue (SHU-312), a whole-tree card: slice O8d (an admin records a currency symbol and decimal places in the catalogue, migration 0206); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
