@@ -109,6 +109,22 @@ const CASES = [
     tests: "card-run.test.mjs",
     pattern: "SHU-71 M10: T8",
   },
+  {
+    name: "M13 claim the head's judgement before the launch preconditions hold",
+    file: "service/card-threads.mjs",
+    from: "    let env;\n",
+    to: "    io.fs.writeFileSync(threadReviewClaim(paths.stateDir, plan.id, head), \"{}\\n\", { flag: \"wx\", mode: 0o600 });\n    let env;\n",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T12",
+  },
+  {
+    name: "M14 stop checking threads the review lane resolved in an earlier landing",
+    file: "service/card-land.mjs",
+    from: "    if (judged) {",
+    to: "    if (false) {",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T13",
+  },
 ];
 
 for (const mutation of CASES) {

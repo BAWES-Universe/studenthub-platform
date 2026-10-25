@@ -202,20 +202,13 @@ function launchRefusal(message) {
 }
 
 // The host launcher card-run hands the landing: one confined run of the review
-// lane's model per card and head, ever (a root-owned claim written wx before
-// the launch). Returns the model's structured output; throws on anything else.
+// lane's model per card and head, ever (a root-owned claim written wx once the
+// launch preconditions hold, before the launch). Returns the model's structured output; throws on anything else.
 // Only the Claude review lane is wired; a Codex review lane refuses.
 export function threadReviewer({ io, paths, plan, validateWrapper = io.validateReviewWrapper ?? validateReviewWrapper }) {
   return async ({ lane, head, prompt, files, timeoutMs }) => {
     if (runtimeForLane(lane) !== "claude-code") throw launchRefusal(`the ${lane} review lane cannot judge threads yet; only claude-code is wired`);
     if (!SHA_RE.test(head ?? "") || !CARD_RE.test(plan?.id ?? "")) throw launchRefusal("the thread review has no exact head or card");
-    const claim = threadReviewClaim(paths.stateDir, plan.id, head);
-    try {
-      io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, head, lane, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
-    } catch (error) {
-      if (error?.code === "EEXIST") throw launchRefusal(`the threads of ${plan.id} were already judged once at ${head}`);
-      throw launchRefusal(`the thread review claim could not be written: ${error?.code ?? "error"}`);
-    }
     let env;
     try { env = adapterLaunchEnvironment(String(io.fs.readFileSync(paths.coordinatorEnv, "utf8"))); } catch { throw launchRefusal("the reviewer launch environment cannot be read"); }
     const token = env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -223,6 +216,15 @@ export function threadReviewer({ io, paths, plan, validateWrapper = io.validateR
     if (!token || !path.isAbsolute(root ?? "")) throw launchRefusal("the reviewer launch environment has no Claude login or worktree root");
     let wrapper;
     try { wrapper = validateWrapper(reviewWrapper(env, "SHU_REVIEW_MODEL_WRAPPER_JSON"), io.fs, { model: true }); } catch { throw launchRefusal("the reviewer model wrapper is not the trusted one"); }
+    // The claim comes after every precondition, so a host that cannot launch
+    // the reviewer yet does not spend the head's one judgement.
+    const claim = threadReviewClaim(paths.stateDir, plan.id, head);
+    try {
+      io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, head, lane, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+    } catch (error) {
+      if (error?.code === "EEXIST") throw launchRefusal(`the threads of ${plan.id} were already judged once at ${head}`);
+      throw launchRefusal(`the thread review claim could not be written: ${error?.code ?? "error"}`);
+    }
     const session = randomUUID();
     // The sandbox takes only a direct, 0750, root- or coordinator-owned
     // attempt child of the worktree root, and lends the reviewer read access

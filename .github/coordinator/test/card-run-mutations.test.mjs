@@ -733,8 +733,8 @@ const CASES = [
   {
     name: "M109 trust a thread an earlier landing settled",
     file: "service/card-land.mjs",
-    from: "  if (policy) checkLandingResolved(page.nodes, viewer, policy);",
-    to: "  // SHU310-M109",
+    from: "  checkLandingResolved(page.nodes, viewer, policy);\n  const unresolved",
+    to: "  // SHU310-M109\n  const unresolved",
     pattern: "SHU-310 L27:",
   },
   {

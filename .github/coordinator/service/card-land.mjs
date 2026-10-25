@@ -263,11 +263,19 @@ async function replyAndResolve(gh, entry, reply, markerFor) {
 
 // Every resolved thread that carries a landing reply, from this run or an
 // earlier one, must still be a settleable bot thread that ends in that reply.
+// M10: a thread the review lane judged, in this run or an earlier one, must
+// still end in the judgement's reply, whether or not settling is on.
 function checkLandingResolved(nodes, viewer, policy) {
-  // M10: with settling off (the review lane's guard alone), there is none.
-  if (!policy) return;
   for (const node of nodes) {
     if (node?.isResolved !== true) continue;
+    const judged = (node?.comments?.nodes ?? []).some((comment) => comment?.author?.login === viewer && String(comment?.body ?? "").includes("<!-- card-land-review "));
+    if (judged) {
+      const last = node.comments.nodes.at(-1);
+      if (last?.author?.login !== viewer || !String(last?.body ?? "").startsWith(`${reviewMarker(node.id)}\n`)) {
+        stop("LAND_ERROR", `review thread ${node?.comments?.nodes?.[0]?.url ?? node.id} was resolved on the review lane's judgement but no longer ends in it`);
+      }
+    }
+    if (!policy) continue;
     const ours = (node?.comments?.nodes ?? []).some((comment) => comment?.author?.login === viewer && String(comment?.body ?? "").includes("<!-- card-land-settle "));
     if (!ours) continue;
     const entry = classifyThread(node, viewer, policy);
@@ -543,7 +551,7 @@ async function checkState(gh, { repo, number, head, branch, settled, policy, ext
   const viewer = threads.data.viewer?.login;
   for (const [id, expected] of settled ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
   for (const [id, expected] of reviewed ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected, reviewMarker);
-  if (policy) checkLandingResolved(page.nodes, viewer, policy);
+  checkLandingResolved(page.nodes, viewer, policy);
   const unresolved = page.nodes.filter((thread) => thread?.isResolved !== true);
   const open = external ? unresolved.filter((thread) => holdsThread(thread, external)) : unresolved;
   if (open.length) return { green: false, note: `${open.length} review thread(s) are unresolved`, open, viewer, ...(reviewed ? { unresolved } : {}) };

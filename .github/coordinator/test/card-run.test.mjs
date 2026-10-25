@@ -4679,3 +4679,50 @@ test("SHU-71 M10: T11 only the review lane that passed the card, of the other fa
   assert.equal(host.files.has(path.join(LAND_PATHS.stateDir, `card-thread-review-SHU-301-${PASSED}.json`)), false);
   assert.equal(host.reviewRuns.length, 0);
 });
+
+test("SHU-71 M10: T12 a host that cannot launch the reviewer yet does not spend the head's one judgement", async () => {
+  const claim = path.join(LAND_PATHS.stateDir, `card-thread-review-SHU-301-${PASSED}.json`);
+  const call = { lane: "claude-verifier", head: PASSED, prompt: "x", files: [], timeoutMs: 1000 };
+  for (const [name, breakIt, why] of [
+    ["no Claude login", (h) => { h.files.get(LAND_PATHS.coordinatorEnv).text = `${M10_ENV.replace(/^CLAUDE_CODE_OAUTH_TOKEN=.*$/m, "")}\n`; }, /no Claude login/],
+    ["no worktree root", (h) => { h.files.get(LAND_PATHS.coordinatorEnv).text = `${M10_ENV.replace(/^SHU_WORKTREE_ROOT=.*$/m, "")}\n`; }, /cannot be read/],
+    ["an unreadable environment", (h) => { h.files.delete(LAND_PATHS.coordinatorEnv); }, /cannot be read/],
+    ["an untrusted wrapper", (h) => { h.io = { ...h.io, validateReviewWrapper: () => { throw new Error("not trusted"); } }; }, /not the trusted one/],
+  ]) {
+    const host = m10Host({ botThreads: [SENTRY_THREAD] });
+    breakIt(host);
+    await assert.rejects(threadReviewer({ io: host.io, paths: LAND_PATHS, plan: { id: "SHU-301" } })(call), why, name);
+    assert.equal(host.files.has(claim), false, `${name}: nothing is claimed`);
+    assert.equal(host.reviewRuns.length, 0, name);
+  }
+  // Once the host is fixed, the same head is still judged, once.
+  const host = m10Host({ botThreads: [SENTRY_THREAD] });
+  const judge = threadReviewer({ io: host.io, paths: LAND_PATHS, plan: { id: "SHU-301" } });
+  await judge(call);
+  assert.equal(host.files.has(claim), true);
+  await assert.rejects(judge(call), /already judged once/);
+  assert.equal(host.reviewRuns.length, 1);
+});
+
+test("SHU-71 M10: T13 a thread the review lane resolved in an earlier landing must still end in its judgement, whether or not M10 is on", async () => {
+  const earlier = (host, after = []) => {
+    const [thread] = host.land.threads;
+    thread.isResolved = true;
+    thread.comments.push({ id: "rc900", url: `${thread.comments[0].url}x`, updatedAt: "2026-10-09T17:40:00Z", author: { __typename: "Bot", login: "shu-lander" },
+      body: `<!-- card-land-review ${thread.id} -->\nNot applicable to SHU-301: handled by the caller.` }, ...after);
+  };
+  for (const review of [undefined, false]) {
+    const kept = m10Host({ botThreads: [SENTRY_THREAD], ...(review === false ? { review } : {}) });
+    earlier(kept);
+    const landed = await landRun(kept);
+    assert.equal(landed.land.outcome, "MERGED", JSON.stringify(landed.land));
+    assert.equal(kept.reviewRuns.length, 0, "nothing left to judge");
+    const changed = m10Host({ botThreads: [SENTRY_THREAD], ...(review === false ? { review } : {}) });
+    earlier(changed, [{ id: "rc901", url: "https://github.com/x/y/pull/77#discussion_r901", updatedAt: "2026-10-09T17:50:00Z",
+      author: { __typename: "User", login: "khalid" }, body: "This is real, please fix it." }]);
+    const stopped = await landRun(changed);
+    assert.equal(stopped.land.outcome, "LAND_ERROR", JSON.stringify(stopped.land));
+    assert.match(stopped.land.reason, /resolved on the review lane's judgement but no longer ends in it/);
+    assert.equal(changed.land.merges, 0);
+  }
+});
