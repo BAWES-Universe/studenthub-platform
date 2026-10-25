@@ -11,6 +11,19 @@ const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/organizations/test/organizations.test.js", import.meta.url));
 const mutations = [
   [
+    "ignore the stored profile", "SHU342_PROFILE_STORED",
+    "else if (profile !== undefined && name in ORGANIZATION_PROFILE_SOURCES\n            && typeof profile[ORGANIZATION_PROFILE_SOURCES[name]] === \"string\")",
+    "else if (false)",
+  ],
+  [
+    "read the parent's profile", "SHU342_PROFILE_SCOPE",
+    "this.#profiles?.read(org.id)", "this.#profiles?.read(parentOrgId ?? org.id)",
+  ],
+  [
+    "trust an unparsed stored value", "SHU342_PROFILE_INVALID",
+    "return available(name, PARSERS[name](value));", "return available(name, value);",
+  ],
+  [
     "let any audience read counts", "SHU334_COUNTS_SCOPE",
     "if (audience !== \"admin\")", "if (audience === undefined)",
   ],

@@ -33,6 +33,7 @@ export { bootstrapAdmin, type BootstrapResult } from "./bootstrap-admin.js";
 export { DEFAULT_DATABASE_URL, databaseUrl } from "./connection.js";
 export { PostgresOrganizationProfileStore, ORGANIZATION_PROFILE_OPERATION,
   type PostgresOrganizationProfileStoreOptions } from "./postgres-organization-profile-store.js";
+export { PostgresOrganizationProfileReads } from "./postgres-organization-profile-reads.js";
 export { PostgresBankDetailsStore, BANK_DETAILS_OPERATION,
   type PostgresBankDetailsStoreOptions } from "./postgres-bank-details-store.js";
 export {PostgresOrganizationStatusStore,ORGANIZATION_STATUS_OPERATION,type PostgresOrganizationStatusStoreOptions} from "./postgres-organization-status-store.js";
