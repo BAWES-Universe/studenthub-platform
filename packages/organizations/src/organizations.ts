@@ -126,12 +126,27 @@ const PARSERS: Readonly<Record<Exclude<OrganizationFieldName, "status" | "status
   email: text(255),
 };
 
+export const ORGANIZATION_PROFILE_SOURCES = Object.freeze({
+  commonNameEn: "name_en", commonNameAr: "name_ar", descriptionEn: "description_en",
+  descriptionAr: "description_ar", website: "website",
+} as const);
+export type OrganizationProfileRecord = Readonly<Partial<Record<"name_en" | "name_ar" | "description_en" | "description_ar" | "website", string>>>;
+export interface OrganizationProfileRecords { read(orgId: string): Promise<OrganizationProfileRecord> }
+
 function available<T>(name: OrganizationFieldName, value: T): OrganizationField<T> {
   return Object.freeze({ state: "available", value, sourceField: ORGANIZATION_FIELD_CONTRACT[name].sourceField });
 }
 
 function unavailable(name: OrganizationFieldName, reason: "not_imported" | "not_recorded"): OrganizationField<never> {
   return Object.freeze({ state: "unavailable", reason, sourceField: ORGANIZATION_FIELD_CONTRACT[name].sourceField });
+}
+
+function storedProfileField(name: keyof typeof ORGANIZATION_PROFILE_SOURCES, value: string): OrganizationField<unknown> {
+  try {
+    return available(name, PARSERS[name](value));
+  } catch {
+    return unavailable(name, "not_recorded");
+  }
 }
 
 /**
@@ -263,6 +278,7 @@ export function projectOrganizationFields(
   record?: OrganizationStatusRecord,
   terms?:{readonly own:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord};readonly parent:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}},
   approvedRecord?:OrganizationApprovedToHireRecord,
+  profile?: OrganizationProfileRecord,
 ): Readonly<Record<string, OrganizationField<unknown>>> {
   const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience];
   const fields: Record<string, OrganizationField<unknown>> = {};
@@ -275,6 +291,10 @@ export function projectOrganizationFields(
       fields[name] = record.kind === "status" ? available("statusOverride", record.status) : unavailable("statusOverride", "not_recorded");
     } else if ((name === "hourlyRate" || name === "bonusCommission") && terms) {
       fields[name] = storedDecimal(name,row,parent,terms.own[name],terms.parent[name]);
+    } else if (profile !== undefined && name in ORGANIZATION_PROFILE_SOURCES
+      && typeof profile[ORGANIZATION_PROFILE_SOURCES[name as keyof typeof ORGANIZATION_PROFILE_SOURCES]] === "string") {
+      fields[name] = storedProfileField(name as keyof typeof ORGANIZATION_PROFILE_SOURCES,
+        profile[ORGANIZATION_PROFILE_SOURCES[name as keyof typeof ORGANIZATION_PROFILE_SOURCES]]!);
     } else if (row === undefined) {
       fields[name] = unavailable(name, "not_imported");
     } else if (name === "status") {
@@ -384,6 +404,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #storeCounts?: OrganizationStoreCounts;
   readonly #accountManagers?: OrganizationAccountManagerRecords;
   readonly #deletions?:OrganizationDeletionRecords;
+  readonly #profiles?: OrganizationProfileRecords;
 
   constructor(options: {
     readonly store: AuthzStore;
@@ -395,6 +416,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly storeCounts?: OrganizationStoreCounts;
     readonly accountManagers?: OrganizationAccountManagerRecords;
     readonly deletions?:OrganizationDeletionRecords;
+    readonly profiles?: OrganizationProfileRecords;
   }) {
     this.#store = options.store;
     this.#source = options.source;
@@ -405,6 +427,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     this.#storeCounts = options.storeCounts;
     this.#accountManagers = options.accountManagers;
     this.#deletions=options.deletions;
+    this.#profiles = options.profiles;
   }
 
   /** The audience the caller may read at `orgId` right now, or undefined. */
@@ -435,6 +458,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const snapshot = await this.#source.readSnapshot(org.id);
       const statusRecord = await this.#statusRecords?.read(org.id);
       const approvedRecord=await this.#approvedToHire?.read(org.id);
+      const profile = await this.#profiles?.read(org.id);
       const absent={hourlyRate:{kind:"absent" as const},bonusCommission:{kind:"absent" as const}};
       const ownTerms=await this.#commercialTerms?.read(org.id)??absent;
       const row = snapshotRow(snapshot, org.id, parentOrgId);
@@ -453,7 +477,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         snapshot: row === undefined
           ? Object.freeze({ kind: "not_imported" as const })
           : Object.freeze({ kind: "imported" as const, observedAt: observedAt(row) }),
-        fields: projectOrganizationFields(audience, row, parent, statusRecord,{own:ownTerms,parent:parentTerms},approvedRecord),
+        fields: projectOrganizationFields(audience, row, parent, statusRecord,{own:ownTerms,parent:parentTerms},approvedRecord,profile),
       }) as unknown as OrganizationView;
       return { kind: "found", organization: view };
     } catch {

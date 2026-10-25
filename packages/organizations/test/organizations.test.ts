@@ -9,6 +9,7 @@ import {
   UnconfiguredApprovedOrganizationAdapter,
   type OrganizationReadResult,
   type OrganizationView,
+  type OrganizationProfileRecords,
 } from "../src/index.js";
 import * as builtIn from "../src/organizations.js";
 
@@ -28,6 +29,7 @@ async function setup(options: {
   readonly rows?: ReadonlyMap<string, unknown>;
   readonly unconfigured?: boolean;
   readonly extraOrganizations?: readonly { id: string; name: string; parentOrgId?: string }[];
+  readonly profiles?: OrganizationProfileRecords;
 } = {}) {
   const store = new InMemoryAuthzStore({
     principals: PEOPLE,
@@ -52,7 +54,7 @@ async function setup(options: {
     : new InMemoryApprovedOrganizationAdapter(options.rows ?? new Map<string, unknown>([
       ["org-a", parentA], ["org-a1", childA1], ["org-a2", childA2], ["org-b", unrelatedB],
     ]));
-  return { store, repository: new OrganizationRepository({ store, source }) };
+  return { store, repository: new OrganizationRepository({ store, source, profiles: options.profiles }) };
 }
 
 function found(result: OrganizationReadResult): OrganizationView {
@@ -67,6 +69,57 @@ function value(view: OrganizationView, name: string): unknown {
 }
 
 const SENTINELS = /SENSITIVE-|company_auth_key|password|reset_token|commercial_licence|company_logo|staff_id|followup/i;
+
+test("SHU342_PROFILE_STORED stored profile overlays only its five company-card fields", async () => {
+  const all = { name_en: "Stored Retail", name_ar: "متجر مخزن", description_en: "Stored description",
+    description_ar: "وصف مخزن", website: "https://stored.example.invalid" };
+  const baseline = (await setup()).repository;
+  const profileNames = new Set(["commonNameEn", "commonNameAr", "descriptionEn", "descriptionAr", "website"]);
+  for (const [principalId, role, audience] of [["owner-a", "org-owner", "employer"], ["staff", "staff", "staff"], ["admin", "admin", "admin"]] as const) {
+    const profiles = { async read() { return all; } };
+    const view = found(await (await setup({ profiles })).repository.read({ principalId, orgId: "org-a", role }));
+    const old = found(await baseline.read({ principalId, orgId: "org-a", role }));
+    assert.deepEqual(Object.keys(view.fields), [...ORGANIZATION_FIELDS_BY_AUDIENCE[audience]]);
+    assert.deepEqual([value(view,"commonNameEn"),value(view,"commonNameAr"),value(view,"descriptionEn"),value(view,"descriptionAr"),value(view,"website")], Object.values(all));
+    for (const name of ORGANIZATION_FIELDS_BY_AUDIENCE[audience]) if (!profileNames.has(name)) assert.deepEqual(
+      (view.fields as unknown as Record<string, unknown>)[name], (old.fields as unknown as Record<string, unknown>)[name]);
+  }
+  const partial = { async read() { return { name_en: all.name_en, website: all.website }; } };
+  const partialView = found(await (await setup({ profiles: partial })).repository.read({ principalId:"owner-a",orgId:"org-a",role:"org-owner" }));
+  assert.equal(value(partialView,"commonNameEn"),all.name_en); assert.equal(value(partialView,"website"),all.website);
+  for (const name of ["commonNameAr","descriptionEn","descriptionAr"]) assert.equal(value(partialView,name),value(found(await baseline.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),name));
+  const missing = found(await (await setup({ unconfigured:true, profiles:partial })).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"}));
+  assert.equal(value(missing,"commonNameEn"),all.name_en); assert.equal(value(missing,"website"),all.website);
+  for (const name of ["commonNameAr","descriptionEn","descriptionAr"]) assert.equal(value(missing,name),"unavailable:not_imported");
+  assert.deepEqual(Object.keys(missing.fields), [...ORGANIZATION_FIELDS_BY_AUDIENCE.employer]);
+});
+
+test("SHU342_PROFILE_SCOPE reads exactly the authorized organization profile without inheritance", async () => {
+  const calls:string[]=[];
+  const profiles={async read(id:string){calls.push(id);return id==="org-a"?{name_en:"Stored Retail"}:{}}};
+  const {repository}=await setup({profiles});
+  await repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"}); assert.deepEqual(calls,["org-a"]);
+  calls.length=0;
+  const child=found(await repository.read({principalId:"owner-a-subtree",orgId:"org-a1",role:"org-owner"}));
+  assert.deepEqual(calls,["org-a1"]); assert.equal(value(child,"commonNameEn"),childA1.company_common_name_en);
+  calls.length=0;
+  for(const [principalId,role] of [["candidate-a","candidate"],["finance-a","finance"],["nobody","org-owner"]] as const)
+    assert.deepEqual(await repository.read({principalId,orgId:"org-a",role}),{kind:"not_found"});
+  assert.deepEqual(calls,[]);
+});
+
+test("SHU342_PROFILE_INVALID isolates malformed stored fields and port failures", async () => {
+  const profiles={async read(){return{name_en:"x".repeat(256),website:"https://stored.example.invalid"}}};
+  const {repository}=await setup({profiles});
+  const view=found(await repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"}));
+  assert.equal(value(view,"commonNameEn"),"unavailable:not_recorded"); assert.equal(value(view,"website"),"https://stored.example.invalid");
+  const broken=(await setup({profiles:{async read(){throw new Error("down")}}})).repository;
+  assert.deepEqual(await broken.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"}),{kind:"unavailable"});
+  let calls=0; const unused=(await setup({profiles:{async read(){calls++;return{}}}})).repository;
+  await unused.listOrganizations({principalId:"admin",orgId:"root",role:"admin"});
+  await unused.listSubOrganizations({principalId:"owner-a-subtree",orgId:"org-a",role:"org-owner"});
+  await unused.readCounts({principalId:"admin",orgId:"org-a",role:"admin"}); assert.equal(calls,0);
+});
 
 test("SHU-159/parity-contract two organizations, conflicting status fields, self and subtree grants", async () => {
   const { repository } = await setup();
