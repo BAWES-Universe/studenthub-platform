@@ -6,6 +6,7 @@ import { InMemoryApprovedProfileAdapter, OwnProfileRepository } from "@studenthu
 import {
   InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
   type OrganizationStoreCounts,
+  type OrganizationAccountManagerRecords,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createCompanyDirectory } from "../src/company-directory.js";
@@ -16,7 +17,7 @@ const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts } = {}) {
+async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -34,7 +35,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   const { parentA, childA1, unrelatedB } = SYNTHETIC_ORGANIZATION_FIXTURES;
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-b", unrelatedB],
-  ])), storeCounts: options.storeCounts });
+  ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
     ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
@@ -167,4 +168,26 @@ test("SHU168_PAGE renders source store counts and unavailable state in HTML and 
   const unconfigured = await fixture(t);
   const unconfiguredPage = await (await unconfigured.get(STAFF_LIST, html)).text();
   assert.equal((unconfiguredPage.match(/<td><span class="missing" data-state="unavailable">Unavailable<\/span><\/td>/g) ?? []).length, 2);
+});
+
+test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the manager field", async (t) => {
+  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", "person-1"]]) } });
+  for (const manager of ["me", "person-1"]) {
+    const body = await (await f.get(`${STAFF_LIST}&manager=${manager}`)).json();
+    assert.equal(body.filters.accountManager, "person-1");
+    assert.deepEqual(body.directory.entries.map((entry: { orgId: string }) => entry.orgId), ["org-a"]);
+  }
+  assert.deepEqual((await (await f.get(`${STAFF_LIST}&manager=other`)).json()).directory.entries, []);
+  for (const suffix of ["manager=a%20b", "manager=me&manager=other"]) {
+    const response = await f.get(`${STAFF_LIST}&${suffix}`); assert.equal(response.status, 400); assert.deepEqual(await response.json(), { error: "invalid_directory_query" });
+  }
+  assert.equal((await (await f.get(`${STAFF_LIST}&manager=`)).json()).directory.entries.length, 2);
+  const page = await (await f.get(`${STAFF_LIST}&manager=me`, html)).text();
+  assert.match(page, /name="manager" maxlength="128" value="person-1"/);
+});
+
+test("SHU339_PAGE_UNAVAILABLE requires the manager read port only for manager filters", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.get(`${STAFF_LIST}&manager=me`)).status, 503);
+  assert.equal((await f.get()).status, 200);
 });

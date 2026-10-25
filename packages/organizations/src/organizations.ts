@@ -163,6 +163,7 @@ export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<{
 export type OrganizationApprovedToHireRecord={readonly kind:"absent"}|{readonly kind:"value";readonly value:boolean};
 export interface OrganizationApprovedToHireRecords{read(orgId:string):Promise<OrganizationApprovedToHireRecord>;readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationApprovedToHireRecord>>}
 export interface OrganizationStoreCounts { countMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, number>> }
+export interface OrganizationAccountManagerRecords { readMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, string>> }
 
 export function deriveOrganizationStatus(row: Row, record?:OrganizationStatusRecord): OrganizationField<OrganizationStatus> {
   if (record?.kind === "status") return available("status", record.status);
@@ -295,12 +296,13 @@ export const ORGANIZATION_DIRECTORY_ROLES: ReadonlySet<string> = new Set<Role>([
 const DIRECTORY_STATUSES: ReadonlySet<unknown> = new Set<OrganizationStatus>(["active", "under_review", "inactive"]);
 
 function validDirectoryFilters(filters: OrganizationDirectoryFilters): boolean {
-  const { query, status, approvedToHire, currencyCode, ...rest } = filters;
+  const { query, status, approvedToHire, currencyCode, accountManager, ...rest } = filters;
   if (Object.keys(rest).length > 0) return false;
   if (query !== undefined && (typeof query !== "string" || query.trim() !== query || query.length === 0
     || query.length > 100)) return false;
   if (status !== undefined && !DIRECTORY_STATUSES.has(status)) return false;
   if (approvedToHire !== undefined && typeof approvedToHire !== "boolean") return false;
+  if (accountManager !== undefined && (typeof accountManager !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager))) return false;
   return currencyCode === undefined || (typeof currencyCode === "string" && /^[A-Z]{3}$/.test(currencyCode));
 }
 
@@ -380,6 +382,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #commercialTerms?:OrganizationCommercialTermsRecords;
   readonly #approvedToHire?:OrganizationApprovedToHireRecords;
   readonly #storeCounts?: OrganizationStoreCounts;
+  readonly #accountManagers?: OrganizationAccountManagerRecords;
   readonly #deletions?:OrganizationDeletionRecords;
 
   constructor(options: {
@@ -390,6 +393,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly commercialTerms?:OrganizationCommercialTermsRecords;
     readonly approvedToHire?:OrganizationApprovedToHireRecords;
     readonly storeCounts?: OrganizationStoreCounts;
+    readonly accountManagers?: OrganizationAccountManagerRecords;
     readonly deletions?:OrganizationDeletionRecords;
   }) {
     this.#store = options.store;
@@ -399,6 +403,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     this.#commercialTerms=options.commercialTerms;
     this.#approvedToHire=options.approvedToHire;
     this.#storeCounts = options.storeCounts;
+    this.#accountManagers = options.accountManagers;
     this.#deletions=options.deletions;
   }
 
@@ -537,6 +542,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       ]);
       // A deleted organization is never an active directory context, even under an ancestor's subtree grant.
       if (await this.#deletions?.isDeleted(request.orgId)) return { kind: "not_found" };
+      if (filters.accountManager !== undefined && !this.#accountManagers) return { kind: "unavailable" };
       const within = new Set(descendantOrgIdsIncludingSelf(organizations, request.orgId));
       const covered = new Set(contexts
         .filter((context) => context.role === request.role && within.has(context.orgId)
@@ -556,8 +562,10 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         : undefined;
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
+      const managers = filters.accountManager !== undefined && shown.length > 0 ? await this.#accountManagers?.readMany(shown.map((org) => org.id)) : undefined;
       const entries: OrganizationDirectoryEntry[] = [];
       for (const org of shown) {
+        if (filters.accountManager !== undefined && managers?.get(org.id) !== filters.accountManager) continue;
         // As in legacy (`filterParent`), the list holds top-level companies; sub-organizations open from their parent.
         const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);
         const statusRecord = batchRecords
