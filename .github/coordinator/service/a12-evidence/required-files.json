@@ -70,6 +70,7 @@
   ".github/coordinator/test/launch-refusal-visibility.test.mjs",
   ".github/coordinator/test/lifecycle.test.mjs",
   ".github/coordinator/test/linear-issues.test.mjs",
+  ".github/coordinator/test/m10-bot-threads-mutations.test.mjs",
   ".github/coordinator/test/merge-readiness.test.mjs",
   ".github/coordinator/test/push-broker-gitconfig.test.mjs",
   ".github/coordinator/test/push-broker.test.mjs",

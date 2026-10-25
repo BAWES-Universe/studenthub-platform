@@ -64,6 +64,7 @@ import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
 import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
+import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
@@ -671,7 +672,10 @@ async function landRun({ io, paths, limits, plan, config, credentials }) {
   try { custody = readLandToken(io, paths.landEnv); } catch { custody = { token: null, refused: "the landing token file cannot be read" }; }
   if (custody.refused) return { outcome: "LAND_ERROR", reason: custody.refused };
   if (!custody.token) return { outcome: "LAND_SKIPPED_NO_TOKEN", reason: custody.reason };
-  return landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause,
+  // M10: the card's review lane, run through the reviewer sandbox, judges
+  // review bot threads when the committed config turns that on.
+  const adjudicate = config?.landing_thread_review?.enabled === true ? threadReviewer({ io, paths, plan }) : null;
+  return landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, adjudicate,
     limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs,
       requestTimeoutMs: limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs } });
 }
@@ -1183,8 +1187,11 @@ export const defaultIO = Object.freeze({
   invocation: () => process.env.INVOCATION_ID ?? null,
   fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
-  exec: (file, args, { timeoutMs } = {}) => {
-    const result = spawnSync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...(timeoutMs ? { timeout: timeoutMs, killSignal: "SIGKILL" } : {}) });
+  // env and cwd, when given, replace the child's (M10: the thread reviewer's
+  // login travels in its environment, never in argv).
+  exec: (file, args, { timeoutMs, env, cwd } = {}) => {
+    const result = spawnSync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...(timeoutMs ? { timeout: timeoutMs, killSignal: "SIGKILL" } : {}),
+      ...(env ? { env } : {}), ...(cwd ? { cwd } : {}) });
     const timedOut = result.error?.code === "ETIMEDOUT";
     return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(timedOut ? { timedOut } : {}) };
   },

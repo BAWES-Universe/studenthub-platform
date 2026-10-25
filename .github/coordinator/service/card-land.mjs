@@ -44,6 +44,15 @@
 // A resolved thread carrying a landing reply is checked again by every run.
 // Any other thread still blocks.
 //
+// SHU-71 M10 (self-repair B3): with landing_thread_review.enabled, a read
+// held only by unresolved review threads hands them, once per head, to the
+// card's own review lane when every one of them is a listed bot's
+// (card-threads.mjs). Only when it judges every thread not_applicable does
+// the landing reply with its reason on each thread and resolve it, the same
+// reply, re-read and resolve SHU-310 uses, and every resolved thread is held
+// to that state until the merge. Anything else resolves nothing, and the
+// landing ends as before with the must_fix threads named in its reason.
+//
 // The landing token is the only credential that can open and merge a pull
 // request. It lives in its own root-only file that card-run alone reads; it is
 // never in the coordinator's environment file, so neither the coordinator unit
@@ -54,6 +63,7 @@ import { writeHandoffReceipt, validHandoff, handoffReceipt } from "../durable-ha
 import { consumeMergeReadiness, parseMergeAttemptsFromComments } from "../merge-readiness.mjs";
 import { externalPolicy, holdsRun, holdsStatus, holdsThread, advisoryNote } from "./external-checks.mjs";
 import { readTestWeakening, repairPullIdentity } from "./card-repair.mjs";
+import { REVIEW_LIMITS, threadReviewPolicy, reviewMarker, judgingLane, botThread, adjudicationPrompt, parseAdjudication, reviewReplyBody } from "./card-threads.mjs";
 
 export const CARD_LAND_ENV = "/srv/shu/card-land.env";
 export const LAND_TOKEN_KEY = "SHU_LAND_GITHUB_TOKEN";
@@ -76,8 +86,8 @@ export const LAND_OUTCOMES = Object.freeze([
 export const REPAIR_LAND_OUTCOMES = Object.freeze(["REPAIR_TEST_WEAKENED"]);
 const SHA_RE = /^[0-9a-f]{40}$/;
 const GREEN = new Set(["success", "neutral", "skipped"]);
-const THREAD_FIELDS = "id isResolved comments(first:20) { nodes { id url body updatedAt author { __typename login } } pageInfo { hasNextPage } }";
-const THREADS_QUERY = `query CardLandThreads($owner:String!,$name:String!,$number:Int!) { viewer { login } repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { ${THREAD_FIELDS} } pageInfo { hasNextPage } } } } }`;
+const THREAD_FIELDS = "id isResolved path line comments(first:20) { nodes { id url body updatedAt diffHunk author { __typename login } } pageInfo { hasNextPage } }";
+const THREADS_QUERY = `query CardLandThreads($owner:String!,$name:String!,$number:Int!) { viewer { login } repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewDecision reviewThreads(first:100) { nodes { ${THREAD_FIELDS} } pageInfo { hasNextPage } } } } }`;
 const THREAD_QUERY = `query CardLandThread($id:ID!) { viewer { login } node(id:$id) { ... on PullRequestReviewThread { ${THREAD_FIELDS} } } }`;
 const THREAD_REPLY_MUTATION = "mutation CardLandThreadReply($id:ID!,$body:String!) { addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}) { comment { id } } }";
 const THREAD_RESOLVE_MUTATION = "mutation CardLandThreadResolve($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } } }";
@@ -136,10 +146,10 @@ const commentKey = (comment) => `${comment?.id} ${comment?.updatedAt} ${comment?
 
 // A thread as the landing reads it: complete, with the landing's own replies
 // (by the token's own login, carrying this thread's marker) set apart.
-function readThread(node, viewer) {
+function readThread(node, viewer, markerFor = settleMarker) {
   const nodes = node?.comments?.nodes;
   if (typeof node?.id !== "string" || !Array.isArray(nodes) || nodes.length === 0 || node.comments.pageInfo?.hasNextPage !== false) return null;
-  const marker = settleMarker(node.id);
+  const marker = markerFor(node.id);
   const own = (comment) => typeof viewer === "string" && comment?.author?.login === viewer && String(comment?.body ?? "").includes(marker);
   return { id: node.id, isResolved: node.isResolved === true, url: nodes[0]?.url ?? null,
     others: nodes.filter((comment) => !own(comment)), replies: nodes.filter(own) };
@@ -172,8 +182,8 @@ function signature(thread) {
   return JSON.stringify([...thread.others, ...thread.replies].map(commentKey));
 }
 
-function checkSettled(node, viewer, id, expected) {
-  const thread = readThread(node, viewer);
+function checkSettled(node, viewer, id, expected, markerFor = settleMarker) {
+  const thread = readThread(node, viewer, markerFor);
   if (!thread || thread.id !== id || !thread.isResolved || signature(thread) !== expected) {
     stop("LAND_ERROR", `settled review thread ${thread?.url ?? id} changed before the handoff`);
   }
@@ -188,9 +198,9 @@ async function graphql(gh, query, variables) {
 
 // The thread now, checked against what was classified: the same bot comments,
 // unchanged, and exactly one landing reply.
-async function rereadThread(gh, id, snapshot) {
+async function rereadThread(gh, id, snapshot, markerFor = settleMarker) {
   const data = await graphql(gh, THREAD_QUERY, { id });
-  const thread = readThread(data?.node, data?.viewer?.login);
+  const thread = readThread(data?.node, data?.viewer?.login, markerFor);
   if (!thread || thread.id !== id || thread.replies.length !== 1
       || JSON.stringify(thread.others.map(commentKey)) !== JSON.stringify(snapshot)) {
     stop("LAND_ERROR", `review thread ${thread?.url ?? id} changed after the landing classified it`);
@@ -213,18 +223,31 @@ async function settleThread(ctx, entry) {
     const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
     if (posted?.commentCreate?.success !== true) stop("LAND_ERROR", `the follow-up note for review thread ${entry.url} was not written`);
   }
+  let reply = null;
   if (!entry.replied) {
-    const body = [marker, `Not blocking this landing: ${entry.bot} labelled it ${entry.severity}, after an independent PASS at ${head}. A follow-up note is on ${card}.`].join("\n");
-    const data = await graphql(gh, THREAD_REPLY_MUTATION, { id: entry.id, body });
+    reply = [marker, `Not blocking this landing: ${entry.bot} labelled it ${entry.severity}, after an independent PASS at ${head}. A follow-up note is on ${card}.`].join("\n");
+  }
+  const after = await replyAndResolve(gh, entry, reply, settleMarker);
+  audit.settled.push({ url: entry.url, bot: entry.bot, severity: entry.severity });
+  return after;
+}
+
+// Replies on a thread (unless reply is null), re-reads it whole against what
+// was judged, resolves it and reads it once more. Every write is sent once; a
+// change seen only once it is resolved reopens it. Returns the resolved
+// thread's signature.
+async function replyAndResolve(gh, entry, reply, markerFor) {
+  if (reply !== null) {
+    const data = await graphql(gh, THREAD_REPLY_MUTATION, { id: entry.id, body: reply });
     if (!data?.addPullRequestReviewThreadReply?.comment?.id) stop("LAND_ERROR", `the reply on review thread ${entry.url} was not written`);
   }
-  const before = await rereadThread(gh, entry.id, entry.snapshot);
+  const before = await rereadThread(gh, entry.id, entry.snapshot, markerFor);
   if (before.isResolved) stop("LAND_ERROR", `review thread ${entry.url} was resolved by someone else`);
   const resolved = await graphql(gh, THREAD_RESOLVE_MUTATION, { id: entry.id });
   if (resolved?.resolveReviewThread?.thread?.isResolved !== true) stop("LAND_ERROR", `review thread ${entry.url} was not resolved`);
   let after;
   try {
-    after = await rereadThread(gh, entry.id, entry.snapshot);
+    after = await rereadThread(gh, entry.id, entry.snapshot, markerFor);
     if (!after.isResolved || JSON.stringify(after.replies.map(commentKey)) !== JSON.stringify(before.replies.map(commentKey))) {
       stop("LAND_ERROR", `review thread ${entry.url} changed while it was being resolved`);
     }
@@ -235,15 +258,24 @@ async function settleThread(ctx, entry) {
     try { reopened = (await graphql(gh, THREAD_UNRESOLVE_MUTATION, { id: entry.id }))?.unresolveReviewThread?.thread?.isResolved === false; } catch { /* reported below */ }
     throw Object.assign(new Error(`${error.message}; ${reopened ? "it was reopened" : "it could not be reopened"}`), { landOutcome: error.landOutcome ?? "LAND_ERROR" });
   }
-  audit.settled.push({ url: entry.url, bot: entry.bot, severity: entry.severity });
   return signature(after);
 }
 
 // Every resolved thread that carries a landing reply, from this run or an
 // earlier one, must still be a settleable bot thread that ends in that reply.
+// M10: a thread the review lane judged, in this run or an earlier one, must
+// still end in the judgement's reply, whether or not settling is on.
 function checkLandingResolved(nodes, viewer, policy) {
   for (const node of nodes) {
     if (node?.isResolved !== true) continue;
+    const judged = (node?.comments?.nodes ?? []).some((comment) => comment?.author?.login === viewer && String(comment?.body ?? "").includes("<!-- card-land-review "));
+    if (judged) {
+      const last = node.comments.nodes.at(-1);
+      if (last?.author?.login !== viewer || !String(last?.body ?? "").startsWith(`${reviewMarker(node.id)}\n`)) {
+        stop("LAND_ERROR", `review thread ${node?.comments?.nodes?.[0]?.url ?? node.id} was resolved on the review lane's judgement but no longer ends in it`);
+      }
+    }
+    if (!policy) continue;
     const ours = (node?.comments?.nodes ?? []).some((comment) => comment?.author?.login === viewer && String(comment?.body ?? "").includes("<!-- card-land-settle "));
     if (!ours) continue;
     const entry = classifyThread(node, viewer, policy);
@@ -256,13 +288,16 @@ function checkLandingResolved(nodes, viewer, policy) {
 
 // The whole thread list, checked: settled threads exactly as left, and every
 // landing-settled thread still settleable.
-async function guardThreads(gh, { repo, number }, settled, policy) {
+// M10: threads the review lane judged are held the same way, by their own
+// marker.
+async function guardThreads(gh, { repo, number }, settled, policy, reviewed = new Map()) {
   const [owner, name] = repo.split("/");
   const data = await graphql(gh, THREADS_QUERY, { owner, name, number });
   const page = data?.repository?.pullRequest?.reviewThreads;
   if (!Array.isArray(page?.nodes) || page.pageInfo?.hasNextPage !== false) stop("LAND_ERROR", "the review threads could not be read in full");
   const viewer = data.viewer?.login;
   for (const [id, expected] of settled) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
+  for (const [id, expected] of reviewed) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected, reviewMarker);
   checkLandingResolved(page.nodes, viewer, policy);
 }
 
@@ -480,7 +515,7 @@ export async function readCommitChecks(gh, repo, sha) {
 }
 
 // One read of the head's checks and the pull request's own state.
-async function checkState(gh, { repo, number, head, branch, settled, policy, external }) {
+async function checkState(gh, { repo, number, head, branch, settled, policy, external, reviewed }) {
   const [owner, name] = repo.split("/");
   const [runsResponse, statusResponse, pullResponse, threadsResponse] = await Promise.all([
     gh("GET", `https://api.github.com/repos/${repo}/commits/${head}/check-runs?filter=latest&per_page=100`),
@@ -500,7 +535,17 @@ async function checkState(gh, { repo, number, head, branch, settled, policy, ext
   // GitHub reads "unstable" when a check outside branch protection is not
   // green; with everything that holds already green, that is only advisory.
   const mergeable = pull.mergeable_state === "clean" || (external && pull.mergeable_state === "unstable");
-  if (pull.mergeable !== true || !mergeable) return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}` };
+  if (pull.mergeable !== true || !mergeable) {
+    // M10: GitHub reads "blocked" while a conversation it requires resolved
+    // is open, an advisory bot's included; the review lane may see those.
+    // A required approval or requested changes block it too, so the threads
+    // go to the lane only when no review decision is outstanding.
+    const decision = threads?.data?.repository?.pullRequest?.reviewDecision;
+    const blockedBy = pull.mergeable_state === "blocked" && reviewed && decision !== "REVIEW_REQUIRED" && decision !== "CHANGES_REQUESTED"
+      ? unresolvedThreads(threadsResponse, threads) : null;
+    return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}`,
+      ...(blockedBy?.length ? { unresolved: blockedBy, viewer: threads.data.viewer?.login } : {}) };
+  }
   // The SHU-259 consumer holds for good on any unresolved review thread, so a
   // thread (a review bot's included) keeps the run waiting before the handoff.
   const page = threads?.data?.repository?.pullRequest?.reviewThreads;
@@ -509,18 +554,29 @@ async function checkState(gh, { repo, number, head, branch, settled, policy, ext
   }
   const viewer = threads.data.viewer?.login;
   for (const [id, expected] of settled ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected);
-  if (policy) checkLandingResolved(page.nodes, viewer, policy);
+  for (const [id, expected] of reviewed ?? []) checkSettled(page.nodes.find((node) => node?.id === id), viewer, id, expected, reviewMarker);
+  checkLandingResolved(page.nodes, viewer, policy);
   const unresolved = page.nodes.filter((thread) => thread?.isResolved !== true);
   const open = external ? unresolved.filter((thread) => holdsThread(thread, external)) : unresolved;
-  if (open.length) return { green: false, note: `${open.length} review thread(s) are unresolved`, open, viewer };
+  if (open.length) return { green: false, note: `${open.length} review thread(s) are unresolved`, open, viewer, ...(reviewed ? { unresolved } : {}) };
   const advisory = external ? advisoryNote({ ...judged.advisory, threads: unresolved.filter((thread) => !holdsThread(thread, external)) }) : null;
   return { green: true, ...(advisory ? { advisory } : {}) };
 }
 
+// The unresolved threads of a thread read, or null when it was not read whole.
+function unresolvedThreads(threadsResponse, threads) {
+  const page = threads?.data?.repository?.pullRequest?.reviewThreads;
+  if (!threadsResponse.ok || threads?.errors?.length || !Array.isArray(page?.nodes) || page.pageInfo?.hasNextPage !== false) return null;
+  return page.nodes.filter((thread) => thread?.isResolved !== true);
+}
+
 // settle, when given, is handed the unresolved threads of a read on which
 // nothing else stood in the way. It may end the wait with an outcome.
-async function waitForGreen(io, gh, target, limits, settle) {
-  const deadline = io.now().getTime() + limits.waitMs;
+// M10: review, when given, is handed every unresolved thread of a read held
+// only by threads. It may end the wait with an outcome, and once it resolved
+// threads the wait runs long enough for green to hold again.
+async function waitForGreen(io, gh, target, limits, settle, review) {
+  let deadline = io.now().getTime() + limits.waitMs;
   let streak = 0;
   let last = "no read yet";
   for (;;) {
@@ -540,9 +596,37 @@ async function waitForGreen(io, gh, target, limits, settle) {
       if (step.outcome) return step;
       last = step.note;
     }
+    if (state.unresolved && review) {
+      const step = await review(state.unresolved, deadline - io.now().getTime());
+      if (step.outcome) return step;
+      if (step.note) last = step.note;
+      if (step.resolved) deadline = Math.max(deadline, io.now().getTime() + (limits.greenReads + 1) * limits.pollMs);
+    }
     if (io.now().getTime() >= deadline) return { outcome: "CI_TIMEOUT", reason: `not green within ${Math.round(limits.waitMs / 60000)} minutes: ${last}` };
     io.sleep(limits.pollMs);
   }
+}
+
+// M10: a promise that settles within ms, or rejects.
+function withDeadline(promise, ms) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${Math.round(ms / 60000)} minutes`)), ms); })])
+    .finally(() => clearTimeout(timer));
+}
+
+// M10: the files the threads point at, at the passed head, for the review
+// lane's workspace. A file that cannot be read, or is too large, is left out.
+async function commentedFiles(gh, repo, head, threads) {
+  const files = [];
+  for (const file of [...new Set(threads.map((thread) => thread.path).filter(Boolean))]) {
+    try {
+      const response = await gh("GET", `https://api.github.com/repos/${repo}/contents/${file.split("/").map(encodeURIComponent).join("/")}?ref=${head}`);
+      const json = await response.json();
+      if (!response.ok || json?.type !== "file" || json?.encoding !== "base64" || !(json.size <= REVIEW_LIMITS.fileBytes)) continue;
+      files.push({ path: file, text: Buffer.from(String(json.content ?? ""), "base64").toString("utf8") });
+    } catch { /* left out */ }
+  }
+  return files;
 }
 
 // Self-repair B2: the repaired pull request, read by its number; never found
@@ -578,14 +662,17 @@ async function repairLastCheck(gh, { repo, number, branch, head, external }) {
 }
 
 // The run's landing. Returns an outcome, never throws.
-export async function landCard({ io, plan, config, credentials, landToken, pausePath, limits = LAND_LIMITS }) {
+export async function landCard({ io, plan, config, credentials, landToken, pausePath, limits = LAND_LIMITS, adjudicate = null }) {
   // SHU-310: what settling did, on every outcome, when it is on.
   let policy = null;
   const audit = { settled: [], blocking: [] };
+  // M10: what the review lane judged, on every outcome, when it is on.
+  const reviewOn = config?.landing_thread_review?.enabled === true;
+  const judged = { judged: false, resolved: [], must_fix: [], held: null };
   // Carried whenever the committed config turns settling on, even when the
   // run stops before it reads the policy, or because the policy is malformed.
   const settleOn = config?.landing_thread_settle?.enabled === true;
-  const result = (outcome, extra = {}) => ({ outcome, ...extra, ...(settleOn ? { threads: audit } : {}) });
+  const result = (outcome, extra = {}) => ({ outcome, ...extra, ...(settleOn ? { threads: audit } : {}), ...(reviewOn ? { thread_review: judged } : {}) });
   if (!landToken) return result("LAND_SKIPPED_NO_TOKEN", { reason: "no landing token" });
   const card = plan.id;
   const branch = plan.branch;
@@ -609,6 +696,8 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   try {
     if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
     policy = settlePolicy(config);
+    const review = threadReviewPolicy(config);
+    if (review?.error) stop("LAND_ERROR", review.error);
     const external = externalPolicy(config);
     if (!external) stop("LAND_ERROR", "external_checks in the committed config is malformed");
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo ?? "") || !branch) stop("LAND_ERROR", "pilot_repo or the card branch is missing");
@@ -653,12 +742,76 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       for (const entry of entries) settled.set(entry.id, await settleThread(ctx, entry));
       return { note: `${entries.length} review bot thread(s) settled; green must hold again` };
     });
-    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external }, limits, settle || undefined);
+    // M10: the review lane judges bot threads, once for this head.
+    const reviewed = review ? new Map() : null;
+    const judge = review && (async (unresolved, leftMs) => {
+      if (judged.judged) return { note: judged.held };
+      const threads = unresolved.map((node) => botThread(node, review));
+      const others = threads.filter((thread) => !thread.id);
+      if (others.length) {
+        return { note: `${others.length} unresolved review thread(s) are not for the review lane: ${others.map(({ url, why }) => `${url ?? "a thread"} (${why})`).join(", ")}` };
+      }
+      // The lane runs inside the landing's wait, so the run stays within its
+      // unit's start timeout; with too little left it is not started at all.
+      if (!(leftMs >= review.timeoutMs)) return { note: "too little of the landing's wait is left for the review lane to judge the bot threads" };
+      judged.judged = true;
+      const held = (why) => { judged.held = why; return { note: why }; };
+      if (threads.length > review.maxThreads) return held(`${threads.length} review bot thread(s) are more than the review lane judges at once (${review.maxThreads})`);
+      const lane = judgingLane(plan.record, terminal);
+      if (!lane.lane) return held(`the review bot threads were not judged: ${lane.why}`);
+      if (paused()) return { outcome: "LAND_PAUSED", reason: `${pausePath} exists; no review thread was judged and the pull request stays open and unmerged` };
+      const files = await commentedFiles(gh, repo, head, threads);
+      const prompt = adjudicationPrompt({ card, lane: lane.lane, pr: pr.number, head, threads, files });
+      if (!prompt) return held("the review bot threads are too long to put to the review lane");
+      let answer;
+      try {
+        answer = await withDeadline(adjudicate ? adjudicate({ lane: lane.lane, head, prompt, files, timeoutMs: review.timeoutMs })
+          : Promise.reject(new Error("no review lane launcher was given")), review.timeoutMs);
+      } catch (error) {
+        return held(`the review lane did not judge the bot threads: ${String(error?.message ?? error)}`);
+      }
+      const parsed = parseAdjudication(answer, threads.map((thread) => thread.id));
+      if (!parsed.ok) return held(`the review lane's answer on the bot threads was unusable: ${parsed.reason}`);
+      judged.must_fix = threads.filter((thread) => parsed.verdicts.get(thread.id).verdict === "must_fix")
+        .map((thread) => ({ url: thread.url, reason: parsed.verdicts.get(thread.id).reason }));
+      if (judged.must_fix.length) {
+        return held(`the review lane judged ${judged.must_fix.length} bot thread(s) must_fix: ${judged.must_fix.map(({ url, reason }) => `${url} (${reason})`).join("; ")}`);
+      }
+      if (paused()) return { outcome: "LAND_PAUSED", reason: `${pausePath} exists; no review thread was resolved and the pull request stays open and unmerged` };
+      // Nothing is written unless the pull request is still at the head that
+      // passed and every thread is still exactly what was judged.
+      const now = await (await gh("GET", `https://api.github.com/repos/${repo}/pulls/${pr.number}`)).json();
+      if (!headMatches(now, { repo, branch, head })) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${now?.head?.sha ?? "an unknown head"} while the review lane judged its threads`);
+      const entries = [];
+      for (const thread of threads) {
+        const data = await graphql(gh, THREAD_QUERY, { id: thread.id });
+        const read = readThread(data?.node, data?.viewer?.login, reviewMarker);
+        const again = botThread(data?.node, review);
+        const was = unresolved.find((node) => node?.id === thread.id);
+        if (!read || !again.id || read.replies.length || JSON.stringify(read.others.map(commentKey)) !== JSON.stringify(readThread(was, null, reviewMarker)?.others.map(commentKey))) {
+          return held(`review thread ${thread.url} changed while the review lane judged it; nothing was resolved`);
+        }
+        entries.push({ id: thread.id, url: thread.url, snapshot: read.others.map(commentKey) });
+      }
+      for (const entry of entries) {
+        const reply = reviewReplyBody({ threadId: entry.id, card, lane: lane.lane, head, reason: parsed.verdicts.get(entry.id).reason });
+        try {
+          reviewed.set(entry.id, await replyAndResolve(gh, entry, reply, reviewMarker));
+        } catch (error) {
+          // Threads resolved before this one stay resolved; say which.
+          const done = judged.resolved.map(({ url }) => url).join(", ");
+          throw Object.assign(new Error(`${error.message}; already resolved by this landing: ${done || "none"}`), { landOutcome: error.landOutcome ?? "LAND_ERROR" });
+        }
+        judged.resolved.push({ url: entry.url, reason: parsed.verdicts.get(entry.id).reason });
+      }
+      return { note: `the review lane judged ${entries.length} bot thread(s) not applicable and they were resolved; green must hold again`, resolved: true };
+    });
+    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external, reviewed }, limits, settle || undefined, judge || undefined);
     if (checks.outcome !== "GREEN") return result(checks.outcome, { ...prFields, reason: checks.reason });
     audit.blocking = [];
 
     if (paused()) return result("LAND_PAUSED", { ...prFields, reason: `${pausePath} exists; the pull request stays open and unmerged` });
-    if (policy) await guardThreads(gh, { repo, number: pr.number }, settled, policy);
+    if (policy || reviewed?.size) await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined);
 
     // The handoff: the terminal PASS plus merge-readiness, the very record the
     // coordinator's own consumer writes, through its writer.
@@ -691,10 +844,10 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       externalPolicy: external,
       // SHU-310: the consumer runs the thread check once more right before
       // its merge call, and holds on a failure.
-      ...(policy ? { beforeMerge: async () => { await guardThreads(gh, { repo, number: pr.number }, settled, policy); return { ok: true }; } } : {}),
+      ...(policy || reviewed?.size ? { beforeMerge: async () => { await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined); return { ok: true }; } } : {}),
       // Self-repair B2: a repair's last look, after the thread check when there is one.
       ...(repair ? { beforeMerge: async () => {
-        if (policy !== null) await guardThreads(gh, { repo, number: pr.number }, settled, policy);
+        if (policy !== null || reviewed?.size) await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined);
         repairHeld = await repairLastCheck(gh, { repo, number: pr.number, branch, head, external });
         return { ok: repairHeld === null };
       } } : {}),

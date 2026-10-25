@@ -74,6 +74,7 @@
     ".github/coordinator/test/launch-refusal-visibility.test.mjs",
     ".github/coordinator/test/lifecycle.test.mjs",
     ".github/coordinator/test/linear-issues.test.mjs",
+    ".github/coordinator/test/m10-bot-threads-mutations.test.mjs",
     ".github/coordinator/test/merge-readiness.test.mjs",
     ".github/coordinator/test/push-broker-gitconfig.test.mjs",
     ".github/coordinator/test/push-broker.test.mjs",
@@ -2506,6 +2507,25 @@
     "LINEAR BUDGET: the reported retry is the one Linear stated, in seconds",
     "LINEAR READ: a single issue's comment thread is read to its end, oldest receipts included",
     "LINEAR READ: a repeated or missing comment cursor fails closed instead of truncating",
+    "SHU-71 M10: mutation M1 count a person's comment under a bot's name as the bot's",
+    "SHU-71 M10: mutation M2 resolve threads the review lane judged must_fix",
+    "SHU-71 M10: mutation M3 judge a head more than once in a landing",
+    "SHU-71 M10: mutation M4 accept an answer that leaves a thread out",
+    "SHU-71 M10: mutation M5 resolve after the head moved",
+    "SHU-71 M10: mutation M6 resolve a thread that changed while it was judged",
+    "SHU-71 M10: mutation M7 judge threads when the committed switch is off",
+    "SHU-71 M10: mutation M8 launch a second judgement at the same head",
+    "SHU-71 M10: mutation M9 put the reviewer's login in argv instead of its environment",
+    "SHU-71 M10: mutation M10 let the writer's own family judge",
+    "SHU-71 M10: mutation M11 stop holding a resolved thread until the merge",
+    "SHU-71 M10: mutation M12 pass @mentions and markers through to the reply",
+    "SHU-71 M10: mutation M13 claim the head's judgement before the launch preconditions hold",
+    "SHU-71 M10: mutation M14 stop checking threads the review lane resolved in an earlier landing",
+    "SHU-71 M10: mutation M15 put the threads to the review lane while an approval is still required",
+    "SHU-71 M10: mutation M16 start the review lane with too little of the landing's wait left",
+    "SHU-71 M10: mutation M17 count the prompt in UTF-16 units instead of bytes",
+    "SHU-71 M10: mutation M18 let backticks in bot text through to the fenced JSON",
+    "SHU-71 M10: mutation M19 drop the list of threads already resolved from the error",
     "stale-head",
     "self-same-family-verdict",
     "red-required-check",
@@ -4494,6 +4514,23 @@
     "Self-repair B2: L1 a repaired head that weakens a test is refused REPAIR_TEST_WEAKENED with nothing handed off or merged",
     "Self-repair B2: L2 the repaired pull request moving before the wait, during it, or right before the merge stops the landing",
     "Self-repair B2: L3 only check runs at the repaired head count toward landing it",
+    "SHU-71 M10: T1 the review lane judges both bot threads not applicable, the landing replies, resolves them and the card lands",
+    "SHU-71 M10: T2 a must_fix verdict resolves nothing, is judged once, and the landing ends CI_TIMEOUT naming it",
+    "SHU-71 M10: T3 an unusable answer resolves nothing",
+    "SHU-71 M10: T4 a person's thread, or a person using a bot's name, is never put to the review lane",
+    "SHU-71 M10: T5 a head that moves while the review lane judges resolves nothing",
+    "SHU-71 M10: T6 a thread that changes while the review lane judges it resolves nothing",
+    "SHU-71 M10: T7 the committed config ships it off, and a malformed or doubled policy refuses",
+    "SHU-71 M10: T8 the bots' words reach the reviewer only as quoted data, and the reply pages no one",
+    "SHU-71 M10: T9 a head's threads are judged once, ever: a later landing at that head launches no second review",
+    "SHU-71 M10: T10 a resolved thread that changes before the handoff stops the landing",
+    "SHU-71 M10: T11 only the review lane that passed the card, of the other family, may judge its threads",
+    "SHU-71 M10: T12 a host that cannot launch the reviewer yet does not spend the head's one judgement",
+    "SHU-71 M10: T13 a thread the review lane resolved in an earlier landing must still end in its judgement, whether or not M10 is on",
+    "SHU-71 M10: T14 a pull request still waiting on an approval, or with changes requested, is not put to the review lane",
+    "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
+    "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
+    "SHU-71 M10: T17 a thread that changes after others were resolved stops the landing and names what was already resolved",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -20683,6 +20720,82 @@
       "capabilities": []
     },
     {
+      "name": "SHU-71 M10: mutation M1 count a person's comment under a bot's name as the bot's",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M2 resolve threads the review lane judged must_fix",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M3 judge a head more than once in a landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M4 accept an answer that leaves a thread out",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M5 resolve after the head moved",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M6 resolve a thread that changed while it was judged",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M7 judge threads when the committed switch is off",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M8 launch a second judgement at the same head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M9 put the reviewer's login in argv instead of its environment",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M10 let the writer's own family judge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M11 stop holding a resolved thread until the merge",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M12 pass @mentions and markers through to the reply",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M13 claim the head's judgement before the launch preconditions hold",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M14 stop checking threads the review lane resolved in an earlier landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M15 put the threads to the review lane while an approval is still required",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M16 start the review lane with too little of the landing's wait left",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M17 count the prompt in UTF-16 units instead of bytes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M18 let backticks in bot text through to the fenced JSON",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M19 drop the list of threads already resolved from the error",
+      "capabilities": []
+    },
+    {
       "name": "stale-head",
       "capabilities": []
     },
@@ -33020,6 +33133,74 @@
     },
     {
       "name": "Self-repair B2: L3 only check runs at the repaired head count toward landing it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T1 the review lane judges both bot threads not applicable, the landing replies, resolves them and the card lands",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T2 a must_fix verdict resolves nothing, is judged once, and the landing ends CI_TIMEOUT naming it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T3 an unusable answer resolves nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T4 a person's thread, or a person using a bot's name, is never put to the review lane",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T5 a head that moves while the review lane judges resolves nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T6 a thread that changes while the review lane judges it resolves nothing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T7 the committed config ships it off, and a malformed or doubled policy refuses",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T8 the bots' words reach the reviewer only as quoted data, and the reply pages no one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T9 a head's threads are judged once, ever: a later landing at that head launches no second review",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T10 a resolved thread that changes before the handoff stops the landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T11 only the review lane that passed the card, of the other family, may judge its threads",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T12 a host that cannot launch the reviewer yet does not spend the head's one judgement",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T13 a thread the review lane resolved in an earlier landing must still end in its judgement, whether or not M10 is on",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T14 a pull request still waiting on an approval, or with changes requested, is not put to the review lane",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T17 a thread that changes after others were resolved stops the landing and names what was already resolved",
       "capabilities": []
     },
     {

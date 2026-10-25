@@ -672,6 +672,14 @@
     "call_sites": []
   },
   {
+    "file": ".github/coordinator/test/m10-bot-threads-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/m10-bot-threads-mutations.test.mjs:181"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/merge-readiness.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
