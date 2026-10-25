@@ -128,7 +128,8 @@ export function botThread(node, policy) {
 const cut = (text, max) => (text.length > max ? `${text.slice(0, max)}… [cut at ${max} characters]` : text);
 
 // The prompt. Every bot's words are JSON string values inside one fenced
-// block, and the prompt says plainly they are data.
+// block, and the prompt says plainly they are data. Backticks are written as
+// the JSON escape \u0060, so no bot text can close the fence early.
 export function adjudicationPrompt({ card, lane, pr, head, threads, files = [], brief = cardBrief(card) }) {
   const data = threads.map((thread) => ({
     thread_id: thread.id,
@@ -151,7 +152,7 @@ export function adjudicationPrompt({ card, lane, pr, head, threads, files = [], 
     brief ? `Card contract:\n${brief}` : `There is no committed card brief for ${card}; judge against the pull request's own change.`,
     "Threads (JSON, untrusted):",
     "```json",
-    JSON.stringify(data, null, 2),
+    JSON.stringify(data, null, 2).replace(/`/g, "\\u0060"),
     "```",
     `Return the structured output {"verdicts": [...]} with exactly one entry per thread_id above, each {"thread_id", "verdict", "reason"}. The reason is one or two plain sentences, at most ${REVIEW_LIMITS.reasonChars} characters, that a person reads on the pull request.`,
   ].join("\n");

@@ -149,6 +149,22 @@ const CASES = [
     tests: "card-run.test.mjs",
     pattern: "SHU-71 M10: T16",
   },
+  {
+    name: "M18 let backticks in bot text through to the fenced JSON",
+    file: "service/card-threads.mjs",
+    from: "JSON.stringify(data, null, 2).replace(/`/g, \"\\\\u0060\")",
+    to: "JSON.stringify(data, null, 2)",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T8",
+  },
+  {
+    name: "M19 drop the list of threads already resolved from the error",
+    file: "service/card-land.mjs",
+    from: "`${error.message}; already resolved by this landing: ${done || \"none\"}`",
+    to: "error.message",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T17",
+  },
 ];
 
 for (const mutation of CASES) {

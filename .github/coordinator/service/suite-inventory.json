@@ -2524,6 +2524,8 @@
     "SHU-71 M10: mutation M15 put the threads to the review lane while an approval is still required",
     "SHU-71 M10: mutation M16 start the review lane with too little of the landing's wait left",
     "SHU-71 M10: mutation M17 count the prompt in UTF-16 units instead of bytes",
+    "SHU-71 M10: mutation M18 let backticks in bot text through to the fenced JSON",
+    "SHU-71 M10: mutation M19 drop the list of threads already resolved from the error",
     "stale-head",
     "self-same-family-verdict",
     "red-required-check",
@@ -4528,6 +4530,7 @@
     "SHU-71 M10: T14 a pull request still waiting on an approval, or with changes requested, is not put to the review lane",
     "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
     "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
+    "SHU-71 M10: T17 a thread that changes after others were resolved stops the landing and names what was already resolved",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -20785,6 +20788,14 @@
       "capabilities": []
     },
     {
+      "name": "SHU-71 M10: mutation M18 let backticks in bot text through to the fenced JSON",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M19 drop the list of threads already resolved from the error",
+      "capabilities": []
+    },
+    {
       "name": "stale-head",
       "capabilities": []
     },
@@ -33186,6 +33197,10 @@
     },
     {
       "name": "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T17 a thread that changes after others were resolved stops the landing and names what was already resolved",
       "capabilities": []
     },
     {

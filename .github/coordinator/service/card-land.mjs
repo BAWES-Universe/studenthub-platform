@@ -795,7 +795,13 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       }
       for (const entry of entries) {
         const reply = reviewReplyBody({ threadId: entry.id, card, lane: lane.lane, head, reason: parsed.verdicts.get(entry.id).reason });
-        reviewed.set(entry.id, await replyAndResolve(gh, entry, reply, reviewMarker));
+        try {
+          reviewed.set(entry.id, await replyAndResolve(gh, entry, reply, reviewMarker));
+        } catch (error) {
+          // Threads resolved before this one stay resolved; say which.
+          const done = judged.resolved.map(({ url }) => url).join(", ");
+          throw Object.assign(new Error(`${error.message}; already resolved by this landing: ${done || "none"}`), { landOutcome: error.landOutcome ?? "LAND_ERROR" });
+        }
         judged.resolved.push({ url: entry.url, reason: parsed.verdicts.get(entry.id).reason });
       }
       return { note: `the review lane judged ${entries.length} bot thread(s) not applicable and they were resolved; green must hold again`, resolved: true };
