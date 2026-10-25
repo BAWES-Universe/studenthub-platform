@@ -1,5 +1,6 @@
 import { CatalogueError, catalogueSortKey } from "./catalogue.js";
 import type { BankPaymentDetails } from "./bank-payment-details.js";
+import type { CurrencyDetails } from "./currency-details.js";
 import type {
   CatalogueItem, CatalogueItemInput, CatalogueSortKey, CatalogueStore,
   CatalogueSubmission, CatalogueType, SubmittableCatalogueType,
@@ -15,6 +16,7 @@ export class InMemoryCatalogueStore implements CatalogueStore {
   readonly #items = new Map<string, CatalogueItem>();
   readonly #submissions = new Map<string, CatalogueSubmission>();
   readonly #bankPaymentDetails = new Map<string, BankPaymentDetails>();
+  readonly #currencyDetails = new Map<string, CurrencyDetails>();
 
   async listActive(type: CatalogueType, after: CatalogueSortKey | undefined, limit: number): Promise<readonly CatalogueItem[]> {
     return [...this.#items.values()].filter((item) => item.type === type && item.status === "active" && afterKey(item, after))
@@ -63,6 +65,15 @@ export class InMemoryCatalogueStore implements CatalogueStore {
     const { actorRef: _actorRef, now, ...values } = details;
     const result = Object.freeze({ bankId, ...values, updatedAt: now });
     this.#bankPaymentDetails.set(bankId, result);
+    return result;
+  }
+
+  async readCurrencyDetails(currencyId: string): Promise<CurrencyDetails | undefined> { return this.#currencyDetails.get(currencyId); }
+
+  async writeCurrencyDetails(currencyId: string, details: Omit<CurrencyDetails, "currencyId" | "updatedAt"> & { readonly actorRef: string; readonly now: string }): Promise<CurrencyDetails | undefined> {
+    const { actorRef: _actorRef, now, ...values } = details;
+    const result = Object.freeze({ currencyId, ...values, updatedAt: now });
+    this.#currencyDetails.set(currencyId, result);
     return result;
   }
 

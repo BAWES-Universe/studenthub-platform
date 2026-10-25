@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Role } from "@studenthub/contracts";
 import { canWriteBankPaymentDetails, normalizeBankPaymentDetails, type BankPaymentDetails } from "./bank-payment-details.js";
+import { canWriteCurrencyDetails, normalizeCurrencyDetails, type CurrencyDetails } from "./currency-details.js";
 import {
   isCatalogueType, isSubmittableCatalogueType,
   type CatalogueActor, type CatalogueItem, type CatalogueItemInput,
@@ -167,6 +168,26 @@ export class ReferenceCatalogue {
     const bank = await this.store.resolveById("bank", id);
     if (bank?.status !== "active") throw new CatalogueError("catalogue_item_not_found", 404);
     const written = await this.store.writeBankPaymentDetails(id, { ...details, actorRef: actor.principalRef, now: this.now().toISOString() });
+    if (!written) throw new CatalogueError("catalogue_item_not_found", 404);
+    return written;
+  }
+
+  async currencyDetails(_actor: CatalogueActor, id: string): Promise<CurrencyDetails> {
+    requireId(id);
+    const currency = await this.store.resolveById("currency", id);
+    if (!currency) throw new CatalogueError("catalogue_item_not_found", 404);
+    const details = await this.store.readCurrencyDetails(id);
+    if (!details) throw new CatalogueError("currency_details_not_found", 404);
+    return details;
+  }
+
+  async setCurrencyDetails(actor: CatalogueActor, id: string, raw: unknown): Promise<CurrencyDetails> {
+    if (!canWriteCurrencyDetails(actor.role)) throw new CatalogueError("catalogue_write_forbidden", 403);
+    requireId(id);
+    const details = normalizeCurrencyDetails(raw);
+    const currency = await this.store.resolveById("currency", id);
+    if (currency?.status !== "active" || currency.type !== "currency") throw new CatalogueError("catalogue_item_not_found", 404);
+    const written = await this.store.writeCurrencyDetails(id, { ...details, actorRef: actor.principalRef, now: this.now().toISOString() });
     if (!written) throw new CatalogueError("catalogue_item_not_found", 404);
     return written;
   }

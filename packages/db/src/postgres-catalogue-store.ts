@@ -1,7 +1,7 @@
 import pg from "pg";
 import type { Pool as PgPool, PoolClient, PoolConfig } from "pg";
 import type {
-  BankPaymentDetails, BankTransferType, CatalogueItem, CatalogueItemInput, CatalogueSortKey, CatalogueStore,
+  BankPaymentDetails, BankTransferType, CatalogueItem, CatalogueItemInput, CatalogueSortKey, CatalogueStore, CurrencyDetails,
   CatalogueSubmission, CatalogueType, SubmittableCatalogueType,
 } from "@studenthub/reference-catalogue";
 import { catalogueSortKey } from "@studenthub/reference-catalogue";
@@ -19,6 +19,7 @@ interface BankPaymentDetailsRow {
   bank_id: string; swift_code: string; iban_bank_code: string; abk_code: string;
   transfer_type: BankTransferType; updated_at: Date;
 }
+interface CurrencyDetailsRow { currency_id: string; symbol: string; decimal_places: number; updated_at: Date; }
 
 export class PostgresCatalogueStore implements CatalogueStore {
   readonly #pool: PgPool;
@@ -101,6 +102,25 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return rows[0] && bankPaymentDetailsFromRow(rows[0]);
   }
 
+  async readCurrencyDetails(currencyId: string): Promise<CurrencyDetails | undefined> {
+    const { rows } = await this.#pool.query<CurrencyDetailsRow>(
+      `SELECT currency_id,symbol,decimal_places,updated_at FROM catalogue_currency_details WHERE currency_id=$1`, [currencyId]);
+    return rows[0] && currencyDetailsFromRow(rows[0]);
+  }
+
+  async writeCurrencyDetails(currencyId: string, details: Omit<CurrencyDetails, "currencyId" | "updatedAt"> & { readonly actorRef: string; readonly now: string }): Promise<CurrencyDetails | undefined> {
+    const { rows } = await this.#pool.query<CurrencyDetailsRow>(
+      `INSERT INTO catalogue_currency_details
+       (currency_id,symbol,decimal_places,created_by_ref,updated_by_ref,created_at,updated_at)
+       SELECT id,$2::text,$3::smallint,$4::char(64),$4::char(64),$5::timestamptz,$5::timestamptz FROM catalogue_items
+       WHERE id=$1 AND catalogue_type='currency' AND status='active'
+       ON CONFLICT (currency_id) DO UPDATE SET symbol=EXCLUDED.symbol,decimal_places=EXCLUDED.decimal_places,
+         updated_by_ref=EXCLUDED.updated_by_ref,updated_at=EXCLUDED.updated_at
+       RETURNING currency_id,symbol,decimal_places,updated_at`,
+      [currencyId, details.symbol, details.decimalPlaces, details.actorRef, details.now]);
+    return rows[0] && currencyDetailsFromRow(rows[0]);
+  }
+
   async createSubmission(input: CatalogueSubmission & { readonly actorRef: string; readonly orgId: string }): Promise<CatalogueSubmission> {
     const { rows } = await this.#pool.query<SubmissionRow>(
       `INSERT INTO catalogue_submissions
@@ -171,4 +191,7 @@ function submissionFromRow(row: SubmissionRow): CatalogueSubmission {
 function bankPaymentDetailsFromRow(row: BankPaymentDetailsRow): BankPaymentDetails {
   return { bankId: row.bank_id, swiftCode: row.swift_code, ibanBankCode: row.iban_bank_code,
     abkCode: row.abk_code, transferType: row.transfer_type, updatedAt: row.updated_at.toISOString() };
+}
+function currencyDetailsFromRow(row: CurrencyDetailsRow): CurrencyDetails {
+  return { currencyId: row.currency_id, symbol: row.symbol, decimalPlaces: Number(row.decimal_places), updatedAt: row.updated_at.toISOString() };
 }
