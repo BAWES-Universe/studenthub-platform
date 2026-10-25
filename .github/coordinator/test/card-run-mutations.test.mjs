@@ -483,8 +483,8 @@ const CASES = [
   {
     name: "M73 write the handoff before green",
     file: "service/card-land.mjs",
-    from: "    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external }, limits, settle || undefined);",
-    to: '    await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external }, limits, settle || undefined); // SHU306-M73',
+    from: "    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external, reviewed }, limits, settle || undefined, judge || undefined);",
+    to: '    await writeHandoffReceipt({ terminal, target: head, decision: { action: "merge-readiness", hold_code: "MISSING_AUTHORITY" }, issueId: issue.id, linearToken, fetchImpl }); const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external, reviewed }, limits, settle || undefined, judge || undefined); // SHU306-M73',
     pattern: "SHU-306 L5:",
   },
   {
@@ -615,7 +615,7 @@ const CASES = [
   },  {
     name: "M92 resolve without re-reading the thread",
     file: "service/card-land.mjs",
-    from: "  const before = await rereadThread(gh, entry.id, entry.snapshot);",
+    from: "  const before = await rereadThread(gh, entry.id, entry.snapshot, markerFor);",
     to: "  const before = { isResolved: false, replies: [] }; // SHU310-M92",
     pattern: "SHU-310 L19:",
   },
@@ -629,7 +629,7 @@ const CASES = [
   {
     name: "M94 hand off without re-reading settled threads",
     file: "service/card-land.mjs",
-    from: "    if (policy) await guardThreads(gh, { repo, number: pr.number }, settled, policy);",
+    from: "    if (policy || reviewed?.size) await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined);",
     to: "    // SHU310-M94",
     pattern: "SHU-310 L20:",
   },
@@ -719,7 +719,7 @@ const CASES = [
   {
     name: "M107 merge without the consumer's last thread check",
     file: "service/card-land.mjs",
-    from: "      ...(policy ? { beforeMerge:",
+    from: "      ...(policy || reviewed?.size ? { beforeMerge:",
     to: "      ...(false ? { beforeMerge: // SHU310-M107\n",
     pattern: "SHU-310 L26:",
   },

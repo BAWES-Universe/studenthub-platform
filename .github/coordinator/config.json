@@ -24,6 +24,15 @@
       }
     ]
   },
+  "landing_thread_review": {
+    "enabled": false,
+    "authors": [
+      "sentry",
+      "coderabbitai"
+    ],
+    "max_threads": 10,
+    "timeout_minutes": 15
+  },
   "external_checks": {
     "required": [
       "sentry"
