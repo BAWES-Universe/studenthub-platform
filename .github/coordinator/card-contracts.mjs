@@ -3086,6 +3086,9 @@ export const SHU353_PATHS = Object.freeze([
   "packages/organizations/test/organization-directory.test.ts",
   "packages/organizations/test/mutations.mjs",
   "packages/organizations/test/directory-mutations.mjs",
+  "packages/organizations/src/commercial-terms-writes.ts",
+  "packages/organizations/test/commercial-terms-writes.test.ts",
+  "packages/organizations/test/commercial-terms-writes-mutations.mjs",
   "apps/gateway/src/organization-commercial-terms.ts",
   "apps/gateway/test/organization-commercial-terms-http.test.ts",
   "apps/gateway/src/company-directory.ts",
@@ -3096,10 +3099,10 @@ export const SHU353_PATHS = Object.freeze([
 
 const SHU353_ACCEPTANCE = [
   "(1) A currency an admin confirmed through the commercial-terms write shows as the company's currencyCode on the company card for the employer, staff and admin audiences, in place of the snapshot value and also when the snapshot is unconfigured; a currency an admin cleared shows unavailable:not_recorded, never the snapshot value; a company with no written currency keeps exactly today's result; a sub-company shows only its own written currency (SHU353_CARD_CURRENCY);",
-  "(2) The Companies directory shows the same value for each listed company, and the currency filter matches a written currency (a cleared or absent one never matches); reading the currencies of a directory page costs a fixed number of reads whatever the number of companies, proved with a counting fake (SHU353_DIRECTORY_CURRENCY);",
-  "(3) The commercial-terms preview and confirm accept a currency code in any letter case and store it upper case (usd stores USD); an unknown code still answers 400 invalid_value; the directory's currency query parameter is matched case-insensitively; the two rate fields keep their exact behaviour (SHU353_CASE);",
+  "(2) The Companies directory shows the same value for each listed company, and the currency filter matches a written currency; a cleared currency never matches, and a company with no written currency matches on its snapshot currency exactly as today; reading the currencies of a directory page costs a fixed number of reads whatever the number of companies, proved with a counting fake (SHU353_DIRECTORY_CURRENCY);",
+  "(3) The commercial-terms preview and confirm accept a currency code in any letter case and store it upper case (usd stores USD); an unknown code still answers 400 invalid_value; the directory's currency query parameter is matched case-insensitively; the SHU-340 test and mutant that refuse a lower-case code are replaced by ones proving it is stored upper case; the two rate fields keep their exact behaviour (SHU353_CASE);",
   "(4) S1: the rendered workspace HTML of a company with a written currency shows that code on its company card, and the rendered directory shows it in the company's row (SHU353_SHOWN); S2 holds (no per-company currency read);",
-  "(5) Each of items 1-3 has a mutant in the matching existing mutation script that dies by assertion in its named test; every existing mutant of mutations.mjs, directory-mutations.mjs and commercial-terms-writes-mutations.mjs still binds once and is killed; every existing test passes unchanged, and nothing outside the card's paths changes.",
+  "(5) Each of items 1-3 has a mutant in the matching existing mutation script that dies by assertion in its named test; every other existing mutant of mutations.mjs, directory-mutations.mjs and commercial-terms-writes-mutations.mjs still binds once and is killed; every other existing test passes unchanged, and nothing outside the card's paths changes.",
 ].join(" ");
 
 const SHU353_BRIEF = `Card SHU-353: a currency an admin sets shows on the company card and in the directory (audit follow-up 1 to SHU-340; risk R2).
@@ -3111,7 +3114,7 @@ Why. SHU-340 built the currency write, but nothing reads it: PostgresOrganizatio
 Read first:
 - packages/organizations/src/organizations.ts: the OrganizationCommercialTermsRecords port, projectOrganizationFields (the approvedToHire override), directoryEntry, matchesDirectoryFilters, validDirectoryFilters and OrganizationRepository.read and listOrganizations (where approvedToHire is read one company at a time for the card and in one batch for the directory).
 - packages/db/src/postgres-organization-commercial-terms-store.ts (read, and how currency_code is stored), and migration 0205.
-- apps/gateway/src/organization-commercial-terms.ts (request() and the field checks) and apps/gateway/src/company-directory.ts (parseCompanyDirectoryQuery).
+- packages/organizations/src/commercial-terms-writes.ts (the currency pattern check and the catalogue check), its test and commercial-terms-writes-mutations.mjs (the SHU340_VALUE "lowercase currency" mutant), and apps/gateway/src/organization-commercial-terms.ts (request() and the field checks) and apps/gateway/src/company-directory.ts (parseCompanyDirectoryQuery).
 - apps/gateway/src/web-ui.ts renderOrganization and renderCompanyDirectory, which already print currencyCode, and apps/gateway/test/context-navigation.test.ts and company-directory.test.ts for how a rendered page is checked.
 
 Outcomes:
@@ -3120,7 +3123,7 @@ Outcomes:
 
 Guards:
 - No caller learns more than today: the card reads the record only after the caller is authorized, and a refused caller still gets not_found with no record read.
-- The currency write, its refusals, its audit and migration 0205 do not change; no new migration.
+- The currency write's authorization, its audit, its other refusals and migration 0205 do not change; its only change is accepting a code in any letter case (acceptance item 3); no new migration.
 - The catalogue check stays: a code the catalogue does not know is refused whatever its case.
 - Currency does not inherit from the parent company.
 - ${QUEUE11_STANDING}
