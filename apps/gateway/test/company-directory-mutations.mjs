@@ -22,6 +22,8 @@ try {
       "if (!active || !login.companies || !DIRECTORY_ROLES.has(active.role))", "if (!active || !login.companies)"],
     ["web-ui.js", "company names are escaped", "SHU-163/AC-08 ACCESS",
       "${escapeHtml(name)}</a>${common}", "${name}</a>${common}"],
+    ["company-directory.js", "the manager filter is dropped", "SHU339_PAGE", "filters.accountManager = manager;", ""],
+    ["company-directory.js", "me is not resolved", "SHU339_PAGE", "accountManager: session.personId", 'accountManager: "me"'],
   ];
   for (const [module, name, pattern, from, to] of mutants) {
     const file = join(root, "dist/apps/gateway/src", module);

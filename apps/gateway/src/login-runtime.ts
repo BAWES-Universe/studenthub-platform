@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -232,6 +232,7 @@ export function createRuntimeLoginFromEnv(
   const organizationCommercialTermsStore=new PostgresOrganizationCommercialTermsStore({connectionString:value("DATABASE_URL"),decision:organizationCommercialTermsDecision,stateDecision:organizationCommercialTermsStateDecision,recordRef:organizationCommercialTermsRecordRef,principalRef:organizationCommercialTermsPrincipalRef});
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
   const organizationAccountManagerStore=new PostgresOrganizationAccountManagerStore({connectionString:value("DATABASE_URL"),decision:organizationAccountManagerDecision,readDecision:organizationAccountManagerReadDecision,stateDecision:organizationAccountManagerStateDecision,recordRef:organizationAccountManagerRecordRef,principalRef:organizationAccountManagerPrincipalRef});
+  const organizationAccountManagerReads=new PostgresOrganizationAccountManagerReads({connectionString:value("DATABASE_URL")});
   const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef,noteType:organizationNoteTypeOf});
   const organizationBrandsStore=new PostgresOrganizationBrandsStore({connectionString:value("DATABASE_URL"),decision:organizationBrandDecision,linkOutcome:organizationBrandLinkOutcome,unlinkOutcome:organizationBrandUnlinkOutcome});
   const organizationStoresStore=new PostgresOrganizationStoresStore({connectionString:value("DATABASE_URL"),writeDecision:organizationStoreWriteDecision,readDecision:organizationStoreReadDecision});
@@ -274,7 +275,7 @@ export function createRuntimeLoginFromEnv(
   // Organization snapshots stay unconfigured until an approved import exists:
   // the card and the company list show registry names and visibly unavailable fields.
   const organizations = new OrganizationRepository({
-    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,storeCounts:organizationStoresStore,
+    store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,storeCounts:organizationStoresStore,accountManagers:organizationAccountManagerReads,
   });
   return {
     application: {
@@ -311,7 +312,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationNotesStore.close(),
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
         organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
     },
   };

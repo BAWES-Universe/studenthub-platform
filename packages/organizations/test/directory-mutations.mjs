@@ -75,6 +75,11 @@ const mutations = [
     "count stores outside the shown grant scope", "SHU168_STORE_COUNT_SCOPE",
     "this.#storeCounts.countMany(shown.map((org) => org.id))", "this.#storeCounts.countMany(organizations.map((org) => org.id))",
   ],
+  ["ignore the manager filter", "SHU339_FILTER", "managers?.get(org.id) !== filters.accountManager", "false"],
+  ["unmanaged company matches", "SHU339_FILTER", "managers?.get(org.id) !== filters.accountManager", "(managers?.get(org.id) ?? filters.accountManager) !== filters.accountManager"],
+  ["read every organization's manager", "SHU339_FILTER_SCOPE", "this.#accountManagers?.readMany(shown.map((org) => org.id))", "this.#accountManagers?.readMany(organizations.map((org) => org.id))"],
+  ["accept any manager", "SHU339_FILTER_INVALID", "!/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager)", "false"],
+  ["ignore a missing port", "SHU339_FILTER_UNAVAILABLE", "!this.#accountManagers", "false"],
 ];
 
 function run(pattern, module) {
