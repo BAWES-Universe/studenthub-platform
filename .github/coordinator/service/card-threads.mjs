@@ -39,8 +39,8 @@ export const REVIEW_LIMITS = Object.freeze({
   commentChars: 4000,
   fileBytes: 256 * 1024,
   reasonChars: 600,
-  // A prompt is one argv string; Linux caps one at 128 KiB.
-  promptChars: 96 * 1024,
+  // A prompt is one argv string; Linux caps one at 128 KiB, counted in bytes.
+  promptBytes: 96 * 1024,
 });
 const LOGIN_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 const SAFE_PATH_RE = /^[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*$/;
@@ -155,7 +155,7 @@ export function adjudicationPrompt({ card, lane, pr, head, threads, files = [], 
     "```",
     `Return the structured output {"verdicts": [...]} with exactly one entry per thread_id above, each {"thread_id", "verdict", "reason"}. The reason is one or two plain sentences, at most ${REVIEW_LIMITS.reasonChars} characters, that a person reads on the pull request.`,
   ].join("\n");
-  return prompt.length > REVIEW_LIMITS.promptChars ? null : prompt;
+  return Buffer.byteLength(prompt, "utf8") > REVIEW_LIMITS.promptBytes ? null : prompt;
 }
 
 // The reviewer's answer, judged whole: exactly one well-formed verdict per

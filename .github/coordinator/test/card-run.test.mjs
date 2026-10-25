@@ -34,7 +34,7 @@ import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceTex
   repairRecordPath, repairAlertPath, advanceRound, REPAIR_LIMITS, REPAIR_SKIPS } from "../service/card-repair.mjs";
 import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
 import { judgeChecks } from "../service/card-land.mjs";
-import { judgingLane, threadReviewer } from "../service/card-threads.mjs";
+import { judgingLane, threadReviewer, REVIEW_LIMITS } from "../service/card-threads.mjs";
 import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1570,7 +1570,8 @@ function cardLineage() {
 // the settle cases name both review bots, so their threads hold), review
 // (M10: landing_thread_review overrides), blockedWhileUnresolved (M10: GitHub
 // reads mergeable_state "blocked" while any thread is unresolved), contents
-// (M10: { path: text } served at the passed head).
+// (M10: { path: text } served at the passed head), reviewDecision (M10: the
+// pull request's review decision on the thread reads).
 function landingHost(options = {}) {
   const external = options.external ?? (options.settle !== undefined ? { required: ["coderabbitai", "sentry"] } : undefined);
   const config = options.settle !== undefined || external !== undefined || options.review !== undefined
@@ -1669,7 +1670,7 @@ function landingHost(options = {}) {
       }
       if (/query CardLandThread\(/.test(query)) return respond(200, { data: { viewer: { login: "shu-lander" }, node: view(find()) } });
       const page = respond(200, { data: { viewer: { login: "shu-lander" },
-        repository: { pullRequest: { reviewThreads: { nodes: land.threads.map(view), pageInfo: { hasNextPage: false, endCursor: null } } } } } });
+        repository: { pullRequest: { ...(options.reviewDecision !== undefined ? { reviewDecision: options.reviewDecision } : {}), reviewThreads: { nodes: land.threads.map(view), pageInfo: { hasNextPage: false, endCursor: null } } } } } });
       // Changes a settled thread just after a read has seen it unchanged.
       if (query.includes("CardLandThreads") && land.resolves && land.checkReads === options.editAfterThreadsRead) {
         land.threads[0].comments[0] = { ...land.threads[0].comments[0], updatedAt: "2026-10-09T18:45:00Z" };
@@ -4725,4 +4726,45 @@ test("SHU-71 M10: T13 a thread the review lane resolved in an earlier landing mu
     assert.match(stopped.land.reason, /resolved on the review lane's judgement but no longer ends in it/);
     assert.equal(changed.land.merges, 0);
   }
+});
+
+test("SHU-71 M10: T14 a pull request still waiting on an approval, or with changes requested, is not put to the review lane", async () => {
+  for (const reviewDecision of ["REVIEW_REQUIRED", "CHANGES_REQUESTED"]) {
+    const host = m10Host({ botThreads: [SENTRY_THREAD], reviewDecision });
+    const result = await landRun(host);
+    assert.equal(result.land.outcome, "CI_TIMEOUT", `${reviewDecision}: ${JSON.stringify(result.land)}`);
+    assert.match(result.land.reason, /mergeable_state blocked$/, reviewDecision);
+    assert.equal(host.reviewRuns.length, 0, reviewDecision);
+    nothingResolved(host);
+  }
+  for (const reviewDecision of ["APPROVED", null]) {
+    const host = m10Host({ botThreads: [SENTRY_THREAD], reviewDecision });
+    assert.equal((await landRun(host)).land.outcome, "MERGED", String(reviewDecision));
+    assert.equal(host.reviewRuns.length, 1);
+  }
+});
+
+test("SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec", async () => {
+  const host = m10Host({ botThreads: [SENTRY_THREAD] });
+  const result = await landRun(host, { ...CARD_RUN_LIMITS, landWaitMs: 10 * 60 * 1000 });
+  assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
+  assert.match(result.land.reason, /too little of the landing's wait is left for the review lane/);
+  assert.equal(host.reviewRuns.length, 0);
+  assert.equal(host.files.has(path.join(LAND_PATHS.stateDir, `card-thread-review-SHU-301-${PASSED}.json`)), false, "the head's judgement is not spent");
+  nothingResolved(host);
+  // Its GitHub work (files, the head, a read before and after, a reply and a
+  // resolve per thread) and the green reads after it still fit.
+  const worst = CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.workerGraceMs + CARD_RUN_LIMITS.landWaitMs + CARD_RUN_LIMITS.landPollMs
+    + 40 * CARD_RUN_LIMITS.landRequestTimeoutMs + REPORT_ATTEMPTS * (CARD_RUN_LIMITS.reportTimeoutMs * 2 + REPORT_RETRY_WAIT_MS)
+    + (REVIEW_LIMITS.maxThreads * 5 + 2) * CARD_RUN_LIMITS.landRequestTimeoutMs + 3 * CARD_RUN_LIMITS.landPollMs;
+  assert.ok(worst < AUTO_TIMEOUT_START_MS, `${worst} must stay under ${AUTO_TIMEOUT_START_MS}`);
+});
+
+test("SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string", async () => {
+  const emoji = "\u{1F600}".repeat(2000);
+  const host = m10Host({ botThreads: [Array.from({ length: 13 }, () => ["sentry", emoji])] });
+  const result = await landRun(host);
+  assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
+  assert.match(result.land.reason, /too long to put to the review lane/);
+  assert.equal(host.reviewRuns.length, 0);
 });

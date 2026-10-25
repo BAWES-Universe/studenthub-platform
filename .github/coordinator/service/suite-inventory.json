@@ -2519,6 +2519,11 @@
     "SHU-71 M10: mutation M10 let the writer's own family judge",
     "SHU-71 M10: mutation M11 stop holding a resolved thread until the merge",
     "SHU-71 M10: mutation M12 pass @mentions and markers through to the reply",
+    "SHU-71 M10: mutation M13 claim the head's judgement before the launch preconditions hold",
+    "SHU-71 M10: mutation M14 stop checking threads the review lane resolved in an earlier landing",
+    "SHU-71 M10: mutation M15 put the threads to the review lane while an approval is still required",
+    "SHU-71 M10: mutation M16 start the review lane with too little of the landing's wait left",
+    "SHU-71 M10: mutation M17 count the prompt in UTF-16 units instead of bytes",
     "stale-head",
     "self-same-family-verdict",
     "red-required-check",
@@ -4518,6 +4523,11 @@
     "SHU-71 M10: T9 a head's threads are judged once, ever: a later landing at that head launches no second review",
     "SHU-71 M10: T10 a resolved thread that changes before the handoff stops the landing",
     "SHU-71 M10: T11 only the review lane that passed the card, of the other family, may judge its threads",
+    "SHU-71 M10: T12 a host that cannot launch the reviewer yet does not spend the head's one judgement",
+    "SHU-71 M10: T13 a thread the review lane resolved in an earlier landing must still end in its judgement, whether or not M10 is on",
+    "SHU-71 M10: T14 a pull request still waiting on an approval, or with changes requested, is not put to the review lane",
+    "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
+    "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -20755,6 +20765,26 @@
       "capabilities": []
     },
     {
+      "name": "SHU-71 M10: mutation M13 claim the head's judgement before the launch preconditions hold",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M14 stop checking threads the review lane resolved in an earlier landing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M15 put the threads to the review lane while an approval is still required",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M16 start the review lane with too little of the landing's wait left",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: mutation M17 count the prompt in UTF-16 units instead of bytes",
+      "capabilities": []
+    },
+    {
       "name": "stale-head",
       "capabilities": []
     },
@@ -33136,6 +33166,26 @@
     },
     {
       "name": "SHU-71 M10: T11 only the review lane that passed the card, of the other family, may judge its threads",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T12 a host that cannot launch the reviewer yet does not spend the head's one judgement",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T13 a thread the review lane resolved in an earlier landing must still end in its judgement, whether or not M10 is on",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T14 a pull request still waiting on an approval, or with changes requested, is not put to the review lane",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
       "capabilities": []
     },
     {

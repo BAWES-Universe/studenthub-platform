@@ -87,7 +87,7 @@ export const REPAIR_LAND_OUTCOMES = Object.freeze(["REPAIR_TEST_WEAKENED"]);
 const SHA_RE = /^[0-9a-f]{40}$/;
 const GREEN = new Set(["success", "neutral", "skipped"]);
 const THREAD_FIELDS = "id isResolved path line comments(first:20) { nodes { id url body updatedAt diffHunk author { __typename login } } pageInfo { hasNextPage } }";
-const THREADS_QUERY = `query CardLandThreads($owner:String!,$name:String!,$number:Int!) { viewer { login } repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { ${THREAD_FIELDS} } pageInfo { hasNextPage } } } } }`;
+const THREADS_QUERY = `query CardLandThreads($owner:String!,$name:String!,$number:Int!) { viewer { login } repository(owner:$owner,name:$name) { pullRequest(number:$number) { reviewDecision reviewThreads(first:100) { nodes { ${THREAD_FIELDS} } pageInfo { hasNextPage } } } } }`;
 const THREAD_QUERY = `query CardLandThread($id:ID!) { viewer { login } node(id:$id) { ... on PullRequestReviewThread { ${THREAD_FIELDS} } } }`;
 const THREAD_REPLY_MUTATION = "mutation CardLandThreadReply($id:ID!,$body:String!) { addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}) { comment { id } } }";
 const THREAD_RESOLVE_MUTATION = "mutation CardLandThreadResolve($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } } }";
@@ -538,7 +538,11 @@ async function checkState(gh, { repo, number, head, branch, settled, policy, ext
   if (pull.mergeable !== true || !mergeable) {
     // M10: GitHub reads "blocked" while a conversation it requires resolved
     // is open, an advisory bot's included; the review lane may see those.
-    const blockedBy = pull.mergeable_state === "blocked" && reviewed ? unresolvedThreads(threadsResponse, threads) : null;
+    // A required approval or requested changes block it too, so the threads
+    // go to the lane only when no review decision is outstanding.
+    const decision = threads?.data?.repository?.pullRequest?.reviewDecision;
+    const blockedBy = pull.mergeable_state === "blocked" && reviewed && decision !== "REVIEW_REQUIRED" && decision !== "CHANGES_REQUESTED"
+      ? unresolvedThreads(threadsResponse, threads) : null;
     return { green: false, note: `the pull request reads mergeable_state ${pull.mergeable_state ?? "unknown"}`,
       ...(blockedBy?.length ? { unresolved: blockedBy, viewer: threads.data.viewer?.login } : {}) };
   }
@@ -593,7 +597,7 @@ async function waitForGreen(io, gh, target, limits, settle, review) {
       last = step.note;
     }
     if (state.unresolved && review) {
-      const step = await review(state.unresolved);
+      const step = await review(state.unresolved, deadline - io.now().getTime());
       if (step.outcome) return step;
       if (step.note) last = step.note;
       if (step.resolved) deadline = Math.max(deadline, io.now().getTime() + (limits.greenReads + 1) * limits.pollMs);
@@ -740,13 +744,16 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     });
     // M10: the review lane judges bot threads, once for this head.
     const reviewed = review ? new Map() : null;
-    const judge = review && (async (unresolved) => {
+    const judge = review && (async (unresolved, leftMs) => {
       if (judged.judged) return { note: judged.held };
       const threads = unresolved.map((node) => botThread(node, review));
       const others = threads.filter((thread) => !thread.id);
       if (others.length) {
         return { note: `${others.length} unresolved review thread(s) are not for the review lane: ${others.map(({ url, why }) => `${url ?? "a thread"} (${why})`).join(", ")}` };
       }
+      // The lane runs inside the landing's wait, so the run stays within its
+      // unit's start timeout; with too little left it is not started at all.
+      if (!(leftMs >= review.timeoutMs)) return { note: "too little of the landing's wait is left for the review lane to judge the bot threads" };
       judged.judged = true;
       const held = (why) => { judged.held = why; return { note: why }; };
       if (threads.length > review.maxThreads) return held(`${threads.length} review bot thread(s) are more than the review lane judges at once (${review.maxThreads})`);

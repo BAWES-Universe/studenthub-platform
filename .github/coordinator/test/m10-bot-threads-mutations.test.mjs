@@ -125,6 +125,30 @@ const CASES = [
     tests: "card-run.test.mjs",
     pattern: "SHU-71 M10: T13",
   },
+  {
+    name: "M15 put the threads to the review lane while an approval is still required",
+    file: "service/card-land.mjs",
+    from: "reviewed && decision !== \"REVIEW_REQUIRED\" && decision !== \"CHANGES_REQUESTED\"",
+    to: "reviewed",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T14",
+  },
+  {
+    name: "M16 start the review lane with too little of the landing's wait left",
+    file: "service/card-land.mjs",
+    from: "      if (!(leftMs >= review.timeoutMs)) return",
+    to: "      if (false) return",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T15",
+  },
+  {
+    name: "M17 count the prompt in UTF-16 units instead of bytes",
+    file: "service/card-threads.mjs",
+    from: "Buffer.byteLength(prompt, \"utf8\")",
+    to: "prompt.length",
+    tests: "card-run.test.mjs",
+    pattern: "SHU-71 M10: T16",
+  },
 ];
 
 for (const mutation of CASES) {

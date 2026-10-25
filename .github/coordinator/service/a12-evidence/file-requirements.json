@@ -676,7 +676,7 @@
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
     "call_sites": [
-      ".github/coordinator/test/m10-bot-threads-mutations.test.mjs:125"
+      ".github/coordinator/test/m10-bot-threads-mutations.test.mjs:165"
     ]
   },
   {
