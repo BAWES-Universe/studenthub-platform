@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
 import type { ActionToken, Receipt, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
-import { buildOrganizationCommercialTermsWrite, ORGANIZATION_COMMERCIAL_TERMS_FIELDS, ORGANIZATION_COMMERCIAL_TERMS_POLICY,
+import { buildOrganizationCommercialTermsWrite, ORGANIZATION_COMMERCIAL_TERMS_FIELDS, ORGANIZATION_COMMERCIAL_TERMS_POLICY, ORGANIZATION_CURRENCY_FIELD,
   organizationCommercialTermsPrincipalRef, organizationCommercialTermsRecordRef, type OrganizationCommercialTermsField } from "@studenthub/organizations";
 
 export interface OrganizationCommercialTermsStore {
   forPrincipal(principalId: string, orgId: string): SafeWriteStore;
   readReceipt(principalId: string, orgId: string, receiptRef: string): Promise<Receipt | null>;
+  currencyKnown(code: string): Promise<boolean>;
 }
 type Result = { readonly status: 200; readonly body: unknown } | { readonly status: 400|401|403|404|409|503; readonly body: { readonly error: string } };
 export interface OrganizationCommercialTerms { preview(session: string|undefined, body: unknown): Promise<Result>; confirm(session: string|undefined, body: unknown): Promise<Result>; receipt(session: string|undefined, orgId: string, ref: string): Promise<Result> }
@@ -14,17 +15,19 @@ const TOKEN_KEYS = ["changeSetDigest","expectedBeforeDigest","expiresAt","issued
 function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function exact(value: unknown, keys: string[]): value is Record<string, unknown> { return object(value) && Object.keys(value).sort().join() === [...keys].sort().join(); }
 function token(value: unknown): ActionToken|undefined { return exact(value,TOKEN_KEYS) && TOKEN_KEYS.every(k=>typeof value[k]==="string") ? value as unknown as ActionToken : undefined; }
-function request(body: unknown): {orgId:string;field:OrganizationCommercialTermsField;value:string}|undefined {
+function request(body: unknown): {orgId:string;field:OrganizationCommercialTermsField|typeof ORGANIZATION_CURRENCY_FIELD;value:string}|undefined {
   if (!exact(body,["orgId","field","value"]) || typeof body.orgId!=="string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(body.orgId)
-    || !ORGANIZATION_COMMERCIAL_TERMS_FIELDS.includes(body.field as OrganizationCommercialTermsField)
-    || typeof body.value!=="string" || !(body.value==="none" || /^[0-9]{1,10}(\.[0-9]{1,6})?$/.test(body.value))) return undefined;
-  return body as {orgId:string;field:OrganizationCommercialTermsField;value:string};
+    || typeof body.field!=="string" || typeof body.value!=="string"
+    || !(ORGANIZATION_COMMERCIAL_TERMS_FIELDS.includes(body.field as OrganizationCommercialTermsField)
+      ? body.value==="none" || /^[0-9]{1,10}(\.[0-9]{1,6})?$/.test(body.value)
+      : body.field===ORGANIZATION_CURRENCY_FIELD && (body.value==="none" || /^[A-Za-z]{3}$/.test(body.value)))) return undefined;
+  return body as {orgId:string;field:OrganizationCommercialTermsField|typeof ORGANIZATION_CURRENCY_FIELD;value:string};
 }
 function refused(reason:string):Result { return { status: reason==="not_own_record"?404:reason==="receipt_failed"?503:reason.startsWith("token_")||reason==="state_changed"?409:400, body:{error:reason} } as Result; }
 
 export function createOrganizationCommercialTerms(ports:{sessions:Pick<SessionStore,"get">;store:OrganizationCommercialTermsStore;secret:SafeWriteSecret;clock?:SafeWriteClock}):OrganizationCommercialTerms {
   const principal=async(id:string|undefined)=>id?(await ports.sessions.get(id))?.personId:undefined;
-  const writer=(person:string,org:string)=>buildOrganizationCommercialTermsWrite({store:ports.store.forPrincipal(person,org),secret:ports.secret,policy:ORGANIZATION_COMMERCIAL_TERMS_POLICY,...(ports.clock?{clock:ports.clock}:{})});
+  const writer=(person:string,org:string)=>buildOrganizationCommercialTermsWrite({store:ports.store.forPrincipal(person,org),secret:ports.secret,policy:ORGANIZATION_COMMERCIAL_TERMS_POLICY,currencyKnown:(code)=>ports.store.currencyKnown(code),...(ports.clock?{clock:ports.clock}:{})});
   return {
     async preview(session,body){ const person=await principal(session);if(!person)return {status:401,body:{error:"unauthorized"}};const r=request(body);if(!r)return {status:400,body:{error:"invalid_request"}};
       const out=await writer(person,r.orgId).preview({principalRef:organizationCommercialTermsPrincipalRef(person),change:{personRef:organizationCommercialTermsRecordRef(r.orgId),field:r.field,value:r.value}});return out.ok?{status:200,body:{changes:out.changes,token:out.token}}:refused(out.reason);},
