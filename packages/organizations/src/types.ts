@@ -139,6 +139,8 @@ export interface OrganizationDirectoryFilters {
   readonly status?: OrganizationStatus;
   readonly approvedToHire?: boolean;
   readonly currencyCode?: string;
+  /** The principal id of the company's account manager (SHU-336); a company without one never matches. */
+  readonly accountManager?: string;
 }
 
 export interface OrganizationDirectoryRequest {
