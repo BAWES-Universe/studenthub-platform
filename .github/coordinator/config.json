@@ -43,10 +43,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-9901",
-      "SHU-9902",
-      "SHU-9903",
-      "SHU-9904",
+      "SHU-353",
+      "SHU-354",
+      "SHU-355",
+      "SHU-356",
       "SHU-352"
     ]
   },
@@ -1306,8 +1306,8 @@
       ]
     },
     {
-      "id": "SHU-9901",
-      "authorization_ref": "SHU-9901",
+      "id": "SHU-353",
+      "authorization_ref": "SHU-353",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "first card of the eleventh committed card queue (SHU-312), a whole-tree card in the M10b outcome template: slice audit-1 (a currency an admin sets shows on the company card and in the directory); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
@@ -1343,8 +1343,8 @@
       ]
     },
     {
-      "id": "SHU-9902",
-      "authorization_ref": "SHU-9902",
+      "id": "SHU-354",
+      "authorization_ref": "SHU-354",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "second card of the eleventh committed card queue (SHU-312), a whole-tree card in the M10b outcome template: slice audit-2 (My companies works at any size and has its own page); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
@@ -1380,8 +1380,8 @@
       ]
     },
     {
-      "id": "SHU-9903",
-      "authorization_ref": "SHU-9903",
+      "id": "SHU-355",
+      "authorization_ref": "SHU-355",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "third card of the eleventh committed card queue (SHU-312), a whole-tree card in the M10b outcome template: slice audit-3 (the account manager staff see is always a current one); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
@@ -1425,8 +1425,8 @@
       ]
     },
     {
-      "id": "SHU-9904",
-      "authorization_ref": "SHU-9904",
+      "id": "SHU-356",
+      "authorization_ref": "SHU-356",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "fourth card of the eleventh committed card queue (SHU-312), a whole-tree card in the M10b outcome template: slice audit-4 (account manager history, migration 0208); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",

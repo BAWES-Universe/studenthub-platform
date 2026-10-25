@@ -3078,7 +3078,7 @@ const QUEUE11_CONTEXT = `Dependencies are installed and there is no network. You
 
 How this brief is written. It states what must be true and what must never happen. It does not prescribe the code: choose the shape, the queries and the helpers yourself, following the patterns of the files it names. When a guard and the code you would naturally write disagree, the guard wins; when the brief and the code at the bound head disagree, say so in your final message rather than forcing either.`;
 
-export const SHU9901_PATHS = Object.freeze([
+export const SHU353_PATHS = Object.freeze([
   "packages/db/src/postgres-organization-commercial-terms-store.ts",
   "packages/db/test/postgres-organization-commercial-terms.test.ts",
   "packages/organizations/src/organizations.ts",
@@ -3094,15 +3094,15 @@ export const SHU9901_PATHS = Object.freeze([
   "apps/gateway/src/login-runtime.ts",
 ]);
 
-const SHU9901_ACCEPTANCE = [
-  "(1) A currency an admin confirmed through the commercial-terms write shows as the company's currencyCode on the company card for the employer, staff and admin audiences, in place of the snapshot value and also when the snapshot is unconfigured; a currency an admin cleared shows unavailable:not_recorded, never the snapshot value; a company with no written currency keeps exactly today's result; a sub-company shows only its own written currency (SHU9901_CARD_CURRENCY);",
-  "(2) The Companies directory shows the same value for each listed company, and the currency filter matches a written currency (a cleared or absent one never matches); reading the currencies of a directory page costs a fixed number of reads whatever the number of companies, proved with a counting fake (SHU9901_DIRECTORY_CURRENCY);",
-  "(3) The commercial-terms preview and confirm accept a currency code in any letter case and store it upper case (usd stores USD); an unknown code still answers 400 invalid_value; the directory's currency query parameter is matched case-insensitively; the two rate fields keep their exact behaviour (SHU9901_CASE);",
-  "(4) S1: the rendered workspace HTML of a company with a written currency shows that code on its company card, and the rendered directory shows it in the company's row (SHU9901_SHOWN); S2 holds (no per-company currency read);",
+const SHU353_ACCEPTANCE = [
+  "(1) A currency an admin confirmed through the commercial-terms write shows as the company's currencyCode on the company card for the employer, staff and admin audiences, in place of the snapshot value and also when the snapshot is unconfigured; a currency an admin cleared shows unavailable:not_recorded, never the snapshot value; a company with no written currency keeps exactly today's result; a sub-company shows only its own written currency (SHU353_CARD_CURRENCY);",
+  "(2) The Companies directory shows the same value for each listed company, and the currency filter matches a written currency (a cleared or absent one never matches); reading the currencies of a directory page costs a fixed number of reads whatever the number of companies, proved with a counting fake (SHU353_DIRECTORY_CURRENCY);",
+  "(3) The commercial-terms preview and confirm accept a currency code in any letter case and store it upper case (usd stores USD); an unknown code still answers 400 invalid_value; the directory's currency query parameter is matched case-insensitively; the two rate fields keep their exact behaviour (SHU353_CASE);",
+  "(4) S1: the rendered workspace HTML of a company with a written currency shows that code on its company card, and the rendered directory shows it in the company's row (SHU353_SHOWN); S2 holds (no per-company currency read);",
   "(5) Each of items 1-3 has a mutant in the matching existing mutation script that dies by assertion in its named test; every existing mutant of mutations.mjs, directory-mutations.mjs and commercial-terms-writes-mutations.mjs still binds once and is killed; every existing test passes unchanged, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU9901_BRIEF = `Card SHU-9901: a currency an admin sets shows on the company card and in the directory (audit follow-up 1 to SHU-340; risk R2).
+const SHU353_BRIEF = `Card SHU-353: a currency an admin sets shows on the company card and in the directory (audit follow-up 1 to SHU-340; risk R2).
 
 You are working in the StudentHub platform monorepo at the bound head, which includes SHU-340 (migration 0205: an admin writes a company's currency_code through the commercial-terms safe write) and SHU-342 (the card shows the stored profile). ${QUEUE11_CONTEXT}
 
@@ -3125,13 +3125,13 @@ Guards:
 - Currency does not inherit from the parent company.
 - ${QUEUE11_STANDING}
 
-Tests: name every new test with its token first and a space after it (SHU9901_CARD_CURRENCY, SHU9901_DIRECTORY_CURRENCY, SHU9901_CASE, SHU9901_SHOWN), in the test files of the card's paths; a Postgres test proves the store answers the written and the cleared currency.
+Tests: name every new test with its token first and a space after it (SHU353_CARD_CURRENCY, SHU353_DIRECTORY_CURRENCY, SHU353_CASE, SHU353_SHOWN), in the test files of the card's paths; a Postgres test proves the store answers the written and the cleared currency.
 
 Out of scope: exchange rates and money formatting, currency details (SHU-344), pay-contract currencies, any other field, CSS, apps/gateway/src/index.ts, package.json (the touched tests and mutation scripts already run), the lockfile, and any network call, credential, staging or production access. login-runtime.ts is in scope only if wiring a new read needs it.
 
 ${QUEUE11_FINISH}`;
 
-export const SHU9902_PATHS = Object.freeze([
+export const SHU354_PATHS = Object.freeze([
   "packages/db/src/postgres-organization-account-manager-store.ts",
   "packages/db/test/postgres-organization-account-manager.test.ts",
   "packages/db/migrations/0207_organization_account_managers_principal_index.sql",
@@ -3147,15 +3147,15 @@ export const SHU9902_PATHS = Object.freeze([
   "apps/gateway/test/web-ui.test.ts",
 ]);
 
-const SHU9902_ACCEPTANCE = [
-  "(1) The assigned-companies read answers the companies the person manages and may still read (live, and covered by their staff or admin grant), sorted by name and then org id exactly as the view sorts them, at most 50; when more than 50 qualify, the 50 kept are the first 50 of the whole sorted list, so the cap never comes before the sort or the grant check (SHU9902_ORDER_AND_CAP);",
-  "(2) The read costs a fixed number of database round trips whatever the number of assignments (a Postgres test with 60 assignments counts the queries the store sends and finds the same number as with 1), and a new migration indexes organization_account_managers by principal_id (SHU9902_PG_SCALE);",
-  "(3) A staff or admin person whose workspace is selected sees a \"My companies\" link in the workspace sidebar, and it opens an HTML page listing their managed companies by name, each linking where the Companies directory links that company; an empty list says so plainly, a failed read shows a retry notice, the page is private (no-store, the same CSP as the workspace), and employer, candidate and signed-out visitors get no link and no list (SHU9902_PAGE);",
+const SHU354_ACCEPTANCE = [
+  "(1) The assigned-companies read answers the companies the person manages and may still read (live, and covered by their staff or admin grant), sorted by name and then org id exactly as the view sorts them, at most 50; when more than 50 qualify, the 50 kept are the first 50 of the whole sorted list, so the cap never comes before the sort or the grant check (SHU354_ORDER_AND_CAP);",
+  "(2) The read costs a fixed number of database round trips whatever the number of assignments (a Postgres test with 60 assignments counts the queries the store sends and finds the same number as with 1), and a new migration indexes organization_account_managers by principal_id (SHU354_PG_SCALE);",
+  "(3) A staff or admin person whose workspace is selected sees a \"My companies\" link in the workspace sidebar, and it opens an HTML page listing their managed companies by name, each linking where the Companies directory links that company; an empty list says so plainly, a failed read shows a retry notice, the page is private (no-store, the same CSP as the workspace), and employer, candidate and signed-out visitors get no link and no list (SHU354_PAGE);",
   "(4) S1: the page test renders companies assigned through the real store's view and finds each name; S2 holds for the read and the page;",
   "(5) Items 1 and 3 each have a mutant that dies by assertion in its named test, item 2's Postgres mutant is checked by hand and reported; GET /organization/assigned-companies keeps its JSON shape; every existing account-manager test passes unchanged, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU9902_BRIEF = `Card SHU-9902: My companies works at any size and has its own page (audit follow-up 2 to SHU-338; risk R2).
+const SHU354_BRIEF = `Card SHU-354: My companies works at any size and has its own page (audit follow-up 2 to SHU-338; risk R2).
 
 You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write, migration 0204) and SHU-338 (GET /organization/assigned-companies). ${QUEUE11_CONTEXT}
 
@@ -3176,13 +3176,13 @@ Guards:
 - The JSON route's body, headers and failures stay as they are.
 - ${QUEUE11_STANDING}
 
-Tests: name every new test with its token first and a space after it (SHU9902_ORDER_AND_CAP, SHU9902_PG_SCALE, SHU9902_PAGE, SHU9902_SHOWN). A query-count check may wrap the pool the store is given; it must fail if one query per assignment comes back. Register any new test file in the package.json lists that run its neighbours, appending at the end.
+Tests: name every new test with its token first and a space after it (SHU354_ORDER_AND_CAP, SHU354_PG_SCALE, SHU354_PAGE, SHU354_SHOWN). A query-count check may wrap the pool the store is given; it must fail if one query per assignment comes back. Register any new test file in the package.json lists that run its neighbours, appending at the end.
 
-Out of scope: who counts as a current manager elsewhere (the card read and the directory filter belong to SHU-9903), manager history (SHU-9904), assigning from the app, the directory, CSS beyond reusing existing classes, the lockfile, and any network call, credential, staging or production access.
+Out of scope: who counts as a current manager elsewhere (the card read and the directory filter belong to SHU-355), manager history (SHU-356), assigning from the app, the directory, CSS beyond reusing existing classes, the lockfile, and any network call, credential, staging or production access.
 
 ${QUEUE11_FINISH}`;
 
-export const SHU9903_PATHS = Object.freeze([
+export const SHU355_PATHS = Object.freeze([
   "packages/db/src/postgres-organization-account-manager-store.ts",
   "packages/db/src/postgres-organization-account-manager-reads.ts",
   "packages/db/test/postgres-organization-account-manager.test.ts",
@@ -3202,17 +3202,17 @@ export const SHU9903_PATHS = Object.freeze([
   "apps/gateway/test/organization-account-manager-http.test.ts",
 ]);
 
-const SHU9903_ACCEPTANCE = [
-  "(1) One rule says who is a company's current account manager: the assigned person while they hold a staff or admin grant that covers the company; a person whose grant was revoked, narrowed away or never covered it is not current. The assignment row stays, so a person whose covering grant comes back is current again (SHU9903_RULE);",
-  "(2) The rule holds in every place a manager is shown or matched: GET /organization/account-manager/:orgId answers accountManager null for a non-current assignment; the directory's manager filter (an id or me) matches only a current manager; My companies already lists only current ones and keeps doing so (SHU9903_EVERYWHERE);",
-  "(3) The workspace company card shows an \"Account manager\" line with the current manager's display name (or \"None\") to staff and admin audiences only, and the Companies directory shows a Manager column with the current manager's display name for each row; employer audiences see neither; reading the managers of a directory page costs a fixed number of reads (SHU9903_SHOWN);",
-  "(4) S1: the rendered card and directory of a company whose manager lost their grant show None, and show the name again once the grant is restored (SHU9903_SHOWN_GRANT); S2 holds;",
+const SHU355_ACCEPTANCE = [
+  "(1) One rule says who is a company's current account manager: the assigned person while they hold a staff or admin grant that covers the company; a person whose grant was revoked, narrowed away or never covered it is not current. The assignment row stays, so a person whose covering grant comes back is current again (SHU355_RULE);",
+  "(2) The rule holds in every place a manager is shown or matched: GET /organization/account-manager/:orgId answers accountManager null for a non-current assignment; the directory's manager filter (an id or me) matches only a current manager; My companies already lists only current ones and keeps doing so (SHU355_EVERYWHERE);",
+  "(3) The workspace company card shows an \"Account manager\" line with the current manager's display name (or \"None\") to staff and admin audiences only, and the Companies directory shows a Manager column with the current manager's display name for each row; employer audiences see neither; reading the managers of a directory page costs a fixed number of reads (SHU355_SHOWN);",
+  "(4) S1: the rendered card and directory of a company whose manager lost their grant show None, and show the name again once the grant is restored (SHU355_SHOWN_GRANT); S2 holds;",
   "(5) Items 1 to 3 each have a mutant that dies by assertion in its named test; the account-manager write, its decisions and its refusals are unchanged; every existing test passes unchanged, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU9903_BRIEF = `Card SHU-9903: the account manager staff see is always a current one (audit follow-up 3 to SHU-336, SHU-338 and SHU-339; risk R2).
+const SHU355_BRIEF = `Card SHU-355: the account manager staff see is always a current one (audit follow-up 3 to SHU-336, SHU-338 and SHU-339; risk R2).
 
-You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write), SHU-338 (My companies), SHU-339 (the directory's manager filter) and, possibly, SHU-9902 of this queue. ${QUEUE11_CONTEXT}
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write), SHU-338 (My companies), SHU-339 (the directory's manager filter) and, possibly, SHU-354 of this queue. ${QUEUE11_CONTEXT}
 
 Why. The 10-25 audit found three cards giving three answers for a manager who loses their staff grant: GET /organization/account-manager/:orgId still names them, the directory filter manager=<id> still matches them, and My companies drops the company. This card decides one rule and applies it everywhere. The decision, recorded here: hide a non-current assignment rather than delete it on revoke. Revocation lives in the authorization store and its audit, which this card must not touch, and keeping the row means a restored grant restores the manager without a new write.
 
@@ -3231,13 +3231,13 @@ Guards:
 - Revocation, grants, the authorization audit and the account-manager write are unchanged; no migration.
 - ${QUEUE11_STANDING}
 
-Tests: name every new test with its token first and a space after it (SHU9903_RULE, SHU9903_EVERYWHERE, SHU9903_SHOWN, SHU9903_SHOWN_GRANT); a Postgres test revokes the manager's grant through the real store and checks the read, the filter and My companies, then restores it.
+Tests: name every new test with its token first and a space after it (SHU355_RULE, SHU355_EVERYWHERE, SHU355_SHOWN, SHU355_SHOWN_GRANT); a Postgres test revokes the manager's grant through the real store and checks the read, the filter and My companies, then restores it.
 
-Out of scope: manager history (SHU-9904), assigning from the app (a later card), sorting or filtering by manager name, CSS beyond existing classes, apps/gateway/src/index.ts unless a route needs it, the lockfile, and any network call, credential, staging or production access.
+Out of scope: manager history (SHU-356), assigning from the app (a later card), sorting or filtering by manager name, CSS beyond existing classes, apps/gateway/src/index.ts unless a route needs it, the lockfile, and any network call, credential, staging or production access.
 
 ${QUEUE11_FINISH}`;
 
-export const SHU9904_PATHS = Object.freeze([
+export const SHU356_PATHS = Object.freeze([
   "packages/db/migrations/0208_organization_account_manager_events.sql",
   "packages/db/src/postgres-organization-account-manager-store.ts",
   "packages/db/test/postgres-organization-account-manager.test.ts",
@@ -3253,17 +3253,17 @@ export const SHU9904_PATHS = Object.freeze([
   "apps/gateway/test/context-navigation.test.ts",
 ]);
 
-const SHU9904_ACCEPTANCE = [
-  "(1) Every confirmed account-manager change (assign, replace, clear) records one history event in the same transaction as the change: the company, the person before (or none), the person after (or none) and when; a refused, stale or replayed confirm records nothing, and a confirm that rolls back leaves no event (SHU9904_PG_EVENTS);",
-  "(2) GET /organization/account-manager/:orgId/history answers the company's events newest first, at most 50, each with the before and after person as {principalId, displayName} or null and the time, to callers who may read the company's manager; everyone else, an unknown or a deleted company answers 404 not_found exactly as the manager read does; the events are indexed for this read (SHU9904_HISTORY);",
-  "(3) An event outlives the people in it: removing a principal keeps its events and shows that side as a removed person, never a dangling id (SHU9904_PG_REMOVED);",
-  "(4) The workspace company card shows staff and admin the last five changes under the account manager (\"from → to, date\", names only), and nothing to employer audiences (SHU9904_SHOWN); S1 and S2 hold (one read for the panel, whatever the number of events);",
+const SHU356_ACCEPTANCE = [
+  "(1) Every confirmed account-manager change (assign, replace, clear) records one history event in the same transaction as the change: the company, the person before (or none), the person after (or none) and when; a refused, stale or replayed confirm records nothing, and a confirm that rolls back leaves no event (SHU356_PG_EVENTS);",
+  "(2) GET /organization/account-manager/:orgId/history answers the company's events newest first, at most 50, each with the before and after person as {principalId, displayName} or null and the time, to callers who may read the company's manager; everyone else, an unknown or a deleted company answers 404 not_found exactly as the manager read does; the events are indexed for this read (SHU356_HISTORY);",
+  "(3) An event outlives the people in it: removing a principal keeps its events and shows that side as a removed person, never a dangling id (SHU356_PG_REMOVED);",
+  "(4) The workspace company card shows staff and admin the last five changes under the account manager (\"from → to, date\", names only), and nothing to employer audiences (SHU356_SHOWN); S1 and S2 hold (one read for the panel, whatever the number of events);",
   "(5) Items 1, 2 and 4 each have a mutant that dies by assertion in its named test, item 3's Postgres mutant is checked by hand and reported; the account-manager write's audit row, refusals and receipts are unchanged; every existing test passes unchanged, and nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU9904_BRIEF = `Card SHU-9904: who managed a company, and when, is answerable (audit follow-up 4 to SHU-336; risk R3).
+const SHU356_BRIEF = `Card SHU-356: who managed a company, and when, is answerable (audit follow-up 4 to SHU-336; risk R3).
 
-You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write, migration 0204), SHU-313 (organization_status_events, the pattern for an events table) and, possibly, SHU-9902 and SHU-9903 of this queue. ${QUEUE11_CONTEXT}
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write, migration 0204), SHU-313 (organization_status_events, the pattern for an events table) and, possibly, SHU-354 and SHU-355 of this queue. ${QUEUE11_CONTEXT}
 
 Why. The account-manager write audits that something changed, but its audit row names the actor as the target and the SHU-336 tests assert the assignee appears nowhere, so the trail cannot say who was assigned (the 10-25 audit, finding 3). Status changes got an events table for exactly this question (migration 0191); the account manager did not. This card adds that history and shows it where staff look.
 
@@ -3282,7 +3282,7 @@ Guards:
 - No principal id is printed in HTML.
 - ${QUEUE11_STANDING}
 
-Tests: name every new test with its token first and a space after it (SHU9904_PG_EVENTS, SHU9904_HISTORY, SHU9904_PG_REMOVED, SHU9904_SHOWN). Register any new test file in the package.json lists that run its neighbours, appending at the end. Add the new migration to both schema_migrations lists of postgres-authz-store.test.ts.
+Tests: name every new test with its token first and a space after it (SHU356_PG_EVENTS, SHU356_HISTORY, SHU356_PG_REMOVED, SHU356_SHOWN). Register any new test file in the package.json lists that run its neighbours, appending at the end. Add the new migration to both schema_migrations lists of postgres-authz-store.test.ts.
 
 Out of scope: backfilling history from the audit (it holds no assignee), the status history panel, assigning from the app, CSS beyond existing classes, the lockfile, and any network call, credential, staging or production access.
 
@@ -3305,7 +3305,7 @@ const SHU352_ACCEPTANCE = [
   "(5) Items 1 and 2 each have a mutant that dies by assertion in its named test; every existing profile-writes and mutations.mjs mutant still binds once and is killed; nothing outside the card's paths changes.",
 ].join(" ");
 
-const SHU352_BRIEF = `Card SHU-352: a company name its owner saved shows on the card at any length the profile accepts (slice O2d of O2, follow-up to SHU-342; risk R1).
+const SHU352_BRIEF = `Card SHU-352: a company name its owner saved shows on the card at any length the profile accepts (slice O2d of O2, follow-up to SHU-342; risk R2).
 
 You are working in the StudentHub platform monorepo at the bound head, which includes SHU-300 (the owner's profile safe write) and SHU-342 (the card shows the stored profile). ${QUEUE11_CONTEXT}
 
@@ -3599,33 +3599,33 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU344_PATHS,
     acceptance: SHU344_ACCEPTANCE,
     brief: SHU344_BRIEF,
-  }),  "SHU-9901": Object.freeze({
+  }),  "SHU-353": Object.freeze({
     workspace_mode: "repo",
-    initial_build_paths: SHU9901_PATHS,
-    revision_paths: SHU9901_PATHS,
-    acceptance: SHU9901_ACCEPTANCE,
-    brief: SHU9901_BRIEF,
+    initial_build_paths: SHU353_PATHS,
+    revision_paths: SHU353_PATHS,
+    acceptance: SHU353_ACCEPTANCE,
+    brief: SHU353_BRIEF,
   }),
-  "SHU-9902": Object.freeze({
+  "SHU-354": Object.freeze({
     workspace_mode: "repo",
-    initial_build_paths: SHU9902_PATHS,
-    revision_paths: SHU9902_PATHS,
-    acceptance: SHU9902_ACCEPTANCE,
-    brief: SHU9902_BRIEF,
+    initial_build_paths: SHU354_PATHS,
+    revision_paths: SHU354_PATHS,
+    acceptance: SHU354_ACCEPTANCE,
+    brief: SHU354_BRIEF,
   }),
-  "SHU-9903": Object.freeze({
+  "SHU-355": Object.freeze({
     workspace_mode: "repo",
-    initial_build_paths: SHU9903_PATHS,
-    revision_paths: SHU9903_PATHS,
-    acceptance: SHU9903_ACCEPTANCE,
-    brief: SHU9903_BRIEF,
+    initial_build_paths: SHU355_PATHS,
+    revision_paths: SHU355_PATHS,
+    acceptance: SHU355_ACCEPTANCE,
+    brief: SHU355_BRIEF,
   }),
-  "SHU-9904": Object.freeze({
+  "SHU-356": Object.freeze({
     workspace_mode: "repo",
-    initial_build_paths: SHU9904_PATHS,
-    revision_paths: SHU9904_PATHS,
-    acceptance: SHU9904_ACCEPTANCE,
-    brief: SHU9904_BRIEF,
+    initial_build_paths: SHU356_PATHS,
+    revision_paths: SHU356_PATHS,
+    acceptance: SHU356_ACCEPTANCE,
+    brief: SHU356_BRIEF,
   }),
   "SHU-352": Object.freeze({
     workspace_mode: "repo",
