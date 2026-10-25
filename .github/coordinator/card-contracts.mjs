@@ -2914,7 +2914,7 @@ Design:
 
 Tests (name every new test with its token first and a space after it):
 - organizations.test.ts: give setup an optional profiles option passed to the repository, leaving every existing caller unchanged. Use a fake that records each call's org id and answers per org id.
-  - "SHU342_PROFILE_STORED ...": with org-a answering {name_en: "Stored Retail", website: "https://stored.example.invalid"}, owner-a (org-owner), staff and admin reads of org-a show commonNameEn "Stored Retail" and the stored website, while commonNameAr, descriptionEn and descriptionAr keep their snapshot values and every other field equals the same read without the port. With setup({ unconfigured: true, profiles }) the two stored fields are available and every other profile field stays unavailable:not_imported. Each view's field keys still equal ORGANIZATION_FIELDS_BY_AUDIENCE for its audience.
+  - "SHU342_PROFILE_STORED ...": with org-a answering all five columns {name_en: "Stored Retail", name_ar: "متجر مخزن", description_en: "Stored description", description_ar: "وصف مخزن", website: "https://stored.example.invalid"}, owner-a (org-owner), staff and admin reads of org-a show each of the five stored values in its own field (commonNameEn, commonNameAr, descriptionEn, descriptionAr, website), and every non-profile field equals the same read without the port. With org-a answering only {name_en: "Stored Retail", website: "https://stored.example.invalid"}, those two fields show the stored values while commonNameAr, descriptionEn and descriptionAr keep their snapshot values. With setup({ unconfigured: true, profiles }) and only those two stored, the two stored fields are available and every other profile field stays unavailable:not_imported. Each view's field keys still equal ORGANIZATION_FIELDS_BY_AUDIENCE for its audience.
   - "SHU342_PROFILE_SCOPE ...": one read of org-a calls the port exactly once with "org-a"; a read of org-a1 by owner-a-subtree calls it with "org-a1" only and, with only org-a holding a stored name, shows org-a1's snapshot common name; candidate-a, finance-a and nobody get not_found with no port call.
   - "SHU342_PROFILE_INVALID ...": a stored name_en of 256 characters makes commonNameEn unavailable:not_recorded while the read stays found and the stored website shows; a port that throws makes read answer {kind:"unavailable"}; listOrganizations, listSubOrganizations and readCounts make no port call.
 - mutations.mjs: add three entries in its form:
@@ -3037,12 +3037,12 @@ Design:
 
 Tests (name every new test with its token first and a space after it):
 - packages/reference-catalogue/test/currency-details.test.ts (new; fixture as in bank-payment-details.test.ts with an active "Kuwaiti Dinar" currency item, code KWD):
-  - "SHU344_SYMBOL ...": " KD " gives "KD", "د.ك" and "$" pass; "", "   ", nine characters and a symbol with U+200B each give invalid_currency_symbol.
+  - "SHU344_SYMBOL ...": " KD " gives "KD", "د.ك" and "$" pass; "", "   ", nine characters, a symbol with U+200B, and the non-string symbols 42, null and ["KD"] each give invalid_currency_symbol.
   - "SHU344_DECIMALS ...": 0, 3 and 4 pass; -1, 5, 2.5, "3" and null each give invalid_currency_decimal_places.
   - "SHU344_CLOSED_INPUT ...": an extra key, a missing key, an array and null each give invalid_currency_details.
   - "SHU344_ADMIN_ONLY ...": an admin writes {symbol:"KD", decimalPlaces:3}; staff, recruiter, org-owner and candidate actors each get catalogue_write_forbidden and the stored details are unchanged.
   - "SHU344_ACTIVE_ONLY ...": writing on a soft-deleted currency, on a bank item and on an unknown uuid each give catalogue_item_not_found and store nothing.
-  - "SHU344_READ ...": the read answers exactly the keys currencyId, decimalPlaces, symbol and updatedAt with the written values; a currency without details gives currency_details_not_found; a soft-deleted currency that had details still reads them.
+  - "SHU344_READ ...": the read answers exactly the keys currencyId, decimalPlaces, symbol and updatedAt with the written values; a currency without details gives currency_details_not_found; an unknown uuid gives catalogue_item_not_found; a soft-deleted currency that had details still reads them.
 - packages/reference-catalogue/test/currency-details-mutations.mjs (new; copy bank-payment-details-mutations.mjs, its form and its output check), five mutants:
   - "open input object", SHU344_CLOSED_INPUT: the keys check made false.
   - "longer symbol", SHU344_SYMBOL: the code-point length bound widened from 8 to 16.
