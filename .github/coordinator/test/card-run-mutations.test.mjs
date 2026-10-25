@@ -1387,6 +1387,12 @@ const CASES = [
     to: "  // SHU86-M204",
     pattern: "Velocity V",
   },
+  {
+    name: "M205 count an operator run as landed unattended",
+    from: '      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" && trigger === "timer"',
+    to: '      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" // SHU86-M205',
+    pattern: "Velocity V1",
+  },
 ];
 
 for (const mutation of CASES) {

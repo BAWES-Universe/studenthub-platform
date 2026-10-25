@@ -1827,7 +1827,7 @@ test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and re
   assert.equal(claim.landed_at, null, "Velocity: a run that never landed records no landing time");
 });
 
-test("Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended", async () => {
+test("Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended, and an operator run does not", async () => {
   const host = landingHost();
   const result = await autoRun({ io: host.io, paths: LAND_PATHS });
   assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
@@ -1839,6 +1839,10 @@ test("Velocity V1: a merged timer run records landed_at and its report counts it
   assert.match(host.reports[0], /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\. Median \d+ min from claim to merge \(1 card\)\.$/m);
   const lines = host.reports[0].split("\n");
   assert.equal(lines.at(-1), "The host is reverted and idle.", "the velocity line comes before the host line");
+  const operator = landingHost();
+  const byHand = await runCard({ io: operator.io, paths: LAND_PATHS });
+  assert.equal(byHand.land?.outcome, "MERGED", JSON.stringify(byHand.land));
+  assert.deepEqual(byHand.velocity.day, { unattended: 0, hand: 0 }, "a run a person started never counts as unattended");
 });
 
 test("Velocity V2: the box's own records give unattended and hand landings, by window, with each card counted once", () => {

@@ -654,10 +654,11 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       ...(plan.repair ? { repair: plan.repair } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
       owner_mention: ownerMention(config.owner_mention) };
     summary.needs_owner = needsOwner(summary);
-    // Velocity: what the box has landed lately, this run included. Best
-    // effort: a state directory that cannot be read leaves it out.
+    // Velocity: what the box has landed lately, this run included when the
+    // timer started it (an operator run is a person's, and leaves no claim to
+    // count later). Best effort: a state directory that cannot be read leaves it out.
     try {
-      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card"
+      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" && trigger === "timer"
         ? { card: plan.id, landed: land?.outcome === "MERGED", claimed_at: claimedAt } : null });
     } catch { /* the report goes out without it */ }
     status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
