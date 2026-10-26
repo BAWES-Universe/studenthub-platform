@@ -68,7 +68,8 @@ import { REVIEW_LIMITS, threadReviewPolicy, reviewMarker, judgingLane, botThread
 export const CARD_LAND_ENV = "/srv/shu/card-land.env";
 export const LAND_TOKEN_KEY = "SHU_LAND_GITHUB_TOKEN";
 export const LAND_LIMITS = Object.freeze({
-  waitMs: 30 * 60 * 1000,
+  // CI on a card pull request takes about 55 minutes (SHU-353, SHU-354).
+  waitMs: 75 * 60 * 1000,
   pollMs: 60 * 1000,
   requestTimeoutMs: 30 * 1000,
   // A read that never reached its server is tried this many times in all.
