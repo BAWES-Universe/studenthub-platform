@@ -12,7 +12,7 @@ import {
   planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
-  reviewClaim, queueConfigPath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
+  reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
@@ -3060,6 +3060,51 @@ test("SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or a
     ".github/workflows/ci.yml", "test/a.test.mjs", ".github/coordinator/config.json.bak", ".github/coordinator/testdata/a.mjs"]) assert.equal(queueConfigPath(file), false, file);
 });
 
+// Box review: a Claude-written change to the coordinator's own code, under the
+// policy's code_label, gets the same Codex verdict at its exact head, so no
+// person relays it. The contracts and trailer rules still hold, and a path
+// outside the coordinator is never reviewed.
+test("Box review C1: a coordinator:code pull request is reviewed by Codex, and only inside the coordinator", async () => {
+  const CODE = COMMITTED.queue_config_review.code_label;
+  const codeFiles = () => [...queueFiles(),
+    { filename: ".github/coordinator/service/card-run.mjs", status: "modified", sha: "6".repeat(40), additions: 9, deletions: 3 },
+    { filename: ".github/coordinator/service/card-velocity.mjs", status: "added", sha: "7".repeat(40), additions: 90, deletions: 0 }];
+  const host = reviewHost([queuePull(250, { labels: [CODE], files: codeFiles() })]);
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.deepEqual(run.review, { pr: 250, head: PR_HEAD, base: PR_BASE });
+  assert.equal(host.armedRecords[0].reviewer_lane, "codex-verifier");
+  assert.equal(host.armedRecords[0].pr_author_family, "claude");
+  assert.equal(JSON.parse(host.files.get(reviewClaim(PATHS, 250, PR_HEAD)).text).files[".github/coordinator/service/card-run.mjs"].additions, 9);
+  // The queue label alone still refuses coordinator code; both labels take the wider rule.
+  const both = reviewHost([queuePull(251, { labels: [LABEL, CODE], files: codeFiles() })]);
+  assert.equal((await attempt(() => autoRun({ io: both.io, paths: PATHS }))).outcome, "REVIEW_PASS");
+  const files = (edit) => { const list = codeFiles(); edit(list); return list; };
+  for (const [label, pull] of [
+    ["queue label on code", queuePull(250, { files: codeFiles() })],
+    ["a path outside the coordinator", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/workflows/ci.yml", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 })) })],
+    ["a rename from outside", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/coordinator/x.mjs", previous_filename: "src/x.mjs", status: "renamed", sha: "8".repeat(40), additions: 0, deletions: 0 })) })],
+    ["a deleted contract line", queuePull(250, { labels: [CODE], files: files((list) => { list[1].deletions = 1; }) })],
+    ["a commit without the trailer", queuePull(250, { labels: [CODE], files: codeFiles(), messages: ["fix: b\n\nCo-Authored-By: Claude <noreply@anthropic.com>"] })],
+    ["a draft", queuePull(250, { labels: [CODE], files: codeFiles(), draft: true })],
+    ["a fork", queuePull(250, { labels: [CODE], files: codeFiles(), fork: true })],
+  ]) {
+    const quiet = reviewHost([pull]);
+    const skipped = await attempt(() => autoRun({ io: quiet.io, paths: PATHS }));
+    assert.equal(skipped.skipped, "QUEUE_DONE", `${label}: ${JSON.stringify(skipped)}`);
+    notReviewed(quiet, label);
+  }
+  // Without code_label the policy reviews queue config only, as before.
+  const config = queueConfig();
+  delete config.queue_config_review.code_label;
+  const off = reviewHost([queuePull(250, { labels: [CODE], files: codeFiles() })], { config });
+  assert.equal((await attempt(() => autoRun({ io: off.io, paths: PATHS }))).skipped, "QUEUE_DONE");
+  notReviewed(off, "no code_label");
+  for (const file of [".github/coordinator/service/card-run.mjs", ".github/coordinator/a.mjs"]) assert.equal(coordinatorCodePath(file), true, file);
+  for (const file of [".github/coordinator", ".github/coordinator/../workflows/ci.yml", ".github/coordinator//a.mjs", ".github/workflows/ci.yml", "src/a.ts", null])
+    assert.equal(coordinatorCodePath(file), false, String(file));
+});
+
 test("SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused", async () => {
   const host = reviewHost();
   await autoRun({ io: host.io, paths: PATHS });
@@ -3259,7 +3304,7 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
   const { narrowQueueScope } = await import("../single-run-activation.mjs");
   const { resolveDispatchScope } = await import("../reconcile.mjs");
   const { resolveQueueConfigReview } = await import("../workspace-scope.mjs");
-  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", maxHeadsPerPr: 3 });
+  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", codeLabel: "coordinator:code", maxHeadsPerPr: 3 });
   const review = { pr: 240, head: PR_HEAD, base: PR_BASE, authorFamily: "claude" };
   const record = planRun({ config: queueConfig(), revision: REV, now: START, review, cardId: "SHU-304" }).record;
   const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
@@ -3281,7 +3326,9 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
   assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START, review }), { code: "CARD_RUN_REVIEW_INPUT" });
   assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-304" }), { code: "CARD_RUN_SCOPE" });
   for (const policy of [{ lane: "SHU-304" }, { ...COMMITTED.queue_config_review, max_heads_per_pr: 0 }, { ...COMMITTED.queue_config_review, label: "a b" },
-    { ...COMMITTED.queue_config_review, lane: "SHU-301" }, { ...COMMITTED.queue_config_review, note: "x" }, []]) {
+    { ...COMMITTED.queue_config_review, lane: "SHU-301" }, { ...COMMITTED.queue_config_review, note: "x" }, []
+    , { ...COMMITTED.queue_config_review, code_label: "a b" }, { ...COMMITTED.queue_config_review, code_label: COMMITTED.queue_config_review.label },
+    { ...COMMITTED.queue_config_review, code_label: 1 }]) {
     assert.throws(() => resolveQueueConfigReview({ ...COMMITTED, queue_config_review: policy }), /queue_config_review/, JSON.stringify(policy));
   }
 });

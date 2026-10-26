@@ -2220,6 +2220,7 @@
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
     "SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pull request is reviewed, lowest first, one per start",
     "SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or an extra path is never reviewed",
+    "Box review C1: a coordinator:code pull request is reviewed by Codex, and only inside the coordinator",
     "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
     "SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_pr heads per revision, and a busy host gives the head back",
     "SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins",
@@ -3195,6 +3196,8 @@
     "SHU-321 mutation M9 drop the per-pull-request cap",
     "SHU-321 mutation M10 drop the pause recheck before arming",
     "SHU-321 mutation M11 drop the Claude-Session trailer check",
+    "SHU-321 mutation M12 review coordinator code under the queue label",
+    "SHU-321 mutation M13 let a coordinator code path climb out",
     "SHU-321 mutation the unmutated suite passes",
     "SHU-322 B1: a reviewed card queue on main installs in order, reports once and exits for the next start",
     "SHU-322 B2: a coordinator change outside the queue config paths, or a deletion, is a refusal for the owner",
@@ -18853,6 +18856,10 @@
       "capabilities": []
     },
     {
+      "name": "Box review C1: a coordinator:code pull request is reviewed by Codex, and only inside the coordinator",
+      "capabilities": []
+    },
+    {
       "name": "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
       "capabilities": []
     },
@@ -25412,6 +25419,14 @@
     },
     {
       "name": "SHU-321 mutation M11 drop the Claude-Session trailer check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M12 review coordinator code under the queue label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M13 let a coordinator code path climb out",
       "capabilities": []
     },
     {

@@ -1504,6 +1504,7 @@
   ],
   "queue_config_review": {
     "lane": "SHU-304",
+    "code_label": "coordinator:code",
     "label": "coordinator:queue-config",
     "max_heads_per_pr": 3
   }

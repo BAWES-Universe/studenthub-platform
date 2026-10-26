@@ -884,7 +884,10 @@ async function repairInterrupted({ io, paths, limits, config, revision, next, sk
 // is open, not a draft, on main, a branch of the pilot repository, labelled,
 // touches only queue config paths, only adds to the card contracts, and every
 // commit carries a Claude-Session: trailer. Anything else is not a candidate:
-// no claim and no report.
+// no claim and no report. Under the policy's code_label the same review covers
+// a Claude-written change to the coordinator's own code: any path under
+// .github/coordinator, with the same contracts and trailer rules. It still
+// reviews only; Card B never installs coordinator code.
 export const QUEUE_CONFIG_REVIEWER = "codex-verifier";
 export const QUEUE_CONFIG_AUTHOR_FAMILY = "claude";
 export const QUEUE_CONFIG_PATHS = Object.freeze([
@@ -909,25 +912,32 @@ export function queueConfigPath(file) {
   return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");
 }
 
-// What the open-pull-request list itself says: a labelled branch of the pilot
-// repository, open and ready, against main.
-function listedCandidate(pull, repo, label) {
+// Any file of the coordinator's own tree.
+export function coordinatorCodePath(file) {
+  if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
+  return !file.split("/").some((part) => !part || part === "." || part === "..");
+}
+
+// What the open-pull-request list itself says: a branch of the pilot
+// repository, open and ready, against main, with one of the given labels.
+const hasLabel = (pull, label) => label !== null && Array.isArray(pull.labels) && pull.labels.some((entry) => entry?.name === label);
+function listedCandidate(pull, repo, labels) {
   return Number.isInteger(pull?.number) && pull.number > 0 && pull.state === "open" && pull.base?.ref === "main"
     && pull.base?.repo?.full_name === repo && pull.draft === false && pull.head?.repo?.full_name === repo && SHA_RE.test(pull.head?.sha ?? "")
-    && Array.isArray(pull.labels) && pull.labels.some((entry) => entry?.name === label);
+    && labels.some((label) => hasLabel(pull, label));
 }
 
 // The pull request's files and commits, judged whole. A renamed file counts
 // under both names, so nothing leaves the allowlist by a rename, and the
 // contracts may only gain lines: a deleted line could loosen a pinned card.
-export function queueConfigChange(files, head, commits) {
+export function queueConfigChange(files, head, commits, allowed = queueConfigPath) {
   if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
   if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
   if (commits.at(-1)?.sha !== head) return { ok: false, reason: "its head moved while it was read" };
   const blobs = {};
   for (const file of files) {
     const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
-    if (!names.every(queueConfigPath)) return { ok: false, reason: `${String(file?.filename)} is not a queue config path` };
+    if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : "coordinator"} path` };
     if (names.includes(CONTRACTS_PATH) && (file.status !== "modified" || file.deletions !== 0)) {
       return { ok: false, reason: `${CONTRACTS_PATH} may only gain lines` };
     }
@@ -996,7 +1006,8 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   const open = await get(`${api}/pulls?state=open&base=main&per_page=${GITHUB_PAGE}`);
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
-  const listed = open.filter((pull) => listedCandidate(pull, repo, policy.label)).sort((a, b) => a.number - b.number);
+  const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : [])];
+  const listed = open.filter((pull) => listedCandidate(pull, repo, labels)).sort((a, b) => a.number - b.number);
   for (const pull of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
@@ -1008,7 +1019,8 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
     }
     const files = await get(`${api}/pulls/${pr}/files?per_page=${GITHUB_PAGE}`);
     const commits = await get(`${api}/pulls/${pr}/commits?per_page=${GITHUB_PAGE}`);
-    const change = queueConfigChange(files, head, commits);
+    let change = hasLabel(pull, policy.label) ? queueConfigChange(files, head, commits) : { ok: false };
+    if (!change.ok && hasLabel(pull, policy.codeLabel)) change = queueConfigChange(files, head, commits, coordinatorCodePath);
     if (!change.ok) continue;
     // The approved base is the merge base with main, as the coordinator's
     // own check of a review-only pull request reads it.
