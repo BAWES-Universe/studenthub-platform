@@ -43,11 +43,11 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-353",
-      "SHU-354",
-      "SHU-355",
-      "SHU-356",
-      "SHU-352"
+      "SHU-357",
+      "SHU-358",
+      "SHU-359",
+      "SHU-360",
+      "SHU-361"
     ]
   },
   "adapter_pause_map": {},
@@ -1488,6 +1488,163 @@
         "packages/organizations/test/organizations.test.ts",
         "apps/gateway/src/organization-profile.ts",
         "apps/gateway/test/context-navigation.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-357",
+      "authorization_ref": "SHU-357",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the twelfth committed card queue (SHU-312), a whole-tree card in the M10b outcome template: follow-ups to SHU-353, SHU-354 and SHU-355 (account-manager reads degrade instead of failing, and an expired session on My companies offers sign-in); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/test/organizations.test.ts",
+        "packages/organizations/test/organization-directory.test.ts",
+        "packages/organizations/test/commercial-terms-writes.test.ts",
+        "packages/organizations/test/directory-mutations.mjs",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs",
+        "apps/gateway/test/company-directory.test.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/test/organizations.test.ts",
+        "packages/organizations/test/organization-directory.test.ts",
+        "packages/organizations/test/commercial-terms-writes.test.ts",
+        "packages/organizations/test/directory-mutations.mjs",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs",
+        "apps/gateway/test/company-directory.test.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-358",
+      "authorization_ref": "SHU-358",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "second card of the twelfth committed card queue (SHU-312), a whole-tree card in the M10b outcome template: follow-up to SHU-313 (status changes show on the company card, migration 0209); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0209_organization_status_events_org_occurred_index.sql",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/organizations/src/status-writes.ts",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0209_organization_status_events_org_occurred_index.sql",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/organizations/src/status-writes.ts",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-359",
+      "authorization_ref": "SHU-359",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "third card of the twelfth committed card queue (SHU-312), a whole-tree card in the M10b outcome template: assigning from the app, part one (the eligible-staff listing and the directory's manager picker, migration 0210); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0210_grants_org_id_index.sql",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "packages/db/src/postgres-organization-account-manager-store.ts",
+        "packages/db/test/postgres-organization-account-manager.test.ts",
+        "packages/organizations/src/account-manager-writes.ts",
+        "packages/organizations/test/account-manager-writes.test.ts",
+        "packages/organizations/test/account-manager-writes-mutations.mjs",
+        "apps/gateway/src/organization-account-manager.ts",
+        "apps/gateway/test/organization-account-manager-http.test.ts",
+        "apps/gateway/src/company-directory.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/company-directory.test.ts",
+        "apps/gateway/test/company-directory-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0210_grants_org_id_index.sql",
+        "packages/db/test/postgres-authz-store.test.ts",
+        "packages/db/src/postgres-organization-account-manager-store.ts",
+        "packages/db/test/postgres-organization-account-manager.test.ts",
+        "packages/organizations/src/account-manager-writes.ts",
+        "packages/organizations/test/account-manager-writes.test.ts",
+        "packages/organizations/test/account-manager-writes-mutations.mjs",
+        "apps/gateway/src/organization-account-manager.ts",
+        "apps/gateway/test/organization-account-manager-http.test.ts",
+        "apps/gateway/src/company-directory.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/company-directory.test.ts",
+        "apps/gateway/test/company-directory-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-360",
+      "authorization_ref": "SHU-360",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "fourth card of the twelfth committed card queue (SHU-312), a whole-tree card in the M10b outcome template: assigning from the app, part two (an admin assigns the account manager from the company card); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/organization-account-manager.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-account-manager-http.test.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/organization-account-manager.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/context-navigation.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/organization-account-manager-http.test.ts",
+        "apps/gateway/test/context-navigation.test.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/test/context-navigation-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-361",
+      "authorization_ref": "SHU-361",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "fifth card of the twelfth committed card queue (SHU-312), a whole-tree card in the M10b outcome template: the S2 standing line on older read paths (the directory, sub-companies and counts cost a fixed number of reads); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/types.ts",
+        "packages/organizations/src/adapter.ts",
+        "packages/organizations/test/organizations.test.ts",
+        "packages/organizations/test/organization-directory.test.ts",
+        "packages/organizations/test/mutations.mjs",
+        "packages/organizations/test/directory-mutations.mjs",
+        "apps/gateway/test/company-directory.test.ts"
+      ],
+      "revision_paths": [
+        "packages/organizations/src/organizations.ts",
+        "packages/organizations/src/types.ts",
+        "packages/organizations/src/adapter.ts",
+        "packages/organizations/test/organizations.test.ts",
+        "packages/organizations/test/organization-directory.test.ts",
+        "packages/organizations/test/mutations.mjs",
+        "packages/organizations/test/directory-mutations.mjs",
+        "apps/gateway/test/company-directory.test.ts"
       ]
     }
   ],
