@@ -25,7 +25,7 @@
     ]
   },
   "landing_thread_review": {
-    "enabled": false,
+    "enabled": true,
     "authors": [
       "sentry",
       "coderabbitai"

@@ -40,6 +40,9 @@ import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
+// The committed config turns M10 on; every other test starts from it off and
+// turns it on only where it means to (T7 pins the committed value).
+const BASELINE = { ...structuredClone(COMMITTED), landing_thread_review: { ...COMMITTED.landing_thread_review, enabled: false } };
 const REV = "a".repeat(40);
 const HEAD = "b".repeat(40);
 const BASE = "c".repeat(40);
@@ -61,7 +64,7 @@ const TODO_ID = "todo-state-id";
 const UNITS = ["shu-supervisor.service", "shu-coordinator.service"];
 const dropIn = (unit, name) => `${PATHS.unitDir}/${unit}.d/${name}`;
 
-const configFor = (id, edit = (config) => config) => edit({ ...structuredClone(COMMITTED), dispatch_scope: { issue_ids: [id] } });
+const configFor = (id, edit = (config) => config) => edit({ ...structuredClone(BASELINE), dispatch_scope: { issue_ids: [id] } });
 const REVIEW = Object.freeze({ pr: 239, head: HEAD, base: BASE, authorFamily: "claude" });
 
 const armed = (id, target = "SHU-301") => `activation=ARMED id=${id} target=${target} ref=${target} revision=${REV} slots=1 expires=x writer=codex-builder reviewer=claude-verifier`;
@@ -2780,7 +2783,7 @@ test("SHU-310 L27: a thread an earlier landing settled is checked again by every
 // SHU-312: one install runs a short committed queue of cards, one per timer
 // start, each from main as it is when its run starts.
 const QUEUE = Object.freeze(["SHU-301", "SHU-305"]);
-const queueConfig = (ids = QUEUE) => ({ ...structuredClone(COMMITTED), dispatch_scope: { issue_ids: [...ids] } });
+const queueConfig = (ids = QUEUE) => ({ ...structuredClone(BASELINE), dispatch_scope: { issue_ids: [...ids] } });
 const passFor = (id) => (h) => tickText(spent(id, "review PASS — the episode is complete"));
 const claimFor = (host, revision, id, fields) => host.files.set(autoClaim(PATHS, revision, id),
   { text: `${JSON.stringify({ card: id, revision, ...fields })}\n`, mode: 0o600, uid: 0, gid: 0 });
@@ -4774,8 +4777,8 @@ test("SHU-71 M10: T6 a thread that changes while the review lane judges it resol
   nothingResolved(host);
 });
 
-test("SHU-71 M10: T7 the committed config ships it off, and a malformed or doubled policy refuses", async () => {
-  assert.deepEqual(COMMITTED.landing_thread_review, { enabled: false, authors: ["sentry", "coderabbitai"], max_threads: 10, timeout_minutes: 15 });
+test("SHU-71 M10: T7 the committed config turns it on, off waits as before, and a malformed or doubled policy refuses", async () => {
+  assert.deepEqual(COMMITTED.landing_thread_review, { enabled: true, authors: ["sentry", "coderabbitai"], max_threads: 10, timeout_minutes: 15 });
   const off = m10Host({ review: false, botThreads: [SENTRY_THREAD] });
   const result = await landRun(off);
   assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
