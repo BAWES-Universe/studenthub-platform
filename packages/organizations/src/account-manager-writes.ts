@@ -13,6 +13,10 @@ export interface OrganizationAssignedCompanyRow{readonly org_id:string;readonly 
 export interface OrganizationAssignedCompany{readonly orgId:string;readonly name:string}
 export const ORGANIZATION_ASSIGNED_COMPANIES_LIMIT=50;
 export function organizationAssignedCompaniesView(rows:readonly OrganizationAssignedCompanyRow[]):OrganizationAssignedCompany[]{return rows.map((row)=>({orgId:row.org_id,name:row.name})).sort((a,b)=>a.name.localeCompare(b.name)||a.orgId.localeCompare(b.orgId)).slice(0,ORGANIZATION_ASSIGNED_COMPANIES_LIMIT);}
+export interface OrganizationAccountManagerEventRow{readonly from_principal_id:string|null;readonly from_display_name:string|null;readonly from_principal_exists:boolean;readonly to_principal_id:string|null;readonly to_display_name:string|null;readonly to_principal_exists:boolean;readonly occurred_at:Date|string}
+export interface OrganizationAccountManagerHistoryPerson{readonly principalId:string;readonly displayName:string|null}
+export interface OrganizationAccountManagerHistoryEvent{readonly from:OrganizationAccountManagerHistoryPerson|null;readonly to:OrganizationAccountManagerHistoryPerson|null;readonly occurredAt:string}
+export function organizationAccountManagerHistoryView(rows:readonly OrganizationAccountManagerEventRow[]):OrganizationAccountManagerHistoryEvent[]{return rows.map(row=>({from:row.from_principal_id===null?null:{principalId:row.from_principal_id,displayName:row.from_display_name},to:row.to_principal_id===null?null:{principalId:row.to_principal_id,displayName:row.to_display_name},occurredAt:new Date(row.occurred_at).toISOString()}));}
 function ref(domain:string,value:string){return createHash("sha256").update(`studenthub:${domain}:v1\0`).update(value).digest("hex");}
 export const organizationAccountManagerRecordRef=(orgId:string)=>ref("organization-account-manager-record",orgId);
 export const organizationAccountManagerPrincipalRef=(id:string)=>ref("organization-account-manager-principal",id);
