@@ -42,7 +42,7 @@ import {handleOrganizationAccountManager,type OrganizationAccountManager} from "
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -224,6 +224,26 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
+      return;
+    }
+
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
+      const selected = new URL(request.url, "http://gateway.invalid").searchParams;
+      const orgId = selected.get("org_id"), role = selected.get("role");
+      const active = orgId && (role === "staff" || role === "admin")
+        ? { orgId, role, organizationName: "" } as const
+        : null;
+      const service = login?.organizationAccountManager;
+      let result: import("./organization-account-manager.js").AssignedCompaniesResult;
+      try {
+        result = service
+          ? await service.assigned(cookieValue(request.headers.cookie, "__Host-studenthub_session"))
+          : { status: 503, body: { error: "unavailable" } };
+      } catch {
+        result = { status: 503, body: { error: "unavailable" } };
+      }
+      if (html) writeHtml(response, active ? result.status : 403, login && active ? renderAssignedCompanies(result, login, active) : renderError(login ? 403 : 503, login), {}, true);
+      else writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       return;
     }
 

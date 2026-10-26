@@ -12,7 +12,10 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import type { ServerResponse } from "node:http";
+import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
+import { organizationAssignedCompaniesView } from "@studenthub/organizations";
 
 const SESSION = "s".repeat(43);
 const OTHER_SESSION = "t".repeat(43);
@@ -365,4 +368,26 @@ test("unconfigured browser login gives a truthful unavailable page and leaves ma
   assert.equal((await fetch(`${url}/profile`, { headers: { accept: "text/html" } })).status, 503);
   assert.equal((await fetch(`${url}/profile`)).status, 404);
   assert.equal((await fetch(`${url}/assets/missing.css`)).status, 404);
+});
+
+test("SHU354_PAGE renders a read-only My companies page and workspace link", () => {
+  const login={organizationAccountManager:{} as OrganizationAccountManager} as BrowserLoginApplication;
+  const active={orgId:"employer",organizationName:"Employer",role:"staff" as const};
+  const body=renderAssignedCompanies({status:200,body:{companies:[]}},login,active);
+  assert.match(body,/My companies/);assert.match(body,/Read-only/);assert.match(body,/No companies assigned/);assert.match(body,/href="\/workspace\/my-companies\?org_id=employer&amp;role=staff"/);
+  const failed=renderAssignedCompanies({status:503,body:{error:"unavailable"}},login,active);
+  assert.match(failed,/couldn’t be loaded/);assert.match(failed,/Try again/);
+  let headers:Record<string,string>={};const response={writeHead(_status:number,value:Record<string,string>){headers=value},end(){}} as unknown as ServerResponse;
+  writeHtml(response,200,body,{},true);assert.equal(headers["cache-control"],"no-store");assert.match(headers["content-security-policy"]!,/default-src 'none'/);
+  const navigation=(role:"staff"|"candidate",selected=true)=>renderWorkspace({status:200,body:{contexts:[],active:selected?{orgId:"employer",organizationName:"Employer",role}:null}} as Parameters<typeof renderWorkspace>[0],login);
+  assert.match(navigation("staff"),/>My companies<\/a>/);
+  assert.doesNotMatch(navigation("candidate"),/>My companies<\/a>/);
+  assert.doesNotMatch(navigation("staff",false),/>My companies<\/a>/);
+});
+
+test("SHU354_SHOWN shows each assigned name as a company link without principal ids", () => {
+  const login={organizationAccountManager:{} as OrganizationAccountManager} as BrowserLoginApplication;
+  const companies=organizationAssignedCompaniesView([{org_id:"company-two",name:"Beta"},{org_id:"company-one",name:"Alpha & One"}]);
+  const body=renderAssignedCompanies({status:200,body:{companies}},login,{orgId:"employer",organizationName:"Employer",role:"admin"});
+  assert.ok(body.indexOf("Alpha &amp; One")<body.indexOf("Beta"));assert.match(body,/href="\/workspace\?org_id=company-one&amp;role=admin"/);assert.doesNotMatch(body,/principal|person-1|workspace\/companies/);
 });
