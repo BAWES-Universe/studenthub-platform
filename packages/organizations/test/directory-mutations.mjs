@@ -11,6 +11,10 @@ const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/organizations/test/organization-directory.test.js", import.meta.url));
 const mutations = [
   [
+    "ignore the directory currency batch", "SHU353_DIRECTORY_CURRENCY",
+    "termsBatch?.get(org.id)", "undefined",
+  ],
+  [
     "list for an employer role", "SHU-163/AC-01 SCOPE",
     'new Set(["staff", "admin"])', 'new Set(["staff", "admin", "org-owner"])',
   ],

@@ -7,6 +7,7 @@ import {
   InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
   type OrganizationStoreCounts,
   type OrganizationAccountManagerRecords,
+  type OrganizationCommercialTermsRecords,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createCompanyDirectory } from "../src/company-directory.js";
@@ -17,7 +18,7 @@ const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords } = {}) {
+async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -35,7 +36,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   const { parentA, childA1, unrelatedB } = SYNTHETIC_ORGANIZATION_FIXTURES;
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-b", unrelatedB],
-  ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers });
+  ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers, commercialTerms:options.commercialTerms });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
     ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
@@ -82,9 +83,25 @@ test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspac
   assert.doesNotMatch(text, /Organization A1|Synthetic Retail Kuwait City|SENSITIVE-/, "sub-companies open from their parent");
 });
 
+test("SHU353_SHOWN directory renders the written currency in the company row", async (t) => {
+  const absent = { hourlyRate: { kind: "absent" as const }, bonusCommission: { kind: "absent" as const } };
+  const f = await fixture(t, { commercialTerms: {
+    async read() { return absent; },
+    async readMany(ids) {
+      return new Map(ids.map((id) => [id, {
+        ...absent,
+        currencyCode: id === "org-a" ? { kind: "value" as const, value: "USD" } : { kind: "absent" as const },
+      }]));
+    },
+  } });
+
+  const text = await (await f.get(STAFF_LIST, html)).text();
+  assert.match(text, /<tr><th scope="row"><a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>.*?<\/th><td>Active<\/td><td>Yes<\/td><td>USD<\/td>/);
+});
+
 test("SHU-163/AC-07 PAGE filters reach the directory and survive paging links", async (t) => {
   const f = await fixture(t);
-  const filtered = await (await f.get(`${STAFF_LIST}&q=%20cafe%20&status=under_review&approved=yes&currency=KWD`)).json();
+  const filtered = await (await f.get(`${STAFF_LIST}&q=%20cafe%20&status=under_review&approved=yes&currency=kwd`)).json();
   assert.deepEqual(filtered.filters, { query: "cafe", status: "under_review", approvedToHire: true, currencyCode: "KWD" });
   assert.deepEqual(filtered.directory.entries.map((entry: { orgId: string }) => entry.orgId), ["org-b"]);
   // Empty form fields mean "any", as a GET form submits them.
@@ -113,7 +130,7 @@ test("SHU-163/AC-08 ACCESS only a current staff or admin context opens the list"
   }
   for (const query of [
     "", "org_id=root", "role=staff", "org_id=root&role=staff&role=admin", "org_id=root&role=staff&staff_id=77",
-    "org_id=root&role=staff&status=approved", "org_id=root&role=staff&approved=1", "org_id=root&role=staff&currency=kwd",
+    "org_id=root&role=staff&status=approved", "org_id=root&role=staff&approved=1", "org_id=root&role=staff&currency=12d",
     "org_id=root&role=staff&page=0", "org_id=root&role=staff&page=1.5", `org_id=root&role=staff&q=${"x".repeat(101)}`,
   ]) {
     const response = await f.get(`/workspace/companies?${query}`);

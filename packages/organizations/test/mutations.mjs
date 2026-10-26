@@ -11,6 +11,10 @@ const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/organizations/test/organizations.test.js", import.meta.url));
 const mutations = [
   [
+    "ignore the written card currency", "SHU353_CARD_CURRENCY",
+    'if (record?.kind === "value")', 'if (false)',
+  ],
+  [
     "ignore the stored profile", "SHU342_PROFILE_STORED",
     "else if (profile !== undefined && name in ORGANIZATION_PROFILE_SOURCES\n            && typeof profile[ORGANIZATION_PROFILE_SOURCES[name]] === \"string\")",
     "else if (false)",
