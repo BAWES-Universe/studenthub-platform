@@ -3334,6 +3334,258 @@ Out of scope: an owner profile form in the app, existing stored names over 255 c
 
 ${QUEUE11_FINISH}`;
 
+// The twelfth committed card queue (SHU-312) keeps the eleventh queue's
+// template: the shared context and finish blocks and the two standing lines
+// (QUEUE11_CONTEXT, QUEUE11_FINISH, QUEUE11_STANDING) hold for every card
+// below, each contract states outcomes and guards and leaves the code shape
+// to the writer, and every card ends in something a person sees in the app.
+
+export const SHU357_PATHS = Object.freeze([
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/test/organizations.test.ts",
+  "packages/organizations/test/organization-directory.test.ts",
+  "packages/organizations/test/commercial-terms-writes.test.ts",
+  "packages/organizations/test/directory-mutations.mjs",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+  "apps/gateway/test/company-directory.test.ts",
+  "apps/gateway/test/web-ui.test.ts",
+]);
+
+const SHU357_ACCEPTANCE = [
+  "(1) When the account-manager read (manager, or history) throws while a staff or admin workspace is built, the workspace still answers 200 with the company card and every other panel exactly as when the read succeeds, and the card shows the account manager as unavailable (\"Unavailable\", never \"None\" and never an error page); a read that refuses (null) keeps today's result (SHU357_CARD_DEGRADES);",
+  "(2) When the directory's batch manager read throws, an unfiltered directory request still answers found with every company and every other value, each company's manager marked unavailable, and the rendered directory shows \"Unavailable\" in the Account manager column; a request that filters by manager (an id or me) still answers unavailable (503) and never lists companies it could not filter (SHU357_DIRECTORY_DEGRADES);",
+  "(3) /workspace/my-companies answers a 401 (no session, or an expired one) with the standard sign-in page, the one renderError(401, login) draws with its sign-in link, and keeps the \"My companies couldn't be loaded\" page with Try again for a 503; the status codes and the JSON route GET /organization/assigned-companies are unchanged (SHU357_MY_COMPANIES_SIGN_IN);",
+  "(4) readMany is required on OrganizationCommercialTermsRecords, so a port without it is a compile error (a test holds a @ts-expect-error on such a port); the directory reads written currencies only through it, with no per-company fallback; every fake in the card's tests gains readMany and every existing currency test keeps its assertions (SHU357_TERMS_BATCH_REQUIRED);",
+  "(5) S1: items 1 to 3 are each checked on the rendered page, not only on the JSON result; S2 holds;",
+  "(6) Item 1 has a mutant in context-navigation-mutations.mjs and item 2 one in directory-mutations.mjs that die by assertion in their named tests, item 3's mutant is checked by hand and reported; every other existing mutant still binds once and is killed (a mutant whose source line this card rewrites may be re-pointed at the new line, keeping what it proves); every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU357_BRIEF = `Card SHU-357: account-manager reads degrade instead of failing, and an expired session on My companies offers sign-in (audit follow-ups to SHU-353, SHU-354 and SHU-355; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes the eleventh queue: SHU-353 (written currency on the card and in the directory), SHU-354 (My companies page), SHU-355 (one current-manager rule, the Account manager line and column) and SHU-356 (account-manager history on the card). ${QUEUE11_CONTEXT}
+
+Why. Reviews of the eleventh queue's pull requests found four places where an optional extra takes down the page it sits on, or a mistake can hide silently. In apps/gateway/src/context-navigation.ts the staff and admin workspace awaits accountManagers.manager() and history() inside the request's one try, so if either throws the whole workspace answers 503 context_unavailable (#327). In packages/organizations/src/organizations.ts listOrganizations awaits accountManagers.readMany for every directory page, so if it throws even an unfiltered directory is unavailable (#327). In apps/gateway/src/web-ui.ts renderAssignedCompanies draws the same "Try again" page for 401 and 503, so a person whose session expired is told to retry instead of being offered sign-in (#326, Sentry and CodeRabbit). And OrganizationCommercialTermsRecords.readMany is optional, so an adapter that forgets it silently falls back to the snapshot (#325, CodeRabbit).
+
+Read first:
+- apps/gateway/src/context-navigation.ts (the account-manager block after the sub-companies panel, and the catch at the end of the request).
+- apps/gateway/src/web-ui.ts: renderOrganization (managerRow, managerHistory), renderCompanyDirectory (managerName), renderAssignedCompanies and renderError; and apps/gateway/src/index.ts, the /workspace/my-companies route, to see which status reaches the renderer.
+- packages/organizations/src/organizations.ts: the OrganizationCommercialTermsRecords and OrganizationAccountManagerRecords ports and listOrganizations (the managers batch and the accountManager filter).
+- The SHU355_ and SHU356_ tests in apps/gateway/test/context-navigation.test.ts, packages/organizations/test/organization-directory.test.ts (SHU339_FILTER_UNAVAILABLE) and the SHU354_ tests in apps/gateway/test/web-ui.test.ts.
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- A filter never degrades: a directory request that filters by manager stays fail-closed, and no request lists a company it was asked to filter out.
+- Only the account-manager panel, history and column degrade. A failing company read, authorization, snapshot, status, approved-to-hire, currency, counts or sub-company read keeps exactly today's result.
+- Unavailable is not None: a failed read is never drawn as "no manager", and a refused read is never drawn as unavailable.
+- A failure reveals nothing a refusal would not: the manager line, history and column still appear only for staff and admin audiences, after the existing authorization.
+- No new route and no migration; the account-manager write and its JSON routes are unchanged.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU357_CARD_DEGRADES, SHU357_DIRECTORY_DEGRADES, SHU357_MY_COMPANIES_SIGN_IN, SHU357_TERMS_BATCH_REQUIRED), in the test files of the card's paths.
+
+Out of scope: making any other optional port required (the directory's other batch reads belong to SHU-361), retries, logging, the status history panel (SHU-358), the manager picker (SHU-359), CSS beyond existing classes, apps/gateway/src/index.ts, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU358_PATHS = Object.freeze([
+  "packages/db/migrations/0209_organization_status_events_org_occurred_index.sql",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/db/test/postgres-organization-status.test.ts",
+  "packages/organizations/src/status-writes.ts",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+]);
+
+const SHU358_ACCEPTANCE = [
+  "(1) A new migration indexes organization_status_events on (org_id, occurred_at DESC, id DESC), the order the history read already uses; a Postgres test finds the index with exactly that definition, and the history read's rows and order are unchanged (SHU358_PG_INDEX);",
+  "(2) The workspace company card shows staff and admin audiences a \"Status history\" section with the company's last five status changes, newest first, each as \"from → to, date\" with status names (Active, Under review, Inactive, and \"Not set\" for an empty side), or \"No status changes recorded.\" when there are none; employer audiences see no section and no history read is made for them (SHU358_SHOWN);",
+  "(3) A history read that throws shows \"Status history couldn't be loaded.\" in that section while the workspace still answers 200 with the card and every other panel unchanged; a history read that refuses (null) shows no section (SHU358_UNAVAILABLE);",
+  "(4) S1: a status change written through the status write's store (a fake in the gateway test, the real store in the Postgres test) shows in the rendered card's panel; S2 holds: the panel costs one history read whatever the number of events;",
+  "(5) Items 2 and 3 each have a mutant in context-navigation-mutations.mjs that dies by assertion in its named test, item 1's Postgres mutant is checked by hand and reported; GET /organization/status/:orgId/history keeps its body, statuses and refusals; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU358_BRIEF = `Card SHU-358: a company's status changes show on its card (follow-up to SHU-313; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-313 (organization_status_events, migration 0191, and GET /organization/status/:orgId/history), SHU-356 (the account-manager history panel on the card, the pattern for this one) and, possibly, SHU-357 of this queue. ${QUEUE11_CONTEXT}
+
+Why. Every confirmed status change records an event and a JSON route answers the history, but no page shows it, so staff cannot see who changed a company's status or when without calling the API. The events table has no index for its one read (WHERE org_id ORDER BY occurred_at DESC, id DESC), so the read scans the table as it grows.
+
+Read first:
+- packages/db/migrations/0191_organization_status_events.sql and packages/db/src/postgres-organization-status-store.ts (history and #allowed).
+- packages/organizations/src/status-writes.ts (organizationStatusDecision, organizationStatusHistoryView).
+- apps/gateway/src/organization-status.ts (the history route and its refusals) and apps/gateway/src/login-runtime.ts (how organizationStatusStore and the account-manager store reach the navigation).
+- apps/gateway/src/context-navigation.ts and web-ui.ts renderOrganization (the account-manager history panel, built the same way).
+
+Outcomes: acceptance items 1 to 3.
+
+Guards:
+- One who-may-read rule: the panel reads through the status store's history, which applies the same decision and liveness check as the JSON route; do not write a second copy of either.
+- The panel is built only after the card read has authorized the caller, and only for staff and admin audiences.
+- The status write, its events, delivery (delivered_at) and its audit are unchanged; the migration only adds the index.
+- No receipt reference or principal id is printed in HTML.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU358_PG_INDEX, SHU358_SHOWN, SHU358_UNAVAILABLE). Add the new migration to both schema_migrations lists of postgres-authz-store.test.ts.
+
+Out of scope: who made each change (the events table holds no actor), changing status from the card, the status filter, account-manager history, CSS beyond existing classes, apps/gateway/src/index.ts, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU359_PATHS = Object.freeze([
+  "packages/db/migrations/0210_grants_org_id_index.sql",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/db/src/postgres-organization-account-manager-store.ts",
+  "packages/db/test/postgres-organization-account-manager.test.ts",
+  "packages/organizations/src/account-manager-writes.ts",
+  "packages/organizations/test/account-manager-writes.test.ts",
+  "packages/organizations/test/account-manager-writes-mutations.mjs",
+  "apps/gateway/src/organization-account-manager.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+  "apps/gateway/src/company-directory.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/company-directory.test.ts",
+  "apps/gateway/test/company-directory-mutations.mjs",
+]);
+
+const SHU359_ACCEPTANCE = [
+  "(1) A read port answers, for a caller and a company, the people who may be its account manager: exactly the people the account-manager write would accept as the new manager (a staff or admin grant that covers the company, by organizationAccountManagerReadDecision), each as principal id and display name, sorted by display name and then id with unnamed people after named ones, at most 200, the first 200 of the whole sorted list; a caller the manager read refuses, an unknown, operator or deleted company gets a refusal and no list (SHU359_ELIGIBLE);",
+  "(2) The listing costs a fixed number of database round trips whatever the number of people and grants (a Postgres test with 60 eligible people counts the queries the store sends and finds the same number as with 1), and a new migration indexes grants by org_id (SHU359_PG_SCALE);",
+  "(3) The Companies directory's Account manager filter is a select: \"Any\", \"Me\", then, by display name, each person holding a staff or admin grant on the directory's active context company or one of its ancestors (for an operator-root directory, the operator's staff and admins, whom the write accepts for every company that directory lists), read through a second method of the same port that refuses a caller the directory itself would refuse, is bounded at 200 in the same order as item 1 and costs a fixed number of round trips; choosing Me submits manager=me and choosing a person submits their id, the current choice is selected, and a manager=<id> URL for someone not in the list still filters exactly as today and stays selected under a neutral label; if the listing fails, the directory still renders with Any, Me and the current choice (SHU359_PICKER);",
+  "(4) S1: the rendered directory shows eligible staff by display name in the picker, and following the URL that choosing one submits lists only the companies that person currently manages (SHU359_SHOWN); S2 holds;",
+  "(5) Item 1 has a mutant in account-manager-writes-mutations.mjs and item 3 one in company-directory-mutations.mjs that die by assertion in their named tests, item 2's Postgres mutant is checked by hand and reported; manager=me and manager=<id> URLs and the directory's JSON keep working as today; the account-manager write, its decisions and refusals are unchanged; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU359_BRIEF = `Card SHU-359: the staff who may manage a company can be listed by name, and the directory's manager filter becomes a picker (part one of assigning from the app; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager write and its eligibility check), SHU-339 (the directory's manager filter), SHU-355 (one current-manager rule) and, possibly, SHU-357 and SHU-358 of this queue. ${QUEUE11_CONTEXT}
+
+Why. Staff can filter the Companies directory by account manager only by typing "me" or a raw principal id into a text box, and nothing lists who could be assigned: the store can only answer whether one given person is eligible (PostgresOrganizationAccountManagerStore.eligible). SHU-360 needs the same listing for its assign form, so this card builds it once and first uses it where it is already needed, the directory filter. grants has a unique key on (principal_id, org_id, role) but no index that starts with org_id, which a by-company listing needs.
+
+Read first:
+- packages/organizations/src/account-manager-writes.ts (organizationAccountManagerReadDecision, the view helpers and their sorting) and packages/db/src/postgres-organization-account-manager-store.ts (eligible, manager, #grants, #ancestors).
+- packages/db/migrations/0001_create_authz_tables.sql (the grants table) and 0002_enforce_single_root_admin.sql (its one partial index).
+- apps/gateway/src/organization-account-manager.ts (the OrganizationAccountManagerStore port) and apps/gateway/src/company-directory.ts (parseCompanyDirectoryQuery, the me rule, accountManagerSelection).
+- apps/gateway/src/web-ui.ts renderCompanyDirectory (the filter form) and apps/gateway/src/login-runtime.ts (how the directory and the account-manager store are wired).
+
+Outcomes: acceptance items 1 to 3.
+
+Guards:
+- One eligibility rule, shared with the write: the listing uses the same decision the write's eligibility check uses; do not write a second copy of it.
+- The listing reveals nothing to a caller the manager read refuses, and the picker appears only to staff and admin directory callers after the directory's own authorization.
+- People are shown by display name (or "Unnamed staff member"); a principal id appears in HTML only as an option's value, never as visible text.
+- The directory's query vocabulary does not change: manager stays the one parameter, me keeps meaning the caller.
+- No new JSON route unless a test needs one, and the account-manager write, its audit and its refusals are unchanged.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU359_ELIGIBLE, SHU359_PG_SCALE, SHU359_PICKER, SHU359_SHOWN). A query-count check may wrap the pool the store is given; it must fail if one query per person comes back. Add the new migration to both schema_migrations lists of postgres-authz-store.test.ts.
+
+Out of scope: assigning from the card (SHU-360), searching or paging staff, sorting the directory by manager, CSS beyond existing classes, apps/gateway/src/index.ts, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU360_PATHS = Object.freeze([
+  "apps/gateway/src/organization-account-manager.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/organization-account-manager-http.test.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+]);
+
+const SHU360_ACCEPTANCE = [
+  "(1) On the workspace company card, a caller the account-manager write would accept (an admin whose grant covers the company) sees an assign form: a select of the people SHU-359's port lists, by display name, plus \"No account manager\", with the current manager selected; staff, employer audiences and callers the write would refuse see no form; if the listing fails, the card keeps its Account manager line and shows a short notice in place of the form (SHU360_FORM);",
+  "(2) Submitting the form changes nothing yet and shows an HTML preview page naming the company and the change \"from → to\" by display names, with Confirm and Cancel; Confirm commits through the existing account-manager safe write and sends the person back to the workspace card (303), where the new manager shows on the Account manager line and the change is listed in its history; Cancel returns to the card with nothing stored (SHU360_PREVIEW_CONFIRM);",
+  "(3) Every refusal is an HTML page, never JSON or a blank page: no or an expired session gets the sign-in page (renderError(401, login)); a cross-site or wrong-origin POST is refused 403 before its body is read; a person the write finds ineligible gets 400 with nothing stored; a stale preview (the manager changed, or the token was used or expired) gets 409 with a page that says the manager changed and links back to the card; an unavailable store gets 503; a replayed confirm stores nothing (SHU360_REFUSALS);",
+  "(4) S1: assigning through the form in a test shows the new manager's name on the rendered card and in its history panel (SHU360_SHOWN); S2 holds (the form costs one listing read);",
+  "(5) Item 1 has a mutant in context-navigation-mutations.mjs that dies by assertion in its named test, items 2 and 3 each have a mutant checked by hand and reported; the JSON routes under /organization/account-manager keep their bodies, statuses and refusals; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU360_BRIEF = `Card SHU-360: an admin assigns a company's account manager from its card (part two of assigning from the app; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-336 (the account-manager safe write: preview, confirm and receipt as JSON), SHU-355 and SHU-356 (the Account manager line and history on the card), SHU-359 of this queue (the eligible-staff listing) and, possibly, SHU-357 and SHU-358. ${QUEUE11_CONTEXT}
+
+Why. An admin can change a company's account manager only by calling the JSON preview and confirm routes by hand. This card gives the write a page. It is the first browser safe-write flow in the gateway: every safe write so far is JSON only, and the only HTML forms that write anything are the profile background forms in apps/gateway/src/profile-records-http.ts, which are not safe writes. Take that file's form handling (urlencoded bodies with an exact field list and a size limit, the same-origin check, the session cookie) and the JSON route's preview and confirm as the two halves to join; do not invent a third pattern.
+
+Read first:
+- apps/gateway/src/organization-account-manager.ts (createOrganizationAccountManager: preview, confirm, refused(); handleOrganizationAccountManager: the origin check and body limit).
+- apps/gateway/src/profile-records-http.ts (formBody, sameOrigin, how a form post answers with a page or a redirect).
+- apps/gateway/src/index.ts (how the workspace and its pages are routed and served as HTML) and web-ui.ts (renderOrganization, workspaceDocument, renderError, the CSP with form-action 'self').
+- apps/gateway/src/context-navigation.ts (where the card's account-manager panel is read) and SHU-359's listing port.
+
+Outcomes: acceptance items 1 to 3.
+
+Guards:
+- One write path: the page calls the same preview and confirm as the JSON route (same token, same eligibility check, same audit row, same history event); it never writes a store directly, and on confirm trusts nothing from the preview page but the token and the change it binds.
+- The token travels only in hidden fields of the preview page, served no-store to the same session; it never goes in a URL, a redirect or a log.
+- Writes are POST only, from the exact origin (the same Origin and Sec-Fetch-Site check as the JSON route), with the session cookie only; no inline script, and the workspace CSP is unchanged.
+- The form is shown only to callers the write would accept; the confirm still decides, so a form shown to someone who lost their grant is refused at confirm.
+- A principal id appears in HTML only as an option or hidden-field value, never as visible text.
+- The account-manager write's decision, audit row, refusals, receipts and events are unchanged; no migration.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU360_FORM, SHU360_PREVIEW_CONFIRM, SHU360_REFUSALS, SHU360_SHOWN), in the test files of the card's paths; drive the flow through the gateway's real routes with the form bodies and headers a browser sends.
+
+Out of scope: other safe writes as pages, a generic form framework, JavaScript, searching staff, bulk assignment, CSS beyond existing classes, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU361_PATHS = Object.freeze([
+  "packages/organizations/src/organizations.ts",
+  "packages/organizations/src/types.ts",
+  "packages/organizations/src/adapter.ts",
+  "packages/organizations/test/organizations.test.ts",
+  "packages/organizations/test/organization-directory.test.ts",
+  "packages/organizations/test/mutations.mjs",
+  "packages/organizations/test/directory-mutations.mjs",
+  "apps/gateway/test/company-directory.test.ts",
+]);
+
+const SHU361_ACCEPTANCE = [
+  "(1) A directory page makes the same number of calls to the authorization store, the snapshot adapter and each record port (status, approved-to-hire, commercial terms, store counts, account managers, deletions) with 1, 20 and 60 covered top-level companies, with and without filters and on any page, proved with counting fakes that wrap every port (SHU361_DIRECTORY_FIXED);",
+  "(2) The company card's sub-company list and the admin counts make the same number of authorization-store, deletion and adapter calls with 1 and 30 sub-companies, while still showing and counting only the children the caller's current grants cover (SHU361_CHILDREN_FIXED);",
+  "(3) Results do not change: every existing directory, sub-company, counts, filter, page and authorization test passes with its assertions unchanged; a batch read that fails behaves exactly as at the bound head (the whole answer unavailable, never a partial list, except the account-manager read of an unfiltered directory, which SHU-357 lets degrade to managers shown as unavailable while a manager-filtered request stays fail-closed); a deleted or uncovered company or child never appears (SHU361_SAME_RESULTS);",
+  "(4) S1: this card writes no value; the rendered directory of a 60-company fixture lists every company across its pages, as before (SHU361_SHOWN); S2 is this card's outcome;",
+  "(5) Items 1 and 2 each have a mutant that brings back a per-company call and dies by assertion in its named test, in directory-mutations.mjs and mutations.mjs; every other existing mutant still binds once and is killed (a mutant whose source line this card rewrites may be re-pointed at the new line, keeping what it proves), and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU361_BRIEF = `Card SHU-361: the directory, sub-companies and counts cost a fixed number of reads at any size (the S2 standing line, applied to the read paths written before it; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes the directory (SHU-163), its batch reads (SHU-308, SHU-168, SHU-339, SHU-353), the counts (SHU-334) and, possibly, SHU-357 of this queue. ${QUEUE11_CONTEXT}
+
+Why. The eleventh queue made S2 a standing line, but the read paths written before it still cost one or more calls per company. OrganizationRepository.listOrganizations reads the import snapshot once per shown company (readSnapshot in the entry loop) and falls back to one status read per company when the status port has no batch read; listSubOrganizations and readCounts authorize each child one at a time (#authorize, which resolves the context and checks deletion per child), and listSubOrganizations reads each child's snapshot separately. With 60 companies a directory page makes well over a hundred calls. This card is outcome-only: how to batch (new batch methods on the ports, reusing listEffectiveContexts, or anything else) is yours to choose.
+
+Read first:
+- packages/organizations/src/organizations.ts: OrganizationRepository (#authorize, read, listSubOrganizations, readCounts, listOrganizations) and the record ports above it.
+- packages/organizations/src/types.ts (ApprovedOrganizationAdapter) and adapter.ts (the in-memory and unconfigured adapters).
+- packages/contracts/src/authz/context.ts (listEffectiveContexts and resolveActiveContext; read only).
+- packages/organizations/test/organization-directory.test.ts and organizations.test.ts for the existing counting fakes and the SHU-308 batch tests.
+
+Outcomes: acceptance items 1 and 2.
+
+Guards:
+- Authorization still comes first and decides coverage from current grants; the authorization rule and packages/contracts do not change; a refused caller still learns nothing, not even a count.
+- Batch, do not cache: nothing read is kept between requests.
+- A batch method you add to a port is required, not optional, and both adapters in adapter.ts implement it; the SHU-308 read-only status port keeps its tested fallback, and production wiring uses batch reads everywhere.
+- No SQL is prescribed and no migration is expected; if you find you need a store change outside the card's paths, say so in your final message rather than widening the card.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU361_DIRECTORY_FIXED, SHU361_CHILDREN_FIXED, SHU361_SAME_RESULTS, SHU361_SHOWN). A counting fake must fail if one call per company comes back; compare counts across sizes rather than pinning an exact number.
+
+Out of scope: the company card's own single-company read, the account-manager and status history reads, Postgres stores, the gateway's source files, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -3637,6 +3889,41 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU352_PATHS,
     acceptance: SHU352_ACCEPTANCE,
     brief: SHU352_BRIEF,
+  }),
+  "SHU-357": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU357_PATHS,
+    revision_paths: SHU357_PATHS,
+    acceptance: SHU357_ACCEPTANCE,
+    brief: SHU357_BRIEF,
+  }),
+  "SHU-358": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU358_PATHS,
+    revision_paths: SHU358_PATHS,
+    acceptance: SHU358_ACCEPTANCE,
+    brief: SHU358_BRIEF,
+  }),
+  "SHU-359": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU359_PATHS,
+    revision_paths: SHU359_PATHS,
+    acceptance: SHU359_ACCEPTANCE,
+    brief: SHU359_BRIEF,
+  }),
+  "SHU-360": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU360_PATHS,
+    revision_paths: SHU360_PATHS,
+    acceptance: SHU360_ACCEPTANCE,
+    brief: SHU360_BRIEF,
+  }),
+  "SHU-361": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU361_PATHS,
+    revision_paths: SHU361_PATHS,
+    acceptance: SHU361_ACCEPTANCE,
+    brief: SHU361_BRIEF,
   }),
 });
 
