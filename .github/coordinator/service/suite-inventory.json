@@ -4528,7 +4528,7 @@
     "SHU-71 M10: T4 a person's thread, or a person using a bot's name, is never put to the review lane",
     "SHU-71 M10: T5 a head that moves while the review lane judges resolves nothing",
     "SHU-71 M10: T6 a thread that changes while the review lane judges it resolves nothing",
-    "SHU-71 M10: T7 the committed config ships it off, and a malformed or doubled policy refuses",
+    "SHU-71 M10: T7 the committed config turns it on, off waits as before, and a malformed or doubled policy refuses",
     "SHU-71 M10: T8 the bots' words reach the reviewer only as quoted data, and the reply pages no one",
     "SHU-71 M10: T9 a head's threads are judged once, ever: a later landing at that head launches no second review",
     "SHU-71 M10: T10 a resolved thread that changes before the handoff stops the landing",
@@ -33208,7 +33208,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-71 M10: T7 the committed config ships it off, and a malformed or doubled policy refuses",
+      "name": "SHU-71 M10: T7 the committed config turns it on, off waits as before, and a malformed or doubled policy refuses",
       "capabilities": []
     },
     {
