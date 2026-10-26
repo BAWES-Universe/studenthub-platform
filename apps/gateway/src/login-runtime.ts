@@ -233,7 +233,7 @@ export function createRuntimeLoginFromEnv(
   const organizationCommercialTermsStore=new PostgresOrganizationCommercialTermsStore({connectionString:value("DATABASE_URL"),decision:organizationCommercialTermsDecision,stateDecision:organizationCommercialTermsStateDecision,recordRef:organizationCommercialTermsRecordRef,principalRef:organizationCommercialTermsPrincipalRef});
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
   const organizationAccountManagerStore=new PostgresOrganizationAccountManagerStore({connectionString:value("DATABASE_URL"),decision:organizationAccountManagerDecision,readDecision:organizationAccountManagerReadDecision,stateDecision:organizationAccountManagerStateDecision,recordRef:organizationAccountManagerRecordRef,principalRef:organizationAccountManagerPrincipalRef});
-  const organizationAccountManagerReads=new PostgresOrganizationAccountManagerReads({connectionString:value("DATABASE_URL")});
+  const organizationAccountManagerReads=new PostgresOrganizationAccountManagerReads({connectionString:value("DATABASE_URL"),decision:organizationAccountManagerReadDecision});
   const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef,noteType:organizationNoteTypeOf});
   const organizationBrandsStore=new PostgresOrganizationBrandsStore({connectionString:value("DATABASE_URL"),decision:organizationBrandDecision,linkOutcome:organizationBrandLinkOutcome,unlinkOutcome:organizationBrandUnlinkOutcome});
   const organizationStoresStore=new PostgresOrganizationStoresStore({connectionString:value("DATABASE_URL"),writeDecision:organizationStoreWriteDecision,readDecision:organizationStoreReadDecision});
@@ -281,7 +281,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: {
       ...application,
-      navigation: createContextNavigation(loginStore.sessions, authzStore, organizations, organizationDeletionStore),
+      navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations),
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }

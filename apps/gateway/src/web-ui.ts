@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
-import type { ContextNavigation, NavigationResult, OrganizationCountsPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
+import type { ContextNavigation, NavigationResult, OrganizationAccountManagerPanel, OrganizationCountsPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
 import type { BankDetailsService } from "./bank-details.js";
 import {
@@ -128,17 +128,19 @@ function organizationFieldText(name: OrganizationFieldName, field: OrganizationF
 }
 
 /** Read-only company card for the selected workspace; fields come from the role's closed projection. */
-function renderOrganization(organization: ActiveOrganization | undefined): string {
+function renderOrganization(organization: ActiveOrganization | undefined, accountManager?:OrganizationAccountManagerPanel): string {
   if (!organization || organization.kind === "not_applicable") return "";
   if (organization.kind === "unavailable") {
     return `<section class="notice org-notice" role="status"><strong>Company details couldn’t be loaded.</strong><p>Your workspace is still selected. Please try again in a moment.</p></section>`;
   }
+  accountManager??=(organization as ActiveOrganization&{accountManager?:OrganizationAccountManagerPanel}).accountManager;
   const view = organization.view;
   const fields = view.fields as unknown as Readonly<Record<OrganizationFieldName, OrganizationField<unknown>>>;
   const legalName = fields.legalName;
   const heading = legalName.state === "available" ? String(legalName.value) : view.registryName;
+  const managerRow=accountManager===undefined?"":`<div><dt>Account manager</dt><dd>${accountManager===null?"None":escapeHtml(accountManager.displayName??"Unnamed staff member")}</dd></div>`;
   const rows = ORGANIZATION_FIELDS_BY_AUDIENCE[view.audience].map((name) =>
-    `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${organizationFieldText(name, fields[name])}</dd></div>`).join("");
+    `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${organizationFieldText(name, fields[name])}</dd></div>`).join("")+managerRow;
   const source = view.snapshot.kind === "imported"
     ? `StudentHub company snapshot · ${escapeHtml(view.snapshot.observedAt.slice(0, 10))}`
     : "Company details haven’t been imported yet, so they show as unavailable.";
@@ -209,14 +211,14 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
       : "Your access may have changed. Choose one of your current workspaces to continue.";
     return workspaceDocument("Companies unavailable", `<header class="topbar">${brand}<a href="/workspace">Workspaces</a></header><main id="main" class="error-page"><h1>This company list isn’t available.</h1><p>${message}</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
   }
-  const { active, filters, directory } = result.body;
+  const { active, filters, directory, accountManagerSelection } = result.body;
   const context = { org_id: active.orgId, role: active.role };
   const query: Record<string, string> = { ...context,
     ...(filters.query ? { q: filters.query } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.approvedToHire === undefined ? {} : { approved: filters.approvedToHire ? "yes" : "no" }),
     ...(filters.currencyCode ? { currency: filters.currencyCode } : {}),
-    ...(filters.accountManager ? { manager: filters.accountManager } : {}) };
+    ...(accountManagerSelection ? { manager: accountManagerSelection } : {}) };
   const cell = (field: { readonly state: string; readonly value?: unknown }, format: (value: unknown) => string = String) =>
     field.state === "available" ? escapeHtml(format(field.value)) : '<span class="missing" data-state="unavailable">Unavailable</span>';
   const rows = directory.entries.map((entry) => {
@@ -224,7 +226,9 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
     const common = entry.commonNameEn.state === "available" && entry.commonNameEn.value !== name
       ? `<span class="field-meta">${escapeHtml(entry.commonNameEn.value)}</span>` : "";
     const href = `/workspace?${new URLSearchParams({ org_id: entry.orgId, role: active.role })}`;
-    return `<tr><th scope="row"><a href="${escapeHtml(href)}">${escapeHtml(name)}</a>${common}</th><td>${cell(entry.status, (value) => statusNames[String(value)] ?? String(value))}</td><td>${cell(entry.approvedToHire, (value) => value ? "Yes" : "No")}</td><td>${cell(entry.currencyCode)}</td><td>${entry.subOrganizationCount}</td><td>${entry.storeCount === null ? '<span class="missing" data-state="unavailable">Unavailable</span>' : entry.storeCount}</td></tr>`;
+    const manager=(entry as typeof entry&{accountManager?:{displayName:string|null}|null}).accountManager;
+    const managerName=manager===undefined?"Unavailable":manager===null?"None":manager.displayName??"Unnamed staff member";
+    return `<tr><th scope="row"><a href="${escapeHtml(href)}">${escapeHtml(name)}</a>${common}</th><td>${cell(entry.status, (value) => statusNames[String(value)] ?? String(value))}</td><td>${cell(entry.approvedToHire, (value) => value ? "Yes" : "No")}</td><td>${cell(entry.currencyCode)}</td><td>${entry.subOrganizationCount}</td><td>${entry.storeCount === null ? '<span class="missing" data-state="unavailable">Unavailable</span>' : entry.storeCount}</td><td>${escapeHtml(managerName)}</td></tr>`;
   }).join("");
   const first = directory.total === 0 ? 0 : (directory.page - 1) * directory.pageSize + 1;
   const last = (directory.page - 1) * directory.pageSize + directory.entries.length;
@@ -237,9 +241,9 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
   const option = (value: string, label: string, selected: string | undefined) =>
     `<option value="${value}"${selected === value ? " selected" : ""}>${label}</option>`;
   const approved = filters.approvedToHire === undefined ? undefined : filters.approvedToHire ? "yes" : "no";
-  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><label>Account manager<input name="manager" maxlength="128" value="${escapeHtml(filters.accountManager ?? "")}" placeholder="Any, or me"></label><button class="sign-out" type="submit">Search</button></form>`;
+  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><label>Account manager<input name="manager" maxlength="128" value="${escapeHtml(accountManagerSelection ?? "")}" placeholder="Any, or me"></label><button class="sign-out" type="submit">Search</button></form>`;
   const table = directory.entries.length
-    ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th><th scope="col">Stores</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th><th scope="col">Stores</th><th scope="col">Account manager</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-contexts" role="status">${directory.total === 0 ? "No companies match these filters." : "There are no more companies on this page."}</p>`;
   return workspaceDocument("Companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(String(new URLSearchParams(context)))}">Workspaces</a>${companiesLink(active, login, true)}${myCompaniesLink(login)}</nav><p class="sidebar-note">Read-only for now.<br>Changes still happen in the current StudentHub.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">${escapeHtml(active.organizationName)} · ${roleNames[active.role].toUpperCase()}</div><h1>Companies<span class="accent">.</span></h1><p>Top-level companies your role covers. Open one to see its details and sub-companies.</p></div><span class="badge">Read-only</span></div>${form}${table}${pager ? `<nav class="pager" aria-label="Pages">${pager}</nav>` : ""}<section class="next-note"><div class="eyebrow">ABOUT THIS LIST</div><h2>Unavailable means we don’t have an approved value.</h2><p>Filters only match approved values. A company whose status or currency hasn’t been imported never matches a status or currency filter.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }

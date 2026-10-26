@@ -24,6 +24,9 @@ export type SubOrganizationsPanel =
 export type OrganizationCountsPanel =
   | { readonly kind: "found"; readonly counts: OrganizationCounts }
   | { readonly kind: "unavailable" };
+export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null;
+export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>}
+export type OrganizationReaderWithAccountManagers=OrganizationReader&{readonly accountManagers?:OrganizationAccountManagerReader};
 
 export type NavigationResult =
   | { readonly status: 200; readonly body: {
@@ -32,6 +35,7 @@ export type NavigationResult =
     readonly organization?: ActiveOrganization;
     readonly counts?: OrganizationCountsPanel;
     readonly subOrganizations?: SubOrganizationsPanel;
+    readonly accountManager?: OrganizationAccountManagerPanel;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
 
@@ -43,7 +47,7 @@ export interface ContextNavigation {
 export function createContextNavigation(
   sessions: Pick<SessionStore, "get">,
   store: AuthzStore,
-  organizationReader?: OrganizationReader,
+  organizationReader?: OrganizationReaderWithAccountManagers,
   deletions?: OrganizationDeletionRecords,
 ): ContextNavigation {
   return {
@@ -120,7 +124,11 @@ export function createContextNavigation(
             ? { kind: "found", subOrganizations: children.subOrganizations }
             : children.kind === "unavailable" ? { kind: "unavailable" } : undefined;
         }
-        return { status: 200, body: { contexts, active, organization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}) } };
+        let accountManager:OrganizationAccountManagerPanel|undefined;
+        const accountManagers=organizationReader.accountManagers;
+        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const result=await accountManagers.manager(session.personId,active.orgId);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null}
+        const shownOrganization=accountManager!==undefined?{...organization,accountManager}:organization;
+        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}) } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }
