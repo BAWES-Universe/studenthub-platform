@@ -392,6 +392,24 @@ test("SHU353_SHOWN company card renders the written currency in its closed proje
   assert.match(body, /Currency<\/dt><dd>USD<\/dd>/);
 });
 
+test("SHU352_SHOWN maximum-length saved company names render on every company card audience", async () => {
+  const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:"person-1"});
+  const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});
+  const savedNameEn="N".repeat(255),savedNameAr="ن".repeat(255);
+  const profiles={async read(){return{name_en:savedNameEn,name_ar:savedNameAr}}};
+  const organizations=new OrganizationRepository({store,source:new InMemoryApprovedOrganizationAdapter(new Map([
+    ["org-a",SYNTHETIC_ORGANIZATION_FIXTURES.parentA],
+  ])),profiles});
+  for(const role of ["org-owner","staff","admin"] as const){
+    await store.grantMany("person-1",[{orgId:"org-a",role}]);
+    const navigation=createContextNavigation(rig.sessions,store,organizations);
+    const page=await navigation.open(SESSION,new URLSearchParams({org_id:"org-a",role}));
+    const html=renderWorkspace(page,{...rig.app,navigation});
+    assert.match(html,new RegExp(`Common name<\\/dt><dd>${savedNameEn}<\\/dd>`));
+    assert.match(html,new RegExp(`Common name \\(Arabic\\)<\\/dt><dd>${savedNameAr}<\\/dd>`));
+  }
+});
+
 test("SHU355_SHOWN_GRANT company card hides a revoked manager and restores the retained assignment",async()=>{
   const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:"person-1"});
   const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]},{id:"person-2",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});

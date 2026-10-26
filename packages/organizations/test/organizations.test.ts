@@ -140,6 +140,16 @@ test("SHU342_PROFILE_INVALID isolates malformed stored fields and port failures"
   await unused.readCounts({principalId:"admin",orgId:"org-a",role:"admin"}); assert.equal(calls,0);
 });
 
+test("SHU352_SHOWN a maximum-length saved company name is shown on the company card", async () => {
+  const savedNameEn = "N".repeat(255), savedNameAr = "ن".repeat(255);
+  const {repository}=await setup({profiles:{async read(){return{name_en:savedNameEn,name_ar:savedNameAr}}}});
+  for (const [principalId, role] of [["owner-a", "org-owner"], ["staff", "staff"], ["admin", "admin"]] as const) {
+    const view=found(await repository.read({principalId,orgId:"org-a",role}));
+    assert.equal(value(view,"commonNameEn"),savedNameEn);
+    assert.equal(value(view,"commonNameAr"),savedNameAr);
+  }
+});
+
 test("SHU-159/parity-contract two organizations, conflicting status fields, self and subtree grants", async () => {
   const { repository } = await setup();
   // One documented status rule: the stored company_status column (10 for A1) is never read.
