@@ -93,7 +93,7 @@ export const RESIDENT_DROP_IN = "90-shu71.conf";
 export const runDropIn = () => "[Service]\nEnvironment=ENABLE_DISPATCH=true\n";
 export const targetDropIn = (sha) => `[Service]\nEnvironment=DISPATCH_TARGET_SHA=${sha}\n`;
 export const CARD_RUN_LIMITS = Object.freeze({
-  runMs: 6 * 60 * 60 * 1000,
+  runMs: 5 * 60 * 60 * 1000,
   tickIntervalMs: 60 * 1000,
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
@@ -101,8 +101,9 @@ export const CARD_RUN_LIMITS = Object.freeze({
   reportTimeoutMs: 30 * 1000,
   // SHU-306: landing a passed card. The wait for its checks is bounded so the
   // whole run (window, worker grace, landing, reports) stays inside the unit's
-  // TimeoutStartSec.
-  landWaitMs: 30 * 60 * 1000,
+  // TimeoutStartSec. CI on a card pull request takes about 55 minutes
+  // (SHU-353, SHU-354), so the wait allows 75.
+  landWaitMs: 75 * 60 * 1000,
   landPollMs: 60 * 1000,
   landRequestTimeoutMs: 30 * 1000,
   // SHU-321: each GitHub read of the queue config review's discovery.
