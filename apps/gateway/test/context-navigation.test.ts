@@ -358,6 +358,40 @@ test("SHU-159/AC-09 CARD the selected workspace shows only the active role's com
   assert.equal(Object.hasOwn(none, "organization"), false);
 });
 
+test("SHU353_SHOWN company card renders the written currency in its closed projection", async (t) => {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.sessions.put({ id: SESSION, personId: "person-1" });
+  const store = new InMemoryAuthzStore({
+    principals: [{ id: "person-1", pbuuids: [] }],
+    organizations: [{ id: "org-a", name: "Organization A" }],
+  });
+  await store.grantMany("person-1", [{ orgId: "org-a", role: "org-owner" }]);
+  const commercialTerms = { async read() { return {
+    hourlyRate: { kind: "absent" as const }, bonusCommission: { kind: "absent" as const },
+    currencyCode: { kind: "value" as const, value: "USD" },
+  }; } };
+  const organizations = new OrganizationRepository({
+    store,
+    source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
+      ["org-a", SYNTHETIC_ORGANIZATION_FIXTURES.parentA],
+    ])),
+    commercialTerms,
+  });
+  const login: BrowserLoginApplication = { ...rig.app, navigation: createContextNavigation(rig.sessions, store, organizations) };
+  const server = createGatewayServer(undefined, undefined, undefined, login);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/workspace?org_id=org-a&role=org-owner`, {
+    headers: { ...headers, accept: "text/html" },
+  });
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(body, /Currency<\/dt><dd>USD<\/dd>/);
+});
+
 async function shu332Rig(options: {
   scope?: "self" | "subtree";
   deletions?: OrganizationDeletionRecords;
