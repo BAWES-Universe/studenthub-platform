@@ -1581,7 +1581,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0147_person_language_safe_write",
           "0148_candidate_profile_records",
           "0150_organization_profile",
-          "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write", "0197_catalogue_bank_payment_details", "0198_organization_notes_refuse_delete", "0199_organization_note_types", "0200_organization_brands", "0201_organization_deletion", "0202_organization_stores", "0203_organization_creation", "0204_organization_account_managers", "0205_organization_currency", "0206_catalogue_currency_details", "0207_organization_account_managers_principal_index",
+          "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write", "0197_catalogue_bank_payment_details", "0198_organization_notes_refuse_delete", "0199_organization_note_types", "0200_organization_brands", "0201_organization_deletion", "0202_organization_stores", "0203_organization_creation", "0204_organization_account_managers", "0205_organization_currency", "0206_catalogue_currency_details", "0207_organization_account_managers_principal_index", "0208_organization_account_manager_events",
         ],
         "each migration is recorded exactly once",
       );
@@ -1634,7 +1634,7 @@ test(
             "0147_person_language_safe_write",
             "0148_candidate_profile_records",
             "0150_organization_profile",
-            "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write", "0197_catalogue_bank_payment_details", "0198_organization_notes_refuse_delete", "0199_organization_note_types", "0200_organization_brands", "0201_organization_deletion", "0202_organization_stores", "0203_organization_creation", "0204_organization_account_managers", "0205_organization_currency", "0206_catalogue_currency_details", "0207_organization_account_managers_principal_index",
+            "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write", "0197_catalogue_bank_payment_details", "0198_organization_notes_refuse_delete", "0199_organization_note_types", "0200_organization_brands", "0201_organization_deletion", "0202_organization_stores", "0203_organization_creation", "0204_organization_account_managers", "0205_organization_currency", "0206_catalogue_currency_details", "0207_organization_account_managers_principal_index", "0208_organization_account_manager_events",
           ],
         );
       } finally {
