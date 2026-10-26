@@ -1363,7 +1363,7 @@ const CASES = [
   {
     name: "M201 count a card landed by hand as unattended too",
     file: "service/card-velocity.mjs",
-    from: "  for (const id of hand.keys()) { unattended.delete(id); cycles.delete(id); }",
+    from: "  for (const id of hand.keys()) unattended.delete(id);",
     to: "  // SHU86-M201",
     pattern: "Velocity V",
   },
@@ -1396,9 +1396,23 @@ const CASES = [
   {
     name: "M206 time an older merged claim by its claim instead of its run's end",
     file: "service/card-velocity.mjs",
-    from: "      const at = time(record.landed_at) ?? time(record.finished_at);",
-    to: "      const at = time(record.landed_at) ?? time(record.claimed_at); // SHU86-M206",
+    from: "      const at = landed ?? time(record.finished_at);",
+    to: "      const at = landed ?? time(record.claimed_at); // SHU86-M206",
     pattern: "Velocity V2",
+  },
+  {
+    name: "M207 follow a symbolic link named like a state record",
+    file: "service/card-velocity.mjs",
+    from: "      if (!stat.isFile() || stat.isSymbolicLink()) continue;",
+    to: "      // SHU86-M207",
+    pattern: "Velocity V4",
+  },
+  {
+    name: "M208 keep whichever cycle was read last, not the newest landing's",
+    file: "service/card-velocity.mjs",
+    from: "    if (better) unattended.set(id, { at, cycle });",
+    to: "    unattended.set(id, { at: Math.max(at, seen?.at ?? at), cycle: cycle ?? seen?.cycle ?? null }); // SHU86-M208",
+    pattern: "Velocity V4",
   },
 ];
 

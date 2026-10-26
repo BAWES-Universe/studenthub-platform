@@ -1869,6 +1869,7 @@ test("Velocity V2: the box's own records give unattended and hand landings, by w
   ]);
   const io = { now: () => now, fs: {
     readdirSync: (d) => { assert.equal(d, dir); return [...files.keys()]; },
+    lstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false }),
     readFileSync: (file) => { const v = files.get(path.basename(file)); if (v === null) return "{not json"; return JSON.stringify(v); } } };
   const v = readVelocity(io, dir);
   assert.deepEqual(v.day, { unattended: 3, hand: 2 },
@@ -1893,6 +1894,49 @@ test("Velocity V3: a report renders the velocity line only when the run carries 
   const velocity = { day: { unattended: 1, hand: 0 }, week: { unattended: 1, hand: 0 }, median_cycle_ms: null, cycles: 0 };
   assert.match(renderRunReport({ ...base, velocity }), /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\.$/m);
   assert.throws(() => readVelocity({ now: () => new Date(), fs: { readdirSync: () => { throw new Error("EACCES"); } } }, "/x"));
+});
+
+// Codex BLOCK at a557bf8: a matching name that is a symbolic link, or not a
+// regular file, is never read; and a card landed twice counts by its newest
+// landing with that landing's own cycle, whatever order readdir lists them in.
+test("Velocity V4: links and non-files are skipped, and a card landed twice counts by its newest landing and that landing's cycle", () => {
+  const now = new Date("2026-10-25T22:00:00.000Z");
+  const ago = (hours) => new Date(now.getTime() - hours * 3600 * 1000).toISOString();
+  const dir = "/srv/shu/state";
+  const [revA, revB] = ["a".repeat(40), "b".repeat(40)];
+  const ioFor = (entries) => {
+    const files = new Map(entries.map(([name, record, kind = "file"]) => [name, { record, kind }]));
+    const read = [];
+    return { read, io: { now: () => now, fs: {
+      readdirSync: () => [...files.keys()],
+      lstatSync: (file) => { const { kind } = files.get(path.basename(file)); return { isFile: () => kind === "file", isSymbolicLink: () => kind === "link" }; },
+      readFileSync: (file) => { read.push(path.basename(file)); return JSON.stringify(files.get(path.basename(file)).record); } } } };
+  };
+  const linked = ioFor([
+    [`card-run-auto-${revA}-SHU-1.json`, { card: "SHU-1", land: "MERGED", claimed_at: ago(2), landed_at: ago(1) }, "link"],
+    [`card-hand-landed-SHU-2.json`, { card: "SHU-2", recorded_at: ago(1) }, "link"],
+    [`card-repair-${revA}-SHU-3.json`, { card: "SHU-3", land: "MERGED", finished_at: ago(1) }, "dir"],
+    [`card-run-auto-${revA}-SHU-4.json`, { card: "SHU-4", land: "MERGED", claimed_at: ago(2), landed_at: ago(1) }],
+  ]);
+  const v = readVelocity(linked.io, dir);
+  assert.deepEqual(v.day, { unattended: 1, hand: 0 }, "only the regular file SHU-4 counts");
+  assert.deepEqual(linked.read, [`card-run-auto-${revA}-SHU-4.json`], "a link or a directory is never opened");
+  const month = [`card-run-auto-${revA}-SHU-5.json`, { card: "SHU-5", land: "MERGED", claimed_at: ago(24 * 40), landed_at: ago(24 * 30) }];
+  const yesterday = [`card-run-auto-${revB}-SHU-5.json`, { card: "SHU-5", land: "MERGED", claimed_at: ago(20), landed_at: ago(19) }];
+  for (const order of [[month, yesterday], [yesterday, month]]) {
+    const twice = readVelocity(ioFor(order).io, dir);
+    assert.deepEqual(twice.week, { unattended: 1, hand: 0 }, "the card counts once, by its newest landing");
+    assert.equal(twice.cycles, 1);
+    assert.equal(twice.median_cycle_ms, 3600 * 1000, "the newest landing's own one-hour cycle, never the ten-day one from a month ago");
+  }
+  // A newer landing with no cycle wins over an older one with a cycle, and gives none.
+  const older = [`card-run-auto-${revA}-SHU-6.json`, { card: "SHU-6", land: "MERGED", claimed_at: ago(4), landed_at: ago(3) }];
+  const newer = [`card-run-auto-${revB}-SHU-6.json`, { card: "SHU-6", land: "MERGED", claimed_at: ago(2), finished_at: ago(1) }];
+  for (const order of [[older, newer], [newer, older]]) {
+    const mixed = readVelocity(ioFor(order).io, dir);
+    assert.deepEqual(mixed.day, { unattended: 1, hand: 0 });
+    assert.equal(mixed.median_cycle_ms, null, "the newest landing gives no cycle, so none is taken from the older one");
+  }
 });
 
 test("SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head", async () => {

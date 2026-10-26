@@ -2173,6 +2173,7 @@
     "Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended, and an operator run does not",
     "Velocity V2: the box's own records give unattended and hand landings, by window, with each card counted once",
     "Velocity V3: a report renders the velocity line only when the run carries one, and an unreadable state directory throws for the run to catch",
+    "Velocity V4: links and non-files are skipped, and a card landed twice counts by its newest landing and that landing's cycle",
     "SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head",
     "SHU-86 0a: a timer run stopped on red checks records the pull request at its reviewed head",
     "SHU-86 0b: the observe-only watch records first dispatch, last progress and the longest stretch without progress, and changes nothing else",
@@ -4606,7 +4607,9 @@
     "SHU-86 mutation M203 never write down when a merged landing happened",
     "SHU-86 mutation M204 drop the velocity line from the report",
     "SHU-86 mutation M205 count an operator run as landed unattended",
-    "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end"
+    "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end",
+    "SHU-86 mutation M207 follow a symbolic link named like a state record",
+    "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's"
   ],
   "requirements": [
     {
@@ -18665,6 +18668,10 @@
     },
     {
       "name": "Velocity V3: a report renders the velocity line only when the run carries one, and an unreadable state directory throws for the run to catch",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity V4: links and non-files are skipped, and a card landed twice counts by its newest landing and that landing's cycle",
       "capabilities": []
     },
     {
@@ -33518,6 +33525,14 @@
     },
     {
       "name": "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M207 follow a symbolic link named like a state record",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
       "capabilities": []
     }
   ],
