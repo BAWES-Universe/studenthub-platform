@@ -68,6 +68,7 @@ import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
+import { readVelocity } from "./card-velocity.mjs";
 import { landingRepairOn, repairCandidate, repairRecordPath, repairAlertPath, repairActivationId, readRound, claimRound, advanceRound,
   repairSkip, readRepairPull, priorPass, readRepairEvidence, REPAIR_LIMITS } from "./card-repair.mjs";
 
@@ -550,7 +551,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 // repair of that claim's pull request; `repairRound` receives its round record
 // as soon as it is written, so the caller can finish it whatever happens.
 export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator", cardId = null,
-  repair = null, repairRound = null }) {
+  repair = null, repairRound = null, claimedAt = null }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -644,15 +645,24 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       status.write({ step: "landing", ...progress(), outcome: result.outcome });
       land = await landRun({ io, paths, limits, plan, config, credentials });
     }
+    // Velocity: the merge time, taken as the landing returns, before the report.
+    const landedAt = land?.outcome === "MERGED" ? io.now().toISOString() : null;
     // Self-watch 0a: when the run armed, ticked and finished, so real run
     // lengths can be read back from the claims.
     const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
-      finished_at: finishedAt };
+      finished_at: finishedAt, landed_at: landedAt };
     summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
       timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}),
       ...(plan.repair ? { repair: plan.repair } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
       owner_mention: ownerMention(config.owner_mention) };
     summary.needs_owner = needsOwner(summary);
+    // Velocity: what the box has landed lately, this run included when the
+    // timer started it (an operator run is a person's, and leaves no claim to
+    // count later). Best effort: a state directory that cannot be read leaves it out.
+    try {
+      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" && trigger === "timer"
+        ? { card: plan.id, landed: land?.outcome === "MERGED", claimed_at: claimedAt } : null });
+    } catch { /* the report goes out without it */ }
     status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
       reverted: reverted.reverted === true, needs_owner: summary.needs_owner });
     summary.status_write_failures = status.failures();
@@ -768,7 +778,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   }
   let result;
   try {
-    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id });
+    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       io.fs.unlinkSync(claim);
@@ -795,6 +805,8 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       outcome: result.outcome, ok: result.ok, land: result.land?.outcome ?? null,
       armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
       last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
+      // Velocity: when a merged landing was written down, for claim-to-merge times.
+      landed_at: result.timing?.landed_at ?? null,
       repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
       reverted: result.revert?.reverted ?? null,
       // Self-watch 0b: what the observe-only watch saw; null when it was off.
@@ -872,7 +884,10 @@ async function repairInterrupted({ io, paths, limits, config, revision, next, sk
 // is open, not a draft, on main, a branch of the pilot repository, labelled,
 // touches only queue config paths, only adds to the card contracts, and every
 // commit carries a Claude-Session: trailer. Anything else is not a candidate:
-// no claim and no report.
+// no claim and no report. Under the policy's code_label the same review covers
+// a Claude-written change to the coordinator's own code: any path under
+// .github/coordinator, with the same contracts and trailer rules. It still
+// reviews only; Card B never installs coordinator code.
 export const QUEUE_CONFIG_REVIEWER = "codex-verifier";
 export const QUEUE_CONFIG_AUTHOR_FAMILY = "claude";
 export const QUEUE_CONFIG_PATHS = Object.freeze([
@@ -897,25 +912,32 @@ export function queueConfigPath(file) {
   return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");
 }
 
-// What the open-pull-request list itself says: a labelled branch of the pilot
-// repository, open and ready, against main.
-function listedCandidate(pull, repo, label) {
+// Any file of the coordinator's own tree.
+export function coordinatorCodePath(file) {
+  if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
+  return !file.split("/").some((part) => !part || part === "." || part === "..");
+}
+
+// What the open-pull-request list itself says: a branch of the pilot
+// repository, open and ready, against main, with one of the given labels.
+const hasLabel = (pull, label) => label !== null && Array.isArray(pull.labels) && pull.labels.some((entry) => entry?.name === label);
+function listedCandidate(pull, repo, labels) {
   return Number.isInteger(pull?.number) && pull.number > 0 && pull.state === "open" && pull.base?.ref === "main"
     && pull.base?.repo?.full_name === repo && pull.draft === false && pull.head?.repo?.full_name === repo && SHA_RE.test(pull.head?.sha ?? "")
-    && Array.isArray(pull.labels) && pull.labels.some((entry) => entry?.name === label);
+    && labels.some((label) => hasLabel(pull, label));
 }
 
 // The pull request's files and commits, judged whole. A renamed file counts
 // under both names, so nothing leaves the allowlist by a rename, and the
 // contracts may only gain lines: a deleted line could loosen a pinned card.
-export function queueConfigChange(files, head, commits) {
+export function queueConfigChange(files, head, commits, allowed = queueConfigPath) {
   if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
   if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
   if (commits.at(-1)?.sha !== head) return { ok: false, reason: "its head moved while it was read" };
   const blobs = {};
   for (const file of files) {
     const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
-    if (!names.every(queueConfigPath)) return { ok: false, reason: `${String(file?.filename)} is not a queue config path` };
+    if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : "coordinator"} path` };
     if (names.includes(CONTRACTS_PATH) && (file.status !== "modified" || file.deletions !== 0)) {
       return { ok: false, reason: `${CONTRACTS_PATH} may only gain lines` };
     }
@@ -984,7 +1006,8 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   const open = await get(`${api}/pulls?state=open&base=main&per_page=${GITHUB_PAGE}`);
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
-  const listed = open.filter((pull) => listedCandidate(pull, repo, policy.label)).sort((a, b) => a.number - b.number);
+  const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : [])];
+  const listed = open.filter((pull) => listedCandidate(pull, repo, labels)).sort((a, b) => a.number - b.number);
   for (const pull of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
@@ -996,7 +1019,8 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
     }
     const files = await get(`${api}/pulls/${pr}/files?per_page=${GITHUB_PAGE}`);
     const commits = await get(`${api}/pulls/${pr}/commits?per_page=${GITHUB_PAGE}`);
-    const change = queueConfigChange(files, head, commits);
+    let change = hasLabel(pull, policy.label) ? queueConfigChange(files, head, commits) : { ok: false };
+    if (!change.ok && hasLabel(pull, policy.codeLabel)) change = queueConfigChange(files, head, commits, coordinatorCodePath);
     if (!change.ok) continue;
     // The approved base is the merge base with main, as the coordinator's
     // own check of a review-only pull request reads it.

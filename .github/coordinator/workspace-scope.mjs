@@ -145,25 +145,34 @@ export function resolveReviewOnlyLane(config = {}, issueId) {
 // marks a queue config pull request, and how many heads of one pull request it
 // reviews per installed revision. Absent is null; present but malformed is a
 // refusal, never a guess, so a typo cannot widen what the timer arms.
+// code_label, when present, is a second label: a Claude-written change to the
+// coordinator's own code under it gets the same review-only verdict, so a
+// person no longer relays it to Codex (Khalid, 2026-10-25).
 export const QUEUE_CONFIG_REVIEW_KEYS = Object.freeze(["label", "lane", "max_heads_per_pr"]);
+export const QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS = Object.freeze(["code_label"]);
 export const MAX_QUEUE_CONFIG_REVIEW_HEADS = 10;
+const LABEL_RE = /^[a-z0-9][a-z0-9:._-]{0,49}$/;
 export function resolveQueueConfigReview(config = {}) {
   const policy = config?.queue_config_review;
   if (policy === undefined) return null;
   if (!policy || typeof policy !== "object" || Array.isArray(policy)
-      || JSON.stringify(Object.keys(policy).sort()) !== JSON.stringify(QUEUE_CONFIG_REVIEW_KEYS)) {
-    throw new Error(`queue_config_review must name exactly ${QUEUE_CONFIG_REVIEW_KEYS.join(", ")}`);
+      || JSON.stringify(Object.keys(policy).filter((key) => !QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS.includes(key)).sort())
+        !== JSON.stringify(QUEUE_CONFIG_REVIEW_KEYS)) {
+    throw new Error(`queue_config_review must name exactly ${QUEUE_CONFIG_REVIEW_KEYS.join(", ")}, and may name ${QUEUE_CONFIG_REVIEW_OPTIONAL_KEYS.join(", ")}`);
   }
   if (typeof policy.lane !== "string" || !resolveReviewOnlyLane(config, policy.lane)) {
     throw new Error("queue_config_review.lane must be a committed review-only lane");
   }
-  if (typeof policy.label !== "string" || !/^[a-z0-9][a-z0-9:._-]{0,49}$/.test(policy.label)) {
+  if (typeof policy.label !== "string" || !LABEL_RE.test(policy.label)) {
     throw new Error("queue_config_review.label must be one plain GitHub label");
+  }
+  if (Object.hasOwn(policy, "code_label") && (typeof policy.code_label !== "string" || !LABEL_RE.test(policy.code_label) || policy.code_label === policy.label)) {
+    throw new Error("queue_config_review.code_label must be one plain GitHub label other than label");
   }
   if (!Number.isInteger(policy.max_heads_per_pr) || policy.max_heads_per_pr < 1 || policy.max_heads_per_pr > MAX_QUEUE_CONFIG_REVIEW_HEADS) {
     throw new Error(`queue_config_review.max_heads_per_pr must be 1 to ${MAX_QUEUE_CONFIG_REVIEW_HEADS}`);
   }
-  return Object.freeze({ lane: policy.lane, label: policy.label, maxHeadsPerPr: policy.max_heads_per_pr });
+  return Object.freeze({ lane: policy.lane, label: policy.label, codeLabel: policy.code_label ?? null, maxHeadsPerPr: policy.max_heads_per_pr });
 }
 
 // Repo-mode paths never reach what the host's dependency install owns.

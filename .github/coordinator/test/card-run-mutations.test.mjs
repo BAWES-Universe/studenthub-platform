@@ -779,8 +779,8 @@ const CASES = [
   },
   {
     name: "M116 select the card again inside the run",
-    from: '    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id });',
-    to: '    result = await runCard({ io, paths, limits, trigger: "timer" }); // SHU312-M116',
+    from: '    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt });',
+    to: '    result = await runCard({ io, paths, limits, trigger: "timer", claimedAt }); // SHU312-M116',
     pattern: "SHU-312 Q5:",
   },
   {
@@ -1359,6 +1359,60 @@ const CASES = [
     from: "        if (error instanceof TypeError) {",
     to: "        if (false) { // SHU86-M200",
     pattern: "SHU-86 C47:",
+  },
+  {
+    name: "M201 count a card landed by hand as unattended too",
+    file: "service/card-velocity.mjs",
+    from: "  for (const id of hand.keys()) unattended.delete(id);",
+    to: "  // SHU86-M201",
+    pattern: "Velocity V",
+  },
+  {
+    name: "M202 leave the run being reported out of its own velocity",
+    file: "service/card-velocity.mjs",
+    from: '  if (current?.landed === true && /^SHU-[1-9]\\d*$/.test(current.card ?? "")) {',
+    to: "  if (false) { // SHU86-M202",
+    pattern: "Velocity V",
+  },
+  {
+    name: "M203 never write down when a merged landing happened",
+    from: '    const landedAt = land?.outcome === "MERGED" ? io.now().toISOString() : null;',
+    to: "    const landedAt = null; // SHU86-M203",
+    pattern: "Velocity V",
+  },
+  {
+    name: "M204 drop the velocity line from the report",
+    file: "service/card-prepare.mjs",
+    from: "  if (result.velocity) lines.push(velocityLine(result.velocity));",
+    to: "  // SHU86-M204",
+    pattern: "Velocity V",
+  },
+  {
+    name: "M205 count an operator run as landed unattended",
+    from: '      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" && trigger === "timer"',
+    to: '      summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" // SHU86-M205',
+    pattern: "Velocity V1",
+  },
+  {
+    name: "M206 time an older merged claim by its claim instead of its run's end",
+    file: "service/card-velocity.mjs",
+    from: "      const at = landed ?? time(record.finished_at);",
+    to: "      const at = landed ?? time(record.claimed_at); // SHU86-M206",
+    pattern: "Velocity V2",
+  },
+  {
+    name: "M207 follow a symbolic link named like a state record",
+    file: "service/card-velocity.mjs",
+    from: "      if (!stat.isFile() || stat.isSymbolicLink()) continue;",
+    to: "      // SHU86-M207",
+    pattern: "Velocity V4",
+  },
+  {
+    name: "M208 keep whichever cycle was read last, not the newest landing's",
+    file: "service/card-velocity.mjs",
+    from: "    if (better) unattended.set(id, { at, cycle });",
+    to: "    unattended.set(id, { at: Math.max(at, seen?.at ?? at), cycle: cycle ?? seen?.cycle ?? null }); // SHU86-M208",
+    pattern: "Velocity V4",
   },
 ];
 

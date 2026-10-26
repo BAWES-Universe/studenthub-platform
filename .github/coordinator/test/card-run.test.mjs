@@ -12,7 +12,7 @@ import {
   planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
-  reviewClaim, queueConfigPath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
+  reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
   readCoordinatorCredentials, COORDINATOR_ENV } from "../service/card-prepare.mjs";
@@ -35,6 +35,7 @@ import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceTex
 import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
 import { judgeChecks } from "../service/card-land.mjs";
 import { judgingLane, threadReviewer, REVIEW_LIMITS } from "../service/card-threads.mjs";
+import { readVelocity, velocityLine } from "../service/card-velocity.mjs";
 import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1794,7 +1795,7 @@ test("SHU-86 0a: a timer run's final claim keeps claimed_at and records its timi
   assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
   const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
   assert.deepEqual(Object.keys(claim), ["card", "revision", "claimed_at", "activation_id", "outcome", "ok", "land", "armed_at", "first_tick_at",
-    "last_tick_at", "finished_at", "repo", "pr", "reviewed_head", "reverted", "first_dispatch_at", "last_progress_at", "max_progress_gap_ms", "would_stall"]);
+    "last_tick_at", "finished_at", "landed_at", "repo", "pr", "reviewed_head", "reverted", "first_dispatch_at", "last_progress_at", "max_progress_gap_ms", "would_stall"]);
   assert.equal(typeof claim.max_progress_gap_ms, "number", "SHU-86 0b: the committed config watches every run");
   assert.equal(claim.would_stall, null, "SHU-86 0b: no limit is configured, so nothing would have stopped it");
   assert.equal(claim.outcome, "PASS");
@@ -1823,6 +1824,119 @@ test("SHU-86 0a: a claim for a run refused before arming keeps claimed_at and re
   assert.equal(claim.reviewed_head, null);
   assert.equal(claim.reverted, null);
   assert.equal(claim.finished_at, null, "SHU-86 0a: a run that never armed never finished");
+  assert.equal(claim.landed_at, null, "Velocity: a run that never landed records no landing time");
+});
+
+test("Velocity V1: a merged timer run records landed_at and its report counts it as landed unattended, and an operator run does not", async () => {
+  const host = landingHost();
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land?.outcome, "MERGED", JSON.stringify(result.land));
+  const claim = JSON.parse(host.files.get(autoClaim(LAND_PATHS, REV, "SHU-301")).text);
+  assert.match(claim.landed_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.ok(claim.finished_at <= claim.landed_at, "the landing is written down after the run finished");
+  assert.equal(claim.landed_at, result.timing.landed_at, "the claim keeps the time the landing returned, not the time the report went out");
+  assert.deepEqual(result.velocity.day, { unattended: 1, hand: 0 }, "this run counts before its final claim is written");
+  assert.equal(result.velocity.cycles, 1);
+  assert.match(host.reports[0], /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\. Median \d+ min from claim to merge \(1 card\)\.$/m);
+  const lines = host.reports[0].split("\n");
+  assert.equal(lines.at(-1), "The host is reverted and idle.", "the velocity line comes before the host line");
+  const operator = landingHost();
+  const byHand = await runCard({ io: operator.io, paths: LAND_PATHS });
+  assert.equal(byHand.land?.outcome, "MERGED", JSON.stringify(byHand.land));
+  assert.deepEqual(byHand.velocity.day, { unattended: 0, hand: 0 }, "a run a person started never counts as unattended");
+});
+
+test("Velocity V2: the box's own records give unattended and hand landings, by window, with each card counted once", () => {
+  const now = new Date("2026-10-25T22:00:00.000Z");
+  const ago = (hours) => new Date(now.getTime() - hours * 3600 * 1000).toISOString();
+  const dir = "/srv/shu/state";
+  const rev = "a".repeat(40);
+  const files = new Map([
+    [`card-run-auto-${rev}-SHU-1.json`, { card: "SHU-1", land: "MERGED", claimed_at: ago(2), landed_at: ago(1.5) }],
+    [`card-run-auto-${rev}-SHU-2.json`, { card: "SHU-2", land: "MERGED", claimed_at: ago(30), landed_at: ago(29) }],
+    [`card-run-auto-${rev}-SHU-3.json`, { card: "SHU-3", land: "CI_TIMEOUT", claimed_at: ago(3) }],
+    [`card-hand-landed-SHU-3.json`, { card: "SHU-3", recorded_at: ago(2) }],
+    [`card-run-auto-${rev}-SHU-4.json`, { card: "SHU-4", land: "MERGED", claimed_at: ago(5), finished_at: ago(4.5) }],
+    [`card-run-auto-${rev}-SHU-11.json`, { card: "SHU-11", land: "MERGED", claimed_at: ago(25), finished_at: ago(23.5) }],
+    [`card-run-auto-${rev}-SHU-12.json`, { card: "SHU-12", land: "MERGED", claimed_at: ago(3) }],
+    [`card-hand-landed-SHU-4.json`, { card: "SHU-4", recorded_at: ago(4) }],
+    [`card-repair-${rev}-SHU-5.json`, { card: "SHU-5", state: "finished", land: "MERGED", finished_at: ago(6) }],
+    [`card-repair-${rev}-SHU-5.alerted.json`, { card: "SHU-5" }],
+    [`card-run-auto-${rev}-SHU-6.json`, { card: "SHU-6", land: "MERGED", claimed_at: ago(200), landed_at: ago(199) }],
+    [`card-run-auto-${rev}-SHU-7.json`, { card: "SHU-8", land: "MERGED", claimed_at: ago(1), landed_at: ago(1) }],
+    [`card-run-auto-${rev}-SHU-9.json`, null],
+    [`card-review-auto-pr9-${rev}.json`, { land: "MERGED", claimed_at: ago(1) }],
+  ]);
+  const io = { now: () => now, fs: {
+    readdirSync: (d) => { assert.equal(d, dir); return [...files.keys()]; },
+    lstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false }),
+    readFileSync: (file) => { const v = files.get(path.basename(file)); if (v === null) return "{not json"; return JSON.stringify(v); } } };
+  const v = readVelocity(io, dir);
+  assert.deepEqual(v.day, { unattended: 3, hand: 2 },
+    "SHU-1, the SHU-5 repair and SHU-11 (an older claim timed by its run's end, not its claim) unattended; SHU-3 and SHU-4 by hand");
+  assert.deepEqual(v.week, { unattended: 4, hand: 2 },
+    "SHU-2 is a day old; SHU-6 is past the week; a claim with no landing or finish time, a misnamed or an unreadable file is skipped");
+  assert.equal(v.cycles, 2, "only claims with a landing time give a cycle; an older claim or a hand landing gives none");
+  assert.equal(v.median_cycle_ms, 45 * 60 * 1000, "the median of 30 and 60 minutes");
+  const withCurrent = readVelocity(io, dir, { current: { card: "SHU-10", landed: true, claimed_at: ago(0.5) } });
+  assert.deepEqual(withCurrent.day, { unattended: 4, hand: 2 });
+  assert.equal(withCurrent.median_cycle_ms, 30 * 60 * 1000);
+  assert.deepEqual(readVelocity(io, dir, { current: { card: "SHU-10", landed: false, claimed_at: ago(0.5) } }).day, v.day,
+    "a run that did not land is not counted");
+  assert.equal(velocityLine(v), "Velocity: 3 card(s) landed unattended and 2 by hand in the last 24 hours; 4 and 2 in the last 7 days, 67% unattended. Median 45 min from claim to merge (2 cards).");
+  assert.equal(velocityLine({ day: { unattended: 0, hand: 0 }, week: { unattended: 0, hand: 0 }, median_cycle_ms: null, cycles: 0 }),
+    "Velocity: 0 card(s) landed unattended and 0 by hand in the last 24 hours; 0 and 0 in the last 7 days.");
+});
+
+test("Velocity V3: a report renders the velocity line only when the run carries one, and an unreadable state directory throws for the run to catch", () => {
+  const base = { card: "SHU-301", kind: "card", activation_id: "a", outcome: "PASS", ticks: [], revert: { reverted: true } };
+  assert.doesNotMatch(renderRunReport(base), /^Velocity:/m);
+  const velocity = { day: { unattended: 1, hand: 0 }, week: { unattended: 1, hand: 0 }, median_cycle_ms: null, cycles: 0 };
+  assert.match(renderRunReport({ ...base, velocity }), /^Velocity: 1 card\(s\) landed unattended and 0 by hand in the last 24 hours; 1 and 0 in the last 7 days, 100% unattended\.$/m);
+  assert.throws(() => readVelocity({ now: () => new Date(), fs: { readdirSync: () => { throw new Error("EACCES"); } } }, "/x"));
+});
+
+// Codex BLOCK at a557bf8: a matching name that is a symbolic link, or not a
+// regular file, is never read; and a card landed twice counts by its newest
+// landing with that landing's own cycle, whatever order readdir lists them in.
+test("Velocity V4: links and non-files are skipped, and a card landed twice counts by its newest landing and that landing's cycle", () => {
+  const now = new Date("2026-10-25T22:00:00.000Z");
+  const ago = (hours) => new Date(now.getTime() - hours * 3600 * 1000).toISOString();
+  const dir = "/srv/shu/state";
+  const [revA, revB] = ["a".repeat(40), "b".repeat(40)];
+  const ioFor = (entries) => {
+    const files = new Map(entries.map(([name, record, kind = "file"]) => [name, { record, kind }]));
+    const read = [];
+    return { read, io: { now: () => now, fs: {
+      readdirSync: () => [...files.keys()],
+      lstatSync: (file) => { const { kind } = files.get(path.basename(file)); return { isFile: () => kind === "file", isSymbolicLink: () => kind === "link" }; },
+      readFileSync: (file) => { read.push(path.basename(file)); return JSON.stringify(files.get(path.basename(file)).record); } } } };
+  };
+  const linked = ioFor([
+    [`card-run-auto-${revA}-SHU-1.json`, { card: "SHU-1", land: "MERGED", claimed_at: ago(2), landed_at: ago(1) }, "link"],
+    [`card-hand-landed-SHU-2.json`, { card: "SHU-2", recorded_at: ago(1) }, "link"],
+    [`card-repair-${revA}-SHU-3.json`, { card: "SHU-3", land: "MERGED", finished_at: ago(1) }, "dir"],
+    [`card-run-auto-${revA}-SHU-4.json`, { card: "SHU-4", land: "MERGED", claimed_at: ago(2), landed_at: ago(1) }],
+  ]);
+  const v = readVelocity(linked.io, dir);
+  assert.deepEqual(v.day, { unattended: 1, hand: 0 }, "only the regular file SHU-4 counts");
+  assert.deepEqual(linked.read, [`card-run-auto-${revA}-SHU-4.json`], "a link or a directory is never opened");
+  const month = [`card-run-auto-${revA}-SHU-5.json`, { card: "SHU-5", land: "MERGED", claimed_at: ago(24 * 40), landed_at: ago(24 * 30) }];
+  const yesterday = [`card-run-auto-${revB}-SHU-5.json`, { card: "SHU-5", land: "MERGED", claimed_at: ago(20), landed_at: ago(19) }];
+  for (const order of [[month, yesterday], [yesterday, month]]) {
+    const twice = readVelocity(ioFor(order).io, dir);
+    assert.deepEqual(twice.week, { unattended: 1, hand: 0 }, "the card counts once, by its newest landing");
+    assert.equal(twice.cycles, 1);
+    assert.equal(twice.median_cycle_ms, 3600 * 1000, "the newest landing's own one-hour cycle, never the ten-day one from a month ago");
+  }
+  // A newer landing with no cycle wins over an older one with a cycle, and gives none.
+  const older = [`card-run-auto-${revA}-SHU-6.json`, { card: "SHU-6", land: "MERGED", claimed_at: ago(4), landed_at: ago(3) }];
+  const newer = [`card-run-auto-${revB}-SHU-6.json`, { card: "SHU-6", land: "MERGED", claimed_at: ago(2), finished_at: ago(1) }];
+  for (const order of [[older, newer], [newer, older]]) {
+    const mixed = readVelocity(ioFor(order).io, dir);
+    assert.deepEqual(mixed.day, { unattended: 1, hand: 0 });
+    assert.equal(mixed.median_cycle_ms, null, "the newest landing gives no cycle, so none is taken from the older one");
+  }
 });
 
 test("SHU-86 0a: a timer run whose pull request is not at the passed head records the pull request but no reviewed head", async () => {
@@ -2990,6 +3104,51 @@ test("SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or a
     ".github/workflows/ci.yml", "test/a.test.mjs", ".github/coordinator/config.json.bak", ".github/coordinator/testdata/a.mjs"]) assert.equal(queueConfigPath(file), false, file);
 });
 
+// Box review: a Claude-written change to the coordinator's own code, under the
+// policy's code_label, gets the same Codex verdict at its exact head, so no
+// person relays it. The contracts and trailer rules still hold, and a path
+// outside the coordinator is never reviewed.
+test("Box review C1: a coordinator:code pull request is reviewed by Codex, and only inside the coordinator", async () => {
+  const CODE = COMMITTED.queue_config_review.code_label;
+  const codeFiles = () => [...queueFiles(),
+    { filename: ".github/coordinator/service/card-run.mjs", status: "modified", sha: "6".repeat(40), additions: 9, deletions: 3 },
+    { filename: ".github/coordinator/service/card-velocity.mjs", status: "added", sha: "7".repeat(40), additions: 90, deletions: 0 }];
+  const host = reviewHost([queuePull(250, { labels: [CODE], files: codeFiles() })]);
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(run.outcome, "REVIEW_PASS", JSON.stringify(run));
+  assert.deepEqual(run.review, { pr: 250, head: PR_HEAD, base: PR_BASE });
+  assert.equal(host.armedRecords[0].reviewer_lane, "codex-verifier");
+  assert.equal(host.armedRecords[0].pr_author_family, "claude");
+  assert.equal(JSON.parse(host.files.get(reviewClaim(PATHS, 250, PR_HEAD)).text).files[".github/coordinator/service/card-run.mjs"].additions, 9);
+  // The queue label alone still refuses coordinator code; both labels take the wider rule.
+  const both = reviewHost([queuePull(251, { labels: [LABEL, CODE], files: codeFiles() })]);
+  assert.equal((await attempt(() => autoRun({ io: both.io, paths: PATHS }))).outcome, "REVIEW_PASS");
+  const files = (edit) => { const list = codeFiles(); edit(list); return list; };
+  for (const [label, pull] of [
+    ["queue label on code", queuePull(250, { files: codeFiles() })],
+    ["a path outside the coordinator", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/workflows/ci.yml", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 })) })],
+    ["a rename from outside", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/coordinator/x.mjs", previous_filename: "src/x.mjs", status: "renamed", sha: "8".repeat(40), additions: 0, deletions: 0 })) })],
+    ["a deleted contract line", queuePull(250, { labels: [CODE], files: files((list) => { list[1].deletions = 1; }) })],
+    ["a commit without the trailer", queuePull(250, { labels: [CODE], files: codeFiles(), messages: ["fix: b\n\nCo-Authored-By: Claude <noreply@anthropic.com>"] })],
+    ["a draft", queuePull(250, { labels: [CODE], files: codeFiles(), draft: true })],
+    ["a fork", queuePull(250, { labels: [CODE], files: codeFiles(), fork: true })],
+  ]) {
+    const quiet = reviewHost([pull]);
+    const skipped = await attempt(() => autoRun({ io: quiet.io, paths: PATHS }));
+    assert.equal(skipped.skipped, "QUEUE_DONE", `${label}: ${JSON.stringify(skipped)}`);
+    notReviewed(quiet, label);
+  }
+  // Without code_label the policy reviews queue config only, as before.
+  const config = queueConfig();
+  delete config.queue_config_review.code_label;
+  const off = reviewHost([queuePull(250, { labels: [CODE], files: codeFiles() })], { config });
+  assert.equal((await attempt(() => autoRun({ io: off.io, paths: PATHS }))).skipped, "QUEUE_DONE");
+  notReviewed(off, "no code_label");
+  for (const file of [".github/coordinator/service/card-run.mjs", ".github/coordinator/a.mjs"]) assert.equal(coordinatorCodePath(file), true, file);
+  for (const file of [".github/coordinator", ".github/coordinator/../workflows/ci.yml", ".github/coordinator//a.mjs", ".github/workflows/ci.yml", "src/a.ts", null])
+    assert.equal(coordinatorCodePath(file), false, String(file));
+});
+
 test("SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused", async () => {
   const host = reviewHost();
   await autoRun({ io: host.io, paths: PATHS });
@@ -3189,7 +3348,7 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
   const { narrowQueueScope } = await import("../single-run-activation.mjs");
   const { resolveDispatchScope } = await import("../reconcile.mjs");
   const { resolveQueueConfigReview } = await import("../workspace-scope.mjs");
-  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", maxHeadsPerPr: 3 });
+  assert.deepEqual({ ...resolveQueueConfigReview(COMMITTED) }, { lane: "SHU-304", label: "coordinator:queue-config", codeLabel: "coordinator:code", maxHeadsPerPr: 3 });
   const review = { pr: 240, head: PR_HEAD, base: PR_BASE, authorFamily: "claude" };
   const record = planRun({ config: queueConfig(), revision: REV, now: START, review, cardId: "SHU-304" }).record;
   const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
@@ -3211,7 +3370,9 @@ test("SHU-321 R6: under a queue the scope narrows to the committed review lane o
   assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START, review }), { code: "CARD_RUN_REVIEW_INPUT" });
   assert.throws(() => planRun({ config: queueConfig(), revision: REV, now: START, cardId: "SHU-304" }), { code: "CARD_RUN_SCOPE" });
   for (const policy of [{ lane: "SHU-304" }, { ...COMMITTED.queue_config_review, max_heads_per_pr: 0 }, { ...COMMITTED.queue_config_review, label: "a b" },
-    { ...COMMITTED.queue_config_review, lane: "SHU-301" }, { ...COMMITTED.queue_config_review, note: "x" }, []]) {
+    { ...COMMITTED.queue_config_review, lane: "SHU-301" }, { ...COMMITTED.queue_config_review, note: "x" }, []
+    , { ...COMMITTED.queue_config_review, code_label: "a b" }, { ...COMMITTED.queue_config_review, code_label: COMMITTED.queue_config_review.label },
+    { ...COMMITTED.queue_config_review, code_label: 1 }]) {
     assert.throws(() => resolveQueueConfigReview({ ...COMMITTED, queue_config_review: policy }), /queue_config_review/, JSON.stringify(policy));
   }
 });

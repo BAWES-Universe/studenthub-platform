@@ -15,7 +15,7 @@ const FILE = "service/card-run.mjs";
 const CASES = [
   {
     name: "M1 drop the path allowlist",
-    from: "    if (!names.every(queueConfigPath)) return",
+    from: "    if (!names.every(allowed)) return",
     to: "    if (false) /* SHU321-M1 */ return",
     pattern: "SHU-321 R2:",
   },
@@ -73,6 +73,18 @@ const CASES = [
     from: "  if (pausedNow) return skip(",
     to: "  if (false) return skip( // SHU321-M10\n",
     pattern: "SHU-321 R5:",
+  },
+  {
+    name: "M12 review coordinator code under the queue label",
+    from: "    let change = hasLabel(pull, policy.label) ? queueConfigChange(files, head, commits) : { ok: false };",
+    to: "    let change = hasLabel(pull, policy.label) ? queueConfigChange(files, head, commits, coordinatorCodePath) : { ok: false }; // SHU321-M12",
+    pattern: "Box review C1:",
+  },
+  {
+    name: "M13 let a coordinator code path climb out",
+    from: '  return !file.split("/").some((part) => !part || part === "." || part === "..");',
+    to: "  return true; // SHU321-M13",
+    pattern: "Box review C1:",
   },
   {
     name: "M11 drop the Claude-Session trailer check",
