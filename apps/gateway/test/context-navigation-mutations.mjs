@@ -47,8 +47,8 @@ try {
     {
       name: "grants must be read again after revocation",
       pattern: "revocation denies the very next bookmarked request",
-      from: "export function createContextNavigation(sessions, store, organizationReader, deletions) {",
-      to: `export function createContextNavigation(sessions, store, organizationReader, deletions) {
+      from: "export function createContextNavigation(sessions, store, organizationReader, deletions, statusHistoryReader) {",
+      to: `export function createContextNavigation(sessions, store, organizationReader, deletions, statusHistoryReader) {
         const readGrants = store.listGrantsForPrincipal.bind(store);
         const cached = new Map();
         store.listGrantsForPrincipal = (id) => {
@@ -81,6 +81,48 @@ try {
       pattern: "SHU332_NAV_SUBS_UNAVAILABLE",
       from: ': children.kind === "unavailable" ? { kind: "unavailable" } : undefined;',
       to: ': children.kind === "unavailable" ? { kind: "found", subOrganizations: [] } : undefined;',
+    },
+    {
+      name: "manager read failure must degrade only its panel",
+      pattern: "SHU357_CARD_DEGRADES",
+      from: `catch {
+                        accountManager = { kind: "unavailable" };
+                    }`,
+      to: `catch {
+                        throw new Error("mutated manager failure");
+                    }`,
+    },
+    {
+      name: "manager history failure must degrade only its panel",
+      pattern: "SHU357_CARD_DEGRADES",
+      from: `catch {
+                            accountManagerHistory = { kind: "unavailable" };
+                        }`,
+      to: `catch {
+                            throw new Error("mutated manager history failure");
+                        }`,
+    },
+    {
+      name: "status history must be limited to five events",
+      pattern: "SHU358_SHOWN",
+      from: "statusHistory = history.slice(0, 5);",
+      to: "statusHistory = history;",
+    },
+    {
+      name: "status history refusal must remain concealed",
+      pattern: "SHU358_UNAVAILABLE",
+      from: "if (history)\n                            statusHistory = history.slice(0, 5);",
+      to: "if (history === null) statusHistory = [];\n                        else statusHistory = history.slice(0, 5);",
+    },
+    {
+      name: "status history failure must degrade only its panel",
+      pattern: "SHU358_UNAVAILABLE",
+      from: `catch {
+                        statusHistory = { kind: "unavailable" };
+                    }`,
+      to: `catch {
+                        throw new Error("mutated status history failure");
+                    }`,
     },
   ];
   for (const mutant of mutants) {

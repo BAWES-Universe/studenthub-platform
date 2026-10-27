@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
-import type { ContextNavigation, NavigationResult, OrganizationAccountManagerHistoryPanel, OrganizationAccountManagerPanel, OrganizationCountsPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
+import type { ContextNavigation, NavigationResult, OrganizationAccountManagerHistoryPanel, OrganizationAccountManagerPanel, OrganizationCountsPanel, OrganizationStatusHistoryPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
 import type { BankDetailsService } from "./bank-details.js";
 import {
@@ -128,27 +128,30 @@ function organizationFieldText(name: OrganizationFieldName, field: OrganizationF
 }
 
 /** Read-only company card for the selected workspace; fields come from the role's closed projection. */
-function renderOrganization(organization: ActiveOrganization | undefined, accountManager?:OrganizationAccountManagerPanel, accountManagerHistory?:OrganizationAccountManagerHistoryPanel): string {
+function renderOrganization(organization: ActiveOrganization | undefined, accountManager?:OrganizationAccountManagerPanel, accountManagerHistory?:OrganizationAccountManagerHistoryPanel, statusHistory?:OrganizationStatusHistoryPanel): string {
   if (!organization || organization.kind === "not_applicable") return "";
   if (organization.kind === "unavailable") {
     return `<section class="notice org-notice" role="status"><strong>Company details couldn’t be loaded.</strong><p>Your workspace is still selected. Please try again in a moment.</p></section>`;
   }
   accountManager??=(organization as ActiveOrganization&{accountManager?:OrganizationAccountManagerPanel}).accountManager;
   accountManagerHistory??=(organization as ActiveOrganization&{accountManagerHistory?:OrganizationAccountManagerHistoryPanel}).accountManagerHistory;
+  statusHistory??=(organization as ActiveOrganization&{statusHistory?:OrganizationStatusHistoryPanel}).statusHistory;
   const view = organization.view;
   const fields = view.fields as unknown as Readonly<Record<OrganizationFieldName, OrganizationField<unknown>>>;
   const legalName = fields.legalName;
   const heading = legalName.state === "available" ? String(legalName.value) : view.registryName;
-  const managerRow=accountManager===undefined?"":`<div><dt>Account manager</dt><dd>${accountManager===null?"None":escapeHtml(accountManager.displayName??"Unnamed staff member")}</dd></div>`;
+  const managerRow=accountManager===undefined?"":`<div><dt>Account manager</dt><dd>${accountManager===null?"None":"kind" in accountManager?'<span class="missing" data-state="unavailable">Unavailable</span>':escapeHtml(accountManager.displayName??"Unnamed staff member")}</dd></div>`;
   const historyPerson=(id:string|null,name:string|null,present:boolean)=>id===null?"None":present?(name??"Unnamed staff member"):"Removed staff member";
-  const managerHistory=accountManagerHistory===undefined?"":`<section aria-labelledby="manager-history-title"><h3 id="manager-history-title">Account manager history</h3>${accountManagerHistory.length?`<ol>${accountManagerHistory.slice(0,5).map(event=>`<li>${escapeHtml(historyPerson(event.from_principal_id,event.from_display_name,event.from_principal_exists))} → ${escapeHtml(historyPerson(event.to_principal_id,event.to_display_name,event.to_principal_exists))} <time datetime="${escapeHtml(new Date(event.occurred_at).toISOString())}">${escapeHtml(new Date(event.occurred_at).toISOString().slice(0,10))}</time></li>`).join("")}</ol>`:"<p>No account manager changes recorded.</p>"}</section>`;
+  const managerHistory=accountManagerHistory===undefined?"":"kind" in accountManagerHistory?`<section class="notice org-notice" role="status"><strong>Account manager history couldn’t be loaded.</strong><p>Please try again in a moment.</p></section>`:`<section aria-labelledby="manager-history-title"><h3 id="manager-history-title">Account manager history</h3>${accountManagerHistory.length?`<ol>${accountManagerHistory.slice(0,5).map(event=>`<li>${escapeHtml(historyPerson(event.from_principal_id,event.from_display_name,event.from_principal_exists))} → ${escapeHtml(historyPerson(event.to_principal_id,event.to_display_name,event.to_principal_exists))} <time datetime="${escapeHtml(new Date(event.occurred_at).toISOString())}">${escapeHtml(new Date(event.occurred_at).toISOString().slice(0,10))}</time></li>`).join("")}</ol>`:"<p>No account manager changes recorded.</p>"}</section>`;
+  const statusText=(value:string|null)=>value===null?"Not set":organizationFormatters.status!(value);
+  const statusChanges=statusHistory===undefined?"":"kind" in statusHistory?`<section class="notice org-notice" role="status"><strong>Status history couldn’t be loaded.</strong><p>Please try again in a moment.</p></section>`:`<section aria-labelledby="status-history-title"><h3 id="status-history-title">Status history</h3>${statusHistory.length?`<ol>${statusHistory.slice(0,5).map(event=>{const occurred=new Date(event.occurred_at).toISOString();return `<li>${escapeHtml(statusText(event.from_status))} → ${escapeHtml(statusText(event.to_status))} <time datetime="${escapeHtml(occurred)}">${escapeHtml(occurred.slice(0,10))}</time></li>`}).join("")}</ol>`:"<p>No status changes recorded.</p>"}</section>`;
   const rows = ORGANIZATION_FIELDS_BY_AUDIENCE[view.audience].map((name) =>
     `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${organizationFieldText(name, fields[name])}</dd></div>`).join("")+managerRow;
   const source = view.snapshot.kind === "imported"
     ? `StudentHub company snapshot · ${escapeHtml(view.snapshot.observedAt.slice(0, 10))}`
     : "Company details haven’t been imported yet, so they show as unavailable.";
   const kind = view.parentOrgId === null ? "ORGANIZATION" : "SUB-ORGANIZATION";
-  return `<section class="profile-card org-card" aria-labelledby="org-title"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(Array.from(heading.trim())[0]?.toUpperCase() ?? "S")}</div><div><h2 id="org-title">${escapeHtml(heading)}</h2><p>${source}</p></div><span class="identity-label">${kind}</span></div><dl class="profile-fields">${rows}</dl>${managerHistory}<div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>You see the company details your role allows. Licences, logos, sign-in data and internal notes are never shown here.</p></div></section>`;
+  return `<section class="profile-card org-card" aria-labelledby="org-title"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(Array.from(heading.trim())[0]?.toUpperCase() ?? "S")}</div><div><h2 id="org-title">${escapeHtml(heading)}</h2><p>${source}</p></div><span class="identity-label">${kind}</span></div><dl class="profile-fields">${rows}</dl>${managerHistory}${statusChanges}<div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>You see the company details your role allows. Licences, logos, sign-in data and internal notes are never shown here.</p></div></section>`;
 }
 
 function renderOrganizationCounts(panel: OrganizationCountsPanel | undefined): string {
@@ -181,6 +184,7 @@ function myCompaniesLink(active: WorkspaceContext | BrowserLoginApplication | nu
 /** Read-only projection of the account-manager route: names and company links only. */
 export function renderAssignedCompanies(result: AssignedCompaniesResult, login: BrowserLoginApplication, active: WorkspaceContext): string {
   const context = String(new URLSearchParams({ org_id: active.orgId, role: active.role }));
+  if (result.status === 401) return renderError(401, login);
   if (result.status !== 200) return workspaceDocument("My companies unavailable", `<header class="topbar">${brand}<a href="/workspace?${escapeHtml(context)}">Workspaces</a></header><main id="main" class="error-page"><h1>My companies couldn’t be loaded.</h1><p>Please try again in a moment.</p><a class="button primary" href="/workspace/my-companies?${escapeHtml(context)}">Try again</a></main>`);
   const links = result.body.companies.map(company => `<a class="context-option" href="/workspace?${escapeHtml(String(new URLSearchParams({org_id:company.orgId,role:active.role})))}"><span>${escapeHtml(company.name)}</span><span aria-hidden="true">→</span></a>`).join("");
   return workspaceDocument("My companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(context)}">Workspaces</a>${myCompaniesLink(active,login,true)}</nav><p class="sidebar-note">Read-only for now.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ACCOUNT MANAGEMENT</div><h1>My companies<span class="accent">.</span></h1><p>Companies where you are the assigned account manager.</p></div><span class="badge">Read-only</span></div><section aria-labelledby="companies-title"><h2 id="companies-title">Assigned companies</h2>${links ? `<nav class="context-list" aria-label="Assigned companies">${links}</nav>` : '<p class="empty-contexts">No companies assigned.</p>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
