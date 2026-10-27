@@ -9,8 +9,8 @@
 //   from the kernel at report time.
 // Both are best effort: anything that cannot be read is left out of the
 // report and never changes a run's result.
+import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
 
 const ATTEMPT_FILE = /^[0-9a-f-]{36}\.json$/i;
 const time = (value) => {
@@ -19,10 +19,23 @@ const time = (value) => {
 };
 const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
 
-function readRegular(io, file) {
-  const stat = io.fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink()) return null;
-  return JSON.parse(io.fs.readFileSync(file, "utf8"));
+// Nothing here follows a link. Each records directory is opened with no-follow
+// and kept open, and every name in it is opened through that descriptor
+// (/proc/self/fd), never by path again. A records directory or a record that is
+// a link is never read, even if it is swapped for one after it is first seen.
+const C = fs.constants;
+const through = (dirFd, name) => `/proc/self/fd/${dirFd}${name ? `/${name}` : ""}`;
+
+function openRecords(f, dir) {
+  return f.openSync(dir, C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
+}
+
+function readRecord(f, dirFd, name) {
+  const fd = f.openSync(through(dirFd, name), C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
+  try {
+    if (!f.fstatSync(fd).isFile()) return null;
+    return JSON.parse(f.readFileSync(fd, "utf8"));
+  } finally { f.closeSync(fd); }
 }
 
 // Every worker run of `issue` that finished inside [from, to], summed by its
@@ -31,18 +44,33 @@ export function readRunUsage(io, supervisorStateDir, { issue, from, to }) {
   const fromMs = time(from);
   const toMs = time(to);
   if (fromMs === null || toMs === null || !/^SHU-[1-9]\d*$/.test(issue ?? "")) return null;
-  const completions = path.join(supervisorStateDir, "completions");
-  const orders = path.join(supervisorStateDir, "orders");
+  if (typeof supervisorStateDir !== "string" || !supervisorStateDir.startsWith("/")) return null;
+  const f = io.fs;
+  let completions = null;
+  let orders = null;
+  try {
+    completions = openRecords(f, `${supervisorStateDir}/completions`);
+    orders = openRecords(f, `${supervisorStateDir}/orders`);
+    return sumUsage(f, completions, orders, { issue, fromMs, toMs });
+  } catch {
+    return null;
+  } finally {
+    if (completions !== null) f.closeSync(completions);
+    if (orders !== null) f.closeSync(orders);
+  }
+}
+
+function sumUsage(f, completions, orders, { issue, fromMs, toMs }) {
   const sums = new Map();
-  for (const file of io.fs.readdirSync(completions)) {
+  for (const file of f.readdirSync(through(completions))) {
     if (!ATTEMPT_FILE.test(file)) continue;
     let completion;
     let order;
     try {
-      completion = readRegular(io, path.join(completions, file));
+      completion = readRecord(f, completions, file);
       // The supervisor keeps each work order in its durable envelope,
       // { protocol, order, digest } (supervisor.mjs accept).
-      order = readRegular(io, path.join(orders, file))?.order;
+      order = readRecord(f, orders, file)?.order;
     } catch { continue; }
     if (!completion || !order || order.issue_id !== issue) continue;
     const finished = time(completion.finished_at);

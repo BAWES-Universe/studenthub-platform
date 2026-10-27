@@ -1,6 +1,8 @@
 // M15 step 1: the cost and capacity lines on every card-run report.
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseCodexUsage, parseClaudeUsage, withUsage } from "../adapters/usage.mjs";
 import { readRunUsage, usageLine, hostSnapshot, hostLine } from "../service/card-usage.mjs";
@@ -29,25 +31,34 @@ test("Usage U1: the Codex and Claude CLI outputs give token counts, and anything
   assert.deepEqual(withUsage(result, { family: "codex" }), { stage: "COMPLETED", ok: true, usage: { family: "codex" } });
 });
 
-const DIR = "/srv/shu/supervisor";
 const A = (n) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000.json`;
-function supervisorIo(entries) {
-  const files = new Map();
-  for (const [name, order, completion, kind = "file"] of entries) {
-    files.set(path.join(DIR, "orders", name), { value: { protocol: 2, order, digest: "d" }, kind });
-    files.set(path.join(DIR, "completions", name), { value: completion, kind });
+// A real supervisor state folder in a temporary directory: entries of
+// [name, order, completion, kind], where kind "link" stores both records outside
+// the folder and puts links to them in it.
+function supervisorDir(entries) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "card-usage-"));
+  const dir = path.join(root, "supervisor");
+  const outside = path.join(root, "outside");
+  for (const sub of ["completions", "orders"]) {
+    fs.mkdirSync(path.join(dir, sub), { recursive: true });
+    fs.mkdirSync(path.join(outside, sub), { recursive: true });
   }
-  return { fs: {
-    readdirSync: (dir) => { assert.equal(dir, path.join(DIR, "completions")); return entries.map(([name]) => name).concat(["notes.txt"]); },
-    lstatSync: (file) => { const f = files.get(file); if (!f) throw new Error("ENOENT"); return { isFile: () => f.kind === "file", isSymbolicLink: () => f.kind === "link" }; },
-    readFileSync: (file) => JSON.stringify(files.get(file).value),
-  } };
+  for (const [name, order, completion, kind = "file"] of entries) {
+    for (const [sub, value] of [["orders", { protocol: 2, order, digest: "d" }], ["completions", completion]]) {
+      const target = path.join(kind === "link" ? outside : dir, sub, name);
+      fs.writeFileSync(target, JSON.stringify(value));
+      if (kind === "link") fs.symlinkSync(target, path.join(dir, sub, name));
+    }
+  }
+  fs.writeFileSync(path.join(dir, "completions", "notes.txt"), "not a record");
+  return { root, dir, outside, done: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
+const at = (minute) => `2026-10-27T10:${String(minute).padStart(2, "0")}:00.000Z`;
+const usage = (family, input, output, cost = null) => ({ family, input_tokens: input, cached_input_tokens: 10, output_tokens: output, cost_usd: cost, turns: 1 });
+
 test("Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family", () => {
-  const at = (minute) => `2026-10-27T10:${String(minute).padStart(2, "0")}:00.000Z`;
-  const usage = (family, input, output, cost = null) => ({ family, input_tokens: input, cached_input_tokens: 10, output_tokens: output, cost_usd: cost, turns: 1 });
-  const io = supervisorIo([
+  const sup = supervisorDir([
     [A(1), { issue_id: "SHU-5", role: "build" }, { finished_at: at(10), result: { usage: usage("codex", 100, 20) } }],
     [A(2), { issue_id: "SHU-5", role: "revise" }, { finished_at: at(20), result: { usage: usage("codex", 300, 40) } }],
     [A(3), { issue_id: "SHU-5", role: "review" }, { finished_at: at(15), result: { usage: usage("claude", 50, 5, 0.5) } }],
@@ -57,19 +68,57 @@ test("Usage U2: a run's usage is summed from the supervisor's records for its ow
     [A(7), { issue_id: "SHU-5", role: "build" }, { finished_at: at(11), result: { stage: "COMPLETED" } }],
     [A(8), { issue_id: "SHU-5", role: "build" }, { finished_at: at(11), result: { usage: usage("codex", 999, 999) } }, "link"],
   ]);
-  const sums = readRunUsage(io, DIR, { issue: "SHU-5", from: at(0), to: at(30) });
-  assert.deepEqual(sums, [
-    { role: "build", family: "codex", runs: 2, input_tokens: 400, cached_input_tokens: 20, output_tokens: 60, cost_usd: null },
-    { role: "review", family: "claude", runs: 2, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, cost_usd: 0.75 },
-  ], "another card, a run before the window, a result with no usage and a linked record are all left out");
-  assert.equal(readRunUsage(io, DIR, { issue: "not-a-card", from: at(0), to: at(30) }), null);
-  assert.equal(readRunUsage(io, DIR, { issue: "SHU-5", from: null, to: at(30) }), null);
-  assert.equal(usageLine(sums), "AI usage: 2 build runs (codex): 400 input (20 cached), 60 output; 2 review runs (claude): 100 input (20 cached), 10 output, $0.75.",
-    "cached tokens are part of the input count, never added to it");
+  const io = { fs };
+  try {
+    const sums = readRunUsage(io, sup.dir, { issue: "SHU-5", from: at(0), to: at(30) });
+    assert.deepEqual(sums, [
+      { role: "build", family: "codex", runs: 2, input_tokens: 400, cached_input_tokens: 20, output_tokens: 60, cost_usd: null },
+      { role: "review", family: "claude", runs: 2, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, cost_usd: 0.75 },
+    ], "another card, a run before the window, a result with no usage and a linked record are all left out");
+    assert.equal(readRunUsage(io, sup.dir, { issue: "not-a-card", from: at(0), to: at(30) }), null);
+    assert.equal(readRunUsage(io, sup.dir, { issue: "SHU-5", from: null, to: at(30) }), null);
+    assert.equal(readRunUsage(io, "relative/dir", { issue: "SHU-5", from: at(0), to: at(30) }), null);
+    assert.equal(usageLine(sums), "AI usage: 2 build runs (codex): 400 input (20 cached), 60 output; 2 review runs (claude): 100 input (20 cached), 10 output, $0.75.",
+      "cached tokens are part of the input count, never added to it");
+  } finally { sup.done(); }
   assert.equal(usageLine([{ role: "build", family: "codex", runs: 1, input_tokens: 2_400_000, cached_input_tokens: 0, output_tokens: 12_345, cost_usd: null }]),
     "AI usage: 1 build run (codex): 2.4M input, 12k output.");
   assert.equal(usageLine([]), null);
   assert.equal(usageLine(undefined), null);
+});
+
+test("Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read", () => {
+  const record = [A(1), { issue_id: "SHU-5", role: "build" }, { finished_at: at(10), result: { usage: usage("codex", 1234, 56) } }];
+  const window = { issue: "SHU-5", from: at(0), to: at(30) };
+  for (const sub of ["completions", "orders"]) {
+    const sup = supervisorDir([]);
+    try {
+      // The real records live outside; the supervisor's own folder is a link to them.
+      fs.writeFileSync(path.join(sup.outside, "orders", record[0]), JSON.stringify({ protocol: 2, order: record[1], digest: "d" }));
+      fs.writeFileSync(path.join(sup.outside, "completions", record[0]), JSON.stringify(record[2]));
+      for (const other of ["completions", "orders"].filter((name) => name !== sub)) {
+        fs.copyFileSync(path.join(sup.outside, other, record[0]), path.join(sup.dir, other, record[0]));
+      }
+      fs.rmSync(path.join(sup.dir, sub), { recursive: true });
+      fs.symlinkSync(path.join(sup.outside, sub), path.join(sup.dir, sub));
+      assert.equal(readRunUsage({ fs }, sup.dir, window), null, `a linked ${sub} folder is refused`);
+    } finally { sup.done(); }
+  }
+  // A record that is a real file when the folder is listed and a link when it is opened.
+  const sup = supervisorDir([record]);
+  try {
+    const outsideFile = path.join(sup.outside, "completions", record[0]);
+    fs.writeFileSync(outsideFile, JSON.stringify(record[2]));
+    const swapping = { ...fs, readdirSync(dir, ...rest) {
+      const names = fs.readdirSync(dir, ...rest);
+      if (names.includes(record[0]) && fs.realpathSync(dir) === fs.realpathSync(path.join(sup.dir, "completions"))) {
+        fs.rmSync(path.join(sup.dir, "completions", record[0]));
+        fs.symlinkSync(outsideFile, path.join(sup.dir, "completions", record[0]));
+      }
+      return names;
+    } };
+    assert.deepEqual(readRunUsage({ fs: swapping }, sup.dir, window), [], "the swapped name is opened without following the link and left out");
+  } finally { sup.done(); }
 });
 
 test("Usage U3: the box line reads CPUs, load, memory and disk where the state lives", () => {

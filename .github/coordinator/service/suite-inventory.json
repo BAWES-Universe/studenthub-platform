@@ -4614,6 +4614,7 @@
     "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
+    "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
     "Usage U3: the box line reads CPUs, load, memory and disk where the state lives",
     "Usage U4: busy share counts overlapping card runs once, clipped to the window",
     "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
@@ -33562,23 +33563,51 @@
     },
     {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "Usage U3: the box line reads CPUs, load, memory and disk where the state lives",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "Usage U4: busy share counts overlapping card runs once, clipped to the window",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
     },
     {
       "name": "M11 C1: reviewed coordinator code installs only with the installed policy on, its approval at the passed head, and green checks",
