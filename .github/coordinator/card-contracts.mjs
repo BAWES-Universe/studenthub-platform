@@ -3491,6 +3491,19 @@ Out of scope: assigning from the card (SHU-360), searching or paging staff, sort
 
 ${QUEUE11_FINISH}`;
 
+// SHU-368 runs SHU-359's contract again from main: SHU-359's run stopped when
+// its revision quit before starting, and its branch still holds that run's
+// build, so a second run of SHU-359 itself would be refused. Later cards call
+// this listing "SHU-359's port"; it is the port this card builds.
+const SHU368_ACCEPTANCE = `${SHU359_ACCEPTANCE} (6) Item 1's refusal of an operator company is pinned under SHU359_ELIGIBLE with the real operator id, and the picker's second method is the only one that lists an operator-root directory's staff.`;
+
+const SHU368_BRIEF = `${SHU359_BRIEF.replace(/^Card SHU-359: /, "Card SHU-368: ")}
+
+This card replaces SHU-359 with the same contract and tokens (SHU359_ELIGIBLE, SHU359_PG_SCALE, SHU359_PICKER, SHU359_SHOWN); SHU-360 and SHU-361 name the listing it builds "SHU-359's port". SHU-359's first build was blocked by its review for three things; avoid them:
+- Item 1's method must stay strict: it refuses an operator company (organizationAccountManagerReadDecision and the eligible view at the default operator list), exactly as the manager read does. The directory picker of item 3 is a second method of the port with its own operator handling. Wiring the one method with an empty operator list in login-runtime.ts made it list every staff and admin of "root", which the manager read refuses. Pin the operator, unknown and deleted refusals of item 1 under SHU359_ELIGIBLE, including a company whose id is the real operator id.
+- If the listing fails, item 3 still renders the select with Any, Me and the current choice under a neutral label; falling back to the old free-text box puts a raw principal id back on screen.
+- SHU359_SHOWN follows the URL a choice submits and checks that only that person's managed companies are listed.`;
+
 export const SHU360_PATHS = Object.freeze([
   "apps/gateway/src/organization-account-manager.ts",
   "apps/gateway/src/index.ts",
@@ -4173,6 +4186,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU359_PATHS,
     acceptance: SHU359_ACCEPTANCE,
     brief: SHU359_BRIEF,
+  }),
+  "SHU-368": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU359_PATHS,
+    revision_paths: SHU359_PATHS,
+    acceptance: SHU368_ACCEPTANCE,
+    brief: SHU368_BRIEF,
   }),
   "SHU-360": Object.freeze({
     workspace_mode: "repo",
