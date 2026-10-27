@@ -55,6 +55,8 @@ const ENV = Object.freeze({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C', 
 export const boundary = Object.freeze({ fs, uid: () => process.getuid(),
   run: (exe, args, opts) => spawnSync(exe, args, { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024, ...opts }) });
 
+export const FIND_TIMEOUT_MS = 15 * 60 * 1000;
+
 export function provisioner(revision, b = boundary) {
   need(/^[a-f0-9]{40}$/.test(revision), 'ACT_PREREQUISITE_REVISION');
   need(b.uid() === 0, 'ACT_PROCESS_IDENTITY');
@@ -64,7 +66,11 @@ export function provisioner(revision, b = boundary) {
     if (exe === '/usr/sbin/useradd' && r.status === 3 && /unknown item/.test(String(r.stderr))) {
       throw Object.assign(new Error('ACT_PREREQUISITE_USERADD_CONFIGURATION'), { code: 'ACT_PREREQUISITE_USERADD_CONFIGURATION', command: exe, argument: args.includes('-K') ? '-K ' + args[args.indexOf('-K') + 1] : null, stderr: String(r.stderr) });
     }
-    need(!r.error && r.status === 0, 'ACT_PREREQUISITE_COMMAND');
+    // A failed command names itself, its exit status and signal, never its
+    // output, so a report says which step failed and how.
+    try { need(!r.error && r.status === 0, 'ACT_PREREQUISITE_COMMAND'); } catch (e) {
+      throw Object.assign(e, { failed: { command: exe, status: r.status ?? null, signal: r.signal ?? null, error: r.error?.code ?? null } });
+    }
     return Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? '');
   };
   const git = (args, input) => { serviceIdentity(); return command('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups', '/usr/bin/git',
@@ -291,7 +297,11 @@ export function provisioner(revision, b = boundary) {
             need(!ids.includes(e.uid) && !ids.includes(e.gid), 'ACT_ROLLBACK_IDENTITY_IN_USE');
           }
         }
-        if (u || g) need(command('/usr/bin/find', ['/', '(', '-path', '/proc', '-o', '-path', '/sys', '-o', '-path', '/dev', ')', '-prune', '-o', '(', '-uid', String(e.uid), '-o', '-gid', String(e.gid), ')', '-print']).length === 0, 'ACT_ROLLBACK_IDENTITY_IN_USE');
+        // The whole-filesystem walk outgrows the 30-second default on a cold
+        // cache (the last three installs' rollbacks, 2026-10-26 and 27, each
+        // failed ACT_PREREQUISITE_COMMAND once and passed a retry 45 seconds
+        // later), so it gets FIND_TIMEOUT_MS.
+        if (u || g) need(command('/usr/bin/find', ['/', '(', '-path', '/proc', '-o', '-path', '/sys', '-o', '-path', '/dev', ')', '-prune', '-o', '(', '-uid', String(e.uid), '-o', '-gid', String(e.gid), ')', '-print'], { timeout: FIND_TIMEOUT_MS }).length === 0, 'ACT_ROLLBACK_IDENTITY_IN_USE');
         if (u) command('/usr/sbin/userdel', [BROKER]);
         if (g && databases().groups.some(g => g.name === BROKER)) command('/usr/sbin/groupdel', [BROKER]);
         // Account utilities rewrite their backup files as well as the databases.
@@ -569,6 +579,7 @@ export function provisioner(revision, b = boundary) {
 export function prerequisiteFailure(e) {
   return { ok: false, code: e.code ?? 'ACT_PREREQUISITE_FAILED',
     ...(e.argument !== undefined ? { command: e.command, argument: e.argument, stderr: e.stderr } : {}),
+    ...(e.failed ? { failed: e.failed } : {}),
     ...(e.original ? { original: e.original } : {}), ...(e.rollback ? { rollback: e.rollback } : {}) };
 }
 export function parseCli(argv) {
