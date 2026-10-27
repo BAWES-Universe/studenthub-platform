@@ -60,6 +60,7 @@
     ".github/coordinator/test/card-lanes.test.mjs",
     ".github/coordinator/test/card-run-mutations.test.mjs",
     ".github/coordinator/test/card-run.test.mjs",
+    ".github/coordinator/test/card-usage.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
@@ -3700,6 +3701,7 @@
     "SHU71 provisioning partial installation and rollback residue crash matrix",
     "SHU71 provisioning rollback process replacement at every effect",
     "SHU71 provisioning refuses to remove an identity still in use",
+    "SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself",
     "SHU71 review worktrees production shape",
     "SHU71 review checkout capability",
     "SHU71 review named absent row codes",
@@ -4609,7 +4611,28 @@
     "SHU-86 mutation M205 count an operator run as landed unattended",
     "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end",
     "SHU-86 mutation M207 follow a symbolic link named like a state record",
-    "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's"
+    "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
+    "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
+    "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
+    "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
+    "Usage U3: the box line reads CPUs, load, memory and disk where the state lives",
+    "Usage U4: busy share counts overlapping card runs once, clipped to the window",
+    "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
+    "M11 C1: reviewed coordinator code installs only with the installed policy on, its approval at the passed head, and green checks",
+    "M11 C2: the paths that install or check everything else as root, and the policy itself, stay a person's install",
+    "M11 C7: every module the root install tools import, at any depth, is a person's install",
+    "M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head",
+    "M11 C4: an approved code change installs in order, reports as a code install and leaves the queue as it was",
+    "M11 C5: a code install that fails after the merge puts the installed revision back and does not pause",
+    "M11 C6: when the installed revision cannot be put back, the host pauses as before",
+    "SHU-322 mutation M30 install an owner-only path",
+    "SHU-322 mutation M31 let code change the self-install policy",
+    "SHU-322 mutation M32 read the policy from main",
+    "SHU-322 mutation M33 install code without its approval",
+    "SHU-322 mutation M34 count the author's own approval",
+    "SHU-322 mutation M35 count an approval of another head",
+    "SHU-322 mutation M36 pause instead of putting R back",
+    "SHU-322 mutation M37 run the code plan check as a queue plan check"
   ],
   "requirements": [
     {
@@ -28804,6 +28827,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself",
+      "capabilities": []
+    },
+    {
       "name": "SHU71 review worktrees production shape",
       "capabilities": []
     },
@@ -33533,6 +33560,114 @@
     },
     {
       "name": "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
+      "capabilities": []
+    },
+    {
+      "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "Usage U3: the box line reads CPUs, load, memory and disk where the state lives",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "Usage U4: busy share counts overlapping card runs once, clipped to the window",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
+      "capabilities": [
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "M11 C1: reviewed coordinator code installs only with the installed policy on, its approval at the passed head, and green checks",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C2: the paths that install or check everything else as root, and the policy itself, stay a person's install",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C7: every module the root install tools import, at any depth, is a person's install",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C4: an approved code change installs in order, reports as a code install and leaves the queue as it was",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C5: a code install that fails after the merge puts the installed revision back and does not pause",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C6: when the installed revision cannot be put back, the host pauses as before",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M30 install an owner-only path",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M31 let code change the self-install policy",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M32 read the policy from main",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M33 install code without its approval",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M34 count the author's own approval",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M35 count an approval of another head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M36 pause instead of putting R back",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M37 run the code plan check as a queue plan check",
       "capabilities": []
     }
   ],

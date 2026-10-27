@@ -555,6 +555,18 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/card-usage.test.mjs",
+    "capabilities": [
+      "linux_proc"
+    ],
+    "justification": "readRunUsage opens the supervisor's records through /proc/self/fd descriptors of real temporary directories; host readings and reports are doubled in memory",
+    "call_sites": [
+      ".github/coordinator/test/card-usage.test.mjs:73",
+      ".github/coordinator/test/card-usage.test.mjs:104",
+      ".github/coordinator/test/card-usage.test.mjs:120"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/claude-contract.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

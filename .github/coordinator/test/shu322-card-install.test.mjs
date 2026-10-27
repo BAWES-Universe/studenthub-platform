@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
+  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -77,12 +78,14 @@ const refused = (gate) => gate.ok === false && gate.transient === false && gate.
 // checkout, the coordinator's bare repository and its view of main, the
 // provisioner, N's plan, GitHub and Linear.
 function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), changes = CHANGES, contractLines = { added: 6, deleted: 0 },
-  blobs = BLOBS, mainContracts = nextContracts(), landedQueue = true } = {}) {
+  blobs = BLOBS, mainContracts = nextContracts(), landedQueue = true, installedConfigText = COMMITTED_TEXT } = {}) {
   const files = new Map();
   const host = {
     files, calls: [], reports: [], github: [], steps: [], clock: START.getTime(), head: R, branch: R, main, descends: true,
     changes, contractLines, blobs, failGit: new Set(), provisionFails: {}, checks: { runs: [{ name: "ci", status: "completed", conclusion: "success" }], statuses: [] },
     plan: null, planStatus: 0, pushDir: null, merged: false, onStep: null,
+    // M11: the pull requests GitHub serves, by number: { user, reviews }.
+    pulls: {}, restoreFails: false,
   };
   const put = (file, text, extra = {}) => files.set(file, { text, mode: 0o644, uid: 0, ...extra });
   host.put = put;
@@ -99,7 +102,7 @@ function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), cha
   put(reviewClaim(PATHS, 300, PR_HEAD), JSON.stringify({ pr: 300, head: PR_HEAD, base: R, revision: R, outcome: "REVIEW_PASS",
     files: Object.fromEntries(Object.entries(BLOBS).map(([file, sha]) => [file, { sha, additions: 1, deletions: 0 }])) }), { mode: 0o600 });
   const texts = new Map([
-    [`${R}:${CONFIG_PATH}`, COMMITTED_TEXT], [`${main}:${CONFIG_PATH}`, JSON.stringify(mainConfig)],
+    [`${R}:${CONFIG_PATH}`, installedConfigText], [`${main}:${CONFIG_PATH}`, JSON.stringify(mainConfig)],
     [`${R}:${CONTRACTS_PATH}`, CONTRACTS_TEXT], [`${main}:${CONTRACTS_PATH}`, mainContracts],
   ]);
   const children = (dir) => {
@@ -185,6 +188,14 @@ function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), cha
         host.head = host.main; host.branch = host.main; host.merged = true;
         return ok();
       }
+      // M11: putting R back after a failed code install.
+      if (verb === "checkout") {
+        step(`checkout ${rest.at(-1)}`);
+        assert.deepEqual(rest, ["-q", "-B", "main", R]);
+        if (host.restoreFails) return fail(1);
+        host.head = R; host.branch = R;
+        return ok();
+      }
       if (verb === "rev-parse") return ok(`${rest[0] === "HEAD" ? host.head : host.branch}\n`);
       if (verb === "status") return ok("");
       return fail();
@@ -225,6 +236,11 @@ function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), cha
     if (url === `${api}/commits/${host.main}/check-runs?filter=latest&per_page=100`) return respond(200, { total_count: host.checks.runs.length, check_runs: host.checks.runs });
     if (url === `${api}/commits/${host.main}/status?per_page=100`) return respond(200, { statuses: host.checks.statuses });
     if (url === `${api}/pulls?state=open&base=main&per_page=100`) return respond(200, []);
+    const pull = /^pulls\/(\d+)(\/reviews\?per_page=100)?$/.exec(url.slice(api.length + 1));
+    if (pull && host.pulls[pull[1]]) {
+      const served = host.pulls[pull[1]];
+      return pull[2] ? respond(200, served.reviews) : respond(200, { number: Number(pull[1]), user: served.user });
+    }
     return respond(404, null);
   };
   host.io = { fs: host.fs, exec: host.exec, fetch: host.fetch, uid: () => 0, now: () => new Date(host.clock), sleep: () => {}, delay: async () => {}, nodePath: () => NODE };
@@ -698,4 +714,213 @@ test("SHU-322 B20: every card in the committed queue has a contract entry Card B
   const config = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
   const entries = contractEntries(CONTRACTS_TEXT);
   for (const id of config.dispatch_scope.issue_ids) assert.ok(entries.has(id), `${id} has a contract entry on its own line`);
+});
+
+// M11: the box installs reviewed coordinator code itself once the installed
+// config turns code_self_install on, with the policy's approval, and puts the
+// installed revision back when the code install fails after the merge.
+const CODE_PATH = ".github/coordinator/service/card-watch.mjs";
+const CODE_BLOB = "6".repeat(40);
+const CODE_PR = 310;
+const CODE_HEAD = "c".repeat(40);
+const APPROVER = "khalid-approves";
+const withPolicy = (policy) => ({ ...structuredClone(COMMITTED), code_self_install: policy });
+const REVIEW_POLICY = { approval: "github_review", approvers: [APPROVER] };
+function codeFacts(policy = REVIEW_POLICY, edit = (value) => value) {
+  const installed = JSON.stringify(withPolicy(policy));
+  return edit({
+    revision: R, main: N, descends: true, changes: [{ status: "M", path: CODE_PATH }], contractLines: null,
+    blobs: { [CODE_PATH]: CODE_BLOB }, configs: { installed, main: installed },
+    contractTexts: { installed: CONTRACTS_TEXT, main: CONTRACTS_TEXT },
+    passes: [{ pr: CODE_PR, head: CODE_HEAD, files: { [CODE_PATH]: { sha: CODE_BLOB } } }],
+    landed: [], checks: { green: true }, approval: { pr: CODE_PR, head: CODE_HEAD, approved: true, by: APPROVER },
+  });
+}
+// A host whose installed revision has the policy on and whose main adds one
+// reviewed, approved code change and the same queue.
+function codeHost(policy = REVIEW_POLICY, { approved = true } = {}) {
+  const config = withPolicy(policy);
+  const host = fakeHost({ config, installedConfigText: JSON.stringify(config), mainConfig: config,
+    changes: [{ status: "M", path: CODE_PATH }], blobs: { [CODE_PATH]: CODE_BLOB }, mainContracts: CONTRACTS_TEXT });
+  host.put(reviewClaim(PATHS, CODE_PR, CODE_HEAD), JSON.stringify({ pr: CODE_PR, head: CODE_HEAD, base: R, revision: R, outcome: "REVIEW_PASS",
+    files: { [CODE_PATH]: { sha: CODE_BLOB, additions: 3, deletions: 1 } } }), { mode: 0o600 });
+  host.pulls[CODE_PR] = { user: { login: "BAWES" },
+    reviews: approved ? [{ user: { login: APPROVER }, state: "APPROVED", commit_id: CODE_HEAD }] : [] };
+  // N's plan at a done queue: no next card, every queued card landed.
+  const queue = config.dispatch_scope.issue_ids;
+  host.plan = { queue, next: { id: null, skipped: "QUEUE_DONE" }, busy: [], queued: queue.map((id) => ({ id, prepare: { skipped: "LANDED" } })) };
+  return host;
+}
+const RESTORE_ORDER = [`rollback ${N}`, `checkout ${R}`, `install ${R}`, `verify ${R}`, `precondition ${R}`];
+
+test("M11 C1: reviewed coordinator code installs only with the installed policy on, its approval at the passed head, and green checks", () => {
+  const admitted = selfInstallGate(codeFacts());
+  assert.deepEqual(admitted, { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: APPROVER } });
+  const unread = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, approval: undefined })));
+  assert.equal(unread.transient, true, "an approval not read yet is read, never refused");
+  assert.deepEqual(unread.needs, { approval: { pr: CODE_PR, head: CODE_HEAD, approvers: [APPROVER] } });
+  for (const approval of [{ pr: CODE_PR, head: CODE_HEAD, approved: false, note: "none" }, { pr: CODE_PR, head: "f".repeat(40), approved: true, by: APPROVER },
+    { pr: 999, head: CODE_HEAD, approved: true, by: APPROVER }]) {
+    const gate = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, approval })));
+    assert.equal(gate.ok, false);
+    assert.equal(gate.transient, true, `${JSON.stringify(approval)} waits for a tap`);
+  }
+  assert.deepEqual(selfInstallGate(codeFacts({ approval: "none" }, (f) => ({ ...f, approval: undefined }))),
+    { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: null } }, "approval none needs only the review");
+  // With the policy off or malformed, code stays a person's install as before.
+  for (const policy of [null, { approval: "github_review", approvers: [] }, { approval: "github_review" }, { approval: "always" },
+    { approval: "none", approvers: [APPROVER] }, { approval: "github_review", approvers: ["not a login!"] }]) {
+    const gate = selfInstallGate(codeFacts(policy));
+    assert.equal(gate.quiet, true, `${JSON.stringify(policy)}: code with the installed queue is nothing to install`);
+    assert.equal(codeInstallPolicy({ code_self_install: policy }), null);
+  }
+  const offWithQueue = selfInstallGate(facts((f) => ({ ...f, changes: [...f.changes, { status: "M", path: CODE_PATH }], blobs: { ...f.blobs, [CODE_PATH]: CODE_BLOB } })));
+  assert.ok(refused(offWithQueue));
+  assert.match(offWithQueue.reason, /is not a queue config path/);
+  // The policy is read from the installed revision: main turning it on installs nothing.
+  const selfEnabled = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: f.configs.main } })));
+  assert.equal(selfEnabled.quiet, true, "main's own policy never lets main in");
+  const red = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, checks: { red: ["ci"] } })));
+  assert.ok(refused(red));
+  const unreviewed = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, blobs: { [CODE_PATH]: "7".repeat(40) } })));
+  assert.ok(refused(unreviewed));
+  assert.match(unreviewed.reason, /REVIEW_PASS/);
+});
+
+test("M11 C2: the paths that install or check everything else as root, and the policy itself, stay a person's install", () => {
+  const extras = [...OWNER_ONLY_PATHS, ".github/coordinator/service/userns-profile/profile", ".github/coordinator/host-tick.sh",
+    ".github/coordinator/service/shu-supervisor.service.in", ".github/coordinator/service/shu-coordinator.timer.in"];
+  for (const file of extras) {
+    assert.equal(ownerOnlyPath(file), true, file);
+    const gate = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, changes: [...f.changes, { status: "M", path: file }],
+      blobs: { ...f.blobs, [file]: "8".repeat(40) }, passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [file]: { sha: "8".repeat(40) } } }] })));
+    assert.ok(refused(gate), file);
+    assert.match(gate.reason, /is installed only by a person/, file);
+  }
+  assert.equal(ownerOnlyPath(".github/coordinator/test/card-install.test.mjs"), false, "a test file is never owner-only");
+  assert.equal(ownerOnlyPath(CODE_PATH), false);
+  const outside = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, changes: [...f.changes, { status: "M", path: ".github/workflows/ci.yml" }] })));
+  assert.ok(refused(outside));
+  const policyEdit = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f,
+    configs: { ...f.configs, main: JSON.stringify(withPolicy({ approval: "none" })) }, changes: [...f.changes, { status: "M", path: CONFIG_PATH }],
+    blobs: { ...f.blobs, [CONFIG_PATH]: "9".repeat(40) }, passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [CONFIG_PATH]: { sha: "9".repeat(40) } } }] })));
+  assert.ok(refused(policyEdit));
+  assert.match(policyEdit.reason, /config\.json changes code_self_install/);
+  const deleted = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, changes: [{ status: "D", path: CODE_PATH }] })));
+  assert.ok(refused(deleted));
+  assert.match(deleted.reason, /deleted/);
+});
+
+test("M11 C7: every module the root install tools import, at any depth, is a person's install", () => {
+  const repo = fileURLToPath(new URL("../../../", import.meta.url));
+  const relative = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g;
+  const seen = new Set();
+  const stack = [...ROOT_INSTALL_TOOLS];
+  while (stack.length) {
+    const file = stack.pop();
+    // Import-like text inside a quoted brief or fixture names no real module.
+    if (seen.has(file) || !fs.existsSync(path.join(repo, file))) continue;
+    seen.add(file);
+    const text = fs.readFileSync(path.join(repo, file), "utf8");
+    for (const [, spec] of text.matchAll(relative)) stack.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+  }
+  assert.ok(seen.size > ROOT_INSTALL_TOOLS.length, "the closure follows imports");
+  for (const file of seen) {
+    assert.ok(installablePath(file) || ownerOnlyPath(file), `${file} runs inside a root install tool, so it is a person's install`);
+  }
+  for (const tool of ROOT_INSTALL_TOOLS) assert.equal(ownerOnlyPath(tool), true, tool);
+});
+
+test("M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head", async () => {
+  const served = (user, reviews, status = 200) => async (method, url) => {
+    assert.equal(method, "GET");
+    const body = url.endsWith("/reviews?per_page=100") ? reviews : { user: { login: user } };
+    return { ok: status < 300, status, json: async () => body };
+  };
+  const ask = (gh, approvers = [APPROVER]) => readApproval(gh, REPO, { pr: CODE_PR, head: CODE_HEAD, approvers });
+  const approve = (login, commit = CODE_HEAD, state = "APPROVED") => ({ user: { login }, state, commit_id: commit });
+  assert.deepEqual(await ask(served("BAWES", [approve(APPROVER)])), { pr: CODE_PR, head: CODE_HEAD, approved: true, by: APPROVER });
+  assert.equal((await ask(served("BAWES", [approve("Khalid-Approves")]))).approved, true, "logins compare without case");
+  assert.equal((await ask(served(APPROVER, [approve(APPROVER)]))).approved, false, "the author's own approval does not count");
+  assert.equal((await ask(served("BAWES", [approve("someone-else")]))).approved, false, "only a listed approver counts");
+  assert.equal((await ask(served("BAWES", [approve(APPROVER, "f".repeat(40))]))).approved, false, "an approval of another head does not count");
+  assert.equal((await ask(served("BAWES", [approve(APPROVER), approve(APPROVER, CODE_HEAD, "CHANGES_REQUESTED")]))).approved, false, "a later change request wins");
+  assert.equal((await ask(served("BAWES", [approve(APPROVER), approve(APPROVER, CODE_HEAD, "DISMISSED")]))).approved, false, "a dismissed approval does not count");
+  assert.equal((await ask(served("BAWES", [approve(APPROVER), approve(APPROVER, CODE_HEAD, "COMMENTED")]))).approved, true, "a comment changes nothing");
+  assert.equal((await ask(served("BAWES", [approve(APPROVER)], 502))).approved, false);
+  assert.equal((await ask(served("BAWES", Array.from({ length: 100 }, () => approve(APPROVER))))).approved, false, "a full page is not read as complete");
+});
+
+test("M11 C4: an approved code change installs in order, reports as a code install and leaves the queue as it was", async () => {
+  const host = codeHost();
+  const out = await install(host, withPolicy(REVIEW_POLICY));
+  const result = out.result ?? {};
+  assert.equal(result.outcome, "INSTALLED", JSON.stringify(result));
+  assert.equal(result.queue, null);
+  assert.deepEqual(result.code, [CODE_PATH]);
+  assert.deepEqual(result.approval, { pr: CODE_PR, head: CODE_HEAD, by: APPROVER });
+  assert.deepEqual(host.steps, INSTALL_ORDER);
+  assert.ok(host.github.includes(`pulls/${CODE_PR}/reviews?per_page=100`), "the approval was read from GitHub");
+  assert.equal(host.reports.length, 1);
+  assert.match(host.reports[0], new RegExp(`Code install of main at ${N} over installed revision ${R}: INSTALLED`));
+  assert.match(host.reports[0], new RegExp(`Code: 1 coordinator file\\(s\\) from pull request #${CODE_PR} at ${CODE_HEAD}, approved by ${APPROVER}\\.`));
+  assert.deepEqual(claimOf(host).code, [CODE_PATH]);
+  assert.equal(JSON.parse(host.files.get(PATHS.receipt).text).revision, N);
+  assert.equal(host.files.has(PATHS.pause), false);
+  assert.equal(host.files.has(PATHS.lock), false);
+  // With the approval missing, nothing is claimed or touched, and a later start reads it again.
+  const waiting = codeHost(REVIEW_POLICY, { approved: false });
+  const skipped = await install(waiting, withPolicy(REVIEW_POLICY));
+  assert.equal(skipped.skipped, "INSTALL_NOT_READY");
+  assert.match(skipped.reason, /waits on an Approve/);
+  assert.equal([...waiting.files.keys()].some((file) => file.includes("card-install-auto-")), false);
+  untouched(waiting);
+  // Approval none reads no reviews.
+  const reviewOnly = codeHost({ approval: "none" }, { approved: false });
+  assert.equal((await install(reviewOnly, withPolicy({ approval: "none" }))).result?.outcome, "INSTALLED");
+  assert.equal(reviewOnly.github.some((entry) => entry.startsWith("pulls/")), false);
+});
+
+test("M11 C5: a code install that fails after the merge puts the installed revision back and does not pause", async () => {
+  const planFails = codeHost();
+  planFails.planStatus = 1;
+  const out = (await install(planFails, withPolicy(REVIEW_POLICY))).result ?? {};
+  assert.equal(out.outcome, "INSTALL_RESTORED", JSON.stringify(out));
+  assert.equal(out.failed_step, "plan");
+  assert.deepEqual(planFails.steps, [...INSTALL_ORDER, ...RESTORE_ORDER]);
+  assert.deepEqual(out.restored, { ok: true, steps: ["rollback", "checkout", "install", "verify", "precondition"] });
+  assert.equal(JSON.parse(planFails.files.get(PATHS.receipt).text).revision, R, "R's prerequisites are installed again");
+  assert.equal(planFails.head, R);
+  assert.equal(planFails.files.has(PATHS.pause), false, "the box keeps running R");
+  assert.equal(planFails.files.has(PATHS.lock), false);
+  assert.match(planFails.reports[0], new RegExp(`INSTALL_RESTORED.*\\n[\\s\\S]*Put ${R} back: rollback, checkout, install, verify, precondition\\.`));
+  assert.equal(claimOf(planFails).outcome, "INSTALL_RESTORED", "N is never tried again at this claim");
+  // A verify failure already rolled N back, so R goes straight back on.
+  const verifyFails = codeHost();
+  verifyFails.provisionFails[`verify ${N}`] = true;
+  const verified = (await install(verifyFails, withPolicy(REVIEW_POLICY))).result ?? {};
+  assert.equal(verified.outcome, "INSTALL_RESTORED");
+  assert.deepEqual(verifyFails.steps.slice(-5), [`rollback ${N}`, `checkout ${R}`, `install ${R}`, `verify ${R}`, `precondition ${R}`]);
+  assert.equal(verifyFails.steps.filter((entry) => entry === `rollback ${N}`).length, 1, "N is rolled back once");
+});
+
+test("M11 C6: when the installed revision cannot be put back, the host pauses as before", async () => {
+  for (const [name, edit] of [["checkout", (h) => { h.restoreFails = true; }], ["install", (h) => { h.provisionFails[`install ${R}`] = true; }]]) {
+    const host = codeHost();
+    host.planStatus = 1;
+    edit(host);
+    const out = (await install(host, withPolicy(REVIEW_POLICY))).result ?? {};
+    assert.equal(out.outcome, "INSTALL_FAILED", name);
+    assert.equal(out.restored?.ok, false, name);
+    assert.equal(out.pause?.written, true, name);
+    assert.ok(host.files.has(PATHS.pause), name);
+    assert.match(host.reports[0], new RegExp(`Putting ${R} back failed after`), name);
+  }
+  // A queue-only install keeps its old rule: R is never reinstalled by the box.
+  const queue = fakeHost();
+  queue.planStatus = 1;
+  const out = (await install(queue)).result ?? {};
+  assert.equal(out.outcome, "INSTALL_FAILED");
+  assert.equal(out.restored, undefined);
+  assert.equal(queue.steps.includes(`install ${R}`), false);
 });

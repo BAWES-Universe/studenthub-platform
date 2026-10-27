@@ -23,7 +23,8 @@ import { repairEligible, readOpenPulls } from "../repair-eligibility.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { watchLine } from "./card-watch.mjs";
 import { alertLine } from "./card-status.mjs";
-import { velocityLine } from "./card-velocity.mjs";
+import { velocityLine, busyLine } from "./card-velocity.mjs";
+import { usageLine, hostLine } from "./card-usage.mjs";
 
 export const COORDINATOR_ENV = "/srv/shu/coordinator.env";
 export const COORDINATOR_USER = "shu-coordinator";
@@ -107,13 +108,18 @@ export function readRetrying(io) {
 // Self-heal: whether a refusal before arming may pass on a later start. Only
 // a read that failed transiently, or the branch read-back GitHub may still
 // lag on, and only while the card itself was not yet written: a definitive
-// answer (the card's labels, owner or state, a contract, a dirty checkout, a
-// branch with its own commit) never is.
+// answer (the card's labels or state, a contract, a dirty checkout, a branch
+// with its own commit) never is. An owner on a card that has not started is
+// the exception (2026-10-26: queue 12's first card was created with an
+// assignee, and the queue stopped until the next install): removing the
+// assignee or delegate is how a person hands the card back, so the next start
+// reads it again, within the same bound.
 export function retryableRefusal(error) {
   if (!error || error.afterCardWrite === true) return false;
   if (error.transient === true) return true;
   const code = String(error.code ?? "");
-  return code === "CARD_RUN_BRANCH_READBACK" || code === "LINEAR_RATE_LIMITED" || /^LINEAR_HTTP_(429|5\d\d)$/.test(code);
+  return code === "CARD_RUN_BRANCH_READBACK" || (code === "CARD_RUN_CARD_OWNED" && error.handBack === true) || code === "LINEAR_RATE_LIMITED"
+    || /^LINEAR_HTTP_(429|5\d\d)$/.test(code);
 }
 
 // The coordinator's GitHub and Linear tokens and its push remote, from its
@@ -206,7 +212,15 @@ export function cardAction(issue, repair = null) {
 async function checkCard(io, credentials, id, repair = null) {
   const issue = await readCard(io, credentials, id);
   const decision = cardAction(issue, repair);
-  if (decision.action === "refuse") refuse(decision.code, decision.detail);
+  if (decision.action === "refuse") {
+    try { refuse(decision.code, decision.detail); } catch (error) {
+      // An owner on a card that has not started is the one definitive answer a
+      // person clears by handing the card back (retryableRefusal); an owned
+      // card that already started is that person's work, and stays refused.
+      if (decision.code === "CARD_RUN_CARD_OWNED" && MOVABLE_STATE_TYPES.includes(issue.state?.type)) error.handBack = true;
+      throw error;
+    }
+  }
   return { issue, decision };
 }
 
@@ -611,6 +625,12 @@ export function renderRunReport(result) {
   if (result.watch) lines.push(watchLine(result.watch));
   if (result.land) lines.push(...landingLines(result.land));
   if (result.velocity) lines.push(velocityLine(result.velocity));
+  const busy = result.velocity ? busyLine(result.velocity) : null;
+  if (busy) lines.push(busy);
+  const usage = usageLine(result.usage);
+  if (usage) lines.push(usage);
+  const host = result.host ? hostLine(result.host) : null;
+  if (host) lines.push(host);
   lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."
     : result.revert?.reverted ? "The host is reverted and idle."
       : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);

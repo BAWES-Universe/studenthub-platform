@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { provisioner, parseCli, PATHS, BROKER } from '../provision-shu71-prerequisites.mjs';
+import { provisioner, parseCli, prerequisiteFailure, PATHS, BROKER, FIND_TIMEOUT_MS } from '../provision-shu71-prerequisites.mjs';
 import { revision } from './provision-prerequisites-fixture.mjs';
 import { targetFixture as fixture } from './provision-target-host-fixture.mjs';
 
@@ -92,4 +92,26 @@ test('SHU71 provisioning refuses to remove an identity still in use', t => {
   const h = fixture(t), p = provisioner(revision, h.boundary); p.install(); h.faults.inUse = true;
   assert.throws(() => p.rollback(), { code: 'ACT_ROLLBACK_IDENTITY_IN_USE' }, 'SHU71_UNUSED_IDENTITY_REQUIRED');
   assert.ok(h.users().some(u => u.name === BROKER)); h.faults.inUse = false; p.rollback();
+});
+test('SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself', t => {
+  // 2026-10-26 and 27: three rollbacks in a row failed ACT_PREREQUISITE_COMMAND
+  // once and passed a retry; the walk outgrew the 30-second default.
+  const h = fixture(t), run = h.boundary.run, finds = [];
+  let timeout = false;
+  h.boundary.run = (exe, args, opts) => {
+    if (exe === '/usr/bin/find') {
+      finds.push(opts.timeout);
+      if (timeout) return { status: null, signal: 'SIGTERM', stdout: '', stderr: '', error: Object.assign(new Error('spawnSync /usr/bin/find ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+    }
+    return run(exe, args, opts);
+  };
+  const p = provisioner(revision, h.boundary); p.install(); timeout = true;
+  let failure = null;
+  try { p.rollback(); } catch (e) { failure = prerequisiteFailure(e); }
+  assert.deepEqual(failure, { ok: false, code: 'ACT_PREREQUISITE_COMMAND', failed: { command: '/usr/bin/find', status: null, signal: 'SIGTERM', error: 'ETIMEDOUT' } });
+  assert.ok(h.users().some(u => u.name === BROKER), 'nothing was removed');
+  timeout = false; p.rollback();
+  assert.ok(!h.users().some(u => u.name === BROKER));
+  assert.ok(FIND_TIMEOUT_MS >= 10 * 60 * 1000);
+  assert.deepEqual(finds, [FIND_TIMEOUT_MS, FIND_TIMEOUT_MS]);
 });

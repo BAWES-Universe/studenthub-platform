@@ -58,6 +58,68 @@ export const INSTALL_STEPS = Object.freeze(["claim", "idle", "merge", "rollback"
 export const INSTALL_REQUEST_TIMEOUT_MS = 30 * 1000;
 const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
 
+// M11: coordinator code the box may install itself once its config turns
+// that on (code_self_install, read from the installed revision only). These
+// paths install or check everything else as root, hold the trust anchors, or
+// draw this boundary, so they always stay a person's install. So does every
+// module the root install tools import, since it runs inside them: test M11 C7
+// derives that import closure from the tree and fails if one is missing here.
+export const CODE_SELF_INSTALL_KEY = "code_self_install";
+export const ROOT_INSTALL_TOOLS = Object.freeze([
+  PROVISIONER,
+  ".github/coordinator/service/install.mjs",
+  ".github/coordinator/service/units.mjs",
+  ".github/coordinator/service/credential-delivery.mjs",
+  ".github/coordinator/shu71-public-key.mjs",
+]);
+export const OWNER_ONLY_PATHS = Object.freeze([
+  PROVISIONER,
+  ".github/coordinator/service/card-install.mjs",
+  ".github/coordinator/service/install.mjs",
+  ".github/coordinator/service/units.mjs",
+  ".github/coordinator/service/credential-delivery.mjs",
+  ".github/coordinator/service/disposable-suite.mjs",
+  ".github/coordinator/service/host-suite-contract.mjs",
+  ".github/coordinator/service/shu71-journal.mjs",
+  ".github/coordinator/service/shu71-production.mjs",
+  ".github/coordinator/service/shu71-runtime-schema.mjs",
+  ".github/coordinator/service/shu71-runtime.mjs",
+  ".github/coordinator/service/suite-runner-spec.mjs",
+  ".github/coordinator/execution-authorization.mjs",
+  ".github/coordinator/launch-vocabulary.mjs",
+  ".github/coordinator/reseed-append-contract.mjs",
+  ".github/coordinator/shu71-activation-package.mjs",
+  ".github/coordinator/workspace-scope.mjs",
+  ".github/coordinator/service/shu-reviewer.sudoers",
+  ".github/coordinator/reviewer-sandbox.sh",
+  ".github/coordinator/shu71-trust-anchor.json",
+  ".github/coordinator/shu71-activation-public-key.pem",
+  ".github/coordinator/shu71-public-key.mjs",
+]);
+const OWNER_ONLY_PREFIXES = Object.freeze([".github/coordinator/service/userns-profile/"]);
+const OWNER_ONLY_SUFFIXES = Object.freeze([".sh", ".sudoers", ".service.in", ".timer.in", ".pem"]);
+export function ownerOnlyPath(file) {
+  if (typeof file !== "string" || installablePath(file)) return false;
+  return OWNER_ONLY_PATHS.includes(file) || OWNER_ONLY_PREFIXES.some((prefix) => file.startsWith(prefix))
+    || OWNER_ONLY_SUFFIXES.some((suffix) => file.endsWith(suffix));
+}
+const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+
+// The installed config's code self-install policy, or null when it is off or
+// malformed: { approval: "github_review", approvers: [logins] }, a GitHub
+// Approve by one of those logins on the reviewed pull request at its passed
+// head; or { approval: "none" }, the box review and green checks alone.
+export function codeInstallPolicy(config) {
+  const policy = config?.[CODE_SELF_INSTALL_KEY];
+  if (!plainObject(policy)) return null;
+  if (policy.approval === "none" && Object.keys(policy).length === 1) return { approval: "none", approvers: [] };
+  if (policy.approval === "github_review" && JSON.stringify(Object.keys(policy).sort()) === JSON.stringify(["approval", "approvers"])
+    && Array.isArray(policy.approvers) && policy.approvers.length > 0 && policy.approvers.every((login) => typeof login === "string" && LOGIN_RE.test(login))) {
+    return { approval: "github_review", approvers: [...policy.approvers] };
+  }
+  return null;
+}
+
 export const installClaim = (paths, main) => path.join(paths.stateDir, `card-install-auto-${main}.json`);
 export const installActivationId = (main) => `card-install-${main}`;
 
@@ -98,26 +160,36 @@ export function selfInstallGate(facts) {
   const next = parse(facts.configs?.main);
   if (!plainObject(installed)) return no("the installed config.json cannot be read", { transient: true });
   if (!plainObject(next)) return no("config.json at main is not a JSON object");
-  if (isDeepStrictEqual(installed.dispatch_scope, next.dispatch_scope)) return no("main commits no new dispatch_scope", { quiet: true });
-
+  const scopeChanged = !isDeepStrictEqual(installed.dispatch_scope, next.dispatch_scope);
+  const policy = codeInstallPolicy(installed);
   const changes = facts.changes;
+  // M11: with code self-install on, main may commit coordinator code with no
+  // new queue; without it, only a new queue is anything to install.
+  const code = Array.isArray(changes) ? changes.filter((change) => !installablePath(change?.path)) : [];
+  if (!scopeChanged && (!policy || code.length === 0)) return no("main commits no new dispatch_scope", { quiet: true });
+
   if (!Array.isArray(changes) || changes.length === 0) return no("the coordinator changes cannot be read", { transient: true });
   for (const change of changes) {
-    if (!installablePath(change?.path)) return no(`${String(change?.path)} is not a queue config path`);
+    if (!installablePath(change?.path) && !policy) return no(`${String(change?.path)} is not a queue config path`);
+    if (!installablePath(change?.path) && !coordinatorFile(change?.path)) return no(`${String(change?.path)} is not a coordinator path`);
+    if (ownerOnlyPath(change.path)) return no(`${change.path} is installed only by a person`);
     if (!["A", "M"].includes(change.status)) return no(`${change.path} is ${change.status === "D" ? "deleted" : `changed as ${String(change.status)}`}; only additions and edits install themselves`);
   }
   const contracts = changes.find((change) => change.path === CONTRACTS_PATH);
-  if (contracts && (contracts.status !== "M" || facts.contractLines?.deleted !== 0 || !Number.isInteger(facts.contractLines?.added))) {
+  if (code.length === 0 && contracts && (contracts.status !== "M" || facts.contractLines?.deleted !== 0 || !Number.isInteger(facts.contractLines?.added))) {
     return no(`${CONTRACTS_PATH} may only gain lines`);
   }
 
   const keys = new Set([...Object.keys(installed), ...Object.keys(next)]);
   for (const key of keys) {
     if (key === "dispatch_scope" || key === "card_lanes") continue;
-    if (!Object.hasOwn(installed, key) || !Object.hasOwn(next, key) || !isDeepStrictEqual(installed[key], next[key])) {
-      return no(`config.json changes ${key}; only dispatch_scope and appended card_lanes install themselves`);
+    const same = Object.hasOwn(installed, key) && Object.hasOwn(next, key) && isDeepStrictEqual(installed[key], next[key]);
+    // Code may change the config with it, but never the policy that let it in.
+    if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) {
+      return no(`config.json changes ${key}; ${code.length ? "the code self-install policy is" : "only dispatch_scope and appended card_lanes"} install${code.length ? "ed only by a person" : " themselves"}`);
     }
   }
+  if (!scopeChanged) return codeGate(facts, { changes, code, policy });
   const before = installed.card_lanes;
   const after = next.card_lanes;
   if (!Array.isArray(before) || !Array.isArray(after) || after.length <= before.length
@@ -147,6 +219,28 @@ export function selfInstallGate(facts) {
     if (installedContracts.has(id) || !nextContracts.has(id)) return no(`${id} has no CARD_CONTRACTS entry added at main`);
   }
 
+  const reviewed = reviewedAndGreen(facts, { changes, code, policy });
+  if (!reviewed.ok) return reviewed;
+  return { ok: true, queue: [...ids], lanes: added, ...(code.length ? { code: code.map((change) => change.path), approval: reviewed.approval } : {}) };
+}
+
+const coordinatorFile = (file) => typeof file === "string" && file.startsWith(COORDINATOR)
+  && !file.split("/").some((part) => !part || part === "." || part === "..");
+
+// M11: main commits coordinator code and the same queue. Everything above
+// already held; what is left is the review, the approval and the checks.
+function codeGate(facts, { changes, code, policy }) {
+  const reviewed = reviewedAndGreen(facts, { changes, code, policy });
+  if (!reviewed.ok) return reviewed;
+  return { ok: true, queue: null, lanes: [], code: code.map((change) => change.path), approval: reviewed.approval };
+}
+
+// One REVIEW_PASS claim covers every changed blob; coordinator code also needs
+// the policy's approval at that pass's exact head; then main's checks are
+// green. The checks and the approval are read from GitHub only when every
+// structural rule already holds, so their absence here is transient.
+function reviewedAndGreen(facts, { changes, code, policy }) {
+  const no = (reason, kind = {}) => ({ ok: false, transient: false, quiet: false, ...kind, reason });
   const passes = Array.isArray(facts.passes) ? facts.passes : [];
   for (const change of changes) {
     if (!SHA_RE.test(facts.blobs?.[change.path] ?? "")) return no(`${change.path} has no readable blob at main`);
@@ -155,11 +249,48 @@ export function selfInstallGate(facts) {
   // requests were never reviewed together.
   const review = passes.find((entry) => changes.every((change) => entry?.files?.[change.path]?.sha === facts.blobs[change.path]));
   if (!review) return no(`the coordinator changes at main are not the blobs one REVIEW_PASS claim recorded at an exact pull request head`);
+  let approval = null;
+  if (code.length && policy.approval === "github_review") {
+    const wanted = { pr: review.pr, head: review.head, approvers: policy.approvers };
+    const read = facts.approval;
+    if (!read || read.pr !== review.pr || read.head !== review.head) {
+      return no(`pull request #${review.pr} carries coordinator code, and its approval is not read yet`, { transient: true, needs: { approval: wanted } });
+    }
+    if (read.approved !== true) {
+      return no(`pull request #${review.pr} carries coordinator code and waits on an Approve at ${review.head} from ${policy.approvers.join(" or ")}: ${read.note ?? "none yet"}`,
+        { transient: true, needs: { approval: wanted } });
+    }
+    approval = { pr: review.pr, head: review.head, by: read.by };
+  } else if (code.length) {
+    approval = { pr: review.pr, head: review.head, by: null };
+  }
 
   const checks = facts.checks;
-  if (Array.isArray(checks?.red) && checks.red.length) return no(`main's checks at ${main} are red: ${checks.red.join(", ")}`);
-  if (checks?.green !== true) return no(`main's checks at ${main} are not green yet: ${checks?.note ?? "unread"}`, { transient: true });
-  return { ok: true, queue: [...ids], lanes: added };
+  if (Array.isArray(checks?.red) && checks.red.length) return no(`main's checks at ${facts.main} are red: ${checks.red.join(", ")}`);
+  if (checks?.green !== true) return no(`main's checks at ${facts.main} are not green yet: ${checks?.note ?? "unread"}`, { transient: true });
+  return { ok: true, approval };
+}
+
+// M11: whether one of the approvers, not the pull request's author, approved
+// it at exactly the passed head, by their latest decisive review. Read only.
+export async function readApproval(gh, repo, { pr, head, approvers }) {
+  const api = `https://api.github.com/repos/${repo}/pulls/${pr}`;
+  const pullResponse = await gh("GET", api);
+  const pull = await pullResponse.json();
+  if (!pullResponse.ok || !plainObject(pull)) return { pr, head, approved: false, note: `the pull request cannot be read (HTTP ${pullResponse.status})` };
+  const author = typeof pull.user?.login === "string" ? pull.user.login.toLowerCase() : null;
+  const reviewsResponse = await gh("GET", `${api}/reviews?per_page=100`);
+  const reviews = await reviewsResponse.json();
+  if (!reviewsResponse.ok || !Array.isArray(reviews)) return { pr, head, approved: false, note: `the reviews cannot be read (HTTP ${reviewsResponse.status})` };
+  if (reviews.length >= 100) return { pr, head, approved: false, note: "the pull request has too many reviews to read in one page" };
+  const decisive = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
+  for (const login of approvers) {
+    const who = login.toLowerCase();
+    if (who === author) continue;
+    const latest = reviews.filter((entry) => typeof entry?.user?.login === "string" && entry.user.login.toLowerCase() === who && decisive.has(entry.state)).at(-1);
+    if (latest?.state === "APPROVED" && latest.commit_id === head) return { pr, head, approved: true, by: login };
+  }
+  return { pr, head, approved: false, note: `no Approve at ${head} from ${approvers.join(" or ")}${author && approvers.some((login) => login.toLowerCase() === author) ? " (the author's own does not count)" : ""}` };
 }
 
 // A passed review as a Card A claim records it. The supervisor ends a passed
@@ -287,6 +418,46 @@ function planCheck(io, paths, queue) {
   if (refused) throw new Error(`a dry-run preparation is refused: ${plainReason(refused.prepare?.reason ?? refused.prepare?.refused ?? "no preparation")}`);
 }
 
+// M11: a code install leaves the queue as it was. N's own card-run.mjs must
+// still plan: exit 0, read the same queue, and refuse no queued preparation.
+function codePlanCheck(io, paths, scope) {
+  const node = io.nodePath?.() ?? process.execPath;
+  const result = io.exec(node, [path.join(paths.checkout, CARD_RUN), "plan"]);
+  const plan = parse(String(result.stdout ?? ""));
+  if (result.status !== 0 || !plainObject(plan)) throw new Error(`the plan check exited ${result.status}`);
+  if (!isDeepStrictEqual(plan.queue, scope)) throw new Error(`the plan check reads queue ${JSON.stringify(plan.queue ?? null)}, not ${scope.join(", ")}`);
+  const queued = Array.isArray(plan.queued) ? plan.queued : [];
+  const refused = queued.find((entry) => !plainObject(entry?.prepare) || entry.prepare.refused);
+  if (refused) throw new Error(`a dry-run preparation is refused: ${plainReason(refused.prepare?.reason ?? refused.prepare?.refused ?? "no preparation")}`);
+}
+
+// M11: puts the installed revision R back after a failed code install: N's
+// prerequisites off (when they were installed and not already rolled back),
+// the checkout's main back to R as the coordinator user, then R installed,
+// verified and its precondition read. Never throws.
+function restoreRevision(io, credentials, paths, repo, { revision, main, installed }) {
+  const steps = [];
+  try {
+    if (installed) { provision(io, paths, "rollback", main); steps.push("rollback"); }
+    if (!validateRepoUrl(credentials.SHU_PUSH_REMOTE_URL, { allowedRepo: repo }).ok) throw new Error(`SHU_PUSH_REMOTE_URL is not the ${repo} remote`);
+    const asCoordinator = coordinatorRunner(io);
+    const git = (args, what) => {
+      const result = asCoordinator(["timeout", "--kill-after=10", String(PUSH_TIMEOUT_SECONDS), "git", ...BROKER_GIT_CONFIG_ARGS, "-C", paths.checkout, ...args]);
+      if (result.status !== 0) throw new Error(`${what} failed (git exit ${result.status})`);
+      return String(result.stdout ?? "").trim();
+    };
+    git(["checkout", "-q", "-B", "main", revision], `moving the checkout's main back to ${revision}`);
+    const head = git(["rev-parse", "HEAD"], "reading HEAD");
+    const dirty = git(["status", "--porcelain=v1", "--untracked-files=all"], "reading the checkout status");
+    if (head !== revision || dirty) throw new Error(`the checkout did not read back clean at ${revision}`);
+    steps.push("checkout");
+    for (const action of ["install", "verify", "precondition"]) { provision(io, paths, action, revision); steps.push(action); }
+    return { ok: true, steps };
+  } catch (error) {
+    return { ok: false, steps, reason: error.message };
+  }
+}
+
 // The pause file, created only: if it exists its text stays. After a failed
 // install it is what stops the next timer start, so it counts as in place only
 // when it was written now or a plain pause file was already there; otherwise
@@ -310,19 +481,26 @@ export const INSTALL_OUTCOME_TEXT = Object.freeze({
   NEEDS_OWNER: "main changes more than a reviewed card queue, so a person installs it",
   INSTALL_FAILED: "the install stopped and the card-run timer is paused",
   INSTALL_PAUSED: "the pause file appeared, so the install stopped part way",
+  INSTALL_RESTORED: "the install stopped and the installed revision is back in place, so the box keeps running it",
 });
 
 export function renderInstallReport(result) {
   const lines = [
     reportMarker(result.activation_id),
-    `Card queue install of main at ${result.main} over installed revision ${result.revision}: ${result.outcome}, ${INSTALL_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
+    `${result.code?.length ? (result.queue?.length ? "Code and card queue" : "Code") : "Card queue"} install of main at ${result.main} over installed revision ${result.revision}: ${result.outcome}, ${INSTALL_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
     "Started by the card-run timer once the installed queue was done.",
   ];
   if (result.queue?.length) lines.push(`Queue: ${result.queue.join(", ")}.`);
+  if (result.code?.length) {
+    const approval = result.approval;
+    lines.push(`Code: ${result.code.length} coordinator file(s) from pull request #${approval?.pr ?? "?"} at ${approval?.head ?? "?"}, ${approval?.by ? `approved by ${approval.by}` : "passed by the box review"}.`);
+  }
   if (result.reason) lines.push(`Reason: ${plainReason(result.reason)}`);
   if (result.steps?.length) lines.push(`Steps done: ${result.steps.join(", ")}.`);
   if (result.failed_step) lines.push(`Stopped at: ${result.failed_step}.`);
-  if (result.rollback) lines.push(result.rollback.ok ? `Rolled back the prerequisites of ${result.main}; ${result.revision} was not reinstalled.`
+  if (result.restored) lines.push(result.restored.ok ? `Put ${result.revision} back: ${result.restored.steps.join(", ")}.`
+    : `Putting ${result.revision} back failed after ${result.restored.steps.join(", ") || "no step"}: ${plainReason(result.restored.reason)}`);
+  else if (result.rollback) lines.push(result.rollback.ok ? `Rolled back the prerequisites of ${result.main}; ${result.revision} was not reinstalled.`
     : `The rollback of ${result.main} failed: ${plainReason(result.rollback.reason)}`);
   if (result.pause) lines.push(result.pause.written ? "Wrote /etc/shu/card-run.paused; the owner removes it."
     : result.pause.held ? `The pause file was not written (${result.pause.code}); a pause file is already in place.`
@@ -362,13 +540,20 @@ export async function selfInstall({ io, paths, config, revision, deps, limits = 
   if (gate.quiet) return { silent: true };
   if (gate.transient) {
     let checks;
+    let approval;
+    const gh = github(boundedFetch(io, limits.installRequestTimeoutMs ?? INSTALL_REQUEST_TIMEOUT_MS), credentials.GITHUB_TOKEN);
     try {
-      const gh = github(boundedFetch(io, limits.installRequestTimeoutMs ?? INSTALL_REQUEST_TIMEOUT_MS), credentials.GITHUB_TOKEN);
       checks = await readCommitChecks(gh, repo, facts.main);
     } catch (error) {
       checks = { green: false, note: `the checks cannot be read: ${error.message}` };
     }
-    gate = selfInstallGate({ ...facts, passes, landed, checks });
+    // M11: the approval of a code change, read only when the gate asks for it.
+    const wanted = gate.needs?.approval;
+    if (wanted) {
+      try { approval = await readApproval(gh, repo, wanted); }
+      catch (error) { approval = { ...wanted, approved: false, note: `the reviews cannot be read: ${error.message}` }; }
+    }
+    gate = selfInstallGate({ ...facts, passes, landed, checks, approval });
   }
   if (gate.transient) return { skipped: "INSTALL_NOT_READY", reason: gate.reason };
   if (io.fs.existsSync(paths.pause)) return { paused: true, reason: `${paths.pause} exists` };
@@ -385,10 +570,11 @@ export async function selfInstall({ io, paths, config, revision, deps, limits = 
     }
     return { result: { ...(await report(result)), claim } };
   }
-  return installMain({ io, paths, deps, credentials, repo, revision, main: facts.main, queue: gate.queue, claim, base, report });
+  return installMain({ io, paths, deps, credentials, repo, revision, main: facts.main, queue: gate.queue, code: gate.code ?? null,
+    approval: gate.approval ?? null, scope: scopeIds(facts.configs?.main), claim, base, report });
 }
 
-async function installMain({ io, paths, deps, credentials, repo, revision, main, queue, claim, base, report }) {
+async function installMain({ io, paths, deps, credentials, repo, revision, main, queue, code = null, approval = null, scope = [], claim, base, report }) {
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { return { skipped: "INSTALL_LOCKED", reason: `${paths.lock} exists` }; }
   const steps = [];
@@ -403,7 +589,7 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
     // host before it gives N back for a later start.
     if (paused()) return { paused: true, reason: `${paths.pause} exists` };
     try {
-      io.fs.writeFileSync(claim, `${JSON.stringify({ main, revision, queue, claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+      io.fs.writeFileSync(claim, `${JSON.stringify({ main, revision, queue, ...(code ? { code, approval } : {}), claimed_at: io.now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
     } catch (error) {
       if (error.code === "EEXIST") return { silent: true };
       return { skipped: "INSTALL_UNREADABLE", reason: `the claim cannot be written: ${error.code ?? error.message}` };
@@ -440,14 +626,25 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
           throw error;
         }
       }
-      run("plan", () => planCheck(io, paths, queue));
-      result = { ...base, ok: true, outcome: "INSTALLED", queue, steps: [...steps], reason: `the next timer start runs ${queue[0]}` };
+      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));
+      result = { ...base, ok: true, outcome: "INSTALLED", queue, ...(code ? { code, approval } : {}), steps: [...steps],
+        reason: queue ? `the next timer start runs ${queue[0]}` : "the next timer start runs the installed code" };
     } catch (error) {
       const reason = `${failedStep ?? "a step"}: ${error.message}`;
-      const pause = outcome === "INSTALL_PAUSED" ? null : pauseHost(io, paths, `${main} ${reason}`);
+      // M11: a code install that failed after the merge puts R back, so the
+      // box keeps working on the code a person or a passed install left. Only
+      // when R cannot be put back does the host pause.
+      let restored = null;
+      if (code && outcome !== "INSTALL_PAUSED" && steps.includes("merge")) {
+        restored = restoreRevision(io, credentials, paths, repo, { revision, main, installed: steps.includes("install") && !rollback });
+        if (restored.ok) rollback = rollback ?? (steps.includes("install") ? { ok: true } : null);
+      }
+      const pause = outcome === "INSTALL_PAUSED" || restored?.ok ? null : pauseHost(io, paths, `${main} ${reason}`);
       if (pause && !pause.held) keepLock = true;
-      result = { ...base, outcome: outcome ?? "INSTALL_FAILED", queue, steps: [...steps], failed_step: failedStep, reason,
+      result = { ...base, outcome: outcome ?? (restored?.ok ? "INSTALL_RESTORED" : "INSTALL_FAILED"), queue, ...(code ? { code, approval } : {}),
+        steps: [...steps], failed_step: failedStep, reason,
         ...(rollback ? { rollback } : {}),
+        ...(restored ? { restored } : {}),
         ...(pause ? { pause } : {}),
         ...(keepLock ? { lock_kept: true } : {}) };
     }
@@ -456,7 +653,7 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
   }
   let claimError = null;
   try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ main, revision, queue, outcome: result.outcome, ok: result.ok, steps: result.steps,
+    io.fs.writeFileSync(claim, `${JSON.stringify({ main, revision, queue, ...(code ? { code, approval } : {}), outcome: result.outcome, ok: result.ok, steps: result.steps,
       ...(result.reason ? { reason: result.reason } : {}) })}\n`, { mode: 0o600 });
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { result: { ...(await report(result)), claim, ...(claimError ? { claim_error: claimError } : {}) } };

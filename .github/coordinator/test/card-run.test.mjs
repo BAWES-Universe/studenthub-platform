@@ -779,13 +779,33 @@ test("SHU-86 C46: a start refused on a read that may pass gives the card's run b
   assert.deepEqual(lagged.retry, { attempt: 1, of: REFUSED_START_RETRIES });
   assert.equal(lagging.files.has(CLAIM), false);
 
-  // A definitive refusal (the card is owned) spends the run and writes no give-back.
-  const owned = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
-  const refused = await attempt(() => autoRun({ io: owned.io, paths: PATHS }));
-  assert.equal(refused.code, "CARD_RUN_CARD_OWNED");
+  // An owned card is given back too (queue 12, 2026-10-26): once its owner is removed, the
+  // next start runs it.
+  const owned = fakeHost({ config: queueConfig(), onTick: passOnFirstTick,
+    card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
+  const ownedRefusal = await attempt(() => autoRun({ io: owned.io, paths: PATHS }));
+  assert.equal(ownedRefusal.code, "CARD_RUN_CARD_OWNED");
+  assert.deepEqual(ownedRefusal.retry, { attempt: 1, of: REFUSED_START_RETRIES });
+  assert.equal(owned.files.has(CLAIM), false);
+  noArming(owned);
+  owned.card.assignee = null;
+  const freed = await attempt(() => autoRun({ io: owned.io, paths: PATHS }));
+  assert.equal(freed.outcome, "PASS", JSON.stringify(freed));
+
+  // A definitive refusal (the card already started) spends the run and writes no give-back.
+  const started = fakeHost({ card: { state: { id: "p", name: "In Progress", type: "started" }, assignee: null, delegate: null } });
+  const refused = await attempt(() => autoRun({ io: started.io, paths: PATHS }));
+  assert.equal(refused.code, "CARD_RUN_CARD_STATE");
   assert.equal(refused.retry, undefined);
-  assert.equal(JSON.parse(owned.files.get(CLAIM).text).outcome, "NOT_STARTED");
-  assert.deepEqual(retries(owned), []);
+  assert.equal(JSON.parse(started.files.get(CLAIM).text).outcome, "NOT_STARTED");
+  assert.deepEqual(retries(started), []);
+  // Started and owned: that person's work, so the refusal is not given back.
+  const startedOwned = fakeHost({ card: { state: { id: "p", name: "In Progress", type: "started" }, assignee: { id: "someone" }, delegate: null } });
+  const startedRefusal = await attempt(() => autoRun({ io: startedOwned.io, paths: PATHS }));
+  assert.equal(startedRefusal.code, "CARD_RUN_CARD_OWNED");
+  assert.equal(startedRefusal.retry, undefined);
+  assert.equal(JSON.parse(startedOwned.files.get(CLAIM).text).outcome, "NOT_STARTED");
+  assert.deepEqual(retries(startedOwned), []);
 
   // Once the card was moved, a failed read after it never gives the run back:
   // the card may have changed.
@@ -816,7 +836,7 @@ test("SHU-86 C46: a start refused on a read that may pass gives the card's run b
     [{ code: "LINEAR_RATE_LIMITED" }, true], [Object.assign(new TypeError("fetch failed"), { transient: true }), true],
     [{ code: "CARD_RUN_BASE", transient: true }, true], [{ code: "LINEAR_HTTP_503", afterCardWrite: true }, false],
     [{ code: "LINEAR_HTTP_400" }, false], [new TypeError("x is undefined"), false], [{ code: "CARD_RUN_CARD_LABELS" }, false],
-    [{ code: "CARD_RUN_CARD_OWNED" }, false], [{ code: "CARD_RUN_CARD_STATE" }, false], [{ code: "CARD_RUN_CHECKOUT" }, false],
+    [{ code: "CARD_RUN_CARD_OWNED" }, false], [{ code: "CARD_RUN_CARD_OWNED", handBack: true }, true], [{ code: "CARD_RUN_CARD_STATE" }, false], [{ code: "CARD_RUN_CHECKOUT" }, false],
     [{ code: "CARD_RUN_CONFIG" }, false], [{ code: "CARD_RUN_BRANCH_NOT_AT_TARGET" }, false], [{ code: "CARD_RUN_BASE", notDescendant: true }, false],
     [{ code: "CARD_RUN_CREDENTIALS" }, false], [null, false],
   ]) assert.equal(retryableRefusal(error), want, JSON.stringify(error));
@@ -1386,7 +1406,7 @@ test("SHU-86 C32: a paused, locked, busy or not-ready host is skipped without to
 });
 
 test("SHU-86 C33: a refusal before arming spends the revision's run and is reported once", async () => {
-  const host = fakeHost({ card: { state: { id: "backlog", name: "Backlog", type: "backlog" }, assignee: { id: "someone" }, delegate: null } });
+  const host = fakeHost({ card: { state: { id: "p", name: "In Progress", type: "started" }, assignee: null, delegate: null } });
   const { code, output } = await main(["auto"], host.io, PATHS);
   assert.equal(code, 1);
   assert.equal(output.outcome, "NOT_STARTED");
