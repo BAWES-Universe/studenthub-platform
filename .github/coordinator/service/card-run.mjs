@@ -1066,7 +1066,9 @@ async function afterQueueDone({ io, paths, limits, config, revision, done, skip 
   // the failed unit as a run that died before its first write and paused the
   // timer, which then held the queue the owner had just installed by hand.
   // The status says this start finished, as a refused run's does (C44).
-  if (install.result?.outcome === "NEEDS_OWNER") installRefusedStatus({ io, paths, config, result: install.result });
+  // M11: a code install that put the installed revision back ends the same
+  // way: nothing new runs, and the owner was told once by its report.
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });
   if (install.result) return install.result;
   if (install.paused) return skip("PAUSED", install.reason);
   const review = await autoReview({ io, paths, limits, config, revision, done, skip });
@@ -1080,7 +1082,7 @@ function installRefusedStatus({ io, paths, config, result }) {
   createStatus({ io, paths, run: { run_id: result.activation_id,
     invocation: /^[0-9a-f]{32}$/.test(invocation ?? "") ? invocation : null, card: null, kind: "install", trigger: "timer",
     revision: result.revision, queue: (config?.dispatch_scope?.issue_ids ?? []).filter((id) => typeof id === "string") } })
-    .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: "NEEDS_OWNER", land: null,
+    .write({ step: "finished", ticks: 0, last_tick_at: null, armed_at: null, outcome: result.outcome, land: null,
       reverted: false, needs_owner: true });
 }
 

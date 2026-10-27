@@ -20,7 +20,7 @@ test("Usage U1: the Codex and Claude CLI outputs give token counts, and anything
   assert.equal(parseCodexUsage(undefined), null);
   const claude = JSON.stringify({ type: "result", num_turns: 7, total_cost_usd: 1.25,
     usage: { input_tokens: 10, cache_creation_input_tokens: 90, cache_read_input_tokens: 5000, output_tokens: 300 } });
-  assert.deepEqual(parseClaudeUsage(claude), { family: "claude", input_tokens: 100, cached_input_tokens: 5000, output_tokens: 300, cost_usd: 1.25, turns: 7 });
+  assert.deepEqual(parseClaudeUsage(claude), { family: "claude", input_tokens: 5100, cached_input_tokens: 5000, output_tokens: 300, cost_usd: 1.25, turns: 7 });
   assert.equal(parseClaudeUsage(JSON.stringify({ usage: { input_tokens: 1 }, total_cost_usd: "x" })).cost_usd, null);
   assert.equal(parseClaudeUsage("{not json"), null);
   assert.equal(parseClaudeUsage(JSON.stringify({ type: "result" })), null);
@@ -34,7 +34,7 @@ const A = (n) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000.json
 function supervisorIo(entries) {
   const files = new Map();
   for (const [name, order, completion, kind = "file"] of entries) {
-    files.set(path.join(DIR, "orders", name), { value: order, kind });
+    files.set(path.join(DIR, "orders", name), { value: { protocol: 2, order, digest: "d" }, kind });
     files.set(path.join(DIR, "completions", name), { value: completion, kind });
   }
   return { fs: {
@@ -64,7 +64,8 @@ test("Usage U2: a run's usage is summed from the supervisor's records for its ow
   ], "another card, a run before the window, a result with no usage and a linked record are all left out");
   assert.equal(readRunUsage(io, DIR, { issue: "not-a-card", from: at(0), to: at(30) }), null);
   assert.equal(readRunUsage(io, DIR, { issue: "SHU-5", from: null, to: at(30) }), null);
-  assert.equal(usageLine(sums), "AI usage: 2 build runs (codex): 420 input (20 cached), 60 output; 2 review runs (claude): 120 input (20 cached), 10 output, $0.75.");
+  assert.equal(usageLine(sums), "AI usage: 2 build runs (codex): 400 input (20 cached), 60 output; 2 review runs (claude): 100 input (20 cached), 10 output, $0.75.",
+    "cached tokens are part of the input count, never added to it");
   assert.equal(usageLine([{ role: "build", family: "codex", runs: 1, input_tokens: 2_400_000, cached_input_tokens: 0, output_tokens: 12_345, cost_usd: null }]),
     "AI usage: 1 build run (codex): 2.4M input, 12k output.");
   assert.equal(usageLine([]), null);

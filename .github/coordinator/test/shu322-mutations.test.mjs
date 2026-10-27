@@ -15,7 +15,7 @@ const FILE = "service/card-install.mjs";
 const CASES = [
   {
     name: "M1 drop the path allowlist",
-    from: "    if (!installablePath(change?.path)) return no(",
+    from: "    if (!installablePath(change?.path) && !policy) return no(",
     to: "    if (false) /* SHU322-M1 */ return no(",
     pattern: "SHU-322 B2:",
   },
@@ -105,8 +105,8 @@ const CASES = [
   },
   {
     name: "M16 claim an install without the exclusive flag",
-    from: "JSON.stringify({ main, revision, queue, claimed_at: io.now().toISOString() })}\\n`, { flag: \"wx\", mode: 0o600 });",
-    to: "JSON.stringify({ main, revision, queue, claimed_at: io.now().toISOString() })}\\n`, { flag: \"w\", mode: 0o600 }); // SHU322-M16",
+    from: "...(code ? { code, approval } : {}), claimed_at: io.now().toISOString() })}\\n`, { flag: \"wx\", mode: 0o600 });",
+    to: "...(code ? { code, approval } : {}), claimed_at: io.now().toISOString() })}\\n`, { flag: \"w\", mode: 0o600 }); // SHU322-M16",
     pattern: "SHU-322 B10:",
   },
   {
@@ -123,7 +123,7 @@ const CASES = [
   },
   {
     name: "M19 leave the host unpaused after a failure",
-    from: "      const pause = outcome === \"INSTALL_PAUSED\" ? null : pauseHost(io, paths, `${main} ${reason}`);",
+    from: "      const pause = outcome === \"INSTALL_PAUSED\" || restored?.ok ? null : pauseHost(io, paths, `${main} ${reason}`);",
     to: "      const pause = null; // SHU322-M19",
     pattern: "SHU-322 B12:",
   },
@@ -141,7 +141,7 @@ const CASES = [
   },
   {
     name: "M22 skip the plan check",
-    from: '      run("plan", () => planCheck(io, paths, queue));',
+    from: '      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));',
     to: "      // SHU322-M22",
     pattern: "SHU-322 B14:",
   },
@@ -180,7 +180,7 @@ const CASES = [
   {
     name: "M28 refuse an install without a finished status",
     file: "service/card-run.mjs",
-    from: '  if (install.result?.outcome === "NEEDS_OWNER") installRefusedStatus({ io, paths, config, result: install.result });',
+    from: '  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });',
     to: "  // SHU322-M28",
     pattern: "SHU-322 B19:",
   },
@@ -190,6 +190,54 @@ const CASES = [
     from: 'raw.kind === "review" || raw.kind === "install" ? raw.kind : null,',
     to: 'raw.kind === "review" ? raw.kind : null, // SHU322-M29',
     pattern: "SHU-322 B19:",
+  },
+  {
+    name: "M30 install an owner-only path",
+    from: "    if (ownerOnlyPath(change.path)) return no(",
+    to: "    if (false) /* M11-M30 */ return no(",
+    pattern: "M11 C2:",
+  },
+  {
+    name: "M31 let code change the self-install policy",
+    from: "if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) {",
+    to: "if (!same && (code.length === 0)) { // M11-M31",
+    pattern: "M11 C2:",
+  },
+  {
+    name: "M32 read the policy from main",
+    from: "  const policy = codeInstallPolicy(installed);",
+    to: "  const policy = codeInstallPolicy(next); // M11-M32",
+    pattern: "M11 C1:",
+  },
+  {
+    name: "M33 install code without its approval",
+    from: "    if (read.approved !== true) {",
+    to: "    if (false) { // M11-M33",
+    pattern: "M11 C1:",
+  },
+  {
+    name: "M34 count the author's own approval",
+    from: "    if (who === author) continue;",
+    to: "    // M11-M34",
+    pattern: "M11 C3:",
+  },
+  {
+    name: "M35 count an approval of another head",
+    from: '    if (latest?.state === "APPROVED" && latest.commit_id === head) return',
+    to: '    if (latest?.state === "APPROVED") /* M11-M35 */ return',
+    pattern: "M11 C3:",
+  },
+  {
+    name: "M36 pause instead of putting R back",
+    from: '      if (code && outcome !== "INSTALL_PAUSED" && steps.includes("merge")) {',
+    to: "      if (false) { // M11-M36",
+    pattern: "M11 C5:",
+  },
+  {
+    name: "M37 run the code plan check as a queue plan check",
+    from: '      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));',
+    to: '      run("plan", () => planCheck(io, paths, queue ?? scope)); // M11-M37',
+    pattern: "M11 C4:",
   },
 ];
 

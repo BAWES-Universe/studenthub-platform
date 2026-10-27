@@ -40,7 +40,9 @@ export function readRunUsage(io, supervisorStateDir, { issue, from, to }) {
     let order;
     try {
       completion = readRegular(io, path.join(completions, file));
-      order = readRegular(io, path.join(orders, file));
+      // The supervisor keeps each work order in its durable envelope,
+      // { protocol, order, digest } (supervisor.mjs accept).
+      order = readRegular(io, path.join(orders, file))?.order;
     } catch { continue; }
     if (!completion || !order || order.issue_id !== issue) continue;
     const finished = time(completion.finished_at);
@@ -68,7 +70,7 @@ export function usageLine(usage) {
     const what = `${u.runs} ${u.role === "review" ? "review" : "build"} run${u.runs === 1 ? "" : "s"} (${u.family})`;
     const cached = u.cached_input_tokens ? ` (${tokens(u.cached_input_tokens)} cached)` : "";
     const cost = u.cost_usd === null ? "" : `, $${u.cost_usd.toFixed(2)}`;
-    return `${what}: ${tokens(u.input_tokens + u.cached_input_tokens)} input${cached}, ${tokens(u.output_tokens)} output${cost}`;
+    return `${what}: ${tokens(u.input_tokens)} input${cached}, ${tokens(u.output_tokens)} output${cost}`;
   });
   return `AI usage: ${parts.join("; ")}.`;
 }

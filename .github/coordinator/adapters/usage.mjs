@@ -5,7 +5,7 @@
 const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
 
 // `codex exec --json` prints one turn.completed event per turn, each with that
-// turn's token counts.
+// turn's token counts; its input_tokens already include the cached ones.
 export function parseCodexUsage(stdout) {
   const usage = { family: "codex", input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 };
   for (const line of String(stdout ?? "").split("\n")) {
@@ -22,6 +22,9 @@ export function parseCodexUsage(stdout) {
 }
 
 // `claude -p --output-format json` prints one envelope with the run's totals.
+// Its input_tokens leave out cache writes and reads, so they are added here:
+// input_tokens is every input token, of which cached_input_tokens were read
+// from cache, the way Codex counts them.
 export function parseClaudeUsage(stdout) {
   let envelope;
   try { envelope = JSON.parse(String(stdout ?? "").trim()); } catch { return null; }
@@ -30,7 +33,7 @@ export function parseClaudeUsage(stdout) {
   const cost = envelope.total_cost_usd;
   return {
     family: "claude",
-    input_tokens: count(u.input_tokens) + count(u.cache_creation_input_tokens),
+    input_tokens: count(u.input_tokens) + count(u.cache_creation_input_tokens) + count(u.cache_read_input_tokens),
     cached_input_tokens: count(u.cache_read_input_tokens),
     output_tokens: count(u.output_tokens),
     cost_usd: typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null,
