@@ -54,6 +54,9 @@ export function readVelocity(io, stateDir, { now = io.now(), current = null } = 
       || (at === seen.at && cycle !== null && (seen.cycle === null || cycle < seen.cycle));
     if (better) unattended.set(id, { at, cycle });
   };
+  // M15 step 1: when the box was busy with a timer card run, from its claim to
+  // its merge (or its end), merged so overlapping runs count once.
+  const busy = [];
   for (const file of io.fs.readdirSync(stateDir)) {
     const match = AUTO_RE.exec(file) ?? REPAIR_RE.exec(file) ?? HAND_RE.exec(file);
     if (!match) continue;
@@ -70,6 +73,9 @@ export function readVelocity(io, stateDir, { now = io.now(), current = null } = 
       const at = time(record?.recorded_at);
       if (at !== null) hand.set(id, at);
     } else if (AUTO_RE.test(file)) {
+      const start = time(record?.claimed_at);
+      const end = time(record?.landed_at) ?? time(record?.finished_at);
+      if (start !== null && end !== null && end >= start) busy.push([start, end]);
       if (record?.land !== "MERGED") continue;
       const claimed = time(record.claimed_at);
       const landed = time(record.landed_at);
@@ -80,6 +86,10 @@ export function readVelocity(io, stateDir, { now = io.now(), current = null } = 
       const at = time(record.finished_at);
       if (at !== null) land(id, at, null);
     }
+  }
+  if (current && /^SHU-[1-9]\d*$/.test(current.card ?? "")) {
+    const claimed = time(current.claimed_at);
+    if (claimed !== null && claimed <= nowMs) busy.push([claimed, nowMs]);
   }
   if (current?.landed === true && /^SHU-[1-9]\d*$/.test(current.card ?? "")) {
     const claimed = time(current.claimed_at);
@@ -98,7 +108,22 @@ export function readVelocity(io, stateDir, { now = io.now(), current = null } = 
     week,
     median_cycle_ms: weekCycles.length ? median(weekCycles) : null,
     cycles: weekCycles.length,
+    busy_share: { day: busyShare(busy, nowMs, DAY_MS), week: busyShare(busy, nowMs, 7 * DAY_MS) },
   };
+}
+
+// The share of the window [now - ms, now] covered by at least one interval.
+export function busyShare(intervals, nowMs, ms) {
+  const from = nowMs - ms;
+  const clipped = intervals.map(([a, b]) => [Math.max(a, from), Math.min(b, nowMs)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  let covered = 0;
+  let end = -Infinity;
+  for (const [a, b] of clipped) {
+    if (b <= end) continue;
+    covered += b - Math.max(a, end);
+    end = b;
+  }
+  return covered / ms;
 }
 
 export function velocityLine(velocity) {
@@ -109,4 +134,12 @@ export function velocityLine(velocity) {
     : ` Median ${Math.round(velocity.median_cycle_ms / 60000)} min from claim to merge (${velocity.cycles} card${velocity.cycles === 1 ? "" : "s"}).`;
   return `Velocity: ${day.unattended} card(s) landed unattended and ${day.hand} by hand in the last 24 hours; `
     + `${week.unattended} and ${week.hand} in the last 7 days${share}.${cycle}`;
+}
+
+// M15 step 1: how much of the time the box had a card run, on its own line.
+export function busyLine(velocity) {
+  const share = velocity?.busy_share;
+  if (!share || !Number.isFinite(share.day) || !Number.isFinite(share.week)) return null;
+  const pct = (value) => `${Math.round(100 * value)}%`;
+  return `Box busy with cards ${pct(share.day)} of the last 24 hours and ${pct(share.week)} of the last 7 days.`;
 }

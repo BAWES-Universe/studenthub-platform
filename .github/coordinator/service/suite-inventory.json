@@ -60,6 +60,7 @@
     ".github/coordinator/test/card-lanes.test.mjs",
     ".github/coordinator/test/card-run-mutations.test.mjs",
     ".github/coordinator/test/card-run.test.mjs",
+    ".github/coordinator/test/card-usage.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
@@ -4610,7 +4611,12 @@
     "SHU-86 mutation M205 count an operator run as landed unattended",
     "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end",
     "SHU-86 mutation M207 follow a symbolic link named like a state record",
-    "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's"
+    "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
+    "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
+    "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
+    "Usage U3: the box line reads CPUs, load, memory and disk where the state lives",
+    "Usage U4: busy share counts overlapping card runs once, clipped to the window",
+    "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them"
   ],
   "requirements": [
     {
@@ -33538,6 +33544,26 @@
     },
     {
       "name": "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
+      "capabilities": []
+    },
+    {
+      "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
+      "capabilities": []
+    },
+    {
+      "name": "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
+      "capabilities": []
+    },
+    {
+      "name": "Usage U3: the box line reads CPUs, load, memory and disk where the state lives",
+      "capabilities": []
+    },
+    {
+      "name": "Usage U4: busy share counts overlapping card runs once, clipped to the window",
+      "capabilities": []
+    },
+    {
+      "name": "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
       "capabilities": []
     }
   ],

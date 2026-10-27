@@ -23,7 +23,8 @@ import { repairEligible, readOpenPulls } from "../repair-eligibility.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { watchLine } from "./card-watch.mjs";
 import { alertLine } from "./card-status.mjs";
-import { velocityLine } from "./card-velocity.mjs";
+import { velocityLine, busyLine } from "./card-velocity.mjs";
+import { usageLine, hostLine } from "./card-usage.mjs";
 
 export const COORDINATOR_ENV = "/srv/shu/coordinator.env";
 export const COORDINATOR_USER = "shu-coordinator";
@@ -624,6 +625,12 @@ export function renderRunReport(result) {
   if (result.watch) lines.push(watchLine(result.watch));
   if (result.land) lines.push(...landingLines(result.land));
   if (result.velocity) lines.push(velocityLine(result.velocity));
+  const busy = result.velocity ? busyLine(result.velocity) : null;
+  if (busy) lines.push(busy);
+  const usage = usageLine(result.usage);
+  if (usage) lines.push(usage);
+  const host = result.host ? hostLine(result.host) : null;
+  if (host) lines.push(host);
   lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."
     : result.revert?.reverted ? "The host is reverted and idle."
       : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);

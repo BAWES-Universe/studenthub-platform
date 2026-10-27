@@ -20,6 +20,7 @@ import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { confinedTestResultLine, runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
+import { parseClaudeUsage, withUsage } from "./usage.mjs";
 
 export const ADAPTER_NAME = "claude-code";
 export const CLAUDE_MODEL = "claude-opus-5";
@@ -457,7 +458,15 @@ function failureFrom(error, stdout, stderr) {
 // Claude `-p` is synchronous: launchBuilder returns the terminal CLI result.
 // The coordinator still records an acknowledged run using the deterministic
 // session id before folding this terminal result through the receipt machine.
-export async function launchBuilder({
+// M15 step 1: the result also carries the run's token counts and cost, read
+// from the CLI's own envelope once it exits (usage.mjs).
+export async function launchBuilder(options) {
+  const output = { stdout: null };
+  const result = await launchClaude({ ...options, outputSink: output });
+  return withUsage(result, output.stdout === null ? null : parseClaudeUsage(output.stdout));
+}
+
+async function launchClaude({
   issue_id,
   authorization_ref,
   attempt_id,
@@ -484,6 +493,7 @@ export async function launchBuilder({
   persistEnvelopeImpl = persistClaudeEnvelope,
   io = {},
   timeout_ms = 30 * 60 * 1000,
+  outputSink = null,
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
@@ -584,6 +594,7 @@ export async function launchBuilder({
       timeout: timeout_ms,
       windowsHide: true,
     });
+    if (outputSink) outputSink.stdout = result.stdout;
   } catch (error) {
     return failureFrom(error, "", "");
   }

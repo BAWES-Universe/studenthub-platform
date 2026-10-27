@@ -69,6 +69,7 @@ import { selfInstall } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
+import { readRunUsage, hostSnapshot } from "./card-usage.mjs";
 import { landingRepairOn, repairCandidate, repairRecordPath, repairAlertPath, repairActivationId, readRound, claimRound, advanceRound,
   repairSkip, readRepairPull, priorPass, readRepairEvidence, REPAIR_LIMITS } from "./card-repair.mjs";
 
@@ -470,7 +471,10 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
   if (!environ.includes("ENABLE_DISPATCH=true") || !environ.includes(`DISPATCH_TARGET_SHA=${target}`)) {
     refuse("CARD_RUN_ARM_READBACK", "the supervisor did not come up with dispatch on at the target");
   }
-  return { activation_id: plan.record.activation_id, target, revision };
+  // M15 step 1: where the supervisor keeps its completion records, so the
+  // report can sum what this run's workers spent. Not part of the result.
+  const stateDir = environ.find((entry) => entry.startsWith("SHU_SUPERVISOR_STATE_DIR="))?.slice("SHU_SUPERVISOR_STATE_DIR=".length) ?? null;
+  return { activation_id: plan.record.activation_id, target, revision, supervisor_state_dir: stateDir };
 }
 
 // One coordinator tick and its output. The coordinator is a oneshot, and
@@ -572,6 +576,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const ticks = [];
     let result;
     let armedAt = null;
+    let supervisorStateDir = null;
     let watch = null;
     // Self-watch 0e: where the run is, in a local file only; see card-status.mjs.
     // The invocation id ties the status to the unit start the outside watch
@@ -588,7 +593,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     try {
       // Self-repair B2: the round says it may be armed before anything is.
       if (repairRound?.round) advanceRound(io, repairRound.round, "armed", { arming_at: io.now().toISOString() });
-      const armed = arm(io, plan, revision, paths);
+      const { supervisor_state_dir: armedStateDir, ...armed } = arm(io, plan, revision, paths);
+      supervisorStateDir = armedStateDir;
       armedAt = io.now().toISOString();
       // Self-watch 0b, observe only: the committed config turns it on; it
       // records progress and never changes how the run ends.
@@ -664,6 +670,15 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       summary.velocity = readVelocity(io, paths.stateDir, { current: plan.kind === "card" && trigger === "timer"
         ? { card: plan.id, landed: land?.outcome === "MERGED", claimed_at: claimedAt } : null });
     } catch { /* the report goes out without it */ }
+    // M15 step 1: what this card's worker runs spent, and how full the box is.
+    // Best effort, like velocity: anything unreadable is left out.
+    try {
+      if (plan.kind === "card" && supervisorStateDir?.startsWith("/")) {
+        const usage = readRunUsage(io, supervisorStateDir, { issue: plan.id, from: claimedAt ?? armedAt, to: io.now().toISOString() });
+        if (usage?.length) summary.usage = usage;
+      }
+    } catch { /* the report goes out without it */ }
+    try { summary.host = hostSnapshot(io, paths.stateDir); } catch { /* the report goes out without it */ }
     status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
       reverted: reverted.reverted === true, needs_owner: summary.needs_owner });
     summary.status_write_failures = status.failures();

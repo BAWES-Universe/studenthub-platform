@@ -32,6 +32,7 @@ import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
 import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
+import { parseCodexUsage, withUsage } from "./usage.mjs";
 const path = nodePath;
 
 export const ADAPTER_NAME = "codex-cli";
@@ -781,7 +782,15 @@ export function persistDurableSession({ stateDir, attempt_id, target_sha, thread
 // `codex exec` is synchronous: launchBuilder returns the terminal CLI result.
 // The coordinator still records an acknowledged run using the durable thread id
 // before folding the terminal result through the receipt machine.
-export async function launchBuilder({
+// M15 step 1: the result also carries the run's token counts, read from the
+// CLI's own output once it exits (usage.mjs).
+export async function launchBuilder(options) {
+  const output = { stdout: null };
+  const result = await launchCodex({ ...options, outputSink: output });
+  return withUsage(result, output.stdout === null ? null : parseCodexUsage(output.stdout));
+}
+
+async function launchCodex({
   issue_id,
   authorization_ref,
   attempt_id,
@@ -813,6 +822,7 @@ export async function launchBuilder({
   timeout_ms = 45 * 60 * 1000,
   timeout_grace_ms = 30_000,
   max_output_bytes = 32 * 1024 * 1024,
+  outputSink = null,
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
@@ -1089,6 +1099,7 @@ export async function launchBuilder({
     result = execImpl !== nodeExecFile && !io.spawnImpl
       ? await runExecFile(execImpl, launchBin, launchArgs, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
       : await runSpawn(io.spawnImpl ?? spawnImpl, launchBin, launchArgs, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
+    if (outputSink) outputSink.stdout = result.stdout;
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {

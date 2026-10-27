@@ -369,7 +369,7 @@ export function provisioner(revision, b = boundary) {
       return { ok: true, state: 'VERIFIED', revision, ...result };
     } catch (error) {
       try { rollback(j); } catch (recovery) {
-        throw Object.assign(new Error('ACT_PREREQUISITE_ROLLBACK_REQUIRED'), { code: 'ACT_PREREQUISITE_ROLLBACK_REQUIRED', original: prerequisiteFailure(error), rollback: { ok: false, code: recovery.code ?? 'ACT_PREREQUISITE_FAILED' } });
+        throw Object.assign(new Error('ACT_PREREQUISITE_ROLLBACK_REQUIRED'), { code: 'ACT_PREREQUISITE_ROLLBACK_REQUIRED', original: prerequisiteFailure(error), rollback: { ok: false, code: recovery.code ?? 'ACT_PREREQUISITE_FAILED', ...(recovery.failed ? { failed: recovery.failed } : {}) } });
       }
       error.rollback = { ok: true, state: 'ROLLED_BACK' };
       throw error;

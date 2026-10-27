@@ -78,7 +78,7 @@ const controls = {
     assert.equal(r.code,'ACT_PREREQUISITE_ROLLBACK_REQUIRED','TARGET_RECOVERY');
     assert.equal(r.ok,false,'TARGET_RECOVERY');
     assert.equal(r.original?.code,'ACT_PREREQUISITE_USERADD_CONFIGURATION','TARGET_RECOVERY');
-    assert.deepEqual(r.rollback,{ok:false,code:'ACT_PREREQUISITE_COMMAND'},'TARGET_RECOVERY');
+    assert.deepEqual(r.rollback,{ok:false,code:'ACT_PREREQUISITE_COMMAND',failed:{command:'/usr/bin/find',status:1,signal:null,error:null}},'TARGET_RECOVERY: the rollback names the command that failed it');
     assert.equal(JSON.parse(h.f.readFileSync(shipped.PATHS.receipt)).state,'INSTALLING','TARGET_RECOVERY');
     assert.ok(h.groups().some(g=>g.name===shipped.BROKER),'TARGET_RECOVERY');
   },
