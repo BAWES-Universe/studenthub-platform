@@ -99,6 +99,23 @@ test("SHU353_SHOWN directory renders the written currency in the company row", a
   assert.match(text, /<tr><th scope="row"><a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>.*?<\/th><td>Active<\/td><td>Yes<\/td><td>USD<\/td>/);
 });
 
+test("SHU361_SHOWN rendered directory lists all 60 companies across its pages", async (t) => {
+  const f = await fixture(t);
+  const extras = Array.from({ length: 58 }, (_, index) => ({
+    id: `org-shown-${String(index).padStart(2, "0")}`,
+    name: `Shown Company ${String(index).padStart(2, "0")}`,
+  }));
+  for (const company of extras) await f.store.upsertOrganization({ ...company, parentOrgId: "root" });
+  const pages = await Promise.all([1, 2, 3].map(async (page) => (await f.get(`${STAFF_LIST}&page=${page}`, html)).text()));
+  const rendered = pages.join("\n");
+  assert.match(pages[0]!, /Companies 1–20 of 60/);
+  assert.match(pages[1]!, /Companies 21–40 of 60/);
+  assert.match(pages[2]!, /Companies 41–60 of 60/);
+  for (const company of extras) assert.match(rendered, new RegExp(`>${company.name}<`), company.id);
+  assert.match(rendered, />Synthetic Retail Group</);
+  assert.match(rendered, />Synthetic Cafe Company</);
+});
+
 test("SHU-163/AC-07 PAGE filters reach the directory and survive paging links", async (t) => {
   const f = await fixture(t);
   const filtered = await (await f.get(`${STAFF_LIST}&q=%20cafe%20&status=under_review&approved=yes&currency=kwd`)).json();

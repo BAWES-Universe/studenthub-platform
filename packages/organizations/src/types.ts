@@ -91,6 +91,7 @@ export type ApprovedOrganizationSnapshot =
  */
 export interface ApprovedOrganizationAdapter {
   readSnapshot(orgId: string): Promise<ApprovedOrganizationSnapshot>;
+  readSnapshots(orgIds: readonly string[]): Promise<ReadonlyMap<string, ApprovedOrganizationSnapshot>>;
 }
 
 export interface OrganizationReadRequest {
