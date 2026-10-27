@@ -2,7 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { OrganizationAccountManagerEventRow, OrganizationCounts, OrganizationDeletionRecords, OrganizationReader, OrganizationStatusEventRow, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
+import type { OrganizationAccountManagerEventRow, OrganizationCounts, OrganizationDeletionRecords, OrganizationEligibleAccountManager, OrganizationReader, OrganizationStatusEventRow, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -24,8 +24,9 @@ export type SubOrganizationsPanel =
 export type OrganizationCountsPanel =
   | { readonly kind: "found"; readonly counts: OrganizationCounts }
   | { readonly kind: "unavailable" };
-export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null|{readonly kind:"unavailable"};
-export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>;history?(principalId:string,orgId:string):Promise<readonly OrganizationAccountManagerEventRow[]|null>}
+export type OrganizationAccountManagerPanel={readonly principalId:string;readonly displayName:string|null}|null|{readonly kind:"unavailable"};
+export type OrganizationAccountManagerOptionsPanel=readonly OrganizationEligibleAccountManager[]|{readonly kind:"unavailable";readonly length?:never};
+export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>;history?(principalId:string,orgId:string):Promise<readonly OrganizationAccountManagerEventRow[]|null>;eligibleManagers?(principalId:string,orgId:string):Promise<readonly OrganizationEligibleAccountManager[]|null>}
 export type OrganizationAccountManagerHistoryPanel=readonly OrganizationAccountManagerEventRow[]|{readonly kind:"unavailable";readonly length?:never};
 export type OrganizationStatusHistoryPanel=readonly OrganizationStatusEventRow[]|{readonly kind:"unavailable";readonly length?:never};
 export interface OrganizationStatusHistoryReader{history(principalId:string,orgId:string):Promise<readonly OrganizationStatusEventRow[]|null>}
@@ -40,6 +41,7 @@ export type NavigationResult =
     readonly subOrganizations?: SubOrganizationsPanel;
     readonly accountManager?: OrganizationAccountManagerPanel;
     readonly accountManagerHistory?: OrganizationAccountManagerHistoryPanel;
+    readonly accountManagerOptions?: OrganizationAccountManagerOptionsPanel;
     readonly statusHistory?: OrganizationStatusHistoryPanel;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
@@ -130,13 +132,15 @@ export function createContextNavigation(
             ? { kind: "found", subOrganizations: children.subOrganizations }
             : children.kind === "unavailable" ? { kind: "unavailable" } : undefined;
         }
-        let accountManager:OrganizationAccountManagerPanel|undefined,accountManagerHistory:OrganizationAccountManagerHistoryPanel|undefined;
+        let accountManager:OrganizationAccountManagerPanel|undefined,accountManagerHistory:OrganizationAccountManagerHistoryPanel|undefined,accountManagerOptions:OrganizationAccountManagerOptionsPanel|undefined;
         const accountManagers=organizationReader.accountManagers;
         if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){
-          try { const result=await accountManagers.manager(session.personId,active.orgId); if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null; }
+          try { const result=await accountManagers.manager(session.personId,active.orgId); if(result)accountManager=result.manager?{principalId:result.manager.principalId,displayName:result.manager.displayName}:null; }
           catch { accountManager={kind:"unavailable"}; }
           if(accountManagers.history)try { const history=await accountManagers.history(session.personId,active.orgId); if(history)accountManagerHistory=history.slice(0,5); }
           catch { accountManagerHistory={kind:"unavailable"}; }
+          if(active.role==="admin"&&accountManagers.eligibleManagers)try { const options=await accountManagers.eligibleManagers(session.personId,active.orgId); if(options)accountManagerOptions=options; }
+          catch { accountManagerOptions={kind:"unavailable"}; }
         }
         let statusHistory:OrganizationStatusHistoryPanel|undefined;
         if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&statusHistoryReader){
@@ -144,7 +148,7 @@ export function createContextNavigation(
           catch { statusHistory={kind:"unavailable"}; }
         }
         const shownOrganization=accountManager!==undefined||accountManagerHistory!==undefined||statusHistory!==undefined?{...organization,...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}),...(statusHistory!==undefined?{statusHistory}:{})}:organization;
-        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}),...(statusHistory!==undefined?{statusHistory}:{}) } };
+        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}),...(accountManagerOptions!==undefined?{accountManagerOptions}:{}),...(statusHistory!==undefined?{statusHistory}:{}) } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }

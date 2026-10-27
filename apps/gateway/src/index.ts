@@ -38,7 +38,7 @@ import {handleOrganizationBrands,type OrganizationBrands} from "./organization-b
 import {handleOrganizationStores,type OrganizationStores} from "./organization-stores.js";
 import {handleOrganizationDeletion,type OrganizationDeletion} from "./organization-deletion.js";
 import {handleOrganizationCreation,type OrganizationCreation} from "./organization-creation.js";
-import {handleOrganizationAccountManager,type OrganizationAccountManager} from "./organization-account-manager.js";
+import {handleOrganizationAccountManager,handleOrganizationAccountManagerPage,type OrganizationAccountManager} from "./organization-account-manager.js";
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
@@ -196,6 +196,7 @@ export function createGatewayServer(
     if(await handleOrganizationStores(request,response,(login as BrowserLoginApplication&{organizationStores?:OrganizationStores}|undefined)?.organizationStores,login?.web?.origin))return;
     if(await handleOrganizationDeletion(request,response,(login as BrowserLoginApplication&{organizationDeletion?:OrganizationDeletion}|undefined)?.organizationDeletion,login?.web?.origin))return;
     if(await handleOrganizationCreation(request,response,(login as BrowserLoginApplication&{organizationCreation?:OrganizationCreation}|undefined)?.organizationCreation,login?.web?.origin))return;
+    if(await handleOrganizationAccountManagerPage(request,response,(login as BrowserLoginApplication&{organizationAccountManager?:OrganizationAccountManager}|undefined)?.organizationAccountManager,login?.web?.origin,(status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body)),async(session,orgId)=>{const result=await login?.navigation?.open(session,new URLSearchParams({org_id:orgId,role:"admin"}));return result?.status===200&&result.body.active?.orgId===orgId?result.body.active.organizationName:undefined}))return;
     if(await handleOrganizationAccountManager(request,response,(login as BrowserLoginApplication&{organizationAccountManager?:OrganizationAccountManager}|undefined)?.organizationAccountManager,login?.web?.origin))return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;

@@ -18,7 +18,7 @@ const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
+async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly managerPicker?:{directoryManagers(callerId:string,orgId:string):Promise<readonly{principalId:string;displayName:string|null}[]|null>}; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -39,7 +39,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers, commercialTerms:options.commercialTerms });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
-    ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
+    ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations,options.managerPicker) }),
     web: { origin: "https://studenthub.example.invalid", returnTo: rig.config.allowedReturnUrls[1],
       profiles: new OwnProfileRepository({ principals: store, source: new InMemoryApprovedProfileAdapter({ links: [], rows: new Map() }),
         today: () => "2026-10-04" }) },
@@ -97,6 +97,23 @@ test("SHU353_SHOWN directory renders the written currency in the company row", a
 
   const text = await (await f.get(STAFF_LIST, html)).text();
   assert.match(text, /<tr><th scope="row"><a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>.*?<\/th><td>Active<\/td><td>Yes<\/td><td>USD<\/td>/);
+});
+
+test("SHU361_SHOWN rendered directory lists all 60 companies across its pages", async (t) => {
+  const f = await fixture(t);
+  const extras = Array.from({ length: 58 }, (_, index) => ({
+    id: `org-shown-${String(index).padStart(2, "0")}`,
+    name: `Shown Company ${String(index).padStart(2, "0")}`,
+  }));
+  for (const company of extras) await f.store.upsertOrganization({ ...company, parentOrgId: "root" });
+  const pages = await Promise.all([1, 2, 3].map(async (page) => (await f.get(`${STAFF_LIST}&page=${page}`, html)).text()));
+  const rendered = pages.join("\n");
+  assert.match(pages[0]!, /Companies 1–20 of 60/);
+  assert.match(pages[1]!, /Companies 21–40 of 60/);
+  assert.match(pages[2]!, /Companies 41–60 of 60/);
+  for (const company of extras) assert.match(rendered, new RegExp(`>${company.name}<`), company.id);
+  assert.match(rendered, />Synthetic Retail Group</);
+  assert.match(rendered, />Synthetic Cafe Company</);
 });
 
 test("SHU-163/AC-07 PAGE filters reach the directory and survive paging links", async (t) => {
@@ -188,7 +205,7 @@ test("SHU168_PAGE renders source store counts and unavailable state in HTML and 
 });
 
 test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the manager field", async (t) => {
-  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", {principalId:"person-1",displayName:"Staff One"}]]) } });
+  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", {principalId:"person-1",displayName:"Staff One"}]]) },managerPicker:{directoryManagers:async()=>[{principalId:"person-1",displayName:"Staff One"}]} });
   for (const manager of ["me", "person-1"]) {
     const body = await (await f.get(`${STAFF_LIST}&manager=${manager}`)).json();
     assert.equal(body.filters.accountManager, "person-1");
@@ -200,8 +217,12 @@ test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the m
   }
   assert.equal((await (await f.get(`${STAFF_LIST}&manager=`)).json()).directory.entries.length, 2);
   const page = await (await f.get(`${STAFF_LIST}&manager=me`, html)).text();
-  assert.match(page, /name="manager" maxlength="128" value="me"/);
+  assert.match(page, /<select name="manager">[\s\S]*?<option value="me" selected>Me<\/option>/);
 });
+
+test("SHU359_PICKER staff sees names and fallback never exposes the selected principal",async(t)=>{const f=await fixture(t,{managerPicker:{directoryManagers:async()=>[{principalId:"staff-secret",displayName:"Staff Name"},{principalId:"unnamed-secret",displayName:null}]}});let page=await(await f.get(STAFF_LIST,html)).text();assert.match(page,/>Staff Name<\/option>/);assert.match(page,/>Unnamed staff member<\/option>/);assert.doesNotMatch(page,/>staff-secret<|>unnamed-secret</);const failed=await fixture(t,{accountManagers:{readMany:async()=>new Map()},managerPicker:{directoryManagers:async()=>{throw new Error("down")}}});page=await(await failed.get(`${STAFF_LIST}&manager=selected-secret`,html)).text();assert.match(page,/<select name="manager">/);assert.match(page,/>Any<\/option>[\s\S]*>Me<\/option>/);assert.match(page,/>Selected account manager<\/option>/);assert.doesNotMatch(page,/>selected-secret</)})
+
+test("SHU359_SHOWN submitted picker choice filters to that manager's companies",async(t)=>{const f=await fixture(t,{accountManagers:{readMany:async()=>new Map([["org-a",{principalId:"staff-secret",displayName:"Staff Name"}]])},managerPicker:{directoryManagers:async()=>[{principalId:"staff-secret",displayName:"Staff Name"}]}});const page=await(await f.get(STAFF_LIST,html)).text(),match=page.match(/<option value="([^"]+)">Staff Name<\/option>/);assert.equal(match?.[1],"staff-secret");const body=await(await f.get(`${STAFF_LIST}&manager=${encodeURIComponent(match![1]!)}`)).json();assert.deepEqual(body.directory.entries.map((entry:{orgId:string})=>entry.orgId),["org-a"])})
 
 test("SHU355_SHOWN directory hides a manager without a covering grant and restores the retained assignment",async(t)=>{
   let granted=true;

@@ -393,3 +393,50 @@ test("SHU-159/AC-08 UNAVAILABLE missing or malformed data stays visibly unavaila
     assert.deepEqual(await malformed.read({ principalId: "staff", orgId: "org-a", role: "staff" }), { kind: "unavailable" });
   }
 });
+
+test("SHU361_CHILDREN_FIXED child authorization and snapshots stay fixed as child count grows", async () => {
+  async function callsFor(extraCount: number) {
+    const extraOrganizations = Array.from({ length: extraCount }, (_, index) => ({
+      id: `org-child-${index}`, name: `Child ${index}`, parentOrgId: "org-a",
+    }));
+    const { store } = await setup({ extraOrganizations });
+    let snapshotBatches = 0;
+    let deletionBatches = 0;
+    let authzCalls = 0;
+    const countedStore = new Proxy(store, { get(target, property, receiver) {
+      const member = Reflect.get(target, property, receiver);
+      if (typeof member !== "function") return member;
+      return (...args: unknown[]) => { authzCalls++; return member.apply(target, args); };
+    } });
+    const source = {
+      async readSnapshot() { throw new Error("per-row snapshot read"); },
+      async readSnapshots(orgIds: readonly string[]) {
+        snapshotBatches++;
+        return new Map(orgIds.map((orgId) => [orgId, { kind: "unconfigured" as const }]));
+      },
+    };
+    const deletions = {
+      async isDeleted() { return false; },
+      async deletedAmong() { deletionBatches++; return new Set<string>(); },
+    };
+    const repository = new OrganizationRepository({ store: countedStore, source, deletions });
+    const listed = await repository.listSubOrganizations({ principalId: "staff", orgId: "org-a", role: "staff" });
+    assert.equal(listed.kind, "found");
+    const counted = await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" });
+    assert.equal(counted.kind, "found");
+    return { snapshotBatches, deletionBatches, authzCalls };
+  }
+  assert.deepEqual(await callsFor(0), await callsFor(60));
+});
+
+test("SHU361_SAME_RESULTS batching preserves child summaries and counts", async () => {
+  const { repository } = await setup();
+  const listed = await repository.listSubOrganizations({ principalId: "staff", orgId: "org-a", role: "staff" });
+  assert.equal(listed.kind, "found");
+  if (listed.kind === "found") assert.deepEqual(listed.subOrganizations.map((child) => [child.orgId, value({ fields: { status: child.status } } as unknown as OrganizationView, "status")]), [
+    ["org-a1", "inactive"], ["org-a2", "inactive"],
+  ]);
+  assert.deepEqual(await repository.readCounts({ principalId: "admin", orgId: "org-a", role: "admin" }), {
+    kind: "found", counts: { stores: null, subOrganizations: 2 },
+  });
+});

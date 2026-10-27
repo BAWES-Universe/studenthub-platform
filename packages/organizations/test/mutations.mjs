@@ -33,7 +33,13 @@ const mutations = [
   ],
   [
     "count every child", "SHU334_COUNTS_CHILDREN",
-    "if (await this.#authorize(request, child.id) !== undefined)", "if (true)",
+    "const subOrganizations = coveredChildIds.filter((orgId) => !deletedIds.has(orgId)).length;",
+    "const subOrganizations = children.length;",
+  ],
+  [
+    "restore per-child snapshot reads", "SHU361_CHILDREN_FIXED",
+    "await this.#source.readSnapshots(visibleChildren.map((child) => child.id))",
+    "new Map(await Promise.all(visibleChildren.map(async (child) => [child.id, await this.#source.readSnapshot(child.id)])))",
   ],
   [
     "count a nested hierarchy", "SHU334_COUNTS_NESTED",
