@@ -107,13 +107,17 @@ export function readRetrying(io) {
 // Self-heal: whether a refusal before arming may pass on a later start. Only
 // a read that failed transiently, or the branch read-back GitHub may still
 // lag on, and only while the card itself was not yet written: a definitive
-// answer (the card's labels, owner or state, a contract, a dirty checkout, a
-// branch with its own commit) never is.
+// answer (the card's labels or state, a contract, a dirty checkout, a branch
+// with its own commit) never is. An owner is the exception (2026-10-26: queue
+// 12's first card was created with an assignee, and the queue stopped until the
+// next install): removing the assignee or delegate is how a person hands the
+// card back, so the next start reads it again, within the same bound.
 export function retryableRefusal(error) {
   if (!error || error.afterCardWrite === true) return false;
   if (error.transient === true) return true;
   const code = String(error.code ?? "");
-  return code === "CARD_RUN_BRANCH_READBACK" || code === "LINEAR_RATE_LIMITED" || /^LINEAR_HTTP_(429|5\d\d)$/.test(code);
+  return code === "CARD_RUN_BRANCH_READBACK" || code === "CARD_RUN_CARD_OWNED" || code === "LINEAR_RATE_LIMITED"
+    || /^LINEAR_HTTP_(429|5\d\d)$/.test(code);
 }
 
 // The coordinator's GitHub and Linear tokens and its push remote, from its
