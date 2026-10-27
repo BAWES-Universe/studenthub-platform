@@ -3922,33 +3922,39 @@ const Q13_RENAMED = (text) => text.replace(/SHU(-?)36([2-5])/g, (_, dash, d) => 
 // so the rescheduled cards neither carry the old list instruction nor the file.
 const Q13_LISTS_FILE = "packages/db/test/postgres-authz-store.test.ts";
 const Q13_LISTS_STEP = " Add the migration to both schema_migrations lists of postgres-authz-store.test.ts.";
-const Q13_BRIEF = (text) => {
-  if (text.includes(Q13_LISTS_STEP)) text = text.replace(Q13_LISTS_STEP, "");
-  return Q13_RENAMED(text);
-};
+const Q13_LISTS_SOURCE = " and the two schema_migrations lists in packages/db/test/postgres-authz-store.test.ts.";
+const Q13_NUMBER_STEP = ", and take the next free migration number from packages/db/migrations.";
+const Q13_HAS_MIGRATION = (paths) => paths.some((path) => path.startsWith("packages/db/migrations/"));
+// Each card's paths pin its migration's name, so no card picks a number.
+const Q13_BRIEF = (text) => Q13_RENAMED(text.replace(Q13_LISTS_STEP, "").replace(Q13_LISTS_SOURCE, ".").replace(Q13_NUMBER_STEP, "."));
 const Q13_PATHS = (paths) => Object.freeze(paths.filter((path) => path !== Q13_LISTS_FILE));
-const Q13_AFTER_PREP = "Since this contract was written, SHU-370 landed: npm test and npm run test:db find test files and mutation scripts by name, and the schema_migrations lists are built from packages/db/migrations. Add your tests, mutation scripts and migration as files; do not edit package.json or those lists.";
+// Only a card whose paths pin a migration is told to add one.
+const Q13_AFTER_PREP = (paths) => [
+  "Since this contract was written, SHU-370 landed: npm test and npm run test:db find test files and mutation scripts by name, and the schema_migrations lists are built from packages/db/migrations.",
+  "Add your tests and mutation scripts as files; do not edit package.json or those lists.",
+  ...(Q13_HAS_MIGRATION(paths) ? ["Your migration is the file your paths name in packages/db/migrations; adding it there is all the migration lists need."] : []),
+].join(" ");
 
 export const SHU371_PATHS = Q13_PATHS(SHU362_PATHS);
 const SHU371_ACCEPTANCE = Q13_RENAMED(SHU362_ACCEPTANCE);
 const SHU371_BRIEF = `${Q13_BRIEF(SHU362_BRIEF)}
 
-${Q13_AFTER_PREP}`;
+${Q13_AFTER_PREP(SHU371_PATHS)}`;
 export const SHU372_PATHS = Q13_PATHS(SHU363_PATHS);
 const SHU372_ACCEPTANCE = Q13_RENAMED(SHU363_ACCEPTANCE);
 const SHU372_BRIEF = `${Q13_BRIEF(SHU363_BRIEF)}
 
-${Q13_AFTER_PREP}`;
+${Q13_AFTER_PREP(SHU372_PATHS)}`;
 export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
 const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
 
-${Q13_AFTER_PREP}`;
+${Q13_AFTER_PREP(SHU373_PATHS)}`;
 export const SHU374_PATHS = Q13_PATHS(SHU365_PATHS);
 const SHU374_ACCEPTANCE = Q13_RENAMED(SHU365_ACCEPTANCE);
 const SHU374_BRIEF = `${Q13_BRIEF(SHU365_BRIEF)}
 
-${Q13_AFTER_PREP}`;
+${Q13_AFTER_PREP(SHU374_PATHS)}`;
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
