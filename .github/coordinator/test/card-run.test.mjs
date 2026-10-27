@@ -3477,6 +3477,8 @@ function watchHost({ state = "inactive", since = null, status = null, now = Date
 }
 
 const MIN = 60 * 1000;
+// The watch's stale limit, in minutes (it follows the landing's wait).
+const STALE_MIN = WATCH_LIMITS.staleMs / MIN;
 // The host booted here; systemd's monotonic stamps count from it.
 const BOOT = Date.parse("2026-10-17T00:00:00.000Z");
 const startKey = (since) => `start-${(since - BOOT) * 1000}`;
@@ -3527,7 +3529,7 @@ test("SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it 
 
 test("SHU-86 0d: a stale status with the unit running pauses the timer and alerts once", async () => {
   const since = Date.parse("2026-10-18T07:00:00.000Z");
-  const host = watchHost({ state: "activating", since, status: watchStatus(), now: Date.parse("2026-10-18T08:04:00.000Z") });
+  const host = watchHost({ state: "activating", since, status: watchStatus(), now: Date.parse("2026-10-18T07:04:00.000Z") + STALE_MIN * MIN });
   // Exactly the limit since the last status write: not yet stale.
   const fresh = await watchOnce({ io: host.io, paths: PATHS });
   assert.equal(fresh.alert, null);
@@ -3540,7 +3542,7 @@ test("SHU-86 0d: a stale status with the unit running pauses the timer and alert
   assert.equal(alertsOf(host).length, 1);
   const alert = alertsOf(host)[0].body.split("\n");
   assert.equal(alert[1], "Alert: the card run on SHU-301 needs the owner (https://linear.app/bawes/profiles/owner).");
-  assert.match(alert[2], /running since 2026-10-18T07:00:00\.000Z, and the run's status was last written at 2026-10-18T07:04:00\.000Z \(step ticking\): nothing for more than 60 minutes\./);
+  assert.match(alert[2], new RegExp(`running since 2026-10-18T07:00:00\\.000Z, and the run's status was last written at 2026-10-18T07:04:00\\.000Z \\(step ticking\\): nothing for more than ${STALE_MIN} minutes\\.`));
   assert.match(alert[3], /^Wrote \/etc\/shu\/card-run\.paused/);
   assert.doesNotMatch(alertsOf(host)[0].body, /secret/);
   // Later passes, stale or ended, never alert this run again.
@@ -3557,44 +3559,47 @@ test("SHU-86 0d: a stale status with the unit running pauses the timer and alert
 test("SHU-86 0d: a run that hangs before it writes a status is still caught", async () => {
   const since = Date.parse("2026-10-18T07:00:00.000Z");
   // The status is the previous run's, written before this start.
-  const host = watchHost({ state: "activating", since, now: since + 61 * MIN,
+  const host = watchHost({ state: "activating", since, now: since + (STALE_MIN + 1) * MIN,
     status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", updated_at: "2026-10-18T06:50:00.000Z" }) });
   const result = await watchOnce({ io: host.io, paths: PATHS });
   assert.equal(result.alert.kind, "stale");
   assert.equal(result.alert.posted, true);
   assert.match(alertsOf(host)[0].body, /Alert: the card run needs the owner/);
-  assert.match(alertsOf(host)[0].body, /no status was written since it started: nothing for more than 60 minutes\./);
+  assert.match(alertsOf(host)[0].body, new RegExp(`no status was written since it started: nothing for more than ${STALE_MIN} minutes\\.`));
   assert.ok(host.files.has(PATHS.pause));
-  assert.equal(stuckRun({ unit: { running: true, since, start: "42" }, status: null, now: since + 60 * MIN }), null);
-  assert.equal(stuckRun({ unit: { running: true, since, start: "42" }, status: null, now: since + 61 * MIN }).key, "start-42");
+  assert.equal(stuckRun({ unit: { running: true, since, start: "42" }, status: null, now: since + STALE_MIN * MIN }), null);
+  assert.equal(stuckRun({ unit: { running: true, since, start: "42" }, status: null, now: since + (STALE_MIN + 1) * MIN }).key, "start-42");
 });
 
 test("SHU-86 0d: a run alerted stale before its first status write, that later writes one and ends unfinished, is alerted once", async () => {
   const since = Date.parse("2026-10-18T07:00:00.000Z");
   const invocation = "fedcba9876543210fedcba9876543210";
-  const ended = (fields = {}) => watchStatus({ invocation, step: "reverting", outcome: "ERROR", updated_at: "2026-10-18T08:20:00.000Z", ...fields });
+  // The first pass that finds it stale; the later writes and passes follow it.
+  const staleAt = since + (STALE_MIN + 1) * MIN;
+  const after = (minutes) => new Date(staleAt + minutes * MIN).toISOString();
+  const ended = (fields = {}) => watchStatus({ invocation, step: "reverting", outcome: "ERROR", updated_at: after(19), ...fields });
   // Both cases: the run resumes, writes and ends between two passes, or a
   // pass sees it running with its own status first.
   for (const seenRunning of [false, true]) {
-    const host = watchHost({ state: "activating", since, now: since + 61 * MIN,
+    const host = watchHost({ state: "activating", since, now: staleAt,
       status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", updated_at: "2026-10-18T06:50:00.000Z" }) });
     host.unit.invocation = invocation;
     const stale = await watchOnce({ io: host.io, paths: PATHS });
     assert.deepEqual(stale.alert, { key: startKey(since), kind: "stale", pause: { written: true }, posted: true });
     if (seenRunning) {
-      host.put(statusPath(PATHS), JSON.stringify(ended({ step: "ticking", outcome: undefined, updated_at: "2026-10-18T08:05:00.000Z" })));
-      host.now = Date.parse("2026-10-18T08:10:00.000Z");
+      host.put(statusPath(PATHS), JSON.stringify(ended({ step: "ticking", outcome: undefined, updated_at: after(4) })));
+      host.now = Date.parse(after(9));
       assert.equal((await watchOnce({ io: host.io, paths: PATHS })).alert, null, "a resumed run is not stale");
     }
     host.put(statusPath(PATHS), JSON.stringify(ended()));
     host.unit = { state: "failed", since };
-    host.now = Date.parse("2026-10-18T08:31:00.000Z");
+    host.now = Date.parse(after(30));
     const again = await watchOnce({ io: host.io, paths: PATHS });
     assert.equal(again.alert?.already, true, JSON.stringify(again));
     assert.equal(alertsOf(host).length, 1, "one run, one alert");
   }
   // A different run that ends unfinished is still alerted.
-  const other = watchHost({ state: "failed", since: Date.parse("2026-10-18T08:00:00.000Z"), now: Date.parse("2026-10-18T08:31:00.000Z"),
+  const other = watchHost({ state: "failed", since: Date.parse("2026-10-18T08:00:00.000Z"), now: Date.parse(after(30)),
     status: ended({ run_id: "shu-302-run-20261018T080000Z", invocation: "00000000000000000000000000000001" }) });
   other.put(path.join(PATHS.stateDir, "card-watch.json"), JSON.stringify({ alerts: [{ key: startKey(since), run_id: null, invocation, kind: "stale", posted: true, pause: { written: true } }] }));
   assert.equal((await watchOnce({ io: other.io, paths: PATHS })).alert.posted, true);
@@ -3638,7 +3643,7 @@ test("SHU-86 0d: a timer run whose unit failed before its first status write ale
 
 test("SHU-86 0d: an alert that cannot be posted is tried again on the next pass, never posted twice, and a pause file in place is kept", async () => {
   const since = Date.parse("2026-10-18T07:00:00.000Z");
-  const host = watchHost({ state: "activating", since, status: watchStatus(), now: since + 70 * MIN });
+  const host = watchHost({ state: "activating", since, status: watchStatus(), now: since + (STALE_MIN + 10) * MIN });
   host.put(PATHS.pause, "card-install: held\n");
   host.linearDown = true;
   const failed = await watchOnce({ io: host.io, paths: PATHS });
@@ -3666,7 +3671,7 @@ test("SHU-86 0d: an alert that cannot be posted is tried again on the next pass,
 
 test("SHU-86 0d: a pause file that could not be written is tried again on every pass, and the alert is still posted once", async () => {
   const since = Date.parse("2026-10-18T07:00:00.000Z");
-  const host = watchHost({ state: "activating", since, status: watchStatus(), now: since + 70 * MIN });
+  const host = watchHost({ state: "activating", since, status: watchStatus(), now: since + (STALE_MIN + 10) * MIN });
   const write = host.fs.writeFileSync;
   host.pauseFails = 2;
   host.fs.writeFileSync = (file, text, options) => {
@@ -4782,7 +4787,7 @@ test("SHU-71 M10: T7 the committed config turns it on, off waits as before, and 
   const off = m10Host({ review: false, botThreads: [SENTRY_THREAD] });
   const result = await landRun(off);
   assert.equal(result.land.outcome, "CI_TIMEOUT", JSON.stringify(result.land));
-  assert.match(result.land.reason, /not green within 30 minutes: (the pull request reads mergeable_state blocked|1 review thread\(s\) are unresolved)$/, "as before");
+  assert.match(result.land.reason, new RegExp(`not green within ${CARD_RUN_LIMITS.landWaitMs / 60000} minutes: (the pull request reads mergeable_state blocked|1 review thread\\(s\\) are unresolved)$`), "as before");
   assert.equal(off.reviewRuns.length, 0);
   assert.equal(result.land.thread_review, undefined, "nothing is reported when it is off");
   nothingResolved(off);
