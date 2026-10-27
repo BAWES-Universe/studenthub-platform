@@ -1947,7 +1947,6 @@
       "note": "card 3 of the thirteenth card queue, re-scheduled with fresh ids: SHU-363's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "packages/db/migrations/0211_person_profiles.sql",
-        "packages/db/test/postgres-authz-store.test.ts",
         "packages/db/src/person-profile-store.ts",
         "packages/db/src/index.ts",
         "packages/db/test/postgres-person-profile.test.ts",
@@ -1965,7 +1964,6 @@
       ],
       "revision_paths": [
         "packages/db/migrations/0211_person_profiles.sql",
-        "packages/db/test/postgres-authz-store.test.ts",
         "packages/db/src/person-profile-store.ts",
         "packages/db/src/index.ts",
         "packages/db/test/postgres-person-profile.test.ts",
@@ -1990,7 +1988,6 @@
       "note": "card 4 of the thirteenth card queue, re-scheduled with fresh ids: SHU-364's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "packages/db/migrations/0212_person_profiles_choices.sql",
-        "packages/db/test/postgres-authz-store.test.ts",
         "packages/db/src/person-profile-store.ts",
         "packages/db/test/postgres-person-profile.test.ts",
         "packages/profile/src/self-edit.ts",
@@ -2006,7 +2003,6 @@
       ],
       "revision_paths": [
         "packages/db/migrations/0212_person_profiles_choices.sql",
-        "packages/db/test/postgres-authz-store.test.ts",
         "packages/db/src/person-profile-store.ts",
         "packages/db/test/postgres-person-profile.test.ts",
         "packages/profile/src/self-edit.ts",
@@ -2029,7 +2025,6 @@
       "note": "card 5 of the thirteenth card queue, re-scheduled with fresh ids: SHU-365's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "packages/db/migrations/0213_person_profiles_contact.sql",
-        "packages/db/test/postgres-authz-store.test.ts",
         "packages/db/src/person-profile-store.ts",
         "packages/db/test/postgres-person-profile.test.ts",
         "packages/profile/src/self-edit.ts",
@@ -2044,7 +2039,6 @@
       ],
       "revision_paths": [
         "packages/db/migrations/0213_person_profiles_contact.sql",
-        "packages/db/test/postgres-authz-store.test.ts",
         "packages/db/src/person-profile-store.ts",
         "packages/db/test/postgres-person-profile.test.ts",
         "packages/profile/src/self-edit.ts",

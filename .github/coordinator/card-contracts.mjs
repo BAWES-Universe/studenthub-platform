@@ -3918,26 +3918,35 @@ ${QUEUE11_FINISH}`;
 // contracts are pinned here with the ids renamed. The prep card SHU-370 runs
 // first, so these cards add tests and migrations as files.
 const Q13_RENAMED = (text) => text.replace(/SHU(-?)36([2-5])/g, (_, dash, d) => `SHU${dash}37${Number(d) - 1}`);
+// SHU-370 builds the schema_migrations lists from the migrations directory,
+// so the rescheduled cards neither carry the old list instruction nor the file.
+const Q13_LISTS_FILE = "packages/db/test/postgres-authz-store.test.ts";
+const Q13_LISTS_STEP = " Add the migration to both schema_migrations lists of postgres-authz-store.test.ts.";
+const Q13_BRIEF = (text) => {
+  if (text.includes(Q13_LISTS_STEP)) text = text.replace(Q13_LISTS_STEP, "");
+  return Q13_RENAMED(text);
+};
+const Q13_PATHS = (paths) => Object.freeze(paths.filter((path) => path !== Q13_LISTS_FILE));
 const Q13_AFTER_PREP = "Since this contract was written, SHU-370 landed: npm test and npm run test:db find test files and mutation scripts by name, and the schema_migrations lists are built from packages/db/migrations. Add your tests, mutation scripts and migration as files; do not edit package.json or those lists.";
 
-export const SHU371_PATHS = SHU362_PATHS;
+export const SHU371_PATHS = Q13_PATHS(SHU362_PATHS);
 const SHU371_ACCEPTANCE = Q13_RENAMED(SHU362_ACCEPTANCE);
-const SHU371_BRIEF = `${Q13_RENAMED(SHU362_BRIEF)}
+const SHU371_BRIEF = `${Q13_BRIEF(SHU362_BRIEF)}
 
 ${Q13_AFTER_PREP}`;
-export const SHU372_PATHS = SHU363_PATHS;
+export const SHU372_PATHS = Q13_PATHS(SHU363_PATHS);
 const SHU372_ACCEPTANCE = Q13_RENAMED(SHU363_ACCEPTANCE);
-const SHU372_BRIEF = `${Q13_RENAMED(SHU363_BRIEF)}
+const SHU372_BRIEF = `${Q13_BRIEF(SHU363_BRIEF)}
 
 ${Q13_AFTER_PREP}`;
-export const SHU373_PATHS = SHU364_PATHS;
+export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
-const SHU373_BRIEF = `${Q13_RENAMED(SHU364_BRIEF)}
+const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
 
 ${Q13_AFTER_PREP}`;
-export const SHU374_PATHS = SHU365_PATHS;
+export const SHU374_PATHS = Q13_PATHS(SHU365_PATHS);
 const SHU374_ACCEPTANCE = Q13_RENAMED(SHU365_ACCEPTANCE);
-const SHU374_BRIEF = `${Q13_RENAMED(SHU365_BRIEF)}
+const SHU374_BRIEF = `${Q13_BRIEF(SHU365_BRIEF)}
 
 ${Q13_AFTER_PREP}`;
 
