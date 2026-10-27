@@ -3700,6 +3700,7 @@
     "SHU71 provisioning partial installation and rollback residue crash matrix",
     "SHU71 provisioning rollback process replacement at every effect",
     "SHU71 provisioning refuses to remove an identity still in use",
+    "SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself",
     "SHU71 review worktrees production shape",
     "SHU71 review checkout capability",
     "SHU71 review named absent row codes",
@@ -28801,6 +28802,10 @@
     },
     {
       "name": "SHU71 provisioning refuses to remove an identity still in use",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself",
       "capabilities": []
     },
     {
