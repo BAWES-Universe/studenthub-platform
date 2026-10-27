@@ -24,6 +24,7 @@ try {
       "${escapeHtml(name)}</a>${common}", "${name}</a>${common}"],
     ["company-directory.js", "the manager filter is dropped", "SHU339_PAGE", "filters.accountManager = manager;", ""],
     ["company-directory.js", "me is not resolved", "SHU339_PAGE", "accountManager: session.personId", 'accountManager: "me"'],
+    ["web-ui.js", "eligible manager options are not rendered", "SHU359_PICKER", 'accountManagerOptions?.map(person => option(person.principalId, person.displayName ?? "Unnamed staff member", accountManagerSelection)).join("") ?? ""', '""'],
   ];
   for (const [module, name, pattern, from, to] of mutants) {
     const file = join(root, "dist/apps/gateway/src", module);
