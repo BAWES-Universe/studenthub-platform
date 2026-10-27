@@ -108,15 +108,16 @@ export function readRetrying(io) {
 // a read that failed transiently, or the branch read-back GitHub may still
 // lag on, and only while the card itself was not yet written: a definitive
 // answer (the card's labels or state, a contract, a dirty checkout, a branch
-// with its own commit) never is. An owner is the exception (2026-10-26: queue
-// 12's first card was created with an assignee, and the queue stopped until the
-// next install): removing the assignee or delegate is how a person hands the
-// card back, so the next start reads it again, within the same bound.
+// with its own commit) never is. An owner on a card that has not started is
+// the exception (2026-10-26: queue 12's first card was created with an
+// assignee, and the queue stopped until the next install): removing the
+// assignee or delegate is how a person hands the card back, so the next start
+// reads it again, within the same bound.
 export function retryableRefusal(error) {
   if (!error || error.afterCardWrite === true) return false;
   if (error.transient === true) return true;
   const code = String(error.code ?? "");
-  return code === "CARD_RUN_BRANCH_READBACK" || code === "CARD_RUN_CARD_OWNED" || code === "LINEAR_RATE_LIMITED"
+  return code === "CARD_RUN_BRANCH_READBACK" || (code === "CARD_RUN_CARD_OWNED" && error.handBack === true) || code === "LINEAR_RATE_LIMITED"
     || /^LINEAR_HTTP_(429|5\d\d)$/.test(code);
 }
 
@@ -210,7 +211,15 @@ export function cardAction(issue, repair = null) {
 async function checkCard(io, credentials, id, repair = null) {
   const issue = await readCard(io, credentials, id);
   const decision = cardAction(issue, repair);
-  if (decision.action === "refuse") refuse(decision.code, decision.detail);
+  if (decision.action === "refuse") {
+    try { refuse(decision.code, decision.detail); } catch (error) {
+      // An owner on a card that has not started is the one definitive answer a
+      // person clears by handing the card back (retryableRefusal); an owned
+      // card that already started is that person's work, and stays refused.
+      if (decision.code === "CARD_RUN_CARD_OWNED" && MOVABLE_STATE_TYPES.includes(issue.state?.type)) error.handBack = true;
+      throw error;
+    }
+  }
   return { issue, decision };
 }
 
