@@ -3862,6 +3862,85 @@ Out of scope: uploading, replacing or removing from the page (queue 14), showing
 
 ${QUEUE11_FINISH}`;
 
+// The parallel-lanes prep card (contracts/parallel-lanes.md) runs first in the
+// thirteenth queue. Every product card used to edit the same lines (the file
+// lists in package.json test and test:db, the chain of mutation steps, and the
+// two schema_migrations lists), so two cards built at once always conflicted,
+// and a card that may not edit package.json had tests that never ran.
+
+export const SHU370_PATHS = Object.freeze([
+  "package.json",
+  "tools/test-runner/discover.mjs",
+  "tools/test-runner/run.mjs",
+  "tools/test-runner/baseline.json",
+  "tools/test-runner/test/discover.test.mjs",
+  "tools/test-runner/test/discover-mutations.mjs",
+  "packages/db/test/postgres-authz-store.test.ts",
+]);
+
+const SHU370_ACCEPTANCE = [
+  "(1) npm test and npm run test:db each run exactly the test files and mutation scripts they ran at the bound head, each exactly once, and every other step of each command (build, vitest, deployment, web, documents, observability, the observability exercise and the rest) still runs, in the same order relative to the others; a test proves both sets equal a baseline written from the bound head's package.json and committed as tools/test-runner/baseline.json, and the final message lists every file that moved between commands (expected: none) (SHU370_SAME_SET);",
+  "(2) A new file that follows the convention runs with no edit to package.json: a compiled test under dist/packages/<pkg>/test/ or dist/apps/<app>/test/ named *.test.js, a source test *.test.mjs in such a test folder, and a mutation script *mutations*.mjs in one; everything under packages/db/test belongs to test:db and everything else to test; a test builds a throwaway tree with one of each and finds each in exactly one command (SHU370_CONVENTION);",
+  "(3) The two schema_migrations lists in packages/db/test/postgres-authz-store.test.ts are built from the file names in packages/db/migrations, sorted, without the .sql suffix, the same way migrate.ts orders them; the assertions they feed are otherwise unchanged; a new migration file needs no edit to that test (SHU370_MIGRATIONS);",
+  "(4) A failing test file or mutation script still fails its command with a non-zero exit, and the runner never skips, filters, retries or reorders tests inside a file; node --test keeps its flags (test:db keeps --test-concurrency=1); an empty discovery, a missing dist folder or an unreadable package.json is an error, never a pass (SHU370_FAILS_CLOSED);",
+  "(5) Items 1, 2 and 4 each have a mutant in discover-mutations.mjs (drop one discovered file, put a db file in test, turn an empty discovery into a pass) that dies by assertion in its named test, and the runner's own test file runs in npm test; every existing test and mutant passes unchanged; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU370_BRIEF = `Card SHU-370: new tests run without editing package.json, and the migrations list builds itself (parallel-lanes prep; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head. ${QUEUE11_CONTEXT}
+
+Why. Every product card edits the same few lines: it appends its compiled test files to the long node --test list in package.json test (or test:db), appends an npm run test:<name>:mutations step to the test chain, and adds its migration name to the two hard-coded schema_migrations lists in packages/db/test/postgres-authz-store.test.ts. Two cards built at the same time therefore always conflict, whatever their domain, and the box cannot run cards side by side. The next cards of this queue may not edit package.json at all, so without this card their new tests would never run. After this card, a card adds a test or a migration by adding a file, and nothing else.
+
+Read first:
+- package.json scripts: test, test:db, every test:*:mutations, test:web, test:assertion, test:deployment, test:documents*, test:observability, exercise:observability. Write down what each command runs today (the baseline) before changing anything.
+- packages/db/src/migrate.ts (how migrations are found and ordered) and the two schema_migrations assertions in packages/db/test/postgres-authz-store.test.ts.
+- .github/workflows/ci.yml (CI runs npm test and npm run test:db).
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- Same tests, nothing lost: the baseline in item 1 is computed from the bound head before you change package.json, and committed, so the test can never be satisfied by a smaller set. A later card that adds a file grows the discovered set beyond the baseline; the test allows additions that follow the convention and refuses any baseline file that is no longer run.
+- The runner is plain Node (no new dependency, no lockfile change), lives in tools/test-runner, and only decides which files run; it does not change how a test runs.
+- Keep every existing script key that something else calls (CI, docs, other scripts); a test:*:mutations key may stay as a convenience, but the test chain must no longer need one per card.
+- Do not touch .github, the coordinator, CI workflows, vitest or tsconfig settings.
+- ${QUEUE11_STANDING} For this card S1 means: say where the runner prints what it ran.
+
+Tests: SHU370_SAME_SET, SHU370_CONVENTION, SHU370_MIGRATIONS, SHU370_FAILS_CLOSED, token first and a space after it.
+
+Out of scope: gateway route and navigation registration, per-lane db exports, the coordinator's suite inventory, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+// Queue 13's first four cards run again under fresh ids. Their lanes were
+// committed (SHU-362 to SHU-365) before the queue was scheduled, and the box
+// schedules a queue only from lanes its pull request appends, so the same
+// contracts are pinned here with the ids renamed. The prep card SHU-370 runs
+// first, so these cards add tests and migrations as files.
+const Q13_RENAMED = (text) => text.replace(/SHU(-?)36([2-5])/g, (_, dash, d) => `SHU${dash}37${Number(d) - 1}`);
+const Q13_AFTER_PREP = "Since this contract was written, SHU-370 landed: npm test and npm run test:db find test files and mutation scripts by name, and the schema_migrations lists are built from packages/db/migrations. Add your tests, mutation scripts and migration as files; do not edit package.json or those lists.";
+
+export const SHU371_PATHS = SHU362_PATHS;
+const SHU371_ACCEPTANCE = Q13_RENAMED(SHU362_ACCEPTANCE);
+const SHU371_BRIEF = `${Q13_RENAMED(SHU362_BRIEF)}
+
+${Q13_AFTER_PREP}`;
+export const SHU372_PATHS = SHU363_PATHS;
+const SHU372_ACCEPTANCE = Q13_RENAMED(SHU363_ACCEPTANCE);
+const SHU372_BRIEF = `${Q13_RENAMED(SHU363_BRIEF)}
+
+${Q13_AFTER_PREP}`;
+export const SHU373_PATHS = SHU364_PATHS;
+const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
+const SHU373_BRIEF = `${Q13_RENAMED(SHU364_BRIEF)}
+
+${Q13_AFTER_PREP}`;
+export const SHU374_PATHS = SHU365_PATHS;
+const SHU374_ACCEPTANCE = Q13_RENAMED(SHU365_ACCEPTANCE);
+const SHU374_BRIEF = `${Q13_RENAMED(SHU365_BRIEF)}
+
+${Q13_AFTER_PREP}`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4242,6 +4321,41 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU366_PATHS,
     acceptance: SHU366_ACCEPTANCE,
     brief: SHU366_BRIEF,
+  }),
+  "SHU-370": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU370_PATHS,
+    revision_paths: SHU370_PATHS,
+    acceptance: SHU370_ACCEPTANCE,
+    brief: SHU370_BRIEF,
+  }),
+  "SHU-371": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU371_PATHS,
+    revision_paths: SHU371_PATHS,
+    acceptance: SHU371_ACCEPTANCE,
+    brief: SHU371_BRIEF,
+  }),
+  "SHU-372": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU372_PATHS,
+    revision_paths: SHU372_PATHS,
+    acceptance: SHU372_ACCEPTANCE,
+    brief: SHU372_BRIEF,
+  }),
+  "SHU-373": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU373_ACCEPTANCE,
+    brief: SHU373_BRIEF,
+  }),
+  "SHU-374": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU374_PATHS,
+    revision_paths: SHU374_PATHS,
+    acceptance: SHU374_ACCEPTANCE,
+    brief: SHU374_BRIEF,
   }),
 });
 
