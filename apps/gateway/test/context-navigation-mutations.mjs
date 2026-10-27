@@ -82,6 +82,26 @@ try {
       from: ': children.kind === "unavailable" ? { kind: "unavailable" } : undefined;',
       to: ': children.kind === "unavailable" ? { kind: "found", subOrganizations: [] } : undefined;',
     },
+    {
+      name: "manager read failure must degrade only its panel",
+      pattern: "SHU357_CARD_DEGRADES",
+      from: `catch {
+                        accountManager = { kind: "unavailable" };
+                    }`,
+      to: `catch {
+                        throw new Error("mutated manager failure");
+                    }`,
+    },
+    {
+      name: "manager history failure must degrade only its panel",
+      pattern: "SHU357_CARD_DEGRADES",
+      from: `catch {
+                            accountManagerHistory = { kind: "unavailable" };
+                        }`,
+      to: `catch {
+                            throw new Error("mutated manager history failure");
+                        }`,
+    },
   ];
   for (const mutant of mutants) {
     assert.equal(original.split(mutant.from).length - 1, 1, `${mutant.name}: unique anchor`);

@@ -82,7 +82,16 @@ const mutations = [
   ["ignore the manager filter", "SHU355_RULE", "managers?.get(org.id)?.principalId !== filters.accountManager", "false"],
   ["unmanaged company matches", "SHU355_RULE", "managers?.get(org.id)?.principalId !== filters.accountManager", "(managers?.get(org.id)?.principalId ?? filters.accountManager) !== filters.accountManager"],
   ["remove the manager directory value", "SHU355_SHOWN", "...(managers ? { accountManager: managers.get(org.id) ?? null } : {})", ""],
-  ["read every organization's manager", "SHU339_FILTER_SCOPE", "this.#accountManagers?.readMany(shown.map((org) => org.id))", "this.#accountManagers?.readMany(organizations.map((org) => org.id))"],
+  ["read every organization's manager", "SHU339_FILTER_SCOPE", "this.#accountManagers.readMany(shown.map((org) => org.id))", "this.#accountManagers.readMany(organizations.map((org) => org.id))"],
+  ["let an unfiltered manager failure take down the directory", "SHU357_DIRECTORY_DEGRADES", `catch {
+                    if (filters.accountManager !== undefined)
+                        return { kind: "unavailable" };
+                }`, `catch {
+                    return { kind: "unavailable" };
+                }`],
+  ["let a filtered manager failure list unverified companies", "SHU357_DIRECTORY_DEGRADES", `if (filters.accountManager !== undefined)
+                        return { kind: "unavailable" };`, `if (false)
+                        return { kind: "unavailable" };`],
   ["accept any manager", "SHU339_FILTER_INVALID", "!/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager)", "false"],
   ["ignore a missing port", "SHU339_FILTER_UNAVAILABLE", "!this.#accountManagers", "false"],
 ];
