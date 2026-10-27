@@ -3586,6 +3586,269 @@ Out of scope: the company card's own single-company read, the account-manager an
 
 ${QUEUE11_FINISH}`;
 
+// The thirteenth committed card queue (SHU-312) keeps the eleventh queue's
+// template. A profile belongs to the person who signs in, not to a candidate
+// or student role (Khalid, 2026-10-27): own-profile writes and own documents
+// are authorised by the signed-in, registered, non-deleted person alone, and
+// every field written has exactly one legacy source column for the import.
+
+export const SHU362_PATHS = Object.freeze([
+  "packages/profile/src/profile.ts",
+  "packages/profile/src/types.ts",
+  "packages/profile/test/profile.test.ts",
+  "packages/profile/test/mutations.mjs",
+  "packages/db/src/safe-write-store.ts",
+  "packages/db/test/safe-write-store.test.ts",
+  "packages/db/test/safe-write-mutations.mjs",
+  "apps/gateway/src/language-preference.ts",
+  "apps/gateway/test/language-preference.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/web-ui.test.ts",
+]);
+
+const SHU362_ACCEPTANCE = [
+  "(1) A language a person confirmed through the SHU-84 safe write shows as their Language on My profile, in place of the snapshot value and also when no snapshot is configured (a person who just signed in); the field's meta line reads \"Updated by you · <date>\" instead of \"StudentHub snapshot · <date>\"; a person with no written language keeps exactly today's result (SHU362_SHOWN_OVER_SNAPSHOT);",
+  "(2) Any signed-in, registered, non-deleted person may write their own language, with or without grants; the rule is checked at preview and again inside the commit; a deleted principal is refused (403) with nothing stored. Before this card a person with no grant was refused; a test proves they now succeed and that nothing else about the write changed (SHU362_ANY_PERSON);",
+  "(3) My profile shows a \"Change\" control on the Language row: a small form (English, العربية) posting to a page route; submitting shows an HTML preview page (\"Language: English → العربية\") with Confirm and Cancel; Confirm commits through the existing SHU-84 preview/confirm (same token, receipt and audit row) and returns to My profile (303), where the new value shows; Cancel returns with nothing stored. Every refusal is an HTML page: no or expired session gets the sign-in page (401); a wrong origin 403 before the body is read; a stale or replayed token 409 with a page saying the value changed and a link back; an unavailable store 503. The JSON routes /profile/language/preview and /profile/language/confirm keep their bodies, statuses and refusals except item 2 (SHU362_PAGE_FLOW);",
+  "(4) The own-profile read gains one port for written values (one read per page, returning every written field of the person), and each field's freshness says where its value came from (imported_snapshot or written_by_person, with the write time); the JSON /profile body carries the same values the page shows. When any field is written, the page shows \"Checked once your documents are on file\" in place of the Profile complete and Pending rows, and the JSON marks both unavailable: not_recorded. The page heading keeps \"My profile\" with the line \"Your StudentHub profile, connected through Universe.\" and drops the \"Read-only\" badge (SHU362_PROJECTION);",
+  "(5) S1: a test confirms a language through the page and finds it on the rendered My profile; S2 holds (one snapshot read and one written-values read whatever the number of fields, counting fakes);",
+  "(6) Items 1, 2 and 4 each have a mutant (profile mutations.mjs for 1 and 4, safe-write-mutations.mjs for 2) that dies by assertion in its named test, and item 3's mutant is checked by hand and reported; every other existing mutant still binds once and is killed; every existing test passes unchanged except the one that pinned \"no grant is refused\", which item 2 replaces; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU362_BRIEF = `Card SHU-362: the language a person chooses shows on My profile and can be changed there (S2 part one; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes queue 12, whose SHU-360 is the first page-driven safe write. ${QUEUE11_CONTEXT}
+
+Why. SHU-84 built the platform's first write, a person's language preference, but nothing reads it: OwnProfileRepository.readOwn (packages/profile/src/profile.ts) projects only the imported snapshot, so a confirmed change never appears, and the write has no page. In production the snapshot adapter is unconfigured, so every field of a new person shows Unavailable. And the write refuses anyone who holds no grant (PostgresSafeWriteStore.#mayWrite), but a profile belongs to the person, not to a role: everyone who signs in must be able to complete theirs. This card sets the rules every later self-edit follows: the person writes their own profile, a value they wrote wins over the snapshot, and the page says which one you are seeing.
+
+Read first:
+- packages/profile/src/profile.ts (OwnProfileRepository, projectApprovedProfile, available, freshness) and types.ts (FieldFreshness, OwnProfileFields).
+- packages/db/src/safe-write-store.ts (person_preferences, #mayWrite, #readLanguage, forPrincipal) and migration 0147.
+- apps/gateway/src/language-preference.ts (preview, confirm, refusal()), index.ts (/profile) and web-ui.ts (profileDocument, fieldRow).
+- SHU-360's page flow (the account-manager form, preview page and confirm). Reuse it; do not invent a third pattern.
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- One write path: the page calls the same preview and confirm as the JSON route and never writes the store directly; the token travels only in hidden fields of a no-store preview page, never in a URL, redirect or log.
+- The overlay reads only the requester's own written values, after the existing own-profile check; person_id of someone else still gets 404 with nothing read.
+- A written value is shown only if it passes the same parser the snapshot uses; a malformed stored value shows Unavailable, never raw text.
+- Imported values are never changed or deleted.
+- ${QUEUE11_STANDING}
+
+Tests: SHU362_SHOWN_OVER_SNAPSHOT, SHU362_ANY_PERSON, SHU362_PAGE_FLOW, SHU362_PROJECTION, token first and a space after it, through the gateway's real routes with the form bodies and headers a browser sends.
+
+Out of scope: other fields (SHU-363 to SHU-365), switching the app's own interface language, recomputing completeness (queue 14), CSS beyond existing classes, JavaScript, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU363_PATHS = Object.freeze([
+  "packages/db/migrations/0211_person_profiles.sql",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/db/src/person-profile-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-person-profile.test.ts",
+  "packages/profile/src/self-edit.ts",
+  "packages/profile/src/index.ts",
+  "packages/profile/src/profile.ts",
+  "packages/profile/test/self-edit.test.ts",
+  "packages/profile/test/self-edit-mutations.mjs",
+  "apps/gateway/src/profile-edit-http.ts",
+  "apps/gateway/test/profile-edit-http.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/test/web-ui.test.ts",
+]);
+
+const SHU363_ACCEPTANCE = [
+  "(1) A person can change, one field at a time, their display name, Arabic name, objective, introduction and preferred time: JSON routes POST /profile/edit/preview, POST /profile/edit/confirm and GET /profile/edit/receipts/:ref follow the SHU-82 contract (preview issues a token bound to the field, the before value and the person; confirm commits once; the receipt names only the field changed, never its value); one migration adds person_profiles keyed by principal, one nullable column per field, with CHECKs refusing every value the application's normalisation would not produce (SHU363_WRITE);",
+  "(2) Field rules, the same in the application and the database: display name and Arabic name have at least two words after trimming and collapsing spaces (PD-10), at most 255 characters, and the Arabic name contains at least one Arabic-script letter; objective at most 100, introduction at most 5,000, preferred time at most 100; no control or bidi-override characters (the forbidden code-point list migration 0183 uses); clearing an optional field stores NULL and shows \"Not recorded\" (SHU363_RULES);",
+  "(3) Each of the five rows on My profile has SHU-362's Change flow: a form, an HTML preview page (\"Objective: before → after\", long values shortened on screen), Confirm and Cancel; refusals as in SHU-362; a value that breaks a rule shows the form again with the reason next to the field and the person's input kept (SHU363_PAGE);",
+  "(4) The person rule of SHU-362 applies at preview and inside the commit; another person's token, a replayed token and a stale before value store nothing (SHU363_OWNER);",
+  "(5) S1: each field written in a test shows on the rendered My profile with \"Updated by you\"; S2 holds (the five fields come back in SHU-362's one written-values read);",
+  "(6) Items 1 to 4 each have a mutant in self-edit-mutations.mjs that dies by assertion in its named test; the Postgres owner and CHECK mutants are checked by hand and reported; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU363_BRIEF = `Card SHU-363: a person edits their names, objective, introduction and preferred time from My profile (S2 part two, PD-10 and PD-11 text fields; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-362 (written values over the snapshot, the person rule, the language page flow). ${QUEUE11_CONTEXT}
+
+Why. Legacy lets a person change each of these from the app (AccountController::actionUpdateName, actionUpdateNameAr, actionUpdateObjective, actionUpdateIntro, actionUpdatePreferredTime); the platform has no store for any of them. This card adds the store every later self-edit shares and its first five fields. Column names follow the mapping table in the queue file so the import (SHU-103) loads legacy values into the same columns.
+
+Read first:
+- SHU-362's written-values port, the person rule and the Language row's page flow.
+- packages/safe-write-contract (createSafeWrite, FieldPolicy) and packages/db/src/safe-write-store.ts (receipts are rows of authorization_mutation_audit, operation profile.safe_write; migration 0147's summary-shape CHECK allows only the language field: extend the allowed field list in your migration; a receipt still carries no value).
+- Migration 0183 (the forbidden code-point list and how a CHECK mirrors the application rule).
+- packages/profile/src/profile.ts (the field parsers and maximum lengths: your rules must accept every value the parser accepts for these fields, except one-word names).
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- One receipt shape: receipts are rows of the existing audit table, written in the same transaction as the field; a failed receipt commits nothing.
+- Receipts and log lines carry field names only, never values.
+- The session decides whose row is written; nothing in the body names a person.
+- Language stays on its SHU-84 route and is not duplicated.
+- ${QUEUE11_STANDING}
+
+Tests: your migration is packages/db/migrations/0211_person_profiles.sql (the card's paths pin the name). Name every new test with its token first and a space after it: SHU363_WRITE, SHU363_RULES, SHU363_PAGE, SHU363_OWNER. Add the migration to both schema_migrations lists of postgres-authz-store.test.ts.
+
+Out of scope: choice fields (SHU-364), phone and profile link (SHU-365), completeness, staff editing a person (S6), CSS beyond existing classes, JavaScript, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU364_PATHS = Object.freeze([
+  "packages/db/migrations/0212_person_profiles_choices.sql",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/db/src/person-profile-store.ts",
+  "packages/db/test/postgres-person-profile.test.ts",
+  "packages/profile/src/self-edit.ts",
+  "packages/profile/src/profile.ts",
+  "packages/profile/src/types.ts",
+  "packages/profile/test/self-edit.test.ts",
+  "packages/profile/test/self-edit-mutations.mjs",
+  "apps/gateway/src/profile-edit-http.ts",
+  "apps/gateway/test/profile-edit-http.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU364_ACCEPTANCE = [
+  "(1) Through SHU-363's write, a person sets gender (male, female, other), birth date, nationality (an active country from the reference catalogue), university (optional: an approved university, or \"None\"), driving licence (yes/no), Kuwaiti-mother flag (yes/no, offered only when the nationality is not Kuwaiti and cleared when it becomes Kuwaiti, PD-12) and work status (not looking, actively looking, open to offers; writing it records when it changed, PD-14) (SHU364_WRITE);",
+  "(2) Birth date: a real calendar date, not in the future, and the age on today's date in Asia/Kuwait is at least 16 (decision D4, Khalid 10-27: minimum 16, no maximum; one setting, no literal in two places); below it the form says \"You need to be at least 16 to complete a StudentHub profile\", the number taken from the setting (SHU364_AGE);",
+  "(3) Catalogue values are checked inside the commit: a pending, rejected, deleted or unknown country or university is refused with nothing stored; the stored value is the catalogue id, and My profile shows the current catalogue name, read for all catalogue fields of the page in one catalogue call (SHU364_CATALOGUE);",
+  "(4) My profile shows work status at the top as \"Looking for work\" (a highlighted line: \"Actively looking\", \"Open to offers\" or \"Not looking right now\", with its Change control), above the other rows. Each row has SHU-362's Change flow with the right control: radio buttons for gender, licence, Kuwaiti mother and work status; a date input for birth date; a select of countries by English name; a select of approved universities by name with \"None\" and \"Not listed\" (which explains that staff add new universities); refusals as in SHU-363 (SHU364_PAGE);",
+  "(5) S1: every field written in a test shows on the rendered My profile, nationality and university by name, Age recomputed from the written birth date; S2 holds (one written-values read and one catalogue read per page, counting fakes);",
+  "(6) Items 1 to 4 each have a mutant that dies by assertion in its named test; the Postgres CHECK and catalogue-status mutants are checked by hand and reported; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU364_BRIEF = `Card SHU-364: a person sets their gender, birth date, nationality, university and driving licence, and says whether they are looking for work (S2 part three, PD-11, PD-12, PD-14; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-362 and SHU-363 (the person-profile store, the self-edit rules, the page flow). ${QUEUE11_CONTEXT}
+
+Why. Legacy actionUpdateGender, actionUpdateBirthDate, actionUpdateNationality, actionUpdateUniversity, actionUpdateDrivingLicense, actionUpdateKuwaitiNational, actionUpdateNationalityWithKuwaitiStatus and actionJobSearchStatus. Work status is how a person says they want to be found for work; recruiting (R3 search, R4 invitations) will read it, so it is a first-class written value now. Legacy's 16 to 25 window does not fit profiles for everyone; Khalid set minimum 16, no maximum.
+
+Read first:
+- SHU-363's store, self-edit module and page flow.
+- packages/reference-catalogue/src/catalogue.ts and types.ts (country, university, moderation status) and packages/db/src/postgres-catalogue-store.ts.
+- packages/profile/src/profile.ts (the snapshot's coded values for gender, licence and job-search status, which you map on read; store the platform's enum, not the codes).
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- Catalogue references are resolved by id at commit, never by name; no catalogue writes.
+- The age minimum comes from one setting.
+- Kuwaiti-mother is never stored with a Kuwaiti nationality; the database refuses it too.
+- Work status changes no search index and sends nothing (R3 and C3 own those).
+- ${QUEUE11_STANDING}
+
+Tests: your migration is packages/db/migrations/0212_person_profiles_choices.sql (the card's paths pin the name). Name every new test with its token first and a space after it: SHU364_WRITE, SHU364_AGE, SHU364_CATALOGUE, SHU364_PAGE. Add the migration to both schema_migrations lists of postgres-authz-store.test.ts.
+
+Out of scope: location and area (needs an area catalogue and a map lookup; queue 15), adding universities (O8 moderation), removing a person from search when they stop looking (R3), the committed flag (staff, PD-40, S6), CSS beyond existing classes, JavaScript, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU365_PATHS = Object.freeze([
+  "packages/db/migrations/0213_person_profiles_contact.sql",
+  "packages/db/test/postgres-authz-store.test.ts",
+  "packages/db/src/person-profile-store.ts",
+  "packages/db/test/postgres-person-profile.test.ts",
+  "packages/profile/src/self-edit.ts",
+  "packages/profile/src/profile.ts",
+  "packages/profile/src/types.ts",
+  "packages/profile/test/self-edit.test.ts",
+  "packages/profile/test/self-edit-mutations.mjs",
+  "apps/gateway/src/profile-edit-http.ts",
+  "apps/gateway/test/profile-edit-http.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+]);
+
+const SHU365_ACCEPTANCE = [
+  "(1) Through SHU-363's write, a person sets a phone number: input in any common form (spaces, dashes, brackets, a leading 00 or +, Arabic-Indic digits) is normalised to a plus and 8 to 15 digits; an 8-digit local number is stored as +965 and the 8 digits; anything else is refused with a readable reason (PD-15; legacy had no rule) (SHU365_PHONE);",
+  "(2) A phone number is unique among non-deleted people: one another person holds is refused at preview and again inside the commit, with a message that never reveals who holds it; two people confirming the same number at once store it for exactly one (a Postgres test runs both confirms concurrently) (SHU365_UNIQUE);",
+  "(3) A person sets a profile link handle: 3 to 30 of a to z, 0 to 9, dot, dash and underscore, starting with a letter, stored lower case, unique among non-deleted people with the same refusal rules (PD-11 update-profile-url) (SHU365_HANDLE);",
+  "(4) Both show on My profile with SHU-362's Change flow; the phone shows grouped (+965 5555 1234); in this queue the phone is shown only on the person's own page (SHU365_PAGE);",
+  "(5) S1: both values written in tests show on the rendered My profile; S2 holds; each column has a unique partial index on non-deleted rows;",
+  "(6) Items 1 to 3 each have a mutant that dies by assertion in its named test; the Postgres concurrency mutant (drop the unique index) is checked by hand and reported; every existing test passes unchanged, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU365_BRIEF = `Card SHU-365: a person adds their phone number and profile link (S2 part four, PD-11 and PD-15; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-362 to SHU-364. ${QUEUE11_CONTEXT}
+
+Why. Legacy actionUpdatePhone and actionUpdateProfileUrl. A phone is how staff and employers reach a person they hire; uniqueness makes it a usable lookup later (S6, R3). Email stays with Universe identity (PD-16). The normalisation rule is also the import rule: legacy phones that do not normalise are imported as not recorded with a reconciliation row (see the queue file's migration section).
+
+Read first: SHU-363's store and its concurrency (FOR UPDATE, unique indexes), and migration 0183's partial unique pattern.
+
+Outcomes: acceptance items 1 to 3.
+
+Guards:
+- The phone never appears in a receipt, log line, error body or URL.
+- The uniqueness refusal reads the same whoever holds the number.
+- No SMS or verification is sent (C4 owns delivery; verification is a later card).
+- ${QUEUE11_STANDING}
+
+Tests: your migration is packages/db/migrations/0213_person_profiles_contact.sql (the card's paths pin the name). Name every new test with its token first and a space after it: SHU365_PHONE, SHU365_UNIQUE, SHU365_HANDLE, SHU365_PAGE. Add the migration to both schema_migrations lists of postgres-authz-store.test.ts.
+
+Out of scope: phone verification, email, showing the phone to staff or employers (S6, S7), a public page at the handle, CSS beyond existing classes, JavaScript, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
+export const SHU366_PATHS = Object.freeze([
+  "packages/private-documents/src/candidate-lifecycle.ts",
+  "packages/private-documents/test/candidate-lifecycle.test.mjs",
+  "packages/private-documents/test/candidate-lifecycle-mutations.mjs",
+  "packages/private-documents/test/candidate-fixtures.mjs",
+  "apps/gateway/src/candidate-documents-http.ts",
+  "apps/gateway/src/candidate-documents-runtime.ts",
+  "apps/gateway/src/documents-page.ts",
+  "apps/gateway/test/documents-page.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "docs/contracts/candidate-document-lifecycle.md",
+]);
+
+const SHU366_ACCEPTANCE = [
+  "(1) Own-document operations (list, upload authorise, bytes, finalize, remove, delivery) accept any signed-in, registered, non-deleted person, with or without a candidate grant; ownership stays the resolved principal and documents stay scoped to the configured DOCUMENT_ORG_ID namespace; the in-transaction re-check becomes \"this principal still exists and is not deleted\" in place of the grant re-read; a deleted principal is refused at every operation (SHU366_PERSON_OWNS);",
+  "(2) Nobody gains access to anyone else's documents: an employer, recruiter, staff or admin grant still confers no access to another person's documents (SHU-200 is still open), and every existing cross-person refusal test passes unchanged (SHU366_NO_WIDENING);",
+  "(3) A new page /profile/documents, \"My documents\", lists the four slots (personal photo, CV, civil ID front, civil ID back); each shows \"On file\" with its format, size and date, or \"Not uploaded\" with what to send (accepted formats and the size limit, taken from the admission rules, not literals); ids and versions never reach the page; a sidebar link \"My documents\" appears on My profile and in the workspace sidebar when the documents service is configured; no session gets the sign-in page (401) without calling the store; any other failure is a 503 page with no error text (SHU366_PAGE);",
+  "(4) docs/contracts/candidate-document-lifecycle.md states the new authority rule in place of the candidate-grant paragraph;",
+  "(5) S1: a document finalized in a test (synthetic file store) shows as On file on the rendered page; S2 holds (the page costs one list call);",
+  "(6) Items 1 and 2 each have a mutant in candidate-lifecycle-mutations.mjs that dies by assertion in its named test, item 3's mutant is checked by hand and reported; every other existing mutant still binds once and is killed; every existing test passes unchanged except those that pinned \"no candidate grant is refused\", which item 1 replaces; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU366_BRIEF = `Card SHU-366: a person's documents belong to them, and My documents shows which are on file (S4 page, part one; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-362 (the person rule for own-profile writes). ${QUEUE11_CONTEXT}
+
+Why. The document lifecycle (SHU-145) authorises every operation with a candidate grant at DOCUMENT_ORG_ID (CandidateDocuments.principal, resolveActiveContext(..., role: 'candidate')). A profile belongs to the person, not a role, and nothing grants candidate to someone who signs in, so today nobody new can keep documents. And the documents have no page: the list exists only as GET /candidate-documents. The four slots map one to one to the legacy columns SHU-103 copies (see the queue file's migration section), so this changes authority only, not the data model.
+
+Read first:
+- packages/private-documents/src/candidate-lifecycle.ts (principal, mutation's in-transaction re-check, current, ticket) and its tests and fixtures.
+- docs/contracts/candidate-document-lifecycle.md.
+- apps/gateway/src/candidate-documents-http.ts and -runtime.ts; web-ui.ts (profileDocument's sidebar).
+- The principal store's liveness (how a deleted principal is represented) in packages/db/src/postgres-authz-store.ts.
+
+Outcomes: acceptance items 1 to 4.
+
+Guards:
+- Ownership is the session's principal, re-checked inside every transaction; no body or query names a person.
+- Upload credentials, delivery URLs, signing, TTLs, admission rules, idempotency and cleanup are unchanged.
+- No other role gains any access (item 2).
+- The page reads only list for the session; no delivery URL is minted for the list.
+- ${QUEUE11_STANDING}
+
+Tests: name every new test with its token first and a space after it (SHU366_PERSON_OWNS, SHU366_NO_WIDENING, SHU366_PAGE).
+
+Out of scope: uploading, replacing or removing from the page (queue 14), showing the photo on My profile (queue 14), employer or staff access to documents (S6, S7, SHU-200), CSS beyond existing classes, JavaScript, package.json, the lockfile, and any network call, credential, staging or production access.
+
+${QUEUE11_FINISH}`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -3924,6 +4187,41 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU361_PATHS,
     acceptance: SHU361_ACCEPTANCE,
     brief: SHU361_BRIEF,
+  }),
+  "SHU-362": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU362_PATHS,
+    revision_paths: SHU362_PATHS,
+    acceptance: SHU362_ACCEPTANCE,
+    brief: SHU362_BRIEF,
+  }),
+  "SHU-363": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU363_PATHS,
+    revision_paths: SHU363_PATHS,
+    acceptance: SHU363_ACCEPTANCE,
+    brief: SHU363_BRIEF,
+  }),
+  "SHU-364": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU364_PATHS,
+    revision_paths: SHU364_PATHS,
+    acceptance: SHU364_ACCEPTANCE,
+    brief: SHU364_BRIEF,
+  }),
+  "SHU-365": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU365_PATHS,
+    revision_paths: SHU365_PATHS,
+    acceptance: SHU365_ACCEPTANCE,
+    brief: SHU365_BRIEF,
+  }),
+  "SHU-366": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU366_PATHS,
+    revision_paths: SHU366_PATHS,
+    acceptance: SHU366_ACCEPTANCE,
+    brief: SHU366_BRIEF,
   }),
 });
 

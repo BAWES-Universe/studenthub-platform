@@ -278,12 +278,17 @@ test("CARD_LANE_EVERY_CARD: each committed card lane is its own reviewed contrac
     assert.equal(validateFixtureScopePolicy(lane).ok, true);
     assert.deepEqual(lane.initial_build_paths, [...contract.initial_build_paths]);
     assert.deepEqual(lane.revision_paths, [...contract.revision_paths]);
-    assert.deepEqual(fixtureReviewTests(lane.id), contract.revision_paths.filter((path) => path.endsWith(".test.mjs")));
-    // A whole-tree card's tests are TypeScript built by npm test, which the
-    // reviewer cannot run yet; its card PR's CI runs them. A scoped card's
-    // reviewer runs the card's own tests.
-    if (contract.workspace_mode === "repo") assert.equal(validateFixtureScopePolicy(lane).workspace_scope, "repo", lane.id);
-    else assert.ok(fixtureReviewTests(lane.id).length > 0, `${lane.id} has tests for the reviewer to run`);
+    // A whole-tree card's tests are built and run by npm test, which the
+    // reviewer cannot run yet, so it runs none here, even a .test.mjs in the
+    // card's paths; its card PR's CI runs them. A scoped card's reviewer runs
+    // the card's own tests.
+    if (contract.workspace_mode === "repo") {
+      assert.deepEqual(fixtureReviewTests(lane.id), [], lane.id);
+      assert.equal(validateFixtureScopePolicy(lane).workspace_scope, "repo", lane.id);
+    } else {
+      assert.deepEqual(fixtureReviewTests(lane.id), contract.revision_paths.filter((path) => path.endsWith(".test.mjs")));
+      assert.ok(fixtureReviewTests(lane.id).length > 0, `${lane.id} has tests for the reviewer to run`);
+    }
     assert.equal(fixtureAcceptance(lane.id), contract.acceptance);
     for (const other of Object.keys(CARD_CONTRACTS).filter((id) => id !== lane.id)) {
       assert.notEqual(fixtureAcceptance(lane.id), fixtureAcceptance(other), `${lane.id} and ${other} have their own acceptance`);
