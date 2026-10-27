@@ -21,6 +21,12 @@ try {
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr);
   const mutants = [
     {
+      name: "admin cards must load eligible account managers",
+      pattern: "SHU360_FORM",
+      from: 'if (active.role === "admin" && accountManagers.eligibleManagers)',
+      to: 'if (false && active.role === "admin" && accountManagers.eligibleManagers)',
+    },
+    {
       name: "admin cards must request counts",
       pattern: "SHU334_NAV_COUNTS",
       from: "const tally = await organizationReader.readCounts({ principalId: session.personId, orgId: active.orgId, role: active.role });",
