@@ -43,9 +43,11 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-368",
-      "SHU-360",
-      "SHU-361"
+      "SHU-370",
+      "SHU-371",
+      "SHU-372",
+      "SHU-373",
+      "SHU-374"
     ]
   },
   "adapter_pause_map": {},
@@ -1873,6 +1875,181 @@
         "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/company-directory.test.ts",
         "apps/gateway/test/company-directory-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-370",
+      "authorization_ref": "SHU-370",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "first card of the thirteenth card queue, re-scheduled with fresh ids: the parallel-lanes prep card (tests and mutation scripts are found by name, and the schema_migrations lists build themselves); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "package.json",
+        "tools/test-runner/discover.mjs",
+        "tools/test-runner/run.mjs",
+        "tools/test-runner/baseline.json",
+        "tools/test-runner/test/discover.test.mjs",
+        "tools/test-runner/test/discover-mutations.mjs",
+        "packages/db/test/postgres-authz-store.test.ts"
+      ],
+      "revision_paths": [
+        "package.json",
+        "tools/test-runner/discover.mjs",
+        "tools/test-runner/run.mjs",
+        "tools/test-runner/baseline.json",
+        "tools/test-runner/test/discover.test.mjs",
+        "tools/test-runner/test/discover-mutations.mjs",
+        "packages/db/test/postgres-authz-store.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-371",
+      "authorization_ref": "SHU-371",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 2 of the thirteenth card queue, re-scheduled with fresh ids: SHU-362's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/profile.test.ts",
+        "packages/profile/test/mutations.mjs",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts",
+        "packages/db/test/safe-write-mutations.mjs",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "revision_paths": [
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/profile.test.ts",
+        "packages/profile/test/mutations.mjs",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts",
+        "packages/db/test/safe-write-mutations.mjs",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-372",
+      "authorization_ref": "SHU-372",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 3 of the thirteenth card queue, re-scheduled with fresh ids: SHU-363's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0211_person_profiles.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0211_person_profiles.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-373",
+      "authorization_ref": "SHU-373",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 4 of the thirteenth card queue, re-scheduled with fresh ids: SHU-364's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0212_person_profiles_choices.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0212_person_profiles_choices.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-374",
+      "authorization_ref": "SHU-374",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 5 of the thirteenth card queue, re-scheduled with fresh ids: SHU-365's contract with the card ids renamed (its lane was committed before the queue was scheduled, so the box could not schedule it); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0213_person_profiles_contact.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0213_person_profiles_contact.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts"
       ]
     }
   ],
