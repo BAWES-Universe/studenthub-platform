@@ -4620,6 +4620,7 @@
     "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
     "M11 C1: reviewed coordinator code installs only with the installed policy on, its approval at the passed head, and green checks",
     "M11 C2: the paths that install or check everything else as root, and the policy itself, stay a person's install",
+    "M11 C7: every module the root install tools import, at any depth, is a person's install",
     "M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head",
     "M11 C4: an approved code change installs in order, reports as a code install and leaves the queue as it was",
     "M11 C5: a code install that fails after the merge puts the installed revision back and does not pause",
@@ -33615,6 +33616,10 @@
     },
     {
       "name": "M11 C2: the paths that install or check everything else as root, and the policy itself, stay a person's install",
+      "capabilities": []
+    },
+    {
+      "name": "M11 C7: every module the root install tools import, at any depth, is a person's install",
       "capabilities": []
     },
     {

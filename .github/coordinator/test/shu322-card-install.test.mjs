@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
-  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS,
+  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -809,6 +809,26 @@ test("M11 C2: the paths that install or check everything else as root, and the p
   const deleted = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, changes: [{ status: "D", path: CODE_PATH }] })));
   assert.ok(refused(deleted));
   assert.match(deleted.reason, /deleted/);
+});
+
+test("M11 C7: every module the root install tools import, at any depth, is a person's install", () => {
+  const repo = fileURLToPath(new URL("../../../", import.meta.url));
+  const relative = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g;
+  const seen = new Set();
+  const stack = [...ROOT_INSTALL_TOOLS];
+  while (stack.length) {
+    const file = stack.pop();
+    // Import-like text inside a quoted brief or fixture names no real module.
+    if (seen.has(file) || !fs.existsSync(path.join(repo, file))) continue;
+    seen.add(file);
+    const text = fs.readFileSync(path.join(repo, file), "utf8");
+    for (const [, spec] of text.matchAll(relative)) stack.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+  }
+  assert.ok(seen.size > ROOT_INSTALL_TOOLS.length, "the closure follows imports");
+  for (const file of seen) {
+    assert.ok(installablePath(file) || ownerOnlyPath(file), `${file} runs inside a root install tool, so it is a person's install`);
+  }
+  for (const tool of ROOT_INSTALL_TOOLS) assert.equal(ownerOnlyPath(tool), true, tool);
 });
 
 test("M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head", async () => {

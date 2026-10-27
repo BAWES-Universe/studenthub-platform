@@ -61,14 +61,35 @@ const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
 // M11: coordinator code the box may install itself once its config turns
 // that on (code_self_install, read from the installed revision only). These
 // paths install or check everything else as root, hold the trust anchors, or
-// draw this boundary, so they always stay a person's install.
+// draw this boundary, so they always stay a person's install. So does every
+// module the root install tools import, since it runs inside them: test M11 C7
+// derives that import closure from the tree and fails if one is missing here.
 export const CODE_SELF_INSTALL_KEY = "code_self_install";
+export const ROOT_INSTALL_TOOLS = Object.freeze([
+  PROVISIONER,
+  ".github/coordinator/service/install.mjs",
+  ".github/coordinator/service/units.mjs",
+  ".github/coordinator/service/credential-delivery.mjs",
+  ".github/coordinator/shu71-public-key.mjs",
+]);
 export const OWNER_ONLY_PATHS = Object.freeze([
   PROVISIONER,
   ".github/coordinator/service/card-install.mjs",
   ".github/coordinator/service/install.mjs",
   ".github/coordinator/service/units.mjs",
   ".github/coordinator/service/credential-delivery.mjs",
+  ".github/coordinator/service/disposable-suite.mjs",
+  ".github/coordinator/service/host-suite-contract.mjs",
+  ".github/coordinator/service/shu71-journal.mjs",
+  ".github/coordinator/service/shu71-production.mjs",
+  ".github/coordinator/service/shu71-runtime-schema.mjs",
+  ".github/coordinator/service/shu71-runtime.mjs",
+  ".github/coordinator/service/suite-runner-spec.mjs",
+  ".github/coordinator/execution-authorization.mjs",
+  ".github/coordinator/launch-vocabulary.mjs",
+  ".github/coordinator/reseed-append-contract.mjs",
+  ".github/coordinator/shu71-activation-package.mjs",
+  ".github/coordinator/workspace-scope.mjs",
   ".github/coordinator/service/shu-reviewer.sudoers",
   ".github/coordinator/reviewer-sandbox.sh",
   ".github/coordinator/shu71-trust-anchor.json",
