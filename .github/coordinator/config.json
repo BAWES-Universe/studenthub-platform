@@ -43,7 +43,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-371",
+      "SHU-379",
       "SHU-372",
       "SHU-373",
       "SHU-374"
@@ -2048,6 +2048,43 @@
         "apps/gateway/src/profile-edit-http.ts",
         "apps/gateway/test/profile-edit-http.test.ts",
         "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-379",
+      "authorization_ref": "SHU-379",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 2 of the thirteenth card queue, run again under a fresh id: SHU-371's contract plus one acceptance item and both reviews' findings in the brief (SHU-371's run stopped with its one revision spent, and a stopped card's branch cannot be rebuilt); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/profile.test.ts",
+        "packages/profile/test/mutations.mjs",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts",
+        "packages/db/test/safe-write-mutations.mjs",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "revision_paths": [
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/profile.test.ts",
+        "packages/profile/test/mutations.mjs",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts",
+        "packages/db/test/safe-write-mutations.mjs",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
         "apps/gateway/test/web-ui.test.ts"
       ]
     }
