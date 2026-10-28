@@ -3964,6 +3964,23 @@ const SHU372_ACCEPTANCE = Q13_RENAMED(SHU363_ACCEPTANCE);
 const SHU372_BRIEF = `${Q13_BRIEF(SHU363_BRIEF)}
 
 ${Q13_AFTER_PREP(SHU372_PATHS)}`;
+// SHU-381 runs SHU-372's contract again from main: SHU-372's three reviews
+// each blocked its build, and its fourth review could not run its confined
+// check, so the run stopped and card-prepare refuses a branch that already
+// holds a build. Later cards of this queue call it "SHU-372"; it is the card
+// this one replaces, with the same tokens.
+const SHU381_ACCEPTANCE = `${SHU372_ACCEPTANCE} (7) Each finding of SHU-372's three reviews is pinned: the three JSON routes of item 1 answer at their own paths and leave /profile/receipts/:ref to the language card, so a receipt reference of another field still answers 404 there; every length in the application, the safe write and the database counts code points, so an objective of 100 emoji is accepted end to end; clearing a field shows "Not recorded" on My profile and never brings back the imported snapshot, tested through the real profile repository; SHU372_PAGE drives the preview, Confirm, Cancel and refusal pages through handleProfileEditPage; postgres-person-profile.test.ts passes, including its teardown; and items 1 to 4 each have a mutant on built modules that dies by assertion in its own token's test.`;
+const SHU381_BRIEF = `${SHU372_BRIEF.replace(/^Card SHU-372: /, "Card SHU-381: ")}
+
+This card replaces SHU-372 with the same contract and tokens (SHU372_WRITE, SHU372_RULES, SHU372_PAGE, SHU372_OWNER); SHU-373 and SHU-374 call what it builds "SHU-372". SHU-372's build was blocked by three reviews; avoid what they found:
+- Routes. Serve JSON POST /profile/edit/preview, POST /profile/edit/confirm and GET /profile/edit/receipts/:ref exactly as item 1 names them, with a receipt() on the service, as language-preference.ts does for SHU-84. Do not answer /profile/receipts/:ref: the language card owns it, and its store's receipt read throws for a receipt whose field is not language, which turned an unknown reference into a 503. Send referrer-policy: no-referrer on every JSON response, as language-preference.ts does.
+- Rules, the same in the application and the database. The Arabic name needs an Arabic-script letter. Reuse migration 0183's forbidden code points, starting at U+0001, since text cannot hold NUL. A CHECK admits only values the application's normalisation produces: no leading or trailing space, and the same idea of whitespace on both sides, so a no-break space is treated alike. Count every length in code points: self-edit.ts, the maxValueLength the safe write is given (createSafeWrite compares UTF-16 length) and char_length all agree, and an objective of 100 emoji is accepted at the route.
+- Clearing. Posting an empty value clears the field to NULL. A cleared field shows "Not recorded" on My profile and must not fall back to the imported snapshot; the written-values read must keep a NULL it wrote apart from a field never written. Test this through OwnProfileRepository and the real store read, not a projection stamped by hand.
+- Page. The preview shows "Objective: before → after", where before is what My profile showed, shortens long values on screen without splitting a character, and has Confirm and Cancel. A value that breaks a rule shows the form again with the reason next to the field and the person's input kept. SHU372_PAGE loads handleProfileEditPage and drives these pages the way SHU371_PAGE_FLOW drives the language row. Keep "editing isn't enabled" wherever the page still has fields a person cannot edit, since web-ui.test.ts asserts it; drop the Read-only badge only from the five rows that now have a Change form.
+- Size. A form post of a 5,000-character Arabic introduction must fit: percent-encoding takes up to six bytes a character, so the body limit must allow at least 32 KiB.
+- Owner. SHU372_OWNER covers another person's token, a replayed token and a stale before value, and none of them stores anything.
+- Store. person_profiles.principal_id references principals(id) ON DELETE CASCADE, as migration 0147 does, so the Postgres test's teardown that deletes its principal passes. readOwnPreferences is one read keyed by the principal (a LEFT JOIN from the person's row, never a FULL JOIN filtered afterwards). Do not give every field the latest write's date: show a field's own date, or none. The commit checks the receipt and change-set digest the way PostgresSafeWriteStore does.
+- Mutants. self-edit-mutations.mjs follows packages/db/test/safe-write-mutations.mjs: a token per mutant, applied to the built modules, each run against its own token's test and dying by assertion. Items 1 to 4 each have one.`;
 export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
 const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
@@ -4397,6 +4414,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU371_PATHS,
     acceptance: SHU379_ACCEPTANCE,
     brief: SHU379_BRIEF,
+  }),
+  "SHU-381": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU372_PATHS,
+    revision_paths: SHU372_PATHS,
+    acceptance: SHU381_ACCEPTANCE,
+    brief: SHU381_BRIEF,
   }),
 });
 
