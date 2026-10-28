@@ -201,6 +201,52 @@ test("read projection does not recreate the historical 16-25 eligibility rule", 
   assert.equal(older.fields.age.state === "available" && older.fields.age.value, 46);
 });
 
+test("SHU371_SHOWN_OVER_SNAPSHOT written language wins and is shown without a configured snapshot", async () => {
+  const preferences = { async readOwnPreferences(id: string) { return id === "person-populated" || id === "person-other" ? { language: "en", updatedAt: "2026-09-14T08:30:00.000Z" } : null; } };
+  const populated = new OwnProfileRepository({
+    principals: new InMemoryAuthzStore({ principals: PEOPLE }),
+    source: new InMemoryApprovedProfileAdapter({
+      links: [{ principalId: "person-populated", candidateRef: "candidate-populated" }],
+      rows: new Map([["candidate-populated", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+    }), preferences, today: () => "2026-09-13",
+  });
+  const overlaid = await populated.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(overlaid.kind, "found");
+  if (overlaid.kind === "found") assert.deepEqual(overlaid.profile.fields.language,
+    { state: "available", value: "en", provenance: overlaid.profile.fields.language.provenance, freshness: { kind: "written_by_person", observedAt: "2026-09-14T08:30:00.000Z" } });
+  const withoutSnapshot = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }),
+    source: new UnconfiguredApprovedProfileAdapter(), preferences, today: () => "2026-09-13" });
+  const result = await withoutSnapshot.readOwn({ requesterPrincipalId: "person-other", targetPersonId: "person-other" });
+  assert.equal(result.kind, "found");
+  if (result.kind === "found") assert.equal(result.profile.fields.language.state === "available" && result.profile.fields.language.value, "en");
+});
+
+test("SHU371_PROJECTION any written field makes imported completeness not recorded", async () => {
+  const profiles = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }),
+    source: new InMemoryApprovedProfileAdapter({ links: [{ principalId: "person-populated", candidateRef: "candidate-populated" }], rows: new Map([["candidate-populated", SYNTHETIC_PROFILE_FIXTURES.populated]]) }),
+    preferences: { async readOwnPreferences() { return { language: "en", updatedAt: "2026-09-14T08:30:00.000Z" }; } }, today: () => "2026-09-13" });
+  const result = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(result.kind, "found");
+  if (result.kind === "found") for (const name of ["isProfileCompleted", "pendingFields"] as const) {
+    assert.equal(result.profile.fields[name].state, "unavailable");
+    assert.equal(result.profile.fields[name].state === "unavailable" && result.profile.fields[name].reason, "not_recorded");
+    assert.equal(result.profile.fields[name].freshness.kind, "imported_snapshot");
+  }
+});
+
+test("SHU371_PROJECTION malformed stored language is unavailable and foreign profile reads no preference", async () => {
+  let reads = 0;
+  const profiles = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }), source: new UnconfiguredApprovedProfileAdapter(),
+    preferences: { async readOwnPreferences() { reads += 1; return { language: "PRIVATE-MALFORMED", updatedAt: "2026-09-14T08:30:00.000Z" }; } }, today: () => "2026-09-13" });
+  assert.deepEqual(await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-other" }), { kind: "not_found" });
+  assert.equal(reads, 0);
+  const own = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(own.kind, "found");
+  if (own.kind === "found") assert.deepEqual(own.profile.fields.language,
+    { state: "unavailable", reason: "not_recorded", provenance: own.profile.fields.language.provenance, freshness: { kind: "written_by_person", observedAt: "2026-09-14T08:30:00.000Z" } });
+  assert.doesNotMatch(JSON.stringify(own), /PRIVATE-MALFORMED/);
+});
+
 
 test("PROFILE-ENUM positive fixture mappings preserve every production enum value", () => {
   const cases = [
@@ -289,7 +335,7 @@ test("PROFILE-DEFAULT-HTML unconfigured adapter renders 200 with all 19 fields u
   assert.equal((html.match(/data-state="unavailable"/g) ?? []).length, 19);
   assert.equal((html.match(/<dt>/g) ?? []).length, 19);
   for (const contract of Object.values(OWN_PROFILE_FIELD_CONTRACT)) assert.ok(html.includes(`<dt>${contract.label}</dt>`));
-  assert.match(html, /Read-only/);
+  assert.doesNotMatch(html, /Read-only/);
   assert.match(html, /editing isn’t enabled/);
   assert.doesNotMatch(html, /Registry must not win|registry@example|Synthetic|noor@example|This profile isn’t available/);
   assert.equal(response.headers.get("cache-control"), "no-store");

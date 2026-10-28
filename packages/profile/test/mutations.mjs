@@ -8,6 +8,11 @@ const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/profile.test.js", import.meta.url));
 const mutations = [
   [
+    "ignore a person's written language", "SHU371_SHOWN_OVER_SNAPSHOT",
+    'PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate)',
+    'PROFILE_FIELD_SPECS.language.parse("ar", profile.asOfDate)',
+  ],
+  [
     "widen the sensitive-field whitelist",
     "PROFILE-WHITELIST",
     "const PROFILE_FIELD_SPECS = Object.freeze({\n    displayName:",
@@ -61,6 +66,11 @@ const mutations = [
     "restore unconfigured 404", "PROFILE-DEFAULT-JSON",
     'if (link.kind === "unconfigured")', 'if (false)',
     "PROFILE-DEFAULT-JSON unconfigured profile must render instead of 404",
+  ],
+  [
+    "keep imported completeness after a person writes", "SHU371_PROJECTION",
+    'for (const name of ["isProfileCompleted", "pendingFields"]) {',
+    'for (const name of []) {',
   ],
 ];
 

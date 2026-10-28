@@ -11,17 +11,14 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for the
 const store = new URL("../dist/safe-write-store.js", import.meta.url);
 const gateway = new URL("../../../dist/apps/gateway/src/language-preference.js", import.meta.url);
 const suite = fileURLToPath(new URL("../../../dist/packages/db/test/safe-write-store.test.js", import.meta.url));
+const gatewaySuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/language-preference.test.js", import.meta.url));
 const mutations = [
   [
-    store, "skip the grant check inside the commit", "SHU-84/AC-06 AUTHORITY",
+    store, "skip the principal check inside the commit", "SHU371_ANY_PERSON",
     "if (!await this.#mayWrite(client, principalId))\n                throw new Refusal(\"not_own_record\");", "",
   ],
   [
-    store, "treat a grantless principal as an owner", "SHU-84/AC-06 AUTHORITY",
-    "WHERE p.id = $1 AND EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = p.id)", "WHERE p.id = $1",
-  ],
-  [
-    store, "accept another principal's references", "SHU-84/AC-06 AUTHORITY",
+    store, "accept another principal's references", "SHU371_ANY_PERSON",
     "if (input.principalRef !== ownPrincipalRef || input.personRef !== ownPersonRef) {", "if (false) {",
   ],
   [
@@ -51,7 +48,11 @@ const mutations = [
   ],
   [
     gateway, "accept a write from any origin", "SHU-84/AC-11 BOUNDARY",
-    "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\") {", "if (false) {",
+    "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\") {\n            request.resume();\n            send({ status: 403, body: { error: \"origin_rejected\" } });", "if (false) {\n            request.resume();\n            send({ status: 403, body: { error: \"origin_rejected\" } });",
+  ],
+  [
+    gateway, "accept a page write from any origin", "SHU371_PAGE_FLOW",
+    "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\") {\n        request.resume();\n        pageError(write, 403);", "if (false) {\n        request.resume();\n        pageError(write, 403);", gatewaySuite,
   ],
   [
     gateway, "accept unknown body keys", "SHU-84/AC-11 BOUNDARY",
@@ -59,9 +60,9 @@ const mutations = [
   ],
 ];
 
-function run(pattern) {
+function run(pattern, targetSuite = suite) {
   const result = spawnSync(process.execPath, [
-    "--test", "--test-reporter=tap", ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), suite,
+    "--test", "--test-reporter=tap", ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), targetSuite,
   ], { encoding: "utf8", env: process.env, timeout: 120_000 });
   return { ...result, output: result.stdout + result.stderr };
 }
@@ -69,12 +70,12 @@ function run(pattern) {
 const baseline = run();
 assert.equal(baseline.status, 0, `baseline must pass\n${baseline.output}`);
 
-for (const [file, name, pattern, from, to] of mutations) {
+for (const [file, name, pattern, from, to, targetSuite] of mutations) {
   const original = await readFile(file, "utf8");
   assert.equal(original.split(from).length - 1, 1, `mutation must bind exactly once: ${name}`);
   try {
     await writeFile(file, original.replace(from, to));
-    const result = run(pattern);
+    const result = run(pattern, targetSuite);
     assert.equal(result.error, undefined, `${name}: runner error`);
     assert.notEqual(result.status, 0, `${name}: survived\n${result.output}`);
     assert.match(result.output, new RegExp(`not ok \\d+ - ${pattern} `), `${name}: named test did not fail\n${result.output}`);

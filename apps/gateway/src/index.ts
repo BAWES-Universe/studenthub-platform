@@ -27,7 +27,7 @@ import {
   type AuthzMiddleware,
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
-import { handleLanguagePreference } from "./language-preference.js";
+import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
@@ -180,6 +180,17 @@ export function createGatewayServer(
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
     if (await handleOrganizationDocuments(request, response, organizationDocuments)) return;
+    if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
+      (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
+      async (sessionId) => {
+        if (!sessionId || !login?.web) return undefined;
+        const authorized = await login.profile({ sessionId });
+        const personId = authorized.status === 200 ? authorized.body?.personId : undefined;
+        if (typeof personId !== "string") return undefined;
+        const result = await login.web.profiles.readOwn({ requesterPrincipalId: personId, targetPersonId: personId });
+        const field = result.kind === "found" ? result.profile.fields.language : undefined;
+        return field?.state === "available" ? field.value : undefined;
+      })) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
     if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,

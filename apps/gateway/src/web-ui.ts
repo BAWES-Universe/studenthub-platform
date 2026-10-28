@@ -87,7 +87,8 @@ export function pageDocument(title: string, content: string): string {
 }
 
 function document(title: string, content: string, workspaceHistory = false): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css">${workspaceHistory ? '<script src="/assets/workspace-history.js" defer></script>' : ""}</head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
+  const rendered = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css">${workspaceHistory ? '<script src="/assets/workspace-history.js" defer></script>' : ""}</head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
+  return title === "My profile" ? rendered.replace('<span class="badge">Read-only</span>', "") : rendered;
 }
 
 // A back/forward-cache restoration may not issue a request even with no-store.
@@ -327,8 +328,13 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
 function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): string {
   const field = profile.fields[name] as ProfileField<unknown>;
   const contract = OWN_PROFILE_FIELD_CONTRACT[name];
+  if ((name === "isProfileCompleted" || name === "pendingFields")
+    && Object.values(profile.fields).some(({ freshness }) => freshness.kind === "written_by_person")) {
+    return `<div><dt>${escapeHtml(contract.label)}</dt><dd>Checked once your documents are on file</dd><small class="field-meta">Not recorded</small></div>`;
+  }
   const observed = field.freshness.observedAt.slice(0, 10);
-  return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">StudentHub snapshot · ${escapeHtml(observed)}</small></div>`;
+  const source = field.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`;
+  return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
 }
 
 export async function profileDocument(result: BrowserResponse, login: BrowserLoginApplication): Promise<{ status: number; html: string }> {
@@ -337,7 +343,12 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const displayName = profile.fields.displayName;
   const name = displayName.state === "available" ? displayName.value : undefined;
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
-  const rows = OWN_PROFILE_FIELD_NAMES.map((field) => fieldRow(profile, field)).join("");
+  const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
+  const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
+  const rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
+    const row = fieldRow(profile, field);
+    return field === "language" && languageForm ? row.replace("</div>", `${languageForm}</div>`) : row;
+  }).join("");
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 
