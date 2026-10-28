@@ -1030,7 +1030,10 @@ test("SHU-86 C13: revert waits for a running worker and leaves the run armed whi
   busy.files.set(PATHS.activation, { text: "{}" });
   busy.files.set(dropIn("shu-supervisor.service", RUN_DROP_IN), { text: "x" });
   const held = await attempt(() => revert(busy.io, PATHS));
-  assert.deepEqual(held, { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING" });
+  // M16: a worker that outlives the grace is stopped; only one that survives
+  // TERM and KILL leaves the run armed.
+  assert.deepEqual(held, { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING",
+    reaped: { cleared: false, count: 1, processes: ["5000"], signals: ["TERM", "KILL"], left: 1 } });
   assert.equal(busy.files.has(PATHS.activation), true);
   assert.equal(busy.files.has(dropIn("shu-supervisor.service", RUN_DROP_IN)), true);
   assert.equal(busy.calls.some((call) => call.startsWith("systemctl")), false, "nothing restarts under a live worker");
@@ -1039,6 +1042,35 @@ test("SHU-86 C13: revert waits for a running worker and leaves the run armed whi
   const done = revert(finishing.io, PATHS);
   assert.equal(done.reverted, true);
   assert.ok(finishing.clock - START.getTime() >= 5 * 60 * 1000);
+  assert.equal(done.reaped, undefined, "a worker that ends inside the grace is never signalled");
+  assert.equal(finishing.calls.some((call) => call.startsWith("pkill")), false);
+});
+
+test("M16 K1: after the grace the revert stops leftover worker processes, records them and finishes", async () => {
+  // SHU-376: orphaned test trees that only a signal ends. TERM ends one of
+  // two; KILL ends the other.
+  const signalled = (h, signal) => h.calls.some((call) => call === `pkill -${signal} -u shu-worker`);
+  const host = fakeHost({ workers: (h) => (signalled(h, "KILL") ? 0 : signalled(h, "TERM") ? 1 : 2) });
+  host.files.set(PATHS.activation, { text: "{}" });
+  for (const unit of UNITS) for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) host.files.set(dropIn(unit, name), { text: "x" });
+  const done = revert(host.io, PATHS);
+  assert.equal(done.reverted, true, JSON.stringify(done));
+  assert.deepEqual(done.reaped, { cleared: true, count: 2, processes: ["5000", "5001"], signals: ["TERM", "KILL"], left: 0 });
+  assert.ok(host.clock - START.getTime() >= CARD_RUN_LIMITS.workerGraceMs, "only after the whole grace");
+  const term = host.calls.indexOf("pkill -TERM -u shu-worker");
+  assert.ok(term >= 0 && term < host.calls.indexOf("pkill -KILL -u shu-worker"), "TERM, then KILL");
+  assert.ok(term < host.calls.findIndex((call) => call.startsWith("systemctl")), "stopped before the supervisor restarts");
+  assert.equal(host.files.has(PATHS.activation), false, "the record is retired");
+  // TERM alone is enough when it ends them all.
+  const gentle = fakeHost({ workers: (h) => (signalled(h, "TERM") ? 0 : 1) });
+  const soft = revert(gentle.io, PATHS);
+  assert.equal(soft.reverted, true);
+  assert.deepEqual(soft.reaped.signals, ["TERM"]);
+  assert.equal(signalled(gentle, "KILL"), false);
+  // The report names what was stopped; a clean revert says nothing more.
+  const report = renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: done });
+  assert.match(report, /^After the worker grace the revert stopped 2 leftover shu-worker process\(es\) with TERM, then KILL: 5000; 5001\.$/m);
+  assert.doesNotMatch(renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: { reverted: true, code: null } }), /worker grace/);
 });
 
 test("SHU-86 C14: one run at a time, as root only", async () => {

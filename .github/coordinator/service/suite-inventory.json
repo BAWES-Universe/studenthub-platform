@@ -2134,6 +2134,7 @@
     "SHU-86 C11d: a card without exactly one known repo label is refused before any write",
     "SHU-86 C12: a run that outlives its window stops at the window and reverts",
     "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
+    "M16 K1: after the grace the revert stops leftover worker processes, records them and finishes",
     "SHU-86 C14: one run at a time, as root only",
     "SHU-86 C15: plan changes nothing, and review flags come all together",
     "SHU-86 C16: a unit without its resident drop-in is not armed",
@@ -4612,6 +4613,10 @@
     "SHU-86 mutation M206 time an older merged claim by its claim instead of its run's end",
     "SHU-86 mutation M207 follow a symbolic link named like a state record",
     "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
+    "SHU-86 mutation M209 fail the revert at the grace instead of stopping leftover workers",
+    "SHU-86 mutation M210 stop leftover workers with TERM only",
+    "SHU-86 mutation M211 restart the supervisor under a worker that survived KILL",
+    "SHU-86 mutation M212 leave the stopped workers out of the report",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -18531,6 +18536,10 @@
     },
     {
       "name": "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
+      "capabilities": []
+    },
+    {
+      "name": "M16 K1: after the grace the revert stops leftover worker processes, records them and finishes",
       "capabilities": []
     },
     {
@@ -33560,6 +33569,22 @@
     },
     {
       "name": "SHU-86 mutation M208 keep whichever cycle was read last, not the newest landing's",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M209 fail the revert at the grace instead of stopping leftover workers",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M210 stop leftover workers with TERM only",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M211 restart the supervisor under a worker that survived KILL",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M212 leave the stopped workers out of the report",
       "capabilities": []
     },
     {

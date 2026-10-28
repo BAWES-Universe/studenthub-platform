@@ -1414,6 +1414,31 @@ const CASES = [
     to: "    unattended.set(id, { at: Math.max(at, seen?.at ?? at), cycle: cycle ?? seen?.cycle ?? null }); // SHU86-M208",
     pattern: "Velocity V4",
   },
+  {
+    name: "M209 fail the revert at the grace instead of stopping leftover workers",
+    from: "      reaped = reapWorkers(io, limits);",
+    to: "      reaped = { cleared: false }; // SHU86-M209",
+    pattern: "M16 K1:",
+  },
+  {
+    name: "M210 stop leftover workers with TERM only",
+    from: '    signals.push("KILL");\n    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);',
+    to: "    // SHU86-M210",
+    pattern: "M16 K1:",
+  },
+  {
+    name: "M211 restart the supervisor under a worker that survived KILL",
+    from: '      if (!reaped.cleared) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING", reaped };',
+    to: "      // SHU86-M211",
+    pattern: "SHU-86 C13:",
+  },
+  {
+    name: "M212 leave the stopped workers out of the report",
+    file: "service/card-prepare.mjs",
+    from: "  if (reaped) {",
+    to: "  if (false) { // SHU86-M212",
+    pattern: "M16 K1:",
+  },
 ];
 
 for (const mutation of CASES) {

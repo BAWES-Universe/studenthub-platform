@@ -506,12 +506,25 @@ export function tick(io, limits = CARD_RUN_LIMITS) {
 }
 
 // Returns the run back to dispatch off. It waits a bounded time for workers to
-// finish; while one is still running it leaves everything armed and says so,
-// because restarting the supervisor under a live worker loses its result.
+// finish, because restarting the supervisor under a live worker loses its
+// result.
+//
+// M16 (SHU-376): on 10-27 orphaned `npm test` trees, reparented to PID 1
+// inside the worker's sandbox, outlived their run by three hours; every revert
+// stopped at the grace with the host left armed, and so did the queue. The
+// shu-worker user runs nothing but card work, and by the end of the grace the
+// run's window and its episode are over, so what is still running is left
+// over: the revert stops it (TERM, then KILL), records what it stopped and
+// goes on. Only a process that survives KILL leaves the run armed, as before.
 export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   const waitUntil = io.now().getTime() + limits.workerGraceMs;
+  let reaped = null;
   while (workerCount(io) !== 0) {
-    if (io.now().getTime() >= waitUntil) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING" };
+    if (io.now().getTime() >= waitUntil) {
+      reaped = reapWorkers(io, limits);
+      if (!reaped.cleared) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING", reaped };
+      break;
+    }
     io.sleep(limits.workerPollMs);
   }
   for (const unit of UNITS) {
@@ -546,7 +559,28 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   for (const name of io.fs.readdirSync(paths.tmp)) {
     if (/^shu-npm-cache-/.test(name)) io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
   }
-  return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed };
+  return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed, ...(reaped ? { reaped } : {}) };
+}
+
+// M16: the shu-worker processes still running after the grace, named for the
+// report (pid and process name only: a command line may carry a secret, and
+// the report is posted on Linear), then stopped: TERM, a short wait, KILL for
+// whatever is left. `cleared` says none is left.
+export const REAPED_LIST_MAX = 20;
+function reapWorkers(io, limits) {
+  const listed = io.exec("pgrep", ["-l", "-u", "shu-worker"]);
+  const lines = listed.status === 0 ? String(listed.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+  const processes = lines.slice(0, REAPED_LIST_MAX).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
+  const signals = ["TERM"];
+  io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
+  io.sleep(limits.killWaitMs);
+  if (workerCount(io) !== 0) {
+    signals.push("KILL");
+    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
+    io.sleep(limits.killWaitMs);
+  }
+  const left = workerCount(io);
+  return { cleared: left === 0, count: lines.length, processes, signals, left };
 }
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
