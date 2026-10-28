@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
-  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal,
+  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -855,6 +855,23 @@ test("M11 C7: every module the root install tools import, at any depth, is owner
   // them as data, through card-contracts-reader.mjs (M16 Q3).
   assert.deepEqual([...seen].filter((file) => installablePath(file)), []);
   assert.ok(seen.has(".github/coordinator/card-contracts-reader.mjs"), "the closure reads the contracts through the reader");
+  // card-run.mjs runs as root too (its unit and the install's plan step). It
+  // is code, a person's install while code_self_install is off, and nothing
+  // it imports is a queue's to change.
+  const closure = (start) => {
+    const found = new Set();
+    const pending = [start];
+    while (pending.length) {
+      const file = pending.pop();
+      if (found.has(file) || !fs.existsSync(path.join(repo, file))) continue;
+      found.add(file);
+      for (const [, spec] of fs.readFileSync(path.join(repo, file), "utf8").matchAll(relative)) pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+    }
+    return found;
+  };
+  const cardRun = closure(CARD_RUN);
+  assert.ok(cardRun.has(".github/coordinator/card-contracts-reader.mjs"));
+  assert.deepEqual([...cardRun].filter((file) => installablePath(file)), [], "card-run.mjs imports nothing a queue installs");
   for (const tool of ROOT_INSTALL_TOOLS) assert.equal(ownerOnlyPath(tool), true, tool);
 });
 
@@ -1069,18 +1086,29 @@ test("M16 Q5: every install, queue or code, may only add cards to the contracts 
     "an empty path list": [added((card) => ({ ...card, initial_build_paths: [] })), "SHU-401 is not a card contract"],
     "a path that is not a string": [added((card) => ({ ...card, revision_paths: ["src/a.ts", 1] })), "SHU-401 is not a card contract"],
     "an empty acceptance": [added((card) => ({ ...card, acceptance: "" })), "SHU-401 is not a card contract"],
-    "another workspace mode": [added((card) => ({ ...card, workspace_mode: "host" })), "SHU-401 is not a card contract"],
+    "another workspace mode": [added((card) => ({ ...card, workspace_mode: "host" })), /^SHU-401 is not a card contract: card workspace_mode must be "repo"/],
+    "a fixture lane": [contractsWith((data) => { data.cards["SHU-140"] = newContract("SHU-140"); }), "SHU-140 is a fixture lane"],
+    "a path out of the tree": [added((card) => ({ ...card, initial_build_paths: ["../../etc/x"] })), "SHU-401 is not a card contract: initial_build_paths contains an unsafe, non-literal, or non-normalized path"],
+    "a git hook path": [added((card) => ({ ...card, revision_paths: ["src/a.ts", ".git/hooks/pre-commit"] })), "SHU-401 is not a card contract: revision_paths contains an unsafe, non-literal, or non-normalized path"],
+    "an unsafe scoped path": [added(({ workspace_mode: _mode, ...card }) => ({ ...card, initial_build_paths: ["/etc/x"] })), "SHU-401 is not a card contract: initial_build_paths contains an unsafe, non-literal, or non-normalized path"],
+    "a repeated path": [added((card) => ({ ...card, revision_paths: ["src/a.ts", "src/a.ts"] })), "SHU-401 is not a card contract: revision_paths contains a duplicate path"],
+    "a coordinator path in repo mode": [added((card) => ({ ...card, initial_build_paths: [".github/coordinator/config.json"] })), /^SHU-401 is not a card contract: .*initial_build_paths/],
     "a card that is not an object": [contractsWith((data) => { data.cards["SHU-401"] = ["brief"]; }), "SHU-401 is not a card contract"],
     "another top-level key": [contractsWith((data) => { data.extra = 1; }), "it is not the contracts data at both revisions"],
     "text that is not JSON": [`export const CARD_CONTRACTS = ${CONTRACTS_TEXT}`, "it is not the contracts data at both revisions"],
   };
   for (const [name, [main, reason]] of Object.entries(refusals)) {
-    assert.equal(contractChangeRefusal(CONTRACTS_TEXT, main), reason, name);
+    const expect = (actual, prefix = "") => (reason instanceof RegExp
+      ? assert.match(actual ?? "", new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${reason.source.slice(1)}`), name)
+      : assert.equal(actual, `${prefix}${reason}`, name));
+    expect(contractChangeRefusal(CONTRACTS_TEXT, main));
     for (const gate of [selfInstallGate(codeWithContracts(main)), selfInstallGate(recutFacts((f) => ({ ...f, contractTexts: { installed: CONTRACTS_TEXT, main } })))]) {
       assert.ok(refused(gate), `${name}: ${JSON.stringify(gate)}`);
-      assert.equal(gate.reason, `${CONTRACTS_PATH} may only gain cards: ${reason}`, name);
+      expect(gate.reason, `${CONTRACTS_PATH} may only gain cards: `);
     }
   }
+  // Without the workspace mode, a card is scoped and its safe paths install.
+  assert.equal(contractChangeRefusal(CONTRACTS_TEXT, added(({ workspace_mode: _mode, ...card }) => card)), null);
   const created = selfInstallGate(codeWithContracts(text, NONE, "A"));
   assert.ok(refused(created));
   assert.match(created.reason, /may only gain cards: it is not an edit/);
@@ -1148,4 +1176,41 @@ test("M16 Q6: a code install changes no config key a queue install could not", (
   // Unchanged config, or lanes only appended, still install with the code.
   assert.equal(selfInstallGate(withMain((c) => c)).ok, true);
   assert.equal(selfInstallGate(withMain((c) => ({ ...c, card_lanes: [...c.card_lanes, lane("SHU-401")] }))).ok, true);
+});
+
+test("M16 Q7: a test file a runtime module imports is never a queue's to change", () => {
+  // The coordinator's own files, named from the repository root, wherever this
+  // copy of the coordinator sits.
+  const coordinatorDir = path.join(HERE, "..");
+  const at = (file) => path.join(coordinatorDir, path.posix.relative(".github/coordinator", file));
+  const relative = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g;
+  const inTest = (file) => file.split("/").slice(2, -1).includes("test");
+  const runtime = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(at(dir), { withFileTypes: true })) {
+      const file = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) { if (entry.name !== "node_modules") walk(file); continue; }
+      if (/\.(?:mjs|js|cjs)$/.test(entry.name) && !inTest(file)) runtime.push(file);
+    }
+  };
+  walk(".github/coordinator");
+  assert.ok(runtime.length > 50, "the walk finds the coordinator's modules");
+  const seen = new Set();
+  const stack = [...runtime];
+  while (stack.length) {
+    const file = stack.pop();
+    if (seen.has(file) || !file.startsWith(".github/coordinator/") || !fs.existsSync(at(file))) continue;
+    seen.add(file);
+    const text = fs.readFileSync(at(file), "utf8");
+    for (const [, spec] of text.matchAll(relative)) stack.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+  }
+  assert.deepEqual([...seen].filter(inTest).sort(), [...RUNTIME_TEST_MODULES].sort(), "every test file a runtime module imports is listed");
+  for (const file of RUNTIME_TEST_MODULES) {
+    assert.equal(installablePath(file), false, file);
+    assert.equal(queueConfigPath(file), false, file);
+    assert.equal(ownerOnlyPath(file), true, file);
+  }
+  const gate = selfInstallGate(facts((f) => ({ ...f, changes: [...f.changes, { status: "M", path: RUNTIME_TEST_MODULES[0] }] })));
+  assert.ok(refused(gate));
+  assert.match(gate.reason, /is not a queue config path/);
 });

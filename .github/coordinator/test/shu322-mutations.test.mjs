@@ -277,9 +277,9 @@ const CASES = [
     pattern: "M16 Q5:",
   },
   {
-    name: "M44 accept a new card of any shape",
-    from: "    if (!plainObject(contract) || Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key))",
-    to: "    if (false /* M16-M44 */ && Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key))",
+    name: "M44 accept a new card with any keys",
+    from: "    if (!plainObject(contract) || Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key))) return",
+    to: "    if (false /* M16-M44 */) return",
     pattern: "M16 Q5:",
   },
   {
@@ -299,6 +299,36 @@ const CASES = [
     from: "        || !lanesBefore.every((lane, i) => isDeepStrictEqual(lane, lanesAfter[i]))) {",
     to: "        || false) { // M16-M47",
     pattern: "M16 Q6:",
+  },
+  {
+    name: "M48 accept a new card under a fixture id",
+    from: "    if (isFixtureIssue(id)) return",
+    to: "    if (false /* M16-M48 */) return",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M49 accept unsafe card paths",
+    from: "      if (!paths.ok) return `${id} is not a card contract: ${paths.reason}`;",
+    to: "      // M16-M49",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M50 skip the workspace mode check",
+    from: "    if (!mode.ok) return `${id} is not a card contract: ${mode.reason}`;",
+    to: "    // M16-M50",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M51 accept an empty acceptance or brief",
+    from: "    if (typeof contract.acceptance !== \"string\" || !contract.acceptance || typeof contract.brief !== \"string\" || !contract.brief) return",
+    to: "    if (false /* M16-M51 */) return",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M52 let a queue install a test file a runtime module imports",
+    from: "|| RUNTIME_TEST_MODULES.includes(file)) return false;\n  const parts",
+    to: ") return false; // M16-M52\n  const parts",
+    pattern: "M16 Q7:",
   },
 ];
 

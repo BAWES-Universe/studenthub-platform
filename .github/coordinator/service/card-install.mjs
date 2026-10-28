@@ -61,8 +61,12 @@
 //     generator imports the source, so installing it runs nothing (test M16
 //     Q3). The data, parsed at R and at N, may only gain cards: every card R
 //     has is deep-equal at N, each new one has a canonical id and the shape
-//     of a contract, and the review-only cards and the writer's finish rule
-//     are unchanged. Any install, queue or code, is held to this.
+//     of a contract whose paths pass the checks workspace-scope.mjs runs when
+//     it loads, and the review-only cards and the writer's finish rule are
+//     unchanged. Any install, queue or code, is held to this.
+//   * a test/ file that a module outside the tests imports runs with it, as
+//     root when that module does (service/verify.mjs), so it is owner-only
+//     (RUNTIME_TEST_MODULES, test M16 Q7).
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReason, reportMarker, PUSH_TIMEOUT_SECONDS,
@@ -70,6 +74,7 @@ import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReaso
 import { boundedFetch, github, readCommitChecks } from "./card-land.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { MAX_CARD_QUEUE } from "../single-run-activation.mjs";
+import { isFixtureIssue, validateAllowedPaths, validateCardContractMode } from "../workspace-scope.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const CARD_ID_RE = /^SHU-[1-9]\d*$/;
@@ -79,6 +84,14 @@ export const CONTRACTS_PATH = ".github/coordinator/card-contracts.json";
 export const CONTRACTS_SOURCE_PATH = ".github/coordinator/card-contracts.mjs";
 export const INVENTORY_PATH = ".github/coordinator/service/suite-inventory.json";
 export const INSTALLABLE_PATHS = Object.freeze([CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH]);
+// M16: the files under a test/ directory that modules outside the tests import
+// (service/verify.mjs, the install's verify step, among them), so they run
+// wherever those do, root included. They are never a queue's to change: test
+// M16 Q7 derives the list from the tree and fails if one is missing here.
+export const RUNTIME_TEST_MODULES = Object.freeze([
+  ".github/coordinator/test/fixture/episode-harness.mjs",
+  ".github/coordinator/test/fixture/linear-board.mjs",
+]);
 export const PROVISIONER = ".github/coordinator/service/provision-shu71-prerequisites.mjs";
 export const CARD_RUN = ".github/coordinator/service/card-run.mjs";
 export const MIN_INSTALL_QUEUE = 2;
@@ -119,6 +132,7 @@ export const OWNER_ONLY_PATHS = Object.freeze([
   ".github/coordinator/shu71-activation-package.mjs",
   ".github/coordinator/workspace-scope.mjs",
   ".github/coordinator/card-contracts-reader.mjs",
+  ...RUNTIME_TEST_MODULES,
   ".github/coordinator/service/shu-reviewer.sudoers",
   ".github/coordinator/reviewer-sandbox.sh",
   ".github/coordinator/shu71-trust-anchor.json",
@@ -153,9 +167,9 @@ export const installClaim = (paths, main) => path.join(paths.stateDir, `card-ins
 export const installActivationId = (main) => `card-install-${main}`;
 
 // The same rule as Card A's queue config paths: one of the exact files, or a
-// file under a test/ directory of the coordinator.
+// file under a test/ directory of the coordinator that no runtime module imports.
 export function installablePath(file) {
-  if (typeof file !== "string" || !file.startsWith(COORDINATOR)) return false;
+  if (typeof file !== "string" || !file.startsWith(COORDINATOR) || RUNTIME_TEST_MODULES.includes(file)) return false;
   const parts = file.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return false;
   return INSTALLABLE_PATHS.includes(file) || parts.slice(2, -1).includes("test");
@@ -177,7 +191,6 @@ function contractData(text) {
 
 // M16: why N's contracts data is more than R's with cards added, or null.
 const CONTRACT_KEYS = new Set(["initial_build_paths", "revision_paths", "acceptance", "brief", "workspace_mode"]);
-const CONTRACT_REQUIRED = ["initial_build_paths", "revision_paths", "acceptance", "brief"];
 const pathList = (value) => Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === "string" && entry.length > 0);
 export function contractChangeRefusal(installedText, mainText) {
   const before = contractData(installedText);
@@ -192,12 +205,18 @@ export function contractChangeRefusal(installedText, mainText) {
   for (const [id, contract] of Object.entries(after.cards)) {
     if (Object.hasOwn(before.cards, id)) continue;
     if (!CARD_ID_RE.test(id) || Object.hasOwn(after.review_only, id)) return `${JSON.stringify(id)} is not a new canonical card id`;
-    if (!plainObject(contract) || Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key)) || !CONTRACT_REQUIRED.every((key) => Object.hasOwn(contract, key))
-        || !pathList(contract.initial_build_paths) || !pathList(contract.revision_paths)
-        || typeof contract.acceptance !== "string" || !contract.acceptance || typeof contract.brief !== "string" || !contract.brief
-        || (Object.hasOwn(contract, "workspace_mode") && contract.workspace_mode !== "repo")) {
-      return `${id} is not a card contract`;
+    if (isFixtureIssue(id)) return `${id} is a fixture lane`;
+    if (!plainObject(contract) || Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key))) return `${id} is not a card contract`;
+    if (!pathList(contract.initial_build_paths) || !pathList(contract.revision_paths)) return `${id} is not a card contract`;
+    if (typeof contract.acceptance !== "string" || !contract.acceptance || typeof contract.brief !== "string" || !contract.brief) return `${id} is not a card contract`;
+    // The checks workspace-scope.mjs runs on every card when it loads, so an
+    // admitted card never stops the coordinator from starting.
+    for (const key of ["initial_build_paths", "revision_paths"]) {
+      const paths = validateAllowedPaths(contract[key], { name: key });
+      if (!paths.ok) return `${id} is not a card contract: ${paths.reason}`;
     }
+    const mode = validateCardContractMode(contract);
+    if (!mode.ok) return `${id} is not a card contract: ${mode.reason}`;
   }
   return null;
 }

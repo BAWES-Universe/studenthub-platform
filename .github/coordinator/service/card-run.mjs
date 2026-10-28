@@ -76,7 +76,7 @@ import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal
 import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { threadReviewer } from "./card-threads.mjs";
-import { selfInstall } from "./card-install.mjs";
+import { selfInstall, RUNTIME_TEST_MODULES } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
@@ -976,9 +976,10 @@ function queueConfigReview(config) {
   try { return resolveQueueConfigReview(config); } catch (error) { refuse("CARD_RUN_CONFIG", error.message); }
 }
 
-// One of the exact files, or any file under a test/ directory of the coordinator.
+// One of the exact files, or any file under a test/ directory of the coordinator
+// that no runtime module imports (card-install.mjs).
 export function queueConfigPath(file) {
-  if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
+  if (typeof file !== "string" || !file.startsWith(".github/coordinator/") || RUNTIME_TEST_MODULES.includes(file)) return false;
   const parts = file.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return false;
   return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");

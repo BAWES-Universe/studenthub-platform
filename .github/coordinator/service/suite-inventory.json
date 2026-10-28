@@ -4639,6 +4639,7 @@
     "M16 Q5: every install, queue or code, may only add cards to the contracts data, whatever their text says",
     "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
     "M16 Q6: a code install changes no config key a queue install could not",
+    "M16 Q7: a test file a runtime module imports is never a queue's to change",
     "SHU-322 mutation M30 install an owner-only path",
     "SHU-322 mutation M31 let code change the self-install policy",
     "SHU-322 mutation M32 read the policy from main",
@@ -4653,10 +4654,15 @@
     "SHU-322 mutation M41 let an installed card change",
     "SHU-322 mutation M42 let the review-only cards change",
     "SHU-322 mutation M43 let the writer's finish rule change",
-    "SHU-322 mutation M44 accept a new card of any shape",
+    "SHU-322 mutation M44 accept a new card with any keys",
     "SHU-322 mutation M45 accept a new card under any id",
     "SHU-322 mutation M46 let code change any config key but the policy",
-    "SHU-322 mutation M47 let code edit installed card lanes"
+    "SHU-322 mutation M47 let code edit installed card lanes",
+    "SHU-322 mutation M48 accept a new card under a fixture id",
+    "SHU-322 mutation M49 accept unsafe card paths",
+    "SHU-322 mutation M50 skip the workspace mode check",
+    "SHU-322 mutation M51 accept an empty acceptance or brief",
+    "SHU-322 mutation M52 let a queue install a test file a runtime module imports"
   ],
   "requirements": [
     {
@@ -33719,6 +33725,10 @@
       "capabilities": []
     },
     {
+      "name": "M16 Q7: a test file a runtime module imports is never a queue's to change",
+      "capabilities": []
+    },
+    {
       "name": "SHU-322 mutation M30 install an owner-only path",
       "capabilities": []
     },
@@ -33775,7 +33785,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M44 accept a new card of any shape",
+      "name": "SHU-322 mutation M44 accept a new card with any keys",
       "capabilities": []
     },
     {
@@ -33788,6 +33798,26 @@
     },
     {
       "name": "SHU-322 mutation M47 let code edit installed card lanes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M48 accept a new card under a fixture id",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M49 accept unsafe card paths",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M50 skip the workspace mode check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M51 accept an empty acceptance or brief",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M52 let a queue install a test file a runtime module imports",
       "capabilities": []
     }
   ],
