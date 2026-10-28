@@ -22,7 +22,8 @@ import {
 import { createReceipt, nextReceiptState, validateReceipt, verifyReviewOnlyPull, receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS } from "../reconcile.mjs";
 import { resolveReviewOnlyLane, fixtureReviewTests } from "../workspace-scope.mjs";
 import { readPullChange, reviewRule, REVIEW_ONLY_VERDICT_RULE, STRICT_REVIEW_RULE } from "../review-change.mjs";
-import { REVIEW_ONLY_BRIEF, cardBrief, reviewOnlyCard } from "../card-contracts.mjs";
+import { REVIEW_ONLY_BRIEF } from "../card-contracts.mjs";
+import { cardBrief, reviewOnlyCard } from "../card-contracts-reader.mjs";
 import { buildCodexReviewPrompt } from "../adapters/codex-cli.mjs";
 import { buildClaudePrompt } from "../adapters/claude-code.mjs";
 import { supervisorOrder } from "../supervisor-dispatch.mjs";

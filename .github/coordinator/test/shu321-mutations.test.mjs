@@ -20,9 +20,9 @@ const CASES = [
     pattern: "SHU-321 R2:",
   },
   {
-    name: "M2 drop the contracts deletions check",
-    from: '(file.status !== "modified" || file.deletions !== 0)',
-    to: '(file.status !== "modified") /* SHU321-M2 */',
+    name: "M2 drop the contracts edit-in-place check",
+    from: 'if (contracts && file.status !== "modified") return',
+    to: 'if (false /* SHU321-M2 */) return',
     pattern: "SHU-321 R2:",
   },
   {

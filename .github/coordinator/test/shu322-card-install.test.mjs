@@ -10,15 +10,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
-  CONFIG_PATH, CONTRACTS_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
-  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractAdditionRefusal,
+  CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
+  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
-import { gunzipSync } from "node:zlib";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED_TEXT = fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8");
-const CONTRACTS_TEXT = fs.readFileSync(path.join(HERE, "..", "card-contracts.mjs"), "utf8");
+const CONTRACTS_TEXT = fs.readFileSync(path.join(HERE, "..", "card-contracts.json"), "utf8");
 const COMMITTED = JSON.parse(COMMITTED_TEXT);
 // M16: the committed config turns code self-install on. The Card B tests read
 // an installed revision with it off, as they always did; the M11 and M16 tests
@@ -50,7 +49,7 @@ const TEST_PATH = ".github/coordinator/test/shu401-queue.test.mjs";
 const BLOBS = Object.freeze({ [CONFIG_PATH]: "1".repeat(40), [CONTRACTS_PATH]: "2".repeat(40), [TEST_PATH]: "3".repeat(40) });
 
 // Main's next queue: R's lanes with two appended, scoped to the new two, each
-// with its own contract entry added at the end of CARD_CONTRACTS.
+// with its own card added to the contracts data.
 const lane = (id) => ({ ...structuredClone(COMMITTED.card_lanes.at(-1)), id, authorization_ref: id, note: `queued card ${id}` });
 function nextConfig(edit = (config) => config) {
   const config = structuredClone(QUEUE_ONLY);
@@ -58,11 +57,14 @@ function nextConfig(edit = (config) => config) {
   config.dispatch_scope = { issue_ids: [...NEW_IDS] };
   return edit(config);
 }
+const newContract = (id) => ({ initial_build_paths: ["src/a.ts"], revision_paths: ["src/a.ts"], acceptance: `${id} holds`, brief: `Card ${id}.`, workspace_mode: "repo" });
+// The contracts data, edited as an object and written as the generator does.
+function contractsWith(edit, text = CONTRACTS_TEXT) {
+  const data = JSON.parse(text);
+  return `${JSON.stringify(edit(data) ?? data, null, 2)}\n`;
+}
 function nextContracts(ids = NEW_IDS) {
-  const start = CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n");
-  const end = CONTRACTS_TEXT.indexOf("\n});", start);
-  const entries = ids.map((id) => `\n  "${id}": Object.freeze({\n    workspace_mode: "repo",\n  }),`).join("");
-  return CONTRACTS_TEXT.slice(0, end) + entries + CONTRACTS_TEXT.slice(end);
+  return contractsWith((data) => { for (const id of ids) data.cards[id] = newContract(id); });
 }
 const CHANGES = Object.freeze([
   { status: "M", path: CONFIG_PATH }, { status: "M", path: CONTRACTS_PATH }, { status: "A", path: TEST_PATH },
@@ -71,7 +73,7 @@ const CHANGES = Object.freeze([
 // Facts as readMainFacts returns them for an admissible main.
 function facts(edit = (value) => value) {
   return edit({
-    revision: R, main: N, descends: true, changes: structuredClone(CHANGES), contractLines: { added: 6, deleted: 0 },
+    revision: R, main: N, descends: true, changes: structuredClone(CHANGES),
     blobs: { ...BLOBS }, configs: { installed: QUEUE_ONLY_TEXT, main: JSON.stringify(nextConfig()) },
     contractTexts: { installed: CONTRACTS_TEXT, main: nextContracts() },
     passes: [{ pr: 300, head: PR_HEAD, files: Object.fromEntries(Object.entries(BLOBS).map(([file, sha]) => [file, { sha }])) }],
@@ -83,12 +85,12 @@ const refused = (gate) => gate.ok === false && gate.transient === false && gate.
 // A fake orchestrator host for the whole timer start: files, the installed
 // checkout, the coordinator's bare repository and its view of main, the
 // provisioner, N's plan, GitHub and Linear.
-function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), changes = CHANGES, contractLines = { added: 6, deleted: 0 },
+function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), changes = CHANGES,
   blobs = BLOBS, mainContracts = nextContracts(), landedQueue = true, installedConfigText = QUEUE_ONLY_TEXT } = {}) {
   const files = new Map();
   const host = {
     files, calls: [], reports: [], github: [], steps: [], clock: START.getTime(), head: R, branch: R, main, descends: true,
-    changes, contractLines, blobs, failGit: new Set(), provisionFails: {}, checks: { runs: [{ name: "ci", status: "completed", conclusion: "success" }], statuses: [] },
+    changes, blobs, failGit: new Set(), provisionFails: {}, checks: { runs: [{ name: "ci", status: "completed", conclusion: "success" }], statuses: [] },
     plan: null, planStatus: 0, pushDir: null, merged: false, onStep: null,
     // M11: the pull requests GitHub serves, by number: { user, reviews }.
     pulls: {}, restoreFails: false,
@@ -171,7 +173,6 @@ function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), ch
         if (verb === "rev-parse") return ok(`${host.main}\n`);
         if (verb === "merge-base") return { status: host.descends ? 0 : 1, stdout: "", stderr: "" };
         if (verb === "diff" && rest.includes("--name-status")) return ok(host.changes.map((c) => `${c.status}\0${c.path}\0`).join(""));
-        if (verb === "diff" && rest.includes("--numstat")) return ok(`${host.contractLines.added}\t${host.contractLines.deleted}\t${CONTRACTS_PATH}\n`);
         if (verb === "cat-file") {
           const text = texts.get(rest.at(-1));
           return text === undefined ? fail() : ok(text);
@@ -316,12 +317,19 @@ test("SHU-322 B2: a coordinator change outside the queue config paths, or a dele
   }
 });
 
-test("SHU-322 B3: card-contracts.mjs may only gain lines", () => {
-  const deletion = selfInstallGate(facts((f) => ({ ...f, contractLines: { added: 6, deleted: 1 } })));
-  assert.ok(refused(deletion));
-  assert.match(deletion.reason, /may only gain lines/);
+test("SHU-322 B3: card-contracts.json may only gain cards", () => {
+  const withContracts = (main) => facts((f) => ({ ...f, contractTexts: { ...f.contractTexts, main } }));
   const created = selfInstallGate(facts((f) => ({ ...f, changes: f.changes.map((c) => (c.path === CONTRACTS_PATH ? { ...c, status: "A" } : c)) })));
   assert.ok(refused(created));
+  assert.match(created.reason, /card-contracts\.json may only gain cards: it is not an edit/);
+  const [installedId] = Object.keys(JSON.parse(CONTRACTS_TEXT).cards);
+  const edited = selfInstallGate(withContracts(contractsWith((data) => { data.cards[installedId].brief += " and more"; }, nextContracts())));
+  assert.ok(refused(edited));
+  assert.match(edited.reason, new RegExp(`may only gain cards: it changes ${installedId}$`));
+  const removed = selfInstallGate(withContracts(contractsWith((data) => { delete data.cards[installedId]; }, nextContracts())));
+  assert.ok(refused(removed));
+  assert.match(removed.reason, new RegExp(`it removes ${installedId}$`));
+  assert.equal(contractEntries(CONTRACTS_TEXT).has("SHU-304"), false, "a review-only card is not a contract entry");
 });
 
 test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue of appended, unlanded, contracted lanes", () => {
@@ -355,7 +363,6 @@ test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue o
   assert.ok(refused(uncontracted));
   assert.match(uncontracted.reason, /SHU-402 has no CARD_CONTRACTS entry/);
   assert.deepEqual([...contractEntries(nextContracts())].slice(-2), NEW_IDS);
-  assert.equal(contractEntries(CONTRACTS_TEXT).has("SHU-304"), false, "a review-only card is not a contract entry");
   // A main whose queue is the installed one is nothing to install.
   const same = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: QUEUE_ONLY_TEXT } })));
   assert.equal(same.quiet, true);
@@ -745,7 +752,7 @@ const REVIEW_POLICY = { approval: "github_review", approvers: [APPROVER] };
 function codeFacts(policy = REVIEW_POLICY, edit = (value) => value) {
   const installed = JSON.stringify(withPolicy(policy));
   return edit({
-    revision: R, main: N, descends: true, changes: [{ status: "M", path: CODE_PATH }], contractLines: null,
+    revision: R, main: N, descends: true, changes: [{ status: "M", path: CODE_PATH }],
     blobs: { [CODE_PATH]: CODE_BLOB }, configs: { installed, main: installed },
     contractTexts: { installed: CONTRACTS_TEXT, main: CONTRACTS_TEXT },
     passes: [{ pr: CODE_PR, head: CODE_HEAD, files: { [CODE_PATH]: { sha: CODE_BLOB } } }],
@@ -844,9 +851,10 @@ test("M11 C7: every module the root install tools import, at any depth, is owner
   for (const file of seen) {
     assert.ok(installablePath(file) || ownerOnlyPath(file), `${file} runs inside a root install tool, so it is owner-only or installable`);
   }
-  // M16: the one installable module in the closure is card-contracts.mjs,
-  // whose code-install additions must be inert data (M16 Q3).
-  assert.deepEqual([...seen].filter((file) => installablePath(file)), [CONTRACTS_PATH]);
+  // M16: no installable module runs inside them: the card contracts reach
+  // them as data, through card-contracts-reader.mjs (M16 Q3).
+  assert.deepEqual([...seen].filter((file) => installablePath(file)), []);
+  assert.ok(seen.has(".github/coordinator/card-contracts-reader.mjs"), "the closure reads the contracts through the reader");
   for (const tool of ROOT_INSTALL_TOOLS) assert.equal(ownerOnlyPath(tool), true, tool);
 });
 
@@ -979,7 +987,7 @@ test("M16 Q1: a re-cut queue of one new lane and later installed lanes that have
   assert.equal(scoped([RECUT_ID, INSTALLED_SCOPE[1]]).ok, true, "later installed lanes stay allowed");
   // A kept card still needs its contract entry at main.
   const kept = INSTALLED_SCOPE[1];
-  const unkept = (text) => text.replace(`  "${kept}": Object.freeze({`, '  "SHU-9999": Object.freeze({');
+  const unkept = (text) => contractsWith((data) => { data.cards["SHU-9999"] = data.cards[kept]; delete data.cards[kept]; }, text);
   const uncontracted = selfInstallGate(recutFacts((f) => ({ ...f,
     contractTexts: { installed: unkept(f.contractTexts.installed), main: unkept(f.contractTexts.main) } })));
   assert.ok(refused(uncontracted));
@@ -1005,184 +1013,82 @@ test("M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new
   assert.equal(JSON.parse(host.files.get(PATHS.receipt).text).revision, N);
 });
 
-// M16: card-contracts.mjs runs inside the root install tools (M11 C7), so an
-// install may add only inert data to it.
-const contractsAdding = (lines) => {
-  const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
-  return CONTRACTS_TEXT.slice(0, end) + lines + CONTRACTS_TEXT.slice(end);
-};
-const appending = (lines) => `${CONTRACTS_TEXT}${lines}`;
+// M16: the card contracts the coordinator reads are data. Their source,
+// card-contracts.mjs, is code nothing the box runs imports, and an install,
+// queue or code, may only add cards to card-contracts.json.
 const NONE = { approval: "none" };
-// The same contracts text, installed as a queue: the re-cut queue with it.
-const queueWithContracts = (text) => recutFacts((f) => ({ ...f, contractTexts: { installed: CONTRACTS_TEXT, main: text } }));
-const codeWithContracts = (text, policy = NONE) => codeFacts(policy, (f) => ({ ...f,
-  changes: [...f.changes, { status: "M", path: CONTRACTS_PATH }], contractLines: { added: 1, deleted: 0 },
+const codeWithContracts = (text, policy = NONE, status = "M") => codeFacts(policy, (f) => ({ ...f,
+  changes: [...f.changes, { status, path: CONTRACTS_PATH }],
   blobs: { ...f.blobs, [CONTRACTS_PATH]: "2".repeat(40) }, contractTexts: { installed: CONTRACTS_TEXT, main: text },
   passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [CONTRACTS_PATH]: { sha: "2".repeat(40) } } }] }));
 
-test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says", () => {
-  const entry = '\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n    brief: "import the module, read process.env and call eval( in the text: https://example.test/x",\n  }),';
-  const declaration = '\nexport const SHU401_PATHS = Object.freeze([\n  "a/b.ts",\n]);\nconst SHU401_NAME = "x";\nconst SHU401_TEXT = `one import\n${SHU401_NAME} two`.trim();\n'
-    + 'const SHU401_RENAME = (text) => text.replace(/SHU-4"0`1/g, (_, d) => `SHU-${Number(d) - 1}`);\n'
-    + 'const SHU401_BRIEF = `${SHU401_RENAME(SHU401_TEXT)} and ${SHU401_PATHS.map((path) => path.trim()).join(" ")}`;\n// a comment\n';
-  assert.deepEqual(selfInstallGate(codeWithContracts(contractsAdding(entry))),
-    { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: null } });
-  assert.equal(selfInstallGate(codeWithContracts(appending(declaration))).ok, true, "helpers built from the file's own names are data");
-  const mutants = {
-    "an import": [appending('\nimport fs from "node:fs";\n'), /names a module/],
-    "a dynamic import": [contractsAdding('\n  "x": import("node:fs"),'), /names a module/],
-    "a require": [contractsAdding('\n  "x": require("fs"),'), /names a module/],
-    "process": [contractsAdding("\n  ...[process.exit(1)],"), /names a module, process/],
-    "eval": [contractsAdding('\n  "x": eval,'), /names a module/],
-    "Function": [contractsAdding('\n  "x": Function("return 1"),'), /names a module/],
-    "an exported function": [appending("\nexport function steal() {}\n"), /exports something other than a const/],
-    "a re-export": [appending('\nexport { x } from "./y.mjs";\n'), /names a module|exports/],
-    "a global call": [contractsAdding('\n  "x": fetch("https://example.test"),'), /refers to fetch/],
-    "a global behind a ternary": [contractsAdding("\n  x: [1].map(true ? setTimeout : 0),"), /refers to setTimeout/],
-    "a global behind a regular expression's quote": [contractsAdding('\n  x: /"/ && fetch("x"),'), /refers to fetch|regular expression that does not follow/],
-    "a global in an interpolation": [appending("\nconst A = `${fetch(1)}`;\n"), /refers to fetch/],
-    "a parameter named like a global": [appending("\nconst F = (fetch) => fetch;\n"), /declares fetch, a global name/],
-    "a getter": [contractsAdding("\n  get x() { return 1; },"), /refers to get/],
-    "a constructor": [contractsAdding("\n  x: new Map(),"), /refers to new/],
-    "a constructor member": [contractsAdding("\n  x: Object.constructor,"), /reaches \.constructor/],
-    "a computed member": [contractsAdding('\n  x: Object["constructor"],'), /computed member/],
-    "a called expression": [contractsAdding("\n  x: (() => 1)(),"), /calls the result of an expression/],
-    "an optional call": [contractsAdding("\n  x: Object.freeze?.(1),"), /optional chaining/],
-    "a tagged template": [contractsAdding("\n  x: String.raw`a`,"), /tags a template/],
-    "an assignment": [appending("\nCARD_CONTRACTS.x = 1;\n"), /assigns/],
-    "a global object": [contractsAdding("\n  x: globalThis,"), /refers to globalThis/],
-    "a top-level statement": [appending("\nCARD_CONTRACTS;\n"), /top-level statement/],
-    "a top-level template": [appending("\n`text`;\n"), /top-level statement/],
-    // The top level is read from the nesting, not the indentation.
-    "an indented throw": [appending("\n  throw 1;\n"), /refers to throw|top-level statement/],
-    "an indented call": [appending("\n  SHU197_ACCEPTANCE.trim();\n"), /top-level statement/],
-    "an indented expression statement": [appending("\n    CARD_CONTRACTS;\n"), /top-level statement/],
-    // A division is never read as a regular expression that hides code.
-    "a division hiding process": [appending("\nexport const EXAMPLE = {} / process.exit(1) / 2;\n"), /process|division/],
-    "a division hiding an import": [appending('\nexport const EXAMPLE = {} / import("node:fs") / 2;\n'), /names a module|division/],
-    "a division hiding child_process": [appending('\nexport const EXAMPLE = {} / (await import("node:child_process")).execFileSync("id") / 2;\n'), /names a module|division/],
-    "a division hiding a binding": [appending('\nexport const EXAMPLE = {} / process.binding("spawn_sync") / 2;\n'), /process|division/],
-    "a commented division": [appending("\n/* x */ export const EXAMPLE = {} / process.exit(1) / 2;\n"), /process|division|top-level/],
-    "a plain division": [appending("\nconst HALF = SHU197_PATHS.length / 2;\n"), /division/],
-    "a regular expression after an operand": [appending("\nconst R = SHU197_PATHS.length && /x/;\n"), /regular expression that does not follow/],
-    "a regular expression after a block": [contractsAdding("\n  x: [{} /x/],"), /division|regular expression/],
-    // An escape in a name is never read as its ASCII tail.
-    "an escaped name": [appending('\nconst \\u0065val = 0; export const E = globalThis.eval("x");\n'), /escape/],
-    "an escaped global": [contractsAdding("\n  x: \\u0066etch,"), /escape/],
-    // A comment hides nothing behind another line terminator.
-    "code after a carriage return in a comment": [appending("\n// note\rfetch(1);\n"), /line terminator other than/],
-    "code after a line separator in a comment": [appending("\n// note\u2028fetch(1);\n"), /line terminator other than/],
-    // A string never continues onto the next line, where the lexer would
-    // read its code as a comment.
-    "code after a string continued onto the next line": [appending('\nexport const PROBE = "a\\\n//"; globalThis.__probe = 1; //\n'), /backslash before a newline/],
-    "a template continued onto the next line": [appending("\nexport const PROBE = `a\\\nb`;\n"), /backslash before a newline/],
-    // A bare interpolated name is code, checked like any other name.
-    "an undeclared name interpolated": [appending("\nconst PROBE = `${REVIEW_UNDECLARED}`;\n"), /refers to REVIEW_UNDECLARED/],
-    "a parameter that is not a plain name": [appending("\nconst A1 = 1;\nconst A2 = [1].map(([A1]) => A1);\n"), /not a plain name/],
-    // Names are ASCII; a parameter is a name only inside its own arrow.
-    "a name outside ASCII": [appending("\nconst PROBE = \u03c0;\n"), /outside ASCII/],
-    "a name outside ASCII interpolated": [appending("\nconst PROBE = `${\u03c0}`;\n"), /outside ASCII/],
-    "a parameter read after its arrow": [appending("\nconst A1 = (REVIEW_LOCAL) => REVIEW_LOCAL;\nconst A2 = `${REVIEW_LOCAL}`;\n"), /refers to REVIEW_LOCAL/],
-    "a parameter read after its arrow's body": [appending("\nconst A1 = [1].map((REVIEW_LOCAL) => REVIEW_LOCAL, REVIEW_LOCAL);\n"), /refers to REVIEW_LOCAL/],
+test("M16 Q3: nothing the coordinator runs imports the contracts source, and the data is the source's output", async () => {
+  const coordinator = path.join(HERE, "..");
+  const modules = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) { if (entry.name !== "test" && entry.name !== "node_modules") walk(path.join(dir, entry.name)); continue; }
+      if (/\.(?:mjs|js|cjs)$/.test(entry.name)) modules.push(path.join(dir, entry.name));
+    }
   };
-  for (const [name, [text, reason]] of Object.entries(mutants)) {
-    for (const [kind, gate] of [["code", selfInstallGate(codeWithContracts(text))], ["queue", selfInstallGate(queueWithContracts(text))]]) {
-      assert.ok(refused(gate), `${kind} ${name}: ${JSON.stringify(gate)}`);
-      assert.match(gate.reason, reason, `${kind} ${name}`);
-      assert.match(gate.reason, /card-contracts\.mjs gains more than inert data/, `${kind} ${name}`);
+  walk(coordinator);
+  assert.ok(modules.length > 50, "the walk finds the coordinator's modules");
+  const importsSource = /(?:from\s*|import\s*\(\s*|import\s+|require\s*\(\s*)["'][^"']*card-contracts\.mjs["']/;
+  const importers = modules.filter((file) => importsSource.test(fs.readFileSync(file, "utf8")))
+    .map((file) => path.relative(coordinator, file));
+  assert.deepEqual(importers, ["build-card-contracts.mjs"], "only the generator reads the source");
+  const { renderContracts } = await import("../build-card-contracts.mjs");
+  assert.equal(CONTRACTS_TEXT, renderContracts(), "card-contracts.json is out of date: run node .github/coordinator/build-card-contracts.mjs");
+  const source = await import("../card-contracts.mjs");
+  const reader = await import("../card-contracts-reader.mjs");
+  assert.deepEqual(reader.CARD_CONTRACTS, source.CARD_CONTRACTS);
+  assert.deepEqual(reader.REVIEW_ONLY_CARDS, source.REVIEW_ONLY_CARDS);
+  assert.equal(reader.WRITER_FINISH_RULE, source.WRITER_FINISH_RULE);
+  assert.ok(Object.isFrozen(reader.CARD_CONTRACTS) && Object.isFrozen(reader.cardContract(INSTALLED_SCOPE[0]).initial_build_paths), "the data is frozen");
+  assert.equal(installablePath(CONTRACTS_SOURCE_PATH), true, "a queue pull request still commits the source with its data");
+  assert.equal(ownerOnlyPath(".github/coordinator/card-contracts-reader.mjs"), true, "the reader is a person's install");
+});
+
+test("M16 Q5: every install, queue or code, may only add cards to the contracts data, whatever their text says", () => {
+  const added = (edit) => contractsWith((data) => { data.cards["SHU-401"] = edit(newContract("SHU-401")); });
+  const text = added((card) => ({ ...card, brief: "import the module, read process.env and call eval( in the text: https://example.test/x" }));
+  assert.deepEqual(selfInstallGate(codeWithContracts(text)),
+    { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: null } });
+  assert.equal(contractChangeRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT), null);
+  const [installedId] = Object.keys(JSON.parse(CONTRACTS_TEXT).cards);
+  const refusals = {
+    "an edited card": [contractsWith((data) => { data.cards[installedId].revision_paths = ["src/anything.ts"]; }), `it changes ${installedId}`],
+    "a removed card": [contractsWith((data) => { delete data.cards[installedId]; }), `it removes ${installedId}`],
+    "a review-only change": [contractsWith((data) => { data.review_only["SHU-304"].acceptance = "anything"; }), "it changes the review-only cards"],
+    "a new review-only card": [contractsWith((data) => { data.review_only["SHU-401"] = data.review_only["SHU-304"]; }), "it changes the review-only cards"],
+    "a finish rule change": [contractsWith((data) => { data.writer_finish_rule = "Return early."; }), "it changes the writer's finish rule"],
+    "a non-canonical id": [contractsWith((data) => { data.cards["SHU-0401"] = newContract("SHU-0401"); }), '"SHU-0401" is not a new canonical card id'],
+    "a prototype key": [CONTRACTS_TEXT.replace('"cards": {', '"cards": {\n    "__proto__": {"brief": "x"},'), '"__proto__" is not a new canonical card id'],
+    "an extra contract key": [added((card) => ({ ...card, writer_lane: "claude-builder" })), "SHU-401 is not a card contract"],
+    "a missing brief": [added(({ brief: _gone, ...card }) => card), "SHU-401 is not a card contract"],
+    "an empty path list": [added((card) => ({ ...card, initial_build_paths: [] })), "SHU-401 is not a card contract"],
+    "a path that is not a string": [added((card) => ({ ...card, revision_paths: ["src/a.ts", 1] })), "SHU-401 is not a card contract"],
+    "an empty acceptance": [added((card) => ({ ...card, acceptance: "" })), "SHU-401 is not a card contract"],
+    "another workspace mode": [added((card) => ({ ...card, workspace_mode: "host" })), "SHU-401 is not a card contract"],
+    "a card that is not an object": [contractsWith((data) => { data.cards["SHU-401"] = ["brief"]; }), "SHU-401 is not a card contract"],
+    "another top-level key": [contractsWith((data) => { data.extra = 1; }), "it is not the contracts data at both revisions"],
+    "text that is not JSON": [`export const CARD_CONTRACTS = ${CONTRACTS_TEXT}`, "it is not the contracts data at both revisions"],
+  };
+  for (const [name, [main, reason]] of Object.entries(refusals)) {
+    assert.equal(contractChangeRefusal(CONTRACTS_TEXT, main), reason, name);
+    for (const gate of [selfInstallGate(codeWithContracts(main)), selfInstallGate(recutFacts((f) => ({ ...f, contractTexts: { installed: CONTRACTS_TEXT, main } })))]) {
+      assert.ok(refused(gate), `${name}: ${JSON.stringify(gate)}`);
+      assert.equal(gate.reason, `${CONTRACTS_PATH} may only gain cards: ${reason}`, name);
     }
   }
-  // A code install's contracts change still only gains lines.
-  const shrunk = selfInstallGate(codeFacts(NONE, (f) => ({ ...codeWithContracts(contractsAdding(entry)), contractLines: { added: 1, deleted: 1 } })));
-  assert.ok(refused(shrunk));
-  assert.match(shrunk.reason, /may only gain lines/);
-  // The installed lines must all be there, each where it was.
-  assert.match(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT.replace("export const SHU197_PATHS", "export const SHU197_PATHS_X")),
-    /does not keep every installed line/);
-  assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT), null);
-  // An added entry never repeats an installed card's key.
-  const [installedId] = contractEntries(CONTRACTS_TEXT);
-  const duplicate = `\n  "${installedId}": Object.freeze({\n    workspace_mode: "repo",\n  }),`;
-  assert.match(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding(duplicate)), /repeats the contract entry/);
-  const repeatedGate = selfInstallGate(queueWithContracts(contractsAdding(duplicate)));
-  assert.ok(refused(repeatedGate), JSON.stringify(repeatedGate));
-  assert.match(repeatedGate.reason, /repeats the contract entry/);
-  // Nor does any other key at the table's level: a spread, a computed key, a
-  // key in single quotes, or a second key after an entry's close.
-  for (const added of [
-    `\n  ...Object.freeze({ "${installedId}": Object.freeze({}) }),`,
-    "\n  ...[],",
-    `\n  ["${installedId}"]: Object.freeze({}),`,
-    `\n  '${installedId}': Object.freeze({}),`,
-    `\n  "SHU-9101": Object.freeze({\n  }), "${installedId}": Object.freeze({\n  }),`,
-  ]) {
-    assert.match(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding(added)) ?? "", /not a whole entry/, added);
-  }
-  // Nor does an added line end the table early.
-  const opening = "export const CARD_CONTRACTS = Object.freeze({\n";
-  const early = CONTRACTS_TEXT.replace(opening, `${opening}});\nconst A1 = Object.freeze({\n`);
-  assert.match(contractAdditionRefusal(CONTRACTS_TEXT, early) ?? "", /opens or closes/);
-  // A whole new entry, on one line or several, is still data.
-  assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding('\n  "SHU-9102": Object.freeze({}),\n  "SHU-9103": Object.freeze({\n    workspace_mode: "repo",\n  }),')), null);
-  // A parameter is read anywhere in its arrow's body, over several lines.
-  assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, `${CONTRACTS_TEXT}\nconst A1 = (REVIEW_LOCAL) => [REVIEW_LOCAL,\n  \`${"${REVIEW_LOCAL}"}\`];\n`), null);
-  // A queue install's brief text may name anything.
-  const queueText = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts,
-    main: nextContracts().replace('    workspace_mode: "repo",\n  }),\n});', '    workspace_mode: "repo",\n    brief: "import the module and read process.env",\n  }),\n});') } })));
-  assert.equal(queueText.ok, true, JSON.stringify(queueText));
-});
-
-test("M16 Q4: an entry inside a block comment is not a contract entry", () => {
-  const commented = [
-    "export const CARD_CONTRACTS = Object.freeze({",
-    '  "SHU-1": Object.freeze({}),',
-    "  /*",
-    '  "SHU-401": Object.freeze({}),',
-    "  */",
-    "});",
-    "",
-  ].join("\n");
-  assert.deepEqual([...contractEntries(commented)], ["SHU-1"]);
-  // A table-shaped template earlier in the file is not the live table.
-  // An entry-shaped line in code between the two must not count either.
-  const fake = "const REVIEW_FAKE = `\nexport const CARD_CONTRACTS = Object.freeze({\n  \"SHU-9001\": Object.freeze({}),\n});\n`;\n"
-    + "const REVIEW_MAP = [{\n  \"SHU-9003\": Object.freeze({}),\n}];\n";
-  const at = CONTRACTS_TEXT.indexOf("export const");
-  assert.deepEqual([...contractEntries(CONTRACTS_TEXT.slice(0, at) + fake + CONTRACTS_TEXT.slice(at))], [...contractEntries(CONTRACTS_TEXT)]);
-  // An entry-shaped property nested inside another entry is not an entry.
-  const table = "export const CARD_CONTRACTS = Object.freeze({\n";
-  const nested = CONTRACTS_TEXT.replace(table, `${table}  "REVIEW_NESTED": Object.freeze({\n  "SHU-9001": Object.freeze({}),\n  }),\n`);
-  assert.notEqual(nested, CONTRACTS_TEXT);
-  assert.deepEqual([...contractEntries(nested)], [...contractEntries(CONTRACTS_TEXT)]);
-  // A re-cut queue whose new lane has its entry only inside a comment is refused.
-  const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
-  const main = `${CONTRACTS_TEXT.slice(0, end)}\n  /*\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n  }),\n  */${CONTRACTS_TEXT.slice(end)}`;
-  const gate = selfInstallGate(recutFacts((f) => ({ ...f, contractTexts: { ...f.contractTexts, main } })));
-  assert.ok(refused(gate), JSON.stringify(gate));
-  assert.match(gate.reason, /SHU-401/);
-});
-
-test("M16 Q5: the real additions of the last queue pull requests are inert data", () => {
-  // card-contracts.mjs at d77fea9, and which of its lines the earlier
-  // revisions lack: the file only gained lines across these commits.
-  const history = JSON.parse(fs.readFileSync(path.join(HERE, "fixture", "m16-card-contracts-history.json"), "utf8"));
-  const latest = gunzipSync(fs.readFileSync(path.join(HERE, "fixture", "m16-card-contracts-d77fea9.mjs.gz"))).toString("utf8");
-  const at = (revision) => {
-    if (revision === "d77fea9") return latest;
-    const absent = history.revisions[revision].absent_lines;
-    return latest.split("\n").filter((_, i) => !absent.some(([from, to]) => i >= from && i <= to)).join("\n");
-  };
-  assert.equal(history.pairs.length, 2);
-  for (const [from, to, what] of history.pairs) {
-    const before = at(from);
-    const after = at(to);
-    assert.ok(after.length > before.length, `${what} adds lines`);
-    assert.equal(contractAdditionRefusal(before, after), null, what);
-    assert.deepEqual([...contractEntries(after)].filter((id) => !contractEntries(before).has(id)).length > 0, true, `${what} adds contract entries`);
-  }
-  // And those revisions' own helpers really are what the check reads as data.
-  assert.match(at("e584bb9"), /const Q13_RENAMED = \(text\) => text\.replace\(/);
-  assert.match(latest, /const SHU379_BRIEF = `\$\{SHU371_BRIEF\.replace\(/);
+  const created = selfInstallGate(codeWithContracts(text, NONE, "A"));
+  assert.ok(refused(created));
+  assert.match(created.reason, /may only gain cards: it is not an edit/);
+  // The source alone changes nothing the coordinator reads.
+  const source = selfInstallGate(codeFacts(NONE, (f) => ({ ...f, changes: [...f.changes, { status: "M", path: CONTRACTS_SOURCE_PATH }],
+    blobs: { ...f.blobs, [CONTRACTS_SOURCE_PATH]: "7".repeat(40) },
+    passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [CONTRACTS_SOURCE_PATH]: { sha: "7".repeat(40) } } }] })));
+  assert.equal(source.ok, true, JSON.stringify(source));
 });
 
 test("M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone", async () => {

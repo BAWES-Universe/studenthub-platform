@@ -3073,6 +3073,7 @@ const SESSION = "Claude-Session: https://claude.ai/code/session_01QXHrfWMbw74J3H
 const LABEL = COMMITTED.queue_config_review.label;
 const queueFiles = () => [
   { filename: ".github/coordinator/config.json", status: "modified", sha: "1".repeat(40), additions: 4, deletions: 2 },
+  { filename: ".github/coordinator/card-contracts.json", status: "modified", sha: "a".repeat(40), additions: 80, deletions: 1 },
   { filename: ".github/coordinator/card-contracts.mjs", status: "modified", sha: "2".repeat(40), additions: 60, deletions: 0 },
   { filename: ".github/coordinator/service/suite-inventory.json", status: "modified", sha: "3".repeat(40), additions: 8, deletions: 0 },
   { filename: ".github/coordinator/test/card-lanes.test.mjs", status: "modified", sha: "4".repeat(40), additions: 5, deletions: 1 },
@@ -3151,15 +3152,17 @@ test("SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pu
   }
 });
 
-test("SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or an extra path is never reviewed", async () => {
+test("SHU-321 R2: a fork, a draft, a non-main base, a contracts file not edited in place or an extra path is never reviewed", async () => {
   const files = (edit) => { const list = queueFiles(); edit(list); return list; };
   for (const [label, pull] of [
     ["a fork", queuePull(240, { fork: true })],
     ["a draft", queuePull(240, { draft: true })],
     ["a non-main base", queuePull(240, { baseRef: "release" })],
-    ["a deleted contract line", queuePull(240, { files: files((list) => { list[1].deletions = 1; }) })],
-    ["a removed contracts file", queuePull(240, { files: files((list) => { list[1].status = "removed"; list[1].additions = 0; }) })],
-    ["contracts renamed away", queuePull(240, { files: files((list) => { list[1] = { ...list[1], status: "renamed", filename: ".github/coordinator/test/x.mjs", previous_filename: ".github/coordinator/card-contracts.mjs" }; }) })],
+    ["an added contracts data file", queuePull(240, { files: files((list) => { list[1].status = "added"; list[1].deletions = 0; }) })],
+    ["a removed contracts data file", queuePull(240, { files: files((list) => { list[1].status = "removed"; list[1].additions = 0; }) })],
+    ["a removed contracts source", queuePull(240, { files: files((list) => { list[2].status = "removed"; list[2].additions = 0; }) })],
+    ["contracts data renamed away", queuePull(240, { files: files((list) => { list[1] = { ...list[1], status: "renamed", filename: ".github/coordinator/test/x.json", previous_filename: ".github/coordinator/card-contracts.json" }; }) })],
+    ["contracts source renamed away", queuePull(240, { files: files((list) => { list[2] = { ...list[2], status: "renamed", filename: ".github/coordinator/test/x.mjs", previous_filename: ".github/coordinator/card-contracts.mjs" }; }) })],
     ["an extra path", queuePull(240, { files: files((list) => list.push({ filename: "src/app/page.tsx", status: "modified", sha: "6".repeat(40), additions: 1, deletions: 0 })) })],
     ["coordinator code", queuePull(240, { files: files((list) => list.push({ filename: ".github/coordinator/service/card-run.mjs", status: "modified", sha: "6".repeat(40), additions: 1, deletions: 0 })) })],
     ["a rename from outside", queuePull(240, { files: files((list) => list.push({ filename: ".github/coordinator/test/y.test.mjs", previous_filename: ".github/coordinator/reconcile.mjs", status: "renamed", sha: "6".repeat(40), additions: 0, deletions: 0 })) })],
@@ -3170,7 +3173,7 @@ test("SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or a
     assert.equal(skipped.skipped, "QUEUE_DONE", `${label}: ${JSON.stringify(skipped)}`);
     notReviewed(host, label);
   }
-  for (const file of [".github/coordinator/config.json", ".github/coordinator/card-contracts.mjs", ".github/coordinator/service/suite-inventory.json",
+  for (const file of [".github/coordinator/config.json", ".github/coordinator/card-contracts.json", ".github/coordinator/card-contracts.mjs", ".github/coordinator/service/suite-inventory.json",
     ".github/coordinator/test/a.test.mjs", ".github/coordinator/service/test/fixtures/b.json"]) assert.equal(queueConfigPath(file), true, file);
   for (const file of [".github/coordinator/service/card-run.mjs", ".github/coordinator/test", ".github/coordinator/test/../reconcile.mjs",
     ".github/workflows/ci.yml", "test/a.test.mjs", ".github/coordinator/config.json.bak", ".github/coordinator/testdata/a.mjs"]) assert.equal(queueConfigPath(file), false, file);
@@ -3200,7 +3203,7 @@ test("Box review C1: a coordinator:code pull request is reviewed by Codex, and o
     ["queue label on code", queuePull(250, { files: codeFiles() })],
     ["a path outside the coordinator", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/workflows/ci.yml", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 })) })],
     ["a rename from outside", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/coordinator/x.mjs", previous_filename: "src/x.mjs", status: "renamed", sha: "8".repeat(40), additions: 0, deletions: 0 })) })],
-    ["a deleted contract line", queuePull(250, { labels: [CODE], files: files((list) => { list[1].deletions = 1; }) })],
+    ["an added contracts data file", queuePull(250, { labels: [CODE], files: files((list) => { list[1].status = "added"; list[1].deletions = 0; }) })],
     ["a commit without the trailer", queuePull(250, { labels: [CODE], files: codeFiles(), messages: ["fix: b\n\nCo-Authored-By: Claude <noreply@anthropic.com>"] })],
     ["a draft", queuePull(250, { labels: [CODE], files: codeFiles(), draft: true })],
     ["a fork", queuePull(250, { labels: [CODE], files: codeFiles(), fork: true })],

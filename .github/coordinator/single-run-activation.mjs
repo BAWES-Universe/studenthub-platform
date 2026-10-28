@@ -86,7 +86,7 @@ import { readProgressionPush } from './two-fixture-progression.mjs';
 import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "./workspace-scope.mjs";
-import { cardContract } from "./card-contracts.mjs";
+import { cardContract } from "./card-contracts-reader.mjs";
 import { validReviewFindings } from "./review-findings.mjs";
 import fs from "node:fs";
 import path from "node:path";

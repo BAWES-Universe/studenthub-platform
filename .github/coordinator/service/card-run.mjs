@@ -951,7 +951,7 @@ async function repairInterrupted({ io, paths, limits, config, revision, next, sk
 // wrote gets a Codex verdict at its exact head without a person running Codex.
 // It reviews only; it never merges, installs or writes a branch. A candidate
 // is open, not a draft, on main, a branch of the pilot repository, labelled,
-// touches only queue config paths, only adds to the card contracts, and every
+// touches only queue config paths, edits the card contracts in place, and every
 // commit carries a Claude-Session: trailer. Anything else is not a candidate:
 // no claim and no report. Under the policy's code_label the same review covers
 // a Claude-written change to the coordinator's own code: any path under
@@ -961,10 +961,13 @@ export const QUEUE_CONFIG_REVIEWER = "codex-verifier";
 export const QUEUE_CONFIG_AUTHOR_FAMILY = "claude";
 export const QUEUE_CONFIG_PATHS = Object.freeze([
   ".github/coordinator/config.json",
+  ".github/coordinator/card-contracts.json",
   ".github/coordinator/card-contracts.mjs",
   ".github/coordinator/service/suite-inventory.json",
 ]);
-const CONTRACTS_PATH = ".github/coordinator/card-contracts.mjs";
+// M16: the contracts data and its source. Card B admits only new cards in the
+// data (card-install.mjs); here each is only ever edited in place.
+const CONTRACTS_PATHS = Object.freeze([".github/coordinator/card-contracts.json", ".github/coordinator/card-contracts.mjs"]);
 const SESSION_TRAILER_RE = /^Claude-Session: \S+$/m;
 // One page of each list; a list that fills it may hide a file or a commit.
 const GITHUB_PAGE = 100;
@@ -998,7 +1001,7 @@ function listedCandidate(pull, repo, labels) {
 
 // The pull request's files and commits, judged whole. A renamed file counts
 // under both names, so nothing leaves the allowlist by a rename, and the
-// contracts may only gain lines: a deleted line could loosen a pinned card.
+// contracts are never added, removed or renamed.
 export function queueConfigChange(files, head, commits, allowed = queueConfigPath) {
   if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
   if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
@@ -1007,9 +1010,8 @@ export function queueConfigChange(files, head, commits, allowed = queueConfigPat
   for (const file of files) {
     const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
     if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : "coordinator"} path` };
-    if (names.includes(CONTRACTS_PATH) && (file.status !== "modified" || file.deletions !== 0)) {
-      return { ok: false, reason: `${CONTRACTS_PATH} may only gain lines` };
-    }
+    const contracts = CONTRACTS_PATHS.find((entry) => names.includes(entry));
+    if (contracts && file.status !== "modified") return { ok: false, reason: `${contracts} may only be edited` };
     if (!SHA_RE.test(file.sha ?? "") || !Number.isInteger(file.additions) || !Number.isInteger(file.deletions) || Object.hasOwn(blobs, file.filename)) {
       return { ok: false, reason: `${file.filename} cannot be read` };
     }
