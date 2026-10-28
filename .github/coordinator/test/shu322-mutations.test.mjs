@@ -330,6 +330,24 @@ const CASES = [
     to: ") return false; // M16-M52\n  const parts",
     pattern: "M16 Q7:",
   },
+  {
+    name: "M53 accept data that is not the contracts document",
+    from: "  if (!before || !after) return \"it is not the contracts data at both revisions\";",
+    to: "  if (!before || !after) return null; // M16-M53",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M54 let a card be removed",
+    from: "    if (!Object.hasOwn(after.cards, id)) return `it removes ${id}`;",
+    to: "    // M16-M54",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M55 accept any path list on a new card",
+    from: "    if (!pathList(contract.initial_build_paths) || !pathList(contract.revision_paths)) return",
+    to: "    if (false /* M16-M55 */) return",
+    pattern: "M16 Q5:",
+  },
 ];
 
 for (const mutation of CASES) {

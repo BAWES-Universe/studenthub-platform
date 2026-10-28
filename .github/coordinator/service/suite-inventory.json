@@ -4662,7 +4662,10 @@
     "SHU-322 mutation M49 accept unsafe card paths",
     "SHU-322 mutation M50 skip the workspace mode check",
     "SHU-322 mutation M51 accept an empty acceptance or brief",
-    "SHU-322 mutation M52 let a queue install a test file a runtime module imports"
+    "SHU-322 mutation M52 let a queue install a test file a runtime module imports",
+    "SHU-322 mutation M53 accept data that is not the contracts document",
+    "SHU-322 mutation M54 let a card be removed",
+    "SHU-322 mutation M55 accept any path list on a new card"
   ],
   "requirements": [
     {
@@ -33818,6 +33821,18 @@
     },
     {
       "name": "SHU-322 mutation M52 let a queue install a test file a runtime module imports",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M53 accept data that is not the contracts document",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M54 let a card be removed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M55 accept any path list on a new card",
       "capabilities": []
     }
   ],
