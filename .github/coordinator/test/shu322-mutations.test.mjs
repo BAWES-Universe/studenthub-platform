@@ -50,9 +50,9 @@ const CASES = [
     pattern: "SHU-322 B4:",
   },
   {
-    name: "M7 accept a queued card that is not an appended lane",
-    from: "  for (const id of ids) if (!added.includes(id)) return no(",
-    to: "  for (const id of ids) if (false) /* SHU322-M7 */ return no(",
+    name: "M7 accept a queued card that is neither an appended nor an installed lane",
+    from: "    if (!added.includes(id) && !known.has(id)) return no(",
+    to: "    if (false) /* SHU322-M7 */ return no(",
     pattern: "SHU-322 B4:",
   },
   {
@@ -63,7 +63,7 @@ const CASES = [
   },
   {
     name: "M9 drop the added contract check",
-    from: "    if (installedContracts.has(id) || !nextContracts.has(id)) return no(",
+    from: "    if (added.includes(id) && (installedContracts.has(id) || !nextContracts.has(id))) return no(",
     to: "    if (false) /* SHU322-M9 */ return no(",
     pattern: "SHU-322 B4:",
   },
@@ -159,10 +159,11 @@ const CASES = [
     pattern: "SHU-322 B16:",
   },
   {
-    name: "M25 install from a stopped queue",
+    // M16: a stopped queue installs too; never installing is now the mutant.
+    name: "M25 never install from a stopped queue",
     file: "service/card-run.mjs",
-    from: '    if (next.skipped === "QUEUE_DONE") done = next;',
-    to: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next; // SHU322-M25',
+    from: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;',
+    to: '    if (next.skipped === "QUEUE_DONE") done = next; // SHU322-M25',
     pattern: "SHU-322 B16:",
   },
   {
@@ -238,6 +239,54 @@ const CASES = [
     from: '      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));',
     to: '      run("plan", () => planCheck(io, paths, queue ?? scope)); // M11-M37',
     pattern: "M11 C4:",
+  },
+  {
+    name: "M38 accept a re-cut queue with no new lane in it",
+    from: '  if (!ids.some((id) => added.includes(id))) return no(',
+    to: "  if (false) /* M16-M38 */ return no(",
+    pattern: "M16 Q1:",
+  },
+  {
+    name: "M39 drop the kept lane's contract check",
+    from: "    if (!added.includes(id) && !nextContracts.has(id)) return no(",
+    to: "    if (false) /* M16-M39 */ return no(",
+    pattern: "M16 Q1:",
+  },
+  {
+    name: "M40 skip the contracts content check on a code install",
+    from: "  if (contracts && code.length) {",
+    to: "  if (false) { // M16-M40",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M41 let a code install delete contracts lines",
+    from: "  if (contracts && (contracts.status !== \"M\" ||",
+    to: "  if (contracts && !code.length && (contracts.status !== \"M\" || /* M16-M41 */",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M42 allow any call in an added contracts line",
+    from: "    if (!CONTRACT_CALLS.test(code.slice(0, at))) return",
+    to: "    if (false) /* M16-M42 */ return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M43 allow any interpolation in an added contracts line",
+    from: '  if (line.interpolation) return "interpolates more than a name";',
+    to: "  // M16-M43",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M44 allow an import in an added contracts line",
+    from: "const CONTRACT_WORDS = [/\\bimport/, ",
+    to: "const CONTRACT_WORDS = [/* M16-M44 */ ",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M45 allow any top-level statement in card-contracts.mjs",
+    from: '    return "is a top-level statement that is not a const declaration";',
+    to: "    return null; // M16-M45",
+    pattern: "M16 Q3:",
   },
 ];
 

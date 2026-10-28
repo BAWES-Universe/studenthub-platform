@@ -14,8 +14,9 @@
 //   * card-contracts.mjs only gains lines;
 //   * config.json, parsed: every key but dispatch_scope and card_lanes is
 //     deep-equal, R's card_lanes are an exact prefix of N's, and the new
-//     dispatch_scope is 2 to 5 cards, every one a new lane that has not landed
-//     and has its own CARD_CONTRACTS entry added at N;
+//     dispatch_scope is 2 to 5 cards that have not landed, at least one of
+//     them a new lane, each new lane with its own CARD_CONTRACTS entry added
+//     at N and each other one a lane R already has (M16, below);
 //   * every changed coordinator blob at N is the blob a Card A REVIEW_PASS
 //     claim (card-review-auto-pr<N>-<head>.json, root's own file) recorded at
 //     that pull request's exact head;
@@ -36,6 +37,27 @@
 // code. Any failure writes the pause file with its reason and reports. A
 // verify or precondition failure rolls N's prerequisites back; R is never
 // reinstalled by the box. The timer only ever creates the pause file.
+//
+// M16: the box installs without a person relaying anything.
+//   * A stopped queue (QUEUE_STOPPED) runs Card B too, not only a done one
+//     (card-run.mjs). What replaces a stopped card is a re-cut queue: one new
+//     lane, a copy of the stopped card's under a new id, first in
+//     dispatch_scope, followed by later lanes R already has, with the stopped
+//     card left out. So a dispatch_scope id may also be an installed lane that
+//     has not landed; every other rule above holds as it was.
+//   * code_self_install { approval: "none" } (codeInstallPolicy, from M11) is
+//     on in config.json: a box REVIEW_PASS at the exact head and green checks
+//     install coordinator code. Owner-only paths stay NEEDS_OWNER.
+//   * card-contracts.mjs is installable, yet the root install tools import it
+//     (test M11 C7), so it runs as root. When a code install changes it, it
+//     must still only gain lines, and each added line must be inert data
+//     (contractAdditionRefusal): no import, require(, export other than the
+//     `export const X = ` pattern, eval, Function(, process. or child_process;
+//     no interpolation but ${NAME}; no call but Object.freeze, .join and
+//     .trim; no assignment, arrow, function, new or class; and a top-level
+//     line is a const declaration, a comment or a closing bracket, so the rest
+//     are object or array entries. A queue install keeps the plain rule: its
+//     brief text names those words often, and it adds no code.
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReason, reportMarker, PUSH_TIMEOUT_SECONDS,
@@ -176,8 +198,13 @@ export function selfInstallGate(facts) {
     if (!["A", "M"].includes(change.status)) return no(`${change.path} is ${change.status === "D" ? "deleted" : `changed as ${String(change.status)}`}; only additions and edits install themselves`);
   }
   const contracts = changes.find((change) => change.path === CONTRACTS_PATH);
-  if (code.length === 0 && contracts && (contracts.status !== "M" || facts.contractLines?.deleted !== 0 || !Number.isInteger(facts.contractLines?.added))) {
+  // M16: a code install's contracts change is held to this too (see below).
+  if (contracts && (contracts.status !== "M" || facts.contractLines?.deleted !== 0 || !Number.isInteger(facts.contractLines?.added))) {
     return no(`${CONTRACTS_PATH} may only gain lines`);
+  }
+  if (contracts && code.length) {
+    const refusal = contractAdditionRefusal(facts.contractTexts?.installed, facts.contractTexts?.main);
+    if (refusal) return no(`${CONTRACTS_PATH} changes with coordinator code, and ${refusal}`);
   }
 
   const keys = new Set([...Object.keys(installed), ...Object.keys(next)]);
@@ -209,19 +236,134 @@ export function selfInstallGate(facts) {
   if (ids.length < MIN_INSTALL_QUEUE || ids.length > MAX_CARD_QUEUE || new Set(ids).size !== ids.length) {
     return no(`the new dispatch_scope must name ${MIN_INSTALL_QUEUE} to ${MAX_CARD_QUEUE} distinct cards`);
   }
-  for (const id of ids) if (!added.includes(id)) return no(`${String(id)} in the new dispatch_scope is not a newly appended card lane`);
+  // M16: a re-cut queue keeps later lanes R already has, so an id may also
+  // be an installed lane; at least one is new, and none has landed.
+  for (const id of ids) {
+    if (!added.includes(id) && !known.has(id)) return no(`${String(id)} in the new dispatch_scope is neither a newly appended nor an installed card lane`);
+  }
+  if (!ids.some((id) => added.includes(id))) return no("the new dispatch_scope names no newly appended card lane");
   const landed = new Set(facts.landed ?? []);
   for (const id of ids) if (landed.has(id)) return no(`${id} already landed`);
   const installedContracts = contractEntries(facts.contractTexts?.installed);
   const nextContracts = contractEntries(facts.contractTexts?.main);
   if (!installedContracts || !nextContracts) return no("CARD_CONTRACTS cannot be read at both revisions");
   for (const id of ids) {
-    if (installedContracts.has(id) || !nextContracts.has(id)) return no(`${id} has no CARD_CONTRACTS entry added at main`);
+    if (added.includes(id) && (installedContracts.has(id) || !nextContracts.has(id))) return no(`${id} has no CARD_CONTRACTS entry added at main`);
+    if (!added.includes(id) && !nextContracts.has(id)) return no(`${id} has no CARD_CONTRACTS entry at main`);
   }
 
   const reviewed = reviewedAndGreen(facts, { changes, code, policy });
   if (!reviewed.ok) return reviewed;
   return { ok: true, queue: [...ids], lanes: added, ...(code.length ? { code: code.map((change) => change.path), approval: reviewed.approval } : {}) };
+}
+
+// M16: card-contracts.mjs, lexed line by line just enough to tell code from
+// the text of strings, templates and comments. Each line records the state it
+// starts in, the code it holds (each string as "" and each template quote as
+// `) and whether it opens an interpolation other than ${NAME}. Regular
+// expression literals are read as code, so an added line may hold none; R's
+// own, read the same way at both revisions, hold no quote.
+export function contractLines(text) {
+  const source = String(text ?? "");
+  const lines = [{ start: "code", text: "", code: "", interpolation: false }];
+  const stack = [{ kind: "code", braces: 0 }];
+  let line = lines[0];
+  for (let i = 0; i < source.length; i += 1) {
+    const c = source[i];
+    let top = stack.at(-1);
+    if (c === "\n") {
+      if (top.kind === "line" || top.kind === "string") stack.pop();
+      top = stack.at(-1);
+      line = { start: top.kind === "template" || top.kind === "comment" ? top.kind : "code", text: "", code: "", interpolation: false };
+      lines.push(line);
+      continue;
+    }
+    line.text += c;
+    if (top.kind === "line") continue;
+    if (top.kind === "comment") {
+      if (c === "*" && source[i + 1] === "/") { stack.pop(); line.text += "/"; i += 1; }
+      continue;
+    }
+    if (top.kind === "string") {
+      if (c === "\\" && source[i + 1] !== "\n") { line.text += source[i + 1] ?? ""; i += 1; } else if (c === top.quote) stack.pop();
+      continue;
+    }
+    if (top.kind === "template") {
+      if (c === "\\" && source[i + 1] !== "\n") { line.text += source[i + 1] ?? ""; i += 1; continue; }
+      if (c === "`") { stack.pop(); line.code += "`"; continue; }
+      if (c === "$" && source[i + 1] === "{") {
+        const name = /^\$\{[A-Za-z_$][\w$]*\}/.exec(source.slice(i));
+        if (name) { line.text += name[0].slice(1); i += name[0].length - 1; continue; }
+        line.interpolation = true;
+        stack.push({ kind: "code", braces: 0 });
+        line.text += "{";
+        i += 1;
+      }
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "/") { stack.push({ kind: "line" }); continue; }
+    if (c === "/" && source[i + 1] === "*") { stack.push({ kind: "comment" }); line.text += "*"; i += 1; continue; }
+    if (c === "\"" || c === "'") { stack.push({ kind: "string", quote: c }); line.code += "\"\""; continue; }
+    if (c === "`") { stack.push({ kind: "template" }); line.code += "`"; continue; }
+    if (c === "{") top.braces += 1;
+    if (c === "}") {
+      if (top.braces === 0 && stack.length > 1) { stack.pop(); continue; }
+      top.braces -= 1;
+    }
+    line.code += c;
+  }
+  return lines;
+}
+
+const CONTRACT_WORDS = [/\bimport/, /\brequire\s*\(/, /\beval\b/, /\bFunction\s*\(/, /\bprocess\./, /child_process/];
+const CONTRACT_EXPORT = /^export const [A-Za-z_$][\w$]* = /;
+const CONTRACT_DECLARATION = /^(?:export )?const [A-Za-z_$][\w$]* = /;
+const CONTRACT_CODE = /=>|\b(?:function|new|class|await|yield|delete|globalThis|constructor|prototype|__proto__)\b|\+\+|--/;
+const CONTRACT_CALLS = /(?:\bObject\.freeze|\.join|\.trim)\s*$/;
+
+// M16: why the lines N's card-contracts.mjs adds to R's are not inert data,
+// or null when they are. R's lines, each in the state it starts in, must
+// appear in N's in order; every other line of N is an added line.
+export function contractAdditionRefusal(installedText, mainText) {
+  if (typeof installedText !== "string" || typeof mainText !== "string") return "it cannot be read at both revisions";
+  const before = contractLines(installedText);
+  const after = contractLines(mainText);
+  const added = [];
+  let j = 0;
+  for (const line of after) {
+    if (j < before.length && before[j].text === line.text && before[j].start === line.start) j += 1;
+    else added.push(line);
+  }
+  if (j < before.length) return "it does not keep every installed line as it was";
+  for (const line of added) {
+    const why = contractLineRefusal(line);
+    if (why) return `an added line ${why}: ${line.text.trim().slice(0, 120)}`;
+  }
+  return null;
+}
+
+function contractLineRefusal(line) {
+  const text = line.text;
+  const word = CONTRACT_WORDS.find((pattern) => pattern.test(text));
+  if (word) return "names a module, process or code loader";
+  if (/\bexport\b/.test(text) && !CONTRACT_EXPORT.test(text)) return "exports something other than a const";
+  if (line.interpolation) return "interpolates more than a name";
+  const code = line.code;
+  if (CONTRACT_CODE.test(code)) return "holds code";
+  if (/[\w$\])]\s*`/.test(code)) return "tags a template";
+  // A regular expression is read as code here, so a quote in one could hide
+  // what follows it; an added line has none.
+  if (code.includes("/")) return "holds a regular expression or a division";
+  const assignments = code.replace(/^\s*(?:export )?const [A-Za-z_$][\w$]* = /, "");
+  if (/=/.test(assignments)) return "assigns";
+  for (let at = code.indexOf("("); at >= 0; at = code.indexOf("(", at + 1)) {
+    if (!CONTRACT_CALLS.test(code.slice(0, at))) return "calls something other than Object.freeze, join or trim";
+  }
+  // A top-level line: a declaration, a comment or a closing bracket.
+  if (line.start === "code" && /^\S/.test(text) && !CONTRACT_DECLARATION.test(text) && !/^\/\//.test(text) && !/^[\]})]/.test(text)) {
+    return "is a top-level statement that is not a const declaration";
+  }
+  return null;
 }
 
 const coordinatorFile = (file) => typeof file === "string" && file.startsWith(COORDINATOR)
@@ -488,7 +630,7 @@ export function renderInstallReport(result) {
   const lines = [
     reportMarker(result.activation_id),
     `${result.code?.length ? (result.queue?.length ? "Code and card queue" : "Code") : "Card queue"} install of main at ${result.main} over installed revision ${result.revision}: ${result.outcome}, ${INSTALL_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
-    "Started by the card-run timer once the installed queue was done.",
+    "Started by the card-run timer once the installed queue was done or stopped.",
   ];
   if (result.queue?.length) lines.push(`Queue: ${result.queue.join(", ")}.`);
   if (result.code?.length) {

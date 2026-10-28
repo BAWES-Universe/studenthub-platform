@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
-  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS,
+  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractAdditionRefusal,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -19,6 +19,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED_TEXT = fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8");
 const CONTRACTS_TEXT = fs.readFileSync(path.join(HERE, "..", "card-contracts.mjs"), "utf8");
 const COMMITTED = JSON.parse(COMMITTED_TEXT);
+// M16: the committed config turns code self-install on. The Card B tests read
+// an installed revision with it off, as they always did; the M11 and M16 tests
+// turn a policy on themselves.
+const { code_self_install: _committedPolicy, ...QUEUE_ONLY } = COMMITTED;
+const QUEUE_ONLY_TEXT = JSON.stringify(QUEUE_ONLY);
 const R = "a".repeat(40);
 const N = "d".repeat(40);
 const PR_HEAD = "e".repeat(40);
@@ -47,7 +52,7 @@ const BLOBS = Object.freeze({ [CONFIG_PATH]: "1".repeat(40), [CONTRACTS_PATH]: "
 // with its own contract entry added at the end of CARD_CONTRACTS.
 const lane = (id) => ({ ...structuredClone(COMMITTED.card_lanes.at(-1)), id, authorization_ref: id, note: `queued card ${id}` });
 function nextConfig(edit = (config) => config) {
-  const config = structuredClone(COMMITTED);
+  const config = structuredClone(QUEUE_ONLY);
   config.card_lanes = [...config.card_lanes, ...NEW_IDS.map(lane)];
   config.dispatch_scope = { issue_ids: [...NEW_IDS] };
   return edit(config);
@@ -66,7 +71,7 @@ const CHANGES = Object.freeze([
 function facts(edit = (value) => value) {
   return edit({
     revision: R, main: N, descends: true, changes: structuredClone(CHANGES), contractLines: { added: 6, deleted: 0 },
-    blobs: { ...BLOBS }, configs: { installed: COMMITTED_TEXT, main: JSON.stringify(nextConfig()) },
+    blobs: { ...BLOBS }, configs: { installed: QUEUE_ONLY_TEXT, main: JSON.stringify(nextConfig()) },
     contractTexts: { installed: CONTRACTS_TEXT, main: nextContracts() },
     passes: [{ pr: 300, head: PR_HEAD, files: Object.fromEntries(Object.entries(BLOBS).map(([file, sha]) => [file, { sha }])) }],
     landed: [], checks: { green: true },
@@ -77,8 +82,8 @@ const refused = (gate) => gate.ok === false && gate.transient === false && gate.
 // A fake orchestrator host for the whole timer start: files, the installed
 // checkout, the coordinator's bare repository and its view of main, the
 // provisioner, N's plan, GitHub and Linear.
-function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), changes = CHANGES, contractLines = { added: 6, deleted: 0 },
-  blobs = BLOBS, mainContracts = nextContracts(), landedQueue = true, installedConfigText = COMMITTED_TEXT } = {}) {
+function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), changes = CHANGES, contractLines = { added: 6, deleted: 0 },
+  blobs = BLOBS, mainContracts = nextContracts(), landedQueue = true, installedConfigText = QUEUE_ONLY_TEXT } = {}) {
   const files = new Map();
   const host = {
     files, calls: [], reports: [], github: [], steps: [], clock: START.getTime(), head: R, branch: R, main, descends: true,
@@ -248,7 +253,7 @@ function fakeHost({ config = COMMITTED, main = N, mainConfig = nextConfig(), cha
 }
 
 const deps = { busyReasons, cardLanded: async (io, paths, id) => io.fs.existsSync(autoClaim(paths, R, id)) };
-const install = (host, config = COMMITTED) => selfInstall({ io: host.io, paths: PATHS, config, revision: R, deps });
+const install = (host, config = QUEUE_ONLY) => selfInstall({ io: host.io, paths: PATHS, config, revision: R, deps });
 const claimOf = (host) => JSON.parse(host.files.get(installClaim(PATHS, N))?.text ?? "{}");
 // Another start writes the claim just after this one looked for it.
 const raceClaim = (host) => {
@@ -330,7 +335,7 @@ test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue o
     "one card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401"] } }),
     "six cards": (c) => ({ ...c, card_lanes: [...c.card_lanes, ...["SHU-403", "SHU-404", "SHU-405", "SHU-406"].map(lane)],
       dispatch_scope: { issue_ids: ["SHU-401", "SHU-402", "SHU-403", "SHU-404", "SHU-405", "SHU-406"] } }),
-    "an old lane": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-197"] } }),
+    "an unknown card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-999"] } }),
     "a repeated card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-401"] } }),
     "a scope with another key": (c) => ({ ...c, dispatch_scope: { issue_ids: NEW_IDS, extra: true } }),
   };
@@ -341,7 +346,7 @@ test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue o
   const laneless = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: JSON.stringify(nextConfig((c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-403"] } }))) },
     contractTexts: { ...f.contractTexts, main: nextContracts(["SHU-401", "SHU-402", "SHU-403"]) } })));
   assert.ok(refused(laneless), "a contracted card with no appended lane");
-  assert.match(laneless.reason, /SHU-403 in the new dispatch_scope is not a newly appended card lane/);
+  assert.match(laneless.reason, /SHU-403 in the new dispatch_scope is neither a newly appended nor an installed card lane/);
   const landed = selfInstallGate(facts((f) => ({ ...f, landed: ["SHU-402"] })));
   assert.ok(refused(landed));
   assert.match(landed.reason, /already landed/);
@@ -351,7 +356,7 @@ test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue o
   assert.deepEqual([...contractEntries(nextContracts())].slice(-2), NEW_IDS);
   assert.equal(contractEntries(CONTRACTS_TEXT).has("SHU-304"), false, "a review-only card is not a contract entry");
   // A main whose queue is the installed one is nothing to install.
-  const same = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: COMMITTED_TEXT } })));
+  const same = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: QUEUE_ONLY_TEXT } })));
   assert.equal(same.quiet, true);
 });
 
@@ -404,7 +409,7 @@ test("SHU-322 B6: a main that does not descend from the installed revision is re
 test("SHU-322 B7: main at the installed revision, or with the installed queue, is a silent skip", async () => {
   const same = fakeHost({ main: R });
   assert.deepEqual(await install(same), { silent: true });
-  const unchanged = fakeHost({ mainConfig: COMMITTED, changes: [{ status: "A", path: TEST_PATH }] });
+  const unchanged = fakeHost({ mainConfig: QUEUE_ONLY, changes: [{ status: "A", path: TEST_PATH }] });
   assert.deepEqual(await install(unchanged), { silent: true });
   for (const host of [same, unchanged]) {
     assert.equal(host.reports.length, 0);
@@ -583,7 +588,7 @@ test("SHU-322 B15: the timer only ever creates the pause file", async () => {
   assert.equal(out.result?.pause.written, false);
 });
 
-test("SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs", async () => {
+test("SHU-322 B16: a done or stopped queue's timer start runs Card B first, then the review", async () => {
   const io = (host) => ({ io: host.io, paths: PATHS });
   // Installed: the start ends there; the review never runs.
   const installs = fakeHost();
@@ -611,13 +616,23 @@ test("SHU-322 B16: a done queue's timer start runs Card B first, then the review
   const stop = await autoRun(io(paused));
   assert.equal(stop.skipped, "PAUSED");
   assert.equal(paused.github.some((entry) => entry.startsWith("pulls")), false);
-  // A stopped queue never reaches Card B.
-  const stopped = fakeHost();
+  // M16: a stopped queue reaches Card B too, and installs main's queue.
   const last = COMMITTED.dispatch_scope.issue_ids.at(-1);
-  stopped.put(autoClaim(PATHS, R, last), JSON.stringify({ card: last, revision: R, outcome: "STOPPED", ok: false, land: null }));
-  const halted = await autoRun(io(stopped));
-  assert.equal(halted.skipped, "QUEUE_STOPPED");
-  assert.equal(stopped.calls.some((call) => call.startsWith("runuser")), false, "main is never read");
+  const stopAt = (host) => host.put(autoClaim(PATHS, R, last), JSON.stringify({ card: last, revision: R, outcome: "STOPPED", ok: false, land: null }));
+  const stopped = fakeHost();
+  stopAt(stopped);
+  const restarted = await autoRun(io(stopped));
+  assert.equal(restarted.kind, "install", JSON.stringify(restarted));
+  assert.equal(restarted.outcome, "INSTALLED");
+  assert.equal(stopped.github.some((entry) => entry.startsWith("pulls")), false, "no review after an install");
+  // With nothing to install it reviews, and with nothing to review it is the
+  // stopped skip with its reason.
+  const halted = fakeHost({ main: R });
+  stopAt(halted);
+  const held = await autoRun(io(halted));
+  assert.equal(held.skipped, "QUEUE_STOPPED");
+  assert.match(held.reason, new RegExp(`^${last} ran at ${R} and did not land \\(STOPPED\\)`));
+  assert.ok(halted.github.some((entry) => entry.startsWith("pulls")), "the review reads the open pull requests");
 });
 
 test("SHU-322 B17: the report and claim name main, the installed revision, the queue and every step", async () => {
@@ -778,7 +793,7 @@ test("M11 C1: reviewed coordinator code installs only with the installed policy 
   assert.ok(refused(offWithQueue));
   assert.match(offWithQueue.reason, /is not a queue config path/);
   // The policy is read from the installed revision: main turning it on installs nothing.
-  const selfEnabled = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: f.configs.main } })));
+  const selfEnabled = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, configs: { installed: QUEUE_ONLY_TEXT, main: f.configs.main } })));
   assert.equal(selfEnabled.quiet, true, "main's own policy never lets main in");
   const red = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, checks: { red: ["ci"] } })));
   assert.ok(refused(red));
@@ -811,7 +826,7 @@ test("M11 C2: the paths that install or check everything else as root, and the p
   assert.match(deleted.reason, /deleted/);
 });
 
-test("M11 C7: every module the root install tools import, at any depth, is a person's install", () => {
+test("M11 C7: every module the root install tools import, at any depth, is owner-only or installable", () => {
   const repo = fileURLToPath(new URL("../../../", import.meta.url));
   const relative = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g;
   const seen = new Set();
@@ -826,8 +841,11 @@ test("M11 C7: every module the root install tools import, at any depth, is a per
   }
   assert.ok(seen.size > ROOT_INSTALL_TOOLS.length, "the closure follows imports");
   for (const file of seen) {
-    assert.ok(installablePath(file) || ownerOnlyPath(file), `${file} runs inside a root install tool, so it is a person's install`);
+    assert.ok(installablePath(file) || ownerOnlyPath(file), `${file} runs inside a root install tool, so it is owner-only or installable`);
   }
+  // M16: the one installable module in the closure is card-contracts.mjs,
+  // whose code-install additions must be inert data (M16 Q3).
+  assert.deepEqual([...seen].filter((file) => installablePath(file)), [CONTRACTS_PATH]);
   for (const tool of ROOT_INSTALL_TOOLS) assert.equal(ownerOnlyPath(tool), true, tool);
 });
 
@@ -923,4 +941,151 @@ test("M11 C6: when the installed revision cannot be put back, the host pauses as
   assert.equal(out.outcome, "INSTALL_FAILED");
   assert.equal(out.restored, undefined);
   assert.equal(queue.steps.includes(`install ${R}`), false);
+});
+
+// M16: no relay. A stopped queue is replaced by a re-cut queue: one new lane
+// (the stopped card's, under a new id) first, the later installed lanes kept,
+// the stopped card dropped. The shape of #342 over main at e584bb9.
+const INSTALLED_SCOPE = QUEUE_ONLY.dispatch_scope.issue_ids;
+const RECUT_ID = "SHU-401";
+const RECUT_SCOPE = [RECUT_ID, ...INSTALLED_SCOPE.slice(1)];
+function recutConfig(edit = (config) => config) {
+  const config = structuredClone(QUEUE_ONLY);
+  const stopped = config.card_lanes.find((entry) => entry.id === INSTALLED_SCOPE[0]);
+  config.card_lanes = [...config.card_lanes, { ...structuredClone(stopped), id: RECUT_ID, authorization_ref: RECUT_ID, note: "the stopped card, re-cut" }];
+  config.dispatch_scope = { issue_ids: [...RECUT_SCOPE] };
+  return edit(config);
+}
+const recutFacts = (edit = (value) => value) => facts((f) => edit({ ...f, configs: { ...f.configs, main: JSON.stringify(recutConfig()) },
+  contractTexts: { ...f.contractTexts, main: nextContracts([RECUT_ID]) } }));
+
+test("M16 Q1: a re-cut queue of one new lane and later installed lanes that have not landed installs itself", () => {
+  assert.ok(INSTALLED_SCOPE.length >= 2, "the committed queue has a later card to keep");
+  assert.deepEqual(selfInstallGate(recutFacts()), { ok: true, queue: RECUT_SCOPE, lanes: [RECUT_ID] });
+  // Each kept card must not have landed.
+  const landed = selfInstallGate(recutFacts((f) => ({ ...f, landed: [INSTALLED_SCOPE[1]] })));
+  assert.ok(refused(landed));
+  assert.match(landed.reason, new RegExp(`${INSTALLED_SCOPE[1]} already landed`));
+  // At least one card of the new queue is a new lane.
+  const noneNew = selfInstallGate(recutFacts((f) => ({ ...f,
+    configs: { ...f.configs, main: JSON.stringify(recutConfig((c) => ({ ...c, dispatch_scope: { issue_ids: INSTALLED_SCOPE.slice(1) } }))) } })));
+  assert.ok(refused(noneNew));
+  assert.match(noneNew.reason, /names no newly appended card lane/);
+  // A kept card still needs its contract entry at main.
+  const kept = INSTALLED_SCOPE[1];
+  const uncontracted = selfInstallGate(recutFacts((f) => ({ ...f,
+    contractTexts: { ...f.contractTexts, main: f.contractTexts.main.replace(`  "${kept}": Object.freeze({`, '  "SHU-9999": Object.freeze({') } })));
+  assert.ok(refused(uncontracted));
+  assert.match(uncontracted.reason, new RegExp(`${kept} has no CARD_CONTRACTS entry at main`));
+  // The new lane still needs its own entry added at main, and lanes are only appended.
+  const bare = selfInstallGate(recutFacts((f) => ({ ...f, contractTexts: { ...f.contractTexts, main: CONTRACTS_TEXT } })));
+  assert.ok(refused(bare));
+  assert.match(bare.reason, new RegExp(`${RECUT_ID} has no CARD_CONTRACTS entry added at main`));
+  const edited = selfInstallGate(recutFacts((f) => ({ ...f, configs: { ...f.configs,
+    main: JSON.stringify(recutConfig((c) => ({ ...c, card_lanes: c.card_lanes.filter((entry) => entry.id !== INSTALLED_SCOPE[0]) }))) } })));
+  assert.ok(refused(edited), "the stopped card's lane stays in card_lanes");
+});
+
+test("M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next", async () => {
+  const host = fakeHost({ landedQueue: false, mainConfig: recutConfig(), mainContracts: nextContracts([RECUT_ID]) });
+  host.put(autoClaim(PATHS, R, INSTALLED_SCOPE[0]), JSON.stringify({ card: INSTALLED_SCOPE[0], revision: R, outcome: "BLOCKED", ok: false, land: null }), { mode: 0o600 });
+  const result = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(result.kind, "install", JSON.stringify(result));
+  assert.equal(result.outcome, "INSTALLED");
+  assert.deepEqual(result.queue, RECUT_SCOPE);
+  assert.deepEqual(host.steps, INSTALL_ORDER);
+  assert.match(host.reports[0], new RegExp(`Queue: ${RECUT_SCOPE.join(", ")}\\.`));
+  assert.equal(JSON.parse(host.files.get(PATHS.receipt).text).revision, N);
+});
+
+// M16: card-contracts.mjs runs inside the root install tools (M11 C7), so a
+// code install may add only inert data to it.
+const contractsAdding = (lines) => {
+  const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
+  return CONTRACTS_TEXT.slice(0, end) + lines + CONTRACTS_TEXT.slice(end);
+};
+const appending = (lines) => `${CONTRACTS_TEXT}${lines}`;
+const NONE = { approval: "none" };
+const codeWithContracts = (text, policy = NONE) => codeFacts(policy, (f) => ({ ...f,
+  changes: [...f.changes, { status: "M", path: CONTRACTS_PATH }], contractLines: { added: 1, deleted: 0 },
+  blobs: { ...f.blobs, [CONTRACTS_PATH]: "2".repeat(40) }, contractTexts: { installed: CONTRACTS_TEXT, main: text },
+  passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [CONTRACTS_PATH]: { sha: "2".repeat(40) } } }] }));
+
+test("M16 Q3: a code install adds only inert data to card-contracts.mjs", () => {
+  const entry = '\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n    brief: "a plain brief, see https://example.test/x",\n  }),';
+  const declaration = '\nexport const SHU401_PATHS = Object.freeze([\n  "a/b.ts",\n]);\nconst SHU401_TEXT = `one\n${SHU401_NAME} two`.trim();\n// a comment\n';
+  assert.deepEqual(selfInstallGate(codeWithContracts(contractsAdding(entry))),
+    { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: null } });
+  assert.equal(selfInstallGate(codeWithContracts(appending(declaration))).ok, true);
+  const mutants = {
+    "an import": [appending('\nimport fs from "node:fs";\n'), /names a module/],
+    "a dynamic import": [contractsAdding('\n  "x": import("node:fs"),'), /names a module/],
+    "a require": [contractsAdding('\n  "x": require("fs"),'), /names a module/],
+    "process": [contractsAdding("\n  ...[process.exit(1)],"), /names a module, process/],
+    "child_process in text": [contractsAdding('\n  "x": "child_process",'), /names a module, process/],
+    "eval": [contractsAdding('\n  "x": eval,'), /names a module/],
+    "Function": [contractsAdding('\n  "x": Function("return 1"),'), /names a module/],
+    "an exported function": [appending("\nexport function steal() {}\n"), /exports something other than a const/],
+    "a re-export": [appending('\nexport { x } from "./y.mjs";\n'), /names a module|exports/],
+    "a call": [contractsAdding('\n  "x": fetch("https://example.test"),'), /calls something other than/],
+    "a getter": [contractsAdding("\n  get x() { return 1; },"), /calls something other than/],
+    "an interpolated call": [appending("\nconst A = `${f()}`;\n"), /interpolates more than a name/],
+    "a tagged template": [contractsAdding("\n  x: String.raw`a`,"), /tags a template/],
+    "an arrow": [contractsAdding("\n  x: (() => 1),"), /holds code/],
+    "a global": [contractsAdding("\n  x: globalThis,"), /holds code/],
+    "an assignment": [appending("\nCARD_CONTRACTS.x = 1;\n"), /assigns/],
+    "a regular expression": [contractsAdding('\n  x: /"/ && 1,'), /regular expression/],
+    "a top-level statement": [appending("\nCARD_CONTRACTS;\n"), /top-level statement/],
+    "a top-level template": [appending("\n`text`;\n"), /top-level statement/],
+  };
+  for (const [name, [text, reason]] of Object.entries(mutants)) {
+    const gate = selfInstallGate(codeWithContracts(text));
+    assert.ok(refused(gate), `${name}: ${JSON.stringify(gate)}`);
+    assert.match(gate.reason, reason, name);
+    assert.match(gate.reason, /card-contracts\.mjs changes with coordinator code/, name);
+  }
+  // A code install's contracts change still only gains lines.
+  const shrunk = selfInstallGate(codeFacts(NONE, (f) => ({ ...codeWithContracts(contractsAdding(entry)), contractLines: { added: 1, deleted: 1 } })));
+  assert.ok(refused(shrunk));
+  assert.match(shrunk.reason, /may only gain lines/);
+  // The installed lines must all be there, each where it was.
+  assert.match(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT.replace("export const SHU197_PATHS", "export const SHU197_PATHS_X")),
+    /does not keep every installed line/);
+  assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT), null);
+  // A queue install keeps the plain rule: its brief text may name anything.
+  const queueText = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts,
+    main: nextContracts().replace('    workspace_mode: "repo",\n  }),\n});', '    workspace_mode: "repo",\n    brief: "import the module and read process.env",\n  }),\n});') } })));
+  assert.equal(queueText.ok, true, JSON.stringify(queueText));
+});
+
+test("M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone", async () => {
+  assert.deepEqual(COMMITTED.code_self_install, { approval: "none" });
+  assert.deepEqual(codeInstallPolicy(COMMITTED), { approval: "none", approvers: [] });
+  // A policy-none install passes with no GitHub review read.
+  const host = codeHost(NONE, { approved: false });
+  const out = (await install(host, withPolicy(NONE))).result ?? {};
+  assert.equal(out.outcome, "INSTALLED", JSON.stringify(out));
+  assert.deepEqual(out.approval, { pr: CODE_PR, head: CODE_HEAD, by: null });
+  assert.equal(host.github.some((entry) => entry.startsWith("pulls")), false, "no approval is read");
+  assert.match(host.reports[0], /passed by the box review/);
+  // It still needs the passed review at the exact blobs, and green checks.
+  assert.ok(refused(selfInstallGate(codeFacts(NONE, (f) => ({ ...f, passes: [] })))));
+  assert.equal(selfInstallGate(codeFacts(NONE, (f) => ({ ...f, checks: null }))).transient, true);
+  // A malformed policy is off.
+  for (const policy of [{ approval: "none", extra: 1 }, { approval: "None" }, { approval: "none", approvers: [] }, "none", [NONE]]) {
+    assert.equal(codeInstallPolicy({ code_self_install: policy }), null, JSON.stringify(policy));
+    assert.equal(selfInstallGate(codeFacts(policy)).quiet, true, JSON.stringify(policy));
+  }
+  // Owner-only paths stay a person's install, NEEDS_OWNER on the timer.
+  for (const file of [".github/coordinator/service/card-install.mjs", ".github/coordinator/service/units.mjs", ".github/coordinator/reviewer-sandbox.sh"]) {
+    const gate = selfInstallGate(codeFacts(NONE, (f) => ({ ...f, changes: [...f.changes, { status: "M", path: file }],
+      blobs: { ...f.blobs, [file]: "8".repeat(40) }, passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [file]: { sha: "8".repeat(40) } } }] })));
+    assert.ok(refused(gate), file);
+    assert.match(gate.reason, /is installed only by a person/, file);
+  }
+  const owner = codeHost(NONE);
+  owner.changes = [...owner.changes, { status: "M", path: ".github/coordinator/service/units.mjs" }];
+  const needs = (await install(owner, withPolicy(NONE))).result ?? {};
+  assert.equal(needs.outcome, "NEEDS_OWNER");
+  assert.equal(owner.steps.length, 0, "nothing on the host changed");
 });

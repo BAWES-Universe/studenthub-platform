@@ -2226,7 +2226,7 @@
     "Box review C1: a coordinator:code pull request is reviewed by Codex, and only inside the coordinator",
     "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
     "SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_pr heads per revision, and a busy host gives the head back",
-    "SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins",
+    "SHU-321 R5: an invalid or paused queue never reviews, a stopped one does (M16), and a pause during discovery wins",
     "SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review",
     "SHU-321 R7: the claim records the pull request, its head and base, the run and every file's blob, and never reads as a landing",
     "SHU-321 R8: a GitHub read that fails is a skip that claims nothing",
@@ -3193,7 +3193,7 @@
     "SHU-321 mutation M3 claim a head without the exclusive flag",
     "SHU-321 mutation M4 allow claude-verifier to review a Claude change",
     "SHU-321 mutation M5 drop the fork and draft checks",
-    "SHU-321 mutation M6 review on QUEUE_STOPPED",
+    "SHU-321 mutation M6 never review on QUEUE_STOPPED",
     "SHU-321 mutation M7 drop the label check",
     "SHU-321 mutation M8 let narrowQueueScope accept any review lane",
     "SHU-321 mutation M9 drop the per-pull-request cap",
@@ -3217,7 +3217,7 @@
     "SHU-322 B13: a verify or precondition failure rolls N back and pauses, and never reinstalls R",
     "SHU-322 B14: the child plan check must show the new queue, its first card next and no refused preparation",
     "SHU-322 B15: the timer only ever creates the pause file",
-    "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
+    "SHU-322 B16: a done or stopped queue's timer start runs Card B first, then the review",
     "SHU-322 B17: the report and claim name main, the installed revision, the queue and every step",
     "SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip",
     "SHU-322 B19: a refused install writes a finished status, so the watch never reads its start as a run that died",
@@ -3228,7 +3228,7 @@
     "SHU-322 mutation M4 let any config key change",
     "SHU-322 mutation M5 drop the card_lanes prefix check",
     "SHU-322 mutation M6 drop the queue size bounds",
-    "SHU-322 mutation M7 accept a queued card that is not an appended lane",
+    "SHU-322 mutation M7 accept a queued card that is neither an appended nor an installed lane",
     "SHU-322 mutation M8 drop the landed check",
     "SHU-322 mutation M9 drop the added contract check",
     "SHU-322 mutation M10 drop the REVIEW_PASS blob binding",
@@ -3246,7 +3246,7 @@
     "SHU-322 mutation M22 skip the plan check",
     "SHU-322 mutation M23 overwrite an existing pause file",
     "SHU-322 mutation M24 review after an install in the same start",
-    "SHU-322 mutation M25 install from a stopped queue",
+    "SHU-322 mutation M25 never install from a stopped queue",
     "SHU-322 mutation M26 release the lock when the pause could not be written",
     "SHU-322 mutation M27 count anything at the pause path as a pause",
     "SHU-322 mutation M28 refuse an install without a finished status",
@@ -4625,11 +4625,15 @@
     "Usage U5: a report prints the busy, usage and box lines after velocity, only when the run carries them",
     "M11 C1: reviewed coordinator code installs only with the installed policy on, its approval at the passed head, and green checks",
     "M11 C2: the paths that install or check everything else as root, and the policy itself, stay a person's install",
-    "M11 C7: every module the root install tools import, at any depth, is a person's install",
+    "M11 C7: every module the root install tools import, at any depth, is owner-only or installable",
     "M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head",
     "M11 C4: an approved code change installs in order, reports as a code install and leaves the queue as it was",
     "M11 C5: a code install that fails after the merge puts the installed revision back and does not pause",
     "M11 C6: when the installed revision cannot be put back, the host pauses as before",
+    "M16 Q1: a re-cut queue of one new lane and later installed lanes that have not landed installs itself",
+    "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
+    "M16 Q3: a code install adds only inert data to card-contracts.mjs",
+    "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
     "SHU-322 mutation M30 install an owner-only path",
     "SHU-322 mutation M31 let code change the self-install policy",
     "SHU-322 mutation M32 read the policy from main",
@@ -4637,7 +4641,15 @@
     "SHU-322 mutation M34 count the author's own approval",
     "SHU-322 mutation M35 count an approval of another head",
     "SHU-322 mutation M36 pause instead of putting R back",
-    "SHU-322 mutation M37 run the code plan check as a queue plan check"
+    "SHU-322 mutation M37 run the code plan check as a queue plan check",
+    "SHU-322 mutation M38 accept a re-cut queue with no new lane in it",
+    "SHU-322 mutation M39 drop the kept lane's contract check",
+    "SHU-322 mutation M40 skip the contracts content check on a code install",
+    "SHU-322 mutation M41 let a code install delete contracts lines",
+    "SHU-322 mutation M42 allow any call in an added contracts line",
+    "SHU-322 mutation M43 allow any interpolation in an added contracts line",
+    "SHU-322 mutation M44 allow an import in an added contracts line",
+    "SHU-322 mutation M45 allow any top-level statement in card-contracts.mjs"
   ],
   "requirements": [
     {
@@ -18907,7 +18919,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins",
+      "name": "SHU-321 R5: an invalid or paused queue never reviews, a stopped one does (M16), and a pause during discovery wins",
       "capabilities": []
     },
     {
@@ -25437,7 +25449,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-321 mutation M6 review on QUEUE_STOPPED",
+      "name": "SHU-321 mutation M6 never review on QUEUE_STOPPED",
       "capabilities": []
     },
     {
@@ -25533,7 +25545,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 B16: a done queue's timer start runs Card B first, then the review, and a stopped queue never installs",
+      "name": "SHU-322 B16: a done or stopped queue's timer start runs Card B first, then the review",
       "capabilities": []
     },
     {
@@ -25577,7 +25589,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M7 accept a queued card that is not an appended lane",
+      "name": "SHU-322 mutation M7 accept a queued card that is neither an appended nor an installed lane",
       "capabilities": []
     },
     {
@@ -25649,7 +25661,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M25 install from a stopped queue",
+      "name": "SHU-322 mutation M25 never install from a stopped queue",
       "capabilities": []
     },
     {
@@ -33644,7 +33656,7 @@
       "capabilities": []
     },
     {
-      "name": "M11 C7: every module the root install tools import, at any depth, is a person's install",
+      "name": "M11 C7: every module the root install tools import, at any depth, is owner-only or installable",
       "capabilities": []
     },
     {
@@ -33661,6 +33673,22 @@
     },
     {
       "name": "M11 C6: when the installed revision cannot be put back, the host pauses as before",
+      "capabilities": []
+    },
+    {
+      "name": "M16 Q1: a re-cut queue of one new lane and later installed lanes that have not landed installs itself",
+      "capabilities": []
+    },
+    {
+      "name": "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
+      "capabilities": []
+    },
+    {
+      "name": "M16 Q3: a code install adds only inert data to card-contracts.mjs",
+      "capabilities": []
+    },
+    {
+      "name": "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
       "capabilities": []
     },
     {
@@ -33693,6 +33721,38 @@
     },
     {
       "name": "SHU-322 mutation M37 run the code plan check as a queue plan check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M38 accept a re-cut queue with no new lane in it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M39 drop the kept lane's contract check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M40 skip the contracts content check on a code install",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M41 let a code install delete contracts lines",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M42 allow any call in an added contracts line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M43 allow any interpolation in an added contracts line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M44 allow an import in an added contracts line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M45 allow any top-level statement in card-contracts.mjs",
       "capabilities": []
     }
   ],

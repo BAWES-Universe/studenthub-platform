@@ -2068,5 +2068,8 @@
     "code_label": "coordinator:code",
     "label": "coordinator:queue-config",
     "max_heads_per_pr": 3
+  },
+  "code_self_install": {
+    "approval": "none"
   }
 }

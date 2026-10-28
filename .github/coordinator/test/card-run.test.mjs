@@ -3275,13 +3275,21 @@ test("SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_
   assert.equal(owned.reports.length, 1, "reported once");
 });
 
-test("SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins", async () => {
+test("SHU-321 R5: an invalid or paused queue never reviews, a stopped one does (M16), and a pause during discovery wins", async () => {
+  // M16: a stopped queue reviews like a done one, and with nothing to review
+  // it is the QUEUE_STOPPED skip with its reason.
   const stopped = reviewHost();
   claimFor(stopped, REV, "SHU-305", { outcome: "PASS", ok: true, land: "CI_TIMEOUT" });
   const stop = await attempt(() => autoRun({ io: stopped.io, paths: PATHS }));
-  assert.equal(stop.skipped, "QUEUE_STOPPED");
-  assert.equal(stopped.api.some((call) => call.startsWith("github")), false, "GitHub is not read");
-  notReviewed(stopped, "stopped");
+  assert.equal(stop.kind, "review", JSON.stringify(stop));
+  assert.deepEqual(stop.review, { pr: 240, head: PR_HEAD, base: PR_BASE });
+  assert.equal(stopped.armedRecords[0].initial_target_sha, PR_HEAD, "the exact head");
+  const idle = reviewHost([]);
+  claimFor(idle, REV, "SHU-305", { outcome: "PASS", ok: true, land: "CI_TIMEOUT" });
+  const quiet = await attempt(() => autoRun({ io: idle.io, paths: PATHS }));
+  assert.equal(quiet.skipped, "QUEUE_STOPPED");
+  assert.match(quiet.reason, /^SHU-305 ran at .* and did not land \(PASS, landing CI_TIMEOUT\)/);
+  notReviewed(idle, "stopped with nothing to review");
   const paused = reviewHost();
   paused.files.set(PATHS.pause, { text: "" });
   assert.equal((await attempt(() => autoRun({ io: paused.io, paths: PATHS }))).skipped, "PAUSED");
@@ -4381,8 +4389,12 @@ test("Self-repair B2: O1 with landing_repair absent or false a passed run stoppe
     const host = b2Host({ on });
     const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
     assert.deepEqual(await nextCard(host.io, LAND_PATHS, config, REV), { id: null, skipped: "QUEUE_STOPPED", reason: expected }, String(on));
-    const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+    // M16: a stopped start also tries Card B and Card A; this host serves
+    // neither, so the stop stays the skip, with why nothing was reviewed.
+    const { review, install, ...result } = await autoRun({ io: host.io, paths: LAND_PATHS });
     assert.deepEqual(result, { ok: true, trigger: "timer", skipped: "QUEUE_STOPPED", reason: proven }, String(on));
+    assert.equal(review?.skipped, "REVIEW_UNREADABLE", String(on));
+    assert.equal(install, undefined, String(on));
     outputs.push(JSON.stringify(result));
     assert.equal(host.ticks, 0, "nothing is armed");
     assert.equal(b2EvidenceReads(host).length, 0, "no check run, job or log is read");

@@ -44,9 +44,10 @@ const CASES = [
     pattern: "SHU-321 R2:",
   },
   {
-    name: "M6 review on QUEUE_STOPPED",
-    from: '    if (next.skipped === "QUEUE_DONE") done = next;',
-    to: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next; // SHU321-M6',
+    // M16: a stopped queue reviews too; skipping it is now the mutant.
+    name: "M6 never review on QUEUE_STOPPED",
+    from: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;',
+    to: '    if (next.skipped === "QUEUE_DONE") done = next; // SHU321-M6',
     pattern: "SHU-321 R5:",
   },
   {

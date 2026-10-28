@@ -39,13 +39,24 @@
 // pull request at its exact head, with Codex as the reviewer of Claude's
 // change: once per head, at most max_heads_per_pr heads per pull request per
 // installed revision, lowest number first, one review per start. It reviews
-// only; merging and installing stay with people. A stopped, invalid or paused
-// queue never reviews, and a GitHub read that fails claims nothing.
+// only; merging and installing stay with people. An invalid or paused queue
+// never reviews (a stopped one did not either, until M16 below), and a GitHub
+// read that fails claims nothing.
 //
 // SHU-322: before that review, a QUEUE_DONE start installs the next card
 // queue itself when main commits one inside the autopilot boundary
 // (service/card-install.mjs): reviewed queue data only, never coordinator
 // code. It reports and exits; the next start runs the new queue's first card.
+//
+// M16: a QUEUE_STOPPED start does the same as a QUEUE_DONE one: Card B
+// installs a reviewed queue (or, with code_self_install on, reviewed
+// coordinator code) that main commits, else Card A reviews one labelled pull
+// request, under the same once-per-head claims and caps. A stopped queue then
+// waits for no person: the re-cut queue that replaces its stopped card is
+// reviewed, merged and installed by the box. With nothing to install or
+// review it is the plain QUEUE_STOPPED skip, with its reason. An invalid or
+// paused queue still never reviews. And the revert no longer waits forever on
+// leftover worker processes: after the grace it stops them (see revert).
 //
 // Self-repair B2: with the committed `landing_repair` switch on (absent or
 // false is today's behaviour), a card whose run passed and stopped on red
@@ -802,8 +813,9 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     config = readConfig(io, paths);
     const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
     // SHU-321: only a done queue may go on to review a queue config pull
-    // request; a stopped, invalid or paused one never does.
-    if (next.skipped === "QUEUE_DONE") done = next;
+    // request; an invalid or paused one never does. M16: a stopped queue
+    // does what a done one does (Card B, then Card A).
+    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
     // Self-repair B2: an interrupted repair is reported once; a repairable
     // card runs its one repair. Neither can come up with landing_repair off.
     else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
@@ -1082,11 +1094,12 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   return { pull: null, capped };
 }
 
-// SHU-322: what a done queue's timer start does. Card B first: when main
-// commits a new, reviewed card queue, the start installs it, reports and
-// exits, and the next start runs its first card. A refusal is claimed and
-// reported once. With nothing to install, or a read that failed, the start goes
-// on to the queue config review; a pause seen during the install never does.
+// SHU-322: what a done (M16: or stopped) queue's timer start does. Card B
+// first: when main commits a new, reviewed card queue, the start installs it,
+// reports and exits, and the next start runs its first card. A refusal is
+// claimed and reported once. With nothing to install, or a read that failed,
+// the start goes on to the queue config review; a pause seen during the
+// install never does.
 async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
   let install;
   try {
@@ -1120,8 +1133,9 @@ function installRefusedStatus({ io, paths, config, result }) {
       reverted: false, needs_owner: true });
 }
 
-// What a done queue's timer start does after Card B. One review at most per
-// start; with no candidate it is the plain QUEUE_DONE skip it always was.
+// What a done or stopped queue's timer start does after Card B. One review at
+// most per start; with no candidate it is the plain QUEUE_DONE or
+// QUEUE_STOPPED skip it always was.
 async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   let policy;
   try { policy = resolveQueueConfigReview(config); } catch (error) { return skip("NOT_READY", `CARD_RUN_CONFIG: ${error.message}`); }
@@ -1132,7 +1146,10 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
     found = await findQueueConfigPull({ io, credentials, repo: config.pilot_repo, policy, paths, revision,
       timeoutMs: limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs });
   } catch (error) {
-    // Nothing was claimed, so the next timer start reads again.
+    // Nothing was claimed, so the next timer start reads again. M16: a
+    // stopped queue stays the QUEUE_STOPPED skip, its reason first, and says
+    // why nothing was reviewed.
+    if (done.skipped === "QUEUE_STOPPED") return { ...skip(done.skipped, done.reason), review: { skipped: "REVIEW_UNREADABLE", reason: error.message } };
     return skip("REVIEW_UNREADABLE", error.message);
   }
   if (!found.pull) {
