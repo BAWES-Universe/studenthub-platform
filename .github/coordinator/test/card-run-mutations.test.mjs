@@ -1445,6 +1445,12 @@ const CASES = [
     to: "count: lines.length, /* SHU86-M213 */",
     pattern: "M16 K2:",
   },
+  {
+    name: "M214 list leftover workers with their command lines",
+    from: 'io.exec("pgrep", ["-l", "-u", "shu-worker"]);',
+    to: 'io.exec("pgrep", ["-a", "-u", "shu-worker"]); // SHU86-M214',
+    pattern: "M16 K1:",
+  },
 ];
 
 for (const mutation of CASES) {

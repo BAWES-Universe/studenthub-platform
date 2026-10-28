@@ -128,6 +128,9 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     calls.push([file, ...args].join(" "));
     const line = args.join(" ");
     if (file === "pgrep") {
+      // Only these two reads, and the listing gives pid and name alone: a
+      // command line (-a, -f) may carry a secret into the report.
+      assert.ok(["-u shu-worker", "-l -u shu-worker"].includes(line), `pgrep ${line}`);
       const count = host.workers(host);
       return count ? ok(`${Array.from({ length: count }, (_, i) => 5000 + i).join("\n")}\n`) : { status: 1, stdout: "", stderr: "" };
     }

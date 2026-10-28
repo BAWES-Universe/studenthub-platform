@@ -1039,7 +1039,7 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
     "a re-export": [appending('\nexport { x } from "./y.mjs";\n'), /names a module|exports/],
     "a global call": [contractsAdding('\n  "x": fetch("https://example.test"),'), /refers to fetch/],
     "a global behind a ternary": [contractsAdding("\n  x: [1].map(true ? setTimeout : 0),"), /refers to setTimeout/],
-    "a global behind a regular expression's quote": [contractsAdding('\n  x: /"/ && fetch("x"),'), /refers to fetch/],
+    "a global behind a regular expression's quote": [contractsAdding('\n  x: /"/ && fetch("x"),'), /refers to fetch|regular expression that does not follow/],
     "a global in an interpolation": [appending("\nconst A = `${fetch(1)}`;\n"), /refers to fetch/],
     "a parameter named like a global": [appending("\nconst F = (fetch) => fetch;\n"), /declares fetch, a global name/],
     "a getter": [contractsAdding("\n  get x() { return 1; },"), /refers to get/],
@@ -1057,6 +1057,18 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
     "an indented throw": [appending("\n  throw 1;\n"), /refers to throw|top-level statement/],
     "an indented call": [appending("\n  SHU197_ACCEPTANCE.trim();\n"), /top-level statement/],
     "an indented expression statement": [appending("\n    CARD_CONTRACTS;\n"), /top-level statement/],
+    // A division is never read as a regular expression that hides code.
+    "a division hiding process": [appending("\nexport const EXAMPLE = {} / process.exit(1) / 2;\n"), /process|division/],
+    "a division hiding an import": [appending('\nexport const EXAMPLE = {} / import("node:fs") / 2;\n'), /names a module|division/],
+    "a division hiding child_process": [appending('\nexport const EXAMPLE = {} / (await import("node:child_process")).execFileSync("id") / 2;\n'), /names a module|division/],
+    "a division hiding a binding": [appending('\nexport const EXAMPLE = {} / process.binding("spawn_sync") / 2;\n'), /process|division/],
+    "a commented division": [appending("\n/* x */ export const EXAMPLE = {} / process.exit(1) / 2;\n"), /process|division|top-level/],
+    "a plain division": [appending("\nconst HALF = SHU197_PATHS.length / 2;\n"), /division/],
+    "a regular expression after an operand": [appending("\nconst R = SHU197_PATHS.length && /x/;\n"), /regular expression that does not follow/],
+    "a regular expression after a block": [contractsAdding("\n  x: [{} /x/],"), /division|regular expression/],
+    // An escape in a name is never read as its ASCII tail.
+    "an escaped name": [appending('\nconst \\u0065val = 0; export const E = globalThis.eval("x");\n'), /escape/],
+    "an escaped global": [contractsAdding("\n  x: \\u0066etch,"), /escape/],
     // A comment hides nothing behind another line terminator.
     "code after a carriage return in a comment": [appending("\n// note\rfetch(1);\n"), /line terminator other than/],
     "code after a line separator in a comment": [appending("\n// note\u2028fetch(1);\n"), /line terminator other than/],
@@ -1105,9 +1117,16 @@ test("M16 Q5: the real additions of the last queue pull requests are inert data"
   assert.match(latest, /const SHU379_BRIEF = `\$\{SHU371_BRIEF\.replace\(/);
 });
 
-test("M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone", async () => {
-  assert.deepEqual(COMMITTED.code_self_install, { approval: "none" });
-  assert.deepEqual(codeInstallPolicy(COMMITTED), { approval: "none", approvers: [] });
+test("M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone", async () => {
+  // Everything the box runs as root, card-run.mjs included, stays a person's
+  // install: the committed config turns code self-install off.
+  assert.equal(Object.hasOwn(COMMITTED, "code_self_install"), false);
+  assert.equal(codeInstallPolicy(COMMITTED), null);
+  assert.equal(selfInstallGate(codeFacts(null, (f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: COMMITTED_TEXT } }))).quiet, true,
+    "with the committed config, reviewed code alone is nothing to install");
+  // A queue install, the stopped-queue restart, still installs itself.
+  assert.deepEqual(selfInstallGate(recutFacts((f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: JSON.stringify(recutConfig()) } }))),
+    { ok: true, queue: RECUT_SCOPE, lanes: [RECUT_ID] });
   // A policy-none install passes with no GitHub review read.
   const host = codeHost(NONE, { approved: false });
   const out = (await install(host, withPolicy(NONE))).result ?? {};
@@ -1135,4 +1154,24 @@ test("M16 Q4: the committed policy is approval none, which installs on the box r
   const needs = (await install(owner, withPolicy(NONE))).result ?? {};
   assert.equal(needs.outcome, "NEEDS_OWNER");
   assert.equal(owner.steps.length, 0, "nothing on the host changed");
+});
+
+test("M16 Q6: a code install changes no config key a queue install could not", () => {
+  const withMain = (edit) => codeFacts(NONE, (f) => {
+    const config = edit(withPolicy(NONE));
+    return { ...f, configs: { ...f.configs, main: JSON.stringify(config) }, changes: [...f.changes, { status: "M", path: CONFIG_PATH }],
+      blobs: { ...f.blobs, [CONFIG_PATH]: "9".repeat(40) }, passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [CONFIG_PATH]: { sha: "9".repeat(40) } } }] };
+  });
+  for (const [name, edit] of [["another key", (c) => ({ ...c, max_dispatch: 9 })], ["a removed key", (c) => { const { landing_repair: _gone, ...rest } = c; return rest; }],
+    ["the review policy", (c) => ({ ...c, queue_config_review: { ...c.queue_config_review, max_heads_per_pr: 9 } })],
+    ["an edited lane", (c) => ({ ...c, card_lanes: c.card_lanes.map((l, i) => (i === 0 ? { ...l, writer_lane: "claude-builder" } : l)) })],
+    ["a dropped lane", (c) => ({ ...c, card_lanes: c.card_lanes.slice(1) })]]) {
+    const gate = selfInstallGate(withMain(edit));
+    assert.ok(refused(gate), `${name}: ${JSON.stringify(gate)}`);
+    assert.match(gate.reason, /config\.json changes|card_lanes at main are not/, name);
+  }
+  assert.match(selfInstallGate(withMain((c) => ({ ...c, code_self_install: REVIEW_POLICY }))).reason, /code self-install policy is installed only by a person/);
+  // Unchanged config, or lanes only appended, still install with the code.
+  assert.equal(selfInstallGate(withMain((c) => c)).ok, true);
+  assert.equal(selfInstallGate(withMain((c) => ({ ...c, card_lanes: [...c.card_lanes, lane("SHU-401")] }))).ok, true);
 });

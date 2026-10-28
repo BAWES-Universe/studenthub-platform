@@ -200,8 +200,8 @@ const CASES = [
   },
   {
     name: "M31 let code change the self-install policy",
-    from: "if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) {",
-    to: "if (!same && (code.length === 0)) { // M11-M31",
+    from: "    if (!same) {",
+    to: "    if (!same && key !== CODE_SELF_INSTALL_KEY) { // M11-M31",
     pattern: "M11 C2:",
   },
   {
@@ -308,8 +308,8 @@ const CASES = [
   },
   {
     name: "M49 read a regular expression as code",
-    from: '    if (c === "/" && (REGEX_AFTER.has(last)',
-    to: '    if (false /* M16-M49 */ && (REGEX_AFTER.has(last)',
+    from: '    if (c === "/" && regexStarts(last, line.code)) {',
+    to: '    if (false /* M16-M49 */ && regexStarts(last, line.code)) {',
     pattern: "M16 Q5:",
   },
   {
@@ -317,6 +317,42 @@ const CASES = [
     from: '  if (/[\\r\\u2028\\u2029]/.test(mainText)) return',
     to: '  if (false /* M16-M50 */) return',
     pattern: "M16 Q3:",
+  },
+  {
+    name: "M51 read a slash after a closing brace as a regular expression",
+    from: "const DIVISION_AFTER = /[)\\]}\\w$\"`]/;",
+    to: "const DIVISION_AFTER = /[)\\]\\w$\"`]/; // M16-M51",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M52 allow a division in an added line",
+    from: '    if (match[0] === "/") return "holds a division";',
+    to: "    if (false) return; // M16-M52",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M53 allow a regular expression anywhere",
+    from: '    if (!/[(,]\\s*$/.test(code.slice(0, match.index))) return',
+    to: "    if (false) /* M16-M53 */ return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M54 allow an escape in code",
+    from: '  if (line.escape) return "holds an escape outside a string, template or regular expression";',
+    to: "  // M16-M54",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M55 let code change any config key but the policy",
+    from: "    if (!same) {",
+    to: "    if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) { // M16-M55",
+    pattern: "M16 Q6:",
+  },
+  {
+    name: "M56 let code edit installed card lanes",
+    from: "        || !lanesBefore.every((lane, i) => isDeepStrictEqual(lane, lanesAfter[i]))) {",
+    to: "        || false) { // M16-M56",
+    pattern: "M16 Q6:",
   },
 ];
 

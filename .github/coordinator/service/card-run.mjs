@@ -576,7 +576,10 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 // M16: the shu-worker processes still running after the grace, named for the
 // report (pid and process name only: a command line may carry a secret, and
 // the report is posted on Linear), then stopped: TERM, a short wait, KILL for
-// whatever is left. `cleared` says none is left. A listing pgrep could not
+// whatever is left. `pkill -u shu-worker` would also stop a box review or a
+// suite run as that user; the revert only runs on the host its own run armed,
+// which no other run shares (busyReasons keeps every other start off it), so
+// they never overlap. `cleared` says none is left. A listing pgrep could not
 // give (an exit other than 0 or 1) is `listed: false`, and the count is the
 // one read just before, so the report never says a false zero.
 export const REAPED_LIST_MAX = 20;

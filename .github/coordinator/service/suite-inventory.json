@@ -4619,6 +4619,7 @@
     "SHU-86 mutation M211 restart the supervisor under a worker that survived KILL",
     "SHU-86 mutation M212 leave the stopped workers out of the report",
     "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
+    "SHU-86 mutation M214 list leftover workers with their command lines",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -4636,7 +4637,8 @@
     "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
     "M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says",
     "M16 Q5: the real additions of the last queue pull requests are inert data",
-    "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
+    "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
+    "M16 Q6: a code install changes no config key a queue install could not",
     "SHU-322 mutation M30 install an owner-only path",
     "SHU-322 mutation M31 let code change the self-install policy",
     "SHU-322 mutation M32 read the policy from main",
@@ -4657,7 +4659,13 @@
     "SHU-322 mutation M47 let a declared name shadow a global",
     "SHU-322 mutation M48 allow any member",
     "SHU-322 mutation M49 read a regular expression as code",
-    "SHU-322 mutation M50 let a comment end at another line terminator"
+    "SHU-322 mutation M50 let a comment end at another line terminator",
+    "SHU-322 mutation M51 read a slash after a closing brace as a regular expression",
+    "SHU-322 mutation M52 allow a division in an added line",
+    "SHU-322 mutation M53 allow a regular expression anywhere",
+    "SHU-322 mutation M54 allow an escape in code",
+    "SHU-322 mutation M55 let code change any config key but the policy",
+    "SHU-322 mutation M56 let code edit installed card lanes"
   ],
   "requirements": [
     {
@@ -33616,6 +33624,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M214 list leftover workers with their command lines",
+      "capabilities": []
+    },
+    {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
       "capabilities": [
         {
@@ -33708,7 +33720,11 @@
       "capabilities": []
     },
     {
-      "name": "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
+      "name": "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
+      "capabilities": []
+    },
+    {
+      "name": "M16 Q6: a code install changes no config key a queue install could not",
       "capabilities": []
     },
     {
@@ -33793,6 +33809,30 @@
     },
     {
       "name": "SHU-322 mutation M50 let a comment end at another line terminator",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M51 read a slash after a closing brace as a regular expression",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M52 allow a division in an added line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M53 allow a regular expression anywhere",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M54 allow an escape in code",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M55 let code change any config key but the policy",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M56 let code edit installed card lanes",
       "capabilities": []
     }
   ],

@@ -46,9 +46,15 @@
 //     card left out. So a dispatch_scope id after the first may also be an
 //     installed lane that has not landed; every other rule above holds as it
 //     was.
-//   * code_self_install { approval: "none" } (codeInstallPolicy, from M11) is
-//     on in config.json: a box REVIEW_PASS at the exact head and green checks
-//     install coordinator code. Owner-only paths stay NEEDS_OWNER.
+//   * code_self_install stays off in config.json, so coordinator code is
+//     still a person's install. codeInstallPolicy (M11) can read
+//     { approval: "none" }, a box REVIEW_PASS at the exact head and green
+//     checks, but everything the box runs as root needs a person until the
+//     units run unprivileged: card-run.mjs itself runs as root (its unit and
+//     the install's plan step) and is installable code, so a reviewed pull
+//     request would otherwise run code as root with no person. Owner-only
+//     paths stay NEEDS_OWNER under any policy, and a code install changes no
+//     config key but appended card_lanes and a new queue.
 //   * card-contracts.mjs is installable, yet the root install tools import it
 //     (test M11 C7), so it runs as root. Any install that changes it, queue
 //     or code, may only add lines, and each added line's code must be inert
@@ -219,12 +225,23 @@ export function selfInstallGate(facts) {
   for (const key of keys) {
     if (key === "dispatch_scope" || key === "card_lanes") continue;
     const same = Object.hasOwn(installed, key) && Object.hasOwn(next, key) && isDeepStrictEqual(installed[key], next[key]);
-    // Code may change the config with it, but never the policy that let it in.
-    if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) {
-      return no(`config.json changes ${key}; ${code.length ? "the code self-install policy is" : "only dispatch_scope and appended card_lanes"} install${code.length ? "ed only by a person" : " themselves"}`);
+    // M16: code changes the config no more than a queue does, and never the
+    // policy that let it in.
+    if (!same) {
+      return no(`config.json changes ${key}; ${key === CODE_SELF_INSTALL_KEY ? "the code self-install policy is installed only by a person"
+        : "only dispatch_scope and appended card_lanes install themselves"}`);
     }
   }
-  if (!scopeChanged) return codeGate(facts, { changes, code, policy });
+  if (!scopeChanged) {
+    // M16: a code install with the same queue may still only append lanes.
+    const lanesBefore = installed.card_lanes;
+    const lanesAfter = next.card_lanes;
+    if (!Array.isArray(lanesBefore) || !Array.isArray(lanesAfter) || lanesAfter.length < lanesBefore.length
+        || !lanesBefore.every((lane, i) => isDeepStrictEqual(lane, lanesAfter[i]))) {
+      return no("card_lanes at main are not the installed card_lanes with lanes appended");
+    }
+    return codeGate(facts, { changes, code, policy });
+  }
   const before = installed.card_lanes;
   const after = next.card_lanes;
   if (!Array.isArray(before) || !Array.isArray(after) || after.length <= before.length
@@ -273,10 +290,18 @@ export function selfInstallGate(facts) {
 // bracket open, outside every template), and the code it holds: each string
 // as "", each regular expression as /0/, each template quote as ` and each
 // interpolation as #{ and }, with ${NAME} read as template text.
-const REGEX_AFTER = new Set(["", "(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";", "+", "-", "*", "%", "<", ">", "~", "^"]);
+// M16: a slash is a division after what ends an operand: ), ], }, a name, a
+// number, a string or a template (by the grammar; } also ends a block, and an
+// added line is held to stricter rules below either way). Otherwise, or after
+// return or typeof, it starts a regular expression.
+const DIVISION_AFTER = /[)\]}\w$"`]/;
+const regexStarts = (last, code) => !DIVISION_AFTER.test(last) || /(?:^|[^\w$])(?:return|typeof)$/.test(code.trimEnd());
 export function contractLines(text) {
   const source = String(text ?? "");
-  const fresh = (start, top) => ({ start, top, text: "", code: "" });
+  // `lead` is how a line that opens with a slash reads it (regex or
+  // division), which depends on the line before: an added line must not turn
+  // an installed line's division into a regular expression or back.
+  const fresh = (start, top) => ({ start, top, lead: null, text: "", code: "" });
   const lines = [fresh("code", true)];
   const stack = [{ kind: "code", braces: 0 }];
   let depth = 0;
@@ -293,6 +318,8 @@ export function contractLines(text) {
       top = stack.at(-1);
       const start = top.kind === "template" || top.kind === "comment" ? top.kind : "code";
       line = fresh(start, start === "code" && stack.length === 1 && depth === 0);
+      const opening = /^\s*\/(?![/*])/.test(source.slice(i + 1, source.indexOf("\n", i + 1) >>> 0));
+      if (start === "code" && opening) line.lead = regexStarts(last, "") ? "regex" : "division";
       lines.push(line);
       continue;
     }
@@ -321,7 +348,7 @@ export function contractLines(text) {
     }
     if (c === "/" && source[i + 1] === "/") { stack.push({ kind: "line" }); continue; }
     if (c === "/" && source[i + 1] === "*") { stack.push({ kind: "comment" }); line.text += "*"; i += 1; continue; }
-    if (c === "/" && (REGEX_AFTER.has(last) || /^(?:return|typeof)$/.test(/[\w$]*$/.exec(line.code)?.[0] ?? ""))) {
+    if (c === "/" && regexStarts(last, line.code)) {
       // A regular expression literal, to its closing slash outside a class,
       // then its flags. One that runs off the line is read as code.
       let j = i + 1;
@@ -347,6 +374,8 @@ export function contractLines(text) {
       if (top.braces === 0 && stack.length > 1) { stack.pop(); emit("}"); continue; }
       top.braces -= 1;
     }
+    // M16: an escape in code (a \u in a name) is never read as data.
+    if (c === "\\") line.escape = true;
     if ("([{".includes(c)) depth += 1;
     if (")]}".includes(c)) depth -= 1;
     emit(c);
@@ -400,7 +429,8 @@ export function contractAdditionRefusal(installedText, mainText) {
   const added = new Set();
   let j = 0;
   after.forEach((line, i) => {
-    if (j < before.length && before[j].text === line.text && before[j].start === line.start && before[j].top === line.top) j += 1;
+    if (j < before.length && before[j].text === line.text && before[j].start === line.start && before[j].top === line.top
+      && before[j].lead === line.lead) j += 1;
     else added.add(i);
   });
   if (j < before.length) return "it does not keep every installed line as it was";
@@ -422,6 +452,13 @@ export function contractAdditionRefusal(installedText, mainText) {
 
 function contractLineRefusal(line, joined, start, names) {
   const code = line.code;
+  if (line.escape) return "holds an escape outside a string, template or regular expression";
+  // A regular expression only right after ( or , where no division can be,
+  // and no division at all: a misread slash cannot hide code.
+  for (const match of code.matchAll(/\/0\/|\//g)) {
+    if (match[0] === "/") return "holds a division";
+    if (!/[(,]\s*$/.test(code.slice(0, match.index))) return "holds a regular expression that does not follow ( or ,";
+  }
   if (CONTRACT_WORDS.some((pattern) => pattern.test(code))) return "names a module, process or code loader";
   if (/\bexport\b/.test(code) && !CONTRACT_EXPORT.test(code)) return "exports something other than a const";
   if (/\+\+|--|__proto__/.test(code)) return "holds code";
