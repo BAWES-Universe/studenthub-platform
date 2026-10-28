@@ -1118,6 +1118,10 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
   ]) {
     assert.match(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding(added)) ?? "", /not a whole entry/, added);
   }
+  // Nor does an added line end the table early.
+  const opening = "export const CARD_CONTRACTS = Object.freeze({\n";
+  const early = CONTRACTS_TEXT.replace(opening, `${opening}});\nconst A1 = Object.freeze({\n`);
+  assert.match(contractAdditionRefusal(CONTRACTS_TEXT, early) ?? "", /opens or closes/);
   // A whole new entry, on one line or several, is still data.
   assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding('\n  "SHU-9102": Object.freeze({}),\n  "SHU-9103": Object.freeze({\n    workspace_mode: "repo",\n  }),')), null);
   // A parameter is read anywhere in its arrow's body, over several lines.

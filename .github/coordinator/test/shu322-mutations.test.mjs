@@ -438,6 +438,12 @@ const CASES = [
     to: "    if (false /* M16-M70 */) return",
     pattern: "M16 Q3:",
   },
+  {
+    name: "M71 let an added line end the contracts table",
+    from: "  if (table && (added.has(table.open) || added.has(table.close))) return",
+    to: "  if (false /* M16-M71 */) return",
+    pattern: "M16 Q3:",
+  },
 ];
 
 for (const mutation of CASES) {

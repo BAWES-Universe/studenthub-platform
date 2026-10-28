@@ -4680,7 +4680,8 @@
     "SHU-322 mutation M67 let a parameter be read anywhere in the file",
     "SHU-322 mutation M68 end an arrow's body only at a closing bracket",
     "SHU-322 mutation M69 allow a repeated contract entry",
-    "SHU-322 mutation M70 allow any key in the contracts table"
+    "SHU-322 mutation M70 allow any key in the contracts table",
+    "SHU-322 mutation M71 let an added line end the contracts table"
   ],
   "requirements": [
     {
@@ -33908,6 +33909,10 @@
     },
     {
       "name": "SHU-322 mutation M70 allow any key in the contracts table",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M71 let an added line end the contracts table",
       "capabilities": []
     }
   ],

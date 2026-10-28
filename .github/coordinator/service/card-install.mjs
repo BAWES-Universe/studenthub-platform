@@ -462,7 +462,9 @@ function contractNames(lines) {
 }
 
 // M16: why the lines N's card-contracts.mjs adds to R's are not inert data,
-// or null when they are. R's lines, each in the state it starts in, must
+// or null when they are. The check is about effects: a line that would only
+// throw on import (a misspelt member, a syntax error) is caught before any
+// install, because main's checks at N import the file and must be green. R's lines, each in the state it starts in, must
 // appear in N's in order; every other line of N is an added line. A brief's
 // words are template or string text and never code.
 export function contractAdditionRefusal(installedText, mainText) {
@@ -501,6 +503,7 @@ export function contractAdditionRefusal(installedText, mainText) {
   // a whole new entry's opening or an entry's close: no spread, computed or
   // other key can replace an installed entry when the file runs.
   const table = liveTable(after);
+  if (table && (added.has(table.open) || added.has(table.close))) return "it moves where the contracts table opens or closes";
   for (const i of added) {
     if (!table || i <= table.open || i >= table.close) continue;
     const line = after[i];
