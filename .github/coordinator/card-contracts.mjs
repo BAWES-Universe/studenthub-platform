@@ -3940,6 +3940,19 @@ const SHU371_ACCEPTANCE = Q13_RENAMED(SHU362_ACCEPTANCE);
 const SHU371_BRIEF = `${Q13_BRIEF(SHU362_BRIEF)}
 
 ${Q13_AFTER_PREP(SHU371_PATHS)}`;
+// SHU-379 runs SHU-371's contract again from main: SHU-371's run stopped when
+// its one revision was spent, and card-prepare refuses a branch that already
+// holds a build. Later cards of this queue call it "SHU-371"; it is the card
+// this one replaces, with the same tokens.
+const SHU379_ACCEPTANCE = `${SHU371_ACCEPTANCE} (7) Each finding of SHU-371's two reviews is pinned: the existing /profile assertion on "editing isn't enabled" in apps/gateway/test/web-ui.test.ts still passes unchanged; item 4's replacement of the Profile complete and Pending rows happens exactly when a field is written, with its own mutant; SHU371_SHOWN_OVER_SNAPSHOT writes a value different from the snapshot's and also covers a person with no snapshot configured; the item-2 mutant that removes the in-commit check dies in SHU371_ANY_PERSON; and the preview page's "before" is the value My profile showed.`;
+const SHU379_BRIEF = `${SHU371_BRIEF.replace(/^Card SHU-371: /, "Card SHU-379: ")}
+
+This card replaces SHU-371 with the same contract and tokens (SHU371_SHOWN_OVER_SNAPSHOT, SHU371_ANY_PERSON, SHU371_PAGE_FLOW, SHU371_PROJECTION); SHU-372 to SHU-374 call what it builds "SHU-371". SHU-371's build was blocked by two reviews; avoid what they found:
+- Keep every existing test passing unchanged. apps/gateway/test/web-ui.test.ts asserts that the /profile HTML matches /editing isn't enabled/; the first build dropped that sentence and broke the test. Keep the sentence wherever the page still has fields a person cannot edit, or say in your final message why the brief and that assertion disagree, rather than changing the test.
+- Item 4 is decided by whether the person has written any field, not by the state of the two snapshot fields. When anything is written, the Profile complete and Pending rows themselves are replaced by "Checked once your documents are on file", and the JSON marks isProfileCompleted and pendingFields unavailable: not_recorded. Do not stamp those two fields as written_by_person: nobody wrote them. Give item 4 its own mutant bound to SHU371_PROJECTION.
+- In SHU371_SHOWN_OVER_SNAPSHOT, write a value that differs from the snapshot's. The populated fixture's snapshot language is "ar", so write "en" over it and check the rendered value, not only the freshness. Also cover a person with no snapshot configured who has written a language.
+- The item-2 mutant deletes the in-commit check. It survives if every test reaches commit through confirm, because confirm re-checks ownership through ownedRecord first. In SHU371_ANY_PERSON, delete the principal and then call the store's commit directly, comparing an outcome-or-thrown value against { ok: false, reason: "not_own_record" }, so the mutant dies by assertion and not by a foreign-key error.
+- The preview page's "before" is the value My profile showed: the written value if there is one, otherwise the snapshot's. It is not the store's before, which is null for a first change. A person whose profile shows English must see "Language: English → العربية". Test it with the real services, not a fake that already returns "en".`;
 export const SHU372_PATHS = Q13_PATHS(SHU363_PATHS);
 const SHU372_ACCEPTANCE = Q13_RENAMED(SHU363_ACCEPTANCE);
 const SHU372_BRIEF = `${Q13_BRIEF(SHU363_BRIEF)}
@@ -4371,6 +4384,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU374_PATHS,
     acceptance: SHU374_ACCEPTANCE,
     brief: SHU374_BRIEF,
+  }),
+  "SHU-379": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU371_PATHS,
+    revision_paths: SHU371_PATHS,
+    acceptance: SHU379_ACCEPTANCE,
+    brief: SHU379_BRIEF,
   }),
 });
 
