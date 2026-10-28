@@ -307,8 +307,21 @@ export function selfInstallGate(facts) {
 // return or typeof, it starts a regular expression.
 const DIVISION_AFTER = /[)\]}\w$"`]/;
 const regexStarts = (last, code) => !DIVISION_AFTER.test(last) || /(?:^|[^\w$])(?:return|typeof)$/.test(code.trimEnd());
+const INTERPOLATED_NAME = /\$\{[A-Za-z_$][\w$]*\}/y;
+// The same text always lexes the same, and one install reads each revision's
+// file several times, so the last few results are kept. Nothing mutates them.
+const lexed = new Map();
 export function contractLines(text) {
   const source = String(text ?? "");
+  const kept = lexed.get(source);
+  if (kept) return kept;
+  const lines = lexContract(source);
+  lexed.set(source, lines);
+  if (lexed.size > 4) lexed.delete(lexed.keys().next().value);
+  return lines;
+}
+
+function lexContract(source) {
   // `lead` is how a line that opens with a slash reads it (regex or
   // division), which depends on the line before: an added line must not turn
   // an installed line's division into a regular expression or back.
@@ -350,7 +363,8 @@ export function contractLines(text) {
       if (c === "\\" && source[i + 1] !== "\n") { line.text += source[i + 1] ?? ""; i += 1; continue; }
       if (c === "`") { stack.pop(); emit("`"); continue; }
       if (c === "$" && source[i + 1] === "{") {
-        const name = /^\$\{[A-Za-z_$][\w$]*\}/.exec(source.slice(i));
+        INTERPOLATED_NAME.lastIndex = i;
+        const name = INTERPOLATED_NAME.exec(source);
         // The name is code, so it is checked like any other name.
         if (name) { line.text += name[0].slice(1); emit(`#${name[0].slice(1)}`); i += name[0].length - 1; continue; }
         stack.push({ kind: "code", braces: 0 });
