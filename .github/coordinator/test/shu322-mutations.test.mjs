@@ -362,9 +362,45 @@ const CASES = [
   },
   {
     name: "M58 count a commented entry as a contract entry",
-    from: '  return new Set(contractLines(block).filter((line) => line.start === "code")',
-    to: '  return new Set(contractLines(block).filter(() => true /* M16-M58 */)',
+    from: '  return new Set(lines.slice(open + 1, close).filter((line) => line.start === "code")',
+    to: '  return new Set(lines.slice(open + 1, close).filter(() => true /* M16-M58 */)',
     pattern: "M16 Q4:",
+  },
+  {
+    name: "M59 allow an assignment",
+    from: "  if (/=/.test(assignments)) return \"assigns\";",
+    to: "  if (false /* M16-M59 */) return \"assigns\";",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M60 allow any export",
+    from: "  if (/\\bexport\\b/.test(code) && !CONTRACT_EXPORT.test(code)) return",
+    to: "  if (false /* M16-M60 */) return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M61 allow a tagged template",
+    from: "  if (/[\\w$\\])]\\s*`/.test(code)) return \"tags a template\";",
+    to: "  if (false /* M16-M61 */) return \"tags a template\";",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M62 allow any parameter shape",
+    from: "  for (const part of params) if (!IDENTIFIER.test(part)) return",
+    to: "  for (const part of params) if (false /* M16-M62 */) return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M63 take a table inside a template as the live table",
+    from: "  const open = lines.findIndex((line) => line.top && line.start === \"code\" && line.text",
+    to: "  const open = lines.findIndex((line) => /* M16-M63 */ line.text",
+    pattern: "M16 Q4:",
+  },
+  {
+    name: "M64 read an interpolated name as text",
+    from: "        if (name) { line.text += name[0].slice(1); emit(`#${name[0].slice(1)}`);",
+    to: "        if (name) { line.text += name[0].slice(1); /* M16-M64 */",
+    pattern: "M16 Q3:",
   },
 ];
 

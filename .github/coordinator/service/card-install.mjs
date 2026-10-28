@@ -170,15 +170,15 @@ export function installablePath(file) {
 // The card ids with an entry in the CARD_CONTRACTS object of a contracts
 // source, read as text: N's code is never imported here.
 export function contractEntries(text) {
-  const source = String(text ?? "");
-  const start = source.indexOf("export const CARD_CONTRACTS = Object.freeze({\n");
-  if (start < 0) return null;
-  const end = source.indexOf("\n});", start);
-  if (end < 0) return null;
-  const block = source.slice(start, end);
-  // Only a line that starts in code is an entry: one inside a block comment,
-  // a string or a template is not.
-  return new Set(contractLines(block).filter((line) => line.start === "code")
+  // The live table is the top-level line that opens it, read in code, to the
+  // first top-level "});" after it; only a line that starts in code is an
+  // entry. A table or entry inside a string, template or comment is not.
+  const lines = contractLines(String(text ?? ""));
+  const open = lines.findIndex((line) => line.top && line.start === "code" && line.text === "export const CARD_CONTRACTS = Object.freeze({");
+  if (open < 0) return null;
+  const close = lines.findIndex((line, i) => i > open && line.start === "code" && line.text === "});");
+  if (close < 0) return null;
+  return new Set(lines.slice(open + 1, close).filter((line) => line.start === "code")
     .map((line) => /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/.exec(line.text)?.[1]).filter(Boolean));
 }
 
@@ -341,7 +341,8 @@ export function contractLines(text) {
       if (c === "`") { stack.pop(); emit("`"); continue; }
       if (c === "$" && source[i + 1] === "{") {
         const name = /^\$\{[A-Za-z_$][\w$]*\}/.exec(source.slice(i));
-        if (name) { line.text += name[0].slice(1); i += name[0].length - 1; continue; }
+        // The name is code, so it is checked like any other name.
+        if (name) { line.text += name[0].slice(1); emit(`#${name[0].slice(1)}`); i += name[0].length - 1; continue; }
         stack.push({ kind: "code", braces: 0 });
         emit("#{");
         line.text += "{";

@@ -1022,7 +1022,7 @@ const codeWithContracts = (text, policy = NONE) => codeFacts(policy, (f) => ({ .
 
 test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says", () => {
   const entry = '\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n    brief: "import the module, read process.env and call eval( in the text: https://example.test/x",\n  }),';
-  const declaration = '\nexport const SHU401_PATHS = Object.freeze([\n  "a/b.ts",\n]);\nconst SHU401_TEXT = `one import\n${SHU401_NAME} two`.trim();\n'
+  const declaration = '\nexport const SHU401_PATHS = Object.freeze([\n  "a/b.ts",\n]);\nconst SHU401_NAME = "x";\nconst SHU401_TEXT = `one import\n${SHU401_NAME} two`.trim();\n'
     + 'const SHU401_RENAME = (text) => text.replace(/SHU-4"0`1/g, (_, d) => `SHU-${Number(d) - 1}`);\n'
     + 'const SHU401_BRIEF = `${SHU401_RENAME(SHU401_TEXT)} and ${SHU401_PATHS.map((path) => path.trim()).join(" ")}`;\n// a comment\n';
   assert.deepEqual(selfInstallGate(codeWithContracts(contractsAdding(entry))),
@@ -1076,6 +1076,9 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
     // read its code as a comment.
     "code after a string continued onto the next line": [appending('\nexport const PROBE = "a\\\n//"; globalThis.__probe = 1; //\n'), /backslash before a newline/],
     "a template continued onto the next line": [appending("\nexport const PROBE = `a\\\nb`;\n"), /backslash before a newline/],
+    // A bare interpolated name is code, checked like any other name.
+    "an undeclared name interpolated": [appending("\nconst PROBE = `${REVIEW_UNDECLARED}`;\n"), /refers to REVIEW_UNDECLARED/],
+    "a parameter that is not a plain name": [appending("\nconst A1 = 1;\nconst A2 = [1].map(([A1]) => A1);\n"), /not a plain name/],
   };
   for (const [name, [text, reason]] of Object.entries(mutants)) {
     for (const [kind, gate] of [["code", selfInstallGate(codeWithContracts(text))], ["queue", selfInstallGate(queueWithContracts(text))]]) {
@@ -1109,6 +1112,12 @@ test("M16 Q4: an entry inside a block comment is not a contract entry", () => {
     "",
   ].join("\n");
   assert.deepEqual([...contractEntries(commented)], ["SHU-1"]);
+  // A table-shaped template earlier in the file is not the live table.
+  // An entry-shaped line in code between the two must not count either.
+  const fake = "const REVIEW_FAKE = `\nexport const CARD_CONTRACTS = Object.freeze({\n  \"SHU-9001\": Object.freeze({}),\n});\n`;\n"
+    + "const REVIEW_MAP = {\n  \"SHU-9003\": Object.freeze({}),\n};\n";
+  const at = CONTRACTS_TEXT.indexOf("export const");
+  assert.deepEqual([...contractEntries(CONTRACTS_TEXT.slice(0, at) + fake + CONTRACTS_TEXT.slice(at))], [...contractEntries(CONTRACTS_TEXT)]);
   // A re-cut queue whose new lane has its entry only inside a comment is refused.
   const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
   const main = `${CONTRACTS_TEXT.slice(0, end)}\n  /*\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n  }),\n  */${CONTRACTS_TEXT.slice(end)}`;

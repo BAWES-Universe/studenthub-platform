@@ -4668,7 +4668,13 @@
     "SHU-322 mutation M55 let code change any config key but the policy",
     "SHU-322 mutation M56 let code edit installed card lanes",
     "SHU-322 mutation M57 let a string continue onto the next line",
-    "SHU-322 mutation M58 count a commented entry as a contract entry"
+    "SHU-322 mutation M58 count a commented entry as a contract entry",
+    "SHU-322 mutation M59 allow an assignment",
+    "SHU-322 mutation M60 allow any export",
+    "SHU-322 mutation M61 allow a tagged template",
+    "SHU-322 mutation M62 allow any parameter shape",
+    "SHU-322 mutation M63 take a table inside a template as the live table",
+    "SHU-322 mutation M64 read an interpolated name as text"
   ],
   "requirements": [
     {
@@ -33848,6 +33854,30 @@
     },
     {
       "name": "SHU-322 mutation M58 count a commented entry as a contract entry",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M59 allow an assignment",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M60 allow any export",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M61 allow a tagged template",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M62 allow any parameter shape",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M63 take a table inside a template as the live table",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M64 read an interpolated name as text",
       "capabilities": []
     }
   ],
