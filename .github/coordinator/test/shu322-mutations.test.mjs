@@ -362,8 +362,8 @@ const CASES = [
   },
   {
     name: "M58 count a commented entry as a contract entry",
-    from: '  const inside = (line) => line.start === "code" && line.depth === 2;',
-    to: '  const inside = (line) => line.depth === 2; // M16-M58',
+    from: 'const tableLevel = (line) => line.start === "code" && line.depth === 2;',
+    to: 'const tableLevel = (line) => line.depth === 2; // M16-M58',
     pattern: "M16 Q4:",
   },
   {
@@ -404,8 +404,8 @@ const CASES = [
   },
   {
     name: "M65 count a nested property as a contract entry",
-    from: "  const inside = (line) => line.start === \"code\" && line.depth === 2;",
-    to: "  const inside = (line) => line.start === \"code\"; // M16-M65",
+    from: "const tableLevel = (line) => line.start === \"code\" && line.depth === 2;",
+    to: "const tableLevel = (line) => line.start === \"code\"; // M16-M65",
     pattern: "M16 Q4:",
   },
   {
@@ -430,6 +430,12 @@ const CASES = [
     name: "M69 allow a repeated contract entry",
     from: "  if (repeated) return `it repeats",
     to: "  if (false /* M16-M69 */) return `it repeats",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M70 allow any key in the contracts table",
+    from: "    if (!entry && !/^\\)?,?$/.test(keys)) return",
+    to: "    if (false /* M16-M70 */) return",
     pattern: "M16 Q3:",
   },
 ];

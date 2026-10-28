@@ -181,13 +181,19 @@ function contractEntryIds(text) {
   // that starts in code at that nesting is an entry. A table or entry inside
   // a string, template, comment or another entry is not.
   const lines = contractLines(String(text ?? ""));
+  const table = liveTable(lines);
+  if (!table) return null;
+  return lines.slice(table.open + 1, table.close).filter(tableLevel)
+    .map((line) => CONTRACT_ENTRY.exec(line.text)?.[1]).filter(Boolean);
+}
+
+const CONTRACT_ENTRY = /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/;
+const tableLevel = (line) => line.start === "code" && line.depth === 2;
+function liveTable(lines) {
   const open = lines.findIndex((line) => line.top && line.start === "code" && line.text === "export const CARD_CONTRACTS = Object.freeze({");
   if (open < 0) return null;
-  const inside = (line) => line.start === "code" && line.depth === 2;
-  const close = lines.findIndex((line, i) => i > open && inside(line) && line.text === "});");
-  if (close < 0) return null;
-  return lines.slice(open + 1, close).filter(inside)
-    .map((line) => /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/.exec(line.text)?.[1]).filter(Boolean);
+  const close = lines.findIndex((line, i) => i > open && tableLevel(line) && line.text === "});");
+  return close < 0 ? null : { open, close };
 }
 
 const parse = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
@@ -327,7 +333,9 @@ function lexContract(source) {
   // an installed line's division into a regular expression or back.
   // `depth` is the code nesting (parentheses, brackets, braces) the line
   // starts at.
-  const fresh = (start, top, depth) => ({ start, top, depth, lead: null, text: "", code: "" });
+  // `table` is the code the line holds at nesting 2, a key's own level inside
+  // the contracts table.
+  const fresh = (start, top, depth) => ({ start, top, depth, lead: null, text: "", code: "", table: "" });
   const lines = [fresh("code", true, 0)];
   const stack = [{ kind: "code", braces: 0 }];
   let depth = 0;
@@ -335,7 +343,7 @@ function lexContract(source) {
   // The last code character before this one, across lines, to tell a
   // regular expression from a division.
   let last = "";
-  const emit = (value) => { line.code += value; const trimmed = value.trim(); if (trimmed) last = trimmed.at(-1); };
+  const emit = (value) => { line.code += value; if (depth === 2) line.table += value; const trimmed = value.trim(); if (trimmed) last = trimmed.at(-1); };
   for (let i = 0; i < source.length; i += 1) {
     const c = source[i];
     let top = stack.at(-1);
@@ -489,6 +497,17 @@ export function contractAdditionRefusal(installedText, mainText) {
     if (why) return `an added line ${why}: ${line.text.trim().slice(0, 120)}`;
   }
   for (const part of params) if (!IDENTIFIER.test(part)) return `a parameter is not a plain name: ${part.slice(0, 60)}`;
+  // Inside the live table an added line holds, at the keys' own level, only
+  // a whole new entry's opening or an entry's close: no spread, computed or
+  // other key can replace an installed entry when the file runs.
+  const table = liveTable(after);
+  for (const i of added) {
+    if (!table || i <= table.open || i >= table.close) continue;
+    const line = after[i];
+    const keys = line.table.replace(/\s+/g, "");
+    const entry = /^"":Object\.freeze\)?,?$/.test(keys) && tableLevel(line) && CONTRACT_ENTRY.test(line.text);
+    if (!entry && !/^\)?,?$/.test(keys)) return `an added line in the contracts table is not a whole entry: ${line.text.trim().slice(0, 120)}`;
+  }
   // A repeated key replaces the earlier entry's contract when the file runs.
   const ids = contractEntryIds(mainText) ?? [];
   const repeated = ids.find((id, i) => ids.indexOf(id) !== i);

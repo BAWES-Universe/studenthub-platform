@@ -1107,6 +1107,19 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
   const repeatedGate = selfInstallGate(queueWithContracts(contractsAdding(duplicate)));
   assert.ok(refused(repeatedGate), JSON.stringify(repeatedGate));
   assert.match(repeatedGate.reason, /repeats the contract entry/);
+  // Nor does any other key at the table's level: a spread, a computed key, a
+  // key in single quotes, or a second key after an entry's close.
+  for (const added of [
+    `\n  ...Object.freeze({ "${installedId}": Object.freeze({}) }),`,
+    "\n  ...[],",
+    `\n  ["${installedId}"]: Object.freeze({}),`,
+    `\n  '${installedId}': Object.freeze({}),`,
+    `\n  "SHU-9101": Object.freeze({\n  }), "${installedId}": Object.freeze({\n  }),`,
+  ]) {
+    assert.match(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding(added)) ?? "", /not a whole entry/, added);
+  }
+  // A whole new entry, on one line or several, is still data.
+  assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding('\n  "SHU-9102": Object.freeze({}),\n  "SHU-9103": Object.freeze({\n    workspace_mode: "repo",\n  }),')), null);
   // A parameter is read anywhere in its arrow's body, over several lines.
   assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, `${CONTRACTS_TEXT}\nconst A1 = (REVIEW_LOCAL) => [REVIEW_LOCAL,\n  \`${"${REVIEW_LOCAL}"}\`];\n`), null);
   // A queue install's brief text may name anything.
