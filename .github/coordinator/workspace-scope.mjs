@@ -1,6 +1,6 @@
 import { resolveReceiptRoleAuthority, roleForLane } from "./launch-vocabulary.mjs";
 import path from "node:path";
-import { cardContract, CARD_CONTRACTS, reviewOnlyCard } from "./card-contracts.mjs";
+import { cardContract, CARD_CONTRACTS, reviewOnlyCard } from "./card-contracts-reader.mjs";
 
 export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full", "repo"]);
 export const SCOPE_PHASES = Object.freeze(["initial", "revision", "review"]);

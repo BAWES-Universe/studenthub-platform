@@ -26,7 +26,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { familyForLane, runtimeForLane } from "../launch-vocabulary.mjs";
-import { cardBrief } from "../card-contracts.mjs";
+import { cardBrief } from "../card-contracts-reader.mjs";
 import { CLAUDE_MODEL, buildClaudeEnvironment, isolatedReviewerModelCommand, parseClaudeCallback } from "../adapters/claude-code.mjs";
 import { reviewWrapper, validateReviewWrapper } from "../review-execution.mjs";
 import { adapterLaunchEnvironment } from "./units.mjs";

@@ -8,6 +8,12 @@
 // pinned in reviewed code. config.json may name a card lane but never widen
 // it (workspace-scope.mjs), and Linear text never reaches a prompt.
 //
+// M16: this file is the source the contracts are written in, and nothing the
+// coordinator runs imports it. After changing it, run
+// `node .github/coordinator/build-card-contracts.mjs` and commit the
+// card-contracts.json it writes: that data is what the coordinator reads
+// (card-contracts-reader.mjs), and a test fails until the two agree.
+//
 // A card may add workspace_mode: "repo". Its writer then gets the whole tree at
 // the bound head, with dependencies installed by the host, and may still change
 // only its paths. Without it the writer sees only its paths.
@@ -4442,21 +4448,3 @@ export const REVIEW_ONLY_ACCEPTANCE = "the change is correct, secure and covered
 export const REVIEW_ONLY_CARDS = Object.freeze({
   "SHU-304": Object.freeze({ brief: REVIEW_ONLY_BRIEF, acceptance: REVIEW_ONLY_ACCEPTANCE }),
 });
-
-export function reviewOnlyCard(issueId) {
-  return typeof issueId === "string" && Object.hasOwn(REVIEW_ONLY_CARDS, issueId) ? REVIEW_ONLY_CARDS[issueId] : null;
-}
-
-for (const id of Object.keys(REVIEW_ONLY_CARDS)) {
-  if (Object.hasOwn(CARD_CONTRACTS, id)) throw new Error(`${id} cannot be both a build card and a review-only card`);
-}
-
-export function cardContract(issueId) {
-  return typeof issueId === "string" && Object.hasOwn(CARD_CONTRACTS, issueId) ? CARD_CONTRACTS[issueId] : null;
-}
-
-// The writer and the reviewer of a card both get its brief. Fixtures have none:
-// their files are their contract.
-export function cardBrief(issueId) {
-  return cardContract(issueId)?.brief ?? reviewOnlyCard(issueId)?.brief ?? null;
-}

@@ -20,9 +20,9 @@ const CASES = [
     pattern: "SHU-321 R2:",
   },
   {
-    name: "M2 drop the contracts deletions check",
-    from: '(file.status !== "modified" || file.deletions !== 0)',
-    to: '(file.status !== "modified") /* SHU321-M2 */',
+    name: "M2 drop the contracts edit-in-place check",
+    from: 'if (contracts && file.status !== "modified") return',
+    to: 'if (false /* SHU321-M2 */) return',
     pattern: "SHU-321 R2:",
   },
   {
@@ -44,9 +44,10 @@ const CASES = [
     pattern: "SHU-321 R2:",
   },
   {
-    name: "M6 review on QUEUE_STOPPED",
-    from: '    if (next.skipped === "QUEUE_DONE") done = next;',
-    to: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next; // SHU321-M6',
+    // M16: a stopped queue reviews too; skipping it is now the mutant.
+    name: "M6 never review on QUEUE_STOPPED",
+    from: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;',
+    to: '    if (next.skipped === "QUEUE_DONE") done = next; // SHU321-M6',
     pattern: "SHU-321 R5:",
   },
   {

@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
 import { fixtureReviewScope, validateWorkspaceScope } from "../workspace-scope.mjs";
-import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
+import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts-reader.mjs";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalDirectory, unchangedInitialBuild, UNCHANGED_BUILD_NOTE } from "../push-broker.mjs";
 import { confinedTestResultLine, runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";

@@ -30,7 +30,7 @@ import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, pushExactSha, coordinatorJournalD
 import { confinedTestResultLine, runReviewEvidence } from "../review-execution.mjs";
 import { reviewRule, STRICT_REVIEW_RULE } from "../review-change.mjs";
 import { fixtureReviewScope } from "../workspace-scope.mjs";
-import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts.mjs";
+import { cardBrief, WRITER_FINISH_RULE } from "../card-contracts-reader.mjs";
 import { validateCallback as validateReviewerCallback } from "./claude-code.mjs";
 import { parseCodexUsage, withUsage } from "./usage.mjs";
 const path = nodePath;

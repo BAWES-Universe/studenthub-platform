@@ -39,13 +39,24 @@
 // pull request at its exact head, with Codex as the reviewer of Claude's
 // change: once per head, at most max_heads_per_pr heads per pull request per
 // installed revision, lowest number first, one review per start. It reviews
-// only; merging and installing stay with people. A stopped, invalid or paused
-// queue never reviews, and a GitHub read that fails claims nothing.
+// only; merging and installing stay with people. An invalid or paused queue
+// never reviews (a stopped one did not either, until M16 below), and a GitHub
+// read that fails claims nothing.
 //
 // SHU-322: before that review, a QUEUE_DONE start installs the next card
 // queue itself when main commits one inside the autopilot boundary
 // (service/card-install.mjs): reviewed queue data only, never coordinator
 // code. It reports and exits; the next start runs the new queue's first card.
+//
+// M16: a QUEUE_STOPPED start does the same as a QUEUE_DONE one: Card B
+// installs a reviewed queue (or, with code_self_install on, reviewed
+// coordinator code) that main commits, else Card A reviews one labelled pull
+// request, under the same once-per-head claims and caps. A stopped queue then
+// waits for no person: the re-cut queue that replaces its stopped card is
+// reviewed, merged and installed by the box. With nothing to install or
+// review it is the plain QUEUE_STOPPED skip, with its reason. An invalid or
+// paused queue still never reviews. And the revert no longer waits forever on
+// leftover worker processes: after the grace it stops them (see revert).
 //
 // Self-repair B2: with the committed `landing_repair` switch on (absent or
 // false is today's behaviour), a card whose run passed and stopped on red
@@ -65,7 +76,7 @@ import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal
 import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { threadReviewer } from "./card-threads.mjs";
-import { selfInstall } from "./card-install.mjs";
+import { selfInstall, RUNTIME_TEST_MODULES } from "./card-install.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
@@ -506,12 +517,25 @@ export function tick(io, limits = CARD_RUN_LIMITS) {
 }
 
 // Returns the run back to dispatch off. It waits a bounded time for workers to
-// finish; while one is still running it leaves everything armed and says so,
-// because restarting the supervisor under a live worker loses its result.
+// finish, because restarting the supervisor under a live worker loses its
+// result.
+//
+// M16 (SHU-376): on 10-27 orphaned `npm test` trees, reparented to PID 1
+// inside the worker's sandbox, outlived their run by three hours; every revert
+// stopped at the grace with the host left armed, and so did the queue. The
+// shu-worker user runs nothing but card work, and by the end of the grace the
+// run's window and its episode are over, so what is still running is left
+// over: the revert stops it (TERM, then KILL), records what it stopped and
+// goes on. Only a process that survives KILL leaves the run armed, as before.
 export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   const waitUntil = io.now().getTime() + limits.workerGraceMs;
+  let reaped = null;
   while (workerCount(io) !== 0) {
-    if (io.now().getTime() >= waitUntil) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING" };
+    if (io.now().getTime() >= waitUntil) {
+      reaped = reapWorkers(io, limits);
+      if (!reaped.cleared) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING", reaped };
+      break;
+    }
     io.sleep(limits.workerPollMs);
   }
   for (const unit of UNITS) {
@@ -546,7 +570,35 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   for (const name of io.fs.readdirSync(paths.tmp)) {
     if (/^shu-npm-cache-/.test(name)) io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
   }
-  return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed };
+  return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed, ...(reaped ? { reaped } : {}) };
+}
+
+// M16: the shu-worker processes still running after the grace, named for the
+// report (pid and process name only: a command line may carry a secret, and
+// the report is posted on Linear), then stopped: TERM, a short wait, KILL for
+// whatever is left. `pkill -u shu-worker` would also stop a box review or a
+// suite run as that user; the revert only runs on the host its own run armed,
+// which no other run shares (busyReasons keeps every other start off it), so
+// they never overlap. `cleared` says none is left. A listing pgrep could not
+// give (an exit other than 0 or 1) is `listed: false`, and the count is the
+// one read just before, so the report never says a false zero.
+export const REAPED_LIST_MAX = 20;
+function reapWorkers(io, limits) {
+  const running = workerCount(io);
+  const listing = io.exec("pgrep", ["-l", "-u", "shu-worker"]);
+  const listed = listing.status === 0 || listing.status === 1;
+  const lines = listing.status === 0 ? String(listing.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+  const processes = lines.slice(0, REAPED_LIST_MAX).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
+  const signals = ["TERM"];
+  io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
+  io.sleep(limits.killWaitMs);
+  if (workerCount(io) !== 0) {
+    signals.push("KILL");
+    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
+    io.sleep(limits.killWaitMs);
+  }
+  const left = workerCount(io);
+  return { cleared: left === 0, listed, count: listed ? lines.length : running, processes, signals, left };
 }
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the
@@ -768,8 +820,9 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     config = readConfig(io, paths);
     const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
     // SHU-321: only a done queue may go on to review a queue config pull
-    // request; a stopped, invalid or paused one never does.
-    if (next.skipped === "QUEUE_DONE") done = next;
+    // request; an invalid or paused one never does. M16: a stopped queue
+    // does what a done one does (Card B, then Card A).
+    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
     // Self-repair B2: an interrupted repair is reported once; a repairable
     // card runs its one repair. Neither can come up with landing_repair off.
     else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
@@ -898,7 +951,7 @@ async function repairInterrupted({ io, paths, limits, config, revision, next, sk
 // wrote gets a Codex verdict at its exact head without a person running Codex.
 // It reviews only; it never merges, installs or writes a branch. A candidate
 // is open, not a draft, on main, a branch of the pilot repository, labelled,
-// touches only queue config paths, only adds to the card contracts, and every
+// touches only queue config paths, edits the card contracts in place, and every
 // commit carries a Claude-Session: trailer. Anything else is not a candidate:
 // no claim and no report. Under the policy's code_label the same review covers
 // a Claude-written change to the coordinator's own code: any path under
@@ -908,10 +961,13 @@ export const QUEUE_CONFIG_REVIEWER = "codex-verifier";
 export const QUEUE_CONFIG_AUTHOR_FAMILY = "claude";
 export const QUEUE_CONFIG_PATHS = Object.freeze([
   ".github/coordinator/config.json",
+  ".github/coordinator/card-contracts.json",
   ".github/coordinator/card-contracts.mjs",
   ".github/coordinator/service/suite-inventory.json",
 ]);
-const CONTRACTS_PATH = ".github/coordinator/card-contracts.mjs";
+// M16: the contracts data and its source. Card B admits only new cards in the
+// data (card-install.mjs); here each is only ever edited in place.
+const CONTRACTS_PATHS = Object.freeze([".github/coordinator/card-contracts.json", ".github/coordinator/card-contracts.mjs"]);
 const SESSION_TRAILER_RE = /^Claude-Session: \S+$/m;
 // One page of each list; a list that fills it may hide a file or a commit.
 const GITHUB_PAGE = 100;
@@ -920,9 +976,10 @@ function queueConfigReview(config) {
   try { return resolveQueueConfigReview(config); } catch (error) { refuse("CARD_RUN_CONFIG", error.message); }
 }
 
-// One of the exact files, or any file under a test/ directory of the coordinator.
+// One of the exact files, or any file under a test/ directory of the coordinator
+// that no runtime module imports (card-install.mjs).
 export function queueConfigPath(file) {
-  if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
+  if (typeof file !== "string" || !file.startsWith(".github/coordinator/") || RUNTIME_TEST_MODULES.includes(file)) return false;
   const parts = file.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return false;
   return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");
@@ -945,7 +1002,7 @@ function listedCandidate(pull, repo, labels) {
 
 // The pull request's files and commits, judged whole. A renamed file counts
 // under both names, so nothing leaves the allowlist by a rename, and the
-// contracts may only gain lines: a deleted line could loosen a pinned card.
+// contracts are never added, removed or renamed.
 export function queueConfigChange(files, head, commits, allowed = queueConfigPath) {
   if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
   if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
@@ -954,9 +1011,8 @@ export function queueConfigChange(files, head, commits, allowed = queueConfigPat
   for (const file of files) {
     const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
     if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : "coordinator"} path` };
-    if (names.includes(CONTRACTS_PATH) && (file.status !== "modified" || file.deletions !== 0)) {
-      return { ok: false, reason: `${CONTRACTS_PATH} may only gain lines` };
-    }
+    const contracts = CONTRACTS_PATHS.find((entry) => names.includes(entry));
+    if (contracts && file.status !== "modified") return { ok: false, reason: `${contracts} may only be edited` };
     if (!SHA_RE.test(file.sha ?? "") || !Number.isInteger(file.additions) || !Number.isInteger(file.deletions) || Object.hasOwn(blobs, file.filename)) {
       return { ok: false, reason: `${file.filename} cannot be read` };
     }
@@ -1048,11 +1104,12 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   return { pull: null, capped };
 }
 
-// SHU-322: what a done queue's timer start does. Card B first: when main
-// commits a new, reviewed card queue, the start installs it, reports and
-// exits, and the next start runs its first card. A refusal is claimed and
-// reported once. With nothing to install, or a read that failed, the start goes
-// on to the queue config review; a pause seen during the install never does.
+// SHU-322: what a done (M16: or stopped) queue's timer start does. Card B
+// first: when main commits a new, reviewed card queue, the start installs it,
+// reports and exits, and the next start runs its first card. A refusal is
+// claimed and reported once. With nothing to install, or a read that failed,
+// the start goes on to the queue config review; a pause seen during the
+// install never does.
 async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
   let install;
   try {
@@ -1086,8 +1143,9 @@ function installRefusedStatus({ io, paths, config, result }) {
       reverted: false, needs_owner: true });
 }
 
-// What a done queue's timer start does after Card B. One review at most per
-// start; with no candidate it is the plain QUEUE_DONE skip it always was.
+// What a done or stopped queue's timer start does after Card B. One review at
+// most per start; with no candidate it is the plain QUEUE_DONE or
+// QUEUE_STOPPED skip it always was.
 async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   let policy;
   try { policy = resolveQueueConfigReview(config); } catch (error) { return skip("NOT_READY", `CARD_RUN_CONFIG: ${error.message}`); }
@@ -1098,7 +1156,10 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
     found = await findQueueConfigPull({ io, credentials, repo: config.pilot_repo, policy, paths, revision,
       timeoutMs: limits.reviewRequestTimeoutMs ?? CARD_RUN_LIMITS.reviewRequestTimeoutMs });
   } catch (error) {
-    // Nothing was claimed, so the next timer start reads again.
+    // Nothing was claimed, so the next timer start reads again. M16: a
+    // stopped queue stays the QUEUE_STOPPED skip, its reason first, and says
+    // why nothing was reviewed.
+    if (done.skipped === "QUEUE_STOPPED") return { ...skip(done.skipped, done.reason), review: { skipped: "REVIEW_UNREADABLE", reason: error.message } };
     return skip("REVIEW_UNREADABLE", error.message);
   }
   if (!found.pull) {

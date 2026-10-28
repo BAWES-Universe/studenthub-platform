@@ -26,9 +26,9 @@ const CASES = [
     pattern: "SHU-322 B2:",
   },
   {
-    name: "M3 drop the contracts deletions check",
-    from: "facts.contractLines?.deleted !== 0 || ",
-    to: "/* SHU322-M3 */ ",
+    name: "M3 accept a contracts data file that is not an edit",
+    from: 'contracts.status === "M" ? contractChangeRefusal(',
+    to: 'true /* SHU322-M3 */ ? contractChangeRefusal(',
     pattern: "SHU-322 B3:",
   },
   {
@@ -50,9 +50,9 @@ const CASES = [
     pattern: "SHU-322 B4:",
   },
   {
-    name: "M7 accept a queued card that is not an appended lane",
-    from: "  for (const id of ids) if (!added.includes(id)) return no(",
-    to: "  for (const id of ids) if (false) /* SHU322-M7 */ return no(",
+    name: "M7 accept a queued card that is neither an appended nor an installed lane",
+    from: "    if (!added.includes(id) && !known.has(id)) return no(",
+    to: "    if (false) /* SHU322-M7 */ return no(",
     pattern: "SHU-322 B4:",
   },
   {
@@ -63,7 +63,7 @@ const CASES = [
   },
   {
     name: "M9 drop the added contract check",
-    from: "    if (installedContracts.has(id) || !nextContracts.has(id)) return no(",
+    from: "    if (added.includes(id) && (installedContracts.has(id) || !nextContracts.has(id))) return no(",
     to: "    if (false) /* SHU322-M9 */ return no(",
     pattern: "SHU-322 B4:",
   },
@@ -159,10 +159,11 @@ const CASES = [
     pattern: "SHU-322 B16:",
   },
   {
-    name: "M25 install from a stopped queue",
+    // M16: a stopped queue installs too; never installing is now the mutant.
+    name: "M25 never install from a stopped queue",
     file: "service/card-run.mjs",
-    from: '    if (next.skipped === "QUEUE_DONE") done = next;',
-    to: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next; // SHU322-M25',
+    from: '    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;',
+    to: '    if (next.skipped === "QUEUE_DONE") done = next; // SHU322-M25',
     pattern: "SHU-322 B16:",
   },
   {
@@ -199,8 +200,8 @@ const CASES = [
   },
   {
     name: "M31 let code change the self-install policy",
-    from: "if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) {",
-    to: "if (!same && (code.length === 0)) { // M11-M31",
+    from: "    if (!same) {",
+    to: "    if (!same && key !== CODE_SELF_INSTALL_KEY) { // M11-M31",
     pattern: "M11 C2:",
   },
   {
@@ -238,6 +239,114 @@ const CASES = [
     from: '      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));',
     to: '      run("plan", () => planCheck(io, paths, queue ?? scope)); // M11-M37',
     pattern: "M11 C4:",
+  },
+  {
+    name: "M38 accept a re-cut queue whose first card is an installed lane",
+    from: "  if (!added.includes(ids[0])) return no(",
+    to: "  if (false) /* M16-M38 */ return no(",
+    pattern: "M16 Q1:",
+  },
+  {
+    name: "M39 drop the kept lane's contract check",
+    from: "    if (!added.includes(id) && !nextContracts.has(id)) return no(",
+    to: "    if (false) /* M16-M39 */ return no(",
+    pattern: "M16 Q1:",
+  },
+  {
+    name: "M40 skip the contracts data check on a queue install",
+    from: "  if (contracts) {",
+    to: "  if (contracts && code.length) { // M16-M40",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M41 let an installed card change",
+    from: "    if (!isDeepStrictEqual(contract, after.cards[id])) return `it changes ${id}`;",
+    to: "    // M16-M41",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M42 let the review-only cards change",
+    from: "  if (!isDeepStrictEqual(before.review_only, after.review_only)) return \"it changes the review-only cards\";",
+    to: "  // M16-M42",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M43 let the writer's finish rule change",
+    from: "  if (before.writer_finish_rule !== after.writer_finish_rule) return \"it changes the writer's finish rule\";",
+    to: "  // M16-M43",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M44 accept a new card with any keys",
+    from: "    if (!plainObject(contract) || Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key))) return",
+    to: "    if (false /* M16-M44 */) return",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M45 accept a new card under any id",
+    from: "    if (!CARD_ID_RE.test(id) || Object.hasOwn(after.review_only, id)) return",
+    to: "    if (false /* M16-M45 */) return",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M46 let code change any config key but the policy",
+    from: "    if (!same) {",
+    to: "    if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) { // M16-M46",
+    pattern: "M16 Q6:",
+  },
+  {
+    name: "M47 let code edit installed card lanes",
+    from: "        || !lanesBefore.every((lane, i) => isDeepStrictEqual(lane, lanesAfter[i]))) {",
+    to: "        || false) { // M16-M47",
+    pattern: "M16 Q6:",
+  },
+  {
+    name: "M48 accept a new card under a fixture id",
+    from: "    if (isFixtureIssue(id)) return",
+    to: "    if (false /* M16-M48 */) return",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M49 accept unsafe card paths",
+    from: "      if (!paths.ok) return `${id} is not a card contract: ${paths.reason}`;",
+    to: "      // M16-M49",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M50 skip the workspace mode check",
+    from: "    if (!mode.ok) return `${id} is not a card contract: ${mode.reason}`;",
+    to: "    // M16-M50",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M51 accept an empty acceptance or brief",
+    from: "    if (typeof contract.acceptance !== \"string\" || !contract.acceptance || typeof contract.brief !== \"string\" || !contract.brief) return",
+    to: "    if (false /* M16-M51 */) return",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M52 let a queue install a test file a runtime module imports",
+    from: "|| RUNTIME_TEST_MODULES.includes(file)) return false;\n  const parts",
+    to: ") return false; // M16-M52\n  const parts",
+    pattern: "M16 Q7:",
+  },
+  {
+    name: "M53 accept data that is not the contracts document",
+    from: "  if (!before || !after) return \"it is not the contracts data at both revisions\";",
+    to: "  if (!before || !after) return null; // M16-M53",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M54 let a card be removed",
+    from: "    if (!Object.hasOwn(after.cards, id)) return `it removes ${id}`;",
+    to: "    // M16-M54",
+    pattern: "M16 Q5:",
+  },
+  {
+    name: "M55 accept any path list on a new card",
+    from: "    if (!pathList(contract.initial_build_paths) || !pathList(contract.revision_paths)) return",
+    to: "    if (false /* M16-M55 */) return",
+    pattern: "M16 Q5:",
   },
 ];
 

@@ -13,7 +13,8 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CARD_CONTRACTS, SHU197_PATHS, cardBrief, cardContract, WRITER_FINISH_RULE } from "../card-contracts.mjs";
+import { SHU197_PATHS } from "../card-contracts.mjs";
+import { CARD_CONTRACTS, cardBrief, cardContract, WRITER_FINISH_RULE } from "../card-contracts-reader.mjs";
 import {
   fixtureAcceptance,
   fixtureReviewScope,

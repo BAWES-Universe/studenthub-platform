@@ -9,13 +9,14 @@
 //
 //   * R is an ancestor of N;
 //   * every changed .github/coordinator path is config.json,
-//     card-contracts.mjs, service/suite-inventory.json or under a test/
-//     directory, and none is deleted;
-//   * card-contracts.mjs only gains lines;
+//     card-contracts.json, card-contracts.mjs, service/suite-inventory.json
+//     or under a test/ directory, and none is deleted;
+//   * card-contracts.json, parsed, only gains cards (M16, below);
 //   * config.json, parsed: every key but dispatch_scope and card_lanes is
 //     deep-equal, R's card_lanes are an exact prefix of N's, and the new
-//     dispatch_scope is 2 to 5 cards, every one a new lane that has not landed
-//     and has its own CARD_CONTRACTS entry added at N;
+//     dispatch_scope is 2 to 5 cards that have not landed, the first of
+//     them a new lane, each new lane with its own CARD_CONTRACTS entry added
+//     at N and each other one a lane R already has (M16, below);
 //   * every changed coordinator blob at N is the blob a Card A REVIEW_PASS
 //     claim (card-review-auto-pr<N>-<head>.json, root's own file) recorded at
 //     that pull request's exact head;
@@ -36,6 +37,36 @@
 // code. Any failure writes the pause file with its reason and reports. A
 // verify or precondition failure rolls N's prerequisites back; R is never
 // reinstalled by the box. The timer only ever creates the pause file.
+//
+// M16: the box installs without a person relaying anything.
+//   * A stopped queue (QUEUE_STOPPED) runs Card B too, not only a done one
+//     (card-run.mjs). What replaces a stopped card is a re-cut queue: one new
+//     lane, a copy of the stopped card's under a new id, first in
+//     dispatch_scope, followed by later lanes R already has, with the stopped
+//     card left out. So a dispatch_scope id after the first may also be an
+//     installed lane that has not landed; every other rule above holds as it
+//     was.
+//   * code_self_install stays off in config.json, so coordinator code is
+//     still a person's install. codeInstallPolicy (M11) can read
+//     { approval: "none" }, a box REVIEW_PASS at the exact head and green
+//     checks, but everything the box runs as root needs a person until the
+//     units run unprivileged: card-run.mjs itself runs as root (its unit and
+//     the install's plan step) and is installable code, so a reviewed pull
+//     request would otherwise run code as root with no person. Owner-only
+//     paths stay NEEDS_OWNER under any policy, and a code install changes no
+//     config key but appended card_lanes and a new queue.
+//   * the card contracts the coordinator reads are data: card-contracts.json,
+//     generated from their source card-contracts.mjs and read by
+//     card-contracts-reader.mjs. No module outside the tests and the
+//     generator imports the source, so installing it runs nothing (test M16
+//     Q3). The data, parsed at R and at N, may only gain cards: every card R
+//     has is deep-equal at N, each new one has a canonical id and the shape
+//     of a contract whose paths pass the checks workspace-scope.mjs runs when
+//     it loads, and the review-only cards and the writer's finish rule are
+//     unchanged. Any install, queue or code, is held to this.
+//   * a test/ file that a module outside the tests imports runs with it, as
+//     root when that module does (service/verify.mjs), so it is owner-only
+//     (RUNTIME_TEST_MODULES, test M16 Q7).
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReason, reportMarker, PUSH_TIMEOUT_SECONDS,
@@ -43,14 +74,24 @@ import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReaso
 import { boundedFetch, github, readCommitChecks } from "./card-land.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { MAX_CARD_QUEUE } from "../single-run-activation.mjs";
+import { isFixtureIssue, validateAllowedPaths, validateCardContractMode } from "../workspace-scope.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const CARD_ID_RE = /^SHU-[1-9]\d*$/;
 const COORDINATOR = ".github/coordinator/";
 export const CONFIG_PATH = ".github/coordinator/config.json";
-export const CONTRACTS_PATH = ".github/coordinator/card-contracts.mjs";
+export const CONTRACTS_PATH = ".github/coordinator/card-contracts.json";
+export const CONTRACTS_SOURCE_PATH = ".github/coordinator/card-contracts.mjs";
 export const INVENTORY_PATH = ".github/coordinator/service/suite-inventory.json";
-export const INSTALLABLE_PATHS = Object.freeze([CONFIG_PATH, CONTRACTS_PATH, INVENTORY_PATH]);
+export const INSTALLABLE_PATHS = Object.freeze([CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH]);
+// M16: the files under a test/ directory that modules outside the tests import
+// (service/verify.mjs, the install's verify step, among them), so they run
+// wherever those do, root included. They are never a queue's to change: test
+// M16 Q7 derives the list from the tree and fails if one is missing here.
+export const RUNTIME_TEST_MODULES = Object.freeze([
+  ".github/coordinator/test/fixture/episode-harness.mjs",
+  ".github/coordinator/test/fixture/linear-board.mjs",
+]);
 export const PROVISIONER = ".github/coordinator/service/provision-shu71-prerequisites.mjs";
 export const CARD_RUN = ".github/coordinator/service/card-run.mjs";
 export const MIN_INSTALL_QUEUE = 2;
@@ -90,6 +131,8 @@ export const OWNER_ONLY_PATHS = Object.freeze([
   ".github/coordinator/reseed-append-contract.mjs",
   ".github/coordinator/shu71-activation-package.mjs",
   ".github/coordinator/workspace-scope.mjs",
+  ".github/coordinator/card-contracts-reader.mjs",
+  ...RUNTIME_TEST_MODULES,
   ".github/coordinator/service/shu-reviewer.sudoers",
   ".github/coordinator/reviewer-sandbox.sh",
   ".github/coordinator/shu71-trust-anchor.json",
@@ -124,24 +167,58 @@ export const installClaim = (paths, main) => path.join(paths.stateDir, `card-ins
 export const installActivationId = (main) => `card-install-${main}`;
 
 // The same rule as Card A's queue config paths: one of the exact files, or a
-// file under a test/ directory of the coordinator.
+// file under a test/ directory of the coordinator that no runtime module imports.
 export function installablePath(file) {
-  if (typeof file !== "string" || !file.startsWith(COORDINATOR)) return false;
+  if (typeof file !== "string" || !file.startsWith(COORDINATOR) || RUNTIME_TEST_MODULES.includes(file)) return false;
   const parts = file.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return false;
   return INSTALLABLE_PATHS.includes(file) || parts.slice(2, -1).includes("test");
 }
 
-// The card ids with an entry in the CARD_CONTRACTS object of a contracts
-// source, read as text: N's code is never imported here.
+// The card ids of a card-contracts.json text, or null when it is not the
+// contracts data.
 export function contractEntries(text) {
-  const source = String(text ?? "");
-  const start = source.indexOf("export const CARD_CONTRACTS = Object.freeze({\n");
-  if (start < 0) return null;
-  const end = source.indexOf("\n});", start);
-  if (end < 0) return null;
-  const block = source.slice(start, end);
-  return new Set([...block.matchAll(/^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/gm)].map((match) => match[1]));
+  const data = contractData(text);
+  return data && new Set(Object.keys(data.cards));
+}
+
+const CONTRACT_DATA_KEYS = JSON.stringify(["cards", "review_only", "writer_finish_rule"]);
+function contractData(text) {
+  const data = parse(text);
+  if (!plainObject(data) || JSON.stringify(Object.keys(data).sort()) !== CONTRACT_DATA_KEYS) return null;
+  return plainObject(data.cards) && plainObject(data.review_only) && typeof data.writer_finish_rule === "string" ? data : null;
+}
+
+// M16: why N's contracts data is more than R's with cards added, or null.
+const CONTRACT_KEYS = new Set(["initial_build_paths", "revision_paths", "acceptance", "brief", "workspace_mode"]);
+const pathList = (value) => Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === "string" && entry.length > 0);
+export function contractChangeRefusal(installedText, mainText) {
+  const before = contractData(installedText);
+  const after = contractData(mainText);
+  if (!before || !after) return "it is not the contracts data at both revisions";
+  if (!isDeepStrictEqual(before.review_only, after.review_only)) return "it changes the review-only cards";
+  if (before.writer_finish_rule !== after.writer_finish_rule) return "it changes the writer's finish rule";
+  for (const [id, contract] of Object.entries(before.cards)) {
+    if (!Object.hasOwn(after.cards, id)) return `it removes ${id}`;
+    if (!isDeepStrictEqual(contract, after.cards[id])) return `it changes ${id}`;
+  }
+  for (const [id, contract] of Object.entries(after.cards)) {
+    if (Object.hasOwn(before.cards, id)) continue;
+    if (!CARD_ID_RE.test(id) || Object.hasOwn(after.review_only, id)) return `${JSON.stringify(id)} is not a new canonical card id`;
+    if (isFixtureIssue(id)) return `${id} is a fixture lane`;
+    if (!plainObject(contract) || Object.keys(contract).some((key) => !CONTRACT_KEYS.has(key))) return `${id} is not a card contract`;
+    if (!pathList(contract.initial_build_paths) || !pathList(contract.revision_paths)) return `${id} is not a card contract`;
+    if (typeof contract.acceptance !== "string" || !contract.acceptance || typeof contract.brief !== "string" || !contract.brief) return `${id} is not a card contract`;
+    // The checks workspace-scope.mjs runs on every card when it loads, so an
+    // admitted card never stops the coordinator from starting.
+    for (const key of ["initial_build_paths", "revision_paths"]) {
+      const paths = validateAllowedPaths(contract[key], { name: key });
+      if (!paths.ok) return `${id} is not a card contract: ${paths.reason}`;
+    }
+    const mode = validateCardContractMode(contract);
+    if (!mode.ok) return `${id} is not a card contract: ${mode.reason}`;
+  }
+  return null;
 }
 
 const parse = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
@@ -176,20 +253,33 @@ export function selfInstallGate(facts) {
     if (!["A", "M"].includes(change.status)) return no(`${change.path} is ${change.status === "D" ? "deleted" : `changed as ${String(change.status)}`}; only additions and edits install themselves`);
   }
   const contracts = changes.find((change) => change.path === CONTRACTS_PATH);
-  if (code.length === 0 && contracts && (contracts.status !== "M" || facts.contractLines?.deleted !== 0 || !Number.isInteger(facts.contractLines?.added))) {
-    return no(`${CONTRACTS_PATH} may only gain lines`);
+  // M16: a code install's contracts change is held to this too.
+  if (contracts) {
+    const refusal = contracts.status === "M" ? contractChangeRefusal(facts.contractTexts?.installed, facts.contractTexts?.main) : "it is not an edit";
+    if (refusal) return no(`${CONTRACTS_PATH} may only gain cards: ${refusal}`);
   }
 
   const keys = new Set([...Object.keys(installed), ...Object.keys(next)]);
   for (const key of keys) {
     if (key === "dispatch_scope" || key === "card_lanes") continue;
     const same = Object.hasOwn(installed, key) && Object.hasOwn(next, key) && isDeepStrictEqual(installed[key], next[key]);
-    // Code may change the config with it, but never the policy that let it in.
-    if (!same && (code.length === 0 || key === CODE_SELF_INSTALL_KEY)) {
-      return no(`config.json changes ${key}; ${code.length ? "the code self-install policy is" : "only dispatch_scope and appended card_lanes"} install${code.length ? "ed only by a person" : " themselves"}`);
+    // M16: code changes the config no more than a queue does, and never the
+    // policy that let it in.
+    if (!same) {
+      return no(`config.json changes ${key}; ${key === CODE_SELF_INSTALL_KEY ? "the code self-install policy is installed only by a person"
+        : "only dispatch_scope and appended card_lanes install themselves"}`);
     }
   }
-  if (!scopeChanged) return codeGate(facts, { changes, code, policy });
+  if (!scopeChanged) {
+    // M16: a code install with the same queue may still only append lanes.
+    const lanesBefore = installed.card_lanes;
+    const lanesAfter = next.card_lanes;
+    if (!Array.isArray(lanesBefore) || !Array.isArray(lanesAfter) || lanesAfter.length < lanesBefore.length
+        || !lanesBefore.every((lane, i) => isDeepStrictEqual(lane, lanesAfter[i]))) {
+      return no("card_lanes at main are not the installed card_lanes with lanes appended");
+    }
+    return codeGate(facts, { changes, code, policy });
+  }
   const before = installed.card_lanes;
   const after = next.card_lanes;
   if (!Array.isArray(before) || !Array.isArray(after) || after.length <= before.length
@@ -209,14 +299,22 @@ export function selfInstallGate(facts) {
   if (ids.length < MIN_INSTALL_QUEUE || ids.length > MAX_CARD_QUEUE || new Set(ids).size !== ids.length) {
     return no(`the new dispatch_scope must name ${MIN_INSTALL_QUEUE} to ${MAX_CARD_QUEUE} distinct cards`);
   }
-  for (const id of ids) if (!added.includes(id)) return no(`${String(id)} in the new dispatch_scope is not a newly appended card lane`);
+  // M16: a re-cut queue keeps later lanes R already has, so an id may also
+  // be an installed lane. The first is new: nextCard runs the first card that
+  // has not landed, so an installed stopped card first would stop the queue
+  // again. None has landed.
+  for (const id of ids) {
+    if (!added.includes(id) && !known.has(id)) return no(`${String(id)} in the new dispatch_scope is neither a newly appended nor an installed card lane`);
+  }
+  if (!added.includes(ids[0])) return no(`${String(ids[0])}, first in the new dispatch_scope, is not a newly appended card lane`);
   const landed = new Set(facts.landed ?? []);
   for (const id of ids) if (landed.has(id)) return no(`${id} already landed`);
   const installedContracts = contractEntries(facts.contractTexts?.installed);
   const nextContracts = contractEntries(facts.contractTexts?.main);
   if (!installedContracts || !nextContracts) return no("CARD_CONTRACTS cannot be read at both revisions");
   for (const id of ids) {
-    if (installedContracts.has(id) || !nextContracts.has(id)) return no(`${id} has no CARD_CONTRACTS entry added at main`);
+    if (added.includes(id) && (installedContracts.has(id) || !nextContracts.has(id))) return no(`${id} has no CARD_CONTRACTS entry added at main`);
+    if (!added.includes(id) && !nextContracts.has(id)) return no(`${id} has no CARD_CONTRACTS entry at main`);
   }
 
   const reviewed = reviewedAndGreen(facts, { changes, code, policy });
@@ -344,11 +442,6 @@ export function readMainFacts(git, credentials, revision) {
     .split("\0");
   const changes = [];
   for (let i = 0; i + 1 < fields.length; i += 2) changes.push({ status: fields[i], path: fields[i + 1] });
-  let contractLines = null;
-  if (changes.some((change) => change.path === CONTRACTS_PATH)) {
-    const numstat = /^(\d+)\t(\d+)\t/.exec(read(["diff", "--no-ext-diff", "--no-renames", "--numstat", revision, main, "--", CONTRACTS_PATH], "the contracts diff"));
-    contractLines = numstat ? { added: Number(numstat[1]), deleted: Number(numstat[2]) } : { added: null, deleted: null };
-  }
   const blobText = (rev, file) => read(["cat-file", "blob", `${rev}:${file}`], `${file} at ${rev}`);
   const blobs = {};
   for (const row of read(["ls-tree", "-r", "-z", main, "--", ".github/coordinator"], "the coordinator tree at main").split("\0")) {
@@ -356,7 +449,7 @@ export function readMainFacts(git, credentials, revision) {
     if (match) blobs[match[2]] = match[1];
   }
   return {
-    revision, main, descends: true, changes, contractLines, blobs,
+    revision, main, descends: true, changes, blobs,
     configs: { installed: blobText(revision, CONFIG_PATH), main: blobText(main, CONFIG_PATH) },
     contractTexts: { installed: blobText(revision, CONTRACTS_PATH), main: blobText(main, CONTRACTS_PATH) },
   };
@@ -488,7 +581,7 @@ export function renderInstallReport(result) {
   const lines = [
     reportMarker(result.activation_id),
     `${result.code?.length ? (result.queue?.length ? "Code and card queue" : "Code") : "Card queue"} install of main at ${result.main} over installed revision ${result.revision}: ${result.outcome}, ${INSTALL_OUTCOME_TEXT[result.outcome] ?? "an outcome this runner does not know"}.`,
-    "Started by the card-run timer once the installed queue was done.",
+    "Started by the card-run timer once the installed queue was done or stopped.",
   ];
   if (result.queue?.length) lines.push(`Queue: ${result.queue.join(", ")}.`);
   if (result.code?.length) {
