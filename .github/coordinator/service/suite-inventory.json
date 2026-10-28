@@ -4678,7 +4678,8 @@
     "SHU-322 mutation M65 count a nested property as a contract entry",
     "SHU-322 mutation M66 allow a character outside ASCII in code",
     "SHU-322 mutation M67 let a parameter be read anywhere in the file",
-    "SHU-322 mutation M68 end an arrow's body only at a closing bracket"
+    "SHU-322 mutation M68 end an arrow's body only at a closing bracket",
+    "SHU-322 mutation M69 allow a repeated contract entry"
   ],
   "requirements": [
     {
@@ -33898,6 +33899,10 @@
     },
     {
       "name": "SHU-322 mutation M68 end an arrow's body only at a closing bracket",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M69 allow a repeated contract entry",
       "capabilities": []
     }
   ],

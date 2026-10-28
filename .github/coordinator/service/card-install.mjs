@@ -170,6 +170,12 @@ export function installablePath(file) {
 // The card ids with an entry in the CARD_CONTRACTS object of a contracts
 // source, read as text: N's code is never imported here.
 export function contractEntries(text) {
+  const ids = contractEntryIds(text);
+  return ids && new Set(ids);
+}
+
+// The same ids in file order, repeats kept.
+function contractEntryIds(text) {
   // The live table is the top-level line that opens it, read in code, to the
   // first "});" after it that starts at the table's own nesting; only a line
   // that starts in code at that nesting is an entry. A table or entry inside
@@ -180,8 +186,8 @@ export function contractEntries(text) {
   const inside = (line) => line.start === "code" && line.depth === 2;
   const close = lines.findIndex((line, i) => i > open && inside(line) && line.text === "});");
   if (close < 0) return null;
-  return new Set(lines.slice(open + 1, close).filter(inside)
-    .map((line) => /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/.exec(line.text)?.[1]).filter(Boolean));
+  return lines.slice(open + 1, close).filter(inside)
+    .map((line) => /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/.exec(line.text)?.[1]).filter(Boolean);
 }
 
 const parse = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
@@ -469,6 +475,10 @@ export function contractAdditionRefusal(installedText, mainText) {
     if (why) return `an added line ${why}: ${line.text.trim().slice(0, 120)}`;
   }
   for (const part of params) if (!IDENTIFIER.test(part)) return `a parameter is not a plain name: ${part.slice(0, 60)}`;
+  // A repeated key replaces the earlier entry's contract when the file runs.
+  const ids = contractEntryIds(mainText) ?? [];
+  const repeated = ids.find((id, i) => ids.indexOf(id) !== i);
+  if (repeated) return `it repeats the contract entry ${repeated}`;
   return null;
 }
 

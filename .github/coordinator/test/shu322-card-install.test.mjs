@@ -1100,6 +1100,13 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
   assert.match(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT.replace("export const SHU197_PATHS", "export const SHU197_PATHS_X")),
     /does not keep every installed line/);
   assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT), null);
+  // An added entry never repeats an installed card's key.
+  const [installedId] = contractEntries(CONTRACTS_TEXT);
+  const duplicate = `\n  "${installedId}": Object.freeze({\n    workspace_mode: "repo",\n  }),`;
+  assert.match(contractAdditionRefusal(CONTRACTS_TEXT, contractsAdding(duplicate)), /repeats the contract entry/);
+  const repeatedGate = selfInstallGate(queueWithContracts(contractsAdding(duplicate)));
+  assert.ok(refused(repeatedGate), JSON.stringify(repeatedGate));
+  assert.match(repeatedGate.reason, /repeats the contract entry/);
   // A parameter is read anywhere in its arrow's body, over several lines.
   assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, `${CONTRACTS_TEXT}\nconst A1 = (REVIEW_LOCAL) => [REVIEW_LOCAL,\n  \`${"${REVIEW_LOCAL}"}\`];\n`), null);
   // A queue install's brief text may name anything.

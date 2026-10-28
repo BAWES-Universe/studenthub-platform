@@ -426,6 +426,12 @@ const CASES = [
     to: "else if (false /* M16-M68 */) break;",
     pattern: "M16 Q3:",
   },
+  {
+    name: "M69 allow a repeated contract entry",
+    from: "  if (repeated) return `it repeats",
+    to: "  if (false /* M16-M69 */) return `it repeats",
+    pattern: "M16 Q3:",
+  },
 ];
 
 for (const mutation of CASES) {
