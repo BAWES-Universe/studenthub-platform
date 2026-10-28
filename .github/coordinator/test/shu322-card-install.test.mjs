@@ -1072,6 +1072,10 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
     // A comment hides nothing behind another line terminator.
     "code after a carriage return in a comment": [appending("\n// note\rfetch(1);\n"), /line terminator other than/],
     "code after a line separator in a comment": [appending("\n// note\u2028fetch(1);\n"), /line terminator other than/],
+    // A string never continues onto the next line, where the lexer would
+    // read its code as a comment.
+    "code after a string continued onto the next line": [appending('\nexport const PROBE = "a\\\n//"; globalThis.__probe = 1; //\n'), /backslash before a newline/],
+    "a template continued onto the next line": [appending("\nexport const PROBE = `a\\\nb`;\n"), /backslash before a newline/],
   };
   for (const [name, [text, reason]] of Object.entries(mutants)) {
     for (const [kind, gate] of [["code", selfInstallGate(codeWithContracts(text))], ["queue", selfInstallGate(queueWithContracts(text))]]) {
@@ -1092,6 +1096,25 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
   const queueText = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts,
     main: nextContracts().replace('    workspace_mode: "repo",\n  }),\n});', '    workspace_mode: "repo",\n    brief: "import the module and read process.env",\n  }),\n});') } })));
   assert.equal(queueText.ok, true, JSON.stringify(queueText));
+});
+
+test("M16 Q4: an entry inside a block comment is not a contract entry", () => {
+  const commented = [
+    "export const CARD_CONTRACTS = Object.freeze({",
+    '  "SHU-1": Object.freeze({}),',
+    "  /*",
+    '  "SHU-401": Object.freeze({}),',
+    "  */",
+    "});",
+    "",
+  ].join("\n");
+  assert.deepEqual([...contractEntries(commented)], ["SHU-1"]);
+  // A re-cut queue whose new lane has its entry only inside a comment is refused.
+  const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
+  const main = `${CONTRACTS_TEXT.slice(0, end)}\n  /*\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n  }),\n  */${CONTRACTS_TEXT.slice(end)}`;
+  const gate = selfInstallGate(recutFacts((f) => ({ ...f, contractTexts: { ...f.contractTexts, main } })));
+  assert.ok(refused(gate), JSON.stringify(gate));
+  assert.match(gate.reason, /SHU-401/);
 });
 
 test("M16 Q5: the real additions of the last queue pull requests are inert data", () => {

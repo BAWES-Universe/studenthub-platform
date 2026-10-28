@@ -4636,6 +4636,7 @@
     "M16 Q1: a re-cut queue of one new lane and later installed lanes that have not landed installs itself",
     "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
     "M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says",
+    "M16 Q4: an entry inside a block comment is not a contract entry",
     "M16 Q5: the real additions of the last queue pull requests are inert data",
     "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
     "M16 Q6: a code install changes no config key a queue install could not",
@@ -4665,7 +4666,9 @@
     "SHU-322 mutation M53 allow a regular expression anywhere",
     "SHU-322 mutation M54 allow an escape in code",
     "SHU-322 mutation M55 let code change any config key but the policy",
-    "SHU-322 mutation M56 let code edit installed card lanes"
+    "SHU-322 mutation M56 let code edit installed card lanes",
+    "SHU-322 mutation M57 let a string continue onto the next line",
+    "SHU-322 mutation M58 count a commented entry as a contract entry"
   ],
   "requirements": [
     {
@@ -33716,6 +33719,10 @@
       "capabilities": []
     },
     {
+      "name": "M16 Q4: an entry inside a block comment is not a contract entry",
+      "capabilities": []
+    },
+    {
       "name": "M16 Q5: the real additions of the last queue pull requests are inert data",
       "capabilities": []
     },
@@ -33833,6 +33840,14 @@
     },
     {
       "name": "SHU-322 mutation M56 let code edit installed card lanes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M57 let a string continue onto the next line",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M58 count a commented entry as a contract entry",
       "capabilities": []
     }
   ],

@@ -176,7 +176,10 @@ export function contractEntries(text) {
   const end = source.indexOf("\n});", start);
   if (end < 0) return null;
   const block = source.slice(start, end);
-  return new Set([...block.matchAll(/^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/gm)].map((match) => match[1]));
+  // Only a line that starts in code is an entry: one inside a block comment,
+  // a string or a template is not.
+  return new Set(contractLines(block).filter((line) => line.start === "code")
+    .map((line) => /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/.exec(line.text)?.[1]).filter(Boolean));
 }
 
 const parse = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
@@ -424,6 +427,10 @@ export function contractAdditionRefusal(installedText, mainText) {
   // JavaScript also ends a line at \r, U+2028 and U+2029; the lexer splits
   // only at \n, so a comment could hide code behind one. Refuse them outright.
   if (/[\r\u2028\u2029]/.test(mainText)) return "it holds a line terminator other than \\n";
+  // A backslash before a newline continues a string in JavaScript, but the
+  // lexer ends the string there, so the next line would be read as code it
+  // is not (or the reverse). The file holds none; refuse it outright.
+  if (/\\\n/.test(mainText)) return "it holds a backslash before a newline";
   const before = contractLines(installedText);
   const after = contractLines(mainText);
   const added = new Set();

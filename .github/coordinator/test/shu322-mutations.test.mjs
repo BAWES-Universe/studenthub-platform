@@ -354,6 +354,18 @@ const CASES = [
     to: "        || false) { // M16-M56",
     pattern: "M16 Q6:",
   },
+  {
+    name: "M57 let a string continue onto the next line",
+    from: '  if (/\\\\\\n/.test(mainText)) return',
+    to: '  if (false /* M16-M57 */) return',
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M58 count a commented entry as a contract entry",
+    from: '  return new Set(contractLines(block).filter((line) => line.start === "code")',
+    to: '  return new Set(contractLines(block).filter(() => true /* M16-M58 */)',
+    pattern: "M16 Q4:",
+  },
 ];
 
 for (const mutation of CASES) {
