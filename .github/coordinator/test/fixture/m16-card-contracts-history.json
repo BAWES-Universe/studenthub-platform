@@ -1,0 +1,42 @@
+{
+  "source": "card-contracts.mjs at d77fea9 (#342), gzipped",
+  "revisions": {
+    "47e2963^": {
+      "absent_lines": [
+        [
+          3864,
+          3970
+        ],
+        [
+          4352,
+          4393
+        ]
+      ]
+    },
+    "e584bb9": {
+      "absent_lines": [
+        [
+          3942,
+          3954
+        ],
+        [
+          4387,
+          4393
+        ]
+      ]
+    }
+  },
+  "pairs": [
+    [
+      "47e2963^",
+      "e584bb9",
+      "queue 13 (#336); 47e2963 and e584bb9 hold the same file"
+    ],
+    [
+      "e584bb9",
+      "d77fea9",
+      "SHU-379 (#342)"
+    ]
+  ],
+  "note": "Each revision is the d77fea9 text without its absent_lines (0-based, inclusive line ranges): the file only gained lines across these commits."
+}

@@ -1033,7 +1033,7 @@ test("SHU-86 C13: revert waits for a running worker and leaves the run armed whi
   // M16: a worker that outlives the grace is stopped; only one that survives
   // TERM and KILL leaves the run armed.
   assert.deepEqual(held, { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING",
-    reaped: { cleared: false, count: 1, processes: ["5000"], signals: ["TERM", "KILL"], left: 1 } });
+    reaped: { cleared: false, listed: true, count: 1, processes: ["5000"], signals: ["TERM", "KILL"], left: 1 } });
   assert.equal(busy.files.has(PATHS.activation), true);
   assert.equal(busy.files.has(dropIn("shu-supervisor.service", RUN_DROP_IN)), true);
   assert.equal(busy.calls.some((call) => call.startsWith("systemctl")), false, "nothing restarts under a live worker");
@@ -1055,7 +1055,7 @@ test("M16 K1: after the grace the revert stops leftover worker processes, record
   for (const unit of UNITS) for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) host.files.set(dropIn(unit, name), { text: "x" });
   const done = revert(host.io, PATHS);
   assert.equal(done.reverted, true, JSON.stringify(done));
-  assert.deepEqual(done.reaped, { cleared: true, count: 2, processes: ["5000", "5001"], signals: ["TERM", "KILL"], left: 0 });
+  assert.deepEqual(done.reaped, { cleared: true, listed: true, count: 2, processes: ["5000", "5001"], signals: ["TERM", "KILL"], left: 0 });
   assert.ok(host.clock - START.getTime() >= CARD_RUN_LIMITS.workerGraceMs, "only after the whole grace");
   const term = host.calls.indexOf("pkill -TERM -u shu-worker");
   assert.ok(term >= 0 && term < host.calls.indexOf("pkill -KILL -u shu-worker"), "TERM, then KILL");
@@ -1071,6 +1071,20 @@ test("M16 K1: after the grace the revert stops leftover worker processes, record
   const report = renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: done });
   assert.match(report, /^After the worker grace the revert stopped 2 leftover shu-worker process\(es\) with TERM, then KILL: 5000; 5001\.$/m);
   assert.doesNotMatch(renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: { reverted: true, code: null } }), /worker grace/);
+});
+
+test("M16 K2: a listing pgrep cannot give is marked unlisted, counted from before the signals, and never reported as zero", async () => {
+  const signalled = (h, signal) => h.calls.some((call) => call === `pkill -${signal} -u shu-worker`);
+  const host = fakeHost({ workers: (h) => (signalled(h, "KILL") ? 0 : 3) });
+  const exec = host.io.exec;
+  host.io = { ...host.io, exec: (file, args) => (file === "pgrep" && args[0] === "-l" ? (host.calls.push(`pgrep ${args.join(" ")}`), { status: 2, stdout: "", stderr: "bad" }) : exec(file, args)) };
+  const done = revert(host.io, PATHS);
+  assert.equal(done.reverted, true, JSON.stringify(done));
+  assert.deepEqual(done.reaped, { cleared: true, listed: false, count: 3, processes: [], signals: ["TERM", "KILL"], left: 0 });
+  assert.ok(signalled(host, "TERM") && signalled(host, "KILL"), "the signals are sent all the same");
+  const report = renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: done });
+  assert.match(report, /stopped 3 leftover shu-worker process\(es\) with TERM, then KILL \(pgrep could not list them/);
+  assert.doesNotMatch(report, /stopped 0 /);
 });
 
 test("SHU-86 C14: one run at a time, as root only", async () => {

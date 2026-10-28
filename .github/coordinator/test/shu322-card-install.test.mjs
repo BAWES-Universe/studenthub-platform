@@ -14,6 +14,7 @@ import {
   readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractAdditionRefusal,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
+import { gunzipSync } from "node:zlib";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED_TEXT = fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8");
@@ -966,15 +967,21 @@ test("M16 Q1: a re-cut queue of one new lane and later installed lanes that have
   const landed = selfInstallGate(recutFacts((f) => ({ ...f, landed: [INSTALLED_SCOPE[1]] })));
   assert.ok(refused(landed));
   assert.match(landed.reason, new RegExp(`${INSTALLED_SCOPE[1]} already landed`));
-  // At least one card of the new queue is a new lane.
-  const noneNew = selfInstallGate(recutFacts((f) => ({ ...f,
-    configs: { ...f.configs, main: JSON.stringify(recutConfig((c) => ({ ...c, dispatch_scope: { issue_ids: INSTALLED_SCOPE.slice(1) } }))) } })));
-  assert.ok(refused(noneNew));
-  assert.match(noneNew.reason, /names no newly appended card lane/);
+  // The first card of the new queue is a new lane: nextCard runs the first
+  // card that has not landed, so the stopped card first would stop it again.
+  const scoped = (ids) => selfInstallGate(recutFacts((f) => ({ ...f,
+    configs: { ...f.configs, main: JSON.stringify(recutConfig((c) => ({ ...c, dispatch_scope: { issue_ids: ids } }))) } })));
+  for (const ids of [INSTALLED_SCOPE.slice(1), [INSTALLED_SCOPE[0], RECUT_ID, ...INSTALLED_SCOPE.slice(1, 3)], [INSTALLED_SCOPE[1], RECUT_ID]]) {
+    const gate = scoped(ids);
+    assert.ok(refused(gate), JSON.stringify(ids));
+    assert.match(gate.reason, new RegExp(`^${ids[0]}, first in the new dispatch_scope, is not a newly appended card lane`), JSON.stringify(ids));
+  }
+  assert.equal(scoped([RECUT_ID, INSTALLED_SCOPE[1]]).ok, true, "later installed lanes stay allowed");
   // A kept card still needs its contract entry at main.
   const kept = INSTALLED_SCOPE[1];
+  const unkept = (text) => text.replace(`  "${kept}": Object.freeze({`, '  "SHU-9999": Object.freeze({');
   const uncontracted = selfInstallGate(recutFacts((f) => ({ ...f,
-    contractTexts: { ...f.contractTexts, main: f.contractTexts.main.replace(`  "${kept}": Object.freeze({`, '  "SHU-9999": Object.freeze({') } })));
+    contractTexts: { installed: unkept(f.contractTexts.installed), main: unkept(f.contractTexts.main) } })));
   assert.ok(refused(uncontracted));
   assert.match(uncontracted.reason, new RegExp(`${kept} has no CARD_CONTRACTS entry at main`));
   // The new lane still needs its own entry added at main, and lanes are only appended.
@@ -998,51 +1005,65 @@ test("M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new
   assert.equal(JSON.parse(host.files.get(PATHS.receipt).text).revision, N);
 });
 
-// M16: card-contracts.mjs runs inside the root install tools (M11 C7), so a
-// code install may add only inert data to it.
+// M16: card-contracts.mjs runs inside the root install tools (M11 C7), so an
+// install may add only inert data to it.
 const contractsAdding = (lines) => {
   const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
   return CONTRACTS_TEXT.slice(0, end) + lines + CONTRACTS_TEXT.slice(end);
 };
 const appending = (lines) => `${CONTRACTS_TEXT}${lines}`;
 const NONE = { approval: "none" };
+// The same contracts text, installed as a queue: the re-cut queue with it.
+const queueWithContracts = (text) => recutFacts((f) => ({ ...f, contractTexts: { installed: CONTRACTS_TEXT, main: text } }));
 const codeWithContracts = (text, policy = NONE) => codeFacts(policy, (f) => ({ ...f,
   changes: [...f.changes, { status: "M", path: CONTRACTS_PATH }], contractLines: { added: 1, deleted: 0 },
   blobs: { ...f.blobs, [CONTRACTS_PATH]: "2".repeat(40) }, contractTexts: { installed: CONTRACTS_TEXT, main: text },
   passes: [{ ...f.passes[0], files: { ...f.passes[0].files, [CONTRACTS_PATH]: { sha: "2".repeat(40) } } }] }));
 
-test("M16 Q3: a code install adds only inert data to card-contracts.mjs", () => {
-  const entry = '\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n    brief: "a plain brief, see https://example.test/x",\n  }),';
-  const declaration = '\nexport const SHU401_PATHS = Object.freeze([\n  "a/b.ts",\n]);\nconst SHU401_TEXT = `one\n${SHU401_NAME} two`.trim();\n// a comment\n';
+test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says", () => {
+  const entry = '\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n    brief: "import the module, read process.env and call eval( in the text: https://example.test/x",\n  }),';
+  const declaration = '\nexport const SHU401_PATHS = Object.freeze([\n  "a/b.ts",\n]);\nconst SHU401_TEXT = `one import\n${SHU401_NAME} two`.trim();\n'
+    + 'const SHU401_RENAME = (text) => text.replace(/SHU-4"0`1/g, (_, d) => `SHU-${Number(d) - 1}`);\n'
+    + 'const SHU401_BRIEF = `${SHU401_RENAME(SHU401_TEXT)} and ${SHU401_PATHS.map((path) => path.trim()).join(" ")}`;\n// a comment\n';
   assert.deepEqual(selfInstallGate(codeWithContracts(contractsAdding(entry))),
     { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: null } });
-  assert.equal(selfInstallGate(codeWithContracts(appending(declaration))).ok, true);
+  assert.equal(selfInstallGate(codeWithContracts(appending(declaration))).ok, true, "helpers built from the file's own names are data");
   const mutants = {
     "an import": [appending('\nimport fs from "node:fs";\n'), /names a module/],
     "a dynamic import": [contractsAdding('\n  "x": import("node:fs"),'), /names a module/],
     "a require": [contractsAdding('\n  "x": require("fs"),'), /names a module/],
     "process": [contractsAdding("\n  ...[process.exit(1)],"), /names a module, process/],
-    "child_process in text": [contractsAdding('\n  "x": "child_process",'), /names a module, process/],
     "eval": [contractsAdding('\n  "x": eval,'), /names a module/],
     "Function": [contractsAdding('\n  "x": Function("return 1"),'), /names a module/],
     "an exported function": [appending("\nexport function steal() {}\n"), /exports something other than a const/],
     "a re-export": [appending('\nexport { x } from "./y.mjs";\n'), /names a module|exports/],
-    "a call": [contractsAdding('\n  "x": fetch("https://example.test"),'), /calls something other than/],
-    "a getter": [contractsAdding("\n  get x() { return 1; },"), /calls something other than/],
-    "an interpolated call": [appending("\nconst A = `${f()}`;\n"), /interpolates more than a name/],
+    "a global call": [contractsAdding('\n  "x": fetch("https://example.test"),'), /refers to fetch/],
+    "a global behind a ternary": [contractsAdding("\n  x: [1].map(true ? setTimeout : 0),"), /refers to setTimeout/],
+    "a global behind a regular expression's quote": [contractsAdding('\n  x: /"/ && fetch("x"),'), /refers to fetch/],
+    "a global in an interpolation": [appending("\nconst A = `${fetch(1)}`;\n"), /refers to fetch/],
+    "a parameter named like a global": [appending("\nconst F = (fetch) => fetch;\n"), /declares fetch, a global name/],
+    "a getter": [contractsAdding("\n  get x() { return 1; },"), /refers to get/],
+    "a constructor": [contractsAdding("\n  x: new Map(),"), /refers to new/],
+    "a constructor member": [contractsAdding("\n  x: Object.constructor,"), /reaches \.constructor/],
+    "a computed member": [contractsAdding('\n  x: Object["constructor"],'), /computed member/],
+    "a called expression": [contractsAdding("\n  x: (() => 1)(),"), /calls the result of an expression/],
+    "an optional call": [contractsAdding("\n  x: Object.freeze?.(1),"), /optional chaining/],
     "a tagged template": [contractsAdding("\n  x: String.raw`a`,"), /tags a template/],
-    "an arrow": [contractsAdding("\n  x: (() => 1),"), /holds code/],
-    "a global": [contractsAdding("\n  x: globalThis,"), /holds code/],
     "an assignment": [appending("\nCARD_CONTRACTS.x = 1;\n"), /assigns/],
-    "a regular expression": [contractsAdding('\n  x: /"/ && 1,'), /regular expression/],
+    "a global object": [contractsAdding("\n  x: globalThis,"), /refers to globalThis/],
     "a top-level statement": [appending("\nCARD_CONTRACTS;\n"), /top-level statement/],
     "a top-level template": [appending("\n`text`;\n"), /top-level statement/],
+    // The top level is read from the nesting, not the indentation.
+    "an indented throw": [appending("\n  throw 1;\n"), /refers to throw|top-level statement/],
+    "an indented call": [appending("\n  SHU197_ACCEPTANCE.trim();\n"), /top-level statement/],
+    "an indented expression statement": [appending("\n    CARD_CONTRACTS;\n"), /top-level statement/],
   };
   for (const [name, [text, reason]] of Object.entries(mutants)) {
-    const gate = selfInstallGate(codeWithContracts(text));
-    assert.ok(refused(gate), `${name}: ${JSON.stringify(gate)}`);
-    assert.match(gate.reason, reason, name);
-    assert.match(gate.reason, /card-contracts\.mjs changes with coordinator code/, name);
+    for (const [kind, gate] of [["code", selfInstallGate(codeWithContracts(text))], ["queue", selfInstallGate(queueWithContracts(text))]]) {
+      assert.ok(refused(gate), `${kind} ${name}: ${JSON.stringify(gate)}`);
+      assert.match(gate.reason, reason, `${kind} ${name}`);
+      assert.match(gate.reason, /card-contracts\.mjs gains more than inert data/, `${kind} ${name}`);
+    }
   }
   // A code install's contracts change still only gains lines.
   const shrunk = selfInstallGate(codeFacts(NONE, (f) => ({ ...codeWithContracts(contractsAdding(entry)), contractLines: { added: 1, deleted: 1 } })));
@@ -1052,10 +1073,33 @@ test("M16 Q3: a code install adds only inert data to card-contracts.mjs", () => 
   assert.match(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT.replace("export const SHU197_PATHS", "export const SHU197_PATHS_X")),
     /does not keep every installed line/);
   assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT), null);
-  // A queue install keeps the plain rule: its brief text may name anything.
+  // A queue install's brief text may name anything.
   const queueText = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts,
     main: nextContracts().replace('    workspace_mode: "repo",\n  }),\n});', '    workspace_mode: "repo",\n    brief: "import the module and read process.env",\n  }),\n});') } })));
   assert.equal(queueText.ok, true, JSON.stringify(queueText));
+});
+
+test("M16 Q5: the real additions of the last queue pull requests are inert data", () => {
+  // card-contracts.mjs at d77fea9, and which of its lines the earlier
+  // revisions lack: the file only gained lines across these commits.
+  const history = JSON.parse(fs.readFileSync(path.join(HERE, "fixture", "m16-card-contracts-history.json"), "utf8"));
+  const latest = gunzipSync(fs.readFileSync(path.join(HERE, "fixture", "m16-card-contracts-d77fea9.mjs.gz"))).toString("utf8");
+  const at = (revision) => {
+    if (revision === "d77fea9") return latest;
+    const absent = history.revisions[revision].absent_lines;
+    return latest.split("\n").filter((_, i) => !absent.some(([from, to]) => i >= from && i <= to)).join("\n");
+  };
+  assert.equal(history.pairs.length, 2);
+  for (const [from, to, what] of history.pairs) {
+    const before = at(from);
+    const after = at(to);
+    assert.ok(after.length > before.length, `${what} adds lines`);
+    assert.equal(contractAdditionRefusal(before, after), null, what);
+    assert.deepEqual([...contractEntries(after)].filter((id) => !contractEntries(before).has(id)).length > 0, true, `${what} adds contract entries`);
+  }
+  // And those revisions' own helpers really are what the check reads as data.
+  assert.match(at("e584bb9"), /const Q13_RENAMED = \(text\) => text\.replace\(/);
+  assert.match(latest, /const SHU379_BRIEF = `\$\{SHU371_BRIEF\.replace\(/);
 });
 
 test("M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone", async () => {

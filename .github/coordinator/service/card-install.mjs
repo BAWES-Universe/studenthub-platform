@@ -14,7 +14,7 @@
 //   * card-contracts.mjs only gains lines;
 //   * config.json, parsed: every key but dispatch_scope and card_lanes is
 //     deep-equal, R's card_lanes are an exact prefix of N's, and the new
-//     dispatch_scope is 2 to 5 cards that have not landed, at least one of
+//     dispatch_scope is 2 to 5 cards that have not landed, the first of
 //     them a new lane, each new lane with its own CARD_CONTRACTS entry added
 //     at N and each other one a lane R already has (M16, below);
 //   * every changed coordinator blob at N is the blob a Card A REVIEW_PASS
@@ -43,23 +43,30 @@
 //     (card-run.mjs). What replaces a stopped card is a re-cut queue: one new
 //     lane, a copy of the stopped card's under a new id, first in
 //     dispatch_scope, followed by later lanes R already has, with the stopped
-//     card left out. So a dispatch_scope id may also be an installed lane that
-//     has not landed; every other rule above holds as it was.
+//     card left out. So a dispatch_scope id after the first may also be an
+//     installed lane that has not landed; every other rule above holds as it
+//     was.
 //   * code_self_install { approval: "none" } (codeInstallPolicy, from M11) is
 //     on in config.json: a box REVIEW_PASS at the exact head and green checks
 //     install coordinator code. Owner-only paths stay NEEDS_OWNER.
 //   * card-contracts.mjs is installable, yet the root install tools import it
-//     (test M11 C7), so it runs as root. When a code install changes it, it
-//     must still only gain lines, and each added line must be inert data
-//     (contractAdditionRefusal): no import, require(, export other than the
-//     `export const X = ` pattern, eval, Function(, process. or child_process;
-//     no interpolation but ${NAME}; no call but Object.freeze, .join and
-//     .trim; no assignment, arrow, function, new or class; and a top-level
-//     line is a const declaration, a comment or a closing bracket, so the rest
-//     are object or array entries. A queue install keeps the plain rule: its
-//     brief text names those words often, and it adds no code.
+//     (test M11 C7), so it runs as root. Any install that changes it, queue
+//     or code, may only add lines, and each added line's code must be inert
+//     data (contractAdditionRefusal); the text of its strings, templates and
+//     comments is never read as code, so a brief may say anything. The code
+//     names no import, require(, eval, Function(, process. or child_process,
+//     and exports only `export const X = `. It refers only to names the file
+//     declares (top-level consts and arrow parameters, none a global's), to
+//     Object, Number, String and Boolean, and to string and array members
+//     such as replace, map, filter and join. It calls no expression result,
+//     reads no computed member, tags no template and assigns nothing but a
+//     const. A line at the top level, by bracket and template nesting rather
+//     than indentation, is a const declaration or a comment. So the file can
+//     still build briefs from helpers, as queue 13 does, but cannot reach the
+//     process, the filesystem or the network.
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { builtinModules } from "node:module";
 import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReason, reportMarker, PUSH_TIMEOUT_SECONDS,
   readCoordinatorCredentials } from "./card-prepare.mjs";
 import { boundedFetch, github, readCommitChecks } from "./card-land.mjs";
@@ -198,13 +205,14 @@ export function selfInstallGate(facts) {
     if (!["A", "M"].includes(change.status)) return no(`${change.path} is ${change.status === "D" ? "deleted" : `changed as ${String(change.status)}`}; only additions and edits install themselves`);
   }
   const contracts = changes.find((change) => change.path === CONTRACTS_PATH);
-  // M16: a code install's contracts change is held to this too (see below).
+  // M16: a code install's contracts change is held to this too, and every
+  // install's additions to it must be inert data (the root tools import it).
   if (contracts && (contracts.status !== "M" || facts.contractLines?.deleted !== 0 || !Number.isInteger(facts.contractLines?.added))) {
     return no(`${CONTRACTS_PATH} may only gain lines`);
   }
-  if (contracts && code.length) {
+  if (contracts) {
     const refusal = contractAdditionRefusal(facts.contractTexts?.installed, facts.contractTexts?.main);
-    if (refusal) return no(`${CONTRACTS_PATH} changes with coordinator code, and ${refusal}`);
+    if (refusal) return no(`${CONTRACTS_PATH} gains more than inert data: ${refusal}`);
   }
 
   const keys = new Set([...Object.keys(installed), ...Object.keys(next)]);
@@ -237,11 +245,13 @@ export function selfInstallGate(facts) {
     return no(`the new dispatch_scope must name ${MIN_INSTALL_QUEUE} to ${MAX_CARD_QUEUE} distinct cards`);
   }
   // M16: a re-cut queue keeps later lanes R already has, so an id may also
-  // be an installed lane; at least one is new, and none has landed.
+  // be an installed lane. The first is new: nextCard runs the first card that
+  // has not landed, so an installed stopped card first would stop the queue
+  // again. None has landed.
   for (const id of ids) {
     if (!added.includes(id) && !known.has(id)) return no(`${String(id)} in the new dispatch_scope is neither a newly appended nor an installed card lane`);
   }
-  if (!ids.some((id) => added.includes(id))) return no("the new dispatch_scope names no newly appended card lane");
+  if (!added.includes(ids[0])) return no(`${String(ids[0])}, first in the new dispatch_scope, is not a newly appended card lane`);
   const landed = new Set(facts.landed ?? []);
   for (const id of ids) if (landed.has(id)) return no(`${id} already landed`);
   const installedContracts = contractEntries(facts.contractTexts?.installed);
@@ -258,23 +268,31 @@ export function selfInstallGate(facts) {
 }
 
 // M16: card-contracts.mjs, lexed line by line just enough to tell code from
-// the text of strings, templates and comments. Each line records the state it
-// starts in, the code it holds (each string as "" and each template quote as
-// `) and whether it opens an interpolation other than ${NAME}. Regular
-// expression literals are read as code, so an added line may hold none; R's
-// own, read the same way at both revisions, hold no quote.
+// the text of strings, templates, regular expressions and comments. Each line
+// records the state it starts in, whether it starts at the top level (no
+// bracket open, outside every template), and the code it holds: each string
+// as "", each regular expression as /0/, each template quote as ` and each
+// interpolation as #{ and }, with ${NAME} read as template text.
+const REGEX_AFTER = new Set(["", "(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";", "+", "-", "*", "%", "<", ">", "~", "^"]);
 export function contractLines(text) {
   const source = String(text ?? "");
-  const lines = [{ start: "code", text: "", code: "", interpolation: false }];
+  const fresh = (start, top) => ({ start, top, text: "", code: "" });
+  const lines = [fresh("code", true)];
   const stack = [{ kind: "code", braces: 0 }];
+  let depth = 0;
   let line = lines[0];
+  // The last code character before this one, across lines, to tell a
+  // regular expression from a division.
+  let last = "";
+  const emit = (value) => { line.code += value; const trimmed = value.trim(); if (trimmed) last = trimmed.at(-1); };
   for (let i = 0; i < source.length; i += 1) {
     const c = source[i];
     let top = stack.at(-1);
     if (c === "\n") {
       if (top.kind === "line" || top.kind === "string") stack.pop();
       top = stack.at(-1);
-      line = { start: top.kind === "template" || top.kind === "comment" ? top.kind : "code", text: "", code: "", interpolation: false };
+      const start = top.kind === "template" || top.kind === "comment" ? top.kind : "code";
+      line = fresh(start, start === "code" && stack.length === 1 && depth === 0);
       lines.push(line);
       continue;
     }
@@ -290,12 +308,12 @@ export function contractLines(text) {
     }
     if (top.kind === "template") {
       if (c === "\\" && source[i + 1] !== "\n") { line.text += source[i + 1] ?? ""; i += 1; continue; }
-      if (c === "`") { stack.pop(); line.code += "`"; continue; }
+      if (c === "`") { stack.pop(); emit("`"); continue; }
       if (c === "$" && source[i + 1] === "{") {
         const name = /^\$\{[A-Za-z_$][\w$]*\}/.exec(source.slice(i));
         if (name) { line.text += name[0].slice(1); i += name[0].length - 1; continue; }
-        line.interpolation = true;
         stack.push({ kind: "code", braces: 0 });
+        emit("#{");
         line.text += "{";
         i += 1;
       }
@@ -303,64 +321,136 @@ export function contractLines(text) {
     }
     if (c === "/" && source[i + 1] === "/") { stack.push({ kind: "line" }); continue; }
     if (c === "/" && source[i + 1] === "*") { stack.push({ kind: "comment" }); line.text += "*"; i += 1; continue; }
-    if (c === "\"" || c === "'") { stack.push({ kind: "string", quote: c }); line.code += "\"\""; continue; }
-    if (c === "`") { stack.push({ kind: "template" }); line.code += "`"; continue; }
+    if (c === "/" && (REGEX_AFTER.has(last) || /^(?:return|typeof)$/.test(/[\w$]*$/.exec(line.code)?.[0] ?? ""))) {
+      // A regular expression literal, to its closing slash outside a class,
+      // then its flags. One that runs off the line is read as code.
+      let j = i + 1;
+      let inClass = false;
+      for (; j < source.length && source[j] !== "\n"; j += 1) {
+        if (source[j] === "\\") { j += 1; continue; }
+        if (source[j] === "[") inClass = true;
+        else if (source[j] === "]") inClass = false;
+        else if (source[j] === "/" && !inClass) break;
+      }
+      if (source[j] === "/") {
+        while (/[a-z]/.test(source[j + 1] ?? "")) j += 1;
+        line.text += source.slice(i + 1, j + 1);
+        i = j;
+        emit("/0/");
+        continue;
+      }
+    }
+    if (c === "\"" || c === "'") { stack.push({ kind: "string", quote: c }); emit("\"\""); continue; }
+    if (c === "`") { stack.push({ kind: "template" }); emit("`"); continue; }
     if (c === "{") top.braces += 1;
     if (c === "}") {
-      if (top.braces === 0 && stack.length > 1) { stack.pop(); continue; }
+      if (top.braces === 0 && stack.length > 1) { stack.pop(); emit("}"); continue; }
       top.braces -= 1;
     }
-    line.code += c;
+    if ("([{".includes(c)) depth += 1;
+    if (")]}".includes(c)) depth -= 1;
+    emit(c);
   }
   return lines;
 }
 
-const CONTRACT_WORDS = [/\bimport/, /\brequire\s*\(/, /\beval\b/, /\bFunction\s*\(/, /\bprocess\./, /child_process/];
-const CONTRACT_EXPORT = /^export const [A-Za-z_$][\w$]* = /;
-const CONTRACT_DECLARATION = /^(?:export )?const [A-Za-z_$][\w$]* = /;
-const CONTRACT_CODE = /=>|\b(?:function|new|class|await|yield|delete|globalThis|constructor|prototype|__proto__)\b|\+\+|--/;
-const CONTRACT_CALLS = /(?:\bObject\.freeze|\.join|\.trim)\s*$/;
+// What an added line's code may reach: names the file declares (never a
+// global's), the members below, and these globals and literals.
+const CONTRACT_MEMBERS = new Set(["freeze", "replace", "replaceAll", "map", "flatMap", "flat", "filter", "some", "every", "find", "includes",
+  "indexOf", "startsWith", "endsWith", "join", "split", "slice", "concat", "trim", "trimStart", "trimEnd", "toUpperCase", "toLowerCase",
+  "padStart", "padEnd", "repeat", "length"]);
+const CONTRACT_GLOBALS = new Set(["Object", "Number", "String", "Boolean"]);
+const CONTRACT_LITERALS = new Set(["const", "export", "typeof", "true", "false", "null", "undefined", "NaN", "Infinity"]);
+const CONTRACT_NOT_DECLARABLE = new Set(["require", "module", "exports", "__filename", "__dirname", "arguments", "eval", "import", "this", "super"]);
+const CONTRACT_WORDS = [/\bimport\b/, /\brequire\s*\(/, /\beval\b/, /\bFunction\s*\(/, /\bprocess\s*\./, /\bchild_process\b/];
+const CONTRACT_EXPORT = /^\s*export const [A-Za-z_$][\w$]* = /;
+const CONTRACT_DECLARATION = /^\s*(?:export )?const ([A-Za-z_$][\w$]*) = /;
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+// A Node builtin's name is a global only where code is evaluated (node -e),
+// never in a module like this one or card-contracts.mjs.
+const globalName = (name) => (name in globalThis && !builtinModules.includes(name)) || CONTRACT_NOT_DECLARABLE.has(name);
+
+// The names N declares: its top-level consts and every arrow parameter.
+function contractNames(lines) {
+  const names = new Set();
+  const params = [];
+  for (const line of lines) {
+    const declared = line.top ? CONTRACT_DECLARATION.exec(line.code) : null;
+    if (declared) names.add(declared[1]);
+  }
+  const code = lines.map((line) => line.code).join("\n");
+  for (const match of code.matchAll(/\(([^()]*)\)\s*=>|([A-Za-z_$][\w$]*)\s*=>/g)) {
+    for (const part of (match[1] ?? match[2]).split(",").map((entry) => entry.trim()).filter(Boolean)) params.push(part);
+  }
+  for (const part of params) if (IDENTIFIER.test(part)) names.add(part);
+  return { names, params };
+}
 
 // M16: why the lines N's card-contracts.mjs adds to R's are not inert data,
 // or null when they are. R's lines, each in the state it starts in, must
-// appear in N's in order; every other line of N is an added line.
+// appear in N's in order; every other line of N is an added line. A brief's
+// words are template or string text and never code.
 export function contractAdditionRefusal(installedText, mainText) {
   if (typeof installedText !== "string" || typeof mainText !== "string") return "it cannot be read at both revisions";
   const before = contractLines(installedText);
   const after = contractLines(mainText);
-  const added = [];
+  const added = new Set();
   let j = 0;
-  for (const line of after) {
-    if (j < before.length && before[j].text === line.text && before[j].start === line.start) j += 1;
-    else added.push(line);
-  }
+  after.forEach((line, i) => {
+    if (j < before.length && before[j].text === line.text && before[j].start === line.start && before[j].top === line.top) j += 1;
+    else added.add(i);
+  });
   if (j < before.length) return "it does not keep every installed line as it was";
-  for (const line of added) {
-    const why = contractLineRefusal(line);
+  const { names, params } = contractNames(after);
+  for (const name of names) if (globalName(name)) return `it declares ${name}, a global name`;
+  // The code of every line, joined, so a token's neighbours on other lines count.
+  const joined = after.map((line) => line.code).join("\n");
+  let offset = 0;
+  for (const [i, line] of after.entries()) {
+    const start = offset;
+    offset += line.code.length + 1;
+    if (!added.has(i)) continue;
+    const why = contractLineRefusal(line, joined, start, names);
     if (why) return `an added line ${why}: ${line.text.trim().slice(0, 120)}`;
   }
+  for (const part of params) if (!IDENTIFIER.test(part)) return `a parameter is not a plain name: ${part.slice(0, 60)}`;
   return null;
 }
 
-function contractLineRefusal(line) {
-  const text = line.text;
-  const word = CONTRACT_WORDS.find((pattern) => pattern.test(text));
-  if (word) return "names a module, process or code loader";
-  if (/\bexport\b/.test(text) && !CONTRACT_EXPORT.test(text)) return "exports something other than a const";
-  if (line.interpolation) return "interpolates more than a name";
+function contractLineRefusal(line, joined, start, names) {
   const code = line.code;
-  if (CONTRACT_CODE.test(code)) return "holds code";
+  if (CONTRACT_WORDS.some((pattern) => pattern.test(code))) return "names a module, process or code loader";
+  if (/\bexport\b/.test(code) && !CONTRACT_EXPORT.test(code)) return "exports something other than a const";
+  if (/\+\+|--|__proto__/.test(code)) return "holds code";
   if (/[\w$\])]\s*`/.test(code)) return "tags a template";
-  // A regular expression is read as code here, so a quote in one could hide
-  // what follows it; an added line has none.
-  if (code.includes("/")) return "holds a regular expression or a division";
-  const assignments = code.replace(/^\s*(?:export )?const [A-Za-z_$][\w$]* = /, "");
+  const assignments = code.replace(CONTRACT_DECLARATION, "").replace(/===|!==|==|<=|>=|=>/g, "");
   if (/=/.test(assignments)) return "assigns";
-  for (let at = code.indexOf("("); at >= 0; at = code.indexOf("(", at + 1)) {
-    if (!CONTRACT_CALLS.test(code.slice(0, at))) return "calls something other than Object.freeze, join or trim";
+  // The nearest code character before or after a position, across lines.
+  const before = (at) => { let k = at - 1; while (k >= 0 && /\s/.test(joined[k])) k -= 1; return { char: joined[k] ?? "", at: k }; };
+  const after = (at) => { let k = at; while (k < joined.length && /\s/.test(joined[k])) k += 1; return joined[k] ?? ""; };
+  for (const match of code.matchAll(/[A-Za-z_$][\w$]*|[([]/g)) {
+    const at = start + match.index;
+    const token = match[0];
+    const prev = before(at);
+    const spread = joined.slice(prev.at - 2, prev.at + 1) === "...";
+    if (token === "(" || token === "[") {
+      if (prev.char === "." && !spread) return token === "(" ? "calls through optional chaining" : "reads a computed member";
+      if (/[)\]`"}]/.test(prev.char)) return token === "(" ? "calls the result of an expression" : "reads a computed member";
+      if (token === "[" && /[\w$]/.test(prev.char)) return "reads a computed member";
+      continue;
+    }
+    if (/^\d/.test(token) || (match.index > 0 && /[\w$]/.test(code[match.index - 1]))) continue;
+    if (prev.char === "." && !spread) {
+      if (!CONTRACT_MEMBERS.has(token)) return `reaches .${token}`;
+      continue;
+    }
+    // An object key: after { or , and before :.
+    if ((prev.char === "{" || prev.char === ",") && after(at + token.length) === ":") continue;
+    if (CONTRACT_LITERALS.has(token) || CONTRACT_GLOBALS.has(token)) continue;
+    if (!names.has(token)) return `refers to ${token}, which the file does not declare`;
   }
-  // A top-level line: a declaration, a comment or a closing bracket.
-  if (line.start === "code" && /^\S/.test(text) && !CONTRACT_DECLARATION.test(text) && !/^\/\//.test(text) && !/^[\]})]/.test(text)) {
+  // A top-level line, by its nesting: a const declaration or a comment.
+  if (line.top && line.text.trim() && !/^\s*\/\//.test(line.text) && !CONTRACT_DECLARATION.test(line.code)) {
     return "is a top-level statement that is not a const declaration";
   }
   return null;

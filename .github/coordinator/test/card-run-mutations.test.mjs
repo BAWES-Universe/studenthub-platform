@@ -1439,6 +1439,12 @@ const CASES = [
     to: "  if (false) { // SHU86-M212",
     pattern: "M16 K1:",
   },
+  {
+    name: "M213 report a listing pgrep could not give as zero processes",
+    from: "count: listed ? lines.length : running,",
+    to: "count: lines.length, /* SHU86-M213 */",
+    pattern: "M16 K2:",
+  },
 ];
 
 for (const mutation of CASES) {

@@ -576,11 +576,15 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 // M16: the shu-worker processes still running after the grace, named for the
 // report (pid and process name only: a command line may carry a secret, and
 // the report is posted on Linear), then stopped: TERM, a short wait, KILL for
-// whatever is left. `cleared` says none is left.
+// whatever is left. `cleared` says none is left. A listing pgrep could not
+// give (an exit other than 0 or 1) is `listed: false`, and the count is the
+// one read just before, so the report never says a false zero.
 export const REAPED_LIST_MAX = 20;
 function reapWorkers(io, limits) {
-  const listed = io.exec("pgrep", ["-l", "-u", "shu-worker"]);
-  const lines = listed.status === 0 ? String(listed.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+  const running = workerCount(io);
+  const listing = io.exec("pgrep", ["-l", "-u", "shu-worker"]);
+  const listed = listing.status === 0 || listing.status === 1;
+  const lines = listing.status === 0 ? String(listing.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean) : [];
   const processes = lines.slice(0, REAPED_LIST_MAX).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
   const signals = ["TERM"];
   io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
@@ -591,7 +595,7 @@ function reapWorkers(io, limits) {
     io.sleep(limits.killWaitMs);
   }
   const left = workerCount(io);
-  return { cleared: left === 0, count: lines.length, processes, signals, left };
+  return { cleared: left === 0, listed, count: listed ? lines.length : running, processes, signals, left };
 }
 
 // One bounded card run: refuse unless idle and installed, arm, tick until the

@@ -241,8 +241,8 @@ const CASES = [
     pattern: "M11 C4:",
   },
   {
-    name: "M38 accept a re-cut queue with no new lane in it",
-    from: '  if (!ids.some((id) => added.includes(id))) return no(',
+    name: "M38 accept a re-cut queue whose first card is an installed lane",
+    from: "  if (!added.includes(ids[0])) return no(",
     to: "  if (false) /* M16-M38 */ return no(",
     pattern: "M16 Q1:",
   },
@@ -253,9 +253,9 @@ const CASES = [
     pattern: "M16 Q1:",
   },
   {
-    name: "M40 skip the contracts content check on a code install",
-    from: "  if (contracts && code.length) {",
-    to: "  if (false) { // M16-M40",
+    name: "M40 skip the contracts content check on a queue install",
+    from: "  if (contracts) {",
+    to: "  if (contracts && code.length) { // M16-M40",
     pattern: "M16 Q3:",
   },
   {
@@ -265,20 +265,20 @@ const CASES = [
     pattern: "M16 Q3:",
   },
   {
-    name: "M42 allow any call in an added contracts line",
-    from: "    if (!CONTRACT_CALLS.test(code.slice(0, at))) return",
-    to: "    if (false) /* M16-M42 */ return",
+    name: "M42 allow calling the result of an expression",
+    from: '      if (/[)\\]`"}]/.test(prev.char)) return token === "(" ?',
+    to: '      if (false) /* M16-M42 */ return token === "(" ?',
     pattern: "M16 Q3:",
   },
   {
-    name: "M43 allow any interpolation in an added contracts line",
-    from: '  if (line.interpolation) return "interpolates more than a name";',
-    to: "  // M16-M43",
+    name: "M43 allow a name the file does not declare",
+    from: "    if (!names.has(token)) return",
+    to: "    if (false) /* M16-M43 */ return",
     pattern: "M16 Q3:",
   },
   {
     name: "M44 allow an import in an added contracts line",
-    from: "const CONTRACT_WORDS = [/\\bimport/, ",
+    from: "const CONTRACT_WORDS = [/\\bimport\\b/, ",
     to: "const CONTRACT_WORDS = [/* M16-M44 */ ",
     pattern: "M16 Q3:",
   },
@@ -287,6 +287,30 @@ const CASES = [
     from: '    return "is a top-level statement that is not a const declaration";',
     to: "    return null; // M16-M45",
     pattern: "M16 Q3:",
+  },
+  {
+    name: "M46 read the top level from the indentation",
+    from: "  if (line.top && line.text.trim()",
+    to: "  if (/^\\S/.test(line.text) /* M16-M46 */ && line.text.trim()",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M47 let a declared name shadow a global",
+    from: "  for (const name of names) if (globalName(name)) return",
+    to: "  for (const name of names) if (false) /* M16-M47 */ return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M48 allow any member",
+    from: "      if (!CONTRACT_MEMBERS.has(token)) return",
+    to: "      if (false) /* M16-M48 */ return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M49 read a regular expression as code",
+    from: '    if (c === "/" && (REGEX_AFTER.has(last)',
+    to: '    if (false /* M16-M49 */ && (REGEX_AFTER.has(last)',
+    pattern: "M16 Q5:",
   },
 ];
 

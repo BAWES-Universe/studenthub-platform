@@ -2135,6 +2135,7 @@
     "SHU-86 C12: a run that outlives its window stops at the window and reverts",
     "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
     "M16 K1: after the grace the revert stops leftover worker processes, records them and finishes",
+    "M16 K2: a listing pgrep cannot give is marked unlisted, counted from before the signals, and never reported as zero",
     "SHU-86 C14: one run at a time, as root only",
     "SHU-86 C15: plan changes nothing, and review flags come all together",
     "SHU-86 C16: a unit without its resident drop-in is not armed",
@@ -4617,6 +4618,7 @@
     "SHU-86 mutation M210 stop leftover workers with TERM only",
     "SHU-86 mutation M211 restart the supervisor under a worker that survived KILL",
     "SHU-86 mutation M212 leave the stopped workers out of the report",
+    "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -4632,7 +4634,8 @@
     "M11 C6: when the installed revision cannot be put back, the host pauses as before",
     "M16 Q1: a re-cut queue of one new lane and later installed lanes that have not landed installs itself",
     "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
-    "M16 Q3: a code install adds only inert data to card-contracts.mjs",
+    "M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says",
+    "M16 Q5: the real additions of the last queue pull requests are inert data",
     "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
     "SHU-322 mutation M30 install an owner-only path",
     "SHU-322 mutation M31 let code change the self-install policy",
@@ -4642,14 +4645,18 @@
     "SHU-322 mutation M35 count an approval of another head",
     "SHU-322 mutation M36 pause instead of putting R back",
     "SHU-322 mutation M37 run the code plan check as a queue plan check",
-    "SHU-322 mutation M38 accept a re-cut queue with no new lane in it",
+    "SHU-322 mutation M38 accept a re-cut queue whose first card is an installed lane",
     "SHU-322 mutation M39 drop the kept lane's contract check",
-    "SHU-322 mutation M40 skip the contracts content check on a code install",
+    "SHU-322 mutation M40 skip the contracts content check on a queue install",
     "SHU-322 mutation M41 let a code install delete contracts lines",
-    "SHU-322 mutation M42 allow any call in an added contracts line",
-    "SHU-322 mutation M43 allow any interpolation in an added contracts line",
+    "SHU-322 mutation M42 allow calling the result of an expression",
+    "SHU-322 mutation M43 allow a name the file does not declare",
     "SHU-322 mutation M44 allow an import in an added contracts line",
-    "SHU-322 mutation M45 allow any top-level statement in card-contracts.mjs"
+    "SHU-322 mutation M45 allow any top-level statement in card-contracts.mjs",
+    "SHU-322 mutation M46 read the top level from the indentation",
+    "SHU-322 mutation M47 let a declared name shadow a global",
+    "SHU-322 mutation M48 allow any member",
+    "SHU-322 mutation M49 read a regular expression as code"
   ],
   "requirements": [
     {
@@ -18552,6 +18559,10 @@
     },
     {
       "name": "M16 K1: after the grace the revert stops leftover worker processes, records them and finishes",
+      "capabilities": []
+    },
+    {
+      "name": "M16 K2: a listing pgrep cannot give is marked unlisted, counted from before the signals, and never reported as zero",
       "capabilities": []
     },
     {
@@ -33600,6 +33611,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
+      "capabilities": []
+    },
+    {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
       "capabilities": [
         {
@@ -33684,7 +33699,11 @@
       "capabilities": []
     },
     {
-      "name": "M16 Q3: a code install adds only inert data to card-contracts.mjs",
+      "name": "M16 Q3: every install adds only inert data to card-contracts.mjs, whatever its text says",
+      "capabilities": []
+    },
+    {
+      "name": "M16 Q5: the real additions of the last queue pull requests are inert data",
       "capabilities": []
     },
     {
@@ -33724,7 +33743,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M38 accept a re-cut queue with no new lane in it",
+      "name": "SHU-322 mutation M38 accept a re-cut queue whose first card is an installed lane",
       "capabilities": []
     },
     {
@@ -33732,7 +33751,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M40 skip the contracts content check on a code install",
+      "name": "SHU-322 mutation M40 skip the contracts content check on a queue install",
       "capabilities": []
     },
     {
@@ -33740,11 +33759,11 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M42 allow any call in an added contracts line",
+      "name": "SHU-322 mutation M42 allow calling the result of an expression",
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M43 allow any interpolation in an added contracts line",
+      "name": "SHU-322 mutation M43 allow a name the file does not declare",
       "capabilities": []
     },
     {
@@ -33753,6 +33772,22 @@
     },
     {
       "name": "SHU-322 mutation M45 allow any top-level statement in card-contracts.mjs",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M46 read the top level from the indentation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M47 let a declared name shadow a global",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M48 allow any member",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M49 read a regular expression as code",
       "capabilities": []
     }
   ],
