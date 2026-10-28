@@ -201,17 +201,17 @@ test("SHU-84/AC-05 SINGLE USE replay is refused, across instances and under conc
   assert.equal(receipts.rows[0].n, 1, "one token, one receipt");
 });
 
-test("SHU-84/AC-06 AUTHORITY write authority is re-derived from current grants", async (t) => {
+test("SHU371_ANY_PERSON every principal owns their profile and commit rechecks existence", async (t) => {
   const api = await gateway(t);
   const alice = await person();
   const preview = await api.preview(alice, "en");
   await authz.revokeMany(alice.id, [{ orgId: ORG, role: "candidate" }]);
   const before = await snapshot(alice.id);
   const revoked = await api.confirm(alice, "en", preview.body.token);
-  assert.deepEqual([revoked.status, revoked.body], [403, { error: "not_own_record" }]);
-  assert.equal(await snapshot(alice.id), before);
+  assert.equal(revoked.status, 200);
+  assert.notEqual(await snapshot(alice.id), before);
   const noGrant = await api.preview(alice, "ar");
-  assert.deepEqual([noGrant.status, noGrant.body], [403, { error: "not_own_record" }]);
+  assert.equal(noGrant.status, 200);
 
   // Inside the commit: a revocation after every caller-side check still stops the write.
   const bob = await person();
@@ -219,8 +219,9 @@ test("SHU-84/AC-06 AUTHORITY write authority is re-derived from current grants",
   t.after(() => store.close());
   const port = store.forPrincipal(bob.id);
   assert.equal(await port.ownedRecord(safeWritePrincipalRef(bob.id)), personRecordRef(bob.id));
-  await authz.revokeMany(bob.id, [{ orgId: ORG, role: "candidate" }]);
-  const outcome = await port.commit(commitInput(bob.id, null, "en"));
+  await admin.query("DELETE FROM principals WHERE id = $1", [bob.id]);
+  let outcome: unknown;
+  try { outcome = await port.commit(commitInput(bob.id, null, "en")); } catch (error) { outcome = error; }
   assert.deepEqual(outcome, { ok: false, reason: "not_own_record" });
   assert.equal(await language(bob.id), null);
   // Another principal's references are never this port's to read or write.
