@@ -392,6 +392,9 @@ function contractNames(lines) {
 // words are template or string text and never code.
 export function contractAdditionRefusal(installedText, mainText) {
   if (typeof installedText !== "string" || typeof mainText !== "string") return "it cannot be read at both revisions";
+  // JavaScript also ends a line at \r, U+2028 and U+2029; the lexer splits
+  // only at \n, so a comment could hide code behind one. Refuse them outright.
+  if (/[\r\u2028\u2029]/.test(mainText)) return "it holds a line terminator other than \\n";
   const before = contractLines(installedText);
   const after = contractLines(mainText);
   const added = new Set();

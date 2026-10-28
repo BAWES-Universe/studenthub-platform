@@ -4656,7 +4656,8 @@
     "SHU-322 mutation M46 read the top level from the indentation",
     "SHU-322 mutation M47 let a declared name shadow a global",
     "SHU-322 mutation M48 allow any member",
-    "SHU-322 mutation M49 read a regular expression as code"
+    "SHU-322 mutation M49 read a regular expression as code",
+    "SHU-322 mutation M50 let a comment end at another line terminator"
   ],
   "requirements": [
     {
@@ -33788,6 +33789,10 @@
     },
     {
       "name": "SHU-322 mutation M49 read a regular expression as code",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M50 let a comment end at another line terminator",
       "capabilities": []
     }
   ],

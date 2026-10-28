@@ -312,6 +312,12 @@ const CASES = [
     to: '    if (false /* M16-M49 */ && (REGEX_AFTER.has(last)',
     pattern: "M16 Q5:",
   },
+  {
+    name: "M50 let a comment end at another line terminator",
+    from: '  if (/[\\r\\u2028\\u2029]/.test(mainText)) return',
+    to: '  if (false /* M16-M50 */) return',
+    pattern: "M16 Q3:",
+  },
 ];
 
 for (const mutation of CASES) {

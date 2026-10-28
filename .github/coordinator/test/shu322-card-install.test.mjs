@@ -1057,6 +1057,9 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
     "an indented throw": [appending("\n  throw 1;\n"), /refers to throw|top-level statement/],
     "an indented call": [appending("\n  SHU197_ACCEPTANCE.trim();\n"), /top-level statement/],
     "an indented expression statement": [appending("\n    CARD_CONTRACTS;\n"), /top-level statement/],
+    // A comment hides nothing behind another line terminator.
+    "code after a carriage return in a comment": [appending("\n// note\rfetch(1);\n"), /line terminator other than/],
+    "code after a line separator in a comment": [appending("\n// note\u2028fetch(1);\n"), /line terminator other than/],
   };
   for (const [name, [text, reason]] of Object.entries(mutants)) {
     for (const [kind, gate] of [["code", selfInstallGate(codeWithContracts(text))], ["queue", selfInstallGate(queueWithContracts(text))]]) {
