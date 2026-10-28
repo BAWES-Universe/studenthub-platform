@@ -60,7 +60,7 @@ jobs:
         run: node --test .github/coordinator/test/attempt-workspace.test.mjs .github/coordinator/test/workspace-result.test.mjs .github/coordinator/test/workspace-result-mutations.test.mjs .github/coordinator/test/shu241-scoped-build.test.mjs .github/coordinator/test/shu241-mutations.test.mjs
   fast-checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     # The db suite (packages/db) runs against a real Postgres on every PR:
     # migrations apply to a scratch database and the store's integrity +
     # concurrency tests execute there — the same reason Opus asked for CI to

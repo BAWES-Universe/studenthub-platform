@@ -128,6 +128,9 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
     calls.push([file, ...args].join(" "));
     const line = args.join(" ");
     if (file === "pgrep") {
+      // Only these two reads, and the listing gives pid and name alone: a
+      // command line (-a, -f) may carry a secret into the report.
+      assert.ok(["-u shu-worker", "-l -u shu-worker"].includes(line), `pgrep ${line}`);
       const count = host.workers(host);
       return count ? ok(`${Array.from({ length: count }, (_, i) => 5000 + i).join("\n")}\n`) : { status: 1, stdout: "", stderr: "" };
     }
@@ -1030,7 +1033,10 @@ test("SHU-86 C13: revert waits for a running worker and leaves the run armed whi
   busy.files.set(PATHS.activation, { text: "{}" });
   busy.files.set(dropIn("shu-supervisor.service", RUN_DROP_IN), { text: "x" });
   const held = await attempt(() => revert(busy.io, PATHS));
-  assert.deepEqual(held, { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING" });
+  // M16: a worker that outlives the grace is stopped; only one that survives
+  // TERM and KILL leaves the run armed.
+  assert.deepEqual(held, { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING",
+    reaped: { cleared: false, listed: true, count: 1, processes: ["5000"], signals: ["TERM", "KILL"], left: 1 } });
   assert.equal(busy.files.has(PATHS.activation), true);
   assert.equal(busy.files.has(dropIn("shu-supervisor.service", RUN_DROP_IN)), true);
   assert.equal(busy.calls.some((call) => call.startsWith("systemctl")), false, "nothing restarts under a live worker");
@@ -1039,6 +1045,49 @@ test("SHU-86 C13: revert waits for a running worker and leaves the run armed whi
   const done = revert(finishing.io, PATHS);
   assert.equal(done.reverted, true);
   assert.ok(finishing.clock - START.getTime() >= 5 * 60 * 1000);
+  assert.equal(done.reaped, undefined, "a worker that ends inside the grace is never signalled");
+  assert.equal(finishing.calls.some((call) => call.startsWith("pkill")), false);
+});
+
+test("M16 K1: after the grace the revert stops leftover worker processes, records them and finishes", async () => {
+  // SHU-376: orphaned test trees that only a signal ends. TERM ends one of
+  // two; KILL ends the other.
+  const signalled = (h, signal) => h.calls.some((call) => call === `pkill -${signal} -u shu-worker`);
+  const host = fakeHost({ workers: (h) => (signalled(h, "KILL") ? 0 : signalled(h, "TERM") ? 1 : 2) });
+  host.files.set(PATHS.activation, { text: "{}" });
+  for (const unit of UNITS) for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) host.files.set(dropIn(unit, name), { text: "x" });
+  const done = revert(host.io, PATHS);
+  assert.equal(done.reverted, true, JSON.stringify(done));
+  assert.deepEqual(done.reaped, { cleared: true, listed: true, count: 2, processes: ["5000", "5001"], signals: ["TERM", "KILL"], left: 0 });
+  assert.ok(host.clock - START.getTime() >= CARD_RUN_LIMITS.workerGraceMs, "only after the whole grace");
+  const term = host.calls.indexOf("pkill -TERM -u shu-worker");
+  assert.ok(term >= 0 && term < host.calls.indexOf("pkill -KILL -u shu-worker"), "TERM, then KILL");
+  assert.ok(term < host.calls.findIndex((call) => call.startsWith("systemctl")), "stopped before the supervisor restarts");
+  assert.equal(host.files.has(PATHS.activation), false, "the record is retired");
+  // TERM alone is enough when it ends them all.
+  const gentle = fakeHost({ workers: (h) => (signalled(h, "TERM") ? 0 : 1) });
+  const soft = revert(gentle.io, PATHS);
+  assert.equal(soft.reverted, true);
+  assert.deepEqual(soft.reaped.signals, ["TERM"]);
+  assert.equal(signalled(gentle, "KILL"), false);
+  // The report names what was stopped; a clean revert says nothing more.
+  const report = renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: done });
+  assert.match(report, /^After the worker grace the revert stopped 2 leftover shu-worker process\(es\) with TERM, then KILL: 5000; 5001\.$/m);
+  assert.doesNotMatch(renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: { reverted: true, code: null } }), /worker grace/);
+});
+
+test("M16 K2: a listing pgrep cannot give is marked unlisted, counted from before the signals, and never reported as zero", async () => {
+  const signalled = (h, signal) => h.calls.some((call) => call === `pkill -${signal} -u shu-worker`);
+  const host = fakeHost({ workers: (h) => (signalled(h, "KILL") ? 0 : 3) });
+  const exec = host.io.exec;
+  host.io = { ...host.io, exec: (file, args) => (file === "pgrep" && args[0] === "-l" ? (host.calls.push(`pgrep ${args.join(" ")}`), { status: 2, stdout: "", stderr: "bad" }) : exec(file, args)) };
+  const done = revert(host.io, PATHS);
+  assert.equal(done.reverted, true, JSON.stringify(done));
+  assert.deepEqual(done.reaped, { cleared: true, listed: false, count: 3, processes: [], signals: ["TERM", "KILL"], left: 0 });
+  assert.ok(signalled(host, "TERM") && signalled(host, "KILL"), "the signals are sent all the same");
+  const report = renderRunReport({ card: "SHU-301", kind: "card", outcome: "PASS", trigger: "timer", ticks: [], revert: done });
+  assert.match(report, /stopped 3 leftover shu-worker process\(es\) with TERM, then KILL \(pgrep could not list them/);
+  assert.doesNotMatch(report, /stopped 0 /);
 });
 
 test("SHU-86 C14: one run at a time, as root only", async () => {
@@ -3024,6 +3073,7 @@ const SESSION = "Claude-Session: https://claude.ai/code/session_01QXHrfWMbw74J3H
 const LABEL = COMMITTED.queue_config_review.label;
 const queueFiles = () => [
   { filename: ".github/coordinator/config.json", status: "modified", sha: "1".repeat(40), additions: 4, deletions: 2 },
+  { filename: ".github/coordinator/card-contracts.json", status: "modified", sha: "a".repeat(40), additions: 80, deletions: 1 },
   { filename: ".github/coordinator/card-contracts.mjs", status: "modified", sha: "2".repeat(40), additions: 60, deletions: 0 },
   { filename: ".github/coordinator/service/suite-inventory.json", status: "modified", sha: "3".repeat(40), additions: 8, deletions: 0 },
   { filename: ".github/coordinator/test/card-lanes.test.mjs", status: "modified", sha: "4".repeat(40), additions: 5, deletions: 1 },
@@ -3102,15 +3152,17 @@ test("SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pu
   }
 });
 
-test("SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or an extra path is never reviewed", async () => {
+test("SHU-321 R2: a fork, a draft, a non-main base, a contracts file not edited in place or an extra path is never reviewed", async () => {
   const files = (edit) => { const list = queueFiles(); edit(list); return list; };
   for (const [label, pull] of [
     ["a fork", queuePull(240, { fork: true })],
     ["a draft", queuePull(240, { draft: true })],
     ["a non-main base", queuePull(240, { baseRef: "release" })],
-    ["a deleted contract line", queuePull(240, { files: files((list) => { list[1].deletions = 1; }) })],
-    ["a removed contracts file", queuePull(240, { files: files((list) => { list[1].status = "removed"; list[1].additions = 0; }) })],
-    ["contracts renamed away", queuePull(240, { files: files((list) => { list[1] = { ...list[1], status: "renamed", filename: ".github/coordinator/test/x.mjs", previous_filename: ".github/coordinator/card-contracts.mjs" }; }) })],
+    ["an added contracts data file", queuePull(240, { files: files((list) => { list[1].status = "added"; list[1].deletions = 0; }) })],
+    ["a removed contracts data file", queuePull(240, { files: files((list) => { list[1].status = "removed"; list[1].additions = 0; }) })],
+    ["a removed contracts source", queuePull(240, { files: files((list) => { list[2].status = "removed"; list[2].additions = 0; }) })],
+    ["contracts data renamed away", queuePull(240, { files: files((list) => { list[1] = { ...list[1], status: "renamed", filename: ".github/coordinator/test/x.json", previous_filename: ".github/coordinator/card-contracts.json" }; }) })],
+    ["contracts source renamed away", queuePull(240, { files: files((list) => { list[2] = { ...list[2], status: "renamed", filename: ".github/coordinator/test/x.mjs", previous_filename: ".github/coordinator/card-contracts.mjs" }; }) })],
     ["an extra path", queuePull(240, { files: files((list) => list.push({ filename: "src/app/page.tsx", status: "modified", sha: "6".repeat(40), additions: 1, deletions: 0 })) })],
     ["coordinator code", queuePull(240, { files: files((list) => list.push({ filename: ".github/coordinator/service/card-run.mjs", status: "modified", sha: "6".repeat(40), additions: 1, deletions: 0 })) })],
     ["a rename from outside", queuePull(240, { files: files((list) => list.push({ filename: ".github/coordinator/test/y.test.mjs", previous_filename: ".github/coordinator/reconcile.mjs", status: "renamed", sha: "6".repeat(40), additions: 0, deletions: 0 })) })],
@@ -3121,7 +3173,7 @@ test("SHU-321 R2: a fork, a draft, a non-main base, a deleted contract line or a
     assert.equal(skipped.skipped, "QUEUE_DONE", `${label}: ${JSON.stringify(skipped)}`);
     notReviewed(host, label);
   }
-  for (const file of [".github/coordinator/config.json", ".github/coordinator/card-contracts.mjs", ".github/coordinator/service/suite-inventory.json",
+  for (const file of [".github/coordinator/config.json", ".github/coordinator/card-contracts.json", ".github/coordinator/card-contracts.mjs", ".github/coordinator/service/suite-inventory.json",
     ".github/coordinator/test/a.test.mjs", ".github/coordinator/service/test/fixtures/b.json"]) assert.equal(queueConfigPath(file), true, file);
   for (const file of [".github/coordinator/service/card-run.mjs", ".github/coordinator/test", ".github/coordinator/test/../reconcile.mjs",
     ".github/workflows/ci.yml", "test/a.test.mjs", ".github/coordinator/config.json.bak", ".github/coordinator/testdata/a.mjs"]) assert.equal(queueConfigPath(file), false, file);
@@ -3151,7 +3203,7 @@ test("Box review C1: a coordinator:code pull request is reviewed by Codex, and o
     ["queue label on code", queuePull(250, { files: codeFiles() })],
     ["a path outside the coordinator", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/workflows/ci.yml", status: "modified", sha: "8".repeat(40), additions: 1, deletions: 0 })) })],
     ["a rename from outside", queuePull(250, { labels: [CODE], files: files((list) => list.push({ filename: ".github/coordinator/x.mjs", previous_filename: "src/x.mjs", status: "renamed", sha: "8".repeat(40), additions: 0, deletions: 0 })) })],
-    ["a deleted contract line", queuePull(250, { labels: [CODE], files: files((list) => { list[1].deletions = 1; }) })],
+    ["an added contracts data file", queuePull(250, { labels: [CODE], files: files((list) => { list[1].status = "added"; list[1].deletions = 0; }) })],
     ["a commit without the trailer", queuePull(250, { labels: [CODE], files: codeFiles(), messages: ["fix: b\n\nCo-Authored-By: Claude <noreply@anthropic.com>"] })],
     ["a draft", queuePull(250, { labels: [CODE], files: codeFiles(), draft: true })],
     ["a fork", queuePull(250, { labels: [CODE], files: codeFiles(), fork: true })],
@@ -3243,13 +3295,21 @@ test("SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_
   assert.equal(owned.reports.length, 1, "reported once");
 });
 
-test("SHU-321 R5: a stopped, invalid or paused queue never reviews, and a pause during discovery wins", async () => {
+test("SHU-321 R5: an invalid or paused queue never reviews, a stopped one does (M16), and a pause during discovery wins", async () => {
+  // M16: a stopped queue reviews like a done one, and with nothing to review
+  // it is the QUEUE_STOPPED skip with its reason.
   const stopped = reviewHost();
   claimFor(stopped, REV, "SHU-305", { outcome: "PASS", ok: true, land: "CI_TIMEOUT" });
   const stop = await attempt(() => autoRun({ io: stopped.io, paths: PATHS }));
-  assert.equal(stop.skipped, "QUEUE_STOPPED");
-  assert.equal(stopped.api.some((call) => call.startsWith("github")), false, "GitHub is not read");
-  notReviewed(stopped, "stopped");
+  assert.equal(stop.kind, "review", JSON.stringify(stop));
+  assert.deepEqual(stop.review, { pr: 240, head: PR_HEAD, base: PR_BASE });
+  assert.equal(stopped.armedRecords[0].initial_target_sha, PR_HEAD, "the exact head");
+  const idle = reviewHost([]);
+  claimFor(idle, REV, "SHU-305", { outcome: "PASS", ok: true, land: "CI_TIMEOUT" });
+  const quiet = await attempt(() => autoRun({ io: idle.io, paths: PATHS }));
+  assert.equal(quiet.skipped, "QUEUE_STOPPED");
+  assert.match(quiet.reason, /^SHU-305 ran at .* and did not land \(PASS, landing CI_TIMEOUT\)/);
+  notReviewed(idle, "stopped with nothing to review");
   const paused = reviewHost();
   paused.files.set(PATHS.pause, { text: "" });
   assert.equal((await attempt(() => autoRun({ io: paused.io, paths: PATHS }))).skipped, "PAUSED");
@@ -4349,8 +4409,12 @@ test("Self-repair B2: O1 with landing_repair absent or false a passed run stoppe
     const host = b2Host({ on });
     const config = JSON.parse(host.files.get(B2_CONFIG_FILE).text);
     assert.deepEqual(await nextCard(host.io, LAND_PATHS, config, REV), { id: null, skipped: "QUEUE_STOPPED", reason: expected }, String(on));
-    const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+    // M16: a stopped start also tries Card B and Card A; this host serves
+    // neither, so the stop stays the skip, with why nothing was reviewed.
+    const { review, install, ...result } = await autoRun({ io: host.io, paths: LAND_PATHS });
     assert.deepEqual(result, { ok: true, trigger: "timer", skipped: "QUEUE_STOPPED", reason: proven }, String(on));
+    assert.equal(review?.skipped, "REVIEW_UNREADABLE", String(on));
+    assert.equal(install, undefined, String(on));
     outputs.push(JSON.stringify(result));
     assert.equal(host.ticks, 0, "nothing is armed");
     assert.equal(b2EvidenceReads(host).length, 0, "no check run, job or log is read");

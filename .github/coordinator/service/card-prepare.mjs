@@ -634,6 +634,11 @@ export function renderRunReport(result) {
   lines.push(result.outcome === "NOT_STARTED" ? "Nothing was armed, so there was nothing to revert."
     : result.revert?.reverted ? "The host is reverted and idle."
       : `The revert did not finish (${result.revert?.code ?? "unknown"}); check the host before the next run.`);
+  // M16 (SHU-376): worker processes the revert stopped after its grace.
+  const reaped = result.revert?.reaped;
+  if (reaped) {
+    lines.push(`After the worker grace the revert ${reaped.left ? "found" : "stopped"} ${reaped.count} leftover shu-worker process(es) with ${reaped.signals.join(", then ")}${reaped.left ? `; ${reaped.left} survived` : ""}${reaped.listed === false ? " (pgrep could not list them, so the count is the one read before the signals)" : reaped.processes?.length ? `: ${reaped.processes.map(plainReason).join("; ")}` : ""}.`);
+  }
   return lines.join("\n");
 }
 
