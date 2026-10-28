@@ -1079,6 +1079,11 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
     // A bare interpolated name is code, checked like any other name.
     "an undeclared name interpolated": [appending("\nconst PROBE = `${REVIEW_UNDECLARED}`;\n"), /refers to REVIEW_UNDECLARED/],
     "a parameter that is not a plain name": [appending("\nconst A1 = 1;\nconst A2 = [1].map(([A1]) => A1);\n"), /not a plain name/],
+    // Names are ASCII; a parameter is a name only inside its own arrow.
+    "a name outside ASCII": [appending("\nconst PROBE = \u03c0;\n"), /outside ASCII/],
+    "a name outside ASCII interpolated": [appending("\nconst PROBE = `${\u03c0}`;\n"), /outside ASCII/],
+    "a parameter read after its arrow": [appending("\nconst A1 = (REVIEW_LOCAL) => REVIEW_LOCAL;\nconst A2 = `${REVIEW_LOCAL}`;\n"), /refers to REVIEW_LOCAL/],
+    "a parameter read after its arrow's body": [appending("\nconst A1 = [1].map((REVIEW_LOCAL) => REVIEW_LOCAL, REVIEW_LOCAL);\n"), /refers to REVIEW_LOCAL/],
   };
   for (const [name, [text, reason]] of Object.entries(mutants)) {
     for (const [kind, gate] of [["code", selfInstallGate(codeWithContracts(text))], ["queue", selfInstallGate(queueWithContracts(text))]]) {
@@ -1095,6 +1100,8 @@ test("M16 Q3: every install adds only inert data to card-contracts.mjs, whatever
   assert.match(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT.replace("export const SHU197_PATHS", "export const SHU197_PATHS_X")),
     /does not keep every installed line/);
   assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, CONTRACTS_TEXT), null);
+  // A parameter is read anywhere in its arrow's body, over several lines.
+  assert.equal(contractAdditionRefusal(CONTRACTS_TEXT, `${CONTRACTS_TEXT}\nconst A1 = (REVIEW_LOCAL) => [REVIEW_LOCAL,\n  \`${"${REVIEW_LOCAL}"}\`];\n`), null);
   // A queue install's brief text may name anything.
   const queueText = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts,
     main: nextContracts().replace('    workspace_mode: "repo",\n  }),\n});', '    workspace_mode: "repo",\n    brief: "import the module and read process.env",\n  }),\n});') } })));
@@ -1115,9 +1122,14 @@ test("M16 Q4: an entry inside a block comment is not a contract entry", () => {
   // A table-shaped template earlier in the file is not the live table.
   // An entry-shaped line in code between the two must not count either.
   const fake = "const REVIEW_FAKE = `\nexport const CARD_CONTRACTS = Object.freeze({\n  \"SHU-9001\": Object.freeze({}),\n});\n`;\n"
-    + "const REVIEW_MAP = {\n  \"SHU-9003\": Object.freeze({}),\n};\n";
+    + "const REVIEW_MAP = [{\n  \"SHU-9003\": Object.freeze({}),\n}];\n";
   const at = CONTRACTS_TEXT.indexOf("export const");
   assert.deepEqual([...contractEntries(CONTRACTS_TEXT.slice(0, at) + fake + CONTRACTS_TEXT.slice(at))], [...contractEntries(CONTRACTS_TEXT)]);
+  // An entry-shaped property nested inside another entry is not an entry.
+  const table = "export const CARD_CONTRACTS = Object.freeze({\n";
+  const nested = CONTRACTS_TEXT.replace(table, `${table}  "REVIEW_NESTED": Object.freeze({\n  "SHU-9001": Object.freeze({}),\n  }),\n`);
+  assert.notEqual(nested, CONTRACTS_TEXT);
+  assert.deepEqual([...contractEntries(nested)], [...contractEntries(CONTRACTS_TEXT)]);
   // A re-cut queue whose new lane has its entry only inside a comment is refused.
   const end = CONTRACTS_TEXT.indexOf("\n});", CONTRACTS_TEXT.indexOf("export const CARD_CONTRACTS = Object.freeze({\n"));
   const main = `${CONTRACTS_TEXT.slice(0, end)}\n  /*\n  "SHU-401": Object.freeze({\n    workspace_mode: "repo",\n  }),\n  */${CONTRACTS_TEXT.slice(end)}`;

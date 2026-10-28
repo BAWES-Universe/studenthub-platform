@@ -4674,7 +4674,11 @@
     "SHU-322 mutation M61 allow a tagged template",
     "SHU-322 mutation M62 allow any parameter shape",
     "SHU-322 mutation M63 take a table inside a template as the live table",
-    "SHU-322 mutation M64 read an interpolated name as text"
+    "SHU-322 mutation M64 read an interpolated name as text",
+    "SHU-322 mutation M65 count a nested property as a contract entry",
+    "SHU-322 mutation M66 allow a character outside ASCII in code",
+    "SHU-322 mutation M67 let a parameter be read anywhere in the file",
+    "SHU-322 mutation M68 end an arrow's body only at a closing bracket"
   ],
   "requirements": [
     {
@@ -33878,6 +33882,22 @@
     },
     {
       "name": "SHU-322 mutation M64 read an interpolated name as text",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M65 count a nested property as a contract entry",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M66 allow a character outside ASCII in code",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M67 let a parameter be read anywhere in the file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M68 end an arrow's body only at a closing bracket",
       "capabilities": []
     }
   ],

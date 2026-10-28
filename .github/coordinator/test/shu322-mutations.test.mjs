@@ -272,8 +272,8 @@ const CASES = [
   },
   {
     name: "M43 allow a name the file does not declare",
-    from: "    if (!names.has(token)) return",
-    to: "    if (false) /* M16-M43 */ return",
+    from: "    if (!names.has(token) && !scopes.some(",
+    to: "    if (false /* M16-M43 */ && !scopes.some(",
     pattern: "M16 Q3:",
   },
   {
@@ -296,8 +296,8 @@ const CASES = [
   },
   {
     name: "M47 let a declared name shadow a global",
-    from: "  for (const name of names) if (globalName(name)) return",
-    to: "  for (const name of names) if (false) /* M16-M47 */ return",
+    from: "if (globalName(name)) return `it declares",
+    to: "if (false /* M16-M47 */) return `it declares",
     pattern: "M16 Q3:",
   },
   {
@@ -362,8 +362,8 @@ const CASES = [
   },
   {
     name: "M58 count a commented entry as a contract entry",
-    from: '  return new Set(lines.slice(open + 1, close).filter((line) => line.start === "code")',
-    to: '  return new Set(lines.slice(open + 1, close).filter(() => true /* M16-M58 */)',
+    from: '  const inside = (line) => line.start === "code" && line.depth === 2;',
+    to: '  const inside = (line) => line.depth === 2; // M16-M58',
     pattern: "M16 Q4:",
   },
   {
@@ -400,6 +400,30 @@ const CASES = [
     name: "M64 read an interpolated name as text",
     from: "        if (name) { line.text += name[0].slice(1); emit(`#${name[0].slice(1)}`);",
     to: "        if (name) { line.text += name[0].slice(1); /* M16-M64 */",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M65 count a nested property as a contract entry",
+    from: "  const inside = (line) => line.start === \"code\" && line.depth === 2;",
+    to: "  const inside = (line) => line.start === \"code\"; // M16-M65",
+    pattern: "M16 Q4:",
+  },
+  {
+    name: "M66 allow a character outside ASCII in code",
+    from: "  if (/[^\\x00-\\x7f]/.test(code)) return",
+    to: "  if (false /* M16-M66 */) return",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M67 let a parameter be read anywhere in the file",
+    from: "!scopes.some((scope) => scope.from <= at && at < scope.to && scope.names.has(token))",
+    to: "!scopes.some((scope) => /* M16-M67 */ scope.names.has(token))",
+    pattern: "M16 Q3:",
+  },
+  {
+    name: "M68 end an arrow's body only at a closing bracket",
+    from: "else if ((c === \",\" || c === \";\") && open === 0) break;",
+    to: "else if (false /* M16-M68 */) break;",
     pattern: "M16 Q3:",
   },
 ];

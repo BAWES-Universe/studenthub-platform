@@ -171,14 +171,16 @@ export function installablePath(file) {
 // source, read as text: N's code is never imported here.
 export function contractEntries(text) {
   // The live table is the top-level line that opens it, read in code, to the
-  // first top-level "});" after it; only a line that starts in code is an
-  // entry. A table or entry inside a string, template or comment is not.
+  // first "});" after it that starts at the table's own nesting; only a line
+  // that starts in code at that nesting is an entry. A table or entry inside
+  // a string, template, comment or another entry is not.
   const lines = contractLines(String(text ?? ""));
   const open = lines.findIndex((line) => line.top && line.start === "code" && line.text === "export const CARD_CONTRACTS = Object.freeze({");
   if (open < 0) return null;
-  const close = lines.findIndex((line, i) => i > open && line.start === "code" && line.text === "});");
+  const inside = (line) => line.start === "code" && line.depth === 2;
+  const close = lines.findIndex((line, i) => i > open && inside(line) && line.text === "});");
   if (close < 0) return null;
-  return new Set(lines.slice(open + 1, close).filter((line) => line.start === "code")
+  return new Set(lines.slice(open + 1, close).filter(inside)
     .map((line) => /^ {2}"(SHU-[1-9]\d*)": Object\.freeze\(\{/.exec(line.text)?.[1]).filter(Boolean));
 }
 
@@ -304,8 +306,10 @@ export function contractLines(text) {
   // `lead` is how a line that opens with a slash reads it (regex or
   // division), which depends on the line before: an added line must not turn
   // an installed line's division into a regular expression or back.
-  const fresh = (start, top) => ({ start, top, lead: null, text: "", code: "" });
-  const lines = [fresh("code", true)];
+  // `depth` is the code nesting (parentheses, brackets, braces) the line
+  // starts at.
+  const fresh = (start, top, depth) => ({ start, top, depth, lead: null, text: "", code: "" });
+  const lines = [fresh("code", true, 0)];
   const stack = [{ kind: "code", braces: 0 }];
   let depth = 0;
   let line = lines[0];
@@ -320,7 +324,7 @@ export function contractLines(text) {
       if (top.kind === "line" || top.kind === "string") stack.pop();
       top = stack.at(-1);
       const start = top.kind === "template" || top.kind === "comment" ? top.kind : "code";
-      line = fresh(start, start === "code" && stack.length === 1 && depth === 0);
+      line = fresh(start, start === "code" && stack.length === 1 && depth === 0, depth);
       const opening = /^\s*\/(?![/*])/.test(source.slice(i + 1, source.indexOf("\n", i + 1) >>> 0));
       if (start === "code" && opening) line.lead = regexStarts(last, "") ? "regex" : "division";
       lines.push(line);
@@ -403,20 +407,30 @@ const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 // never in a module like this one or card-contracts.mjs.
 const globalName = (name) => (name in globalThis && !builtinModules.includes(name)) || CONTRACT_NOT_DECLARABLE.has(name);
 
-// The names N declares: its top-level consts and every arrow parameter.
+// The names N declares: its top-level consts, for the whole file, and each
+// arrow's parameters, only from the arrow's parameter list to the end of its
+// body: the first , ; ) ] or } in the joined code that its body does not open.
 function contractNames(lines) {
   const names = new Set();
   const params = [];
+  const scopes = [];
   for (const line of lines) {
     const declared = line.top ? CONTRACT_DECLARATION.exec(line.code) : null;
     if (declared) names.add(declared[1]);
   }
   const code = lines.map((line) => line.code).join("\n");
   for (const match of code.matchAll(/\(([^()]*)\)\s*=>|([A-Za-z_$][\w$]*)\s*=>/g)) {
-    for (const part of (match[1] ?? match[2]).split(",").map((entry) => entry.trim()).filter(Boolean)) params.push(part);
+    const own = (match[1] ?? match[2]).split(",").map((entry) => entry.trim()).filter(Boolean);
+    params.push(...own);
+    let to = match.index + match[0].length;
+    for (let open = 0; to < code.length; to += 1) {
+      const c = code[to];
+      if ("([{".includes(c)) open += 1;
+      else if (")]}".includes(c)) { if (open === 0) break; open -= 1; } else if ((c === "," || c === ";") && open === 0) break;
+    }
+    scopes.push({ from: match.index, to, names: new Set(own.filter((part) => IDENTIFIER.test(part))) });
   }
-  for (const part of params) if (IDENTIFIER.test(part)) names.add(part);
-  return { names, params };
+  return { names, params, scopes };
 }
 
 // M16: why the lines N's card-contracts.mjs adds to R's are not inert data,
@@ -442,8 +456,8 @@ export function contractAdditionRefusal(installedText, mainText) {
     else added.add(i);
   });
   if (j < before.length) return "it does not keep every installed line as it was";
-  const { names, params } = contractNames(after);
-  for (const name of names) if (globalName(name)) return `it declares ${name}, a global name`;
+  const { names, params, scopes } = contractNames(after);
+  for (const name of [...names, ...scopes.flatMap((scope) => [...scope.names])]) if (globalName(name)) return `it declares ${name}, a global name`;
   // The code of every line, joined, so a token's neighbours on other lines count.
   const joined = after.map((line) => line.code).join("\n");
   let offset = 0;
@@ -451,16 +465,19 @@ export function contractAdditionRefusal(installedText, mainText) {
     const start = offset;
     offset += line.code.length + 1;
     if (!added.has(i)) continue;
-    const why = contractLineRefusal(line, joined, start, names);
+    const why = contractLineRefusal(line, joined, start, names, scopes);
     if (why) return `an added line ${why}: ${line.text.trim().slice(0, 120)}`;
   }
   for (const part of params) if (!IDENTIFIER.test(part)) return `a parameter is not a plain name: ${part.slice(0, 60)}`;
   return null;
 }
 
-function contractLineRefusal(line, joined, start, names) {
+function contractLineRefusal(line, joined, start, names, scopes) {
   const code = line.code;
   if (line.escape) return "holds an escape outside a string, template or regular expression";
+  // Names are read as ASCII; a character outside it in code (a name, a
+  // space) is never read as data.
+  if (/[^\x00-\x7f]/.test(code)) return "holds a character outside ASCII in code";
   // A regular expression only right after ( or , where no division can be,
   // and no division at all: a misread slash cannot hide code.
   for (const match of code.matchAll(/\/0\/|\//g)) {
@@ -495,7 +512,9 @@ function contractLineRefusal(line, joined, start, names) {
     // An object key: after { or , and before :.
     if ((prev.char === "{" || prev.char === ",") && after(at + token.length) === ":") continue;
     if (CONTRACT_LITERALS.has(token) || CONTRACT_GLOBALS.has(token)) continue;
-    if (!names.has(token)) return `refers to ${token}, which the file does not declare`;
+    if (!names.has(token) && !scopes.some((scope) => scope.from <= at && at < scope.to && scope.names.has(token))) {
+      return `refers to ${token}, which the file does not declare`;
+    }
   }
   // A top-level line, by its nesting: a const declaration or a comment.
   if (line.top && line.text.trim() && !/^\s*\/\//.test(line.text) && !CONTRACT_DECLARATION.test(line.code)) {
