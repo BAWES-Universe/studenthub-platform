@@ -3985,7 +3985,7 @@ This card replaces SHU-372 with the same contract and tokens (SHU372_WRITE, SHU3
 // its revision attempts, and its last review found the code broadly right but
 // two findings unpinned and two new defects. Later cards of this queue call it
 // "SHU-372"; it is the card SHU-381 replaced, with the same tokens.
-const SHU384_ACCEPTANCE = SHU381_ACCEPTANCE;
+const SHU384_ACCEPTANCE = `${SHU381_ACCEPTANCE} (8) Each finding of SHU-381's last review is pinned: SHU372_PAGE posts the preview's hidden inputs to /profile/edit/confirm through handleProfileEditPage and gets the 303 to /profile, a replay gets the 409 page, and the 401, 403 and 503 refusal pages are driven too; clearing a field written over a populated imported snapshot, read through OwnProfileRepository and the real store, renders "Not recorded"; a body over the limit still gets its 400 answer on both the JSON and form routes; and a store failure on a form post answers an HTML refusal page with 503, never the gateway\'s JSON 503.`;
 const SHU384_BRIEF = `${SHU381_BRIEF.replace(/^Card SHU-381: /, "Card SHU-384: ").replace("This card replaces SHU-372 with", "This card replaces SHU-372 (and SHU-381, which ran it again) with")}
 
 SHU-381 ran this contract again and used all its revision attempts. Its last review found the code broadly correct and blocked on these; get them right in the first build:
