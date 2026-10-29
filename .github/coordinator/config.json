@@ -43,7 +43,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-386",
+      "SHU-388",
       "SHU-373",
       "SHU-374"
     ]
@@ -2214,6 +2214,61 @@
         "packages/safe-write-contract/src/safe-write.ts",
         "packages/safe-write-contract/src/types.ts",
         "packages/safe-write-contract/test/safe-write-contract.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-388",
+      "authorization_ref": "SHU-388",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 3 of the thirteenth card queue, run a fifth time under a fresh id: SHU-386's contract plus the language route, the shared safe-write store and their tests in its paths (SHU-386's first build was refused for a file outside its paths), and a brief that has the writer report BLOCKED rather than change a file outside them; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0211_person_profiles.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "packages/safe-write-contract/src/safe-write.ts",
+        "packages/safe-write-contract/src/types.ts",
+        "packages/safe-write-contract/test/safe-write-contract.test.ts",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0211_person_profiles.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "packages/safe-write-contract/src/safe-write.ts",
+        "packages/safe-write-contract/src/types.ts",
+        "packages/safe-write-contract/test/safe-write-contract.test.ts",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts"
       ]
     }
   ],

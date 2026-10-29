@@ -4017,6 +4017,25 @@ SHU-384 ran this contract a third time. Its revision was refused for changing pa
 - S1. Every one of the five fields is written in a test and shown on the rendered My profile with "Updated by you", not only the objective.
 - Build every item in the first build: the SHU-384 build was about 200 lines and left the page flow, the refusal pages and four of the five fields untested.`;
 
+// SHU-388 runs SHU-386's contract again from main with four more paths: its
+// first build was refused for a file outside its paths, and the receipt read
+// across the two profile cards (item 9's 404 at /profile/receipts/:ref) lives
+// in the language route and the shared safe-write store, with their tests.
+export const SHU388_PATHS = Object.freeze([
+  ...SHU386_PATHS,
+  "apps/gateway/src/language-preference.ts",
+  "apps/gateway/test/language-preference.test.ts",
+  "packages/db/src/safe-write-store.ts",
+  "packages/db/test/safe-write-store.test.ts",
+]);
+const SHU388_ACCEPTANCE = `${SHU386_ACCEPTANCE} (10) The result changes only the card's paths; anything that cannot be done inside them is reported, not worked around.`;
+const SHU388_BRIEF = `${SHU386_BRIEF.replace(/^Card SHU-386: /, "Card SHU-388: ").replace("This card replaces SHU-372 (and SHU-381 and SHU-384, which ran it again) with", "This card replaces SHU-372 (and SHU-381, SHU-384 and SHU-386, which ran it again) with")}
+
+SHU-386's first build was refused because it changed a file outside its paths, and the refusal throws the whole build away. This card's paths add apps/gateway/src/language-preference.ts, packages/db/src/safe-write-store.ts and their tests, so the receipt read across the two profile cards can be fixed where it lives. Before you finish:
+- Run git status and make sure every changed or new file is one of your paths. Delete any scratch file, script or output you created elsewhere (gitignored output such as dist/ and node_modules/ is fine).
+- Put each new test in one of the test files your paths name; do not add a test file under another name.
+- If something the brief asks for can only be done by changing a file outside your paths, do not change that file: leave it, finish everything else, and answer BLOCKED with the file's path and why in your summary.`;
+
 export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
 const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
@@ -4471,6 +4490,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU386_PATHS,
     acceptance: SHU386_ACCEPTANCE,
     brief: SHU386_BRIEF,
+  }),
+  "SHU-388": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU388_PATHS,
+    revision_paths: SHU388_PATHS,
+    acceptance: SHU388_ACCEPTANCE,
+    brief: SHU388_BRIEF,
   }),
 });
 
