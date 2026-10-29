@@ -3994,6 +3994,29 @@ SHU-381 ran this contract again and used all its revision attempts. Its last rev
 - Oversize bodies. Both form and JSON read loops pass { destroyOnReturn: false } when iterating the request, as language-preference.ts does, so a body over the limit still gets its 400 answer instead of a destroyed stream; test it.
 - Store failures on the page. handleProfileEditPage catches a store failure and answers an HTML refusal page with 503, as language-preference.ts's page handler does, never the gateway's generic JSON 503; test it.`;
 
+// SHU-386 runs SHU-384's contract again from main with three more paths:
+// clearing a field needs the shared safe-write contract to accept an empty
+// value, which it refuses for every caller, and SHU-384's revision was refused
+// for changing that file outside its paths. Later cards of this queue call it
+// "SHU-372"; it is the card SHU-381 and SHU-384 replaced, with the same tokens.
+export const SHU386_PATHS = Object.freeze([
+  ...SHU372_PATHS,
+  "packages/safe-write-contract/src/safe-write.ts",
+  "packages/safe-write-contract/src/types.ts",
+  "packages/safe-write-contract/test/safe-write-contract.test.ts",
+]);
+const SHU386_ACCEPTANCE = `${SHU384_ACCEPTANCE} (9) Clearing works end to end: a FieldPolicy may opt in to clearing, and only a policy that opts in accepts an empty value, so every other safe write still refuses one with invalid_value and its existing tests pass unchanged; posting an empty value for an optional field previews, confirms and stores NULL; the application's rules and the database CHECKs accept and refuse the same values, so no value the route accepts reaches the database and fails a CHECK; a receipt reference of the other card's field answers 404 at both /profile/edit/receipts/:ref and /profile/receipts/:ref.`;
+const SHU386_BRIEF = `${SHU384_BRIEF.replace(/^Card SHU-384: /, "Card SHU-386: ").replace("This card replaces SHU-372 (and SHU-381, which ran it again) with", "This card replaces SHU-372 (and SHU-381 and SHU-384, which ran it again) with")}
+
+SHU-384 ran this contract a third time. Its revision was refused for changing packages/safe-write-contract/src/safe-write.ts, which was outside its paths; clearing needs that file, so this card's paths now include it, its types.ts and its test. Its review also found these; get them right in the first build:
+- Clearing. validateChange refuses an empty value for every caller. Add an optional allowClear to FieldPolicy (types.ts) and accept an empty value only when the policy sets it; no other caller's policy sets it. Also make validateChange count code points, not UTF-16 units, against maxValueLength ([...value].length), so an objective of 100 emoji passes the shared check; a code-point count is never larger than the UTF-16 count, so no value accepted today becomes refused. Nothing else about validation changes, and every existing safe-write test passes unchanged. Add a test in safe-write-contract.test.ts that an opted-in policy accepts "" and the default policy still refuses it. The self-edit policy sets allowClear for the optional fields only (the store clears to NULL); display name stays required.
+- The Postgres test's populated iteration. Once any field is written, the completeness rows render "Not recorded" by design, so do not assert that the whole page lacks "Not recorded": assert on the cleared field's own row.
+- handleProfileEditPage must be loaded and driven by SHU372_PAGE, as SHU-381's bullets above say. The SHU-384 build only called service.preview and service.confirm. Item 3's mutant must die in a test that loads the page handler.
+- Receipts across the two cards. Both cards write receipts under operation profile.safe_write for the same principal. Each card's receipt read returns nothing for a receipt of the other card's field rather than throwing, so a foreign reference answers 404, never 503, at /profile/edit/receipts/:ref and at /profile/receipts/:ref (convert the language store's throw in login-runtime.ts, and make person-profile-store.ts's read return null).
+- The same rules in both places. The two-word rule is one definition: at least two words of letters after trimming and collapsing spaces, checked the same way in self-edit.ts and in migration 0211 (a value like "Ahmed 3" is refused by both). Normalise to NFC in the application and check IS NFC NORMALIZED in the CHECK, so a combining mark is treated alike. A CHECK violation (SQLSTATE 23514) in the commit becomes invalid_value, never a 503.
+- S1. Every one of the five fields is written in a test and shown on the rendered My profile with "Updated by you", not only the objective.
+- Build every item in the first build: the SHU-384 build was about 200 lines and left the page flow, the refusal pages and four of the five fields untested.`;
+
 export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
 const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
@@ -4441,6 +4464,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU372_PATHS,
     acceptance: SHU384_ACCEPTANCE,
     brief: SHU384_BRIEF,
+  }),
+  "SHU-386": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU386_PATHS,
+    revision_paths: SHU386_PATHS,
+    acceptance: SHU386_ACCEPTANCE,
+    brief: SHU386_BRIEF,
   }),
 });
 
