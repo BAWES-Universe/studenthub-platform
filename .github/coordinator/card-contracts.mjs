@@ -3981,6 +3981,19 @@ This card replaces SHU-372 with the same contract and tokens (SHU372_WRITE, SHU3
 - Owner. SHU372_OWNER covers another person's token, a replayed token and a stale before value, and none of them stores anything.
 - Store. person_profiles.principal_id references principals(id) ON DELETE CASCADE, as migration 0147 does, so the Postgres test's teardown that deletes its principal passes. readOwnPreferences is one read keyed by the principal (a LEFT JOIN from the person's row, never a FULL JOIN filtered afterwards). Do not give every field the latest write's date: show a field's own date, or none. The commit checks the receipt and change-set digest the way PostgresSafeWriteStore does.
 - Mutants. self-edit-mutations.mjs follows packages/db/test/safe-write-mutations.mjs: a token per mutant, applied to the built modules, each run against its own token's test and dying by assertion. Items 1 to 4 each have one.`;
+// SHU-384 runs SHU-381's contract again from main: SHU-381 used all four of
+// its revision attempts, and its last review found the code broadly right but
+// two findings unpinned and two new defects. Later cards of this queue call it
+// "SHU-372"; it is the card SHU-381 replaced, with the same tokens.
+const SHU384_ACCEPTANCE = `${SHU381_ACCEPTANCE} (8) Each finding of SHU-381's last review is pinned: SHU372_PAGE posts the preview's hidden inputs to /profile/edit/confirm through handleProfileEditPage and gets the 303 to /profile, a replay gets the 409 page, and the 401, 403 and 503 refusal pages are driven too; clearing a field written over a populated imported snapshot, read through OwnProfileRepository and the real store, renders "Not recorded"; a body over the limit still gets its 400 answer on both the JSON and form routes; and a store failure on a form post answers an HTML refusal page with 503, never the gateway\'s JSON 503.`;
+const SHU384_BRIEF = `${SHU381_BRIEF.replace(/^Card SHU-381: /, "Card SHU-384: ").replace("This card replaces SHU-372 with", "This card replaces SHU-372 (and SHU-381, which ran it again) with")}
+
+SHU-381 ran this contract again and used all its revision attempts. Its last review found the code broadly correct and blocked on these; get them right in the first build:
+- Drive Confirm. SHU372_PAGE posts the preview form, extracts its hidden inputs, posts them to /profile/edit/confirm through handleProfileEditPage with a real or mock ServerResponse, and checks the 303 to /profile; then replays the same form and gets the 409 page, exactly as SHU371_PAGE_FLOW does in apps/gateway/test/language-preference.test.ts. Also drive the 401, 403 and 503 refusal pages and Cancel. A test that only posts to /profile/edit/preview does not meet item 7.
+- Clearing over a snapshot. In a test, link a principal to a populated imported snapshot (not UnconfiguredApprovedProfileAdapter), write a field, then clear it, read My profile through OwnProfileRepository and PostgresPersonProfileStore, and render that projection: it shows "Not recorded", never the snapshot's value. Prove the populated side the same way (the written value shows over the snapshot's). Do not stamp a projection by hand for either check.
+- Oversize bodies. Both form and JSON read loops pass { destroyOnReturn: false } when iterating the request, as language-preference.ts does, so a body over the limit still gets its 400 answer instead of a destroyed stream; test it.
+- Store failures on the page. handleProfileEditPage catches a store failure and answers an HTML refusal page with 503, as language-preference.ts's page handler does, never the gateway's generic JSON 503; test it.`;
+
 export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
 const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
@@ -4421,6 +4434,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU372_PATHS,
     acceptance: SHU381_ACCEPTANCE,
     brief: SHU381_BRIEF,
+  }),
+  "SHU-384": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU372_PATHS,
+    revision_paths: SHU372_PATHS,
+    acceptance: SHU384_ACCEPTANCE,
+    brief: SHU384_BRIEF,
   }),
 });
 
