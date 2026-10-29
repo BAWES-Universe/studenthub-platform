@@ -4036,6 +4036,19 @@ SHU-386's first build was refused because it changed a file outside its paths, a
 - Put each new test in one of the test files your paths name; do not add a test file under another name.
 - If something the brief asks for can only be done by changing a file outside your paths, do not change that file: leave it, finish everything else, and answer BLOCKED with the file's path and why in your summary.`;
 
+// SHU-390 runs SHU-388's contract again from main with the same paths: its
+// build stayed inside them, but it used up its revision attempts on one
+// finding. The brief's two-word rule said "two words of letters", so the
+// builder refused hyphenated and apostrophed names, the repo's own fixture
+// "Noor Al-Sabah" among them, in both self-edit.ts and the 0211 CHECK.
+const SHU388_TWO_WORD_RULE = "The two-word rule is one definition: at least two words of letters after trimming and collapsing spaces, checked the same way in self-edit.ts and in migration 0211 (a value like \"Ahmed 3\" is refused by both).";
+if (!SHU388_BRIEF.includes(SHU388_TWO_WORD_RULE)) throw new Error("SHU-390: SHU-388's two-word rule is not in its brief");
+export const SHU390_PATHS = SHU388_PATHS;
+const SHU390_ACCEPTANCE = `${SHU388_ACCEPTANCE} (11) A name with a hyphen, apostrophe or dot, such as "Noor Al-Sabah", previews, confirms and stores, and the Postgres CHECK test stores it too; "Ahmed 3" is still refused by both.`;
+const SHU390_BRIEF = `${SHU388_BRIEF.replace(/^Card SHU-388: /, "Card SHU-390: ").replace("This card replaces SHU-372 (and SHU-381, SHU-384 and SHU-386, which ran it again) with", "This card replaces SHU-372 (and SHU-381, SHU-384, SHU-386 and SHU-388, which ran it again) with").replace(SHU388_TWO_WORD_RULE, "The two-word rule is one definition: a word is a maximal run of letters (and the combining marks allowed with them), and a name needs at least two such words after trimming and collapsing spaces; hyphens, apostrophes and dots between or inside words are allowed and do not count as words, checked the same way in self-edit.ts and in migration 0211 (\"Ahmed 3\" has one word and is refused by both; \"Noor Al-Sabah\", \"Abdul-Aziz Al Saud\" and \"O'Brien Smith\" are accepted by both).")}
+
+SHU-388 stopped after its revision attempts ran out on one finding: the two-word rule refused names the parser accepts. It treated every space-separated part as letters only, so "Noor Al-Sabah" (packages/profile/src/fixtures.ts, which My profile pre-fills into the Change field) answered 400 invalid_value, and migration 0211's CHECK refused it too. PD-10 asks only for at least two words (docs/parity/profile-and-private-documents.md), and migration 0183's beneficiary-name CHECK allows hyphens. Count words as runs of letters, keep one shared definition in self-edit.ts and 0211, and add "Noor Al-Sabah" and an apostrophe name to SHU372_RULES in both the unit test and the Postgres CHECK test. The rest of SHU-388's last build was reviewed as correct, so keep its approach. In the same pass, the review noted that the preview's before value should match what My profile showed ("Unavailable" where My profile shows it, not "Not recorded"), and that shorten()'s 120-code-point cut should have a test.`;
+
 export const SHU373_PATHS = Q13_PATHS(SHU364_PATHS);
 const SHU373_ACCEPTANCE = Q13_RENAMED(SHU364_ACCEPTANCE);
 const SHU373_BRIEF = `${Q13_BRIEF(SHU364_BRIEF)}
@@ -4497,6 +4510,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU388_PATHS,
     acceptance: SHU388_ACCEPTANCE,
     brief: SHU388_BRIEF,
+  }),
+  "SHU-390": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU390_PATHS,
+    revision_paths: SHU390_PATHS,
+    acceptance: SHU390_ACCEPTANCE,
+    brief: SHU390_BRIEF,
   }),
 });
 
