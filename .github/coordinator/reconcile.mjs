@@ -141,8 +141,20 @@ export function receiptsWithinDispatchScope(receipts = [], config = {}) {
 // hide an in-flight receipt from lifecycle reconciliation: every non-terminal
 // receipt still consumes the global max_dispatch capacity, so every such
 // receipt must retain a path to terminal state.
-export function receiptsForLifecycle(receipts = [], _config = {}) {
-  return receipts.filter(Boolean);
+//
+// M15 W3: except with more than one card worker. Each worker's coordinator is
+// then narrowed to its own armed card, counts only that card's receipts
+// (selectNextReservation), and reconciles only those: otherwise worker 2's
+// coordinator would resume worker 1's LAUNCH_UNKNOWN and RUNNING receipts
+// through its own supervisor socket, and write adapter pauses from them that
+// every worker reads. Each card's receipts keep their path to terminal state
+// through the worker that runs that card. One worker reconciles every
+// receipt, as before.
+export function receiptsForLifecycle(receipts = [], config = {}) {
+  const present = receipts.filter(Boolean);
+  const scope = resolveDispatchScope(config);
+  if (cardWorkers(config) === 1 || !scope.configured) return present;
+  return present.filter((receipt) => dispatchScopeAllows(scope, receipt.issue_id));
 }
 
 // The Idempotency-Key for the workspace-agents trigger. It is derived from the

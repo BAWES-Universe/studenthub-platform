@@ -2138,6 +2138,8 @@
     "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
     "M16 K1: after the grace the revert stops leftover worker processes, records them and finishes",
     "M16 K2: a listing pgrep cannot give is marked unlisted, counted from before the signals, and never reported as zero",
+    "M15 W3: with more than one worker the busy check and the revert count and stop only the worker's own cgroup processes; one worker goes by uid",
+    "M15 W3: a self-install waits for every configured worker; with one worker it reads the worker's own busy check",
     "SHU-86 C14: one run at a time, as root only",
     "SHU-86 C15: plan changes nothing, and review flags come all together",
     "SHU-86 C16: a unit without its resident drop-in is not armed",
@@ -2879,6 +2881,7 @@
     "SHU-224: absent scope preserves board-wide selection",
     "SHU-224: unscoped terminal receipts cannot publish successor directives",
     "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
+    "M15 W3: with more than one card worker lifecycle reconciles only the receipts of the worker's own card; one worker reconciles every receipt",
     "SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run",
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
     "SHU-224: committed scope is pinned to the current card lanes while dispatch stays disabled",
@@ -4625,6 +4628,14 @@
     "SHU-86 mutation M212 leave the stopped workers out of the report",
     "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
     "SHU-86 mutation M214 list leftover workers with their command lines",
+    "SHU-86 mutation M215 count every worker's processes with more than one worker",
+    "SHU-86 mutation M216 make a worker busy on another worker's drop-ins",
+    "SHU-86 mutation M217 sweep another worker's dependency cache",
+    "SHU-86 mutation M218 stop every worker's processes by uid",
+    "SHU-86 mutation M219 report another worker's processes as stopped",
+    "SHU-86 mutation M220 count none when the cgroups cannot tell workers apart",
+    "SHU-86 mutation M221 install under another worker's held run lock",
+    "SHU-86 mutation M222 install while only another worker is busy",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -18588,6 +18599,14 @@
       "capabilities": []
     },
     {
+      "name": "M15 W3: with more than one worker the busy check and the revert count and stop only the worker's own cgroup processes; one worker goes by uid",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W3: a self-install waits for every configured worker; with one worker it reads the worker's own busy check",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C14: one run at a time, as root only",
       "capabilities": []
     },
@@ -22607,6 +22626,10 @@
     },
     {
       "name": "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W3: with more than one card worker lifecycle reconciles only the receipts of the worker's own card; one worker reconciles every receipt",
       "capabilities": []
     },
     {
@@ -33650,6 +33673,38 @@
     },
     {
       "name": "SHU-86 mutation M214 list leftover workers with their command lines",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M215 count every worker's processes with more than one worker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M216 make a worker busy on another worker's drop-ins",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M217 sweep another worker's dependency cache",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M218 stop every worker's processes by uid",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M219 report another worker's processes as stopped",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M220 count none when the cgroups cannot tell workers apart",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M221 install under another worker's held run lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M222 install while only another worker is busy",
       "capabilities": []
     },
     {

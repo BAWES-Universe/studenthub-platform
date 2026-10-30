@@ -1090,6 +1090,124 @@ test("M16 K2: a listing pgrep cannot give is marked unlisted, counted from befor
   assert.doesNotMatch(report, /stopped 0 /);
 });
 
+// M15 W3: a host with two card workers' shu-worker processes. `live` maps each
+// live pid to the unit whose cgroup holds it; pgrep lists them all, each
+// cgroup.procs only its own (and the supervisor itself, which is not
+// shu-worker's), and `kill` ends the pids it names.
+function cgroupHost(config, live, { unified = true, caches = {} } = {}) {
+  const host = fakeHost({ config });
+  const group = (unit) => `/system.slice/${unit}`;
+  const exec = host.io.exec;
+  const fsio = host.io.fs;
+  host.io = { ...host.io,
+    fs: { ...fsio,
+      existsSync: (file) => (file === "/sys/fs/cgroup/cgroup.controllers" ? unified : fsio.existsSync(file)),
+      readFileSync: (file, encoding) => {
+        const match = /^\/sys\/fs\/cgroup\/system\.slice\/(.+)\/cgroup\.procs$/.exec(file);
+        if (!match) return fsio.readFileSync(file, encoding);
+        const unit = match[1];
+        if (!["shu-supervisor.service", "shu-coordinator.service", "shu-supervisor-w2.service", "shu-coordinator-w2.service"].includes(unit)) {
+          throw Object.assign(new Error(`ENOENT ${file}`), { code: "ENOENT" });
+        }
+        const pids = [...live].filter(([, owner]) => owner === unit).map(([pid]) => pid);
+        return `${[...(unit.startsWith("shu-supervisor") ? ["4242"] : []), ...pids].join("\n")}\n`;
+      },
+      statSync: (dir) => {
+        const name = path.basename(dir);
+        if (!(name in caches)) throw Object.assign(new Error(`ENOENT ${dir}`), { code: "ENOENT" });
+        return { mtimeMs: caches[name] };
+      },
+    },
+    exec: (file, args) => {
+      if (file === "pgrep") {
+        host.calls.push(`pgrep ${args.join(" ")}`);
+        return live.size ? { status: 0, stdout: `${[...live.keys()].join("\n")}\n`, stderr: "" } : { status: 1, stdout: "", stderr: "" };
+      }
+      if (file === "kill") {
+        host.calls.push(`kill ${args.join(" ")}`);
+        for (const pid of args.slice(2)) live.delete(pid);
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      if (file === "systemctl" && args[0] === "show" && args[2] === "ControlGroup") {
+        host.calls.push(`systemctl ${args.join(" ")}`);
+        // A supervisor that is not running reports no cgroup.
+        return { status: 0, stdout: args[4] === "shu-coordinator-w2.service" ? "\n" : `${group(args[4])}\n`, stderr: "" };
+      }
+      return exec(file, args);
+    },
+  };
+  return host;
+}
+
+test("M15 W3: with more than one worker the busy check and the revert count and stop only the worker's own cgroup processes; one worker goes by uid", async () => {
+  const { cardRunPaths, processScope } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2);
+  const two = configFor("SHU-301", (config) => ({ ...config, workers: { max: 2 } }));
+  const owners = () => new Map([["5000", "shu-supervisor.service"], ["5001", "shu-supervisor-w2.service"], ["5002", "shu-coordinator-w2.service"]]);
+  // One worker: every shu-worker process, by uid, and no cgroup is read.
+  const one = cgroupHost(configFor("SHU-301"), owners());
+  assert.equal(processScope(one.io, PATHS), null);
+  assert.deepEqual(busyReasons(one.io, PATHS), ["3 shu-worker process(es) running"]);
+  assert.equal(one.calls.some((call) => call.includes("ControlGroup")), false);
+  // Two workers: each counts its own supervisor's and coordinator's.
+  const host = cgroupHost(two, owners());
+  assert.deepEqual(processScope(host.io, PATHS), { units: UNITS });
+  assert.deepEqual(busyReasons(host.io, PATHS), ["1 shu-worker process(es) running"]);
+  assert.deepEqual(busyReasons(host.io, w2), ["2 shu-worker process(es) running"], "a stopped unit's default cgroup is read too");
+  // Only the worker's own drop-ins and activation make it busy.
+  for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) host.files.set(dropIn("shu-supervisor-w2.service", name), { text: "x" });
+  host.files.set(w2.activation, { text: "{}" });
+  assert.equal(busyReasons(host.io, PATHS).some((reason) => /w2/.test(reason)), false, "worker 2's arming leaves worker 1 idle");
+  assert.equal(busyReasons(host.io, w2).filter((reason) => /w2/.test(reason)).length, 3);
+  // A build worktree cannot be told apart by worker: it keeps every worker busy.
+  host.files.set(`${PATHS.worktrees}/build-x/f`, { text: "x" });
+  assert.ok(busyReasons(host.io, PATHS).includes(`worktree present: ${PATHS.worktrees}/build-x`));
+  assert.ok(busyReasons(host.io, w2).includes(`worktree present: ${PATHS.worktrees}/build-x`));
+  // Without the unified hierarchy the processes cannot be told apart: refuse.
+  assert.throws(() => busyReasons(cgroupHost(two, owners(), { unified: false }).io, PATHS), { code: "CARD_RUN_CGROUP" });
+
+  // Worker 1's revert after the grace stops its own leftover process alone,
+  // never by uid, and keeps a dependency cache young enough to be in use.
+  const live = owners();
+  const now = START.getTime() + CARD_RUN_LIMITS.workerGraceMs;
+  const reverting = cgroupHost(two, live, { caches: { "shu-npm-cache-1": START.getTime() - CARD_RUN_LIMITS.npmCacheAgeMs - 1, "shu-npm-cache-2": now } });
+  reverting.files.set(`${PATHS.tmp}/shu-npm-cache-2/x`, { text: "cache" });
+  reverting.files.set(`${PATHS.tmp}/shu-npm-cache-3/x`, { text: "cache" });
+  const done = revert(reverting.io, PATHS);
+  assert.equal(done.reverted, true, JSON.stringify(done));
+  assert.deepEqual(done.reaped, { cleared: true, listed: true, count: 1, processes: ["5000"], signals: ["TERM"], left: 0 });
+  assert.deepEqual([...live.keys()], ["5001", "5002"], "worker 2's processes are left running");
+  assert.equal(reverting.calls.some((call) => call.startsWith("pkill")), false);
+  assert.deepEqual(reverting.calls.filter((call) => call.startsWith("kill")), ["kill -TERM -- 5000"]);
+  assert.equal(reverting.files.has(`${PATHS.tmp}/shu-npm-cache-1/x`), false, "an old cache goes");
+  assert.equal(reverting.files.has(`${PATHS.tmp}/shu-npm-cache-2/x`), true, "a cache an install may still use stays");
+  assert.equal(reverting.files.has(`${PATHS.tmp}/shu-npm-cache-3/x`), true, "a cache whose age cannot be read stays");
+  // One worker's revert still sweeps every cache and signals by uid.
+  const sole = fakeHost({ workers: (h) => (h.calls.includes("pkill -TERM -u shu-worker") ? 0 : 1) });
+  sole.files.set(`${PATHS.tmp}/shu-npm-cache-2/x`, { text: "cache" });
+  const soleDone = revert(sole.io, PATHS);
+  assert.equal(soleDone.reverted, true);
+  assert.deepEqual(soleDone.reaped.signals, ["TERM"]);
+  assert.equal(sole.files.has(`${PATHS.tmp}/shu-npm-cache-2/x`), false);
+});
+
+test("M15 W3: a self-install waits for every configured worker; with one worker it reads the worker's own busy check", async () => {
+  const { cardRunPaths, hostBusyReasons } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2);
+  const two = configFor("SHU-301", (config) => ({ ...config, workers: { max: 2 } }));
+  const host = cgroupHost(two, new Map([["5001", "shu-supervisor-w2.service"]]));
+  assert.deepEqual(busyReasons(host.io, PATHS), []);
+  assert.deepEqual(hostBusyReasons(host.io, PATHS), ["1 shu-worker process(es) running"], "worker 2's processes keep an install off");
+  host.files.set(w2.lock, { text: "1" });
+  host.files.set(w2.activation, { text: "{}" });
+  assert.deepEqual(hostBusyReasons(host.io, PATHS), [`card run lock held: ${w2.lock}`, `activation record present at ${w2.activation}`, "1 shu-worker process(es) running"]);
+  // One worker: exactly its own busy check.
+  const one = fakeHost();
+  one.files.set(w2.lock, { text: "1" });
+  assert.deepEqual(hostBusyReasons(one.io, PATHS), busyReasons(one.io, PATHS));
+  assert.deepEqual(hostBusyReasons(one.io, PATHS), []);
+});
+
 test("SHU-86 C14: one run at a time, as root only", async () => {
   const locked = fakeHost();
   locked.files.set(PATHS.lock, { text: "1" });

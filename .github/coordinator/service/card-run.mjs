@@ -142,6 +142,11 @@ export const CARD_RUN_LIMITS = Object.freeze({
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
+  // M15 W3: with more than one worker, a revert removes only dependency caches
+  // older than this: twice the install's own bound (attempt-workspace.mjs
+  // DEPENDENCY_INSTALL_TIMEOUT_MS, 15 minutes), so another worker's install is
+  // never left without its cache.
+  npmCacheAgeMs: 30 * 60 * 1000,
   reportTimeoutMs: 30 * 1000,
   // SHU-306: landing a passed card. The wait for its checks is bounded so the
   // whole run (window, worker grace, landing, reports) stays inside the unit's
@@ -442,29 +447,110 @@ export function tickOutcome(text, activationId = null) {
 export const ANSWERED = Object.freeze(new Set(["PASS", "REVIEW_PASS", "REVIEW_BLOCKED"]));
 
 // Every reason the host is not idle. A run starts only when this is empty.
-// M15: the drop-ins, shu-worker processes and worktrees read here are still
-// every worker's; slice W3 scopes them to the worker's own.
+// M15 W3: the worker's own. Its activation record and drop-ins are its own by
+// name, and its shu-worker processes are those of its own cgroups (see
+// processScope). The build and review worktrees cannot be told apart by
+// worker (every worker's attempts share SHU_WORKTREE_ROOT, and nothing names
+// them per worker), so any one still makes every worker busy.
 export function busyReasons(io, paths = CARD_RUN_PATHS) {
   const reasons = [];
   if (io.fs.existsSync(paths.activation)) reasons.push(`activation record present at ${paths.activation}`);
-  for (const unit of UNITS) {
+  for (const unit of workerUnits(workerOf(paths))) {
     for (const dropIn of [RUN_DROP_IN, TARGET_DROP_IN]) {
       const file = path.join(paths.unitDir, `${unit}.d`, dropIn);
       if (io.fs.existsSync(file)) reasons.push(`dispatch drop-in present: ${file}`);
     }
   }
-  const workers = workerCount(io);
+  const workers = workerCount(io, processScope(io, paths));
   if (workers !== 0) reasons.push(`${workers} shu-worker process(es) running`);
   const trees = io.fs.existsSync(paths.worktrees) ? io.fs.readdirSync(paths.worktrees) : [];
   for (const name of trees) if (/^(build-|review-pr)/.test(name)) reasons.push(`worktree present: ${path.join(paths.worktrees, name)}`);
   return reasons;
 }
 
-function workerCount(io) {
+// M15 W3: what keeps a self-install off the host. The install moves the
+// checkout every worker runs from, so it waits for every configured worker:
+// each one's busy reasons, and another worker's held run lock (a run that is
+// still preparing has armed nothing yet). One worker: busyReasons, as before.
+// This is a check, not a lock: a worker can still start just after it.
+export function hostBusyReasons(io, paths = CARD_RUN_PATHS) {
+  let workers = 1;
+  try { workers = cardWorkers(readConfig(io, paths)); } catch { /* one worker */ }
+  const self = workerOf(paths);
+  if (self === 1 && workers === 1) return busyReasons(io, paths);
+  const reasons = [];
+  for (let worker = 1; worker <= Math.max(workers, self); worker += 1) {
+    if (worker === self) { reasons.push(...busyReasons(io, paths)); continue; }
+    const { activation, lock } = cardRunPaths(worker);
+    const other = { ...paths, worker, activation, lock };
+    if (io.fs.existsSync(lock)) reasons.push(`card run lock held: ${lock}`);
+    reasons.push(...busyReasons(io, other));
+  }
+  return [...new Set(reasons)];
+}
+
+// M15 W3: which shu-worker processes are this worker's. With one worker
+// (workers.max unset or 1) every one is, as before: null, and the count and
+// kill go by uid. Otherwise only those in the cgroups of the worker's own
+// supervisor and coordinator: a builder is the supervisor's child, its
+// dependency install the coordinator tick's, and a process stays in its
+// cgroup when it is reparented to PID 1 (the SHU-376 orphans). A config that
+// cannot be read counts as one worker, so worker 1 then behaves as today.
+export const CGROUP_ROOT = "/sys/fs/cgroup";
+export function processScope(io, paths = CARD_RUN_PATHS) {
+  let workers = 1;
+  try { workers = cardWorkers(readConfig(io, paths)); } catch { /* one worker */ }
+  if (workerOf(paths) === 1 && workers === 1) return null;
+  return { units: workerUnits(workerOf(paths)) };
+}
+
+// The pids in the scope's cgroups. The cgroup is the one systemd reports for
+// the unit, or its default place when the unit is not running (KillMode=process
+// leaves a stopped supervisor's children there). Only the unified hierarchy
+// is read: without it the worker's processes cannot be told apart, and the
+// run refuses rather than count none.
+function cgroupPids(io, scope) {
+  if (!io.fs.existsSync(`${CGROUP_ROOT}/cgroup.controllers`)) refuse("CARD_RUN_CGROUP", `${CGROUP_ROOT} is not the unified cgroup hierarchy`);
+  const pids = new Set();
+  for (const unit of scope.units) {
+    const reported = run(io, "systemctl", ["show", "-p", "ControlGroup", "--value", unit]).trim();
+    const group = reported || `/system.slice/${unit}`;
+    if (!/^(\/[A-Za-z0-9_.@:\\-]+)+$/.test(group) || group.split("/").includes("..")) refuse("CARD_RUN_CGROUP", `${unit} reports an unexpected cgroup`);
+    let text;
+    try { text = io.fs.readFileSync(`${CGROUP_ROOT}${group}/cgroup.procs`, "utf8"); }
+    catch (error) {
+      if (error.code === "ENOENT") continue;
+      refuse("CARD_RUN_CGROUP", `the cgroup of ${unit} cannot be read`);
+    }
+    for (const pid of String(text).split("\n").map((line) => line.trim())) if (/^[1-9]\d*$/.test(pid)) pids.add(pid);
+  }
+  return pids;
+}
+
+// The shu-worker pids of the scope: every one with no scope.
+function workerPids(io, scope = null) {
   const result = io.exec("pgrep", ["-u", "shu-worker"]);
-  if (result.status === 1) return 0;
+  if (result.status === 1) return [];
   if (result.status !== 0) refuse("CARD_RUN_COMMAND", `pgrep exited ${result.status}`);
-  return result.stdout.split("\n").filter((line) => line.trim()).length;
+  const pids = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!scope) return pids;
+  const own = cgroupPids(io, scope);
+  return pids.filter((pid) => own.has(pid));
+}
+
+function workerCount(io, scope = null) {
+  return workerPids(io, scope).length;
+}
+
+// TERM or KILL to the scope's shu-worker processes: by uid with no scope, as
+// before; otherwise each pid read from the worker's own cgroups just now.
+function signalWorkers(io, scope, signal) {
+  if (!scope) {
+    io.exec("pkill", [`-${signal}`, "-u", "shu-worker"]);
+    return;
+  }
+  const pids = workerPids(io, scope);
+  if (pids.length) io.exec("kill", [`-${signal}`, "--", ...pids]);
 }
 
 function run(io, file, args, options = undefined) {
@@ -574,15 +660,17 @@ export function tick(io, limits = CARD_RUN_LIMITS, paths = CARD_RUN_PATHS) {
 // goes on. Only a process that survives KILL leaves the run armed, as before.
 //
 // M15 W2: the drop-ins, the supervisor restarted and the dispatch-off tick are
-// the worker's own. The shu-worker wait, count and kill still cover every
-// worker's processes; slice W3 scopes them to the worker's own.
+// the worker's own. W3: so are the shu-worker processes it waits for, counts
+// and stops (processScope), and with more than one worker it removes only the
+// dependency caches no install can still be using.
 export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   const units = workerUnits(workerOf(paths));
+  const scope = processScope(io, paths);
   const waitUntil = io.now().getTime() + limits.workerGraceMs;
   let reaped = null;
-  while (workerCount(io) !== 0) {
+  while (workerCount(io, scope) !== 0) {
     if (io.now().getTime() >= waitUntil) {
-      reaped = reapWorkers(io, limits);
+      reaped = reapWorkers(io, limits, scope);
       if (!reaped.cleared) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING", reaped };
       break;
     }
@@ -603,13 +691,13 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   try { offTick = tickOutcome(tick(io, CARD_RUN_LIMITS, paths)).activation; }
   catch (error) { offTick = `tick failed: ${error.message}`; }
   run(io, "systemctl", ["stop", "shu71-evidence.service"]);
-  const killed = workerCount(io);
+  const killed = workerCount(io, scope);
   if (killed) {
-    io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
+    signalWorkers(io, scope, "TERM");
     io.sleep(limits.killWaitMs);
-    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
+    signalWorkers(io, scope, "KILL");
   }
-  if (workerCount(io) !== 0) refuse("CARD_RUN_REVERT_READBACK", "shu-worker processes survived cleanup");
+  if (workerCount(io, scope) !== 0) refuse("CARD_RUN_REVERT_READBACK", "shu-worker processes survived cleanup");
   // The record is retired last: until every step above succeeded it stays,
   // so the host reads busy and the next run refuses.
   let retired = null;
@@ -617,8 +705,14 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
     retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation.json`);
     io.fs.renameSync(paths.activation, retired);
   }
+  const cacheBefore = io.now().getTime() - (limits.npmCacheAgeMs ?? CARD_RUN_LIMITS.npmCacheAgeMs);
   for (const name of io.fs.readdirSync(paths.tmp)) {
-    if (/^shu-npm-cache-/.test(name)) io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
+    if (!/^shu-npm-cache-/.test(name)) continue;
+    // Every worker's install makes its cache here under one name pattern, so
+    // with more than one worker only a cache too old to be in use goes.
+    const changed = scope ? cacheMtime(io, path.join(paths.tmp, name)) : null;
+    if (scope && !(Number.isFinite(changed) && changed < cacheBefore)) continue;
+    io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
   }
   return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed, ...(reaped ? { reaped } : {}) };
 }
@@ -632,22 +726,26 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 // they never overlap. `cleared` says none is left. A listing pgrep could not
 // give (an exit other than 0 or 1) is `listed: false`, and the count is the
 // one read just before, so the report never says a false zero.
+// M15 W3: with more than one worker, only the worker's own (scope): the
+// listing keeps the pids of its cgroups, and the signals go to those alone.
 export const REAPED_LIST_MAX = 20;
-function reapWorkers(io, limits) {
-  const running = workerCount(io);
+function reapWorkers(io, limits, scope = null) {
+  const running = workerCount(io, scope);
   const listing = io.exec("pgrep", ["-l", "-u", "shu-worker"]);
   const listed = listing.status === 0 || listing.status === 1;
-  const lines = listing.status === 0 ? String(listing.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+  const own = scope && listing.status === 0 ? cgroupPids(io, scope) : null;
+  const lines = listing.status === 0 ? String(listing.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean)
+    .filter((line) => !own || own.has(line.split(/\s+/)[0])) : [];
   const processes = lines.slice(0, REAPED_LIST_MAX).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
   const signals = ["TERM"];
-  io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
+  signalWorkers(io, scope, "TERM");
   io.sleep(limits.killWaitMs);
-  if (workerCount(io) !== 0) {
+  if (workerCount(io, scope) !== 0) {
     signals.push("KILL");
-    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
+    signalWorkers(io, scope, "KILL");
     io.sleep(limits.killWaitMs);
   }
-  const left = workerCount(io);
+  const left = workerCount(io, scope);
   return { cleared: left === 0, listed, count: listed ? lines.length : running, processes, signals, left };
 }
 
@@ -810,6 +908,12 @@ async function landRun({ io, paths, limits, plan, config, credentials }) {
 
 function readConfig(io, paths) {
   return JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
+}
+
+// When a dependency cache last changed, or null when it cannot be read (it is
+// then kept: /tmp is reaped).
+function cacheMtime(io, dir) {
+  try { return io.fs.statSync(dir).mtimeMs; } catch { return null; }
 }
 
 // Refusals that mean "not now" rather than "this run went wrong": a later
@@ -1163,7 +1267,7 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
 async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
   let install;
   try {
-    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons,
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons: hostBusyReasons,
       cardLanded: async (hostIo, hostPaths, id) => (await cardLanded(hostIo, hostPaths, id, { ...landingReader(hostIo, hostPaths, config, limits), record: true })).landed } });
   } catch (error) {
     install = { skipped: "INSTALL_UNREADABLE", reason: error.message };

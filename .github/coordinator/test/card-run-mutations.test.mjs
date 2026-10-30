@@ -64,7 +64,7 @@ const CASES = [
   },
   {
     name: "M9 revert under a running worker",
-    from: "  while (workerCount(io) !== 0) {",
+    from: "  while (workerCount(io, scope) !== 0) {",
     to: "  while (false) { // SHU86-M9",
     pattern: "SHU-86 C13:",
   },
@@ -1416,13 +1416,13 @@ const CASES = [
   },
   {
     name: "M209 fail the revert at the grace instead of stopping leftover workers",
-    from: "      reaped = reapWorkers(io, limits);",
+    from: "      reaped = reapWorkers(io, limits, scope);",
     to: "      reaped = { cleared: false }; // SHU86-M209",
     pattern: "M16 K1:",
   },
   {
     name: "M210 stop leftover workers with TERM only",
-    from: '    signals.push("KILL");\n    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);',
+    from: '    signals.push("KILL");\n    signalWorkers(io, scope, "KILL");',
     to: "    // SHU86-M210",
     pattern: "M16 K1:",
   },
@@ -1450,6 +1450,54 @@ const CASES = [
     from: 'io.exec("pgrep", ["-l", "-u", "shu-worker"]);',
     to: 'io.exec("pgrep", ["-a", "-u", "shu-worker"]); // SHU86-M214',
     pattern: "M16 K1:",
+  },
+  {
+    name: "M215 count every worker's processes with more than one worker",
+    from: "  if (workerOf(paths) === 1 && workers === 1) return null;",
+    to: "  return null; // SHU86-M215",
+    pattern: "M15 W3: with more than one worker the busy check",
+  },
+  {
+    name: "M216 make a worker busy on another worker's drop-ins",
+    from: "  for (const unit of workerUnits(workerOf(paths))) {",
+    to: "  for (const unit of [...UNITS, ...workerUnits(2)]) { // SHU86-M216",
+    pattern: "M15 W3: with more than one worker the busy check",
+  },
+  {
+    name: "M217 sweep another worker's dependency cache",
+    from: "    if (scope && !(Number.isFinite(changed) && changed < cacheBefore)) continue;",
+    to: "    // SHU86-M217",
+    pattern: "M15 W3: with more than one worker the busy check",
+  },
+  {
+    name: "M218 stop every worker's processes by uid",
+    from: "  if (!scope) {\n    io.exec(\"pkill\"",
+    to: "  if (true) { // SHU86-M218\n    io.exec(\"pkill\"",
+    pattern: "M15 W3: with more than one worker the busy check",
+  },
+  {
+    name: "M219 report another worker's processes as stopped",
+    from: ".filter((line) => !own || own.has(line.split(/\\s+/)[0]))",
+    to: ".filter(() => true) /* SHU86-M219 */",
+    pattern: "M15 W3: with more than one worker the busy check",
+  },
+  {
+    name: "M220 count none when the cgroups cannot tell workers apart",
+    from: "  if (!io.fs.existsSync(`${CGROUP_ROOT}/cgroup.controllers`)) refuse(",
+    to: "  if (false) refuse( // SHU86-M220\n",
+    pattern: "M15 W3: with more than one worker the busy check",
+  },
+  {
+    name: "M221 install under another worker's held run lock",
+    from: "    if (io.fs.existsSync(lock)) reasons.push(`card run lock held: ${lock}`);",
+    to: "    // SHU86-M221",
+    pattern: "M15 W3: a self-install waits",
+  },
+  {
+    name: "M222 install while only another worker is busy",
+    from: "    reasons.push(...busyReasons(io, other));",
+    to: "    // SHU86-M222",
+    pattern: "M15 W3: a self-install waits",
   },
 ];
 
