@@ -4124,6 +4124,22 @@ const SHU398_BRIEF = SHU373_BRIEF.replace("Card SHU-373:", "Card SHU-398:").repl
 if (!SHU398_BRIEF.startsWith("Card SHU-398:") || !SHU398_BRIEF.includes(SHU398_FINDINGS)) throw new Error("SHU398_BRIEF must name its own card and carry the findings");
 const SHU398_ACCEPTANCE = `${SHU373_ACCEPTANCE} SHU-398 is SHU-373's contract re-queued after its first build used up its revisions; SHU-373 never runs. Each of the seven fields can be written twice in a row, including the licence Yes then No and a birth-date correction, and the second write succeeds: the store reads every field as the same plain string the commit compares, so no write is refused state_changed and the digest and preview do not depend on the time zone (SHU373_WRITE, against Postgres). The university select offers both "None" and "Not listed", and "Not listed" explains that staff add new universities. The page tests supply the profile choices and assert a countries select by English name and a universities select by name, the store's choices read has its own test, and one catalogue read per page is counted with fakes.`;
 
+// SHU-400: the same contract a third time. SHU-398 built at 62d9476 and fixed
+// every SHU-373 finding, but its review answered BLOCKED on five new ones and
+// it used up its revisions, so the queue stopped again. The brief keeps
+// SHU-398's text, names its own card and adds the second attempt's findings;
+// the acceptance adds sentences that pin them.
+const SHU400_FINDINGS = `Findings from the stopped second attempt (SHU-398) that this card must also fix. SHU-398 built this contract at 62d9476 (branch coordinator/SHU-398, never merged) and fixed every finding above: its review verified the ::text read with expectedBefore from the same read, the one age setting, catalogue resolution by id inside the commit and the page layout. Its review then answered BLOCKED on five findings and it ran out of revisions. You start again from the bound head, so its code is not there; do not repeat these:
+- (1) Blocking: an existing test failed. The Kuwaiti-mother row was appended to My profile unconditionally (its guard was undefined, not false, whenever the projection had no profile choices), so the unconfigured My profile page rendered 20 <dt> rows where packages/profile/test/profile.test.ts (PROFILE-DEFAULT-HTML) asserts 19. The row also bypassed fieldRow, so it had no unavailable marker and no observed date. Render it through fieldRow, and only when the flag is offered (the nationality is a non-Kuwaiti catalogue country) or recorded. Every existing test passes unchanged; you may not edit profile.test.ts.
+- (2) Blocking: clearing the Kuwaiti-mother flag stored false. The store set the stored value to null for "" and then overwrote it with input.value === "true" for driving licence and Kuwaiti mother, so a clear (accepted by the rules: Kuwaiti mother allows clearing) stored false and the page showed "No". A cleared value is stored as NULL and shows "Not recorded"; add a Postgres SHU373_WRITE case that clears the flag.
+- (3) Blocking: the offer was not pinned at page level. Nothing asserted the Kuwaiti-mother row disappears when the nationality is Kuwaiti, and the only possible assertion (<dd>Yes</dd>) was already satisfied by another row. Add SHU373_PAGE cases: with a selected nationality whose catalogue code is KW the row and its radios are absent; with a non-Kuwaiti nationality they are present.
+- (4) Blocking: the Change preview showed stored codes. The preview's after value was the raw submitted string, so it read "Nationality: Jordan → 11111111-…", "true → false" and "Not looking right now → not_looking". Before and after both show what My profile would show: the catalogue name for nationality and university, Yes/No, and the work status label. Test it for nationality, licence and work status.
+- (5) Blocking: the university select opened on "None" for a person who has a university, because it defaulted to the written name while its options carry ids, so submitting it unchanged proposed clearing the university. Preselect the written university by id, as nationality does, and test that the select opens on it.
+- Not blocking, but fix them: the birth-date form showed the minimum-age message for every invalid date (a malformed or future date has its own message); a test reads the time work status was written (PD-14 "records when it changed"); and use existing classes only, with no new CSS rule.`;
+const SHU400_BRIEF = SHU398_BRIEF.replace("Card SHU-398:", "Card SHU-400:").replace("\n\nRead first:\n", `\n\n${SHU400_FINDINGS}\n\nRead first:\n`);
+if (!SHU400_BRIEF.startsWith("Card SHU-400:") || !SHU400_BRIEF.includes(SHU398_FINDINGS) || !SHU400_BRIEF.includes(SHU400_FINDINGS)) throw new Error("SHU400_BRIEF must name its own card and carry both attempts' findings");
+const SHU400_ACCEPTANCE = `${SHU398_ACCEPTANCE} SHU-400 is SHU-398's contract re-queued after its build used up its revisions; SHU-398 never runs again. The Kuwaiti-mother row renders through the same row helper as the other fields and only when the flag is offered or recorded, so the unconfigured My profile page keeps its existing rows and every existing test passes unchanged; the page shows the row and its radios for a non-Kuwaiti nationality and not for a nationality whose catalogue code is KW (SHU373_PAGE). Clearing the Kuwaiti-mother flag stores NULL and shows "Not recorded" (SHU373_WRITE, against Postgres). The Change preview shows before and after as My profile shows them: catalogue names, Yes or No and the work status label, never an id or a stored code (SHU373_PAGE). The university select opens on the person's written university (SHU373_PAGE).`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4609,6 +4625,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU373_PATHS,
     acceptance: SHU398_ACCEPTANCE,
     brief: SHU398_BRIEF,
+  }),
+  "SHU-400": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU400_ACCEPTANCE,
+    brief: SHU400_BRIEF,
   }),
 });
 
