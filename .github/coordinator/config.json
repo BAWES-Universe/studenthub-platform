@@ -43,7 +43,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-390",
+      "SHU-392",
+      "SHU-393",
       "SHU-373",
       "SHU-374"
     ]
@@ -2324,6 +2325,76 @@
         "apps/gateway/test/language-preference.test.ts",
         "packages/db/src/safe-write-store.ts",
         "packages/db/test/safe-write-store.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-392",
+      "authorization_ref": "SHU-392",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 3 of the thirteenth card queue split in two after six whole-card runs ended without a merge: first half, the person_profiles store, the field rules and the self-edit service, with no route or page; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0211_person_profiles.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "packages/safe-write-contract/src/safe-write.ts",
+        "packages/safe-write-contract/src/types.ts",
+        "packages/safe-write-contract/test/safe-write-contract.test.ts",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0211_person_profiles.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "packages/safe-write-contract/src/safe-write.ts",
+        "packages/safe-write-contract/src/types.ts",
+        "packages/safe-write-contract/test/safe-write-contract.test.ts",
+        "packages/db/src/safe-write-store.ts",
+        "packages/db/test/safe-write-store.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-393",
+      "authorization_ref": "SHU-393",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "card 3 of the thirteenth card queue, second half: the JSON routes, the Change flow on My profile's five rows, the refusal pages and the receipt 404 across the two profile cards, on top of the first half's store and service; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/src/language-preference.ts",
+        "apps/gateway/test/language-preference.test.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs"
       ]
     }
   ],
