@@ -998,7 +998,7 @@ test("M16 Q1: a re-cut queue of one new lane and later installed lanes that have
   // card that has not landed, so the stopped card first would stop it again.
   const scoped = (ids) => selfInstallGate(recutFacts((f) => ({ ...f,
     configs: { ...f.configs, main: JSON.stringify(recutConfig((c) => ({ ...c, dispatch_scope: { issue_ids: ids } }))) } })));
-  for (const ids of [INSTALLED_SCOPE.slice(1), [INSTALLED_SCOPE[0], RECUT_ID, ...INSTALLED_SCOPE.slice(1, 3)], [INSTALLED_SCOPE[1], RECUT_ID]]) {
+  for (const ids of [[...INSTALLED_SCOPE.slice(1), INSTALLED_SCOPE[0]], [INSTALLED_SCOPE[0], RECUT_ID, ...INSTALLED_SCOPE.slice(1, 3)], [INSTALLED_SCOPE[1], RECUT_ID]]) {
     const gate = scoped(ids);
     assert.ok(refused(gate), JSON.stringify(ids));
     assert.match(gate.reason, new RegExp(`^${ids[0]}, first in the new dispatch_scope, is not a newly appended card lane`), JSON.stringify(ids));
@@ -1121,15 +1121,18 @@ test("M16 Q5: every install, queue or code, may only add cards to the contracts 
   assert.equal(source.ok, true, JSON.stringify(source));
 });
 
-test("M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone", async () => {
-  // Everything the box runs as root, card-run.mjs included, stays a person's
-  // install: the committed config turns code self-install off.
-  assert.equal(Object.hasOwn(COMMITTED, "code_self_install"), false);
-  assert.equal(codeInstallPolicy(COMMITTED), null);
-  assert.equal(selfInstallGate(codeFacts(null, (f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: COMMITTED_TEXT } }))).quiet, true,
-    "with the committed config, reviewed code alone is nothing to install");
+test("M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone", async () => {
+  // The committed config turns code self-install on with approval none:
+  // reviewed code installs itself, card-run.mjs included.
+  assert.deepEqual(COMMITTED.code_self_install, NONE);
+  assert.deepEqual(codeInstallPolicy(COMMITTED), { approval: "none", approvers: [] });
+  assert.equal(selfInstallGate(codeFacts(null, (f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: COMMITTED_TEXT } }))).ok, true,
+    "with the committed config, reviewed code installs itself");
+  assert.equal(selfInstallGate(codeFacts(null, (f) => ({ ...f, configs: { installed: QUEUE_ONLY_TEXT, main: QUEUE_ONLY_TEXT } }))).quiet, true,
+    "with the policy off, reviewed code alone is nothing to install");
   // A queue install, the stopped-queue restart, still installs itself.
-  assert.deepEqual(selfInstallGate(recutFacts((f) => ({ ...f, configs: { installed: COMMITTED_TEXT, main: JSON.stringify(recutConfig()) } }))),
+  assert.deepEqual(selfInstallGate(recutFacts((f) => ({ ...f, configs: { installed: COMMITTED_TEXT,
+    main: JSON.stringify(recutConfig((c) => ({ ...c, code_self_install: NONE }))) } }))),
     { ok: true, queue: RECUT_SCOPE, lanes: [RECUT_ID] });
   // A policy-none install passes with no GitHub review read.
   const host = codeHost(NONE, { approved: false });
