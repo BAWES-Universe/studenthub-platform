@@ -115,10 +115,15 @@ export function cardRunPaths(worker = 1) {
 }
 export const workerOf = (paths) => paths.worker ?? 1;
 // Another worker's run of this card is still going: its claim has no outcome
-// yet, it names that worker, and that worker's run lock is held.
+// yet, it names that worker, and that worker's run lock is held or the process
+// that wrote the claim is still alive (the lock is released before the run
+// report is posted and the outcome written, and taken after the claim).
 function claimLive(io, paths, ran) {
   if (!ran || ran.outcome !== undefined || !Number.isInteger(ran.worker) || ran.worker === workerOf(paths)) return false;
-  try { return io.fs.existsSync(cardRunPaths(ran.worker).lock); } catch { return false; }
+  try {
+    if (io.fs.existsSync(cardRunPaths(ran.worker).lock)) return true;
+    return Number.isInteger(ran.pid) && ran.pid > 0 && io.fs.existsSync(`/proc/${ran.pid}`);
+  } catch { return false; }
 }
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
 // M15 W2: the supervisor and coordinator a worker arms, ticks and reverts.
@@ -885,7 +890,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   const claim = autoClaim(paths, revision, plan.id);
   const claimedAt = io.now().toISOString();
   try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, worker: workerOf(paths) })}\n`, { flag: "wx", mode: 0o600 });
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, worker: workerOf(paths), pid: process.pid })}\n`, { flag: "wx", mode: 0o600 });
   } catch (error) {
     if (error.code === "EEXIST") return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
     throw error;
