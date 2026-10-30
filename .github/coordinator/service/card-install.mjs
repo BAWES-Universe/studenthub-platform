@@ -46,15 +46,15 @@
 //     card left out. So a dispatch_scope id after the first may also be an
 //     installed lane that has not landed; every other rule above holds as it
 //     was.
-//   * code_self_install stays off in config.json, so coordinator code is
-//     still a person's install. codeInstallPolicy (M11) can read
-//     { approval: "none" }, a box REVIEW_PASS at the exact head and green
-//     checks, but everything the box runs as root needs a person until the
-//     units run unprivileged: card-run.mjs itself runs as root (its unit and
-//     the install's plan step) and is installable code, so a reviewed pull
-//     request would otherwise run code as root with no person. Owner-only
-//     paths stay NEEDS_OWNER under any policy, and a code install changes no
-//     config key but appended card_lanes and a new queue.
+//   * code_self_install is { approval: "none" } in config.json (owner's
+//     call, 2026-10-30: velocity first, harden from what goes wrong): a box
+//     REVIEW_PASS at the exact head and green checks install coordinator
+//     code. card-run.mjs runs as root (its unit and the install's plan step)
+//     and is installable, so a reviewed pull request runs code as root with
+//     no person; what bounds it is the review, the checks, the verify step
+//     that puts R back when N is not sound, and the owner-only paths below,
+//     which set up root itself and stay NEEDS_OWNER under any policy. A code
+//     install changes no config key but appended card_lanes and a new queue.
 //   * the card contracts the coordinator reads are data: card-contracts.json,
 //     generated from their source card-contracts.mjs and read by
 //     card-contracts-reader.mjs. No module outside the tests and the

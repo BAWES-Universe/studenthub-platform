@@ -4637,7 +4637,7 @@
     "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
     "M16 Q3: nothing the coordinator runs imports the contracts source, and the data is the source's output",
     "M16 Q5: every install, queue or code, may only add cards to the contracts data, whatever their text says",
-    "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
+    "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
     "M16 Q6: a code install changes no config key a queue install could not",
     "M16 Q7: a test file a runtime module imports is never a queue's to change",
     "SHU-322 mutation M30 install an owner-only path",
@@ -33720,7 +33720,7 @@
       "capabilities": []
     },
     {
-      "name": "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
+      "name": "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
       "capabilities": []
     },
     {

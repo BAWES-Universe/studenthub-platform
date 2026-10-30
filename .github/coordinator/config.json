@@ -10,6 +10,9 @@
     "max_per_tick": 1
   },
   "landing_repair": true,
+  "code_self_install": {
+    "approval": "none"
+  },
   "landing_thread_settle": {
     "enabled": false,
     "max_per_run": 5,
