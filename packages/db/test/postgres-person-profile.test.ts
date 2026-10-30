@@ -3,9 +3,8 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
-import { PostgresAuthzStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "../src/index.js";
-import { SHU372_RULES } from "../../profile/src/self-edit.js";
-import { createPersonSelfEdit } from "../../profile/src/self-edit.js";
+import { PostgresAuthzStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "@studenthub/db";
+import { SHU372_RULES, createPersonSelfEdit } from "@studenthub/profile";
 
 const url = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool;
