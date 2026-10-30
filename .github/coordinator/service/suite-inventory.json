@@ -8019,7 +8019,14 @@
     },
     {
       "name": "M15 W2: a card worker's supervisor and coordinator render their own activation, socket, store and writer lock; worker 1 is unchanged",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
     },
     {
       "name": "SHU251 canonical workspace constant matches literal deployment and activation contract",
