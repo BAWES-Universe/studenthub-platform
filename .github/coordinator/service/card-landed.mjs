@@ -34,7 +34,12 @@
 import path from "node:path";
 import { updatedHeadHolds } from "./card-land.mjs";
 
-export const HAND_LAND_OUTCOMES = Object.freeze(new Set(["PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "THREADS_HELD"]));
+// M15: with more than one worker, a landing that waited past its bound for
+// another worker's merge step (LAND_LOCK_HELD), or saw main move in every
+// round (LAND_BASE_MOVING), stopped with its pull request open and passed, as
+// these do; a person's merge of it counts on the same proof.
+export const HAND_LAND_OUTCOMES = Object.freeze(new Set(["PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "THREADS_HELD",
+  "LAND_LOCK_HELD", "LAND_BASE_MOVING"]));
 // Main's history read for the first-parent walk: pages of 100, newest first.
 export const HAND_LAND_PAGES = 3;
 const SHA_RE = /^[0-9a-f]{40}$/;

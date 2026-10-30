@@ -1676,7 +1676,7 @@ const CASES = [
   {
     name: "M249 watch worker 1 alone when more card workers are configured",
     file: "service/card-watchdog.mjs",
-    from: "  for (let worker = 2; worker <= workers; worker += 1) others.push({ worker, ...(await watch(worker)) });",
+    from: "  for (const worker of watched) others.push({ worker, ...(await watch(worker)) });",
     to: "  // SHU86-M249",
     pattern: "M15: the watch watches every configured card worker",
   },
@@ -1686,6 +1686,64 @@ const CASES = [
     from: "  const stuck = found && worker > 1 ? { ...found, key: `w${worker}-${found.key}` } : found;",
     to: "  const stuck = found; // SHU86-M250",
     pattern: "M15: the watch watches every configured card worker",
+  },
+  {
+    name: "M251 never count a person's merge after a landing waited on another worker's merge step or a moving main",
+    file: "service/card-landed.mjs",
+    from: "  \"LAND_LOCK_HELD\", \"LAND_BASE_MOVING\"]));",
+    to: "])); // SHU86-M251",
+    pattern: "M15: a card whose landing stopped for another worker's merge step",
+  },
+  {
+    name: "M252 keep a claim live on a pid another process reused",
+    from: "    return ran.pid_start === undefined || processStart(io, ran.pid) === ran.pid_start;",
+    to: "    return true; // SHU86-M252",
+    pattern: "M15 W1: a claim records its process's start time",
+  },
+  {
+    name: "M253 write a claim without its process's start time",
+    from: "  return { worker: workerOf(paths), pid: process.pid, ...(start ? { pid_start: start } : {}) };",
+    to: "  return { worker: workerOf(paths), pid: process.pid }; // SHU86-M253",
+    pattern: "M15 W1: a claim records its process's start time",
+  },
+  {
+    name: "M254 install while a card worker past workers.max is still armed",
+    from: "  for (let worker = counted + 1; worker <= MAX_CARD_WORKERS; worker += 1) {",
+    to: "  for (let worker = counted + 1; worker <= counted; worker += 1) { // SHU86-M254",
+    pattern: "M15 W3: a self-install also waits",
+  },
+  {
+    name: "M255 arm a card worker an install has since turned off",
+    from: "    if (workerOf(paths) > cardWorkers(config)) refuse(\"CARD_RUN_HOST_BUSY\",",
+    to: "    if (false) refuse(\"CARD_RUN_HOST_BUSY\", // SHU86-M255\n",
+    pattern: "M15 W3: a self-install also waits",
+  },
+  {
+    name: "M256 run past an install lock whose holder died",
+    from: "  if (!io.fs.existsSync(lock)) return [];\n  return [installLockHeld(io, lock)];",
+    to: "  if (!io.fs.existsSync(lock) || /which is gone/.test(installLockHeld(io, lock))) return []; // SHU86-M256\n  return [installLockHeld(io, lock)];",
+    pattern: "M15 W5: a card run never takes over",
+  },
+  {
+    name: "M257 take a landing lock over without the takeover marker",
+    file: "service/card-land.mjs",
+    from: "  try { io.fs.writeFileSync(marker, String(process.pid), { flag: \"wx\", mode: 0o600 }); } catch { return null; }",
+    to: "  // SHU86-M257",
+    pattern: "M15 W4: a landing lock whose holder died",
+  },
+  {
+    name: "M258 remove a landing lock without reading it again under the marker",
+    file: "service/card-land.mjs",
+    from: "    if (again !== holder || io.fs.existsSync(`/proc/${again}`)) return null;",
+    to: "    // SHU86-M258",
+    pattern: "M15 W4: a landing lock whose holder died",
+  },
+  {
+    name: "M259 stop watching a card worker past workers.max whose unit is installed",
+    file: "service/card-watchdog.mjs",
+    from: "    if (worker <= workers || io.fs.existsSync(path.join(paths.unitDir, autoServiceName(worker)))) watched.push(worker);",
+    to: "    if (worker <= workers) watched.push(worker); // SHU86-M259",
+    pattern: "M15: the watch also watches",
   },
 ];
 

@@ -350,8 +350,8 @@ const CASES = [
   },
   {
     name: "M56 install without the host-wide install lock",
-    from: "  const takeInstallLock = () => { io.fs.writeFileSync(installLock, String(process.pid), { flag: \"wx\", mode: 0o600 }); };",
-    to: "  const takeInstallLock = () => { /* M15-W5-M56 */ };",
+    from: "  try { io.fs.writeFileSync(installLock, String(process.pid), { flag: \"wx\", mode: 0o600 }); }",
+    to: "  try { /* M15-W5-M56 */ }",
     pattern: "M15 W5: a self-install holds",
   },
   {
@@ -359,6 +359,13 @@ const CASES = [
     from: "      try { io.fs.unlinkSync(installLock); } catch { /* the lock is gone already */ }",
     to: "      // M15-W5-M57",
     pattern: "M15 W5: a self-install holds",
+  },
+  {
+    name: "M58 tell an install lock whose holder died from a live one",
+    file: "service/card-install.mjs",
+    from: "  if (/^[1-9]\\d*$/.test(holder) && !io.fs.existsSync(`/proc/${holder}`)) {",
+    to: "  if (false) { // M15-W5-M58",
+    pattern: "M15 W5: an install lock whose holder died is never taken over",
   },
 ];
 

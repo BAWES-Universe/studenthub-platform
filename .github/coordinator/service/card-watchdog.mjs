@@ -34,7 +34,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { sendLinear } from "../reconcile.mjs";
 import { readCoordinatorCredentials, postRunReport, plainReason, reportMarker, REPORT_ISSUE, REPORT_ISSUE_QUERY, RUN_OUTCOME_TEXT } from "./card-prepare.mjs";
-import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE, cardRunPaths, autoServiceName, cardWorkers } from "./card-run.mjs";
+import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE, cardRunPaths, autoServiceName, cardWorkers, MAX_CARD_WORKERS } from "./card-run.mjs";
 import { statusPath, ownerMention, nextStart } from "./card-status.mjs";
 
 export const WATCH_MODULE = fileURLToPath(import.meta.url);
@@ -347,8 +347,15 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
   let credentialError = null;
   try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) { credentialError = error.code ?? "CARD_WATCH_CREDENTIALS"; }
   // M15: every configured card worker; a config that cannot be read is one.
+  // A worker past that count whose card-run unit is still installed is
+  // watched too: a lower workers.max stops its timer starts, not a run of it
+  // that is already going.
   let workers = 1;
   try { workers = cardWorkers(JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"))); } catch { /* one worker */ }
+  const watched = [];
+  for (let worker = 2; worker <= MAX_CARD_WORKERS; worker += 1) {
+    if (worker <= workers || io.fs.existsSync(path.join(paths.unitDir, autoServiceName(worker)))) watched.push(worker);
+  }
   const watch = (worker) => watchWorker({ io, paths: worker === 1 ? paths : cardRunPaths(worker, paths), limits, now, state, credentials,
     service: autoServiceName(worker), worker });
   const own = await watch(1);
@@ -356,7 +363,7 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
   if (own.result.unit_error !== undefined) result.unit_error = own.result.unit_error;
   if (own.result.stall !== undefined) result.stall = own.result.stall;
   const others = [];
-  for (let worker = 2; worker <= workers; worker += 1) others.push({ worker, ...(await watch(worker)) });
+  for (const worker of watched) others.push({ worker, ...(await watch(worker)) });
   if (others.length) result.workers = others.map(({ worker, result: seen }) => ({ worker, ...seen }));
 
   const paused = io.fs.existsSync(paths.pause);

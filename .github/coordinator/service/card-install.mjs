@@ -71,7 +71,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReason, reportMarker, PUSH_TIMEOUT_SECONDS,
   readCoordinatorCredentials } from "./card-prepare.mjs";
-import { boundedFetch, github, readCommitChecks, clearStaleLock } from "./card-land.mjs";
+import { boundedFetch, github, readCommitChecks } from "./card-land.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { MAX_CARD_QUEUE } from "../single-run-activation.mjs";
 import { isFixtureIssue, validateAllowedPaths, validateCardContractMode } from "../workspace-scope.mjs";
@@ -103,12 +103,24 @@ export const INSTALL_REQUEST_TIMEOUT_MS = 30 * 1000;
 // takes its own run lock before it looks for this one, so a run and an
 // install never both go ahead. A failed install that keeps its run lock keeps
 // this one too, so no worker starts on a half-installed host: it then holds
-// a reason, not a pid. A lock whose holder died mid-install holds that pid and
-// is taken over (card-land.mjs clearStaleLock): a run still refuses a host the
-// crash left half-installed (its receipt is not VERIFIED at HEAD), and the
-// next install rolls it back.
+// a reason instead of the pid. The install lock is never taken over, not even
+// from an install that died: a crash after the install step leaves a receipt
+// VERIFIED at HEAD whose precondition and plan never ran, which no run can
+// tell from a sound install, so the lock stands, naming the dead holder, until
+// the owner removes it (as worker 1's own run lock, which the crash left too,
+// always did). A kept lock whose reason could not be written still holds the
+// pid, and stands the same way.
 export const INSTALL_LOCK = "/run/lock/shu-card-install.lock";
 export const INSTALL_LOCK_KEPT = "kept: a failed install whose pause could not be written";
+// Why a held install lock keeps a run or an install off the host.
+export function installLockHeld(io, file = INSTALL_LOCK) {
+  let holder = "";
+  try { holder = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { /* named without its holder */ }
+  if (/^[1-9]\d*$/.test(holder) && !io.fs.existsSync(`/proc/${holder}`)) {
+    return `install lock held: ${file}, by pid ${holder}, which is gone: that install died and may have left the host half-installed; the owner recovers it and removes the lock`;
+  }
+  return `install lock held: ${file}${holder === INSTALL_LOCK_KEPT ? ` (${INSTALL_LOCK_KEPT})` : ""}`;
+}
 const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
 
 // M11: coordinator code the box may install itself once its config turns
@@ -683,15 +695,10 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { return { skipped: "INSTALL_LOCKED", reason: `${paths.lock} exists` }; }
   const installLock = paths.installLock ?? INSTALL_LOCK;
-  const takeInstallLock = () => { io.fs.writeFileSync(installLock, String(process.pid), { flag: "wx", mode: 0o600 }); };
-  try { takeInstallLock(); }
+  try { io.fs.writeFileSync(installLock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch {
-    let taken = false;
-    if (clearStaleLock(io, installLock) !== null) { try { takeInstallLock(); taken = true; } catch { /* another worker took it first */ } }
-    if (!taken) {
-      try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
-      return { skipped: "INSTALL_LOCKED", reason: `${installLock} exists: another worker is installing` };
-    }
+    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
+    return { skipped: "INSTALL_LOCKED", reason: installLockHeld(io, installLock) };
   }
   const steps = [];
   const paused = () => io.fs.existsSync(paths.pause);
@@ -769,7 +776,8 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
       try { io.fs.unlinkSync(installLock); } catch { /* the lock is gone already */ }
       try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
     } else {
-      // Kept on purpose: no longer a pid, so no worker ever takes it over.
+      // Kept on purpose, with its reason; one that cannot be written still
+      // holds this pid, which no worker takes over either.
       try { io.fs.writeFileSync(installLock, INSTALL_LOCK_KEPT, { mode: 0o600 }); } catch { /* it still holds this pid */ }
     }
   }

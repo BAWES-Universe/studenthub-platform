@@ -36,7 +36,7 @@ import { brokerGitEnv } from "../push-broker.mjs";
 import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceText, readRepairEvidence, testWeakening, isTestPath, isTestConfigPath,
   repairRecordPath, repairAlertPath, advanceRound, REPAIR_LIMITS, REPAIR_SKIPS } from "../service/card-repair.mjs";
 import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
-import { judgeChecks, clearStaleLock, updatedHeadHolds } from "../service/card-land.mjs";
+import { judgeChecks, clearStaleLock, takeoverMarker, updatedHeadHolds } from "../service/card-land.mjs";
 import { judgingLane, threadReviewer, REVIEW_LIMITS } from "../service/card-threads.mjs";
 import { readVelocity, velocityLine } from "../service/card-velocity.mjs";
 import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
@@ -1212,9 +1212,34 @@ test("M15 W3: a self-install waits for every configured worker; with one worker 
   assert.deepEqual(hostBusyReasons(host.io, PATHS), [`card run lock held: ${w2.lock}`, `activation record present at ${w2.activation}`, "1 shu-worker process(es) running"]);
   // One worker: exactly its own busy check.
   const one = fakeHost();
-  one.files.set(w2.lock, { text: "1" });
   assert.deepEqual(hostBusyReasons(one.io, PATHS), busyReasons(one.io, PATHS));
   assert.deepEqual(hostBusyReasons(one.io, PATHS), []);
+});
+
+test("M15 W3: a self-install also waits for a card worker past workers.max that still holds its run lock or armed state, without reading its cgroups", async () => {
+  const { cardRunPaths, hostBusyReasons } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2);
+  const w8 = cardRunPaths(8);
+  // workers.max is 1 now, but worker 2 started on the count before it.
+  const one = fakeHost();
+  const execs = [];
+  const exec = one.io.exec;
+  one.io = { ...one.io, exec: (file, args, ...rest) => { execs.push([file, ...args].join(" ")); return exec(file, args, ...rest); } };
+  one.files.set(w2.lock, { text: "1" });
+  assert.deepEqual(hostBusyReasons(one.io, PATHS), [`card run lock held: ${w2.lock} (card worker 2, past workers.max 1)`]);
+  one.files.delete(w2.lock);
+  one.files.set(w8.activation, { text: "{}" });
+  one.files.set(dropIn("shu-supervisor-w8.service", RUN_DROP_IN), { text: "x" });
+  one.files.set(path.join(PATHS.worktrees, "w8-build-SHU-301"), { text: "" });
+  assert.deepEqual(hostBusyReasons(one.io, PATHS), [`activation record present at ${w8.activation}`,
+    `dispatch drop-in present: ${dropIn("shu-supervisor-w8.service", RUN_DROP_IN)}`, `worktree present: ${path.join(PATHS.worktrees, "w8-build-SHU-301")}`]);
+  assert.equal(execs.some((call) => call.startsWith("systemctl")), false, "no cgroup is read for a worker past the count");
+  // Its timer start, which read the higher count, refuses once its lock is
+  // held and the lowered count is read, and gives its start back.
+  const late = fakeHost({ onTick: passOnFirstTick });
+  await assert.rejects(runCard({ io: late.io, paths: cardRunPaths(2, PATHS) }), { code: "CARD_RUN_HOST_BUSY", message: /card worker 2 is off: workers\.max is 1/ });
+  assert.equal(late.files.has(cardRunPaths(2, PATHS).lock), false);
+  noArming(late);
 });
 
 test("SHU-86 C14: one run at a time, as root only", async () => {
@@ -3281,6 +3306,42 @@ test("M15 W1: with two workers a card another worker is running is passed over, 
   assert.equal(cardQueue(backwards).ok, false);
 });
 
+test("M15 W1: a claim records its process's start time, and a later process that reused the pid does not keep the card live", async () => {
+  const { cardRunPaths, processStart } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2);
+  const two = { ...queueConfig(), workers: { max: 2 } };
+  // /proc/PID/stat: field 22 is the start time; the command name may hold ") ".
+  const stat = (pid, start) => `${pid} (node (card) run) S 1 ${pid} ${pid} 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 11 0 ${start} 1000 100\n`;
+  const proc = (host, pid, start) => {
+    host.files.set(`/proc/${pid}`, { text: "", mode: 0o555, uid: 0, gid: 0 });
+    host.files.set(`/proc/${pid}/stat`, { text: stat(pid, start), mode: 0o444, uid: 0, gid: 0 });
+  };
+  const host = fakeHost({ config: two, branchHead: "" });
+  proc(host, 4242, "123456");
+  assert.equal(processStart(host.io, 4242), "123456");
+  assert.equal(processStart(host.io, 4343), null, "no such process");
+  claimFor(host, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1, pid: 4242, pid_start: "123456" });
+  assert.deepEqual(await nextCard(host.io, w2, two, REV), { id: "SHU-305" }, "the claimant itself is still alive");
+  // The claimant died and another process now has its pid: the card stopped.
+  proc(host, 4242, "999999");
+  assert.equal((await nextCard(host.io, w2, two, REV)).skipped, "QUEUE_STOPPED", "a reused pid is not the claimant");
+  host.files.delete("/proc/4242/stat");
+  assert.equal((await nextCard(host.io, w2, two, REV)).skipped, "QUEUE_STOPPED", "a start time that cannot be read proves nothing");
+  // The claim a timer start writes carries its own start time.
+  const run = fakeHost({ onTick: passOnFirstTick });
+  proc(run, process.pid, "424242");
+  const claims = [];
+  const write = run.io.fs.writeFileSync;
+  run.io = { ...run.io, fs: { ...run.io.fs, writeFileSync: (file, text, ...rest) => {
+    if (/card-run-auto-/.test(String(file)) && rest[0]?.flag === "wx") claims.push(JSON.parse(text));
+    return write(file, text, ...rest);
+  } } };
+  await attempt(() => autoRun({ io: run.io, paths: PATHS }));
+  assert.equal(claims.length, 1, JSON.stringify(claims));
+  assert.equal(claims[0].pid, process.pid);
+  assert.equal(claims[0].pid_start, "424242");
+});
+
 test("M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start", async () => {
   const two = { ...queueConfig(), workers: { max: 2 } };
   const race = (config) => {
@@ -3715,7 +3776,7 @@ test("Self-repair A: a card a person merged at the reviewed head counts as lande
   const host = handGitHub(fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-305")(h) : tickText("activation=absent (committed gates only)")) }));
   host.mainTip = HEAD;
   claimFor(host, REV, "SHU-301", handClaim());
-  assert.deepEqual([...HAND_LAND_OUTCOMES].sort(), ["CI_TIMEOUT", "MERGE_HOLD", "PR_OPENED_CI_RED", "THREADS_HELD"]);
+  assert.deepEqual([...HAND_LAND_OUTCOMES].sort(), ["CI_TIMEOUT", "LAND_BASE_MOVING", "LAND_LOCK_HELD", "MERGE_HOLD", "PR_OPENED_CI_RED", "THREADS_HELD"]);
   // Without GitHub, the claim alone stops the queue as before.
   assert.equal((await nextCard(host.io, PATHS, queueConfig(), REV)).skipped, "QUEUE_STOPPED");
   // The read-only plan proves it, prepares SHU-301 no more, and records nothing.
@@ -3799,6 +3860,24 @@ function updatedGitHub(host, { blobs = "same", parents = [PASSED, MAIN_AT], line
   };
   return host;
 }
+
+test("M15: a card whose landing stopped for another worker's merge step or a moving main, then merged by a person at its updated head, counts as landed and the queue moves on", async () => {
+  for (const land of ["LAND_LOCK_HELD", "LAND_BASE_MOVING"]) {
+    const host = updatedGitHub(fakeHost({ config: queueConfig() }));
+    claimFor(host, REV, "SHU-301", handClaim({ land, updated_head: UPDATED }));
+    const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => host.io.fetch(url, { method }) };
+    const result = await cardLanded(host.io, PATHS, "SHU-301", { ...landing, record: true });
+    assert.equal(result.landed, true, `${land}: ${JSON.stringify(result)}`);
+    assert.equal(JSON.parse(host.files.get(handLandRecord(PATHS, "SHU-301")).text).updated_head, UPDATED, land);
+    assert.deepEqual(await nextCard(host.io, PATHS, queueConfig(), REV, { landing }), { id: "SHU-305" }, land);
+    // Merged at neither head: not landed, and the queue stops as before.
+    const other = updatedGitHub(fakeHost({ config: queueConfig() }), { head: "6".repeat(40) });
+    claimFor(other, REV, "SHU-301", handClaim({ land, updated_head: UPDATED }));
+    const otherLanding = { repo: COMMITTED.pilot_repo, gh: (method, url) => other.io.fetch(url, { method }) };
+    assert.equal((await cardLanded(other.io, PATHS, "SHU-301", otherLanding)).landed, false, land);
+    assert.equal((await nextCard(other.io, PATHS, queueConfig(), REV, { landing: otherLanding })).skipped, "QUEUE_STOPPED", land);
+  }
+});
 
 test("M15: a card a person merged at the head a landing updated it to counts as landed when that head holds the passed blobs, and not otherwise", async () => {
   const host = updatedGitHub(fakeHost({ config: queueConfig() }));
@@ -4358,6 +4437,36 @@ test("M15: the watch watches every configured card worker's service and status f
   assert.equal(alone.workers, undefined);
   assert.equal(one.calls.some((call) => call.includes("-w2")), false);
   assert.doesNotMatch(statusComments(one)[0].body, /Card worker/);
+});
+
+test("M15: the watch also watches a card worker past workers.max whose card-run unit is still installed", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  // workers.max is 1, but worker 2's unit is installed and its run has hung.
+  const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+    now: Date.parse("2026-10-18T07:04:00.000Z") + (STALE_MIN + 1) * MIN });
+  host.put(path.join(PATHS.unitDir, "shu-card-run-w2.service"), "[Service]\n");
+  host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  const units = { "shu-card-run.service": { state: "inactive", since: null }, "shu-card-run-w2.service": { state: "activating", since } };
+  const exec = host.io.exec;
+  host.io = { ...host.io, exec: (file, args) => {
+    if (file === "systemctl" && args[0] === "show") {
+      host.calls.push([file, ...args].join(" "));
+      const unit = units[args.at(-1)];
+      assert.ok(unit, `unexpected unit ${args.at(-1)}`);
+      const exit = unit.since === null ? 0 : (unit.since - BOOT) * 1000;
+      return { status: 0, stdout: `ActiveState=${unit.state}\nInactiveExitTimestampMonotonic=${exit}\nInvocationID=\n`, stderr: "" };
+    }
+    return exec(file, args);
+  } };
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.workers?.length, 1, JSON.stringify(result));
+  assert.equal(result.workers[0].worker, 2);
+  assert.equal(result.workers[0].alert?.key, `w2-${startKey(since)}`);
+  assert.ok(host.files.has(PATHS.pause), "its stuck run pauses every card run");
+  assert.match(statusComments(host)[0].body, /\n\nCard worker 2:\nshu-card-run-w2\.service: running since/);
+  assert.equal(host.calls.some((call) => /-w[3-8]\.service/.test(call)), false, "no worker without an installed unit is read");
 });
 
 test("SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly", () => {
@@ -5730,7 +5839,7 @@ test("M15 W4: a landing lock another worker holds is waited for, and past its bo
   assert.ok(slow.land.checkReads > LAND_LIMITS.lockWaitMs / LAND_LIMITS.pollMs, "green took longer than the lock's bound");
 });
 
-test("M15 W4: a landing lock whose holder died is taken over, and one that changes hands while it is set aside is put back", async () => {
+test("M15 W4: a landing lock whose holder died is taken over under a takeover marker, and a lock that changed hands or a takeover under way is left alone", async () => {
   // The holder crashed mid-landing: no such process, so the lock is stale.
   const stale = landingHost({ parallel: true, mainSeq: [REV] });
   stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
@@ -5738,29 +5847,50 @@ test("M15 W4: a landing lock whose holder died is taken over, and one that chang
   assert.equal(merged.outcome, "MERGED", JSON.stringify(merged));
   assert.equal(stale.land.landLockAtMerge, true);
   assert.equal(stale.files.has(LAND_LOCK), false, "released after the merge");
-  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${LAND_LOCK}.stale-`)), false, "nothing is left aside");
-  // clearStaleLock on its own: a live holder, a lock that is not a pid, and a
-  // lock another worker took over between the read and the rename all stand.
+  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${LAND_LOCK}.`)), false, "nothing is left aside");
+  // clearStaleLock on its own: a live holder and a lock that is not a pid stand.
   const io = { fs: stale.io.fs };
   stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
   stale.files.set("/proc/31337", { text: "", mode: 0o555, uid: 0, gid: 0 });
-  assert.equal(clearStaleLock(io, LAND_LOCK), null);
+  const writes = [];
+  const watched = { fs: { ...stale.io.fs, writeFileSync: (file, ...rest) => { writes.push(file); return stale.io.fs.writeFileSync(file, ...rest); } } };
+  assert.equal(clearStaleLock(watched, LAND_LOCK), null);
   assert.equal(stale.files.get(LAND_LOCK).text, "31337");
+  assert.deepEqual(writes, [], "a live holder's lock is not even marked for takeover");
   stale.files.delete("/proc/31337");
   stale.files.set(LAND_LOCK, { text: "kept", mode: 0o600, uid: 0, gid: 0 });
   assert.equal(clearStaleLock(io, LAND_LOCK), null);
   assert.equal(stale.files.get(LAND_LOCK).text, "kept");
+  // A lock another worker took over and a live worker then took, between
+  // this worker's read and its takeover marker, stands untouched.
   stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
-  const raced = { fs: { ...stale.io.fs, renameSync: (from, to) => {
-    stale.files.set(from, { text: "4242", mode: 0o600, uid: 0, gid: 0 });
-    stale.io.fs.renameSync(from, to);
+  const raced = { fs: { ...stale.io.fs, writeFileSync: (file, text, options) => {
+    if (file === takeoverMarker(LAND_LOCK)) stale.files.set(LAND_LOCK, { text: "4242", mode: 0o600, uid: 0, gid: 0 });
+    return stale.io.fs.writeFileSync(file, text, options);
   } } };
   assert.equal(clearStaleLock(raced, LAND_LOCK), null);
-  assert.equal(stale.files.get(LAND_LOCK).text, "4242", "the newer holder's lock is put back");
-  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${LAND_LOCK}.stale-`)), false);
+  assert.equal(stale.files.get(LAND_LOCK).text, "4242", "the newer holder's lock is never moved");
+  assert.equal(stale.files.has(takeoverMarker(LAND_LOCK)), false, "the marker is removed");
+  // While another worker's takeover is under way, nothing is taken over.
   stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  stale.files.set(takeoverMarker(LAND_LOCK), { text: "5555", mode: 0o600, uid: 0, gid: 0 });
+  assert.equal(clearStaleLock(io, LAND_LOCK), null);
+  assert.equal(stale.files.get(LAND_LOCK).text, "31337");
+  assert.equal(stale.files.get(takeoverMarker(LAND_LOCK)).text, "5555", "another worker's marker is left alone");
+  // A marker left by a takeover that died: the landing waits out its bound
+  // and stops, naming it, with nothing merged.
+  const left = landingHost({ parallel: true, mainSeq: [REV] });
+  left.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  left.files.set(takeoverMarker(LAND_LOCK), { text: "5555", mode: 0o600, uid: 0, gid: 0 });
+  const stopped = await parallelLand(left);
+  assert.equal(stopped.outcome, "LAND_LOCK_HELD", JSON.stringify(stopped));
+  assert.match(stopped.reason, /shu-card-land\.lock\.takeover is left from a takeover that did not finish/);
+  assert.equal(left.files.get(LAND_LOCK).text, "31337");
+  noLandingWrites(left);
+  stale.files.delete(takeoverMarker(LAND_LOCK));
   assert.equal(clearStaleLock(io, LAND_LOCK), 31337);
   assert.equal(stale.files.has(LAND_LOCK), false);
+  assert.equal(stale.files.has(takeoverMarker(LAND_LOCK)), false);
 });
 
 test("M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge", async () => {
@@ -6002,6 +6132,19 @@ test("M15 W5: no card run starts while the install lock is held", async () => {
   const back = await autoRun({ io: timed.io, paths: PATHS });
   assert.equal(back.skipped, "HOST_BUSY");
   assert.equal(timed.files.has(autoClaim(PATHS, REV, "SHU-301")), false);
+});
+
+test("M15 W5: a card run never takes over an install lock whose holder died, and says so", async () => {
+  const host = fakeHost({ onTick: passOnFirstTick });
+  host.files.set(INSTALL_LOCK, { text: "424242", mode: 0o600, uid: 0, gid: 0 });
+  const skipped = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(skipped.skipped, "HOST_BUSY");
+  assert.match(skipped.reason, /install lock held: \/run\/lock\/shu-card-install\.lock, by pid 424242, which is gone/);
+  assert.equal(host.files.get(INSTALL_LOCK).text, "424242", "the dead installer's lock stands");
+  assert.equal([...host.files.keys()].some((file) => file.startsWith(`${INSTALL_LOCK}.`)), false, "nothing is set aside");
+  await assert.rejects(runCard({ io: host.io, paths: PATHS }), { code: "CARD_RUN_HOST_BUSY" });
+  assert.equal(host.files.get(INSTALL_LOCK).text, "424242");
+  noArming(host);
 });
 
 // M15: two card workers on one host, end to end. Worker 1 is the timer's

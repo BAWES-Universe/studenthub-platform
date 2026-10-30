@@ -805,29 +805,35 @@ export async function updatedHeadHolds(gh, { repo, passed, head }) {
   }
 }
 
-// M15: a host-wide lock file (the landing lock, the install lock) holds the
-// pid of the process that took it. A lock whose holder is gone, because that
-// landing or install was killed or crashed, is taken over without a person:
-// it is moved aside first, so of two workers that find it stale at once only
-// one moves it, and the mover checks it moved the dead holder's lock and not
-// one taken since, which it puts back. A lock that holds no pid (an install
-// that kept its lock on purpose writes a reason instead) is never taken over.
+// M15: the landing lock holds the pid of the process that took it. A lock
+// whose holder is gone, because that landing was killed or crashed, is taken
+// over without a person. Only one worker at a time takes a lock over: it
+// first creates the takeover marker (`${file}.takeover`, exclusively), then
+// reads the lock again and removes it only when it still holds the dead
+// holder's pid. While the marker stands nothing else can change the lock: a
+// taker's exclusive create fails on it, its dead holder never releases it,
+// and every other takeover waits for the marker. So a lock a live worker took
+// in the meantime is never moved or removed, and two workers never both hold
+// it. A lock that holds no pid is never taken over, and a marker left by a
+// takeover that died is never removed but by a person: every takeover then
+// waits, and the landing stops LAND_LOCK_HELD rather than guess.
 // Returns the dead holder's pid, or null when the lock stands.
+export const takeoverMarker = (file) => `${file}.takeover`;
 export function clearStaleLock(io, file) {
   let holder;
   try { holder = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { return null; }
   if (!/^[1-9]\d*$/.test(holder) || io.fs.existsSync(`/proc/${holder}`)) return null;
-  const aside = `${file}.stale-${process.pid}`;
-  try { io.fs.renameSync(file, aside); } catch { return null; }
-  let moved = null;
-  try { moved = String(io.fs.readFileSync(aside, "utf8")).trim(); } catch { /* compared below */ }
-  if (moved !== holder) {
-    try { io.fs.writeFileSync(file, moved ?? "", { flag: "wx", mode: 0o600 }); } catch { /* a newer lock stands */ }
-    try { io.fs.unlinkSync(aside); } catch { /* gone already */ }
-    return null;
+  const marker = takeoverMarker(file);
+  try { io.fs.writeFileSync(marker, String(process.pid), { flag: "wx", mode: 0o600 }); } catch { return null; }
+  try {
+    let again = null;
+    try { again = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { /* gone: another takeover finished */ }
+    if (again !== holder || io.fs.existsSync(`/proc/${again}`)) return null;
+    try { io.fs.unlinkSync(file); } catch { return null; }
+    return Number(holder);
+  } finally {
+    try { io.fs.unlinkSync(marker); } catch { /* gone already */ }
   }
-  try { io.fs.unlinkSync(aside); } catch { /* gone already */ }
-  return Number(holder);
 }
 
 // M15 W4: the host-wide landing lock, taken exclusively and waited for up to
@@ -845,7 +851,10 @@ function takeLandLock(io, file, until, limits) {
     if (io.now().getTime() >= until) {
       let holder = "";
       try { holder = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { /* named without its holder */ }
-      stop("LAND_LOCK_HELD", `${file} stayed held${holder ? ` by pid ${holder}` : ""} for ${Math.round(limits.lockWaitMs / 60000)} minutes while its holder was alive: another worker is merging`);
+      const held = `${file} stayed held${holder ? ` by pid ${holder}` : ""} for ${Math.round(limits.lockWaitMs / 60000)} minutes`;
+      const marker = takeoverMarker(file);
+      if (io.fs.existsSync(marker)) stop("LAND_LOCK_HELD", `${held}: ${marker} is left from a takeover that did not finish, so it is not taken over; the owner removes both`);
+      stop("LAND_LOCK_HELD", `${held} while its holder was alive: another worker is merging`);
     }
     io.sleep(limits.lockPollMs);
   }
