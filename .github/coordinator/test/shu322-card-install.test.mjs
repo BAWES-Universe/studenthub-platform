@@ -996,7 +996,7 @@ test("M16 Q1: a re-cut queue of one new lane and later installed lanes that have
   // card that has not landed, so the stopped card first would stop it again.
   const scoped = (ids) => selfInstallGate(recutFacts((f) => ({ ...f,
     configs: { ...f.configs, main: JSON.stringify(recutConfig((c) => ({ ...c, dispatch_scope: { issue_ids: ids } }))) } })));
-  for (const ids of [INSTALLED_SCOPE.slice(1), [INSTALLED_SCOPE[0], RECUT_ID, ...INSTALLED_SCOPE.slice(1, 3)], [INSTALLED_SCOPE[1], RECUT_ID]]) {
+  for (const ids of [[...INSTALLED_SCOPE.slice(1), INSTALLED_SCOPE[0]], [INSTALLED_SCOPE[0], RECUT_ID, ...INSTALLED_SCOPE.slice(1, 3)], [INSTALLED_SCOPE[1], RECUT_ID]]) {
     const gate = scoped(ids);
     assert.ok(refused(gate), JSON.stringify(ids));
     assert.match(gate.reason, new RegExp(`^${ids[0]}, first in the new dispatch_scope, is not a newly appended card lane`), JSON.stringify(ids));

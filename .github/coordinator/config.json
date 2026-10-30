@@ -46,8 +46,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-395",
-      "SHU-373",
+      "SHU-398",
       "SHU-374"
     ]
   },
@@ -2428,6 +2427,43 @@
         "apps/gateway/test/language-preference.test.ts",
         "packages/db/test/postgres-person-profile.test.ts",
         "packages/profile/test/self-edit-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-398",
+      "authorization_ref": "SHU-398",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "SHU-373's contract re-queued under a fresh id after its first build used up its revisions on a BLOCKED review: card 4 of the thirteenth card queue, gender, birth date, nationality, university, licence, Kuwaiti mother and work status, with the first attempt's review findings in the brief and pinned in the acceptance; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0212_person_profiles_choices.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0212_person_profiles_choices.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
       ]
     }
   ],
