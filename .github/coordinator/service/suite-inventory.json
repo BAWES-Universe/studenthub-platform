@@ -4551,6 +4551,12 @@
     "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
     "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
     "SHU-71 M10: T17 a thread that changes after others were resolved stops the landing and names what was already resolved",
+    "M15 W4: with two workers a landing behind main updates its pull request from main, waits for green at the new head and merges it under the landing lock",
+    "M15 W4: main that moves again before the merge step sends the landing round once more, and gives up after baseRounds",
+    "M15 W4: a conflict, or main changing the pull request's own files, stops the landing with its own outcome and nothing merged",
+    "M15 W4: a landing lock another worker holds is waited for, and past its bound the landing stops with nothing merged",
+    "M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge",
+    "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -4636,6 +4642,17 @@
     "SHU-86 mutation M220 count none when the cgroups cannot tell workers apart",
     "SHU-86 mutation M221 install under another worker's held run lock",
     "SHU-86 mutation M222 install while only another worker is busy",
+    "SHU-86 mutation M223 merge without the landing lock",
+    "SHU-86 mutation M224 land a head behind main without updating it",
+    "SHU-86 mutation M225 take an update whose own files are not the passed blobs",
+    "SHU-86 mutation M226 update over main's change to the pull request's own files",
+    "SHU-86 mutation M227 merge although main moved under the landing lock",
+    "SHU-86 mutation M228 update from main with one worker",
+    "SHU-86 mutation M229 take over a landing lock another worker holds",
+    "SHU-86 mutation M233 count the landing lock's bound from before the wait for green",
+    "SHU-86 mutation M230 take a new head that is not main merged into the head",
+    "SHU-86 mutation M231 land as one worker with workers.max 2",
+    "SHU-86 mutation M232 merge the passed head after an update",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -33375,6 +33392,30 @@
       "capabilities": []
     },
     {
+      "name": "M15 W4: with two workers a landing behind main updates its pull request from main, waits for green at the new head and merges it under the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: main that moves again before the merge step sends the landing round once more, and gives up after baseRounds",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: a conflict, or main changing the pull request's own files, stops the landing with its own outcome and nothing merged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: a landing lock another worker holds is waited for, and past its bound the landing stops with nothing merged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M146 never call a running unit's silent run stale",
       "capabilities": []
     },
@@ -33712,6 +33753,50 @@
     },
     {
       "name": "SHU-86 mutation M222 install while only another worker is busy",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M223 merge without the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M224 land a head behind main without updating it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M225 take an update whose own files are not the passed blobs",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M226 update over main's change to the pull request's own files",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M227 merge although main moved under the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M228 update from main with one worker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M229 take over a landing lock another worker holds",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M233 count the landing lock's bound from before the wait for green",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M230 take a new head that is not main merged into the head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M231 land as one worker with workers.max 2",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M232 merge the passed head after an update",
       "capabilities": []
     },
     {

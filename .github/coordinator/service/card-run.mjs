@@ -74,7 +74,7 @@ import { MAX_CARD_WORKERS, cardWorkers, workerActivationFile, supervisorUnitName
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
-import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS, LAND_LOCK } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall, RUNTIME_TEST_MODULES } from "./card-install.mjs";
@@ -98,6 +98,8 @@ export const CARD_RUN_PATHS = Object.freeze({
   pause: "/etc/shu/card-run.paused",
   // SHU-306: the landing token, root's alone and read only by this run.
   landEnv: CARD_LAND_ENV,
+  // M15 W4: the one landing lock every worker merges under.
+  landLock: LAND_LOCK,
 });
 // M15: card workers. Worker 1 is today's single card run and keeps its paths
 // exactly. Worker N > 1 has its own lock and activation; the state folder,
@@ -901,7 +903,10 @@ async function landRun({ io, paths, limits, plan, config, credentials }) {
   // M10: the card's review lane, run through the reviewer sandbox, judges
   // review bot threads when the committed config turns that on.
   const adjudicate = config?.landing_thread_review?.enabled === true ? threadReviewer({ io, paths, plan }) : null;
+  // M15 W4: with more than one worker the landing updates its pull request
+  // from main and merges under the host-wide landing lock.
   return landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, adjudicate,
+    parallel: cardWorkers(config) > 1, landLock: paths.landLock ?? LAND_LOCK,
     limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs,
       requestTimeoutMs: limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs } });
 }

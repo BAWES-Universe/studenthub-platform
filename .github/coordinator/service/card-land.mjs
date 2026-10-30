@@ -53,6 +53,26 @@
 // to that state until the merge. Anything else resolves nothing, and the
 // landing ends as before with the must_fix threads named in its reason.
 //
+// M15 W4: with more than one card worker (config.json workers.max above 1),
+// a sibling's merge moves main under a landing that is still waiting, and
+// main's strict protection then holds the merge. So, before its wait for
+// green, the landing brings its pull request up to main with GitHub's
+// update-branch, and only when main's changes since the pull request's base
+// touch none of the pull request's own files. The update is accepted only as
+// a merge of main into the passed head whose own files keep exactly the blobs
+// the review passed (the "exact blobs" rule card-install.mjs holds a
+// self-install to): only main's changes came in, so the PASS still covers the
+// change, and the new head waits for green like any head. Anything else stops
+// with its own outcome: a conflict GitHub reports (LAND_CONFLICT), or main
+// changing one of the pull request's own files (LAND_DELTA_CHANGED, before
+// anything is pushed when that can be read). The landing never resolves a
+// conflict. The merge step itself, from the last look at main to the merge
+// attempt's record, runs under one short host-wide lock (LAND_LOCK), never the
+// wait, so two workers never merge at once; main that moved again by then
+// sends the landing round once more, at most LAND_LIMITS.baseRounds times in
+// one landing wait. With one worker none of this runs: the landing is as
+// before.
+//
 // The landing token is the only credential that can open and merge a pull
 // request. It lives in its own root-only file that card-run alone reads; it is
 // never in the coordinator's environment file, so neither the coordinator unit
@@ -66,6 +86,8 @@ import { readTestWeakening, repairPullIdentity } from "./card-repair.mjs";
 import { REVIEW_LIMITS, threadReviewPolicy, reviewMarker, judgingLane, botThread, adjudicationPrompt, parseAdjudication, reviewReplyBody } from "./card-threads.mjs";
 
 export const CARD_LAND_ENV = "/srv/shu/card-land.env";
+// M15 W4: the one host-wide landing lock every card worker takes to merge.
+export const LAND_LOCK = "/run/lock/shu-card-land.lock";
 export const LAND_TOKEN_KEY = "SHU_LAND_GITHUB_TOKEN";
 export const LAND_LIMITS = Object.freeze({
   waitMs: 75 * 60 * 1000,
@@ -77,10 +99,21 @@ export const LAND_LIMITS = Object.freeze({
   // Green must hold on this many reads in a row, so a workflow queued a moment
   // after the others is not missed.
   greenReads: 2,
+  // M15 W4, more than one worker only: how long a landing waits, in all, for
+  // another worker's merge step; how long GitHub may take to update the pull
+  // request from main; and how often main may move under one landing. The
+  // rounds share the one wait for green above.
+  lockWaitMs: 10 * 60 * 1000,
+  lockPollMs: 15 * 1000,
+  updateWaitMs: 2 * 60 * 1000,
+  updatePollMs: 10 * 1000,
+  baseRounds: 3,
 });
 export const LAND_OUTCOMES = Object.freeze([
   "MERGED", "PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "LAND_PAUSED", "LAND_SKIPPED_NO_TOKEN",
   "LAND_HEAD_MISMATCH", "LAND_ERROR", "THREADS_HELD",
+  // M15 W4, more than one worker only.
+  "LAND_CONFLICT", "LAND_DELTA_CHANGED", "LAND_LOCK_HELD", "LAND_BASE_MOVING",
 ]);
 // Self-repair B2: the one outcome only a landing repair has.
 export const REPAIR_LAND_OUTCOMES = Object.freeze(["REPAIR_TEST_WEAKENED"]);
@@ -661,8 +694,116 @@ async function repairLastCheck(gh, { repo, number, branch, head, external }) {
   return null;
 }
 
+// M15 W4: compare's answer, read whole. GitHub lists at most 300 files.
+const COMPARE_FILES = 300;
+async function compare(gh, repo, base, head) {
+  const response = await gh("GET", `https://api.github.com/repos/${repo}/compare/${base}...${head}`);
+  const json = await response.json();
+  if (!response.ok || !SHA_RE.test(json?.base_commit?.sha ?? "") || !SHA_RE.test(json?.merge_base_commit?.sha ?? "") || !Array.isArray(json?.files)) {
+    stop("LAND_ERROR", `main and ${head} cannot be compared (HTTP ${response.status})`);
+  }
+  return json;
+}
+
+// M15 W4: whether `head` already holds main's tip, and that tip.
+async function mainAt(gh, repo, head) {
+  const read = await compare(gh, repo, "main", head);
+  return { fresh: ["ahead", "identical"].includes(read.status) && read.merge_base_commit.sha === read.base_commit.sha, main: read.base_commit.sha };
+}
+
+// M15 W4: a pull request's own files at `head`, from where it leaves `main`:
+// each path (a rename's old path too) with its status and blob. A list too
+// long to read in one answer proves nothing.
+async function ownFiles(gh, repo, main, head) {
+  const { files } = await compare(gh, repo, main, head);
+  if (files.length >= COMPARE_FILES) stop("LAND_ERROR", `${head} changes too many files to compare its blobs`);
+  const own = new Map();
+  for (const file of files) {
+    own.set(file?.filename, `${file?.status} ${file?.sha} ${file?.previous_filename ?? ""}`);
+    if (file?.previous_filename) own.set(file.previous_filename, "renamed away");
+  }
+  return own;
+}
+
+const sameFiles = (a, b) => a.size === b.size && [...a].every(([name, blob]) => b.get(name) === blob);
+
+// M15 W4: brings the pull request at `current` up to main, when main moved.
+// The passed head's own files are the review's; a head is taken only when it
+// merges main into `current` and keeps exactly those blobs. Returns the head
+// to land.
+async function updateFromMain(io, gh, { repo, number, branch, passed, current, limits }) {
+  const at = await mainAt(gh, repo, current);
+  if (at.fresh) return current;
+  const own = await ownFiles(gh, repo, at.main, passed);
+  // What main changed since the pull request's base, read the other way; a
+  // list too long to read is left to the check after the update.
+  const { files: theirs } = await compare(gh, repo, current, "main");
+  const touched = theirs.length < COMPARE_FILES ? theirs.find((file) => own.has(file?.filename) || own.has(file?.previous_filename)) : null;
+  if (touched) {
+    stop("LAND_DELTA_CHANGED", `main changed ${touched.filename}, which pull request #${number} changes too; nothing was updated, and its head needs a review with main's change`);
+  }
+  // Sent once, conditional on the head: a lost answer is read back below.
+  let sent = null;
+  try {
+    const response = await gh("PUT", `https://api.github.com/repos/${repo}/pulls/${number}/update-branch`, { expected_head_sha: current });
+    sent = { status: response.status, message: String((await response.json())?.message ?? "") };
+  } catch { /* the answer was lost: the pull request is read below */ }
+  if (sent?.status === 422 && /conflict/i.test(sent.message)) {
+    stop("LAND_CONFLICT", `main does not merge cleanly into pull request #${number}: ${sent.message}; the landing never resolves a conflict`);
+  }
+  if (sent && sent.status !== 202) stop("LAND_ERROR", `pull request #${number} was not updated from main (HTTP ${sent.status}${sent.message ? `: ${sent.message}` : ""})`);
+  const until = io.now().getTime() + limits.updateWaitMs;
+  let pull;
+  for (;;) {
+    const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
+    pull = await response.json();
+    if (response.ok && pull?.head?.sha && pull.head.sha !== current) break;
+    if (io.now().getTime() >= until) stop("LAND_ERROR", `pull request #${number} did not move from ${current} within ${Math.round(limits.updateWaitMs / 1000)} s of its update from main`);
+    io.sleep(limits.updatePollMs);
+  }
+  const head = pull.head.sha;
+  if (!SHA_RE.test(head) || !headMatches(pull, { repo, branch, head })) stop("LAND_HEAD_MISMATCH", `pull request #${number} moved to ${head} in a way its update from main cannot`);
+  const commitResponse = await gh("GET", `https://api.github.com/repos/${repo}/commits/${head}`);
+  const commit = await commitResponse.json();
+  const parents = Array.isArray(commit?.parents) ? commit.parents.map((parent) => parent?.sha) : [];
+  if (!commitResponse.ok || parents.length !== 2 || parents[0] !== current || !SHA_RE.test(parents[1] ?? "")) {
+    stop("LAND_HEAD_MISMATCH", `${head} is not a merge of main into ${current}`);
+  }
+  // The other parent is main's, and the new head holds main.
+  const merged = await compare(gh, repo, parents[1], "main");
+  if (!["ahead", "identical"].includes(merged.status) || merged.merge_base_commit.sha !== parents[1]) stop("LAND_HEAD_MISMATCH", `${head} merged ${parents[1]}, which is not on main`);
+  if (!sameFiles(await ownFiles(gh, repo, parents[1], head), await ownFiles(gh, repo, parents[1], passed))) {
+    stop("LAND_DELTA_CHANGED", `the update of pull request #${number} from main changed its own files from the blobs the review passed at ${passed}; ${head} needs a review with main's change`);
+  }
+  return head;
+}
+
+// M15 W4: the host-wide landing lock, taken exclusively and waited for up to
+// a deadline. Returns its release.
+function takeLandLock(io, file, until, limits) {
+  for (;;) {
+    try {
+      io.fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+      return () => { try { io.fs.unlinkSync(file); } catch { /* gone already */ } };
+    } catch (error) {
+      if (error?.code !== "EEXIST") stop("LAND_ERROR", `${file} cannot be taken: ${error?.code ?? error?.message}`);
+    }
+    if (io.now().getTime() >= until) {
+      let holder = "";
+      try { holder = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { /* named without its holder */ }
+      stop("LAND_LOCK_HELD", `${file} stayed held${holder ? ` by pid ${holder}` : ""} for ${Math.round(limits.lockWaitMs / 60000)} minutes: another worker is merging, or a landing that crashed left it (clear it by hand once no card run is alive)`);
+    }
+    io.sleep(limits.lockPollMs);
+  }
+}
+
 // The run's landing. Returns an outcome, never throws.
-export async function landCard({ io, plan, config, credentials, landToken, pausePath, limits = LAND_LIMITS, adjudicate = null }) {
+// M15 W4: `parallel` (more than one card worker) updates the pull request
+// from main and takes `landLock` around the merge step; see above.
+export async function landCard({ io, plan, config, credentials, landToken, pausePath, limits = LAND_LIMITS, adjudicate = null,
+  parallel = false, landLock = LAND_LOCK }) {
+  // M15 W4: a caller's limits from before W4 keep its bounds.
+  limits = { ...LAND_LIMITS, ...limits };
   // SHU-310: what settling did, on every outcome, when it is on.
   let policy = null;
   const audit = { settled: [], blocking: [] };
@@ -693,6 +834,10 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
   // so a claim never names a head the pull request did not carry.
   let head = null;
   let reviewedHead = null;
+  // M15 W4: the head being landed, once the pull request was updated from
+  // main; the review's own head stays `head`.
+  let landHead = null;
+  let release = null;
   try {
     if (paused()) return result("LAND_PAUSED", { reason: `${pausePath} exists; nothing was opened` });
     policy = settlePolicy(config);
@@ -717,7 +862,9 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       stop("LAND_HEAD_MISMATCH", `pull request #${pr?.number} is at ${pr?.head?.sha ?? "an unknown head"}, not the passed ${head}`);
     }
     reviewedHead = head;
+    landHead = head;
     const prFields = { pr: pr.number, opened: opened.opened, head, reviewed_head: head };
+    const landed = () => ({ ...prFields, ...(landHead !== head ? { updated_head: landHead } : {}) });
     // Self-repair B2: the repaired head must not have weakened a test.
     if (repair) {
       const guard = await readTestWeakening(gh, { repo, base: repair.failed_head, head });
@@ -781,7 +928,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       // Nothing is written unless the pull request is still at the head that
       // passed and every thread is still exactly what was judged.
       const now = await (await gh("GET", `https://api.github.com/repos/${repo}/pulls/${pr.number}`)).json();
-      if (!headMatches(now, { repo, branch, head })) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${now?.head?.sha ?? "an unknown head"} while the review lane judged its threads`);
+      if (!headMatches(now, { repo, branch, head: landHead })) stop("LAND_HEAD_MISMATCH", `the pull request head moved to ${now?.head?.sha ?? "an unknown head"} while the review lane judged its threads`);
       const entries = [];
       for (const thread of threads) {
         const data = await graphql(gh, THREAD_QUERY, { id: thread.id });
@@ -806,11 +953,37 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       }
       return { note: `the review lane judged ${entries.length} bot thread(s) not applicable and they were resolved; green must hold again`, resolved: true };
     });
-    const checks = await waitForGreen(io, gh, { repo, number: pr.number, head, branch, settled, policy, external, reviewed }, limits, settle || undefined, judge || undefined);
-    if (checks.outcome !== "GREEN") return result(checks.outcome, { ...prFields, reason: checks.reason });
+    // M15 W4: one worker waits once, as before. More than one bring the pull
+    // request up to main first, and look at main again under the landing
+    // lock; main that moved meanwhile sends the landing round again, all
+    // rounds inside the one wait.
+    const target = { repo, number: pr.number, head, branch, settled, policy, external, reviewed };
+    const waitUntil = io.now().getTime() + limits.waitMs;
+    // The lock's bound counts from the first time it is wanted, not from
+    // before the wait for green.
+    let lockUntil = null;
+    let checks;
+    for (let round = 1; ; round += 1) {
+      if (parallel) {
+        landHead = await updateFromMain(io, gh, { repo, number: pr.number, branch, passed: head, current: landHead, limits });
+        target.head = landHead;
+      }
+      const wait = parallel ? { ...limits, waitMs: Math.max(0, waitUntil - io.now().getTime()) } : limits;
+      checks = await waitForGreen(io, gh, target, wait, settle || undefined, judge || undefined);
+      if (checks.outcome !== "GREEN" || !parallel) break;
+      lockUntil ??= io.now().getTime() + limits.lockWaitMs;
+      release = takeLandLock(io, landLock, lockUntil, limits);
+      if ((await mainAt(gh, repo, landHead)).fresh) break;
+      release();
+      release = null;
+      if (round >= limits.baseRounds) {
+        return result("LAND_BASE_MOVING", { ...landed(), reason: `main moved under pull request #${pr.number} in each of ${round} rounds; nothing was handed off or merged` });
+      }
+    }
+    if (checks.outcome !== "GREEN") return result(checks.outcome, { ...landed(), reason: checks.reason });
     audit.blocking = [];
 
-    if (paused()) return result("LAND_PAUSED", { ...prFields, reason: `${pausePath} exists; the pull request stays open and unmerged` });
+    if (paused()) return result("LAND_PAUSED", { ...landed(), reason: `${pausePath} exists; the pull request stays open and unmerged` });
     if (policy || reviewed?.size) await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined);
 
     // The handoff: the terminal PASS plus merge-readiness, the very record the
@@ -848,9 +1021,12 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       // Self-repair B2: a repair's last look, after the thread check when there is one.
       ...(repair ? { beforeMerge: async () => {
         if (policy !== null || reviewed?.size) await guardThreads(gh, { repo, number: pr.number }, settled, policy, reviewed ?? undefined);
-        repairHeld = await repairLastCheck(gh, { repo, number: pr.number, branch, head, external });
+        repairHeld = await repairLastCheck(gh, { repo, number: pr.number, branch, head: landHead, external });
         return { ok: repairHeld === null };
       } } : {}),
+      // M15 W4: an updated head is merged at itself; its PASS stays the
+      // passed head's.
+      ...(landHead !== head ? { mergeHead: landHead } : {}),
       fetchImpl,
       stdout: (line) => lines.push(line),
       now: () => io.now(),
@@ -859,17 +1035,20 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
 
     const thread = await fetchIssueComments({ issueId: issue.id, token: linearToken, fetchImpl });
     const parsed = parseMergeAttemptsFromComments(thread, actorIds);
-    const record = parsed.records.find((r) => r.source_attempt_id === terminal.attempt_id && r.approved_head_sha === head);
+    const record = parsed.records.find((r) => r.source_attempt_id === terminal.attempt_id && r.approved_head_sha === landHead);
     if (!record || parsed.conflicts.has(record.attempt_id)) stop("LAND_ERROR", `no merge attempt was recorded${lines.length ? `: ${lines.at(-1)}` : ""}`);
+    // M15 W4: the merge step ends with its record; the comment is not in it.
+    release?.();
+    release = null;
     // Only a COMPLETED record is a merge; a HOLD is final for its attempt.
     const completed = record.state === "COMPLETED";
     if (!completed) {
       // Self-repair B2: a merge the repair's last look stopped says why.
       if (record.state === "HOLD" && repairHeld) {
-        if (repairHeld.outcome === "MERGE_HOLD") return result("MERGE_HOLD", { ...prFields, hold_code: record.hold_code, attempt_id: record.attempt_id, reason: repairHeld.reason });
+        if (repairHeld.outcome === "MERGE_HOLD") return result("MERGE_HOLD", { ...landed(), hold_code: record.hold_code, attempt_id: record.attempt_id, reason: repairHeld.reason });
         stop(repairHeld.outcome, repairHeld.reason);
       }
-      if (record.state === "HOLD") return result("MERGE_HOLD", { ...prFields, hold_code: record.hold_code, attempt_id: record.attempt_id, reason: record.reason });
+      if (record.state === "HOLD") return result("MERGE_HOLD", { ...landed(), hold_code: record.hold_code, attempt_id: record.attempt_id, reason: record.reason });
       stop("LAND_ERROR", `the merge attempt ${record.attempt_id} reads ${record.state}`);
     }
 
@@ -881,12 +1060,15 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
       const posted = await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: issue.id, body }, linearToken, fetchImpl);
       commented = posted?.commentCreate?.success === true;
     }
-    return result("MERGED", { ...prFields, merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented,
+    return result("MERGED", { ...landed(), merge_commit: record.merge_commit_sha, attempt_id: record.attempt_id, commented,
       ...(checks.advisory ? { advisory: checks.advisory } : {}) });
   } catch (error) {
     const outcome = error.landOutcome ?? "LAND_ERROR";
     return result(outcome, { ...(pr?.number ? { pr: pr.number } : {}), ...(head ? { head } : {}),
       ...(reviewedHead && outcome !== "LAND_HEAD_MISMATCH" ? { reviewed_head: reviewedHead } : {}),
+      ...(landHead && landHead !== head ? { updated_head: landHead } : {}),
       reason: String(error.message ?? error) });
+  } finally {
+    release?.();
   }
 }
