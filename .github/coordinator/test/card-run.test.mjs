@@ -2986,6 +2986,13 @@ test("M15 W1: with two workers a card another worker is running is passed over, 
   // A claim whose worker's lock is gone is a run that ended without landing.
   host.files.delete(CARD_RUN_PATHS.lock);
   assert.equal((await nextCard(host.io, w2, two(), REV)).skipped, "QUEUE_STOPPED");
+  // Between the lock's release and the outcome's write, the claiming process
+  // is still alive: the card is still running, not stopped.
+  claimFor(host, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1, pid: 4242 });
+  host.files.set("/proc/4242", { text: "", mode: 0o555, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" }, "a live claimer still holds its card");
+  host.files.delete("/proc/4242");
+  assert.equal((await nextCard(host.io, w2, two(), REV)).skipped, "QUEUE_STOPPED", "a dead claimer without the lock stopped");
   // Every card running or waiting: QUEUE_BUSY, not done and not stopped.
   host.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
   claimFor(host, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 1 });
