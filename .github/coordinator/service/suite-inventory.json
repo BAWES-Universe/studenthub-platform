@@ -2219,6 +2219,7 @@
     "SHU-312 Q2: a queue narrows each tick to the armed card alone, and without one scopes nothing",
     "SHU-312 Q3: the host gate admits only the armed card's order under a queue",
     "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
+    "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
     "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
     "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
@@ -18904,6 +18905,10 @@
     },
     {
       "name": "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
       "capabilities": []
     },
     {

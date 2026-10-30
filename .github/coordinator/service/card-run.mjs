@@ -98,6 +98,29 @@ export const CARD_RUN_PATHS = Object.freeze({
   // SHU-306: the landing token, root's alone and read only by this run.
   landEnv: CARD_LAND_ENV,
 });
+// M15: card workers. Worker 1 is today's single card run and keeps its paths
+// exactly. Worker N > 1 has its own lock and activation; the state folder,
+// where every card's once-per-revision claim lives, stays shared, so a claim
+// written by one worker is the claim every worker sees. Only the count in
+// config.json (workers.max, default 1) turns more workers on.
+export const MAX_CARD_WORKERS = 8;
+export function cardRunPaths(worker = 1) {
+  if (!Number.isInteger(worker) || worker < 1 || worker > MAX_CARD_WORKERS) refuse("CARD_RUN_WORKER", `worker must be 1 to ${MAX_CARD_WORKERS}`);
+  if (worker === 1) return CARD_RUN_PATHS;
+  return Object.freeze({ ...CARD_RUN_PATHS, worker, activation: `${CARD_RUN_PATHS.stateDir}/w${worker}/shu71-activation.json`,
+    lock: `/run/lock/shu-card-run-w${worker}.lock` });
+}
+export const workerOf = (paths) => paths.worker ?? 1;
+export function cardWorkers(config) {
+  const max = config?.workers?.max;
+  return Number.isInteger(max) && max >= 1 && max <= MAX_CARD_WORKERS ? max : 1;
+}
+// Another worker's run of this card is still going: its claim has no outcome
+// yet, it names that worker, and that worker's run lock is held.
+function claimLive(io, paths, ran) {
+  if (!ran || ran.outcome !== undefined || !Number.isInteger(ran.worker) || ran.worker === workerOf(paths)) return false;
+  try { return io.fs.existsSync(cardRunPaths(ran.worker).lock); } catch { return false; }
+}
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
 export const RUN_DROP_IN = "95-v1-run.conf";
 export const TARGET_DROP_IN = "96-v1-target.conf";
@@ -333,13 +356,21 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
   const queue = cardQueue(config);
   if (!queue.queue) return { id: null };
   if (!queue.ok) return { id: null, skipped: "NOT_READY", reason: `CARD_RUN_SCOPE: ${queue.reason}` };
+  // M15: with more than one worker, a card another worker is running, or one
+  // waiting on a queued card it builds on (after), is passed over rather than
+  // stopping the queue. One worker walks the queue exactly as before.
+  const parallel = cardWorkers(config) > 1;
+  const landedIds = new Set();
+  let waiting = 0;
   for (const id of queue.ids) {
     const landed = await cardLanded(io, paths, id, { ...(landing ?? {}), record });
-    if (landed.landed) continue;
+    if (landed.landed) { landedIds.add(id); continue; }
+    if (parallel && (queue.after?.[id] ?? []).some((need) => !landedIds.has(need))) { waiting += 1; continue; }
     const claim = autoClaim(paths, revision, id);
     if (!io.fs.existsSync(claim)) return { id };
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
+    if (parallel && claimLive(io, paths, ran)) { waiting += 1; continue; }
     // Self-repair B2: only with landing_repair on, and only for a passed run
     // that stopped on red checks; otherwise nothing below differs from today.
     const repair = landingRepairOn(config) && repairCandidate(ran, { id, revision, repo: config.pilot_repo ?? null })
@@ -349,6 +380,7 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
     return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
   }
+  if (waiting) return { id: null, skipped: "QUEUE_BUSY", reason: `every queued card that has not landed is running on another worker or waits on one` };
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }
 
@@ -840,7 +872,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   const claim = autoClaim(paths, revision, plan.id);
   const claimedAt = io.now().toISOString();
   try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt })}\n`, { flag: "wx", mode: 0o600 });
+    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, worker: workerOf(paths) })}\n`, { flag: "wx", mode: 0o600 });
   } catch (error) {
     if (error.code === "EEXIST") return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
     throw error;

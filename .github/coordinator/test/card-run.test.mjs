@@ -2859,12 +2859,12 @@ const claimFor = (host, revision, id, fields) => host.files.set(autoClaim(PATHS,
 
 test("SHU-312 Q1: a card queue is two to five distinct committed card lanes; anything else scopes nothing", async () => {
   const { cardQueue, MAX_CARD_QUEUE } = await import("../single-run-activation.mjs");
-  assert.equal(MAX_CARD_QUEUE, 5);
-  assert.deepEqual(cardQueue(queueConfig()), { queue: true, ok: true, ids: [...QUEUE], reason: null });
+  assert.equal(MAX_CARD_QUEUE, 20);
+  assert.deepEqual(cardQueue(queueConfig()), { queue: true, ok: true, ids: [...QUEUE], after: {}, reason: null });
   assert.equal(cardQueue(queueConfig(["SHU-301"])).queue, false, "one card is not a queue");
   assert.equal(cardQueue(queueConfig(["SHU-140", "SHU-254"])).queue, false, "the fixture pair keeps its own handling");
   for (const [label, ids] of [
-    ["six cards", ["SHU-197", "SHU-294", "SHU-295", "SHU-300", "SHU-301", "SHU-305"]],
+    ["twenty-one cards", Array.from({ length: 21 }, (_, i) => `SHU-${1000 + i}`)],
     ["a repeated card", ["SHU-301", "SHU-301"]],
     ["a review-only lane", ["SHU-301", "SHU-304"]],
     ["no lane", ["SHU-301", "SHU-999"]],
@@ -2873,6 +2873,7 @@ test("SHU-312 Q1: a card queue is two to five distinct committed card lanes; any
   ]) {
     const queue = cardQueue(queueConfig(ids));
     assert.equal(queue.queue && queue.ok === false, true, label);
+    if (ids.length > MAX_CARD_QUEUE) assert.match(queue.reason, /at most 20 cards/, label);
     assert.throws(() => planRun({ config: queueConfig(ids), revision: REV, now: START, cardId: ids[0] }), { code: "CARD_RUN_SCOPE" }, label);
   }
   // planRun takes the card it is given, only from the queue, never a review.
@@ -2958,6 +2959,49 @@ test("SHU-312 Q4: a card branch starts from main as it is now, only when main de
   assert.equal(stale.branchHead, REV);
   noArming(stale);
   assert.throws(() => onBase(planRun({ config: configFor("SHU-301"), revision: REV, now: START }), "not-a-sha"), { code: "CARD_RUN_BASE" });
+});
+
+test("M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged", async () => {
+  const { cardRunPaths, cardWorkers, CARD_RUN_PATHS } = await import("../service/card-run.mjs");
+  const { cardQueue } = await import("../single-run-activation.mjs");
+  assert.equal(cardRunPaths(1), CARD_RUN_PATHS, "worker 1 keeps today's paths");
+  const w2 = cardRunPaths(2);
+  assert.equal(w2.worker, 2);
+  assert.equal(w2.stateDir, CARD_RUN_PATHS.stateDir, "claims stay shared");
+  assert.notEqual(w2.lock, CARD_RUN_PATHS.lock);
+  assert.notEqual(w2.activation, CARD_RUN_PATHS.activation);
+  assert.throws(() => cardRunPaths(0), { code: "CARD_RUN_WORKER" });
+  assert.throws(() => cardRunPaths(9), { code: "CARD_RUN_WORKER" });
+  assert.equal(cardWorkers({}), 1);
+  assert.equal(cardWorkers({ workers: { max: 2 } }), 2);
+  assert.equal(cardWorkers({ workers: { max: 99 } }), 1, "an invalid count is one worker");
+  const two = (ids = QUEUE) => ({ ...queueConfig(ids), workers: { max: 2 } });
+  // Worker 1 is running SHU-301: its claim has no outcome and its lock is held.
+  const host = fakeHost({ config: two(), branchHead: "" });
+  claimFor(host, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1 });
+  host.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" }, "worker 2 takes the next card");
+  // The same claim seen with one worker stops the queue as before.
+  assert.equal((await nextCard(host.io, w2, queueConfig(), REV)).skipped, "QUEUE_STOPPED");
+  // A claim whose worker's lock is gone is a run that ended without landing.
+  host.files.delete(CARD_RUN_PATHS.lock);
+  assert.equal((await nextCard(host.io, w2, two(), REV)).skipped, "QUEUE_STOPPED");
+  // Every card running or waiting: QUEUE_BUSY, not done and not stopped.
+  host.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
+  claimFor(host, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 1 });
+  assert.equal((await nextCard(host.io, w2, two(), REV)).skipped, "QUEUE_BUSY");
+  // after: SHU-305 builds on SHU-301, so it waits while SHU-301 has not landed.
+  const chained = two();
+  chained.card_lanes = chained.card_lanes.map((lane) => (lane.id === "SHU-305" ? { ...lane, after: ["SHU-301"] } : lane));
+  assert.deepEqual(cardQueue(chained).after, { "SHU-305": ["SHU-301"] });
+  const waits = fakeHost({ config: chained, branchHead: "" });
+  claimFor(waits, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1 });
+  waits.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
+  assert.equal((await nextCard(waits.io, w2, chained, REV)).skipped, "QUEUE_BUSY");
+  // after must name an earlier card of the same queue.
+  const backwards = two();
+  backwards.card_lanes = backwards.card_lanes.map((lane) => (lane.id === "SHU-301" ? { ...lane, after: ["SHU-305"] } : lane));
+  assert.equal(cardQueue(backwards).ok, false);
 });
 
 test("SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land", async () => {

@@ -541,7 +541,8 @@ export function parseActivationArgs(argv = []) {
 // dispatch_scope may list up to MAX_CARD_QUEUE committed card lanes, in the
 // order the card-run timer runs them. Only the timer reads the order; the
 // coordinator still runs one card per episode, the armed activation's own.
-export const MAX_CARD_QUEUE = 5;
+// M15: with more than one card worker a longer queue keeps every worker fed.
+export const MAX_CARD_QUEUE = 20;
 const FIXTURE_PAIR = Object.freeze(["SHU-140", "SHU-254"]);
 
 // The committed queue, or why the scope is not one. A single id is not a
@@ -567,7 +568,19 @@ export function cardQueue(config = {}) {
       return no(`${id} is not a committed card lane`);
     }
   }
-  return { queue: true, ok: true, ids: [...ids], reason: null };
+  // M15: a lane may name the queued cards it builds on (after). Each must come
+  // earlier in the same queue, so the order stays a valid sequential order and
+  // one worker runs exactly as before; more workers wait on these cards only.
+  const after = {};
+  for (const [index, id] of ids.entries()) {
+    const needs = cards.find((card) => card?.id === id)?.after;
+    if (needs === undefined) continue;
+    if (!Array.isArray(needs) || needs.some((need) => typeof need !== "string" || !ids.slice(0, index).includes(need))) {
+      return no(`${id} after must name cards earlier in the same queue`);
+    }
+    after[id] = [...needs];
+  }
+  return { queue: true, ok: true, ids: [...ids], after, reason: null };
 }
 
 // The configuration one tick works with. Under a queue, the scope narrows to
