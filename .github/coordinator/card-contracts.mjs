@@ -4108,6 +4108,22 @@ const SHU374_BRIEF = `${Q13_BRIEF(SHU365_BRIEF)}
 
 ${Q13_AFTER_PREP(SHU374_PATHS)}`;
 
+// SHU-398: SHU-373's contract under a fresh id. SHU-373 built at 165c4f8, its
+// review answered BLOCKED and it used up its revisions, so the queue stopped,
+// and a stopped card's branch can't run again. The brief names its own card
+// and carries the first attempt's findings; the acceptance adds three
+// sentences that pin them.
+const SHU398_FINDINGS = `Where this brief says SHU-372, read SHU-392 and SHU-395: SHU-372's contract landed as those two cards (the store and rules in packages/db/src/person-profile-store.ts and packages/profile/src/self-edit.ts, the page flow in apps/gateway/src/profile-edit-http.ts and web-ui.ts), with their tests SHU372_WRITE, SHU372_RULES and SHU372_PAGE.
+
+Findings from the stopped first attempt (SHU-373) that this card must fix. SHU-373 built this contract once (branch coordinator/SHU-373, never merged); its review answered BLOCKED and it ran out of revisions. You start again from the bound head, so its code is not there; do not repeat what the review found:
+- (1) Blocking: every second write failed. The store's field read returned node-pg's values as they come from the driver: a JavaScript Date for birth_date and JavaScript booleans for driving_licence and kuwaiti_mother. The safe-write contract works on strings (packages/safe-write-contract/src/types.ts: readField returns string | null, and CommitInput.expectedBefore is a string). The commit normalised the fresh value but compared it with an expectedBefore taken from the un-normalised read, so every second write to birth date, driving licence or Kuwaiti mother was refused state_changed and the page showed a 409 loop. The state digest (expectedStateDigest in packages/safe-write-contract/src/safe-write.ts) interpolated the Date, so it depended on the process's time zone and locale, and the JSON preview's before value showed a time-zone-shifted instant. Read every field as text (for example birth_date::text, driving_licence::text, kuwaiti_mother::text in the store's field read), or normalise both sides of the comparison the same way; either way the read value, the digest and the preview's before value are the same plain string whatever the time zone. Add a Postgres SHU373_WRITE test that writes each of the seven fields twice in a row, including the licence Yes then No and a birth-date correction, and that both writes succeed.
+- (2) Acceptance item 4 was incomplete. The university select had only "None" and a short note. It must offer both "None" and "Not listed", and choosing or reading "Not listed" explains that staff add new universities.
+- (3) Items 4 and 5 were not pinned. The SHU373_PAGE tests left the page's profile choices undefined, so the nationality and university selects rendered empty and still passed. The page tests supply profile choices, assert the countries select lists a country by its English name and the university select an approved university by name, test the store's read of the choices (readProfileChoices or whatever you name it: active countries and universities only), and count, with fakes, exactly one written-values read and one catalogue read per My profile page.
+- Not blocking, but fix it: the Kuwaiti-mother offer matched the nationality's name, and an imported snapshot uses the adjective form ("Kuwaiti"), so the offer appeared for Kuwaitis. Key the offer and the clearing on the nationality's catalogue code or id, never its name.`;
+const SHU398_BRIEF = SHU373_BRIEF.replace("Card SHU-373:", "Card SHU-398:").replace("\n\nRead first:\n", `\n\n${SHU398_FINDINGS}\n\nRead first:\n`);
+if (!SHU398_BRIEF.startsWith("Card SHU-398:") || !SHU398_BRIEF.includes(SHU398_FINDINGS)) throw new Error("SHU398_BRIEF must name its own card and carry the findings");
+const SHU398_ACCEPTANCE = `${SHU373_ACCEPTANCE} SHU-398 is SHU-373's contract re-queued after its first build used up its revisions; SHU-373 never runs. Each of the seven fields can be written twice in a row, including the licence Yes then No and a birth-date correction, and the second write succeeds: the store reads every field as the same plain string the commit compares, so no write is refused state_changed and the digest and preview do not depend on the time zone (SHU373_WRITE, against Postgres). The university select offers both "None" and "Not listed", and "Not listed" explains that staff add new universities. The page tests supply the profile choices and assert a countries select by English name and a universities select by name, the store's choices read has its own test, and one catalogue read per page is counted with fakes.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4586,6 +4602,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU393_PATHS,
     acceptance: SHU395_ACCEPTANCE,
     brief: SHU395_BRIEF,
+  }),
+  "SHU-398": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU398_ACCEPTANCE,
+    brief: SHU398_BRIEF,
   }),
 });
 
