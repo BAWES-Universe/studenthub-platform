@@ -680,6 +680,7 @@
     "SHU251 explicit workspace override stages a visible two-writer hazard",
     "SHU251 mutation: matching foreign environment and writer lock",
     "SHU251 mutation: explicit override warning removed",
+    "M15 W2: a card worker's supervisor and coordinator render their own activation, socket, store and writer lock; worker 1 is unchanged",
     "SHU251 canonical workspace constant matches literal deployment and activation contract",
     "SHU251 mutation: canonical workspace constant repointed",
     "SHU251 non-string workspace state directory has named fail-closed refusal",
@@ -737,6 +738,7 @@
     "B2 broker: arbitrary queries, URLs and command input are refused before credentials are used",
     "B2 broker: actual child-side wiring sends no API tokens, env secrets or shell/eval source",
     "B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-B argv",
+    "M15 W2: the coordinator tick takes worker 1's activation path or a card worker's, and the credential of that worker's unit",
     "B2 allowlist refuses credential aliases and unknown environment keys",
     "B2 environment transport secret has the same strength guard as credentials",
     "B2 actual supervisor spawner applies allowlist at the fork boundary",
@@ -2220,6 +2222,8 @@
     "SHU-312 Q3: the host gate admits only the armed card's order under a queue",
     "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
     "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
+    "M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged",
+    "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
     "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
     "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
@@ -8003,6 +8007,10 @@
       ]
     },
     {
+      "name": "M15 W2: a card worker's supervisor and coordinator render their own activation, socket, store and writer lock; worker 1 is unchanged",
+      "capabilities": []
+    },
+    {
       "name": "SHU251 canonical workspace constant matches literal deployment and activation contract",
       "capabilities": [
         {
@@ -8445,6 +8453,10 @@
     },
     {
       "name": "B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-B argv",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W2: the coordinator tick takes worker 1's activation path or a card worker's, and the credential of that worker's unit",
       "capabilities": []
     },
     {
@@ -18909,6 +18921,14 @@
     },
     {
       "name": "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
       "capabilities": []
     },
     {

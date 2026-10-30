@@ -35,6 +35,7 @@ import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activ
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
+import { cardWorkers } from "./service/credential-delivery.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
@@ -1356,8 +1357,13 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
   const pauseMap = config.adapter_pause_map ?? {};
   const skipped = [];
 
-  if (active.length >= maxDispatch) {
-    return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `max_dispatch=${maxDispatch} reached (${active.length} active)` }] };
+  // M15 W2: with more than one card worker, each worker's coordinator is
+  // narrowed to its own armed card and max_dispatch is that worker's slot, so
+  // only the receipts of its dispatch scope count. One worker counts every
+  // active receipt, as before.
+  const counted = cardWorkers(config) > 1 && scope.configured ? active.filter((r) => scope.issueIds.has(r.issue_id)) : active;
+  if (counted.length >= maxDispatch) {
+    return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `max_dispatch=${maxDispatch} reached (${counted.length} active)` }] };
   }
 
   let sawScopedIssue = false;

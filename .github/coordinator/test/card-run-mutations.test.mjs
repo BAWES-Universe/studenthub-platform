@@ -142,8 +142,8 @@ const CASES = [
   },
   {
     name: "M22 abandon the revert when the dispatch-off tick fails",
-    from: "  try { offTick = tickOutcome(tick(io)).activation; }\n  catch (error) { offTick = `tick failed: ${error.message}`; }",
-    to: "  offTick = tickOutcome(tick(io)).activation; // SHU86-M22",
+    from: "  try { offTick = tickOutcome(tick(io, CARD_RUN_LIMITS, paths)).activation; }\n  catch (error) { offTick = `tick failed: ${error.message}`; }",
+    to: "  offTick = tickOutcome(tick(io, CARD_RUN_LIMITS, paths)).activation; // SHU86-M22",
     pattern: "SHU-86 C18:",
   },
   {
@@ -871,8 +871,8 @@ const CASES = [
   },
   {
     name: "M131 cut the coordinator start short with the tick time limit",
-    from: '  run(io, "systemctl", ["start", "shu-coordinator.service"]);',
-    to: '  run(io, "systemctl", ["start", "shu-coordinator.service"], bounded); // SHU86-M131',
+    from: '  run(io, "systemctl", ["start", coordinator]);',
+    to: '  run(io, "systemctl", ["start", coordinator], bounded); // SHU86-M131',
     pattern: "SHU-86 0b: a journal read",
   },
   {

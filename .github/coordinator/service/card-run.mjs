@@ -70,6 +70,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
+import { MAX_CARD_WORKERS, cardWorkers, workerActivationFile, supervisorUnitName, coordinatorUnitName } from "./credential-delivery.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
@@ -102,19 +103,17 @@ export const CARD_RUN_PATHS = Object.freeze({
 // exactly. Worker N > 1 has its own lock and activation; the state folder,
 // where every card's once-per-revision claim lives, stays shared, so a claim
 // written by one worker is the claim every worker sees. Only the count in
-// config.json (workers.max, default 1) turns more workers on.
-export const MAX_CARD_WORKERS = 8;
+// config.json (workers.max, default 1) turns more workers on. The count and the
+// activation paths live in credential-delivery.mjs, which the coordinator tick
+// and the units read too.
+export { MAX_CARD_WORKERS, cardWorkers };
 export function cardRunPaths(worker = 1) {
   if (!Number.isInteger(worker) || worker < 1 || worker > MAX_CARD_WORKERS) refuse("CARD_RUN_WORKER", `worker must be 1 to ${MAX_CARD_WORKERS}`);
   if (worker === 1) return CARD_RUN_PATHS;
-  return Object.freeze({ ...CARD_RUN_PATHS, worker, activation: `${CARD_RUN_PATHS.stateDir}/w${worker}/shu71-activation.json`,
+  return Object.freeze({ ...CARD_RUN_PATHS, worker, activation: workerActivationFile(worker),
     lock: `/run/lock/shu-card-run-w${worker}.lock` });
 }
 export const workerOf = (paths) => paths.worker ?? 1;
-export function cardWorkers(config) {
-  const max = config?.workers?.max;
-  return Number.isInteger(max) && max >= 1 && max <= MAX_CARD_WORKERS ? max : 1;
-}
 // Another worker's run of this card is still going: its claim has no outcome
 // yet, it names that worker, and that worker's run lock is held.
 function claimLive(io, paths, ran) {
@@ -122,6 +121,11 @@ function claimLive(io, paths, ran) {
   try { return io.fs.existsSync(cardRunPaths(ran.worker).lock); } catch { return false; }
 }
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
+// M15 W2: the supervisor and coordinator a worker arms, ticks and reverts.
+// Worker 1's are UNITS.
+export function workerUnits(worker = 1) {
+  return worker === 1 ? UNITS : Object.freeze([supervisorUnitName(worker), coordinatorUnitName(worker)]);
+}
 export const RUN_DROP_IN = "95-v1-run.conf";
 export const TARGET_DROP_IN = "96-v1-target.conf";
 export const RESIDENT_DROP_IN = "90-shu71.conf";
@@ -433,6 +437,8 @@ export function tickOutcome(text, activationId = null) {
 export const ANSWERED = Object.freeze(new Set(["PASS", "REVIEW_PASS", "REVIEW_BLOCKED"]));
 
 // Every reason the host is not idle. A run starts only when this is empty.
+// M15: the drop-ins, shu-worker processes and worktrees read here are still
+// every worker's; slice W3 scopes them to the worker's own.
 export function busyReasons(io, paths = CARD_RUN_PATHS) {
   const reasons = [];
   if (io.fs.existsSync(paths.activation)) reasons.push(`activation record present at ${paths.activation}`);
@@ -482,8 +488,8 @@ export function installedRevision(io, paths = CARD_RUN_PATHS) {
   return head;
 }
 
-function supervisorEnvironment(io) {
-  const pid = run(io, "systemctl", ["show", "-p", "MainPID", "--value", "shu-supervisor.service"]).trim();
+function supervisorEnvironment(io, supervisor = UNITS[0]) {
+  const pid = run(io, "systemctl", ["show", "-p", "MainPID", "--value", supervisor]).trim();
   if (!/^[1-9]\d*$/.test(pid)) refuse("CARD_RUN_SUPERVISOR", "shu-supervisor has no main process");
   return io.fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
 }
@@ -502,15 +508,16 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
   if (!Number.isInteger(gid) || gid <= 0) refuse("CARD_RUN_GROUP", "the shu-coordinator group cannot be resolved");
   writeExclusive(io, paths.activation, JSON.stringify(plan.record), 0o640, gid);
   const target = plan.record.initial_target_sha;
-  for (const unit of UNITS) {
+  const units = workerUnits(workerOf(paths));
+  for (const unit of units) {
     const dir = path.join(paths.unitDir, `${unit}.d`);
     if (!io.fs.existsSync(path.join(dir, RESIDENT_DROP_IN))) refuse("CARD_RUN_RESIDENT_DROP_IN", `${unit} has no ${RESIDENT_DROP_IN}`);
     writeExclusive(io, path.join(dir, RUN_DROP_IN), runDropIn(), 0o644);
     writeExclusive(io, path.join(dir, TARGET_DROP_IN), targetDropIn(target), 0o644);
   }
   run(io, "systemctl", ["daemon-reload"]);
-  run(io, "systemctl", ["restart", "shu-supervisor.service"]);
-  const environ = supervisorEnvironment(io);
+  run(io, "systemctl", ["restart", units[0]]);
+  const environ = supervisorEnvironment(io, units[0]);
   if (!environ.includes("ENABLE_DISPATCH=true") || !environ.includes(`DISPATCH_TARGET_SHA=${target}`)) {
     refuse("CARD_RUN_ARM_READBACK", "the supervisor did not come up with dispatch on at the target");
   }
@@ -527,13 +534,14 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
 // lines since just before the start, flushed first, in full (json would
 // otherwise null a field over 4096 bytes), and of those only the last
 // invocation's, which is this tick's. No line at all is a refusal, never an
-// earlier tick's output read as this one's.
-export function tick(io, limits = CARD_RUN_LIMITS) {
+// earlier tick's output read as this one's. A worker ticks its own coordinator.
+export function tick(io, limits = CARD_RUN_LIMITS, paths = CARD_RUN_PATHS) {
   const since = io.now().getTime();
   const bounded = { timeoutMs: limits.tickCallTimeoutMs ?? CARD_RUN_LIMITS.tickCallTimeoutMs };
-  run(io, "systemctl", ["start", "shu-coordinator.service"]);
+  const coordinator = workerUnits(workerOf(paths))[1];
+  run(io, "systemctl", ["start", coordinator]);
   run(io, "journalctl", ["--sync"], bounded);
-  const raw = run(io, "journalctl", ["_SYSTEMD_UNIT=shu-coordinator.service", `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"], bounded);
+  const raw = run(io, "journalctl", [`_SYSTEMD_UNIT=${coordinator}`, `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"], bounded);
   const entries = [];
   for (const line of raw.split("\n")) {
     let entry;
@@ -559,7 +567,12 @@ export function tick(io, limits = CARD_RUN_LIMITS) {
 // run's window and its episode are over, so what is still running is left
 // over: the revert stops it (TERM, then KILL), records what it stopped and
 // goes on. Only a process that survives KILL leaves the run armed, as before.
+//
+// M15 W2: the drop-ins, the supervisor restarted and the dispatch-off tick are
+// the worker's own. The shu-worker wait, count and kill still cover every
+// worker's processes; slice W3 scopes them to the worker's own.
 export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
+  const units = workerUnits(workerOf(paths));
   const waitUntil = io.now().getTime() + limits.workerGraceMs;
   let reaped = null;
   while (workerCount(io) !== 0) {
@@ -570,19 +583,19 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
     }
     io.sleep(limits.workerPollMs);
   }
-  for (const unit of UNITS) {
+  for (const unit of units) {
     for (const dropIn of [RUN_DROP_IN, TARGET_DROP_IN]) {
       const file = path.join(paths.unitDir, `${unit}.d`, dropIn);
       if (io.fs.existsSync(file)) io.fs.unlinkSync(file);
     }
   }
   run(io, "systemctl", ["daemon-reload"]);
-  run(io, "systemctl", ["restart", "shu-supervisor.service"]);
-  if (supervisorEnvironment(io).includes("ENABLE_DISPATCH=true")) refuse("CARD_RUN_REVERT_READBACK", "dispatch is still on after revert");
+  run(io, "systemctl", ["restart", units[0]]);
+  if (supervisorEnvironment(io, units[0]).includes("ENABLE_DISPATCH=true")) refuse("CARD_RUN_REVERT_READBACK", "dispatch is still on after revert");
   // Dispatch is already off here, so a failed dispatch-off tick is reported
   // and the rest of the cleanup still runs.
   let offTick;
-  try { offTick = tickOutcome(tick(io)).activation; }
+  try { offTick = tickOutcome(tick(io, CARD_RUN_LIMITS, paths)).activation; }
   catch (error) { offTick = `tick failed: ${error.message}`; }
   run(io, "systemctl", ["stop", "shu71-evidence.service"]);
   const killed = workerCount(io);
@@ -693,7 +706,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           break;
         }
         const startedAt = io.now().toISOString();
-        const output = tick(io, limits);
+        const output = tick(io, limits, paths);
         const outcome = tickOutcome(output, plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
         // Observing reads only the tick's own output: no request and no wait,

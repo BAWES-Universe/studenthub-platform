@@ -2961,6 +2961,91 @@ test("SHU-312 Q4: a card branch starts from main as it is now, only when main de
   assert.throws(() => onBase(planRun({ config: configFor("SHU-301"), revision: REV, now: START }), "not-a-sha"), { code: "CARD_RUN_BASE" });
 });
 
+test("M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged", async () => {
+  const { cardRunPaths, workerUnits, arm, UNITS: units } = await import("../service/card-run.mjs");
+  assert.equal(workerUnits(1), units);
+  assert.deepEqual(units, UNITS);
+  const w2 = cardRunPaths(2);
+  const [supervisor, coordinator] = workerUnits(2);
+  assert.deepEqual([supervisor, coordinator], ["shu-supervisor-w2.service", "shu-coordinator-w2.service"]);
+  // A small host for worker 2's pair: drop-ins, a supervisor whose environment
+  // follows them at restart, and a coordinator whose lines reach the journal.
+  const files = new Map();
+  const calls = [];
+  let environ = [];
+  let clock = START.getTime();
+  const journal = [];
+  for (const unit of [supervisor, coordinator]) files.set(`${PATHS.unitDir}/${unit}.d/${RESIDENT_DROP_IN}`, "[Service]\n");
+  const io = {
+    now: () => new Date(clock),
+    sleep: (ms) => { clock += ms; },
+    fs: {
+      existsSync: (file) => files.has(file) || [PATHS.tmp].includes(file),
+      readFileSync: (file) => { if (file === "/proc/77/environ") return environ.join("\0"); if (!files.has(file)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); return files.get(file); },
+      writeFileSync: (file, text, options = {}) => { if (options.flag === "wx" && files.has(file)) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" }); files.set(file, String(text)); },
+      chownSync: () => {}, chmodSync: () => {},
+      renameSync: (from, to) => { files.set(to, files.get(from)); files.delete(from); },
+      unlinkSync: (file) => files.delete(file),
+      readdirSync: () => [],
+      rmSync: () => {},
+    },
+    exec: (file, args) => {
+      const line = [file, ...args].join(" ");
+      calls.push(line);
+      const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
+      if (file === "id") return ok("998\n");
+      if (file === "pgrep") return { status: 1, stdout: "", stderr: "" };
+      if (line === `systemctl restart ${supervisor}`) {
+        environ = [RUN_DROP_IN, TARGET_DROP_IN].map((name) => files.get(`${PATHS.unitDir}/${supervisor}.d/${name}`)).filter(Boolean)
+          .map((text) => /Environment=(.*)\n/.exec(text)[1]);
+        return ok();
+      }
+      if (line === `systemctl show -p MainPID --value ${supervisor}`) return ok("77\n");
+      if (line === `systemctl start ${coordinator}`) { journal.length = 0; journal.push({ at: clock, message: "activation=absent (committed gates only)" }); return ok(); }
+      if (file === "journalctl" && args[0] === "--sync") return ok();
+      if (file === "journalctl") {
+        assert.equal(args[0], `_SYSTEMD_UNIT=${coordinator}`);
+        return ok(journal.map((entry) => JSON.stringify({ _SYSTEMD_INVOCATION_ID: "d".repeat(32), MESSAGE: entry.message })).join("\n"));
+      }
+      if (file === "systemctl") return ok();
+      return { status: 127, stdout: "", stderr: `unexpected ${file}` };
+    },
+  };
+  const plan = planRun({ config: configFor("SHU-301"), revision: REV, now: START });
+  const armedRun = arm(io, plan, REV, w2);
+  assert.equal(armedRun.target, plan.record.initial_target_sha);
+  assert.ok(files.has(w2.activation), "worker 2's own activation record");
+  assert.equal(files.has(PATHS.activation), false, "worker 1's record is untouched");
+  for (const unit of [supervisor, coordinator]) assert.ok(files.has(`${PATHS.unitDir}/${unit}.d/${RUN_DROP_IN}`), unit);
+  for (const unit of UNITS) assert.equal(files.has(`${PATHS.unitDir}/${unit}.d/${RUN_DROP_IN}`), false, `${unit} is not armed`);
+  assert.equal(tick(io, undefined, w2), "activation=absent (committed gates only)");
+  const done = revert(io, w2);
+  assert.equal(done.reverted, true, JSON.stringify(done));
+  assert.equal(done.dispatch_off_tick, "activation=absent (committed gates only)");
+  for (const unit of [supervisor, coordinator]) assert.equal(files.has(`${PATHS.unitDir}/${unit}.d/${RUN_DROP_IN}`), false, unit);
+  const touched = calls.filter((call) => /^(systemctl (restart|start|show)|journalctl _SYSTEMD_UNIT)/.test(call) && !call.includes("shu71-evidence"));
+  assert.ok(touched.length >= 4);
+  for (const call of touched) assert.match(call, /-w2\.service/, `worker 2 only touches its own units: ${call}`);
+});
+
+test("M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all", async () => {
+  const { selectNextReservation } = await import("../reconcile.mjs");
+  const issue = (id) => ({ id, requested_worker: "codex-builder" });
+  const running = { issue_id: "SHU-301", stage: "RUNNING", attempt_id: "a" };
+  const scoped = (workers) => ({ ...configFor("SHU-305"), ...(workers ? { workers: { max: workers } } : {}) });
+  // One worker: worker 1's running card holds the one slot, as before.
+  const one = selectNextReservation({ ready: [issue("SHU-305")], config: scoped(0), receipts: [running] });
+  assert.equal(one.candidate, null);
+  assert.match(one.skipped[0].reason, /max_dispatch=1 reached \(1 active\)/);
+  // Two workers: worker 2's coordinator, narrowed to SHU-305, has its own slot.
+  const two = selectNextReservation({ ready: [issue("SHU-305")], config: scoped(2), receipts: [running] });
+  assert.equal(two.candidate?.id, "SHU-305", JSON.stringify(two.skipped));
+  // Its own card's active receipt still holds its slot.
+  const own = selectNextReservation({ ready: [issue("SHU-305")], config: scoped(2), receipts: [running, { ...running, issue_id: "SHU-305", attempt_id: "b" }] });
+  assert.equal(own.candidate, null);
+  assert.match(own.skipped[0].reason, /max_dispatch=1 reached \(1 active\)/);
+});
+
 test("M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged", async () => {
   const { cardRunPaths, cardWorkers, CARD_RUN_PATHS } = await import("../service/card-run.mjs");
   const { cardQueue } = await import("../single-run-activation.mjs");

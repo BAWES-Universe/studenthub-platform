@@ -20,7 +20,7 @@ const cases = [
   ['child retains Linear token', 'credential-delivery.mjs', "'PATH', 'HOME'", "'LINEAR_API_TOKEN', 'PATH', 'HOME'", m => {
     assert.equal(m.supervisorChildEnvironment({ LINEAR_API_TOKEN: 'poison' }).LINEAR_API_TOKEN, undefined, 'B2_NO_CHILD_LINEAR_TOKEN');
   }],
-  ['transport accepts foreign credential directory', 'credential-delivery.mjs', "if (env.CREDENTIALS_DIRECTORY !== '/run/credentials/shu-coordinator.service')", "if (false)", m => {
+  ['transport accepts foreign credential directory', 'credential-delivery.mjs', "if (!COORDINATOR_CREDENTIAL_DIRECTORIES.includes(env.CREDENTIALS_DIRECTORY))", "if (false)", m => {
     assert.throws(() => m.supervisorTransportSecret({ CREDENTIALS_DIRECTORY: '/tmp/foreign' }, () => `SHU_SUPERVISOR_SECRET=${'x'.repeat(32)}`), /ACT_CREDENTIAL_UNAVAILABLE/, 'B2_FIXED_CREDENTIAL_DIRECTORY');
   }],
   ['transport allows short secret', 'credential-delivery.mjs', 'Buffer.byteLength(value) < 32', 'Buffer.byteLength(value) < 1', m => {
