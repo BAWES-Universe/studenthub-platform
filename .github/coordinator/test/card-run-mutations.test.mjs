@@ -303,9 +303,15 @@ const CASES = [
   },
   {
     name: "M46 let the timer run the same revision twice",
-    from: '{ flag: "wx", mode: 0o600 });\n  } catch (error) {\n    if (error.code === "EEXIST")',
-    to: '{ mode: 0o600 }); // SHU86-M46\n  } catch (error) {\n    if (error.code === "EEXIST")',
+    from: '{ flag: "wx", mode: 0o600 });\n      break;',
+    to: '{ mode: 0o600 }); // SHU86-M46\n      break;',
     pattern: "SHU-86 C31:",
+  },
+  {
+    name: "M15W1-R1 a worker that loses the claim race gives up its start",
+    from: "      if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) continue;",
+    to: "      // M15W1-R1",
+    pattern: "M15 W1: a worker that loses the claim race",
   },
   {
     name: "M47 run while the host is paused",

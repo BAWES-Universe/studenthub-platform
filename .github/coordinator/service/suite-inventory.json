@@ -2030,6 +2030,7 @@
     "SHU-86 mutation M44 wait on Linear without a deadline",
     "SHU-86 mutation M45 copy the card's state name into the report unflattened",
     "SHU-86 mutation M46 let the timer run the same revision twice",
+    "SHU-86 mutation M15W1-R1 a worker that loses the claim race gives up its start",
     "SHU-86 mutation M47 run while the host is paused",
     "SHU-86 mutation M48 keep the claim when the host was taken after it",
     "SHU-86 mutation M49 stay silent about a refusal before arming",
@@ -2224,6 +2225,7 @@
     "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
     "M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged",
     "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
+    "M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start",
     "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
     "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
@@ -18163,6 +18165,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M15W1-R1 a worker that loses the claim race gives up its start",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M47 run while the host is paused",
       "capabilities": []
     },
@@ -18936,6 +18942,10 @@
     },
     {
       "name": "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start",
       "capabilities": []
     },
     {
