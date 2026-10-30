@@ -4557,6 +4557,9 @@
     "M15 W4: a landing lock another worker holds is waited for, and past its bound the landing stops with nothing merged",
     "M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge",
     "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
+    "M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off",
+    "M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips",
+    "M15 W5: no card run starts while the install lock is held",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -4653,6 +4656,15 @@
     "SHU-86 mutation M230 take a new head that is not main merged into the head",
     "SHU-86 mutation M231 land as one worker with workers.max 2",
     "SHU-86 mutation M232 merge the passed head after an update",
+    "SHU-86 mutation M234 start a card run while the install lock is held",
+    "SHU-86 mutation M235 claim a timer start while the install lock is held",
+    "SHU-86 mutation M236 start worker N's timer as worker 1",
+    "SHU-86 mutation M237 leave card worker timers behind on removal",
+    "SHU-86 mutation M238 leave a card worker's units without their resident drop-in",
+    "SHU-86 mutation M239 leave a card worker's state directory owned by root",
+    "SHU-86 mutation M240 install timers for a worker whose units are missing",
+    "SHU-86 mutation M241 run a worker the config turns off",
+    "SHU-86 mutation M242 take over a card worker directory that is not worker 1's",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -4673,6 +4685,7 @@
     "M16 Q4: the committed policy is off, and approval none installs on the box review and green checks alone",
     "M16 Q6: a code install changes no config key a queue install could not",
     "M16 Q7: a test file a runtime module imports is never a queue's to change",
+    "M15 W5: a self-install holds the host-wide install lock, never takes another worker's, and keeps it with the run lock",
     "SHU-322 mutation M30 install an owner-only path",
     "SHU-322 mutation M31 let code change the self-install policy",
     "SHU-322 mutation M32 read the policy from main",
@@ -4698,7 +4711,9 @@
     "SHU-322 mutation M52 let a queue install a test file a runtime module imports",
     "SHU-322 mutation M53 accept data that is not the contracts document",
     "SHU-322 mutation M54 let a card be removed",
-    "SHU-322 mutation M55 accept any path list on a new card"
+    "SHU-322 mutation M55 accept any path list on a new card",
+    "SHU-322 mutation M56 install without the host-wide install lock",
+    "SHU-322 mutation M57 keep the install lock once the install ended"
   ],
   "requirements": [
     {
@@ -33416,6 +33431,18 @@
       "capabilities": []
     },
     {
+      "name": "M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: no card run starts while the install lock is held",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M146 never call a running unit's silent run stale",
       "capabilities": []
     },
@@ -33800,6 +33827,42 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M234 start a card run while the install lock is held",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M235 claim a timer start while the install lock is held",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M236 start worker N's timer as worker 1",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M237 leave card worker timers behind on removal",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M238 leave a card worker's units without their resident drop-in",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M239 leave a card worker's state directory owned by root",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M240 install timers for a worker whose units are missing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M241 run a worker the config turns off",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M242 take over a card worker directory that is not worker 1's",
+      "capabilities": []
+    },
+    {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
       "capabilities": [
         {
@@ -33904,6 +33967,10 @@
       "capabilities": []
     },
     {
+      "name": "M15 W5: a self-install holds the host-wide install lock, never takes another worker's, and keeps it with the run lock",
+      "capabilities": []
+    },
+    {
       "name": "SHU-322 mutation M30 install an owner-only path",
       "capabilities": []
     },
@@ -34005,6 +34072,14 @@
     },
     {
       "name": "SHU-322 mutation M55 accept any path list on a new card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M56 install without the host-wide install lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M57 keep the install lock once the install ended",
       "capabilities": []
     }
   ],

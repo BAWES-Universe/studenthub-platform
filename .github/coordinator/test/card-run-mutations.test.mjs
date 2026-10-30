@@ -334,8 +334,8 @@ const CASES = [
   },
   {
     name: "M51 replace timer units that hold other content",
-    from: '    else if (io.fs.readFileSync(file, "utf8") !== text) refuse(',
-    to: "    else if (false) refuse( // SHU86-M51\n",
+    from: '    if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== text) refuse(',
+    to: "    if (false) refuse( // SHU86-M51\n",
     pattern: "SHU-86 C35:",
   },
   {
@@ -370,8 +370,8 @@ const CASES = [
   },
   {
     name: "M57 ignore a failed disable",
-    from: '  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);',
-    to: '  if (io.fs.existsSync(timerFile)) io.exec("systemctl", ["disable", "--now", AUTO_TIMER]); // SHU86-M57',
+    from: '    if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", timer]);',
+    to: '    if (io.fs.existsSync(timerFile)) io.exec("systemctl", ["disable", "--now", timer]); // SHU86-M57',
     pattern: "SHU-86 C35:",
   },
   {
@@ -1574,6 +1574,60 @@ const CASES = [
     from: "    const head = mergeHead ?? source.handoff.target_sha;",
     to: "    const head = source.handoff.target_sha; // SHU86-M232",
     pattern: "M15 W4: with two workers a landing behind main",
+  },
+  {
+    name: "M234 start a card run while the install lock is held",
+    from: "    const busy = [...installing(io, paths), ...busyReasons(io, paths)];\n    if (busy.length) refuse(",
+    to: "    const busy = busyReasons(io, paths); // SHU86-M234\n    if (busy.length) refuse(",
+    pattern: "M15 W5: no card run starts while the install lock is held",
+  },
+  {
+    name: "M235 claim a timer start while the install lock is held",
+    from: "  const busy = [...installing(io, paths), ...busyReasons(io, paths)];\n  if (busy.length) return skip(",
+    to: "  const busy = busyReasons(io, paths); // SHU86-M235\n  if (busy.length) return skip(",
+    pattern: "M15 W5: no card run starts while the install lock is held",
+  },
+  {
+    name: "M236 start worker N's timer as worker 1",
+    from: "    `ExecStart=${node} ${module} auto${worker === 1 ? \"\" : ` --worker ${worker}`}`,",
+    to: "    `ExecStart=${node} ${module} auto`, // SHU86-M236",
+    pattern: "M15 W5: timer-install puts each card worker's timer",
+  },
+  {
+    name: "M237 leave card worker timers behind on removal",
+    from: "    .filter((worker) => worker === 1 || [autoServiceName(worker), autoTimerName(worker)]",
+    to: "    .filter((worker) => worker === 1 || false && [autoServiceName(worker), autoTimerName(worker)]",
+    pattern: "M15 W5: timer-install puts each card worker's timer",
+  },
+  {
+    name: "M238 leave a card worker's units without their resident drop-in",
+    from: "    writeExclusive(io, file, gate, 0o644);",
+    to: "    // SHU86-M238",
+    pattern: "M15 W5: timer-install puts each card worker's timer",
+  },
+  {
+    name: "M239 leave a card worker's state directory owned by root",
+    from: "    io.fs.chownSync(dir, owner.uid, owner.gid);",
+    to: "    // SHU86-M239",
+    pattern: "M15 W5: timer-install puts each card worker's timer",
+  },
+  {
+    name: "M240 install timers for a worker whose units are missing",
+    from: "      if (!io.fs.existsSync(path.join(paths.unitDir, unit))) refuse(",
+    to: "      if (false) refuse( // SHU86-M240\n",
+    pattern: "M15 W5: timer-install puts each card worker's timer",
+  },
+  {
+    name: "M241 run a worker the config turns off",
+    from: "  if (workerOf(paths) > workers) return skip(",
+    to: "  if (false) return skip( // SHU86-M241\n",
+    pattern: "M15 W5: auto --worker N runs as card worker N",
+  },
+  {
+    name: "M242 take over a card worker directory that is not worker 1's",
+    from: "    if (found && (!found.isDirectory() || found.isSymbolicLink() || found.uid !== owner.uid",
+    to: "    if (false && (!found.isDirectory() || found.isSymbolicLink() || found.uid !== owner.uid",
+    pattern: "M15 W5: timer-install puts each card worker's timer",
   },
 ];
 

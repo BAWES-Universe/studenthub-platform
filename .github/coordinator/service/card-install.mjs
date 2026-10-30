@@ -97,6 +97,13 @@ export const CARD_RUN = ".github/coordinator/service/card-run.mjs";
 export const MIN_INSTALL_QUEUE = 2;
 export const INSTALL_STEPS = Object.freeze(["claim", "idle", "merge", "rollback", "install", "verify", "precondition", "plan"]);
 export const INSTALL_REQUEST_TIMEOUT_MS = 30 * 1000;
+// M15 W5: one install at a time on the host, whichever card worker's timer
+// start runs it. It is taken after the worker's own run lock and before the
+// idle check (deps.busyReasons, every configured worker's), and a card run
+// takes its own run lock before it looks for this one, so a run and an
+// install never both go ahead. A failed install that keeps its run lock keeps
+// this one too, so no worker starts on a half-installed host.
+export const INSTALL_LOCK = "/run/lock/shu-card-install.lock";
 const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
 
 // M11: coordinator code the box may install itself once its config turns
@@ -670,6 +677,12 @@ export async function selfInstall({ io, paths, config, revision, deps, limits = 
 async function installMain({ io, paths, deps, credentials, repo, revision, main, queue, code = null, approval = null, scope = [], claim, base, report }) {
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { return { skipped: "INSTALL_LOCKED", reason: `${paths.lock} exists` }; }
+  const installLock = paths.installLock ?? INSTALL_LOCK;
+  try { io.fs.writeFileSync(installLock, String(process.pid), { flag: "wx", mode: 0o600 }); }
+  catch {
+    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
+    return { skipped: "INSTALL_LOCKED", reason: `${installLock} exists: another worker is installing` };
+  }
   const steps = [];
   const paused = () => io.fs.existsSync(paths.pause);
   let outcome = null;
@@ -742,7 +755,10 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
         ...(keepLock ? { lock_kept: true } : {}) };
     }
   } finally {
-    if (!keepLock) { try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ } }
+    if (!keepLock) {
+      try { io.fs.unlinkSync(installLock); } catch { /* the lock is gone already */ }
+      try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
+    }
   }
   let claimError = null;
   try {

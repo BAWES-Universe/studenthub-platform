@@ -12,6 +12,7 @@ import {
   planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
+  autoServiceName, autoTimerName,
   reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
 import { renderRunReport, reportMarker, plainReason, PUSH_SSH_COMMAND, REPORT_ATTEMPTS, REPORT_RETRY_WAIT_MS,
@@ -20,6 +21,7 @@ import { cardAction, prepareRun, CARD_TODO_MUTATION, BRANCH_READBACK_ATTEMPTS, B
   READ_ATTEMPTS, READ_RETRY_WAIT_MS, retryableRead, retryableRefusal } from "../service/card-prepare.mjs";
 import { adapterLaunchEnvironment, applyAdapterLaunchEnvironment, supervisorAdapterKeys } from "../service/units.mjs";
 import { supervisorChildEnvironment } from "../service/credential-delivery.mjs";
+import { INSTALL_LOCK } from "../service/card-install.mjs";
 import { CARD_LAND_ENV, LAND_TOKEN_KEY, readLandToken, isReadRequest, settlePolicy, botSeverity, classifyThread, settleMarker,
   landCard, LAND_LIMITS, LAND_LOCK, LAND_OUTCOMES } from "../service/card-land.mjs";
 import { handoffReceipt, validHandoff } from "../durable-handoff.mjs";
@@ -5511,4 +5513,163 @@ test("M15 W4: the landing lock, the updates and their reads keep the run inside 
     + LAND_LIMITS.lockWaitMs + LAND_LIMITS.lockPollMs + rounds * (LAND_LIMITS.updateWaitMs + LAND_LIMITS.updatePollMs + CARD_RUN_LIMITS.landPollMs)
     + rounds * 12 * CARD_RUN_LIMITS.landRequestTimeoutMs;
   assert.ok(worst < AUTO_TIMEOUT_START_MS, `${worst} must stay under ${AUTO_TIMEOUT_START_MS}`);
+});
+
+// M15 W5: a two-worker host as timer-install and timer-remove see it: worker
+// 2's supervisor and coordinator unit files, worker 1's private workspace
+// directory, directories that can be made, owned and read back, and systemd
+// keeping each card-run timer's state.
+const W2_UNITS = ["shu-supervisor-w2.service", "shu-coordinator-w2.service"];
+function workersHost({ units = true } = {}) {
+  const host = fakeHost({ config: configFor("SHU-301", (c) => ({ ...c, workers: { max: 2 } })) });
+  if (units) for (const unit of W2_UNITS) host.files.set(`${PATHS.unitDir}/${unit}`, { text: `[Unit]\n${unit}\n`, mode: 0o644, uid: 0, gid: 0 });
+  host.dirMeta = new Map([["/srv/shu/state/workspaces", { uid: 997, gid: 998, mode: 0o700 }]]);
+  const fsio = host.io.fs;
+  const isDir = (file) => host.dirMeta.has(file);
+  host.io = { ...host.io, nodePath: () => "/usr/bin/node", fs: { ...fsio,
+    existsSync: (file) => isDir(file) || fsio.existsSync(file),
+    lstatSync: (file) => {
+      if (!isDir(file)) return { ...fsio.lstatSync(file), isDirectory: () => false };
+      const meta = host.dirMeta.get(file);
+      return { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, uid: meta.uid, gid: meta.gid, mode: 0o040000 | meta.mode };
+    },
+    mkdirSync: (dir, { mode }) => {
+      if (isDir(dir) || fsio.existsSync(dir)) throw Object.assign(new Error(`EEXIST ${dir}`), { code: "EEXIST" });
+      host.dirMeta.set(dir, { uid: 0, gid: 0, mode });
+    },
+    chownSync: (file, uid, gid) => (isDir(file) ? Object.assign(host.dirMeta.get(file), { uid, gid }) : fsio.chownSync(file, uid, gid)),
+    chmodSync: (file, mode) => (isDir(file) ? Object.assign(host.dirMeta.get(file), { mode }) : fsio.chmodSync(file, mode)),
+  } };
+  host.timers = new Map();
+  const exec = host.io.exec;
+  host.io.exec = (file, args, options) => {
+    if (file !== "systemctl") return exec(file, args, options);
+    const [verb, ...rest] = args;
+    const name = rest.at(-1);
+    if (!/^shu-card-run(-w\d+)?\.(service|timer)$/.test(name ?? "")) return exec(file, args, options);
+    host.calls.push(`systemctl ${args.join(" ")}`);
+    const out = (stdout) => ({ status: 0, stdout: `${stdout}\n`, stderr: "" });
+    if (verb === "enable") { host.timers.set(name, "on"); return out(""); }
+    if (verb === "disable") { host.timers.set(name, "off"); return out(""); }
+    if (verb === "is-enabled") return out(host.timers.get(name) === "on" ? "enabled" : "disabled");
+    if (verb === "is-active") return out(name.endsWith(".service") ? "inactive" : host.timers.get(name) === "on" ? "active" : "inactive");
+    return exec(file, args, options);
+  };
+  return host;
+}
+
+test("M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off", async () => {
+  const MODULE = "/srv/shu/studenthub-platform/.github/coordinator/service/card-run.mjs";
+  const unit = (name) => `${PATHS.unitDir}/${name}`;
+  // Without worker 2's own units nothing is put on the host for any worker.
+  const bare = workersHost({ units: false });
+  const refused = await attempt(() => installTimer(bare.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
+  assert.equal(refused.thrown, "CARD_RUN_TIMER");
+  assert.equal(bare.files.has(unit(AUTO_SERVICE)), false);
+  assert.equal(bare.dirMeta.size, 1);
+  const host = workersHost();
+  const installed = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
+  assert.equal(installed.installed, true, JSON.stringify(installed));
+  assert.equal(installed.workers, 2);
+  // Worker 1's units are as they were.
+  assert.equal(host.files.get(unit(AUTO_SERVICE)).text, autoServiceUnit({ node: "/usr/bin/node", module: MODULE }));
+  assert.equal(host.files.get(unit(AUTO_TIMER)).text, autoTimerUnit());
+  assert.match(host.files.get(unit(AUTO_SERVICE)).text, /^ExecStart=\/usr\/bin\/node \S+card-run\.mjs auto$/m);
+  // Worker 2's start `auto --worker 2` on the same schedule.
+  assert.equal(autoServiceName(2), "shu-card-run-w2.service");
+  assert.equal(autoTimerName(2), "shu-card-run-w2.timer");
+  assert.match(host.files.get(unit("shu-card-run-w2.service")).text, /^ExecStart=\/usr\/bin\/node \S+card-run\.mjs auto --worker 2$/m);
+  assert.match(host.files.get(unit("shu-card-run-w2.service")).text, /^TimeoutStartSec=8h$/m);
+  assert.match(host.files.get(unit("shu-card-run-w2.timer")).text, /^Unit=shu-card-run-w2\.service$/m);
+  assert.match(host.files.get(unit("shu-card-run-w2.timer")).text, /^OnCalendar=\*:00\/30$/m);
+  assert.ok(host.calls.includes("systemctl enable --now shu-card-run-w2.timer"));
+  // Its workspace and supervisor state directories, private and owned as worker 1's.
+  for (const dir of ["/srv/shu/state/workspaces/w2", "/srv/shu/state/workspaces/w2/supervisor"]) {
+    assert.deepEqual(host.dirMeta.get(dir), { uid: 997, gid: 998, mode: 0o700 }, dir);
+  }
+  // The resident drop-in of each of its units, worker 1's bytes.
+  for (const name of W2_UNITS) {
+    const dropped = host.files.get(`${PATHS.unitDir}/${name}.d/${RESIDENT_DROP_IN}`);
+    assert.equal(dropped?.text, host.files.get(dropIn("shu-supervisor.service", RESIDENT_DROP_IN)).text, name);
+    assert.equal(dropped.mode, 0o644);
+  }
+  // Installing again changes nothing; a directory not as worker 1's refuses.
+  assert.equal((await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).installed, true);
+  const foreign = workersHost();
+  foreign.dirMeta.set("/srv/shu/state/workspaces/w2", { uid: 0, gid: 0, mode: 0o755 });
+  assert.equal((await attempt(() => installTimer(foreign.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).thrown, "CARD_RUN_TIMER");
+  assert.equal(foreign.files.has(unit(AUTO_SERVICE)), false);
+  // One worker installs worker 1's units alone, as before.
+  const one = withSystemd(fakeHost());
+  const single = await attempt(() => installTimer(one.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
+  assert.deepEqual(Object.keys(single), ["installed", "units", "enabled", "active"]);
+  // Removal takes every worker's timer off, and none while any worker's run goes.
+  const stopped = await attempt(() => removeTimer({ ...host.io, exec: (file, args, options) => (file === "systemctl" && args.join(" ") === "is-active shu-card-run-w2.service"
+    ? { status: 0, stdout: "active\n", stderr: "" } : host.io.exec(file, args, options)) }, PATHS));
+  assert.equal(stopped.thrown, "CARD_RUN_TIMER_BUSY");
+  assert.equal(host.files.has(unit("shu-card-run-w2.timer")), true);
+  assert.deepEqual(await attempt(() => removeTimer(host.io, PATHS)), { removed: true });
+  for (const name of [AUTO_SERVICE, AUTO_TIMER, "shu-card-run-w2.service", "shu-card-run-w2.timer"]) assert.equal(host.files.has(unit(name)), false, name);
+  assert.ok(host.calls.includes("systemctl disable --now shu-card-run-w2.timer"));
+});
+
+test("M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips", async () => {
+  assert.deepEqual(parseArgs(["auto", "--worker", "2"]), { command: "auto", review: null, worker: 2 });
+  for (const bad of [["auto", "--worker", "1"], ["auto", "--worker", "9"], ["auto", "--worker"], ["auto", "--worker", "02"], ["auto", "--review-pr", "1"]]) {
+    assert.throws(() => parseArgs(bad), { code: "CARD_RUN_USAGE" }, bad.join(" "));
+  }
+  // Worker 3 under workers.max 2 touches nothing.
+  const host = workersHost();
+  const { code, output } = await main(["auto", "--worker", "3"], host.io, PATHS);
+  assert.equal(code, 0, JSON.stringify(output));
+  assert.equal(output.skipped, "NOT_READY");
+  assert.match(output.reason, /card worker 3 is off: workers\.max is 2/);
+  assert.equal(host.calls.length, 0);
+  // Worker 2 is on: it takes its own lock, and writes its own status file.
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  assert.equal(w2.checkout, PATHS.checkout);
+  assert.equal(w2.lock, "/run/lock/shu-card-run-w2.lock");
+  assert.equal(statusPath(w2), "/srv/shu/state/card-run-status-w2.json");
+  assert.equal(statusPath(PATHS), "/srv/shu/state/card-run-status.json");
+  host.files.set(w2.lock, { text: "1", mode: 0o600, uid: 0, gid: 0 });
+  const locked = await main(["auto", "--worker", "2"], host.io, PATHS);
+  assert.equal(locked.output.skipped, "LOCKED");
+  assert.match(locked.output.reason, /shu-card-run-w2\.lock/);
+});
+
+test("M15 W5: no card run starts while the install lock is held", async () => {
+  const host = fakeHost({ onTick: passOnFirstTick });
+  host.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 });
+  const writes = [];
+  const write = host.io.fs.writeFileSync;
+  host.io = { ...host.io, fs: { ...host.io.fs, writeFileSync: (file, ...rest) => { writes.push(file); return write(file, ...rest); } } };
+  const skipped = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(skipped.skipped, "HOST_BUSY");
+  assert.match(skipped.reason, /install lock held: \/run\/lock\/shu-card-install\.lock/);
+  assert.deepEqual(writes, [], "no claim and no lock are written");
+  // An install that took its lock just after this run's start looked: the run
+  // refuses once its own lock is held, and lets it go.
+  const raced = fakeHost({ onTick: passOnFirstTick });
+  const put = raced.io.fs.writeFileSync;
+  raced.io = { ...raced.io, fs: { ...raced.io.fs, writeFileSync: (file, ...rest) => {
+    const done = put(file, ...rest);
+    if (file === PATHS.lock) raced.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 });
+    return done;
+  } } };
+  const refused = await attempt(() => runCard({ io: raced.io, paths: PATHS }));
+  assert.equal(refused.thrown, "CARD_RUN_HOST_BUSY");
+  assert.equal(raced.files.has(PATHS.lock), false);
+  noArming(raced);
+  // Through the timer, the claim is given back.
+  const timed = fakeHost({ onTick: passOnFirstTick });
+  const timedPut = timed.io.fs.writeFileSync;
+  timed.io = { ...timed.io, fs: { ...timed.io.fs, writeFileSync: (file, ...rest) => {
+    const done = timedPut(file, ...rest);
+    if (file === PATHS.lock) timed.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 });
+    return done;
+  } } };
+  const back = await autoRun({ io: timed.io, paths: PATHS });
+  assert.equal(back.skipped, "HOST_BUSY");
+  assert.equal(timed.files.has(autoClaim(PATHS, REV, "SHU-301")), false);
 });

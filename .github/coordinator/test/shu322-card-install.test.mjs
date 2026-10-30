@@ -12,6 +12,7 @@ import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
   readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
+  INSTALL_LOCK,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -1213,4 +1214,34 @@ test("M16 Q7: a test file a runtime module imports is never a queue's to change"
   const gate = selfInstallGate(facts((f) => ({ ...f, changes: [...f.changes, { status: "M", path: RUNTIME_TEST_MODULES[0] }] })));
   assert.ok(refused(gate));
   assert.match(gate.reason, /is not a queue config path/);
+});
+
+test("M15 W5: a self-install holds the host-wide install lock, never takes another worker's, and keeps it with the run lock", async () => {
+  // Another worker is installing: this start skips and gives everything back.
+  const held = fakeHost();
+  held.put(INSTALL_LOCK, "123");
+  assert.equal((await install(held)).skipped, "INSTALL_LOCKED");
+  assert.equal(held.files.get(INSTALL_LOCK).text, "123", "another worker's install lock is left alone");
+  assert.equal(held.files.has(installClaim(PATHS, N)), false);
+  untouched(held);
+  // The install runs under it, from before the idle check to the end.
+  const host = fakeHost();
+  const seen = [];
+  host.onStep = (h, name) => seen.push([name, h.files.has(INSTALL_LOCK)]);
+  assert.equal((await install(host)).result?.outcome, "INSTALLED");
+  assert.ok(seen.length > 0 && seen.every(([, locked]) => locked), JSON.stringify(seen));
+  assert.equal(host.files.has(INSTALL_LOCK), false, "released after the install");
+  // A failed install that keeps the run lock keeps this one too, so no worker
+  // starts on a half-installed host.
+  const failed = fakeHost();
+  failed.provisionFails[`install ${N}`] = true;
+  const write = failed.fs.writeFileSync;
+  failed.fs.writeFileSync = (file, text, options) => {
+    if (file === PATHS.pause) throw Object.assign(new Error(`EIO ${file}`), { code: "EIO" });
+    return write(file, text, options);
+  };
+  const out = await install(failed);
+  assert.equal(out.result?.lock_kept, true);
+  assert.equal(failed.files.has(INSTALL_LOCK), true);
+  assert.equal(failed.files.has(PATHS.lock), true);
 });

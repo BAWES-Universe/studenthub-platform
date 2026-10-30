@@ -348,6 +348,18 @@ const CASES = [
     to: "    if (false /* M16-M55 */) return",
     pattern: "M16 Q5:",
   },
+  {
+    name: "M56 install without the host-wide install lock",
+    from: "  try { io.fs.writeFileSync(installLock, String(process.pid), { flag: \"wx\", mode: 0o600 }); }",
+    to: "  try { /* M15-W5-M56 */ }",
+    pattern: "M15 W5: a self-install holds",
+  },
+  {
+    name: "M57 keep the install lock once the install ended",
+    from: "      try { io.fs.unlinkSync(installLock); } catch { /* the lock is gone already */ }",
+    to: "      // M15-W5-M57",
+    pattern: "M15 W5: a self-install holds",
+  },
 ];
 
 for (const mutation of CASES) {

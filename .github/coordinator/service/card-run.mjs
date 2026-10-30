@@ -77,7 +77,8 @@ import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal
 import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS, LAND_LOCK } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { threadReviewer } from "./card-threads.mjs";
-import { selfInstall, RUNTIME_TEST_MODULES } from "./card-install.mjs";
+import { selfInstall, RUNTIME_TEST_MODULES, INSTALL_LOCK } from "./card-install.mjs";
+import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME } from "./units.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
@@ -100,6 +101,8 @@ export const CARD_RUN_PATHS = Object.freeze({
   landEnv: CARD_LAND_ENV,
   // M15 W4: the one landing lock every worker merges under.
   landLock: LAND_LOCK,
+  // M15 W5: the one install lock; no card run starts while it is held.
+  installLock: INSTALL_LOCK,
 });
 // M15: card workers. Worker 1 is today's single card run and keeps its paths
 // exactly. Worker N > 1 has its own lock and activation; the state folder,
@@ -109,10 +112,11 @@ export const CARD_RUN_PATHS = Object.freeze({
 // activation paths live in credential-delivery.mjs, which the coordinator tick
 // and the units read too.
 export { MAX_CARD_WORKERS, cardWorkers };
-export function cardRunPaths(worker = 1) {
+// M15 W5: `base` is worker 1's paths, CARD_RUN_PATHS on the host.
+export function cardRunPaths(worker = 1, base = CARD_RUN_PATHS) {
   if (!Number.isInteger(worker) || worker < 1 || worker > MAX_CARD_WORKERS) refuse("CARD_RUN_WORKER", `worker must be 1 to ${MAX_CARD_WORKERS}`);
-  if (worker === 1) return CARD_RUN_PATHS;
-  return Object.freeze({ ...CARD_RUN_PATHS, worker, activation: workerActivationFile(worker),
+  if (worker === 1) return base;
+  return Object.freeze({ ...base, worker, activation: workerActivationFile(worker),
     lock: `/run/lock/shu-card-run-w${worker}.lock` });
 }
 export const workerOf = (paths) => paths.worker ?? 1;
@@ -180,25 +184,30 @@ export const CARD_RUN_MODULE = fileURLToPath(import.meta.url);
 export const AUTO_SERVICE = "shu-card-run.service";
 export const AUTO_TIMER = "shu-card-run.timer";
 export const AUTO_SCHEDULE = "*:00/30";
-export function autoServiceUnit({ node, module }) {
+// M15 W5: card worker N > 1 has its own service and timer, on the same
+// schedule, starting `auto --worker N`; each start takes the next card no
+// other worker holds (nextCard). Worker 1's units are as they were.
+export const autoServiceName = (worker = 1) => (worker === 1 ? AUTO_SERVICE : `shu-card-run-w${worker}.service`);
+export const autoTimerName = (worker = 1) => (worker === 1 ? AUTO_TIMER : `shu-card-run-w${worker}.timer`);
+export function autoServiceUnit({ node, module, worker = 1 }) {
   return [
     "[Unit]",
-    "Description=StudentHub card run: the committed card, at most once per installed revision",
+    `Description=StudentHub card run${worker === 1 ? "" : `, card worker ${worker}`}: the committed card, at most once per installed revision`,
     "[Service]",
     "Type=oneshot",
     "User=root",
-    `ExecStart=${node} ${module} auto`,
+    `ExecStart=${node} ${module} auto${worker === 1 ? "" : ` --worker ${worker}`}`,
     "TimeoutStartSec=8h",
     "",
   ].join("\n");
 }
-export function autoTimerUnit() {
+export function autoTimerUnit(worker = 1) {
   return [
     "[Unit]",
-    "Description=Every half hour, run the installed revision's card if it has not run yet",
+    `Description=Every half hour, run the installed revision's card if it has not run yet${worker === 1 ? "" : `, as card worker ${worker}`}`,
     "[Timer]",
     `OnCalendar=${AUTO_SCHEDULE}`,
-    `Unit=${AUTO_SERVICE}`,
+    `Unit=${autoServiceName(worker)}`,
     "[Install]",
     "WantedBy=timers.target",
     "",
@@ -468,6 +477,12 @@ export function busyReasons(io, paths = CARD_RUN_PATHS) {
   const trees = io.fs.existsSync(paths.worktrees) ? io.fs.readdirSync(paths.worktrees) : [];
   for (const name of trees) if (/^(build-|review-pr)/.test(name)) reasons.push(`worktree present: ${path.join(paths.worktrees, name)}`);
   return reasons;
+}
+
+// M15 W5: a held install lock, as a busy reason.
+function installing(io, paths) {
+  const lock = paths.installLock ?? INSTALL_LOCK;
+  return io.fs.existsSync(lock) ? [`install lock held: ${lock}`] : [];
 }
 
 // M15 W3: what keeps a self-install off the host. The install moves the
@@ -765,7 +780,8 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   let summary;
   let credentials;
   try {
-    const busy = busyReasons(io, paths);
+    // M15 W5: looked for only once this run's own lock is held; see INSTALL_LOCK.
+    const busy = [...installing(io, paths), ...busyReasons(io, paths)];
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
     const config = readConfig(io, paths);
@@ -966,7 +982,11 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   const skip = (skipped, reason) => ({ ok: true, trigger: "timer", skipped, reason });
   if (io.fs.existsSync(paths.pause)) return skip("PAUSED", `${paths.pause} exists`);
   if (io.fs.existsSync(paths.lock)) return skip("LOCKED", `${paths.lock} exists`);
-  const busy = busyReasons(io, paths);
+  // M15 W5: a worker's timer outlives a config that turns it off again.
+  let workers = 1;
+  try { workers = cardWorkers(readConfig(io, paths)); } catch { /* read again below */ }
+  if (workerOf(paths) > workers) return skip("NOT_READY", `card worker ${workerOf(paths)} is off: workers.max is ${workers}`);
+  const busy = [...installing(io, paths), ...busyReasons(io, paths)];
   if (busy.length) return skip("HOST_BUSY", busy.join("; "));
   let revision;
   let plan;
@@ -1389,44 +1409,126 @@ async function notStarted({ io, paths, limits, error, config, result }) {
 
 // Puts the timer on the host: the owner's one go. It never replaces units with
 // other content; take the old ones off first.
+//
+// M15 W5: with workers.max above one in the installed config, it also puts
+// each card worker N's timer and service on the host, after it made N's
+// workspace state directories (mode 0700, owned as worker 1's) and the
+// resident drop-in of N's supervisor and coordinator (worker 1's bytes). N's
+// unit files themselves are staged by a person (units.mjs render, worker N);
+// without them nothing is installed for any worker. Worker 1's units are as
+// before.
 export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
-  const units = [[AUTO_SERVICE, autoServiceUnit({ node, module })], [AUTO_TIMER, autoTimerUnit()]];
+  const workers = cardWorkers(readConfig(io, paths));
+  const all = Array.from({ length: workers }, (_, i) => i + 1);
+  const units = all.flatMap((worker) => [[autoServiceName(worker), autoServiceUnit({ node, module, worker })], [autoTimerName(worker), autoTimerUnit(worker)]]);
+  const prepared = all.length > 1 ? prepareWorkers(io, paths, all.slice(1)) : [];
+  for (const [name, text] of units) {
+    const file = path.join(paths.unitDir, name);
+    if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== text) refuse("CARD_RUN_TIMER", `${file} exists with other content; run timer-remove first`);
+  }
   for (const [name, text] of units) {
     const file = path.join(paths.unitDir, name);
     if (!io.fs.existsSync(file)) writeExclusive(io, file, text, 0o644);
-    else if (io.fs.readFileSync(file, "utf8") !== text) refuse("CARD_RUN_TIMER", `${file} exists with other content; run timer-remove first`);
   }
   run(io, "systemctl", ["daemon-reload"]);
-  run(io, "systemctl", ["enable", "--now", AUTO_TIMER]);
-  const enabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
-  const active = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
-  if (enabled !== "enabled" || active !== "active") refuse("CARD_RUN_TIMER", `the timer reads ${enabled || "unknown"}/${active || "unknown"} after install`);
-  return { installed: true, units: units.map(([name]) => path.join(paths.unitDir, name)), enabled, active };
+  const states = [];
+  for (const worker of all) {
+    const timer = autoTimerName(worker);
+    run(io, "systemctl", ["enable", "--now", timer]);
+    const enabled = io.exec("systemctl", ["is-enabled", timer]).stdout.trim();
+    const active = io.exec("systemctl", ["is-active", timer]).stdout.trim();
+    if (enabled !== "enabled" || active !== "active") refuse("CARD_RUN_TIMER", `the timer ${timer} reads ${enabled || "unknown"}/${active || "unknown"} after install`);
+    states.push({ enabled, active });
+  }
+  const [{ enabled, active }] = states;
+  return { installed: true, units: units.map(([name]) => path.join(paths.unitDir, name)), enabled, active,
+    ...(all.length > 1 ? { workers, prepared } : {}) };
+}
+
+// M15 W5: what card worker N needs on the host before its timer: its unit
+// files present, its workspace and supervisor state directories, and the
+// resident drop-in of each of its units. Everything is checked before
+// anything is made, and nothing that exists is changed: a directory or
+// drop-in that is not as worker 1's refuses. Returns what was made.
+function prepareWorkers(io, paths, workers) {
+  const stat = (file) => { try { return io.fs.lstatSync(file); } catch { return null; } };
+  const owner = stat(WORKSPACE_STATE_DIR);
+  if (!owner?.isDirectory() || owner.isSymbolicLink() || (owner.mode & 0o7777) !== 0o700) {
+    refuse("CARD_RUN_TIMER", `${WORKSPACE_STATE_DIR}, worker 1's workspace state directory, is not a private directory`);
+  }
+  const resident = path.join(paths.unitDir, `${UNITS[0]}.d`, RESIDENT_DROP_IN);
+  let gate;
+  try { gate = io.fs.readFileSync(resident, "utf8"); } catch { refuse("CARD_RUN_TIMER", `${resident} cannot be read`); }
+  const dirs = [];
+  const dropIns = [];
+  for (const worker of workers) {
+    for (const unit of workerUnits(worker)) {
+      if (!io.fs.existsSync(path.join(paths.unitDir, unit))) refuse("CARD_RUN_TIMER", `${unit} is not installed: stage card worker ${worker}'s units first`);
+      dropIns.push(path.join(paths.unitDir, `${unit}.d`, RESIDENT_DROP_IN));
+    }
+    const workspace = workerWorkspaceStateDir(worker);
+    dirs.push(workspace, path.join(workspace, SUPERVISOR_STORE_DIRNAME));
+  }
+  for (const dir of dirs) {
+    const found = stat(dir);
+    if (found && (!found.isDirectory() || found.isSymbolicLink() || found.uid !== owner.uid || found.gid !== owner.gid || (found.mode & 0o7777) !== 0o700)) {
+      refuse("CARD_RUN_TIMER", `${dir} exists but is not a private directory owned as ${WORKSPACE_STATE_DIR}`);
+    }
+  }
+  for (const file of dropIns) {
+    if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== gate) refuse("CARD_RUN_TIMER", `${file} exists with other content than ${resident}`);
+  }
+  const made = [];
+  for (const dir of dirs) {
+    if (stat(dir)) continue;
+    io.fs.mkdirSync(dir, { mode: 0o700 });
+    io.fs.chownSync(dir, owner.uid, owner.gid);
+    io.fs.chmodSync(dir, 0o700);
+    made.push(dir);
+  }
+  for (const file of dropIns) {
+    if (io.fs.existsSync(file)) continue;
+    if (!io.fs.existsSync(path.dirname(file))) { io.fs.mkdirSync(path.dirname(file), { mode: 0o755 }); made.push(path.dirname(file)); }
+    writeExclusive(io, file, gate, 0o644);
+    made.push(file);
+  }
+  return made;
 }
 
 // Takes the timer off. It refuses while a run the timer started is still going:
 // stopping that service would kill the run before its revert.
+// M15 W5: every card worker's timer and service on the host go with worker
+// 1's, whatever the config now says; none goes while any one's run is going.
 export function removeTimer(io, paths = CARD_RUN_PATHS) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
-  const state = io.exec("systemctl", ["is-active", AUTO_SERVICE]).stdout.trim();
-  if (["active", "activating", "deactivating", "reloading"].includes(state)) {
-    refuse("CARD_RUN_TIMER_BUSY", `${AUTO_SERVICE} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
+  const workers = Array.from({ length: MAX_CARD_WORKERS }, (_, i) => i + 1)
+    .filter((worker) => worker === 1 || [autoServiceName(worker), autoTimerName(worker)].some((name) => io.fs.existsSync(path.join(paths.unitDir, name))));
+  for (const worker of workers) {
+    const service = autoServiceName(worker);
+    const state = io.exec("systemctl", ["is-active", service]).stdout.trim();
+    if (["active", "activating", "deactivating", "reloading"].includes(state)) {
+      refuse("CARD_RUN_TIMER_BUSY", `${service} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
+    }
   }
   // The unit files stay until the timer reads back disabled and inactive, so a
   // failed disable or readback can be retried rather than leave an enabled
   // timer with no files. A retry after the timer file is gone skips the
   // disable, which would fail on a missing unit.
-  const timerFile = path.join(paths.unitDir, AUTO_TIMER);
-  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);
-  const timerEnabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
-  const timerActive = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
-  if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {
-    refuse("CARD_RUN_TIMER", `${AUTO_TIMER} reads ${timerEnabled || "unknown"}/${timerActive || "unknown"} after disable; its unit files stay`);
+  for (const worker of workers) {
+    const timer = autoTimerName(worker);
+    const timerFile = path.join(paths.unitDir, timer);
+    if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", timer]);
+    const timerEnabled = io.exec("systemctl", ["is-enabled", timer]).stdout.trim();
+    const timerActive = io.exec("systemctl", ["is-active", timer]).stdout.trim();
+    if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {
+      refuse("CARD_RUN_TIMER", `${timer} reads ${timerEnabled || "unknown"}/${timerActive || "unknown"} after disable; its unit files stay`);
+    }
   }
+  const names = workers.flatMap((worker) => [autoTimerName(worker), autoServiceName(worker)]);
   const failed = [];
-  for (const name of [AUTO_TIMER, AUTO_SERVICE]) {
+  for (const name of names) {
     const file = path.join(paths.unitDir, name);
     if (!io.fs.existsSync(file)) continue;
     try {
@@ -1436,7 +1538,7 @@ export function removeTimer(io, paths = CARD_RUN_PATHS) {
     }
   }
   run(io, "systemctl", ["daemon-reload"]);
-  const left = [AUTO_TIMER, AUTO_SERVICE].map((name) => path.join(paths.unitDir, name)).filter((file) => io.fs.existsSync(file));
+  const left = names.map((name) => path.join(paths.unitDir, name)).filter((file) => io.fs.existsSync(file));
   if (failed.length || left.length) refuse("CARD_RUN_TIMER", `still present: ${[...new Set([...failed, ...left])].join(", ")}`);
   return { removed: true };
 }
@@ -1462,7 +1564,15 @@ export const defaultIO = Object.freeze({
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!["plan", "run", "auto", "timer-install", "timer-remove"].includes(command)) {
-    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto | timer-install | timer-remove");
+    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto [--worker N] | timer-install | timer-remove");
+  }
+  // M15 W5: a card worker's timer starts `auto --worker N`, N from 2.
+  if (command === "auto" && rest.length) {
+    const worker = Number(rest[1]);
+    if (rest.length !== 2 || rest[0] !== "--worker" || !/^[1-9][0-9]*$/.test(rest[1] ?? "") || worker < 2 || worker > MAX_CARD_WORKERS) {
+      refuse("CARD_RUN_USAGE", `auto takes only --worker N, N from 2 to ${MAX_CARD_WORKERS}`);
+    }
+    return { command, review: null, worker };
   }
   if (!["plan", "run"].includes(command) && rest.length) refuse("CARD_RUN_USAGE", `${command} takes no flags`);
   const flags = {};
@@ -1478,7 +1588,7 @@ export function parseArgs(argv) {
 
 export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
   try {
-    const { command, review } = parseArgs(argv);
+    const { command, review, worker = 1 } = parseArgs(argv);
     if (command === "plan") {
       const revision = installedRevision(io, paths);
       const config = readConfig(io, paths);
@@ -1516,7 +1626,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath }) };
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
-      const result = await autoRun({ io, paths });
+      const result = await autoRun({ io, paths: cardRunPaths(worker, paths) });
       return { code: result.skipped || (result.ok && (result.revert?.reverted || result.kind === "install")) ? 0 : 1, output: result };
     }
     // A queue keeps its order only through the timer's claims, so it is run by
