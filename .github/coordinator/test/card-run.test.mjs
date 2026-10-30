@@ -1541,7 +1541,7 @@ test("SHU-86 C35: the timer installs exact units, never replaces different ones,
   assert.match(host.files.get(service).text, /^ExecStart=\/usr\/bin\/node \S+card-run\.mjs auto$/m);
   assert.doesNotMatch(host.files.get(service).text, /^Condition/m, "a skipped start would leave a relative timer stuck; auto checks the pause file");
   assert.match(host.files.get(service).text, /^TimeoutStartSec=8h$/m);
-  assert.match(host.files.get(timer).text, /^OnCalendar=\*:00\/30$/m);
+  assert.match(host.files.get(timer).text, /^OnCalendar=\*:00\/5$/m);
   assert.doesNotMatch(host.files.get(timer).text, /^On(Unit|Boot|Startup|Active)/m, "the timer never counts from the service's last state");
   for (const file of [service, timer]) assert.equal(host.files.get(file).mode, 0o644);
   assert.ok(host.calls.includes(`systemctl enable --now ${AUTO_TIMER}`));
@@ -2272,7 +2272,7 @@ test("SHU-86 0e: the run keeps its status file at every step, with no request of
   assert.equal(last.first_dispatch_at, launch);
   assert.equal(last.last_progress_at, heartbeat);
   assert.equal(last.paused, false);
-  assert.match(last.next_start, /^\d{4}-\d\d-\d\dT\d\d:(00|30):00\.000Z$/);
+  assert.match(last.next_start, /^\d{4}-\d\d-\d\dT\d\d:[0-5][05]:00\.000Z$/);
   assert.ok(Date.parse(last.next_start) > Date.parse(last.updated_at));
   assert.equal(log[1].ticks, 1);
   assert.equal(log[1].outcome, undefined, "no outcome while the run is ticking");
@@ -2356,8 +2356,9 @@ test("SHU-86 0e: a run that needs the owner opens its report with one alert line
     assert.equal(ownerMention(bad), null, String(bad));
     assert.equal(alertLine({ outcome: "ERROR", owner_mention: bad }), "Alert: this run needs the owner.");
   }
-  assert.equal(nextStart(new Date("2026-10-17T19:05:12.000Z")), "2026-10-17T19:30:00.000Z");
-  assert.equal(nextStart(new Date("2026-10-17T19:45:00.000Z")), "2026-10-17T20:00:00.000Z");
+  assert.equal(nextStart(new Date("2026-10-17T19:05:12.000Z")), "2026-10-17T19:10:00.000Z");
+  assert.equal(nextStart(new Date("2026-10-17T19:45:00.000Z")), "2026-10-17T19:50:00.000Z");
+  assert.equal(nextStart(new Date("2026-10-17T19:58:00.000Z")), "2026-10-17T20:00:00.000Z");
   assert.equal(nextStart(new Date("2026-10-17T23:59:59.000Z")), "2026-10-18T00:00:00.000Z");
 });
 
@@ -3578,7 +3579,7 @@ test("SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it 
   assert.equal(statusComments(host).length, 1);
   const body = statusComments(host)[0].body;
   assert.ok(body.startsWith(`${STATUS_MARKER}\n`));
-  for (const line of ["shu-card-run.service: idle.", "Timer: next start 2026-10-18T08:30:00.000Z.", "Queue: SHU-301, SHU-302.",
+  for (const line of ["shu-card-run.service: idle.", "Timer: on, starting every five minutes.", "Queue: SHU-301, SHU-302.",
     "Latest run: SHU-301 (card, timer), step finished, 4 tick(s), last tick 2026-10-18T07:04:00.000Z.",
     "Progress: first dispatch 2026-10-18T07:02:00.000Z, last progress 2026-10-18T07:03:00.000Z.", "Outcome: PASS, landing MERGED."]) {
     assert.ok(body.split("\n").includes(line), `${line}\n${body}`);
@@ -3594,7 +3595,7 @@ test("SHU-86 0d: the watch keeps one SHU-71 status comment, edited only when it 
   host.unit = { state: "activating", since: Date.parse("2026-10-18T08:00:00.000Z") };
   assert.deepEqual((await watchOnce({ io: host.io, paths: PATHS })).status_comment, { changed: true, posted: true });
   assert.equal(statusComments(host).length, 1);
-  assert.match(statusComments(host)[0].body, /shu-card-run\.service: running since 2026-10-18T08:00:00\.000Z\.\nTimer: next start/);
+  assert.match(statusComments(host)[0].body, /shu-card-run\.service: running since 2026-10-18T08:00:00\.000Z\.\nTimer: on, starting every five minutes\./);
   assert.match(statusComments(host)[0].body, /Latest run: SHU-302 \(card, timer\), step ticking/);
   // A lost state file finds the comment by its marker instead of posting again.
   host.files.delete(path.join(PATHS.stateDir, "card-watch.json"));

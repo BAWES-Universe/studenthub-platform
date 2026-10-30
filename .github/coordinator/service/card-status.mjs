@@ -48,11 +48,12 @@ export function alertLine(result) {
   return `Alert: this run needs the owner${mention ? ` (${mention})` : ""}.`;
 }
 
-// The card-run timer starts on the hour and the half hour (AUTO_SCHEDULE).
+// The card-run timer starts every five minutes on the clock (AUTO_SCHEDULE),
+// so the next card begins within minutes of the last one ending.
 export function nextStart(now) {
   const next = new Date(now);
   next.setUTCSeconds(0, 0);
-  next.setUTCMinutes(next.getUTCMinutes() < 30 ? 30 : 60);
+  next.setUTCMinutes(Math.floor(next.getUTCMinutes() / 5) * 5 + 5);
   return next.toISOString();
 }
 

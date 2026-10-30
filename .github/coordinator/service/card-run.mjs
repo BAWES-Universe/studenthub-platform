@@ -140,7 +140,7 @@ export const AUTO_TIMEOUT_START_MS = 8 * 60 * 60 * 1000;
 export const CARD_RUN_MODULE = fileURLToPath(import.meta.url);
 export const AUTO_SERVICE = "shu-card-run.service";
 export const AUTO_TIMER = "shu-card-run.timer";
-export const AUTO_SCHEDULE = "*:00/30";
+export const AUTO_SCHEDULE = "*:00/5";
 export function autoServiceUnit({ node, module }) {
   return [
     "[Unit]",
@@ -156,7 +156,7 @@ export function autoServiceUnit({ node, module }) {
 export function autoTimerUnit() {
   return [
     "[Unit]",
-    "Description=Every half hour, run the installed revision's card if it has not run yet",
+    "Description=Every five minutes, run the installed revision's card if it has not run yet",
     "[Timer]",
     `OnCalendar=${AUTO_SCHEDULE}`,
     `Unit=${AUTO_SERVICE}`,

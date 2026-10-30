@@ -29,7 +29,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { sendLinear } from "../reconcile.mjs";
 import { readCoordinatorCredentials, postRunReport, plainReason, reportMarker, REPORT_ISSUE, REPORT_ISSUE_QUERY, RUN_OUTCOME_TEXT } from "./card-prepare.mjs";
 import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE } from "./card-run.mjs";
-import { statusPath, ownerMention, nextStart } from "./card-status.mjs";
+import { statusPath, ownerMention } from "./card-status.mjs";
 
 export const WATCH_MODULE = fileURLToPath(import.meta.url);
 export const WATCH_SERVICE = "shu-card-watch.service";
@@ -247,7 +247,9 @@ export function renderStatus({ status, unit, paused, now }) {
   lines.push(unit === null ? `${AUTO_SERVICE}: state unknown.`
     : unit.running ? `${AUTO_SERVICE}: running since ${new Date(unit.since).toISOString()}.`
       : unit.state === "failed" ? `${AUTO_SERVICE}: failed (last started ${new Date(unit.since).toISOString()}).` : `${AUTO_SERVICE}: idle.`);
-  lines.push(paused ? "Timer: paused (the pause file is present)." : `Timer: next start ${nextStart(now)}.`);
+  // The start time is left out: at one start every five minutes it would change
+  // the comment on every watch run.
+  lines.push(paused ? "Timer: paused (the pause file is present)." : "Timer: on, starting every five minutes.");
   if (!status) {
     lines.push("No card run has written a status yet.");
     return lines.join("\n");
