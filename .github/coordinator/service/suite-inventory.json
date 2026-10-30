@@ -2168,7 +2168,7 @@
     "SHU-86 C42: a report that never reached Linear is tried again, a bounded number of times, and never posted twice",
     "SHU-86 C43: a branch main already contains moves forward to main under a lease on its head; one with its own commit never moves",
     "SHU-86 C45: a branch GitHub still reads at its old head after the push is read again, briefly; any other head refuses",
-    "SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most three times per revision; a definitive refusal spends it",
+    "SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most eighteen times per revision (about 90 minutes of five-minute starts); a definitive refusal spends it",
     "SHU-86 C47: a read before arming that never reached its server or got a 5xx or 429 is tried again, briefly; a write never is",
     "SHU-306 L1: a passed card opens its pull request, waits for green, hands off, merges, and says so on the card",
     "SHU-86 0a: a timer run's final claim keeps claimed_at and records its timing, pull request and reviewed head",
@@ -18703,7 +18703,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most three times per revision; a definitive refusal spends it",
+      "name": "SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most eighteen times per revision (about 90 minutes of five-minute starts); a definitive refusal spends it",
       "capabilities": []
     },
     {

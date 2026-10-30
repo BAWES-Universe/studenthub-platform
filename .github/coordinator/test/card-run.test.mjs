@@ -725,11 +725,11 @@ test("SHU-86 C45: a branch GitHub still reads at its old head after the push is 
   assert.equal(githubReads(moved), 3, "the pre-push read, the lagging read, and the one that saw another head");
 });
 
-test("SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most three times per revision; a definitive refusal spends it", async () => {
+test("SHU-86 C46: a start refused on a read that may pass gives the card's run back, at most eighteen times per revision (about 90 minutes of five-minute starts); a definitive refusal spends it", async () => {
   const retries = (host) => [...host.files.keys()].filter((file) => file.startsWith(`${PATHS.stateDir}/card-run-retry-`)).sort();
   const githubReads = (host) => host.api.filter((call) => call === "github read").length;
   // GitHub answers the card's branch read with a 503 on every try (the
-  // SHU-332 kind of refusal): each start gives the run back, three times.
+  // SHU-332 kind of refusal): each start gives the run back, REFUSED_START_RETRIES times.
   const down = fakeHost({ config: queueConfig(), onTick: passOnFirstTick });
   down.branchReadDown = Infinity;
   for (let n = 1; n <= REFUSED_START_RETRIES; n += 1) {
@@ -741,7 +741,7 @@ test("SHU-86 C46: a start refused on a read that may pass gives the card's run b
     assert.equal(result.claim, null);
     assert.equal(githubReads(down) - reads, READ_ATTEMPTS, "the read itself is tried again first");
     assert.equal(down.files.has(CLAIM), false, "the claim is given back");
-    assert.deepEqual(retries(down), Array.from({ length: n }, (_, i) => refusedStartRecord(PATHS, REV, "SHU-301", i + 1)));
+    assert.deepEqual(retries(down), Array.from({ length: n }, (_, i) => refusedStartRecord(PATHS, REV, "SHU-301", i + 1)).sort());
     assert.equal(down.files.get(refusedStartRecord(PATHS, REV, "SHU-301", n)).mode, 0o600);
     assert.equal(JSON.parse(down.files.get(refusedStartRecord(PATHS, REV, "SHU-301", n)).text).code, "CARD_RUN_BRANCH_UNREADABLE");
     assert.equal(down.reports.length, n, "each refused start is reported once");
@@ -749,7 +749,7 @@ test("SHU-86 C46: a start refused on a read that may pass gives the card's run b
     assert.equal(readStatus(down.io, PATHS).step, "finished");
     noArming(down);
   }
-  // The fourth refusal spends the run as it always did, and the queue stops there.
+  // The next refusal spends the run as it always did, and the queue stops there.
   const spentRun = await attempt(() => autoRun({ io: down.io, paths: PATHS }));
   assert.equal(spentRun.outcome, "NOT_STARTED");
   assert.equal(spentRun.retry, undefined);

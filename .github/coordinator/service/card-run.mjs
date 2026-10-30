@@ -774,10 +774,12 @@ export const autoClaim = (paths, revision, id) => path.join(paths.stateDir, `car
 // instead of the queue stopping until a person installs a new revision
 // (SHU-332, 2026-10-23: a GitHub ref-read lag held the queue 3.5 hours). Each
 // give-back is one file, written exclusively like the claim, and at most
-// REFUSED_START_RETRIES are ever written per card per revision; after that a
+// REFUSED_START_RETRIES are ever written per card per revision (18 at one start
+// every five minutes keeps the window of about 90 minutes the half-hourly timer
+// gave with 3); after that a
 // refusal spends the run as it always did. A give-back that cannot be written,
 // or a claim that cannot be removed, leaves the run spent.
-export const REFUSED_START_RETRIES = 3;
+export const REFUSED_START_RETRIES = 18;
 export const refusedStartRecord = (paths, revision, id, n) => path.join(paths.stateDir, `card-run-retry-${revision}-${id}-${n}.json`);
 
 function giveBackRun(io, paths, revision, id, claim, error) {
