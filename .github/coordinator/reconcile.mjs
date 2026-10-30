@@ -2234,7 +2234,8 @@ export async function repairCardFor(activation, { config = {}, githubToken = "",
     repair: repairFromActivation(activation, config),
     owners: config.linear_callback_actor_ids ?? [],
     repo: config.pilot_repo ?? null,
-    head: activation.successor?.target_sha ?? activation.initial_target_sha ?? null,
+    // M15: a repair of a head a landing updated from main is bound there.
+    head: activation.successor?.target_sha ?? activation.repair_head ?? activation.initial_target_sha ?? null,
     pulls: {
       complete: read.complete === true,
       items: (read.items ?? []).filter((pr) => pullRequestClaimsIssue(pr, activation.target_issue_id)),

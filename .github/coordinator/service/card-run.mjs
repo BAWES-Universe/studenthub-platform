@@ -74,11 +74,11 @@ import { MAX_CARD_WORKERS, cardWorkers, workerActivationFile, supervisorUnitName
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
-import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS, LAND_LOCK } from "./card-land.mjs";
+import { landCard, readLandToken, boundedFetch, github, updatedHeadHolds, clearStaleLock, CARD_LAND_ENV, LAND_LIMITS, LAND_LOCK } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall, RUNTIME_TEST_MODULES, INSTALL_LOCK } from "./card-install.mjs";
-import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME } from "./units.mjs";
+import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME, workerUnitsFromInstalled } from "./units.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
@@ -300,17 +300,27 @@ export function onBase(plan, base) {
 // window), with a deterministic id, the failed head as its approved input,
 // and the B1 repair keys: the pull request, the episode that passed, the
 // filtered CI findings and their digest, and one round.
+//
+// M15: a claim whose landing updated the pull request from main before it
+// stopped (updated_head) is repaired at that head: the PASS stays the
+// reviewed head's (initial_target_sha), the record names the updated head as
+// repair_head, and the failing checks and the one revise are at it.
 export function planRepair({ config, revision, now, limits = CARD_RUN_LIMITS, id, claim, evidence }) {
   const base = planRun({ config, revision, now, limits, cardId: id });
   if (base.kind !== "card") refuse("CARD_RUN_NOT_A_CARD", `${id} is not a card lane; only a card's landing is repaired`);
+  const failed = failedHead(claim);
   const record = { ...base.record, activation_id: repairActivationId(id, revision), initial_target_sha: claim.reviewed_head,
     repair_pr: claim.pr, repair_of: claim.activation_id, repair_findings: evidence.findings,
-    repair_evidence_digest: evidence.digest, max_rounds: REPAIR_MAX_ROUNDS };
+    repair_evidence_digest: evidence.digest, max_rounds: REPAIR_MAX_ROUNDS, ...(failed !== claim.reviewed_head ? { repair_head: failed } : {}) };
   const shape = validateActivationRecord(record);
   if (!shape.ok) refuse("CARD_RUN_RECORD", shape.reason);
-  return { ...base, record, repair: { pr: claim.pr, failed_head: claim.reviewed_head, repair_of: claim.activation_id,
+  return { ...base, record, repair: { pr: claim.pr, failed_head: failed, repair_of: claim.activation_id,
     check_runs: evidence.check_runs } };
 }
+
+// M15: the head a stopped landing left its pull request at: the head a
+// landing updated it to from main, else the reviewed head.
+const failedHead = (claim) => (SHA_RE.test(claim?.updated_head ?? "") && claim.updated_head !== claim.reviewed_head ? claim.updated_head : claim.reviewed_head);
 
 // Self-repair B2: everything a repair does before its round record exists,
 // then the record. Each step that fails is a named skip that writes nothing:
@@ -332,10 +342,17 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
   }
   const timeoutMs = limits.landRequestTimeoutMs ?? REPAIR_LIMITS.requestTimeoutMs;
   const branch = `coordinator/${id}`;
-  await readRepairPull({ io, token: credentials.GITHUB_TOKEN, repo, number: claim.pr, branch, head: claim.reviewed_head, timeoutMs });
+  // M15: an updated head is repaired only while it still holds exactly the
+  // reviewed change, the rule the landing took it by.
+  const failed = failedHead(claim);
+  if (failed !== claim.reviewed_head) {
+    const wrong = await updatedHeadHolds(github(boundedFetch(io, timeoutMs), credentials.GITHUB_TOKEN), { repo, passed: claim.reviewed_head, head: failed });
+    if (wrong) repairSkip("REPAIR_NOT_ELIGIBLE", `${id}'s updated head ${failed} cannot be repaired: ${wrong}`);
+  }
+  await readRepairPull({ io, token: credentials.GITHUB_TOKEN, repo, number: claim.pr, branch, head: failed, timeoutMs });
   const pass = await priorPass({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials.LINEAR_API_TOKEN,
     actorIds: config.linear_receipt_actor_ids, card: id, repo, claim });
-  const evidence = await readRepairEvidence({ io, token: credentials.GITHUB_TOKEN, repo, head: claim.reviewed_head,
+  const evidence = await readRepairEvidence({ io, token: credentials.GITHUB_TOKEN, repo, head: failed,
     limits: { ...REPAIR_LIMITS, requestTimeoutMs: timeoutMs } });
   let plan;
   try { plan = planRepair({ config, revision, now: io.now(), limits, id, claim, evidence }); } catch (error) {
@@ -345,8 +362,10 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
   if (io.fs.existsSync(paths.pause)) repairSkip("PAUSED", `${paths.pause} exists`);
   const round = claimRound(io, repairRecordPath(paths, revision, id), {
     card: id, revision, activation_id: plan.record.activation_id, repair_of: claim.activation_id, repo, pr: claim.pr,
-    reviewed_head: claim.reviewed_head, pass_attempt_id: pass.attempt_id, check_runs: evidence.check_runs,
-    evidence_digest: evidence.digest, evidence_truncated: evidence.truncated, claimed_at: io.now().toISOString() });
+    reviewed_head: claim.reviewed_head, ...(failed !== claim.reviewed_head ? { failed_head: failed } : {}), pass_attempt_id: pass.attempt_id, check_runs: evidence.check_runs,
+    evidence_digest: evidence.digest, evidence_truncated: evidence.truncated, claimed_at: io.now().toISOString(),
+    // M15: which worker runs the round, so another worker passes it over while it runs.
+    ...(cardWorkers(config) > 1 ? { worker: workerOf(paths), pid: process.pid } : {}) });
   if (holder) holder.round = round;
   return plan;
 }
@@ -356,7 +375,9 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
 // at the pull request's head.
 function repairPrepare(plan, config) {
   if (!plan.repair) return {};
-  return { repair: { repair_pr: plan.record.repair_pr, initial_target_sha: plan.record.initial_target_sha,
+  // The head repair eligibility binds: the pull request's own (M15: a
+  // landing's update, when it made one).
+  return { repair: { repair_pr: plan.record.repair_pr, initial_target_sha: plan.record.repair_head ?? plan.record.initial_target_sha,
     owners: Array.isArray(config.linear_callback_actor_ids) ? config.linear_callback_actor_ids : [] } };
 }
 
@@ -399,7 +420,9 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     // Self-repair B2: only with landing_repair on, and only for a passed run
     // that stopped on red checks; otherwise nothing below differs from today.
     const repair = landingRepairOn(config) && repairCandidate(ran, { id, revision, repo: config.pilot_repo ?? null })
-      ? repairStep(io, paths, revision, id, ran) : null;
+      ? repairStep(io, paths, revision, id, ran, parallel) : null;
+    // M15: another worker's repair of this card that is still going.
+    if (repair?.live) { waiting += 1; continue; }
     if (repair?.next) return repair.next;
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
@@ -413,10 +436,14 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
 // record yet: run the repair. A round that finished: no second one, the queue
 // stops as before. A round that never finished (a crash or a kill between its
 // claim and its end): REPAIR_INTERRUPTED, a terminal stop for the owner.
-function repairStep(io, paths, revision, id, claim) {
+function repairStep(io, paths, revision, id, claim, parallel = false) {
   const file = repairRecordPath(paths, revision, id);
   if (!io.fs.existsSync(file)) return { next: { id, repair: claim } };
   const round = readRound(io, file);
+  // M15: with more than one worker, a round another worker is still running
+  // (its run lock held, or the process that claimed it alive) is not an
+  // interrupted one: the card is passed over like any card running elsewhere.
+  if (parallel && round?.state !== "finished" && claimLive(io, paths, round)) return { live: true };
   if (round?.state !== "finished") {
     return { next: { id: null, card: id, skipped: "REPAIR_INTERRUPTED", repair_record: file,
       reason: `${id}'s landing repair at ${revision} never finished (${round ? `state ${round.state}` : "an unreadable record"}); it is never run again: ${file}` } };
@@ -460,9 +487,9 @@ export const ANSWERED = Object.freeze(new Set(["PASS", "REVIEW_PASS", "REVIEW_BL
 // Every reason the host is not idle. A run starts only when this is empty.
 // M15 W3: the worker's own. Its activation record and drop-ins are its own by
 // name, and its shu-worker processes are those of its own cgroups (see
-// processScope). The build and review worktrees cannot be told apart by
-// worker (every worker's attempts share SHU_WORKTREE_ROOT, and nothing names
-// them per worker), so any one still makes every worker busy.
+// processScope). Its hand-made build and review worktrees are its own by name
+// too (workerWorktree): a run's own attempt worktrees under SHU_WORKTREE_ROOT
+// are per attempt (a uuid each) and were never counted here.
 export function busyReasons(io, paths = CARD_RUN_PATHS) {
   const reasons = [];
   if (io.fs.existsSync(paths.activation)) reasons.push(`activation record present at ${paths.activation}`);
@@ -475,14 +502,27 @@ export function busyReasons(io, paths = CARD_RUN_PATHS) {
   const workers = workerCount(io, processScope(io, paths));
   if (workers !== 0) reasons.push(`${workers} shu-worker process(es) running`);
   const trees = io.fs.existsSync(paths.worktrees) ? io.fs.readdirSync(paths.worktrees) : [];
-  for (const name of trees) if (/^(build-|review-pr)/.test(name)) reasons.push(`worktree present: ${path.join(paths.worktrees, name)}`);
+  const own = workerWorktree(workerOf(paths));
+  for (const name of trees) if (own.test(name)) reasons.push(`worktree present: ${path.join(paths.worktrees, name)}`);
   return reasons;
 }
 
-// M15 W5: a held install lock, as a busy reason.
+// M15: which hand-made build and review worktrees under the worktree root are
+// a worker's. Worker 1's are named as they always were (build-*, review-pr*),
+// worker N's carry its number first (wN-build-*, wN-review-pr*), so worker 1's
+// leave worker 2 idle and the other way round. hostBusyReasons, before an
+// install, reads every worker's.
+export function workerWorktree(worker = 1) {
+  return worker === 1 ? /^(build-|review-pr)/ : new RegExp(`^w${worker}-(build-|review-pr)`);
+}
+
+// M15 W5: a held install lock, as a busy reason. One whose holder died is
+// taken over and gone (card-land.mjs clearStaleLock); one kept on purpose,
+// or held by a live install, stands.
 function installing(io, paths) {
   const lock = paths.installLock ?? INSTALL_LOCK;
-  return io.fs.existsSync(lock) ? [`install lock held: ${lock}`] : [];
+  if (!io.fs.existsSync(lock)) return [];
+  return clearStaleLock(io, lock) === null ? [`install lock held: ${lock}`] : [];
 }
 
 // M15 W3: what keeps a self-install off the host. The install moves the
@@ -615,6 +655,10 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
   const gid = Number(run(io, "id", ["-g", "shu-coordinator"]).trim());
   if (!Number.isInteger(gid) || gid <= 0) refuse("CARD_RUN_GROUP", "the shu-coordinator group cannot be resolved");
   writeExclusive(io, paths.activation, JSON.stringify(plan.record), 0o640, gid);
+  // M15: with more than one worker the evidence broker is shared, and another
+  // worker's revert may have stopped it after the start above; it is started
+  // again once this worker's record is in place (see stopEvidence).
+  if (processScope(io, paths)) run(io, "systemctl", ["start", "shu71-evidence.service"]);
   const target = plan.record.initial_target_sha;
   const units = workerUnits(workerOf(paths));
   for (const unit of units) {
@@ -664,6 +708,21 @@ export function tick(io, limits = CARD_RUN_LIMITS, paths = CARD_RUN_PATHS) {
   return entries.filter((entry) => entry.invocation === last).map((entry) => entry.message).join("\n");
 }
 
+// M15: the evidence broker every worker's run starts is one service. With one
+// worker the revert stops it, as before. With more, a revert leaves it running
+// while another worker's activation record is in place, and reads the records
+// again after a stop, so a worker that armed meanwhile (it writes its record
+// before it starts the broker) gets its broker back.
+function otherArmed(io, paths) {
+  return Array.from({ length: MAX_CARD_WORKERS }, (_, i) => i + 1)
+    .some((worker) => worker !== workerOf(paths) && io.fs.existsSync(workerActivationFile(worker)));
+}
+function stopEvidence(io, paths, scope) {
+  if (scope && otherArmed(io, paths)) return;
+  run(io, "systemctl", ["stop", "shu71-evidence.service"]);
+  if (scope && otherArmed(io, paths)) run(io, "systemctl", ["start", "shu71-evidence.service"]);
+}
+
 // Returns the run back to dispatch off. It waits a bounded time for workers to
 // finish, because restarting the supervisor under a live worker loses its
 // result.
@@ -707,7 +766,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   let offTick;
   try { offTick = tickOutcome(tick(io, CARD_RUN_LIMITS, paths)).activation; }
   catch (error) { offTick = `tick failed: ${error.message}`; }
-  run(io, "systemctl", ["stop", "shu71-evidence.service"]);
+  stopEvidence(io, paths, scope);
   const killed = workerCount(io, scope);
   if (killed) {
     signalWorkers(io, scope, "TERM");
@@ -719,7 +778,7 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
   // so the host reads busy and the next run refuses.
   let retired = null;
   if (io.fs.existsSync(paths.activation)) {
-    retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation.json`);
+    retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation${workerOf(paths) === 1 ? "" : `-w${workerOf(paths)}`}.json`);
     io.fs.renameSync(paths.activation, retired);
   }
   const cacheBefore = io.now().getTime() - (limits.npmCacheAgeMs ?? CARD_RUN_LIMITS.npmCacheAgeMs);
@@ -851,7 +910,9 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: false, outcome: "NOT_ELIGIBLE", reason: (targetExcluded.length > 0 ? targetExcluded : outcome.excluded).join("; ") || "no eligible work" };
           break;
         }
-        io.sleep(limits.tickIntervalMs);
+        // Awaited, so a host io whose wait is asynchronous lets other work go
+        // on meanwhile; the host's own wait blocks as before.
+        await io.sleep(limits.tickIntervalMs);
       }
       result = { ...result, ...armed };
     } catch (error) {
@@ -1067,6 +1128,10 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       // Velocity: when a merged landing was written down, for claim-to-merge times.
       landed_at: result.timing?.landed_at ?? null,
       repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
+      // M15: the head a landing with more than one worker updated the pull
+      // request to from main, when it did; a hand landing or a repair may
+      // then go on from it (card-landed.mjs, updatedHeadHolds).
+      ...(result.land?.updated_head ? { updated_head: result.land.updated_head } : {}),
       reverted: result.revert?.reverted ?? null,
       // Self-watch 0b: what the observe-only watch saw; null when it was off.
       first_dispatch_at: result.watch?.first_dispatch_at ?? null, last_progress_at: result.watch?.last_progress_at ?? null,
@@ -1096,12 +1161,13 @@ async function autoRepair({ io, paths, limits, config, revision, next, skip }) {
     const record = holder.round.record;
     result = await notStarted({ io, paths, limits, error, config,
       result: { card: id, kind: "card", activation_id: record.activation_id, revision,
-        repair: { pr: record.pr, failed_head: record.reviewed_head, repair_of: record.repair_of, check_runs: record.check_runs } } });
+        repair: { pr: record.pr, failed_head: record.failed_head ?? record.reviewed_head, repair_of: record.repair_of, check_runs: record.check_runs } } });
   }
   let roundError = null;
   try {
     advanceRound(io, holder.round, "finished", { finished_at: io.now().toISOString(), outcome: result.outcome ?? null, ok: result.ok === true,
-      land: result.land?.outcome ?? null, repaired_head: result.land?.reviewed_head ?? null, merge_commit: result.land?.merge_commit ?? null,
+      land: result.land?.outcome ?? null, repaired_head: result.land?.reviewed_head ?? null,
+      ...(result.land?.updated_head ? { updated_head: result.land.updated_head } : {}), merge_commit: result.land?.merge_commit ?? null,
       armed_at: result.timing?.armed_at ?? null, reverted: result.revert?.reverted ?? null });
   } catch (error) { roundError = error.code ?? "ROUND_WRITE_FAILED"; }
   return { ...result, round: holder.round.file, ...(roundError ? { round_error: roundError } : {}) };
@@ -1422,23 +1488,25 @@ async function notStarted({ io, paths, limits, error, config, result }) {
 // other content; take the old ones off first.
 //
 // M15 W5: with workers.max above one in the installed config, it also puts
-// each card worker N's timer and service on the host, after it made N's
-// workspace state directories (mode 0700, owned as worker 1's) and the
-// resident drop-in of N's supervisor and coordinator (worker 1's bytes). N's
-// unit files themselves are staged by a person (units.mjs render, worker N);
-// without them nothing is installed for any worker. Worker 1's units are as
-// before.
+// each card worker N on the host before N's timer: N's supervisor and
+// coordinator units, rendered from worker 1's installed pair (units.mjs
+// workerUnitsFromInstalled: N's own workspace state directory, supervisor
+// store, socket, writer lock and --activation path), N's workspace, store and
+// activation directories (mode 0700, owned as worker 1's), and the resident
+// drop-in of each of N's units (worker 1's bytes). Nothing is typed in by a
+// person, and a code self-install, which never touches units, leaves them as
+// they are. Worker 1's units are as before.
 export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
   const workers = cardWorkers(readConfig(io, paths));
   const all = Array.from({ length: workers }, (_, i) => i + 1);
   const units = all.flatMap((worker) => [[autoServiceName(worker), autoServiceUnit({ node, module, worker })], [autoTimerName(worker), autoTimerUnit(worker)]]);
-  const prepared = all.length > 1 ? prepareWorkers(io, paths, all.slice(1)) : [];
   for (const [name, text] of units) {
     const file = path.join(paths.unitDir, name);
     if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== text) refuse("CARD_RUN_TIMER", `${file} exists with other content; run timer-remove first`);
   }
+  const prepared = all.length > 1 ? prepareWorkers(io, paths, all.slice(1)) : [];
   for (const [name, text] of units) {
     const file = path.join(paths.unitDir, name);
     if (!io.fs.existsSync(file)) writeExclusive(io, file, text, 0o644);
@@ -1458,11 +1526,21 @@ export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_R
     ...(all.length > 1 ? { workers, prepared } : {}) };
 }
 
-// M15 W5: what card worker N needs on the host before its timer: its unit
-// files present, its workspace and supervisor state directories, and the
-// resident drop-in of each of its units. Everything is checked before
-// anything is made, and nothing that exists is changed: a directory or
-// drop-in that is not as worker 1's refuses. Returns what was made.
+// M15: the directories card worker N needs: its workspace state directory and
+// supervisor store (its units name them), and the directory of its activation
+// record (credential-delivery.mjs workerActivationFile).
+export function workerDirectories(worker) {
+  const workspace = workerWorkspaceStateDir(worker);
+  return [path.dirname(workerActivationFile(worker)), workspace, path.join(workspace, SUPERVISOR_STORE_DIRNAME)];
+}
+
+// M15 W5: what card worker N needs on the host before its timer: its
+// supervisor and coordinator units, its directories, and the resident drop-in
+// of each of its units. Everything is checked before anything is made, and
+// nothing that exists is changed: a unit, directory or drop-in that is not as
+// it should be refuses. When making something fails part way, what this call
+// made is taken off again, so a later timer-install starts clean. Returns what
+// was made.
 function prepareWorkers(io, paths, workers) {
   const stat = (file) => { try { return io.fs.lstatSync(file); } catch { return null; } };
   const owner = stat(WORKSPACE_STATE_DIR);
@@ -1472,15 +1550,26 @@ function prepareWorkers(io, paths, workers) {
   const resident = path.join(paths.unitDir, `${UNITS[0]}.d`, RESIDENT_DROP_IN);
   let gate;
   try { gate = io.fs.readFileSync(resident, "utf8"); } catch { refuse("CARD_RUN_TIMER", `${resident} cannot be read`); }
+  const installed = {};
+  for (const unit of UNITS) {
+    try { installed[unit] = io.fs.readFileSync(path.join(paths.unitDir, unit), "utf8"); } catch { refuse("CARD_RUN_TIMER", `worker 1's ${unit} cannot be read`); }
+  }
+  const unitFiles = [];
   const dirs = [];
   const dropIns = [];
   for (const worker of workers) {
+    let rendered;
+    try { rendered = workerUnitsFromInstalled(worker, installed, io.fs); }
+    catch (error) { refuse("CARD_RUN_TIMER", `card worker ${worker}'s units cannot be rendered from worker 1's: ${error.message}`); }
     for (const unit of workerUnits(worker)) {
-      if (!io.fs.existsSync(path.join(paths.unitDir, unit))) refuse("CARD_RUN_TIMER", `${unit} is not installed: stage card worker ${worker}'s units first`);
+      const file = path.join(paths.unitDir, unit);
+      if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== rendered[unit]) {
+        refuse("CARD_RUN_TIMER", `${file} exists with other content than card worker ${worker}'s rendered unit`);
+      }
+      unitFiles.push([file, rendered[unit]]);
       dropIns.push(path.join(paths.unitDir, `${unit}.d`, RESIDENT_DROP_IN));
     }
-    const workspace = workerWorkspaceStateDir(worker);
-    dirs.push(workspace, path.join(workspace, SUPERVISOR_STORE_DIRNAME));
+    dirs.push(...workerDirectories(worker));
   }
   for (const dir of dirs) {
     const found = stat(dir);
@@ -1492,20 +1581,28 @@ function prepareWorkers(io, paths, workers) {
     if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== gate) refuse("CARD_RUN_TIMER", `${file} exists with other content than ${resident}`);
   }
   const made = [];
-  for (const dir of dirs) {
-    if (stat(dir)) continue;
-    io.fs.mkdirSync(dir, { mode: 0o700 });
-    io.fs.chownSync(dir, owner.uid, owner.gid);
-    io.fs.chmodSync(dir, 0o700);
-    made.push(dir);
+  const madeDir = (dir, mode) => { io.fs.mkdirSync(dir, { mode }); made.push({ dir }); };
+  const madeFile = (file, text) => { writeExclusive(io, file, text, 0o644); made.push({ file }); };
+  try {
+    for (const [file, text] of unitFiles) if (!io.fs.existsSync(file)) madeFile(file, text);
+    for (const dir of dirs) {
+      if (stat(dir)) continue;
+      madeDir(dir, 0o700);
+      io.fs.chownSync(dir, owner.uid, owner.gid);
+      io.fs.chmodSync(dir, 0o700);
+    }
+    for (const file of dropIns) {
+      if (io.fs.existsSync(file)) continue;
+      if (!io.fs.existsSync(path.dirname(file))) madeDir(path.dirname(file), 0o755);
+      madeFile(file, gate);
+    }
+  } catch (error) {
+    for (const item of [...made].reverse()) {
+      try { if (item.dir) io.fs.rmdirSync(item.dir); else io.fs.unlinkSync(item.file); } catch { /* named in the refusal below */ }
+    }
+    refuse("CARD_RUN_TIMER", `card worker preparation failed (${error.code ?? error.message}); what it made was taken off again`);
   }
-  for (const file of dropIns) {
-    if (io.fs.existsSync(file)) continue;
-    if (!io.fs.existsSync(path.dirname(file))) { io.fs.mkdirSync(path.dirname(file), { mode: 0o755 }); made.push(path.dirname(file)); }
-    writeExclusive(io, file, gate, 0o644);
-    made.push(file);
-  }
-  return made;
+  return made.map((item) => item.dir ?? item.file);
 }
 
 // Takes the timer off. It refuses while a run the timer started is still going:

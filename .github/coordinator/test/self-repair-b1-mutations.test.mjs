@@ -47,7 +47,7 @@ const CASES = [
   {
     name: "M5 accept findings taken at another head",
     file: "single-run-activation.mjs",
-    from: "    if (record.repair_findings.target_sha !== record.initial_target_sha) {",
+    from: "    if (record.repair_findings.target_sha !== (record.repair_head ?? record.initial_target_sha)) {",
     to: "    if (false) { // B1-M5",
     tests: "single-run-activation.test.mjs",
     pattern: "Self-repair B1: R3",
@@ -95,7 +95,7 @@ const CASES = [
   {
     name: "M11 repair a branch that moved",
     file: "single-run-activation.mjs",
-    from: "  if (authoritativeHead !== null && authoritativeHead !== head) {",
+    from: "  if (authoritativeHead !== null && authoritativeHead !== branchHead) {",
     to: "  if (false) { // B1-M11",
     tests: "single-run-activation.test.mjs",
     pattern: "Self-repair B1: E3",

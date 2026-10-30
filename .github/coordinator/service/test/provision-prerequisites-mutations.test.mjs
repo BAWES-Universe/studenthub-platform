@@ -25,7 +25,8 @@ async function mutated(from, to) {
   const text = source.replace(from, to).replaceAll("from './host-suite-contract.mjs'", `from '${new URL('../host-suite-contract.mjs', import.meta.url)}'`)
     .replaceAll("from './shu71-runtime-schema.mjs'", `from '${new URL('../shu71-runtime-schema.mjs', import.meta.url)}'`)
     .replaceAll("from './shu71-production.mjs'", `from '${new URL('../shu71-production.mjs', import.meta.url)}'`)
-    .replaceAll("from './units.mjs'", `from '${new URL('../units.mjs', import.meta.url)}'`);
+    .replaceAll("from './units.mjs'", `from '${new URL('../units.mjs', import.meta.url)}'`)
+    .replaceAll("from './credential-delivery.mjs'", `from '${new URL('../credential-delivery.mjs', import.meta.url)}'`);
   return import('data:text/javascript;base64,' + Buffer.from(text).toString('base64'));
 }
 for (const [name, from, to, fault, code] of cases) test(`SHU71 named mutation killed: ${name}`, async t => {

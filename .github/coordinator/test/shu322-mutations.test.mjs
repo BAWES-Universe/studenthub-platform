@@ -350,8 +350,8 @@ const CASES = [
   },
   {
     name: "M56 install without the host-wide install lock",
-    from: "  try { io.fs.writeFileSync(installLock, String(process.pid), { flag: \"wx\", mode: 0o600 }); }",
-    to: "  try { /* M15-W5-M56 */ }",
+    from: "  const takeInstallLock = () => { io.fs.writeFileSync(installLock, String(process.pid), { flag: \"wx\", mode: 0o600 }); };",
+    to: "  const takeInstallLock = () => { /* M15-W5-M56 */ };",
     pattern: "M15 W5: a self-install holds",
   },
   {

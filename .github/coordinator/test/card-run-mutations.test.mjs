@@ -124,8 +124,8 @@ const CASES = [
   },
   {
     name: "M19 ignore a leftover build or review worktree",
-    from: "if (/^(build-|review-pr)/.test(name))",
-    to: "if (false) // SHU86-M19\n",
+    from: "for (const name of trees) if (own.test(name))",
+    to: "for (const name of trees) if (false) // SHU86-M19\n",
     pattern: "SHU-86 C5:",
   },
   {
@@ -1208,8 +1208,8 @@ const CASES = [
   {
     name: "M178 count a merge at any head",
     file: "service/card-landed.mjs",
-    from: "  if (detail.head?.sha !== reviewedHead) return",
-    to: "  if (false) return",
+    from: "  if (detail.head?.sha !== reviewedHead && !updated) {",
+    to: "  if (false) {",
     pattern: "Self-repair A: no other merge, claim or read counts a card as landed",
   },
   {
@@ -1607,20 +1607,20 @@ const CASES = [
   },
   {
     name: "M238 leave a card worker's units without their resident drop-in",
-    from: "    writeExclusive(io, file, gate, 0o644);",
-    to: "    // SHU86-M238",
+    from: "      madeFile(file, gate);",
+    to: "      // SHU86-M238",
     pattern: "M15 W5: timer-install puts each card worker's timer",
   },
   {
     name: "M239 leave a card worker's state directory owned by root",
-    from: "    io.fs.chownSync(dir, owner.uid, owner.gid);",
-    to: "    // SHU86-M239",
+    from: "      io.fs.chownSync(dir, owner.uid, owner.gid);",
+    to: "      // SHU86-M239",
     pattern: "M15 W5: timer-install puts each card worker's timer",
   },
   {
-    name: "M240 install timers for a worker whose units are missing",
-    from: "      if (!io.fs.existsSync(path.join(paths.unitDir, unit))) refuse(",
-    to: "      if (false) refuse( // SHU86-M240\n",
+    name: "M240 install over a card worker unit that holds other content",
+    from: "      if (io.fs.existsSync(file) && io.fs.readFileSync(file, \"utf8\") !== rendered[unit]) {",
+    to: "      if (false) { // SHU86-M240",
     pattern: "M15 W5: timer-install puts each card worker's timer",
   },
   {
@@ -1634,6 +1634,58 @@ const CASES = [
     from: "    if (found && (!found.isDirectory() || found.isSymbolicLink() || found.uid !== owner.uid",
     to: "    if (false && (!found.isDirectory() || found.isSymbolicLink() || found.uid !== owner.uid",
     pattern: "M15 W5: timer-install puts each card worker's timer",
+  },
+  {
+    name: "M243 stop the shared evidence broker while another card worker is armed",
+    from: "  if (scope && otherArmed(io, paths)) return;",
+    to: "  if (false) return; // SHU86-M243",
+    pattern: "M15: two card workers run two cards at once",
+  },
+  {
+    name: "M244 read worker 1's drop-ins as every worker's busy check",
+    from: "  for (const unit of workerUnits(workerOf(paths))) {",
+    to: "  for (const unit of workerUnits(1)) { // SHU86-M244",
+    pattern: "M15: two card workers run two cards at once",
+  },
+  {
+    name: "M245 call another worker's live repair round interrupted",
+    from: "  if (parallel && round?.state !== \"finished\" && claimLive(io, paths, round)) return { live: true };",
+    to: "  if (false) return { live: true }; // SHU86-M245",
+    pattern: "M15: with two workers a landing repair runs at the head",
+  },
+  {
+    name: "M246 repair an updated head without checking it holds the passed change",
+    from: "    if (wrong) repairSkip(\"REPAIR_NOT_ELIGIBLE\", `${id}'s updated head ${failed} cannot be repaired: ${wrong}`);",
+    to: "    // SHU86-M246",
+    pattern: "M15: with two workers a landing repair runs at the head",
+  },
+  {
+    name: "M247 count a hand merge at any updated head as landed",
+    file: "service/card-landed.mjs",
+    from: "    if (wrong) return { merge: null, reason: `#${pr} merged at the updated head ${updatedHead}, which does not hold the reviewed change: ${wrong}` };",
+    to: "    // SHU86-M247",
+    pattern: "M15: a card a person merged at the head a landing updated",
+  },
+  {
+    name: "M248 take over a lock whose holder is still alive",
+    file: "service/card-land.mjs",
+    from: "  if (!/^[1-9]\\d*$/.test(holder) || io.fs.existsSync(`/proc/${holder}`)) return null;",
+    to: "  if (!/^[1-9]\\d*$/.test(holder)) return null; // SHU86-M248",
+    pattern: "M15 W4: a landing lock",
+  },
+  {
+    name: "M249 watch worker 1 alone when more card workers are configured",
+    file: "service/card-watchdog.mjs",
+    from: "  for (let worker = 2; worker <= workers; worker += 1) others.push({ worker, ...(await watch(worker)) });",
+    to: "  // SHU86-M249",
+    pattern: "M15: the watch watches every configured card worker",
+  },
+  {
+    name: "M250 alert a card worker's stuck run under worker 1's key",
+    file: "service/card-watchdog.mjs",
+    from: "  const stuck = found && worker > 1 ? { ...found, key: `w${worker}-${found.key}` } : found;",
+    to: "  const stuck = found; // SHU86-M250",
+    pattern: "M15: the watch watches every configured card worker",
   },
 ];
 

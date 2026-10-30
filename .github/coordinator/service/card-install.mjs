@@ -71,7 +71,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReason, reportMarker, PUSH_TIMEOUT_SECONDS,
   readCoordinatorCredentials } from "./card-prepare.mjs";
-import { boundedFetch, github, readCommitChecks } from "./card-land.mjs";
+import { boundedFetch, github, readCommitChecks, clearStaleLock } from "./card-land.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { MAX_CARD_QUEUE } from "../single-run-activation.mjs";
 import { isFixtureIssue, validateAllowedPaths, validateCardContractMode } from "../workspace-scope.mjs";
@@ -102,8 +102,13 @@ export const INSTALL_REQUEST_TIMEOUT_MS = 30 * 1000;
 // idle check (deps.busyReasons, every configured worker's), and a card run
 // takes its own run lock before it looks for this one, so a run and an
 // install never both go ahead. A failed install that keeps its run lock keeps
-// this one too, so no worker starts on a half-installed host.
+// this one too, so no worker starts on a half-installed host: it then holds
+// a reason, not a pid. A lock whose holder died mid-install holds that pid and
+// is taken over (card-land.mjs clearStaleLock): a run still refuses a host the
+// crash left half-installed (its receipt is not VERIFIED at HEAD), and the
+// next install rolls it back.
 export const INSTALL_LOCK = "/run/lock/shu-card-install.lock";
+export const INSTALL_LOCK_KEPT = "kept: a failed install whose pause could not be written";
 const REVIEW_CLAIM_RE = /^card-review-auto-pr([1-9]\d*)-([0-9a-f]{40})\.json$/;
 
 // M11: coordinator code the box may install itself once its config turns
@@ -678,10 +683,15 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { return { skipped: "INSTALL_LOCKED", reason: `${paths.lock} exists` }; }
   const installLock = paths.installLock ?? INSTALL_LOCK;
-  try { io.fs.writeFileSync(installLock, String(process.pid), { flag: "wx", mode: 0o600 }); }
+  const takeInstallLock = () => { io.fs.writeFileSync(installLock, String(process.pid), { flag: "wx", mode: 0o600 }); };
+  try { takeInstallLock(); }
   catch {
-    try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
-    return { skipped: "INSTALL_LOCKED", reason: `${installLock} exists: another worker is installing` };
+    let taken = false;
+    if (clearStaleLock(io, installLock) !== null) { try { takeInstallLock(); taken = true; } catch { /* another worker took it first */ } }
+    if (!taken) {
+      try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
+      return { skipped: "INSTALL_LOCKED", reason: `${installLock} exists: another worker is installing` };
+    }
   }
   const steps = [];
   const paused = () => io.fs.existsSync(paths.pause);
@@ -758,6 +768,9 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
     if (!keepLock) {
       try { io.fs.unlinkSync(installLock); } catch { /* the lock is gone already */ }
       try { io.fs.unlinkSync(paths.lock); } catch { /* the lock is gone already */ }
+    } else {
+      // Kept on purpose: no longer a pid, so no worker ever takes it over.
+      try { io.fs.writeFileSync(installLock, INSTALL_LOCK_KEPT, { mode: 0o600 }); } catch { /* it still holds this pid */ }
     }
   }
   let claimError = null;

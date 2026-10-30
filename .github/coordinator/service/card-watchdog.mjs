@@ -22,13 +22,19 @@
 // lock, and alerts at most once per run, recorded in its own state file. Every
 // line it posts is built from validated status fields only, never from logs,
 // reasons or the environment.
+//
+// M15: with workers.max above one it watches every configured card worker the
+// same way: worker N's card-run service (shu-card-run-wN.service) and its own
+// status file, each stuck or stalled run alerted once under its own key, and
+// one status comment with a section per worker. One worker is watched exactly
+// as before.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { sendLinear } from "../reconcile.mjs";
 import { readCoordinatorCredentials, postRunReport, plainReason, reportMarker, REPORT_ISSUE, REPORT_ISSUE_QUERY, RUN_OUTCOME_TEXT } from "./card-prepare.mjs";
-import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE } from "./card-run.mjs";
+import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE, cardRunPaths, autoServiceName, cardWorkers } from "./card-run.mjs";
 import { statusPath, ownerMention, nextStart } from "./card-status.mjs";
 
 export const WATCH_MODULE = fileURLToPath(import.meta.url);
@@ -138,8 +144,8 @@ export function readStatus(io, paths) {
 // between passes. A failed unit keeps the start of the run that failed, so a
 // run that died before its first status write is still named; an idle one
 // has none. A read that fails is null, and the watch then raises no alert.
-export function readUnit(io, now) {
-  const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic", "-p", "InvocationID", AUTO_SERVICE]);
+export function readUnit(io, now, service = AUTO_SERVICE) {
+  const result = io.exec("systemctl", ["show", "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic", "-p", "InvocationID", service]);
   if (result.status !== 0) return null;
   const fields = Object.fromEntries(String(result.stdout).split("\n").map((line) => line.split("=")).filter((pair) => pair.length >= 2)
     .map(([key, ...rest]) => [key.trim(), rest.join("=").trim()]));
@@ -213,16 +219,16 @@ export function alertMarker(key) {
   return `card-watch-${key}`;
 }
 
-export function renderAlert({ stuck, mention, pause, paths = CARD_RUN_PATHS, limits = WATCH_LIMITS }) {
+export function renderAlert({ stuck, mention, pause, paths = CARD_RUN_PATHS, limits = WATCH_LIMITS, service = AUTO_SERVICE }) {
   const card = stuck.status?.card ?? null;
   const lines = [
     reportMarker(alertMarker(stuck.key)),
     `Alert: the card run${card ? ` on ${card}` : ""} needs the owner${mention ? ` (${mention})` : ""}.`,
     stuck.kind === "failed"
-      ? `${AUTO_SERVICE} failed after starting at ${stuck.since}, before its run wrote any status: the run may have left its claim or ${paths.lock} in place, holding every later start.`
+      ? `${service} failed after starting at ${stuck.since}, before its run wrote any status: the run may have left its claim or ${paths.lock} in place, holding every later start.`
       : stuck.kind === "stale"
-      ? `${AUTO_SERVICE} has been running since ${stuck.since}, and ${stuck.status ? `the run's status was last written at ${stuck.last} (step ${stuck.status.step ?? "unknown"})` : "no status was written since it started"}: nothing for more than ${Math.round(limits.staleMs / 60000)} minutes.`
-      : `${AUTO_SERVICE} is not running, but the run's status stopped at step ${stuck.status.step} at ${stuck.last} and never reached finished: the run ended without finishing, and may have left the host armed and ${paths.lock} in place.`,
+      ? `${service} has been running since ${stuck.since}, and ${stuck.status ? `the run's status was last written at ${stuck.last} (step ${stuck.status.step ?? "unknown"})` : "no status was written since it started"}: nothing for more than ${Math.round(limits.staleMs / 60000)} minutes.`
+      : `${service} is not running, but the run's status stopped at step ${stuck.status.step} at ${stuck.last} and never reached finished: the run ended without finishing, and may have left the host armed and ${paths.lock} in place.`,
     pause.written ? `Wrote ${paths.pause}, so no new card run starts until the owner removes it.`
       : pause.held ? `${paths.pause} was already in place.`
         : `${paths.pause} could not be written (${plainReason(pause.code)}).`,
@@ -242,11 +248,11 @@ function writePause(io, paths, stuck) {
   }
 }
 
-export function renderStatus({ status, unit, paused, now }) {
+export function renderStatus({ status, unit, paused, now, service = AUTO_SERVICE }) {
   const lines = [STATUS_MARKER, "Card-run status, kept by the card-run watch (every ten minutes, edited only when it changes)."];
-  lines.push(unit === null ? `${AUTO_SERVICE}: state unknown.`
-    : unit.running ? `${AUTO_SERVICE}: running since ${new Date(unit.since).toISOString()}.`
-      : unit.state === "failed" ? `${AUTO_SERVICE}: failed (last started ${new Date(unit.since).toISOString()}).` : `${AUTO_SERVICE}: idle.`);
+  lines.push(unit === null ? `${service}: state unknown.`
+    : unit.running ? `${service}: running since ${new Date(unit.since).toISOString()}.`
+      : unit.state === "failed" ? `${service}: failed (last started ${new Date(unit.since).toISOString()}).` : `${service}: idle.`);
   lines.push(paused ? "Timer: paused (the pause file is present)." : `Timer: next start ${nextStart(now)}.`);
   if (!status) {
     lines.push("No card run has written a status yet.");
@@ -336,18 +342,65 @@ function readOwnerMention(io, paths) {
 export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIMITS }) {
   if (io.uid() !== 0) refuse("CARD_WATCH_NOT_ROOT", "run as root on the orchestrator host");
   const now = io.now().getTime();
-  // The unit is read before the status, so a run that finishes in between is
-  // read as running with a fresh status, never as ended without finishing.
-  const unit = readUnit(io, now);
-  const status = readStatus(io, paths);
   const state = readState(io, paths);
   let credentials = null;
   let credentialError = null;
   try { credentials = readCoordinatorCredentials(io, paths.coordinatorEnv); } catch (error) { credentialError = error.code ?? "CARD_WATCH_CREDENTIALS"; }
-  const result = { ok: true, unit: unit ? unit.state : null, step: status?.step ?? null, alert: null, status_comment: null };
+  // M15: every configured card worker; a config that cannot be read is one.
+  let workers = 1;
+  try { workers = cardWorkers(JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"))); } catch { /* one worker */ }
+  const watch = (worker) => watchWorker({ io, paths: worker === 1 ? paths : cardRunPaths(worker, paths), limits, now, state, credentials,
+    service: autoServiceName(worker), worker });
+  const own = await watch(1);
+  const result = { ok: true, unit: own.result.unit, step: own.result.step, alert: own.result.alert, status_comment: null };
+  if (own.result.unit_error !== undefined) result.unit_error = own.result.unit_error;
+  if (own.result.stall !== undefined) result.stall = own.result.stall;
+  const others = [];
+  for (let worker = 2; worker <= workers; worker += 1) others.push({ worker, ...(await watch(worker)) });
+  if (others.length) result.workers = others.map(({ worker, result: seen }) => ({ worker, ...seen }));
+
+  const paused = io.fs.existsSync(paths.pause);
+  let body = renderStatus({ status: own.status, unit: own.unit, paused, now: new Date(now) });
+  for (const other of others) {
+    const section = renderStatus({ status: other.status, unit: other.unit, paused, now: new Date(now), service: autoServiceName(other.worker) });
+    body += `\n\nCard worker ${other.worker}:\n${section.split("\n").slice(2).join("\n")}`;
+  }
+  if (body === state.status_body) {
+    result.status_comment = { changed: false };
+  } else if (!credentials) {
+    result.status_comment = { changed: true, posted: false, reason: credentialError };
+  } else {
+    try {
+      state.status_comment = await keepStatusComment({ io, credentials, body, known: state.status_comment, timeoutMs: limits.requestTimeoutMs });
+      state.status_body = body;
+      result.status_comment = { changed: true, posted: true };
+    } catch (error) {
+      // A stored id that no longer edits is forgotten, so the next pass finds
+      // the comment by its marker or posts it again.
+      state.status_comment = null;
+      result.status_comment = { changed: true, posted: false, reason: plainReason(error.message) };
+    }
+  }
+  result.state_written = writeState(io, paths, state);
+  const healthy = (seen) => seen.unit_error === undefined && seen.alert?.posted !== false && seen.stall?.posted !== false
+    && (seen.alert === null || seen.alert.pause.written === true || seen.alert.pause.held === true);
+  result.ok = result.state_written && healthy(result) && others.every((other) => healthy(other.result)) && result.status_comment.posted !== false;
+  return result;
+}
+
+// One card worker's watch: its card-run unit and its status, a stuck run
+// alerted once and a stalled run commented on once. Worker N's alert keys
+// carry its number, so its runs are never mistaken for worker 1's.
+async function watchWorker({ io, paths, limits, now, state, credentials, service, worker }) {
+  // The unit is read before the status, so a run that finishes in between is
+  // read as running with a fresh status, never as ended without finishing.
+  const unit = readUnit(io, now, service);
+  const status = readStatus(io, paths);
+  const result = { unit: unit ? unit.state : null, step: status?.step ?? null, alert: null };
   if (unit === null) result.unit_error = "the card-run unit could not be read";
 
-  const stuck = stuckRun({ unit, status, now, limits });
+  const found = stuckRun({ unit, status, now, limits });
+  const stuck = found && worker > 1 ? { ...found, key: `w${worker}-${found.key}` } : found;
   if (stuck) {
     const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)
       || (stuck.invocation !== null && alert.invocation === stuck.invocation));
@@ -371,7 +424,7 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
       writeState(io, paths, state);
       const mention = readOwnerMention(io, paths);
       const report = await postRunReport({ io, credentials, result: { activation_id: alertMarker(record.key) }, timeoutMs: limits.requestTimeoutMs,
-        render: () => renderAlert({ stuck: { ...stuck, key: record.key }, mention, pause, paths, limits }) });
+        render: () => renderAlert({ stuck: { ...stuck, key: record.key }, mention, pause, paths, limits, service }) });
       record.posted = report.posted === true;
       result.alert = { key: record.key, kind: record.kind, pause, posted: record.posted, ...(report.posted ? {} : { reason: report.reason }) };
     }
@@ -395,28 +448,7 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
       result.stall = { run_id: stall.run_id, posted: stall.posted, ...(report.posted ? {} : { reason: report.reason }) };
     }
   }
-
-  const body = renderStatus({ status, unit, paused: io.fs.existsSync(paths.pause), now: new Date(now) });
-  if (body === state.status_body) {
-    result.status_comment = { changed: false };
-  } else if (!credentials) {
-    result.status_comment = { changed: true, posted: false, reason: credentialError };
-  } else {
-    try {
-      state.status_comment = await keepStatusComment({ io, credentials, body, known: state.status_comment, timeoutMs: limits.requestTimeoutMs });
-      state.status_body = body;
-      result.status_comment = { changed: true, posted: true };
-    } catch (error) {
-      // A stored id that no longer edits is forgotten, so the next pass finds
-      // the comment by its marker or posts it again.
-      state.status_comment = null;
-      result.status_comment = { changed: true, posted: false, reason: plainReason(error.message) };
-    }
-  }
-  result.state_written = writeState(io, paths, state);
-  const paused = result.alert === null || result.alert.pause.written === true || result.alert.pause.held === true;
-  result.ok = result.state_written && result.unit_error === undefined && result.alert?.posted !== false && result.stall?.posted !== false && paused && result.status_comment.posted !== false;
-  return result;
+  return { result, unit, status };
 }
 
 // Puts the watch timer on the host, as card-run.mjs puts its own: never over

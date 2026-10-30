@@ -13,6 +13,7 @@ import {
   CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
   readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
   INSTALL_LOCK,
+  INSTALL_LOCK_KEPT,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -1220,6 +1221,7 @@ test("M15 W5: a self-install holds the host-wide install lock, never takes anoth
   // Another worker is installing: this start skips and gives everything back.
   const held = fakeHost();
   held.put(INSTALL_LOCK, "123");
+  held.put("/proc/123", "");
   assert.equal((await install(held)).skipped, "INSTALL_LOCKED");
   assert.equal(held.files.get(INSTALL_LOCK).text, "123", "another worker's install lock is left alone");
   assert.equal(held.files.has(installClaim(PATHS, N)), false);
@@ -1244,4 +1246,30 @@ test("M15 W5: a self-install holds the host-wide install lock, never takes anoth
   assert.equal(out.result?.lock_kept, true);
   assert.equal(failed.files.has(INSTALL_LOCK), true);
   assert.equal(failed.files.has(PATHS.lock), true);
+  // The kept lock names no process, so no later start takes it over.
+  assert.equal(failed.files.get(INSTALL_LOCK).text, INSTALL_LOCK_KEPT);
+  const after = fakeHost();
+  after.put(INSTALL_LOCK, INSTALL_LOCK_KEPT);
+  assert.equal((await install(after)).skipped, "INSTALL_LOCKED");
+  assert.equal(after.files.get(INSTALL_LOCK).text, INSTALL_LOCK_KEPT);
+  untouched(after);
+});
+
+test("M15 W5: an install lock whose holder died is taken over, and the install runs under this run's own", async () => {
+  // The holder crashed: /proc has no such process, so the lock is stale.
+  const stale = fakeHost();
+  stale.put(INSTALL_LOCK, "424242");
+  const seen = [];
+  stale.onStep = (h, name) => seen.push(h.files.get(INSTALL_LOCK)?.text);
+  assert.equal((await install(stale)).result?.outcome, "INSTALLED");
+  assert.ok(seen.length > 0 && seen.every((text) => text === String(process.pid)), JSON.stringify(seen));
+  assert.equal(stale.files.has(INSTALL_LOCK), false, "released after the install");
+  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${INSTALL_LOCK}.stale-`)), false, "nothing is left aside");
+  // A holder that is alive keeps it, whatever its age.
+  const alive = fakeHost();
+  alive.put(INSTALL_LOCK, "424242");
+  alive.put("/proc/424242", "");
+  assert.equal((await install(alive)).skipped, "INSTALL_LOCKED");
+  assert.equal(alive.files.get(INSTALL_LOCK).text, "424242");
+  untouched(alive);
 });

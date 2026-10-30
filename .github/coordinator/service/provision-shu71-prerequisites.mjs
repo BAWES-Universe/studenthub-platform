@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { resolveCvtsudoers } from './host-suite-contract.mjs';
 import { renderEvidenceBroker } from './shu71-production.mjs';
-import { adapterLaunchEnvironment, supervisorAdapterKeys } from './units.mjs';
+import { adapterLaunchEnvironment, supervisorAdapterKeys, workerWorkspaceStateDir } from './units.mjs'; import { MAX_CARD_WORKERS, cardWorkers, workerActivationFile, supervisorUnitName, coordinatorUnitName } from './credential-delivery.mjs';
 
 export const PATHS = Object.freeze({
   checkout: '/srv/shu/studenthub-platform', tree: '/usr/local/lib/shu71/coordinator',
@@ -512,6 +512,64 @@ export function provisioner(revision, b = boundary) {
           return { uid: r.uid, gid: r.gid, mode: r.mode };
         });
       }
+    }
+    // M15: card worker N's directories, units and resident drop-ins, which
+    // card-run's timer-install puts on the host after an install. A worker the
+    // installed config turns on, or one with anything on the host, is
+    // measured; what is absent is deferred to timer-install, and what is
+    // present must be exactly as timer-install makes it. No activation record
+    // of any worker may be present. With one worker and nothing of another
+    // on the host, no row is added.
+    let configured = 1;
+    try { configured = cardWorkers(JSON.parse(Buffer.from(entries?.find(e => e.path === PATHS.tree + '/config.json')?.bytes ?? '', 'base64').toString())); } catch { configured = 1; }
+    for (let worker = 2; worker <= MAX_CARD_WORKERS; worker++) {
+      const workspace = workerWorkspaceStateDir(worker), stateDir = path.dirname(workerActivationFile(worker));
+      const dirs = [stateDir, workspace, workspace + '/supervisor'];
+      const units = [supervisorUnitName(worker), coordinatorUnitName(worker)].map(name => '/etc/systemd/system/' + name);
+      if (worker > configured && ![...dirs, ...units, ...units.map(p => p + '.d')].some(p => stat(p))) continue;
+      for (const p of dirs) check(p, () => {
+        const s = stat(p);
+        // Absent: the nearest directory that exists is the one it is made in.
+        if (!s) { let parent = path.dirname(p); while (!stat(parent)) parent = path.dirname(parent); custody(parent); return { window: 'DEFERRED_UNTIL_TIMER_INSTALL' }; }
+        const { uid, gid } = serviceIdentity(); custody(p);
+        need(s.isDirectory() && !s.isSymbolicLink() && s.uid === uid && s.gid === gid && (s.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY');
+        return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+      });
+      for (const p of units) {
+        const supervisor = p.endsWith(supervisorUnitName(worker));
+        check(p, () => {
+          if (!stat(p)) { custody(path.dirname(p)); return { window: 'DEFERRED_UNTIL_TIMER_INSTALL' }; }
+          const r = read(p), source = Buffer.from(r.bytes, 'base64').toString();
+          need(r.uid === 0 && r.gid === 0 && r.mode === 0o644, 'ACT_PRODUCTION_UNIT_CUSTODY');
+          const exact = (key, value) => { const found = source.split('\n').filter(l => new RegExp('^\\s*' + key + '\\s*=').test(l)); need(found.length === 1 && found[0] === key + '=' + value, 'ACT_PRODUCTION_UNIT_BINDING'); };
+          serviceIdentity(); exact('User', 'shu-coordinator'); exact('Group', 'shu-coordinator');
+          exact('EnvironmentFile', supervisor ? '/etc/shu/supervisor.env' : '/srv/shu/coordinator.env');
+          const states = source.split('\n').filter(l => /^\s*Environment\s*=\s*SHU_WORKSPACE_STATE_DIR=/.test(l));
+          need(states.length === 1 && states[0] === 'Environment=SHU_WORKSPACE_STATE_DIR=' + workspace, 'ACT_PRODUCTION_UNIT_BINDING');
+          if (supervisor) {
+            const files = source.split('\n').filter(l => /^\s*Environment\s*=\s*SHU_SUPERVISOR_ACTIVATION_FILE=/.test(l));
+            need(files.length === 1 && files[0] === 'Environment=SHU_SUPERVISOR_ACTIVATION_FILE=' + workerActivationFile(worker), 'ACT_PRODUCTION_UNIT_BINDING');
+          } else {
+            exact('LoadCredential', 'supervisor-transport:/etc/shu/supervisor.env');
+            const starts = source.split('\n').filter(l => /^\s*ExecStart\s*=/.test(l));
+            need(starts.length === 1 && starts[0].endsWith(' "--activation" "' + workerActivationFile(worker) + '"')
+              && starts[0].includes(' "' + workspace + '/host-tick.lock" '), 'ACT_PRODUCTION_UNIT_BINDING');
+          }
+          return { uid: r.uid, gid: r.gid, mode: r.mode };
+        });
+        check(p + '.d', () => { if (!stat(p + '.d')) { custody(path.dirname(p)); return { window: 'DEFERRED_UNTIL_TIMER_INSTALL' }; } custody(p + '.d'); const s = stat(p + '.d'); need(s.gid === 0 && (s.mode & 0o7777) === 0o755, 'ACT_PRODUCTION_GATE_DIRECTORY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
+        check(p + '.d/90-shu71.conf', () => {
+          if (!stat(p + '.d/90-shu71.conf')) { custody(stat(p + '.d') ? p + '.d' : path.dirname(p)); return { window: 'DEFERRED_UNTIL_TIMER_INSTALL' }; }
+          const r = read(p + '.d/90-shu71.conf'), text = Buffer.from(r.bytes, 'base64').toString();
+          need(r.uid === 0 && r.gid === 0 && r.mode === 0o644 && text === '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'ACT_PRODUCTION_GATE');
+          return { uid: r.uid, gid: r.gid, mode: r.mode };
+        });
+      }
+      check(workerActivationFile(worker), () => {
+        if (stat(stateDir)) custody(stateDir); else custody(path.dirname(stateDir));
+        need(!stat(workerActivationFile(worker)), 'ACT_PRODUCTION_ACTIVATION_PRESENT');
+        return { state: 'CREATED_AT_ARM', window: 'DEFERRED_UNTIL_ARM' };
+      });
     }
     check('/run/lock/shu71-production.lock', () => {
       custody('/run');

@@ -202,10 +202,10 @@ export function readAdapterLaunchEnvironment(io = fs, uid = process.getuid(), gi
 
 // Inspect key names and nonempty values only; never include contents in errors.
 // Restrict the accepted format to unambiguous single-line systemd assignments.
-function environmentBindings(identity) {
+function environmentBindings(identity, fsio = fs) {
   const files = [identity.supervisorEnvironmentFile, identity.coordinatorEnvironmentFile];
   const stats = files.map(file => {
-    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    const stat = fsio.lstatSync(file, { throwIfNoEntry: false });
     assert.ok(stat, 'SHU251_ENV_MISSING: required environment file is absent');
     assert.ok(stat.isFile(), 'SHU251_ENV_FILE: environment binding must be a regular non-symlink file');
     return stat;
@@ -214,7 +214,7 @@ function environmentBindings(identity) {
     'SHU251_ENV_IDENTICAL: environment files must not share an inode');
   const entries = files.map(file => {
     let source;
-    try { source = fs.readFileSync(file, 'utf8'); }
+    try { source = fsio.readFileSync(file, 'utf8'); }
     catch { assert.fail('SHU251_ENV_UNREADABLE: required environment file cannot be read'); }
     return environmentEntries(source);
   });
@@ -298,7 +298,7 @@ function command(argv) {
   assert.ok(Array.isArray(argv) && argv.length > 0 && argv[0].startsWith('/'), 'SHU251_COMMAND: absolute executable argv required');
   return argv.map(quote).join(' ');
 }
-export function render({ worker = 1, workdir, supervisor, coordinator, writerLock, workspaceStateDir = workerWorkspaceStateDir(worker), allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }) {
+export function render({ worker = 1, workdir, supervisor, coordinator, writerLock, workspaceStateDir = workerWorkspaceStateDir(worker), allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }, fsio = fs) {
   assert.ok(workdir?.startsWith('/') && writerLock?.startsWith('/'), 'SHU251_PATH: absolute workdir and shared writer lock required');
   // Use the SAME lock as host-tick.sh. The supplied coordinator command must
   // invoke the reviewed tick directly, not recursively acquire this lock.
@@ -310,7 +310,7 @@ export function render({ worker = 1, workdir, supervisor, coordinator, writerLoc
   for (const path of [supervisorStateDir, supervisorSocket]) assert.match(path, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
   command(coordinator);
   const identity = serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile });
-  environmentBindings(identity);
+  environmentBindings(identity, fsio);
   const values = { SERVICE_USER: identity.serviceUser, SERVICE_GROUP: identity.serviceGroup, SUPERVISOR_ENVIRONMENT_FILE: identity.supervisorEnvironmentFile, COORDINATOR_ENVIRONMENT_FILE: identity.coordinatorEnvironmentFile, WORKDIR: workdir, WORKSPACE_STATE_DIR: workspaceStateDir, SUPERVISOR_STATE_DIR: supervisorStateDir, SUPERVISOR_SOCKET: supervisorSocket, SUPERVISOR_EXEC: command(supervisor),
     COORDINATOR_EXEC: command(['/usr/bin/flock', '--nonblock', '--conflict-exit-code', '2', writerLock, ...coordinator]) };
   const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(new URL(`${name}.in`, import.meta.url), 'utf8')
@@ -318,13 +318,13 @@ export function render({ worker = 1, workdir, supervisor, coordinator, writerLoc
   if (allowWorkspaceStateDirOverride === true) units['shu-coordinator.service'] = `${overrideWarning}\n${units['shu-coordinator.service']}`;
   return worker === 1 ? units : workerUnits(worker, units);
 }
-export function assertPolicy(units, options = {}) {
+export function assertPolicy(units, options = {}, fsio = fs) {
   const worker = options.worker ?? 1;
   const [supervisorName, coordinatorName] = workerNames(worker);
   const services = [supervisorName, coordinatorName];
   const expectedState = workspaceDirectory(options);
   const identity = serviceConfiguration(options);
-  environmentBindings(identity);
+  environmentBindings(identity, fsio);
   assert.match(units[supervisorName], /^Type=notify$/m, 'SHU251_READINESS: supervisor must notify after recovery and listen');
   assert.match(units[supervisorName], /^Restart=on-failure$/m, 'SHU251_RESTART: supervisor must restart on failure');
   assert.match(units[coordinatorName], /^Restart=on-failure$/m, 'SHU251_RESTART: writer must restart on failure');
@@ -395,4 +395,40 @@ export function serviceParameters({ worker = 1, workdir, workspaceStateDir = wor
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
     coordinator: [node, join(workdir, '.github/coordinator/service/coordinator-tick.mjs'), '--activation', workerActivationFile(worker)] };
+}
+
+// M15: card worker N's supervisor and coordinator, as timer-install puts them
+// on the host. They are rendered from worker 1's INSTALLED pair, never typed in
+// by a person: the two installed files are read back into the render
+// parameters (identity, environment files, workdir, node), and those must
+// render worker 1's pair again to exactly its installed bytes, with the
+// deployed workspace, store and socket. Only then is worker N rendered from
+// the same parameters, with its own workspace state directory, supervisor
+// store, socket, writer lock and activation path, and checked by assertPolicy.
+// Anything else refuses SHU251_WORKER.
+const unquote = (token) => token.slice(1, -1).replace(/\$\$|%%|\\(.)/g, (match, escaped) => escaped ?? match[0]);
+function installedLine(text, key) {
+  const lines = String(text).split('\n').filter(line => line.startsWith(`${key}=`));
+  assert.equal(lines.length, 1, `SHU251_WORKER: worker 1's installed unit must name ${key} exactly once`);
+  return lines[0].slice(key.length + 1);
+}
+export function workerUnitsFromInstalled(worker, installed, fsio = fs) {
+  assert.ok(Number.isInteger(worker) && worker > 1 && worker <= MAX_CARD_WORKERS, `SHU251_WORKER: card worker must be 2 to ${MAX_CARD_WORKERS}`);
+  const supervisor = installed?.['shu-supervisor.service'];
+  const coordinator = installed?.['shu-coordinator.service'];
+  assert.ok(typeof supervisor === 'string' && typeof coordinator === 'string', "SHU251_WORKER: worker 1's installed supervisor and coordinator are required");
+  const exec = installedLine(supervisor, 'ExecStart').match(/"(?:[^"\\]|\\.)*"/g) ?? [];
+  assert.ok(exec.length === 2, "SHU251_WORKER: worker 1's supervisor must start node on the supervisor service");
+  const environment = (text) => installedLine(text, 'EnvironmentFile');
+  const options = { workdir: installedLine(supervisor, 'WorkingDirectory'), node: unquote(exec[0]),
+    serviceUser: installedLine(supervisor, 'User'), serviceGroup: installedLine(supervisor, 'Group'),
+    supervisorEnvironmentFile: environment(supervisor), coordinatorEnvironmentFile: environment(coordinator) };
+  const own = render(serviceParameters(options), fsio);
+  for (const name of ['shu-supervisor.service', 'shu-coordinator.service']) {
+    assert.equal(own[name], installed[name], `SHU251_WORKER: worker 1's installed ${name} is not what this revision renders`);
+  }
+  const parameters = serviceParameters({ ...options, worker });
+  const units = render(parameters, fsio);
+  assertPolicy(units, parameters, fsio);
+  return units;
 }

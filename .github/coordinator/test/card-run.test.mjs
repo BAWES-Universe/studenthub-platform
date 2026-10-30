@@ -36,7 +36,7 @@ import { brokerGitEnv } from "../push-broker.mjs";
 import { evidenceLine, secretIndicator, createLineTail, readLogTail, evidenceText, readRepairEvidence, testWeakening, isTestPath, isTestConfigPath,
   repairRecordPath, repairAlertPath, advanceRound, REPAIR_LIMITS, REPAIR_SKIPS } from "../service/card-repair.mjs";
 import { repairEvidenceDigest, validateActivationRecord } from "../single-run-activation.mjs";
-import { judgeChecks } from "../service/card-land.mjs";
+import { judgeChecks, clearStaleLock, updatedHeadHolds } from "../service/card-land.mjs";
 import { judgingLane, threadReviewer, REVIEW_LIMITS } from "../service/card-threads.mjs";
 import { readVelocity, velocityLine } from "../service/card-velocity.mjs";
 import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
@@ -1162,10 +1162,16 @@ test("M15 W3: with more than one worker the busy check and the revert count and 
   host.files.set(w2.activation, { text: "{}" });
   assert.equal(busyReasons(host.io, PATHS).some((reason) => /w2/.test(reason)), false, "worker 2's arming leaves worker 1 idle");
   assert.equal(busyReasons(host.io, w2).filter((reason) => /w2/.test(reason)).length, 3);
-  // A build worktree cannot be told apart by worker: it keeps every worker busy.
+  // Hand-made build and review worktrees are each worker's own by name:
+  // worker 1's as always, worker 2's with its number first.
   host.files.set(`${PATHS.worktrees}/build-x/f`, { text: "x" });
+  host.files.set(`${PATHS.worktrees}/w2-review-pr7/f`, { text: "x" });
+  host.files.set(`${PATHS.worktrees}/0b7e1f3a-1111-4222-8333-444455556666/f`, { text: "x" });
   assert.ok(busyReasons(host.io, PATHS).includes(`worktree present: ${PATHS.worktrees}/build-x`));
-  assert.ok(busyReasons(host.io, w2).includes(`worktree present: ${PATHS.worktrees}/build-x`));
+  assert.equal(busyReasons(host.io, PATHS).some((reason) => reason.includes("w2-review-pr7")), false, "worker 2's worktree leaves worker 1 idle");
+  assert.ok(busyReasons(host.io, w2).includes(`worktree present: ${PATHS.worktrees}/w2-review-pr7`));
+  assert.equal(busyReasons(host.io, w2).some((reason) => reason.includes("build-x")), false, "worker 1's worktree leaves worker 2 idle");
+  assert.equal([...busyReasons(host.io, PATHS), ...busyReasons(host.io, w2)].some((reason) => reason.includes("0b7e1f3a")), false, "a run's own attempt worktree is never counted");
   // Without the unified hierarchy the processes cannot be told apart: refuse.
   assert.throws(() => busyReasons(cgroupHost(two, owners(), { unified: false }).io, PATHS), { code: "CARD_RUN_CGROUP" });
 
@@ -3771,6 +3777,63 @@ test("Self-repair A: no other merge, claim or read counts a card as landed", asy
   assert.equal((await cardLanded(forged.io, PATHS, "SHU-301")).landed, false);
 });
 
+// M15: #77 as a landing that updated it from main and then stopped left it:
+// its head UPDATED merges MAIN_AT (on main) into the passed head, keeping the
+// passed head's own blobs unless `blobs` says otherwise.
+const UPDATED = "ab".repeat(20);
+const MAIN_AT = "cd".repeat(20);
+function updatedGitHub(host, { blobs = "same", parents = [PASSED, MAIN_AT], lineage = "ahead", onMain = "ahead", ...github } = {}) {
+  handGitHub(host, { head: UPDATED, ...github });
+  const api = `https://api.github.com/repos/${COMMITTED.pilot_repo}`;
+  const own = (sha) => [{ filename: "src/thing.ts", status: "modified", sha }];
+  const delegate = host.io.fetch;
+  host.io.fetch = async (url, options = {}) => {
+    const respond = (status, json) => ({ status, ok: status < 300, headers: { get: () => null }, json: async () => structuredClone(json) });
+    const read = (status, base, files = []) => respond(200, { status, base_commit: { sha: base }, merge_base_commit: { sha: base }, files });
+    if (url === `${api}/compare/${PASSED}...${UPDATED}`) { host.githubCalls.push(`GET ${url}`); return read(lineage, PASSED, own("e".repeat(40))); }
+    if (url === `${api}/commits/${UPDATED}`) { host.githubCalls.push(`GET ${url}`); return respond(200, { sha: UPDATED, parents: parents.map((sha) => ({ sha })) }); }
+    if (url === `${api}/compare/${MAIN_AT}...main`) { host.githubCalls.push(`GET ${url}`); return read(onMain, MAIN_AT); }
+    if (url === `${api}/compare/${MAIN_AT}...${UPDATED}`) { host.githubCalls.push(`GET ${url}`); return read("ahead", MAIN_AT, own(blobs === "same" ? "c".repeat(40) : "f".repeat(40))); }
+    if (url === `${api}/compare/${MAIN_AT}...${PASSED}`) { host.githubCalls.push(`GET ${url}`); return read("diverged", MAIN_AT, own("c".repeat(40))); }
+    return delegate(url, options);
+  };
+  return host;
+}
+
+test("M15: a card a person merged at the head a landing updated it to counts as landed when that head holds the passed blobs, and not otherwise", async () => {
+  const host = updatedGitHub(fakeHost({ config: queueConfig() }));
+  claimFor(host, REV, "SHU-301", handClaim({ updated_head: UPDATED }));
+  const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => host.io.fetch(url, { method }) };
+  const result = await cardLanded(host.io, PATHS, "SHU-301", { ...landing, record: true });
+  assert.equal(result.landed, true, JSON.stringify(result));
+  const record = JSON.parse(host.files.get(handLandRecord(PATHS, "SHU-301")).text);
+  assert.deepEqual({ ...record, recorded_at: null },
+    { card: "SHU-301", revision: REV, pr: HAND_PR, reviewed_head: PASSED, updated_head: UPDATED, merge_commit: HAND_MERGE, recorded_at: null });
+  assert.ok(host.githubCalls.every((call) => call.startsWith("GET ")), "GitHub is only read");
+  assert.deepEqual(await cardLanded(host.io, PATHS, "SHU-301"), { landed: true, by: "hand" });
+  // The rule the landing updated it by, read back from GitHub.
+  const gh = (method, url) => host.io.fetch(url, { method });
+  assert.equal(await updatedHeadHolds(gh, { repo: COMMITTED.pilot_repo, passed: PASSED, head: UPDATED }), null);
+  const cases = [
+    ["a claim with no updated head", {}, {}, /not the reviewed head/],
+    ["an updated head that changed the passed blobs", { updated_head: UPDATED }, { blobs: "other" }, /changed the pull request's own files/],
+    ["an updated head that does not descend from the passed head", { updated_head: UPDATED }, { lineage: "diverged" }, /does not descend/],
+    ["an updated head that is not a merge", { updated_head: UPDATED }, { parents: [PASSED] }, /is not a merge of main/],
+    ["an updated head that merged a commit off main", { updated_head: UPDATED }, { onMain: "diverged" }, /which is not on main/],
+    ["merged at a head that is neither", { updated_head: UPDATED }, { head: "6".repeat(40) }, /or its update/],
+    ["an updated head that is not a sha", { updated_head: "main" }, {}, /not the reviewed head/],
+  ];
+  for (const [label, claim, github, why] of cases) {
+    const other = updatedGitHub(fakeHost({ config: queueConfig() }), github);
+    claimFor(other, REV, "SHU-301", handClaim(claim));
+    const otherLanding = { repo: COMMITTED.pilot_repo, gh: (method, url) => other.io.fetch(url, { method }) };
+    const refused = await cardLanded(other.io, PATHS, "SHU-301", { ...otherLanding, record: true });
+    assert.equal(refused.landed, false, `${label}: ${JSON.stringify(refused)}`);
+    assert.match(refused.reason, why, label);
+    assert.equal(other.files.has(handLandRecord(PATHS, "SHU-301")), false, `${label}: nothing recorded`);
+  }
+});
+
 test("SHU-321 R6: under a queue the scope narrows to the committed review lane only, and planning admits only that review", async () => {
   const { narrowQueueScope } = await import("../single-run-activation.mjs");
   const { resolveDispatchScope } = await import("../reconcile.mjs");
@@ -4238,6 +4301,65 @@ test("SHU-86 0d: a running card with no progress for 30 minutes gets one stall c
   assert.equal(readStatus(unwatched.io, PATHS).watching, false);
 });
 
+test("M15: the watch watches every configured card worker's service and status file, alerts each stuck run once under its own key, and shows each", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  const since = Date.parse("2026-10-18T07:00:00.000Z");
+  const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+    now: Date.parse("2026-10-18T07:04:00.000Z") + (STALE_MIN + 1) * MIN });
+  host.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
+  // Worker 2's run has hung: its service runs and its own status went stale.
+  host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", queue: ["SHU-301", "SHU-305"] }))}\n`, { mode: 0o600 });
+  const units = { "shu-card-run.service": { state: "inactive", since: null }, "shu-card-run-w2.service": { state: "activating", since } };
+  const exec = host.io.exec;
+  host.io = { ...host.io, exec: (file, args) => {
+    if (file === "systemctl" && args[0] === "show") {
+      host.calls.push([file, ...args].join(" "));
+      const unit = units[args.at(-1)];
+      assert.ok(unit, `unexpected unit ${args.at(-1)}`);
+      const exit = unit.since === null ? 0 : (unit.since - BOOT) * 1000;
+      return { status: 0, stdout: `ActiveState=${unit.state}\nInactiveExitTimestampMonotonic=${exit}\nInvocationID=\n`, stderr: "" };
+    }
+    return exec(file, args);
+  } };
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.alert, null, "worker 1 is idle");
+  assert.ok(host.calls.includes("systemctl show -p ActiveState -p InactiveExitTimestampMonotonic -p InvocationID shu-card-run-w2.service"));
+  assert.equal(result.workers?.length, 1);
+  assert.equal(result.workers[0].worker, 2);
+  assert.deepEqual(result.workers[0].alert, { key: `w2-${startKey(since)}`, kind: "stale", pause: { written: true }, posted: true });
+  assert.ok(host.calls.includes("systemctl show -p ActiveState -p InactiveExitTimestampMonotonic -p InvocationID shu-card-run-w2.service"));
+  const alert = alertsOf(host);
+  assert.equal(alert.length, 1);
+  assert.match(alert[0].body, /Alert: the card run on SHU-305 needs the owner/);
+  assert.match(alert[0].body, /shu-card-run-w2\.service has been running since 2026-10-18T07:00:00\.000Z/);
+  assert.ok(host.files.has(PATHS.pause), "a stuck worker pauses every card run until the owner looks");
+  // One status comment, worker 1's as before and a section for worker 2.
+  const body = statusComments(host)[0].body;
+  assert.ok(body.split("\n").includes("shu-card-run.service: idle."), body);
+  assert.match(body, /\n\nCard worker 2:\nshu-card-run-w2\.service: running since 2026-10-18T07:00:00\.000Z\.\nTimer: paused/);
+  assert.match(body, /Latest run: SHU-305 \(card, timer\), step ticking/);
+  // Later passes never alert worker 2's run again; worker 1's runs keep their own keys.
+  host.now += 10 * MIN;
+  const again = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(again.workers[0].alert.already, true, JSON.stringify(again));
+  assert.equal(alertsOf(host).length, 1);
+  units["shu-card-run.service"] = { state: "activating", since };
+  host.put(statusPath(PATHS), `${JSON.stringify(watchStatus())}\n`, { mode: 0o600 });
+  const both = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(both.alert.key, startKey(since), "worker 1's stuck run at the same start is its own alert");
+  assert.equal(alertsOf(host).length, 2);
+  assert.deepEqual(sideEffects(host).filter((call) => !call.endsWith("shu-card-run-w2.service")), [], "the watch never stops, kills or reverts a run");
+  // One worker: worker 2's unit and status are never read.
+  const one = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }) });
+  one.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305" }))}\n`, { mode: 0o600 });
+  const alone = await watchOnce({ io: one.io, paths: PATHS });
+  assert.equal(alone.workers, undefined);
+  assert.equal(one.calls.some((call) => call.includes("-w2")), false);
+  assert.doesNotMatch(statusComments(one)[0].body, /Card worker/);
+});
+
 test("SHU-86 0d: the watch timer goes on beside the card-run timer and comes off cleanly", () => {
   const host = watchHost();
   const enabled = { value: "disabled", active: "inactive" };
@@ -4422,11 +4544,12 @@ const b2Respond = (status, json) => ({ status, ok: status < 300, headers: { get:
 // of #77), staleRuns (the landing's check runs name another head),
 // movePullAt (the land-token read of #77 from which its head is MOVED), plus
 // any landingHost option.
+const B2_MAIN_AT = "cd".repeat(20);
 function b2Host(options = {}) {
   const host = landingHost({ existingPr: true, prHead: FAILED, onTick: options.onTick ?? b2Ticks, ...options });
   // `on` undefined means the key is absent, whatever the committed config says.
   const { landing_repair: _committed, ...base } = queueConfig();
-  const config = { ...base, ...(options.on === undefined ? {} : { landing_repair: options.on }) };
+  const config = { ...base, ...(options.on === undefined ? {} : { landing_repair: options.on }), ...(options.parallel ? { workers: { max: 2 } } : {}) };
   host.files.set(B2_CONFIG_FILE, { text: JSON.stringify(config), mode: 0o644, uid: 0, gid: 0 });
   // Linear's GitHub integration moved and assigned the card when #77 opened.
   host.card = { state: { id: "ip", name: "In Progress", type: "started" }, assignee: { id: ACTOR }, delegate: null };
@@ -4440,10 +4563,13 @@ function b2Host(options = {}) {
   } };
   host.b2 = b2;
   for (const receipt of b2Original()) b2.comment(receiptCommentBody(receipt));
+  // M15: `updated`, the head a landing updated #77 to from main before it
+  // stopped: the checks failed there, and the repair reads them there.
+  const failedAt = options.updated ?? FAILED;
   const runs = options.runs ?? [
-    { id: 9001, name: "test", status: "completed", conclusion: "failure", head_sha: FAILED, app: { slug: "github-actions" } },
-    { id: 9002, name: "lint", status: "completed", conclusion: "success", head_sha: FAILED, app: { slug: "github-actions" } },
-    { id: 9003, name: "sentry", status: "completed", conclusion: "failure", head_sha: FAILED, app: { slug: "sentry" } },
+    { id: 9001, name: "test", status: "completed", conclusion: "failure", head_sha: failedAt, app: { slug: "github-actions" } },
+    { id: 9002, name: "lint", status: "completed", conclusion: "success", head_sha: failedAt, app: { slug: "github-actions" } },
+    { id: 9003, name: "sentry", status: "completed", conclusion: "failure", head_sha: failedAt, app: { slug: "sentry" } },
   ];
   const logs = options.logs ?? { 9001: B2_LOG };
   const pullNow = () => ({ number: 77, state: "open", merged: false, title: "[SHU-301] Make the thing",
@@ -4458,12 +4584,23 @@ function b2Host(options = {}) {
       assert.equal(request.method ?? "GET", "GET", "the repair only reads GitHub with the coordinator's token");
       if (route === "/pulls/77") return b2Respond(200, pullNow());
       if (route === "/pulls?state=open&per_page=100&page=1") return b2Respond(200, [pullNow()]);
-      if (route === `/commits/${FAILED}/check-runs?filter=latest&per_page=100`) return b2Respond(200, { total_count: runs.length, check_runs: runs });
+      if (route === `/commits/${failedAt}/check-runs?filter=latest&per_page=100`) return b2Respond(200, { total_count: runs.length, check_runs: runs });
+      if (options.updated) {
+        // What updatedHeadHolds reads: #77's update merged B2_MAIN_AT (on main)
+        // into FAILED and kept its own blobs (`updatedBlobs` says otherwise).
+        const read = (status, base, files = []) => b2Respond(200, { status, base_commit: { sha: base }, merge_base_commit: { sha: base }, files });
+        const own = (sha) => [{ filename: "packages/db/src/org.ts", status: "modified", sha }];
+        if (route === `/compare/${FAILED}...${failedAt}`) return read("ahead", FAILED, own("e".repeat(40)));
+        if (route === `/commits/${failedAt}`) return b2Respond(200, { sha: failedAt, parents: [{ sha: FAILED }, { sha: B2_MAIN_AT }] });
+        if (route === `/compare/${B2_MAIN_AT}...main`) return read("ahead", B2_MAIN_AT);
+        if (route === `/compare/${B2_MAIN_AT}...${failedAt}`) return read("ahead", B2_MAIN_AT, own(options.updatedBlobs ?? "c".repeat(40)));
+        if (route === `/compare/${B2_MAIN_AT}...${FAILED}`) return read("diverged", B2_MAIN_AT, own("c".repeat(40)));
+      }
       const job = /^\/actions\/jobs\/(\d+)$/.exec(route);
       if (job) {
         const given = options.jobs?.[job[1]];
         if (typeof given === "number") return b2Respond(given, { message: "Resource not accessible by integration" });
-        return b2Respond(200, given ?? { id: Number(job[1]), head_sha: FAILED, conclusion: "failure" });
+        return b2Respond(200, given ?? { id: Number(job[1]), head_sha: failedAt, conclusion: "failure" });
       }
       const log = /^\/actions\/jobs\/(\d+)\/logs$/.exec(route);
       if (log) {
@@ -4476,8 +4613,8 @@ function b2Host(options = {}) {
     if (auth === "Bearer land-secret-value" && String(url).startsWith(B2_API)) {
       const route = String(url).slice(B2_API.length);
       b2.landGets.push(`${request.method ?? "GET"} ${route}`);
-      if (route === `/compare/${FAILED}...${PASSED}?per_page=100`) {
-        return b2Respond(200, options.compare ?? { status: "ahead", behind_by: 0, merge_base_commit: { sha: FAILED },
+      if (route === `/compare/${failedAt}...${PASSED}?per_page=100`) {
+        return b2Respond(200, options.compare ?? { status: "ahead", behind_by: 0, merge_base_commit: { sha: failedAt },
           files: [{ filename: "packages/db/src/org.ts", status: "modified", patch: "@@ -1,2 +1,2 @@\n-  return write(org);\n+  return org.deleted ? refuse() : write(org);\n context" }] });
       }
       const contents = /^\/contents\/(.+)\?ref=([0-9a-f]{40})$/.exec(route);
@@ -4875,6 +5012,84 @@ test("Self-repair B2: R2 each stop before the round record is a named skip that 
   assert.equal(result.skipped, "PAUSED", JSON.stringify(result));
   assert.equal(paused.files.has(b2RoundFile()), false);
   noArming(paused);
+});
+
+test("M15: with two workers a landing repair runs at the head a landing updated the pull request to, beside the other worker's run, which passes the live round over", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const UPDATED_AT = "ef".repeat(20);
+  const w2 = cardRunPaths(2, LAND_PATHS);
+  const host = b2Host({ on: true, parallel: true, mainSeq: [REV], updated: UPDATED_AT, prHead: UPDATED_AT, claim: { updated_head: UPDATED_AT },
+    onTick: (h) => {
+      // While the round runs, it names worker 1 and worker 1's run lock is held.
+      if (h.ticks === 1) h.liveRound = { ...b2Round(h), locked: h.files.has(LAND_PATHS.lock) };
+      return b2Ticks(h);
+    } });
+  // Worker 2 is armed on its own card the whole time.
+  host.files.set(w2.activation, { text: "{}", mode: 0o640, uid: 0, gid: 0 });
+  for (const unit of ["shu-supervisor-w2.service", "shu-coordinator-w2.service"]) {
+    for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) host.files.set(dropIn(unit, name), { text: "[Service]\n", mode: 0o644, uid: 0, gid: 0 });
+  }
+  host.files.set(w2.lock, { text: "4343", mode: 0o600, uid: 0, gid: 0 });
+  let armedRecord = null;
+  const write = host.fs.writeFileSync;
+  host.fs.writeFileSync = (file, text, options = {}) => {
+    if (String(file).startsWith(`${LAND_PATHS.activation}.card-run-`)) armedRecord = JSON.parse(text);
+    return write(file, text, options);
+  };
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.outcome, "PASS", JSON.stringify(result));
+  assert.equal(result.land.outcome, "MERGED", JSON.stringify(result.land));
+  // The record: the PASS stays at the reviewed head, the repair is at the updated one.
+  assert.equal(armedRecord.initial_target_sha, FAILED);
+  assert.equal(armedRecord.repair_head, UPDATED_AT);
+  assert.equal(armedRecord.repair_findings.target_sha, UPDATED_AT);
+  assert.deepEqual(armedRecord.repair_findings.links, [`check-run/9001@${UPDATED_AT}`]);
+  assert.equal(validateActivationRecord(armedRecord).ok, true, validateActivationRecord(armedRecord).reason);
+  const round = b2Round(host);
+  assert.equal(round.state, "finished");
+  assert.equal(round.reviewed_head, FAILED);
+  assert.equal(round.failed_head, UPDATED_AT);
+  assert.equal(round.worker, 1);
+  assert.equal(round.land, "MERGED");
+  // The weakening guard read the change from the updated head, and the coordinator's token only read.
+  assert.ok(host.b2.landGets.includes(`GET /compare/${UPDATED_AT}...${PASSED}?per_page=100`));
+  assert.ok(host.b2.gets.includes(`GET /commits/${UPDATED_AT}`), "the updated head was checked before the round");
+  assert.ok(host.b2.gets.every((get) => get.startsWith("GET ")));
+  assert.match(host.reports[0], new RegExp(`one revise of ${UPDATED_AT} after episode`));
+  assert.equal(host.liveRound.state, "armed");
+  assert.equal(host.liveRound.worker, 1);
+  assert.equal(host.liveRound.locked, true);
+  // Worker 2's record, drop-ins and lock are untouched.
+  assert.equal(host.files.get(w2.activation).text, "{}");
+  for (const unit of ["shu-supervisor-w2.service", "shu-coordinator-w2.service"]) {
+    for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) assert.equal(host.files.has(dropIn(unit, name)), true, `${unit} ${name}`);
+  }
+  assert.equal(host.calls.some((call) => /-w2\.service/.test(call)), false, "worker 1 never touched worker 2's units");
+  // The same round, left unfinished by a worker whose run is gone, is interrupted.
+  const left = b2Host({ on: true, parallel: true });
+  left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  const config = JSON.parse(left.files.get(B2_CONFIG_FILE).text);
+  assert.equal((await nextCard(left.io, LAND_PATHS, config, REV)).skipped, "REPAIR_INTERRUPTED");
+  left.files.set("/proc/4343", { text: "", mode: 0o555, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(left.io, LAND_PATHS, config, REV), { id: "SHU-305" }, "a live claimer's round is passed over");
+  // Worker 1's round as worker 2 sees it while worker 1's run lock is held.
+  left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 1, pid: 99999 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  assert.equal((await nextCard(left.io, w2, config, REV)).skipped, "REPAIR_INTERRUPTED", "no lock, no live pid: interrupted");
+  left.files.set(LAND_PATHS.lock, { text: "1", mode: 0o600, uid: 0, gid: 0 });
+  assert.deepEqual(await nextCard(left.io, w2, config, REV), { id: "SHU-305" }, "worker 1's held run lock keeps its round live");
+  left.files.delete(LAND_PATHS.lock);
+  left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  // A worker's own unfinished round is never passed over, and one worker is as before.
+  assert.equal((await nextCard(left.io, w2, config, REV)).skipped, "REPAIR_INTERRUPTED");
+  const { workers: _workers, ...oneWorker } = config;
+  assert.equal((await nextCard(left.io, LAND_PATHS, oneWorker, REV)).skipped, "REPAIR_INTERRUPTED");
+  // An updated head that changed the passed blobs is never repaired.
+  const changed = b2Host({ on: true, parallel: true, mainSeq: [REV], updated: UPDATED_AT, prHead: UPDATED_AT, claim: { updated_head: UPDATED_AT }, updatedBlobs: "f".repeat(40) });
+  const refused = await autoRun({ io: changed.io, paths: LAND_PATHS });
+  assert.equal(refused.skipped, "REPAIR_NOT_ELIGIBLE", JSON.stringify(refused));
+  assert.match(refused.reason, /updated head e{0}(ef){20} cannot be repaired: .*changed the pull request's own files/);
+  assert.equal(changed.files.has(b2RoundFile()), false);
+  noArming(changed);
 });
 
 test("Self-repair B2: R3 any round record means no second round, and one that never finished is REPAIR_INTERRUPTED, alerted once", async () => {
@@ -5487,6 +5702,7 @@ test("M15 W4: a conflict, or main changing the pull request's own files, stops t
 test("M15 W4: a landing lock another worker holds is waited for, and past its bound the landing stops with nothing merged", async () => {
   const held = landingHost({ parallel: true, mainSeq: [REV] });
   held.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  held.files.set("/proc/31337", { text: "", mode: 0o555, uid: 0, gid: 0 });
   const stopped = await parallelLand(held);
   assert.equal(stopped.outcome, "LAND_LOCK_HELD", JSON.stringify(stopped));
   assert.match(stopped.reason, /held by pid 31337 for 10 minutes/);
@@ -5495,6 +5711,7 @@ test("M15 W4: a landing lock another worker holds is waited for, and past its bo
   // Released while the landing waits: it merges.
   const freed = landingHost({ parallel: true, mainSeq: [REV] });
   freed.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  freed.files.set("/proc/31337", { text: "", mode: 0o555, uid: 0, gid: 0 });
   const sleep = freed.io.sleep;
   freed.io.sleep = (ms) => { sleep(ms); if (ms === LAND_LIMITS.lockPollMs) freed.files.delete(LAND_LOCK); };
   const merged = await parallelLand(freed);
@@ -5505,11 +5722,45 @@ test("M15 W4: a landing lock another worker holds is waited for, and past its bo
   // longer than it still waits for the lock.
   const slow = landingHost({ parallel: true, mainSeq: [REV], checks: [...Array(15).fill("pending"), "green"] });
   slow.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  slow.files.set("/proc/31337", { text: "", mode: 0o555, uid: 0, gid: 0 });
   const slowSleep = slow.io.sleep;
   slow.io.sleep = (ms) => { slowSleep(ms); if (ms === LAND_LIMITS.lockPollMs) slow.files.delete(LAND_LOCK); };
   const waited = await parallelLand(slow);
   assert.equal(waited.outcome, "MERGED", JSON.stringify(waited));
   assert.ok(slow.land.checkReads > LAND_LIMITS.lockWaitMs / LAND_LIMITS.pollMs, "green took longer than the lock's bound");
+});
+
+test("M15 W4: a landing lock whose holder died is taken over, and one that changes hands while it is set aside is put back", async () => {
+  // The holder crashed mid-landing: no such process, so the lock is stale.
+  const stale = landingHost({ parallel: true, mainSeq: [REV] });
+  stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  const merged = await parallelLand(stale);
+  assert.equal(merged.outcome, "MERGED", JSON.stringify(merged));
+  assert.equal(stale.land.landLockAtMerge, true);
+  assert.equal(stale.files.has(LAND_LOCK), false, "released after the merge");
+  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${LAND_LOCK}.stale-`)), false, "nothing is left aside");
+  // clearStaleLock on its own: a live holder, a lock that is not a pid, and a
+  // lock another worker took over between the read and the rename all stand.
+  const io = { fs: stale.io.fs };
+  stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  stale.files.set("/proc/31337", { text: "", mode: 0o555, uid: 0, gid: 0 });
+  assert.equal(clearStaleLock(io, LAND_LOCK), null);
+  assert.equal(stale.files.get(LAND_LOCK).text, "31337");
+  stale.files.delete("/proc/31337");
+  stale.files.set(LAND_LOCK, { text: "kept", mode: 0o600, uid: 0, gid: 0 });
+  assert.equal(clearStaleLock(io, LAND_LOCK), null);
+  assert.equal(stale.files.get(LAND_LOCK).text, "kept");
+  stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  const raced = { fs: { ...stale.io.fs, renameSync: (from, to) => {
+    stale.files.set(from, { text: "4242", mode: 0o600, uid: 0, gid: 0 });
+    stale.io.fs.renameSync(from, to);
+  } } };
+  assert.equal(clearStaleLock(raced, LAND_LOCK), null);
+  assert.equal(stale.files.get(LAND_LOCK).text, "4242", "the newer holder's lock is put back");
+  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${LAND_LOCK}.stale-`)), false);
+  stale.files.set(LAND_LOCK, { text: "31337", mode: 0o600, uid: 0, gid: 0 });
+  assert.equal(clearStaleLock(io, LAND_LOCK), 31337);
+  assert.equal(stale.files.has(LAND_LOCK), false);
 });
 
 test("M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge", async () => {
@@ -5545,20 +5796,32 @@ test("M15 W4: the landing lock, the updates and their reads keep the run inside 
 });
 
 // M15 W5: a two-worker host as timer-install and timer-remove see it: worker
-// 2's supervisor and coordinator unit files, worker 1's private workspace
-// directory, directories that can be made, owned and read back, and systemd
-// keeping each card-run timer's state.
+// 1's installed supervisor and coordinator units, rendered by units.mjs from
+// the host's parameters, and the two environment files they name; worker 1's
+// private workspace directory, directories that can be made, owned and read
+// back, and systemd keeping each card-run timer's state.
 const W2_UNITS = ["shu-supervisor-w2.service", "shu-coordinator-w2.service"];
-function workersHost({ units = true } = {}) {
+const W1_UNIT_OPTIONS = Object.freeze({ workdir: PATHS.checkout, serviceUser: "shu-coordinator", serviceGroup: "shu-coordinator", node: "/usr/bin/node" });
+const UNIT_ENV_FILES = Object.freeze({ "/etc/shu/supervisor.env": `SHU_SUPERVISOR_SECRET=${"s".repeat(40)}\n` });
+async function workerOneUnits(fsio) {
+  const { render, serviceParameters } = await import("../service/units.mjs");
+  return render(serviceParameters(W1_UNIT_OPTIONS), fsio);
+}
+async function workersHost({ units = true } = {}) {
   const host = fakeHost({ config: configFor("SHU-301", (c) => ({ ...c, workers: { max: 2 } })) });
-  if (units) for (const unit of W2_UNITS) host.files.set(`${PATHS.unitDir}/${unit}`, { text: `[Unit]\n${unit}\n`, mode: 0o644, uid: 0, gid: 0 });
+  for (const [file, text] of Object.entries(UNIT_ENV_FILES)) host.files.set(file, { text, mode: 0o600, uid: 0, gid: 0 });
   host.dirMeta = new Map([["/srv/shu/state/workspaces", { uid: 997, gid: 998, mode: 0o700 }]]);
   const fsio = host.io.fs;
   const isDir = (file) => host.dirMeta.has(file);
   host.io = { ...host.io, nodePath: () => "/usr/bin/node", fs: { ...fsio,
     existsSync: (file) => isDir(file) || fsio.existsSync(file),
-    lstatSync: (file) => {
-      if (!isDir(file)) return { ...fsio.lstatSync(file), isDirectory: () => false };
+    rmdirSync: (dir) => { if (!host.dirMeta.delete(dir)) throw Object.assign(new Error(`ENOENT ${dir}`), { code: "ENOENT" }); },
+    lstatSync: (file, options) => {
+      if (!isDir(file)) {
+        if (options?.throwIfNoEntry === false && !fsio.existsSync(file)) return undefined;
+        // Each file its own inode, as on a host.
+        return { ...fsio.lstatSync(file), isDirectory: () => false, dev: 1, ino: [...file].reduce((n, c) => n * 31 + c.charCodeAt(0) >>> 0, 7) };
+      }
       const meta = host.dirMeta.get(file);
       return { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, uid: meta.uid, gid: meta.gid, mode: 0o040000 | meta.mode };
     },
@@ -5584,19 +5847,28 @@ function workersHost({ units = true } = {}) {
     if (verb === "is-active") return out(name.endsWith(".service") ? "inactive" : host.timers.get(name) === "on" ? "active" : "inactive");
     return exec(file, args, options);
   };
+  if (units) for (const [name, text] of Object.entries(await workerOneUnits(host.io.fs))) host.files.set(`${PATHS.unitDir}/${name}`, { text, mode: 0o644, uid: 0, gid: 0 });
   return host;
 }
 
 test("M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off", async () => {
+  const { workerUnitsFromInstalled } = await import("../service/units.mjs");
   const MODULE = "/srv/shu/studenthub-platform/.github/coordinator/service/card-run.mjs";
   const unit = (name) => `${PATHS.unitDir}/${name}`;
-  // Without worker 2's own units nothing is put on the host for any worker.
-  const bare = workersHost({ units: false });
+  // Without worker 1's installed units there is nothing to render worker 2's
+  // from, and nothing is put on the host for any worker.
+  const bare = await workersHost({ units: false });
   const refused = await attempt(() => installTimer(bare.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
   assert.equal(refused.thrown, "CARD_RUN_TIMER");
   assert.equal(bare.files.has(unit(AUTO_SERVICE)), false);
   assert.equal(bare.dirMeta.size, 1);
-  const host = workersHost();
+  // Worker 1's installed units that this revision does not render refuse too.
+  const drifted = await workersHost();
+  drifted.files.get(unit("shu-supervisor.service")).text += "# edited by hand\n";
+  const drift = await attempt(() => installTimer(drifted.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
+  assert.equal(drift.thrown, "CARD_RUN_TIMER");
+  for (const name of [AUTO_SERVICE, ...W2_UNITS]) assert.equal(drifted.files.has(unit(name)), false, name);
+  const host = await workersHost();
   const installed = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
   assert.equal(installed.installed, true, JSON.stringify(installed));
   assert.equal(installed.workers, 2);
@@ -5612,8 +5884,22 @@ test("M15 W5: timer-install puts each card worker's timer on the host with its s
   assert.match(host.files.get(unit("shu-card-run-w2.timer")).text, /^Unit=shu-card-run-w2\.service$/m);
   assert.match(host.files.get(unit("shu-card-run-w2.timer")).text, /^OnCalendar=\*:00\/30$/m);
   assert.ok(host.calls.includes("systemctl enable --now shu-card-run-w2.timer"));
-  // Its workspace and supervisor state directories, private and owned as worker 1's.
-  for (const dir of ["/srv/shu/state/workspaces/w2", "/srv/shu/state/workspaces/w2/supervisor"]) {
+  // Worker 2's own supervisor and coordinator, rendered from worker 1's
+  // installed pair: its own workspace, store, socket, writer lock and
+  // activation record, root's and 0644.
+  const rendered = workerUnitsFromInstalled(2, { "shu-supervisor.service": host.files.get(unit("shu-supervisor.service")).text,
+    "shu-coordinator.service": host.files.get(unit("shu-coordinator.service")).text }, host.io.fs);
+  for (const name of W2_UNITS) {
+    assert.equal(host.files.get(unit(name))?.text, rendered[name], name);
+    assert.deepEqual([host.files.get(unit(name)).uid, host.files.get(unit(name)).mode], [0, 0o644], name);
+  }
+  const coordinator = host.files.get(unit("shu-coordinator-w2.service")).text;
+  assert.match(coordinator, /^ExecStart="\/usr\/bin\/flock" "--nonblock" "--conflict-exit-code" "2" "\/srv\/shu\/state\/workspaces\/w2\/host-tick\.lock" "\/usr\/bin\/node" "\S+coordinator-tick\.mjs" "--activation" "\/srv\/shu\/state\/w2\/shu71-activation\.json"$/m);
+  assert.match(coordinator, /^Requires=shu-supervisor-w2\.service$/m);
+  assert.match(host.files.get(unit("shu-supervisor-w2.service")).text, /^Environment=SHU_SUPERVISOR_ACTIVATION_FILE=\/srv\/shu\/state\/w2\/shu71-activation\.json$/m);
+  assert.match(host.files.get(unit("shu-supervisor-w2.service")).text, /^Environment=SHU_SUPERVISOR_SOCKET=\/srv\/shu\/state\/workspaces\/w2\/supervisor\.sock$/m);
+  // Its activation, workspace and supervisor state directories, private and owned as worker 1's.
+  for (const dir of ["/srv/shu/state/w2", "/srv/shu/state/workspaces/w2", "/srv/shu/state/workspaces/w2/supervisor"]) {
     assert.deepEqual(host.dirMeta.get(dir), { uid: 997, gid: 998, mode: 0o700 }, dir);
   }
   // The resident drop-in of each of its units, worker 1's bytes.
@@ -5622,12 +5908,26 @@ test("M15 W5: timer-install puts each card worker's timer on the host with its s
     assert.equal(dropped?.text, host.files.get(dropIn("shu-supervisor.service", RESIDENT_DROP_IN)).text, name);
     assert.equal(dropped.mode, 0o644);
   }
-  // Installing again changes nothing; a directory not as worker 1's refuses.
+  // Installing again changes nothing; a directory not as worker 1's, or a
+  // worker 2 unit with other content, refuses.
   assert.equal((await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).installed, true);
-  const foreign = workersHost();
+  const foreign = await workersHost();
   foreign.dirMeta.set("/srv/shu/state/workspaces/w2", { uid: 0, gid: 0, mode: 0o755 });
   assert.equal((await attempt(() => installTimer(foreign.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).thrown, "CARD_RUN_TIMER");
   assert.equal(foreign.files.has(unit(AUTO_SERVICE)), false);
+  const staged = await workersHost();
+  staged.files.set(unit("shu-coordinator-w2.service"), { text: "[Unit]\nstaged by hand\n", mode: 0o644, uid: 0, gid: 0 });
+  assert.equal((await attempt(() => installTimer(staged.io, PATHS, { node: "/usr/bin/node", module: MODULE }))).thrown, "CARD_RUN_TIMER");
+  assert.equal(staged.files.get(unit("shu-coordinator-w2.service")).text, "[Unit]\nstaged by hand\n");
+  assert.equal(staged.files.has(unit("shu-supervisor-w2.service")), false);
+  // A step that fails part way takes off what this call made.
+  const broken = await workersHost();
+  const chown = broken.io.fs.chownSync;
+  broken.io.fs.chownSync = (file, ...rest) => { if (file === "/srv/shu/state/workspaces/w2/supervisor") throw Object.assign(new Error("EPERM"), { code: "EPERM" }); return chown(file, ...rest); };
+  const partial = await attempt(() => installTimer(broken.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
+  assert.equal(partial.thrown, "CARD_RUN_TIMER");
+  for (const name of [...W2_UNITS, AUTO_SERVICE]) assert.equal(broken.files.has(unit(name)), false, name);
+  assert.deepEqual([...broken.dirMeta.keys()], ["/srv/shu/state/workspaces"], "every directory it made is gone again");
   // One worker installs worker 1's units alone, as before.
   const one = withSystemd(fakeHost());
   const single = await attempt(() => installTimer(one.io, PATHS, { node: "/usr/bin/node", module: MODULE }));
@@ -5648,7 +5948,7 @@ test("M15 W5: auto --worker N runs as card worker N, and a worker the config tur
     assert.throws(() => parseArgs(bad), { code: "CARD_RUN_USAGE" }, bad.join(" "));
   }
   // Worker 3 under workers.max 2 touches nothing.
-  const host = workersHost();
+  const host = await workersHost();
   const { code, output } = await main(["auto", "--worker", "3"], host.io, PATHS);
   assert.equal(code, 0, JSON.stringify(output));
   assert.equal(output.skipped, "NOT_READY");
@@ -5670,6 +5970,7 @@ test("M15 W5: auto --worker N runs as card worker N, and a worker the config tur
 test("M15 W5: no card run starts while the install lock is held", async () => {
   const host = fakeHost({ onTick: passOnFirstTick });
   host.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 });
+  host.files.set("/proc/123", { text: "", mode: 0o555, uid: 0, gid: 0 });
   const writes = [];
   const write = host.io.fs.writeFileSync;
   host.io = { ...host.io, fs: { ...host.io.fs, writeFileSync: (file, ...rest) => { writes.push(file); return write(file, ...rest); } } };
@@ -5683,7 +5984,7 @@ test("M15 W5: no card run starts while the install lock is held", async () => {
   const put = raced.io.fs.writeFileSync;
   raced.io = { ...raced.io, fs: { ...raced.io.fs, writeFileSync: (file, ...rest) => {
     const done = put(file, ...rest);
-    if (file === PATHS.lock) raced.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 });
+    if (file === PATHS.lock) { raced.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 }); raced.files.set("/proc/123", { text: "", mode: 0o555, uid: 0, gid: 0 }); }
     return done;
   } } };
   const refused = await attempt(() => runCard({ io: raced.io, paths: PATHS }));
@@ -5695,10 +5996,186 @@ test("M15 W5: no card run starts while the install lock is held", async () => {
   const timedPut = timed.io.fs.writeFileSync;
   timed.io = { ...timed.io, fs: { ...timed.io.fs, writeFileSync: (file, ...rest) => {
     const done = timedPut(file, ...rest);
-    if (file === PATHS.lock) timed.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 });
+    if (file === PATHS.lock) { timed.files.set(INSTALL_LOCK, { text: "123", mode: 0o600, uid: 0, gid: 0 }); timed.files.set("/proc/123", { text: "", mode: 0o555, uid: 0, gid: 0 }); }
     return done;
   } } };
   const back = await autoRun({ io: timed.io, paths: PATHS });
   assert.equal(back.skipped, "HOST_BUSY");
   assert.equal(timed.files.has(autoClaim(PATHS, REV, "SHU-301")), false);
+});
+
+// M15: two card workers on one host, end to end. Worker 1 is the timer's
+// `auto`, worker 2 is `auto --worker 2`, both through main(argv) on one fake
+// host: each arms, ticks and reverts through its own supervisor and
+// coordinator units, drop-ins and activation record, while the other is armed.
+function twoWorkerHost({ w1Tick, w2Tick }) {
+  const two = { ...queueConfig(), workers: { max: 2 } };
+  const host = fakeHost({ config: two, branchHead: "", onTick: (h) => w1Tick(h) });
+  const W2_SUPERVISOR = "shu-supervisor-w2.service";
+  const W2_COORDINATOR = "shu-coordinator-w2.service";
+  for (const unit of [W2_SUPERVISOR, W2_COORDINATOR]) host.files.set(dropIn(unit, RESIDENT_DROP_IN), { text: "[Service]\n", mode: 0o644, uid: 0, gid: 0 });
+  const w2 = { environ: [], ticks: 0, pending: [], journal: [], pid: "4343" };
+  host.w2 = w2;
+  // shu-worker processes, by the unit whose cgroup holds them: each worker's
+  // supervisor starts one when it is restarted armed.
+  host.live = new Map();
+  host.broker = { running: false, stops: [] };
+  host.events = [];
+  const heads = new Map();
+  const exec = host.io.exec;
+  const fsio = host.io.fs;
+  const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
+  const armedNow = () => ({ w1: fsio.existsSync(PATHS.activation), w2: fsio.existsSync(cardRunPathsOf(2).activation) });
+  host.io = { ...host.io,
+    // The host's wait blocks; this one also lets the other worker's run go on.
+    sleep: (ms) => { host.clock += ms; return new Promise((resolve) => setImmediate(resolve)); },
+    fs: { ...fsio,
+      existsSync: (file) => (file === "/sys/fs/cgroup/cgroup.controllers" ? true : fsio.existsSync(file)),
+      readFileSync: (file, encoding) => {
+        if (file === `/proc/${w2.pid}/environ`) return w2.environ.join("\0");
+        const match = /^\/sys\/fs\/cgroup\/system\.slice\/(.+)\/cgroup\.procs$/.exec(file);
+        if (!match) return fsio.readFileSync(file, encoding);
+        return `${[...host.live].filter(([, unit]) => unit === match[1]).map(([pid]) => pid).join("\n")}\n`;
+      },
+    },
+    exec: (file, args) => {
+      const line = args.join(" ");
+      if (file === "pgrep") {
+        host.calls.push(`pgrep ${line}`);
+        return host.live.size ? ok(`${[...host.live.keys()].join("\n")}\n`) : { status: 1, stdout: "", stderr: "" };
+      }
+      if (file === "pkill") { host.events.push(`pkill ${line}`); return ok(); }
+      if (file === "kill") {
+        host.calls.push(`kill ${line}`);
+        for (const pid of args.slice(2)) { host.events.push(`kill ${pid} of ${host.live.get(pid)}`); host.live.delete(pid); }
+        return ok();
+      }
+      // Each card's own branch on the remote.
+      if (file === "runuser" && args.includes("push")) {
+        const ref = args.at(-1).split(":")[1];
+        host.branchHead = heads.get(ref) ?? "";
+        const done = exec(file, args);
+        heads.set(ref, host.branchHead);
+        return done;
+      }
+      if (file === "systemctl") {
+        // What this host answers itself is logged here; the rest by fakeHost.
+        const own = (answer) => { host.calls.push(`systemctl ${line}`); return answer; };
+        if (args[0] === "show" && args[2] === "ControlGroup") return own(ok("\n"));
+        if (line === "start shu71-evidence.service") { host.broker.running = true; return own(ok()); }
+        if (line === "stop shu71-evidence.service") { host.broker.stops.push(armedNow()); host.broker.running = false; return own(ok()); }
+        if (line === "restart shu-supervisor.service") {
+          const done = exec(file, args);
+          if (host.environ.includes("ENABLE_DISPATCH=true")) host.live.set("6001", "shu-supervisor.service");
+          return done;
+        }
+        if (line === `restart ${W2_SUPERVISOR}`) {
+          w2.environ = ["PATH=/usr/bin", ...[RUN_DROP_IN, TARGET_DROP_IN].map((name) => fsio.existsSync(dropIn(W2_SUPERVISOR, name))
+            ? /Environment=(.*)\n/.exec(fsio.readFileSync(dropIn(W2_SUPERVISOR, name)))[1] : null).filter(Boolean)];
+          if (w2.environ.includes("ENABLE_DISPATCH=true")) host.live.set("6002", W2_SUPERVISOR);
+          return own(ok());
+        }
+        if (line === `show -p MainPID --value ${W2_SUPERVISOR}`) return own(ok(`${w2.pid}\n`));
+        if (line === `start ${W2_COORDINATOR}`) {
+          w2.ticks += 1;
+          const text = w2Tick(host);
+          w2.pending.push(...text.split("\n").map((message) => ({ at: host.clock, invocation: (w2.ticks.toString(16) + "e".repeat(32)).slice(0, 32), message })));
+          return own(ok());
+        }
+        if (line === `show -p InvocationID --value ${W2_COORDINATOR}`) return own(ok("\n"));
+        if (/-w2\.service/.test(line)) return own(ok());
+        return exec(file, args);
+      }
+      if (file === "journalctl") {
+        if (line === "--sync") w2.journal.push(...w2.pending.splice(0));
+        if (args[0] === `_SYSTEMD_UNIT=${W2_COORDINATOR}`) {
+          const since = Number(/^--since=@(\d+\.\d{3})$/.exec(args[1])?.[1]) * 1000;
+          const lines = w2.journal.filter((entry) => entry.at >= since).map((entry) => JSON.stringify({
+            _SYSTEMD_UNIT: W2_COORDINATOR, _SYSTEMD_INVOCATION_ID: entry.invocation, MESSAGE: entry.message }));
+          return ok(lines.length ? `${lines.join("\n")}\n` : "");
+        }
+      }
+      return exec(file, args);
+    },
+  };
+  return host;
+}
+const cardRunPathsOf = (worker) => (worker === 1 ? PATHS : Object.freeze({ ...PATHS, worker, activation: `/srv/shu/state/w${worker}/shu71-activation.json`,
+  lock: `/run/lock/shu-card-run-w${worker}.lock` }));
+// Waits, a macrotask at a time, until `done` holds.
+const until = async (done, what) => {
+  for (let i = 0; i < 5000; i += 1) { if (done()) return; await new Promise((resolve) => setImmediate(resolve)); }
+  assert.fail(`never happened: ${what}`);
+};
+
+test("M15: two card workers run two cards at once through main auto and auto --worker 2, each on its own units, and neither reverts the other", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  assert.deepEqual(cardRunPaths(2, PATHS), cardRunPathsOf(2));
+  const w2 = cardRunPathsOf(2);
+  const seen = {};
+  let w1Done = false;
+  const host = twoWorkerHost({
+    // Worker 1 stays armed until worker 2 has armed and ticked, then passes.
+    w1Tick: (h) => (h.w2.ticks >= 1 ? passFor("SHU-301")(h) : tickText(armed(JSON.parse(h.files.get(PATHS.activation).text).activation_id))),
+    // Worker 2 arms while worker 1 is armed, stays armed through worker 1's
+    // revert, then passes.
+    w2Tick: (h) => {
+      const record = JSON.parse(h.files.get(w2.activation).text);
+      if (h.w2.ticks === 1) {
+        seen.w1ArmedAtW2Arm = h.files.has(PATHS.activation) && h.files.has(dropIn("shu-supervisor.service", RUN_DROP_IN));
+        seen.w2Record = record;
+        seen.claims = ["SHU-301", "SHU-305"].map((id) => JSON.parse(h.files.get(autoClaim(PATHS, REV, id)).text).worker);
+      }
+      return w1Done ? passFor("SHU-305")(h) : tickText(armed(record.activation_id, "SHU-305"));
+    },
+  });
+  const first = main(["auto"], host.io, PATHS);
+  await until(() => host.files.has(PATHS.activation) && host.ticks >= 1, "worker 1 armed and ticking");
+  seen.w1Record = JSON.parse(host.files.get(PATHS.activation).text);
+  const second = main(["auto", "--worker", "2"], host.io, PATHS);
+  const one = await first;
+  w1Done = true;
+  // Worker 1 reverted while worker 2 was armed and its worker still ran.
+  seen.afterW1 = { w2Armed: host.files.has(w2.activation), w2Live: [...host.live.values()], broker: host.broker.running,
+    w2DropIns: [RUN_DROP_IN, TARGET_DROP_IN].map((name) => host.files.has(dropIn("shu-supervisor-w2.service", name))) };
+  const two = await second;
+
+  assert.equal(one.code, 0, JSON.stringify(one.output));
+  assert.equal(two.code, 0, JSON.stringify(two.output));
+  assert.equal(one.output.card, "SHU-301");
+  assert.equal(two.output.card, "SHU-305", "worker 2 passes over the card worker 1 is running");
+  assert.equal(one.output.outcome, "PASS");
+  assert.equal(two.output.outcome, "PASS");
+  assert.equal(one.output.revert.reverted, true);
+  assert.equal(two.output.revert.reverted, true);
+  // Each armed its own card through its own record.
+  assert.equal(seen.w1Record.target_issue_id, "SHU-301");
+  assert.equal(seen.w2Record.target_issue_id, "SHU-305");
+  assert.notEqual(seen.w1Record.activation_id, seen.w2Record.activation_id);
+  assert.equal(seen.w1ArmedAtW2Arm, true, "worker 1 was armed when worker 2 armed");
+  assert.deepEqual(seen.claims, [1, 2], "each card claimed by its own worker");
+  // Worker 1's revert left worker 2 armed, its worker running and the shared broker up.
+  assert.deepEqual(seen.afterW1, { w2Armed: true, w2Live: ["shu-supervisor-w2.service"], broker: true, w2DropIns: [true, true] });
+  // The evidence broker stops once: at worker 2's revert, the last armed
+  // worker's (its own record is retired after the stop).
+  assert.deepEqual(host.broker.stops, [{ w1: false, w2: true }]);
+  assert.equal(host.broker.running, false);
+  // Each worker stopped its own worker process only, and never by uid.
+  assert.deepEqual(host.events.filter((event) => event.startsWith("kill") || event.startsWith("pkill")),
+    ["kill 6001 of shu-supervisor.service", "kill 6002 of shu-supervisor-w2.service"]);
+  // Each worker's units were touched by that worker's run alone.
+  const w2Calls = host.calls.filter((call) => /-w2\.service/.test(call));
+  assert.ok(w2Calls.includes("systemctl restart shu-supervisor-w2.service") && w2Calls.includes("systemctl start shu-coordinator-w2.service"));
+  const w1Restarts = host.calls.filter((call) => call === "systemctl restart shu-supervisor.service").length;
+  assert.equal(w1Restarts, 2, "worker 1's supervisor is restarted at its own arm and revert only");
+  // Both are back to dispatch off, with their locks released and claims written.
+  for (const unit of ["shu-supervisor.service", "shu-coordinator.service", "shu-supervisor-w2.service", "shu-coordinator-w2.service"]) {
+    for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) assert.equal(host.files.has(dropIn(unit, name)), false, `${unit} ${name}`);
+    assert.equal(host.files.has(dropIn(unit, RESIDENT_DROP_IN)), true);
+  }
+  assert.equal(host.files.has(PATHS.activation) || host.files.has(w2.activation), false);
+  assert.equal(host.files.has(PATHS.lock) || host.files.has(w2.lock), false);
+  assert.equal(host.live.size, 0);
+  assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text).outcome, "PASS");
+  assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-305")).text).outcome, "PASS");
 });

@@ -778,8 +778,61 @@ async function updateFromMain(io, gh, { repo, number, branch, passed, current, l
   return head;
 }
 
+// M15: whether `head`, a head a landing updated its pull request to from
+// main and then stopped at (the claim's updated_head), still holds exactly the
+// change the review passed at `passed`: it descends from `passed`, it is a
+// merge of a commit on main into its first parent, and from that commit its
+// own files keep the passed head's blobs: the rule updateFromMain took it by.
+// Reads only. Returns null, or why not; never throws.
+export async function updatedHeadHolds(gh, { repo, passed, head }) {
+  try {
+    if (!SHA_RE.test(passed ?? "") || !SHA_RE.test(head ?? "") || passed === head) return "no updated head to check";
+    const lineage = await compare(gh, repo, passed, head);
+    if (lineage.status !== "ahead" || lineage.merge_base_commit.sha !== passed) return `${head} does not descend from the reviewed head ${passed}`;
+    const commitResponse = await gh("GET", `https://api.github.com/repos/${repo}/commits/${head}`);
+    const commit = await commitResponse.json();
+    const parents = Array.isArray(commit?.parents) ? commit.parents.map((parent) => parent?.sha) : [];
+    if (!commitResponse.ok || parents.length !== 2 || !SHA_RE.test(parents[0] ?? "") || !SHA_RE.test(parents[1] ?? "")) return `${head} is not a merge of main into the pull request`;
+    const merged = await compare(gh, repo, parents[1], "main");
+    if (!["ahead", "identical"].includes(merged.status) || merged.merge_base_commit.sha !== parents[1]) return `${head} merged ${parents[1]}, which is not on main`;
+    const kept = await ownFiles(gh, repo, parents[1], head);
+    if (!sameFiles(kept, await ownFiles(gh, repo, parents[1], passed))) {
+      return `${head} changed the pull request's own files from the blobs the review passed at ${passed}`;
+    }
+    return null;
+  } catch (error) {
+    return String(error?.message ?? error);
+  }
+}
+
+// M15: a host-wide lock file (the landing lock, the install lock) holds the
+// pid of the process that took it. A lock whose holder is gone, because that
+// landing or install was killed or crashed, is taken over without a person:
+// it is moved aside first, so of two workers that find it stale at once only
+// one moves it, and the mover checks it moved the dead holder's lock and not
+// one taken since, which it puts back. A lock that holds no pid (an install
+// that kept its lock on purpose writes a reason instead) is never taken over.
+// Returns the dead holder's pid, or null when the lock stands.
+export function clearStaleLock(io, file) {
+  let holder;
+  try { holder = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { return null; }
+  if (!/^[1-9]\d*$/.test(holder) || io.fs.existsSync(`/proc/${holder}`)) return null;
+  const aside = `${file}.stale-${process.pid}`;
+  try { io.fs.renameSync(file, aside); } catch { return null; }
+  let moved = null;
+  try { moved = String(io.fs.readFileSync(aside, "utf8")).trim(); } catch { /* compared below */ }
+  if (moved !== holder) {
+    try { io.fs.writeFileSync(file, moved ?? "", { flag: "wx", mode: 0o600 }); } catch { /* a newer lock stands */ }
+    try { io.fs.unlinkSync(aside); } catch { /* gone already */ }
+    return null;
+  }
+  try { io.fs.unlinkSync(aside); } catch { /* gone already */ }
+  return Number(holder);
+}
+
 // M15 W4: the host-wide landing lock, taken exclusively and waited for up to
-// a deadline. Returns its release.
+// a deadline. Returns its release. A lock left by a landing that died is taken
+// over (clearStaleLock).
 function takeLandLock(io, file, until, limits) {
   for (;;) {
     try {
@@ -788,10 +841,11 @@ function takeLandLock(io, file, until, limits) {
     } catch (error) {
       if (error?.code !== "EEXIST") stop("LAND_ERROR", `${file} cannot be taken: ${error?.code ?? error?.message}`);
     }
+    if (clearStaleLock(io, file) !== null) continue;
     if (io.now().getTime() >= until) {
       let holder = "";
       try { holder = String(io.fs.readFileSync(file, "utf8")).trim(); } catch { /* named without its holder */ }
-      stop("LAND_LOCK_HELD", `${file} stayed held${holder ? ` by pid ${holder}` : ""} for ${Math.round(limits.lockWaitMs / 60000)} minutes: another worker is merging, or a landing that crashed left it (clear it by hand once no card run is alive)`);
+      stop("LAND_LOCK_HELD", `${file} stayed held${holder ? ` by pid ${holder}` : ""} for ${Math.round(limits.lockWaitMs / 60000)} minutes while its holder was alive: another worker is merging`);
     }
     io.sleep(limits.lockPollMs);
   }

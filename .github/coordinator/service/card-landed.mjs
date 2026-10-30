@@ -22,7 +22,17 @@
 // timer's own landing. A finished round that passed and stopped at landing
 // may be proven hand-landed exactly as above, at the head the repair's own
 // review passed (repaired_head), never at the failed head.
+//
+// M15: with more than one card worker a landing first brings its pull request
+// up to main, and a landing that stopped after that left the pull request at
+// the updated head, recorded in the claim (or round) as updated_head. A merge
+// at that head counts too, but only when GitHub shows it holds exactly the
+// reviewed change: it descends from the reviewed head, merges a commit on
+// main, and keeps the reviewed head's own blobs (card-land.mjs
+// updatedHeadHolds, the rule the landing took it by). Any other head still
+// never counts.
 import path from "node:path";
+import { updatedHeadHolds } from "./card-land.mjs";
 
 export const HAND_LAND_OUTCOMES = Object.freeze(new Set(["PR_OPENED_CI_RED", "CI_TIMEOUT", "MERGE_HOLD", "THREADS_HELD"]));
 // Main's history read for the first-parent walk: pages of 100, newest first.
@@ -71,7 +81,7 @@ const mergedByRepair = (round) => round.outcome === "PASS" && round.ok === true 
 // A finished repair round as the claim it stands for: the head its own review
 // passed is the head a hand landing must have merged.
 const roundAsClaim = (round) => ({ outcome: round.outcome, land: round.land, repo: round.repo, pr: round.pr,
-  reviewed_head: round.repaired_head ?? null, revision: round.revision });
+  reviewed_head: round.repaired_head ?? null, ...(round.updated_head ? { updated_head: round.updated_head } : {}), revision: round.revision });
 
 const mergedByTimer = (claim) => claim.outcome === "PASS" && claim.ok === true && claim.land === "MERGED";
 
@@ -99,7 +109,7 @@ function readOnly(gh) {
 // GitHub's word that pull request `pr` merged into main at `reviewedHead`,
 // with its merge commit on main's first-parent history. Returns the merge
 // commit, or null with the reason.
-export async function provenHandLanding(gh, { repo, pr, reviewedHead, pages = HAND_LAND_PAGES }) {
+export async function provenHandLanding(gh, { repo, pr, reviewedHead, updatedHead = null, pages = HAND_LAND_PAGES }) {
   const get = readOnly(gh);
   const base = `https://api.github.com/repos/${repo}`;
   const pull = await get(`${base}/pulls/${pr}`);
@@ -107,7 +117,16 @@ export async function provenHandLanding(gh, { repo, pr, reviewedHead, pages = HA
   if (!pull.ok || !detail) return { merge: null, reason: `pull request #${pr} cannot be read (HTTP ${pull.status})` };
   if (detail.number !== pr || detail.merged !== true || !SHA_RE.test(detail.merge_commit_sha ?? "")) return { merge: null, reason: `#${pr} is not merged` };
   if (detail.base?.ref !== "main" || detail.base?.repo?.full_name !== repo) return { merge: null, reason: `#${pr} did not merge into main of ${repo}` };
-  if (detail.head?.sha !== reviewedHead) return { merge: null, reason: `#${pr} merged at ${detail.head?.sha ?? "an unknown head"}, not the reviewed head ${reviewedHead}` };
+  // M15: or at the head a landing updated it to, when that head still holds
+  // exactly the reviewed change.
+  const updated = SHA_RE.test(updatedHead ?? "") && updatedHead !== reviewedHead && detail.head?.sha === updatedHead;
+  if (detail.head?.sha !== reviewedHead && !updated) {
+    return { merge: null, reason: `#${pr} merged at ${detail.head?.sha ?? "an unknown head"}, not the reviewed head ${reviewedHead}${SHA_RE.test(updatedHead ?? "") ? ` or its update ${updatedHead}` : ""}` };
+  }
+  if (updated) {
+    const wrong = await updatedHeadHolds((method, url) => get(url), { repo, passed: reviewedHead, head: updatedHead });
+    if (wrong) return { merge: null, reason: `#${pr} merged at the updated head ${updatedHead}, which does not hold the reviewed change: ${wrong}` };
+  }
   const merge = detail.merge_commit_sha;
   // Main's first parents, newest first: the merge commit must be one of them.
   const parents = new Map();
@@ -124,7 +143,7 @@ export async function provenHandLanding(gh, { repo, pr, reviewedHead, pages = HA
     if (list.length < 100) break;
   }
   for (let sha = tip; sha && parents.has(sha); sha = parents.get(sha)) {
-    if (sha === merge) return { merge, reason: null };
+    if (sha === merge) return { merge, reason: null, ...(updated ? { updated: true } : {}) };
   }
   return { merge: null, reason: `${merge} is not on main's first-parent history as read` };
 }
@@ -144,7 +163,7 @@ export async function cardLanded(io, paths, id, { repo = null, gh = null, record
   for (const claim of candidates) {
     let proof;
     try {
-      proof = await provenHandLanding(gh, { repo, pr: claim.pr, reviewedHead: claim.reviewed_head });
+      proof = await provenHandLanding(gh, { repo, pr: claim.pr, reviewedHead: claim.reviewed_head, updatedHead: claim.updated_head ?? null });
     } catch (error) {
       proof = { merge: null, reason: `GitHub cannot be read: ${error.message}` };
     }
@@ -152,7 +171,8 @@ export async function cardLanded(io, paths, id, { repo = null, gh = null, record
     if (record) {
       try {
         io.fs.writeFileSync(handLandRecord(paths, id), `${JSON.stringify({ card: id, revision: claim.revision, pr: claim.pr,
-          reviewed_head: claim.reviewed_head, merge_commit: proof.merge, recorded_at: now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
+          reviewed_head: claim.reviewed_head, ...(proof.updated ? { updated_head: claim.updated_head } : {}),
+          merge_commit: proof.merge, recorded_at: now().toISOString() })}\n`, { flag: "wx", mode: 0o600 });
       } catch (error) {
         if (error.code !== "EEXIST") return { landed: false, reason: `the hand landing cannot be recorded: ${error.code ?? error.message}` };
       }
