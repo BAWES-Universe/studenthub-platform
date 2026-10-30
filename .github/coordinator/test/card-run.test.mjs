@@ -3011,6 +3011,35 @@ test("M15 W1: with two workers a card another worker is running is passed over, 
   assert.equal(cardQueue(backwards).ok, false);
 });
 
+test("M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start", async () => {
+  const two = { ...queueConfig(), workers: { max: 2 } };
+  const race = (config) => {
+    const host = fakeHost({ config, branchHead: "", onTick: passFor("SHU-305") });
+    const write = host.fs.writeFileSync;
+    let raced = false;
+    host.io = { ...host.io, fs: { ...host.fs, writeFileSync: (file, text, options = {}) => {
+      // Worker 2 selected SHU-301 too and wrote its claim first.
+      if (!raced && file === autoClaim(PATHS, REV, "SHU-301") && options.flag === "wx") {
+        raced = true;
+        write(file, `${JSON.stringify({ card: "SHU-301", revision: REV, claimed_at: START.toISOString(), worker: 2, pid: 4343 })}\n`, { mode: 0o600 });
+        write("/proc/4343", "", { mode: 0o555 });
+        throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      }
+      return write(file, text, options);
+    } } };
+    return host;
+  };
+  const host = race(two);
+  const result = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(result.skipped, undefined, JSON.stringify(result));
+  assert.equal(result.card, "SHU-305", "the loser runs the next card instead");
+  assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text).worker, 2, "the winner's claim is untouched");
+  const one = race(queueConfig());
+  const alone = await attempt(() => autoRun({ io: one.io, paths: PATHS }));
+  assert.equal(alone.skipped, "ALREADY_RAN");
+  assert.equal(one.files.has(autoClaim(PATHS, REV, "SHU-305")), false, "one worker never selects again");
+});
+
 test("SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land", async () => {
   const host = fakeHost({ config: queueConfig(), branchHead: "", onTick: (h) => (h.ticks === 1 ? passFor("SHU-301")(h) : tickText("activation=absent (committed gates only)")) });
   assert.deepEqual(await nextCard(host.io, PATHS, queueConfig(), REV), { id: "SHU-301" });

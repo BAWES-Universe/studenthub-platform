@@ -69,7 +69,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
+import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, MAX_CARD_QUEUE, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
@@ -852,35 +852,46 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   let done = null;
   let interrupted = null;
   let repairNext = null;
-  try {
-    revision = installedRevision(io, paths);
-    config = readConfig(io, paths);
-    const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
-    // SHU-321: only a done queue may go on to review a queue config pull
-    // request; an invalid or paused one never does. M16: a stopped queue
-    // does what a done one does (Card B, then Card A).
-    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
-    // Self-repair B2: an interrupted repair is reported once; a repairable
-    // card runs its one repair. Neither can come up with landing_repair off.
-    else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
-    else if (next.skipped) return skip(next.skipped, next.reason);
-    else if (next.repair) repairNext = next;
-    else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
-  } catch (error) {
-    // A review card needs its pull request from an operator, so the timer never
-    // runs one; any other planning refusal waits for the next install.
-    return skip("NOT_READY", error.message);
-  }
-  if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
-  if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
-  if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
-  const claim = autoClaim(paths, revision, plan.id);
-  const claimedAt = io.now().toISOString();
-  try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, worker: workerOf(paths), pid: process.pid })}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code === "EEXIST") return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
-    throw error;
+  let claim;
+  let claimedAt;
+  // M15: with more than one worker, selecting a card and claiming it are two
+  // steps, so two workers starting together can pick the same card; the one
+  // that loses the exclusive claim selects again (the winner's live claim is
+  // then passed over) instead of giving up its start. One worker never loops.
+  for (let selection = 1; ; selection += 1) {
+    plan = undefined;
+    try {
+      revision = installedRevision(io, paths);
+      config = readConfig(io, paths);
+      const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
+      // SHU-321: only a done queue may go on to review a queue config pull
+      // request; an invalid or paused one never does. M16: a stopped queue
+      // does what a done one does (Card B, then Card A).
+      if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
+      // Self-repair B2: an interrupted repair is reported once; a repairable
+      // card runs its one repair. Neither can come up with landing_repair off.
+      else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
+      else if (next.skipped) return skip(next.skipped, next.reason);
+      else if (next.repair) repairNext = next;
+      else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
+    } catch (error) {
+      // A review card needs its pull request from an operator, so the timer never
+      // runs one; any other planning refusal waits for the next install.
+      return skip("NOT_READY", error.message);
+    }
+    if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
+    if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
+    if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
+    claim = autoClaim(paths, revision, plan.id);
+    claimedAt = io.now().toISOString();
+    try {
+      io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, worker: workerOf(paths), pid: process.pid })}\n`, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) continue;
+      return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
+    }
   }
   let result;
   try {
