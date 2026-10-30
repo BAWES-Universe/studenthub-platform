@@ -140,7 +140,7 @@ export const AUTO_TIMEOUT_START_MS = 8 * 60 * 60 * 1000;
 export const CARD_RUN_MODULE = fileURLToPath(import.meta.url);
 export const AUTO_SERVICE = "shu-card-run.service";
 export const AUTO_TIMER = "shu-card-run.timer";
-export const AUTO_SCHEDULE = "*:00/30";
+export const AUTO_SCHEDULE = "*:00/5";
 export function autoServiceUnit({ node, module }) {
   return [
     "[Unit]",
@@ -156,7 +156,7 @@ export function autoServiceUnit({ node, module }) {
 export function autoTimerUnit() {
   return [
     "[Unit]",
-    "Description=Every half hour, run the installed revision's card if it has not run yet",
+    "Description=Every five minutes, run the installed revision's card if it has not run yet",
     "[Timer]",
     `OnCalendar=${AUTO_SCHEDULE}`,
     `Unit=${AUTO_SERVICE}`,
@@ -774,10 +774,12 @@ export const autoClaim = (paths, revision, id) => path.join(paths.stateDir, `car
 // instead of the queue stopping until a person installs a new revision
 // (SHU-332, 2026-10-23: a GitHub ref-read lag held the queue 3.5 hours). Each
 // give-back is one file, written exclusively like the claim, and at most
-// REFUSED_START_RETRIES are ever written per card per revision; after that a
+// REFUSED_START_RETRIES are ever written per card per revision (18 at one start
+// every five minutes keeps the window of about 90 minutes the half-hourly timer
+// gave with 3); after that a
 // refusal spends the run as it always did. A give-back that cannot be written,
 // or a claim that cannot be removed, leaves the run spent.
-export const REFUSED_START_RETRIES = 3;
+export const REFUSED_START_RETRIES = 18;
 export const refusedStartRecord = (paths, revision, id, n) => path.join(paths.stateDir, `card-run-retry-${revision}-${id}-${n}.json`);
 
 function giveBackRun(io, paths, revision, id, claim, error) {
