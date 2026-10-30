@@ -4140,6 +4140,19 @@ const SHU400_BRIEF = SHU398_BRIEF.replace("Card SHU-398:", "Card SHU-400:").repl
 if (!SHU400_BRIEF.startsWith("Card SHU-400:") || !SHU400_BRIEF.includes(SHU398_FINDINGS) || !SHU400_BRIEF.includes(SHU400_FINDINGS)) throw new Error("SHU400_BRIEF must name its own card and carry both attempts' findings");
 const SHU400_ACCEPTANCE = `${SHU398_ACCEPTANCE} SHU-400 is SHU-398's contract re-queued after its build used up its revisions; SHU-398 never runs again. The Kuwaiti-mother row renders through the same row helper as the other fields and only when the flag is offered or recorded, so the unconfigured My profile page keeps its existing rows and every existing test passes unchanged; the page shows the row and its radios for a non-Kuwaiti nationality and not for a nationality whose catalogue code is KW (SHU373_PAGE). Clearing the Kuwaiti-mother flag stores NULL and shows "Not recorded" (SHU373_WRITE, against Postgres). The Change preview shows before and after as My profile shows them: catalogue names, Yes or No and the work status label, never an id or a stored code (SHU373_PAGE). The university select opens on the person's written university (SHU373_PAGE).`;
 
+// SHU-402: the same contract a fourth time. SHU-400 built at 20a5566 and its
+// review verified every earlier finding fixed, but answered BLOCKED on two
+// test defects, and it used up its revisions. The brief keeps SHU-400's text,
+// names its own card and adds the third attempt's findings.
+const SHU402_FINDINGS = `Findings from the stopped third attempt (SHU-400) that this card must also fix. SHU-400 built this contract at 20a5566 (branch coordinator/SHU-400, never merged). Its review verified every finding above fixed (the ::text read, a clear storing NULL, catalogue resolution by id, the Kuwaiti-mother row through fieldRow keeping 19 rows on the unconfigured page, KW keyed on the catalogue code, the university preselected by id, display names in the preview, one age setting) and answered BLOCKED only on two test defects. You start again from the bound head, so its code is not there; keep everything it got right and do not repeat these:
+- (1) Blocking: npm test failed, because a mutation script's needle never matched. Mutation scripts (*-mutations.mjs) read and rewrite the compiled JavaScript under dist/, not the TypeScript source, and tsc re-prints the code: spacing, line breaks and indentation in dist differ from the source (the source's minimum.getUTCFullYear()-PERSON_PROFILE_MINIMUM_AGE is minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE in dist). Take every needle from the built dist file, as packages/organizations/test/deletion-writes-mutations.mjs does, and run each mutation script after npm run build (npm test runs them all) before you finish; a script whose needle does not bind once exits non-zero and fails npm test.
+- (2) Blocking: the radio controls were not pinned. The only radio assertion matched the work-status radios at the top of My profile, so mutating the gender control to a literal left every test passing; the same assertion was vacuous for driving licence and work status. Assert each control inside its own Change form (gender, driving licence, Kuwaiti mother and work status radios, the birth-date input, the nationality and university selects), so a mutant of any one control fails its own assertion.
+- Not blocking, but fix them: prove at page level that a cleared Kuwaiti-mother flag shows "Not recorded"; the Change preview reads the profile choices once per page, and an unknown id shows "Unavailable", never the raw id; a test named for one catalogue query counts the queries it names.
+- Before you finish, run npm run build and npm test to the end and read their output: the run is only done when every test and every mutation script passes.`;
+const SHU402_BRIEF = SHU400_BRIEF.replace("Card SHU-400:", "Card SHU-402:").replace("\n\nRead first:\n", `\n\n${SHU402_FINDINGS}\n\nRead first:\n`);
+if (!SHU402_BRIEF.startsWith("Card SHU-402:") || !SHU402_BRIEF.includes(SHU400_FINDINGS) || !SHU402_BRIEF.includes(SHU402_FINDINGS)) throw new Error("SHU402_BRIEF must name its own card and carry every attempt's findings");
+const SHU402_ACCEPTANCE = `${SHU400_ACCEPTANCE} SHU-402 is SHU-400's contract re-queued after its build used up its revisions; SHU-400 never runs again. npm test passes to the end, every mutation script included: each mutation needle is taken from the built dist output and binds exactly once. Each control (gender, driving licence, Kuwaiti mother and work status radios, the birth-date input, the nationality and university selects) is asserted inside its own Change form, so a mutant of any one control fails (SHU373_PAGE). A cleared Kuwaiti-mother flag shows "Not recorded" on My profile.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4632,6 +4645,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU373_PATHS,
     acceptance: SHU400_ACCEPTANCE,
     brief: SHU400_BRIEF,
+  }),
+  "SHU-402": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU402_ACCEPTANCE,
+    brief: SHU402_BRIEF,
   }),
 });
 
