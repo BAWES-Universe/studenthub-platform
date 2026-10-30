@@ -4,7 +4,8 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "@studenthub/db";
-import { SHU372_RULES, createPersonSelfEdit } from "@studenthub/profile";
+import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SHU372_RULES, SYNTHETIC_PROFILE_FIXTURES, createPersonSelfEdit } from "@studenthub/profile";
+import { profileDocument, type BrowserLoginApplication } from "../../../apps/gateway/src/web-ui.js";
 
 const url = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool;
@@ -77,6 +78,33 @@ test("SHU372_WRITE Postgres commits, clears, replays safely, and cascades princi
   assert.equal(typeof preferences?.objective?.updatedAt, "string");
   await pool.query("DELETE FROM principals WHERE id=$1", [id]);
   assert.equal((await pool.query("SELECT 1 FROM person_profiles WHERE principal_id=$1", [id])).rowCount, 0);
+});
+
+test("SHU395_PG_S1 Postgres writes and clears override a populated snapshot on My profile", async () => {
+  const id = `shu395-${randomUUID()}`, candidateRef = `candidate-${randomUUID()}`;
+  const authz = new PostgresAuthzStore(pool);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [candidateRef] }));
+  const store = new PostgresPersonProfileStore({ pool });
+  const writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+  const write = async (value: string) => {
+    const request = { principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: "objective" as const, value } };
+    const preview = await writer().preview(request); assert.ok(preview.ok); if (!preview.ok) return;
+    assert.ok((await writer().confirm({ ...request, token: preview.token })).ok);
+  };
+  const profiles = new OwnProfileRepository({ principals: authz, source: new InMemoryApprovedProfileAdapter({
+    links: [{ principalId: id, candidateRef }], rows: new Map([[candidateRef, SYNTHETIC_PROFILE_FIXTURES.populated]]),
+  }), preferences: store as never, today: () => "2026-10-30" });
+  const render = async () => {
+    const found = await profiles.readOwn({ requesterPrincipalId: id, targetPersonId: id }); assert.equal(found.kind, "found");
+    if (found.kind !== "found") throw new Error("profile missing");
+    return (await profileDocument({ status: 200, body: found.profile }, { profileEdit: {} } as BrowserLoginApplication)).html;
+  };
+  await write("Postgres objective");
+  assert.match(await render(), /<dt>Objective<\/dt><dd>Postgres objective<\/dd><small class="field-meta">Updated by you/);
+  await write("");
+  const cleared = await render();
+  assert.match(cleared, /<dt>Objective<\/dt><dd><span class="missing"[^>]*>Not recorded<\/span><\/dd><small class="field-meta">Updated by you/);
+  assert.doesNotMatch(cleared, /Build welcoming customer experiences/);
 });
 
 test("SHU372_OWNER Postgres refuses another person and a stale before value", async () => {

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Readable } from "node:stream";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { failedScenarios, runSafeWriteConformance, SAFE_WRITE_SCENARIOS } from "@studenthub/safe-write-contract";
 import { buildSafeWrite, LANGUAGE_POLICY } from "../src/language-preference.js";
-import { createLanguagePreference } from "../src/language-preference.js";
+import { createLanguagePreference, handleLanguagePreference } from "../src/language-preference.js";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
@@ -95,4 +97,13 @@ test("SHU371_PAGE_FLOW unavailable page write renders an HTML 503", async (t) =>
       "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded" }, body: "language=en",
   });
   assert.equal(response.status, 503); assert.match(await response.text(), /profile service is unavailable/);
+});
+
+test("SHU395_RECEIPTS language receipts return 404 for a profile-edit reference and do not own its path", async () => {
+  const session = "r".repeat(43), sessions = { get: async (id: string) => id === session ? { id, personId: "person" } : undefined };
+  const inert: SafeWriteStore = { ownedRecord: () => null, readField: () => null, commit: () => ({ ok: false, reason: "not_own_record" }) };
+  const service = createLanguagePreference({ sessions, store: { forPrincipal: () => inert, readReceipt: async () => null }, secret: "receipt-isolation-secret-at-least-thirty-two-bytes" });
+  assert.deepEqual(await service.receipt(session, "a".repeat(64)), { status: 404, body: { error: "receipt_not_found" } });
+  const request = Readable.from([]) as IncomingMessage; request.url = `/profile/edit/receipts/${"a".repeat(64)}`; request.method = "GET"; request.headers = {};
+  assert.equal(await handleLanguagePreference(request, {} as ServerResponse, service, "https://studenthub.example.invalid"), false);
 });
