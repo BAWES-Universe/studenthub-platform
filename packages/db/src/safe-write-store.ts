@@ -146,10 +146,11 @@ export class PostgresSafeWriteStore {
       || receipt.personRef !== personRecordRef(principalId)
       || typeof receipt.contractVersion !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(receipt.contractVersion)
       || typeof receipt.changeSetDigest !== "string" || !REFERENCE.test(receipt.changeSetDigest)
-      || !Array.isArray(receipt.fields) || receipt.fields.length !== 1 || receipt.fields[0] !== LANGUAGE_FIELD
+      || !Array.isArray(receipt.fields) || receipt.fields.length !== 1
       || typeof receipt.committedAt !== "string" || !isInstant(receipt.committedAt)) {
       throw new Error("malformed safe-write receipt");
     }
+    if (receipt.fields[0] !== LANGUAGE_FIELD) return null;
     return Object.freeze({ ...receipt, fields: Object.freeze([LANGUAGE_FIELD]) }) as Receipt;
   }
 

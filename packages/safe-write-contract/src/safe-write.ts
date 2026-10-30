@@ -73,11 +73,12 @@ function refused(reason: RejectionReason): { ok: false; reason: RejectionReason 
   return { ok: false, reason };
 }
 
-function validateChange(change: ChangeRequest, policy: FieldPolicy): RejectionReason | null {
+export function validateChange(change: ChangeRequest, policy: FieldPolicy): RejectionReason | null {
   if (!REFERENCE_PATTERN.test(change.personRef)) return "malformed_reference";
   if (!policy.allowed.includes(change.field)) return "unknown_field";
   if (typeof change.value !== "string") return "invalid_value";
-  if (change.value.length === 0 || change.value.length > policy.maxValueLength) return "invalid_value";
+  if ((!policy.allowClear && change.value.length === 0)
+    || [...change.value].length > policy.maxValueLength) return "invalid_value";
   // Edge whitespace is rejected rather than trimmed: silently cleaning a value
   // stores something other than what the preview showed the person.
   if (change.value !== change.value.trim()) return "invalid_value";

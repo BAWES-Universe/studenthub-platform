@@ -14,11 +14,19 @@ import {
   createRecordingStore,
   createSafeWrite,
   expectedStateDigest,
+  validateChange,
   failedScenarios,
   runSafeWriteConformance,
   type SafeWriteFactory,
   type SafeWriteScenario,
 } from "../src/index.js";
+
+test("SHU-392/CLEAR opted-in policies accept an empty value and default policies refuse it", () => {
+  const change = { personRef: OWNER_PERSON_REF, field: "objective", value: "" };
+  assert.equal(validateChange(change, { allowed: ["objective"], maxValueLength: 100, allowClear: true }), null);
+  assert.equal(validateChange(change, { allowed: ["objective"], maxValueLength: 100 }), "invalid_value");
+  assert.equal(validateChange({ ...change, value: "😀" }, { allowed: ["objective"], maxValueLength: 1 }), null);
+});
 import {
   inertFactory,
   makeFaultyFactory,
