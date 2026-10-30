@@ -44,7 +44,7 @@ const PATHS = Object.freeze({
   pause: "/etc/shu/card-run.paused",
   landEnv: "/srv/shu/card-land.env",
 });
-const NEW_IDS = ["SHU-401", "SHU-402"];
+const NEW_IDS = ["SHU-901", "SHU-902"];
 const TEST_PATH = ".github/coordinator/test/shu401-queue.test.mjs";
 const BLOBS = Object.freeze({ [CONFIG_PATH]: "1".repeat(40), [CONTRACTS_PATH]: "2".repeat(40), [TEST_PATH]: "3".repeat(40) });
 
@@ -287,7 +287,7 @@ test("SHU-322 B1: a reviewed card queue on main installs in order, reports once 
   assert.equal(host.reports.length, 1);
   assert.match(host.reports[0], /^<!-- card-run-report card-install-d{40} -->/);
   assert.match(host.reports[0], /INSTALLED/);
-  assert.match(host.reports[0], /Queue: SHU-401, SHU-402\./);
+  assert.match(host.reports[0], /Queue: SHU-901, SHU-902\./);
   assert.equal(claimOf(host).outcome, "INSTALLED");
   assert.equal(host.files.has(PATHS.lock), false);
   assert.equal(host.files.has(PATHS.pause), false);
@@ -341,27 +341,27 @@ test("SHU-322 B4: config.json may only replace dispatch_scope with a new queue o
     "the review policy": (c) => ({ ...c, queue_config_review: { ...c.queue_config_review, max_heads_per_pr: 9 } }),
     "an edited existing lane": (c) => ({ ...c, card_lanes: c.card_lanes.map((l, i) => (i === 0 ? { ...l, writer_lane: "claude-builder" } : l)) }),
     "a dropped existing lane": (c) => ({ ...c, card_lanes: c.card_lanes.slice(1) }),
-    "one card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401"] } }),
-    "six cards": (c) => ({ ...c, card_lanes: [...c.card_lanes, ...["SHU-403", "SHU-404", "SHU-405", "SHU-406"].map(lane)],
-      dispatch_scope: { issue_ids: ["SHU-401", "SHU-402", "SHU-403", "SHU-404", "SHU-405", "SHU-406"] } }),
-    "an unknown card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-999"] } }),
-    "a repeated card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-401"] } }),
+    "one card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-901"] } }),
+    "six cards": (c) => ({ ...c, card_lanes: [...c.card_lanes, ...["SHU-903", "SHU-904", "SHU-905", "SHU-906"].map(lane)],
+      dispatch_scope: { issue_ids: ["SHU-901", "SHU-902", "SHU-903", "SHU-904", "SHU-905", "SHU-906"] } }),
+    "an unknown card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-901", "SHU-999"] } }),
+    "a repeated card": (c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-901", "SHU-901"] } }),
     "a scope with another key": (c) => ({ ...c, dispatch_scope: { issue_ids: NEW_IDS, extra: true } }),
   };
   for (const [name, edit] of Object.entries(cases)) {
     const gate = selfInstallGate(withConfig(edit));
     assert.ok(refused(gate), `${name}: ${JSON.stringify(gate)}`);
   }
-  const laneless = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: JSON.stringify(nextConfig((c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-401", "SHU-403"] } }))) },
-    contractTexts: { ...f.contractTexts, main: nextContracts(["SHU-401", "SHU-402", "SHU-403"]) } })));
+  const laneless = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: JSON.stringify(nextConfig((c) => ({ ...c, dispatch_scope: { issue_ids: ["SHU-901", "SHU-903"] } }))) },
+    contractTexts: { ...f.contractTexts, main: nextContracts(["SHU-901", "SHU-902", "SHU-903"]) } })));
   assert.ok(refused(laneless), "a contracted card with no appended lane");
-  assert.match(laneless.reason, /SHU-403 in the new dispatch_scope is neither a newly appended nor an installed card lane/);
-  const landed = selfInstallGate(facts((f) => ({ ...f, landed: ["SHU-402"] })));
+  assert.match(laneless.reason, /SHU-903 in the new dispatch_scope is neither a newly appended nor an installed card lane/);
+  const landed = selfInstallGate(facts((f) => ({ ...f, landed: ["SHU-902"] })));
   assert.ok(refused(landed));
   assert.match(landed.reason, /already landed/);
-  const uncontracted = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts, main: nextContracts(["SHU-401"]) } })));
+  const uncontracted = selfInstallGate(facts((f) => ({ ...f, contractTexts: { ...f.contractTexts, main: nextContracts(["SHU-901"]) } })));
   assert.ok(refused(uncontracted));
-  assert.match(uncontracted.reason, /SHU-402 has no CARD_CONTRACTS entry/);
+  assert.match(uncontracted.reason, /SHU-902 has no CARD_CONTRACTS entry/);
   assert.deepEqual([...contractEntries(nextContracts())].slice(-2), NEW_IDS);
   // A main whose queue is the installed one is nothing to install.
   const same = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs, main: QUEUE_ONLY_TEXT } })));
@@ -566,11 +566,11 @@ test("SHU-322 B14: the child plan check must show the new queue, its first card 
   const prepare = { branch: { action: "create" }, card: { action: "move-to-todo" } };
   for (const [what, plan, status] of [
     ["a nonzero exit", null, 2],
-    ["another queue", { queue: ["SHU-401", "SHU-403"], next: { id: "SHU-401" }, prepare, queued: [{ id: "SHU-401", prepare }, { id: "SHU-403", prepare }] }, 0],
-    ["another next card", { queue: NEW_IDS, next: { id: "SHU-402" }, prepare, queued: NEW_IDS.map((id) => ({ id, prepare })) }, 0],
+    ["another queue", { queue: ["SHU-901", "SHU-903"], next: { id: "SHU-901" }, prepare, queued: [{ id: "SHU-901", prepare }, { id: "SHU-903", prepare }] }, 0],
+    ["another next card", { queue: NEW_IDS, next: { id: "SHU-902" }, prepare, queued: NEW_IDS.map((id) => ({ id, prepare })) }, 0],
     ["no next card", { queue: NEW_IDS, next: { id: null, skipped: "QUEUE_STOPPED" }, prepare, queued: NEW_IDS.map((id) => ({ id, prepare })) }, 0],
-    ["a refused preparation", { queue: NEW_IDS, next: { id: "SHU-401" }, prepare, queued: [{ id: "SHU-401", prepare }, { id: "SHU-402", prepare: { refused: "CARD_RUN_CARD_STATE", reason: "SHU-402 is Done" } }] }, 0],
-    ["a refused next preparation", { queue: NEW_IDS, next: { id: "SHU-401" }, prepare: { refused: "CARD_RUN_CARD_OWNED" }, queued: NEW_IDS.map((id) => ({ id, prepare })) }, 0],
+    ["a refused preparation", { queue: NEW_IDS, next: { id: "SHU-901" }, prepare, queued: [{ id: "SHU-901", prepare }, { id: "SHU-902", prepare: { refused: "CARD_RUN_CARD_STATE", reason: "SHU-902 is Done" } }] }, 0],
+    ["a refused next preparation", { queue: NEW_IDS, next: { id: "SHU-901" }, prepare: { refused: "CARD_RUN_CARD_OWNED" }, queued: NEW_IDS.map((id) => ({ id, prepare })) }, 0],
   ]) {
     const host = fakeHost();
     host.plan = plan;
@@ -653,7 +653,7 @@ test("SHU-322 B17: the report and claim name main, the installed revision, the q
   const text = renderInstallReport(out.result);
   assert.match(text, new RegExp(`main at ${N} over installed revision ${R}`));
   assert.match(text, /Steps done: claim, idle, merge, rollback, install, verify, precondition, plan\./);
-  assert.match(text, /the next timer start runs SHU-401/);
+  assert.match(text, /the next timer start runs SHU-901/);
 });
 
 test("SHU-322 B18: a failed install whose pause cannot be put in place keeps the card-run lock, so later starts skip", async () => {
@@ -973,7 +973,7 @@ test("M11 C6: when the installed revision cannot be put back, the host pauses as
 // (the stopped card's, under a new id) first, the later installed lanes kept,
 // the stopped card dropped. The shape of #342 over main at e584bb9.
 const INSTALLED_SCOPE = QUEUE_ONLY.dispatch_scope.issue_ids;
-const RECUT_ID = "SHU-401";
+const RECUT_ID = "SHU-901";
 const RECUT_SCOPE = [RECUT_ID, ...INSTALLED_SCOPE.slice(1)];
 function recutConfig(edit = (config) => config) {
   const config = structuredClone(QUEUE_ONLY);
@@ -1067,7 +1067,7 @@ test("M16 Q3: nothing the coordinator runs imports the contracts source, and the
 });
 
 test("M16 Q5: every install, queue or code, may only add cards to the contracts data, whatever their text says", () => {
-  const added = (edit) => contractsWith((data) => { data.cards["SHU-401"] = edit(newContract("SHU-401")); });
+  const added = (edit) => contractsWith((data) => { data.cards["SHU-901"] = edit(newContract("SHU-901")); });
   const text = added((card) => ({ ...card, brief: "import the module, read process.env and call eval( in the text: https://example.test/x" }));
   assert.deepEqual(selfInstallGate(codeWithContracts(text)),
     { ok: true, queue: null, lanes: [], code: [CODE_PATH], approval: { pr: CODE_PR, head: CODE_HEAD, by: null } });
@@ -1077,23 +1077,23 @@ test("M16 Q5: every install, queue or code, may only add cards to the contracts 
     "an edited card": [contractsWith((data) => { data.cards[installedId].revision_paths = ["src/anything.ts"]; }), `it changes ${installedId}`],
     "a removed card": [contractsWith((data) => { delete data.cards[installedId]; }), `it removes ${installedId}`],
     "a review-only change": [contractsWith((data) => { data.review_only["SHU-304"].acceptance = "anything"; }), "it changes the review-only cards"],
-    "a new review-only card": [contractsWith((data) => { data.review_only["SHU-401"] = data.review_only["SHU-304"]; }), "it changes the review-only cards"],
+    "a new review-only card": [contractsWith((data) => { data.review_only["SHU-901"] = data.review_only["SHU-304"]; }), "it changes the review-only cards"],
     "a finish rule change": [contractsWith((data) => { data.writer_finish_rule = "Return early."; }), "it changes the writer's finish rule"],
     "a non-canonical id": [contractsWith((data) => { data.cards["SHU-0401"] = newContract("SHU-0401"); }), '"SHU-0401" is not a new canonical card id'],
     "a prototype key": [CONTRACTS_TEXT.replace('"cards": {', '"cards": {\n    "__proto__": {"brief": "x"},'), '"__proto__" is not a new canonical card id'],
-    "an extra contract key": [added((card) => ({ ...card, writer_lane: "claude-builder" })), "SHU-401 is not a card contract"],
-    "a missing brief": [added(({ brief: _gone, ...card }) => card), "SHU-401 is not a card contract"],
-    "an empty path list": [added((card) => ({ ...card, initial_build_paths: [] })), "SHU-401 is not a card contract"],
-    "a path that is not a string": [added((card) => ({ ...card, revision_paths: ["src/a.ts", 1] })), "SHU-401 is not a card contract"],
-    "an empty acceptance": [added((card) => ({ ...card, acceptance: "" })), "SHU-401 is not a card contract"],
-    "another workspace mode": [added((card) => ({ ...card, workspace_mode: "host" })), /^SHU-401 is not a card contract: card workspace_mode must be "repo"/],
+    "an extra contract key": [added((card) => ({ ...card, writer_lane: "claude-builder" })), "SHU-901 is not a card contract"],
+    "a missing brief": [added(({ brief: _gone, ...card }) => card), "SHU-901 is not a card contract"],
+    "an empty path list": [added((card) => ({ ...card, initial_build_paths: [] })), "SHU-901 is not a card contract"],
+    "a path that is not a string": [added((card) => ({ ...card, revision_paths: ["src/a.ts", 1] })), "SHU-901 is not a card contract"],
+    "an empty acceptance": [added((card) => ({ ...card, acceptance: "" })), "SHU-901 is not a card contract"],
+    "another workspace mode": [added((card) => ({ ...card, workspace_mode: "host" })), /^SHU-901 is not a card contract: card workspace_mode must be "repo"/],
     "a fixture lane": [contractsWith((data) => { data.cards["SHU-140"] = newContract("SHU-140"); }), "SHU-140 is a fixture lane"],
-    "a path out of the tree": [added((card) => ({ ...card, initial_build_paths: ["../../etc/x"] })), "SHU-401 is not a card contract: initial_build_paths contains an unsafe, non-literal, or non-normalized path"],
-    "a git hook path": [added((card) => ({ ...card, revision_paths: ["src/a.ts", ".git/hooks/pre-commit"] })), "SHU-401 is not a card contract: revision_paths contains an unsafe, non-literal, or non-normalized path"],
-    "an unsafe scoped path": [added(({ workspace_mode: _mode, ...card }) => ({ ...card, initial_build_paths: ["/etc/x"] })), "SHU-401 is not a card contract: initial_build_paths contains an unsafe, non-literal, or non-normalized path"],
-    "a repeated path": [added((card) => ({ ...card, revision_paths: ["src/a.ts", "src/a.ts"] })), "SHU-401 is not a card contract: revision_paths contains a duplicate path"],
-    "a coordinator path in repo mode": [added((card) => ({ ...card, initial_build_paths: [".github/coordinator/config.json"] })), /^SHU-401 is not a card contract: .*initial_build_paths/],
-    "a card that is not an object": [contractsWith((data) => { data.cards["SHU-401"] = ["brief"]; }), "SHU-401 is not a card contract"],
+    "a path out of the tree": [added((card) => ({ ...card, initial_build_paths: ["../../etc/x"] })), "SHU-901 is not a card contract: initial_build_paths contains an unsafe, non-literal, or non-normalized path"],
+    "a git hook path": [added((card) => ({ ...card, revision_paths: ["src/a.ts", ".git/hooks/pre-commit"] })), "SHU-901 is not a card contract: revision_paths contains an unsafe, non-literal, or non-normalized path"],
+    "an unsafe scoped path": [added(({ workspace_mode: _mode, ...card }) => ({ ...card, initial_build_paths: ["/etc/x"] })), "SHU-901 is not a card contract: initial_build_paths contains an unsafe, non-literal, or non-normalized path"],
+    "a repeated path": [added((card) => ({ ...card, revision_paths: ["src/a.ts", "src/a.ts"] })), "SHU-901 is not a card contract: revision_paths contains a duplicate path"],
+    "a coordinator path in repo mode": [added((card) => ({ ...card, initial_build_paths: [".github/coordinator/config.json"] })), /^SHU-901 is not a card contract: .*initial_build_paths/],
+    "a card that is not an object": [contractsWith((data) => { data.cards["SHU-901"] = ["brief"]; }), "SHU-901 is not a card contract"],
     "another top-level key": [contractsWith((data) => { data.extra = 1; }), "it is not the contracts data at both revisions"],
     "text that is not JSON": [`export const CARD_CONTRACTS = ${CONTRACTS_TEXT}`, "it is not the contracts data at both revisions"],
   };
@@ -1178,7 +1178,7 @@ test("M16 Q6: a code install changes no config key a queue install could not", (
   assert.match(selfInstallGate(withMain((c) => ({ ...c, code_self_install: REVIEW_POLICY }))).reason, /code self-install policy is installed only by a person/);
   // Unchanged config, or lanes only appended, still install with the code.
   assert.equal(selfInstallGate(withMain((c) => c)).ok, true);
-  assert.equal(selfInstallGate(withMain((c) => ({ ...c, card_lanes: [...c.card_lanes, lane("SHU-401")] }))).ok, true);
+  assert.equal(selfInstallGate(withMain((c) => ({ ...c, card_lanes: [...c.card_lanes, lane("SHU-901")] }))).ok, true);
 });
 
 test("M16 Q7: a test file a runtime module imports is never a queue's to change", () => {
