@@ -385,7 +385,7 @@ assert.equal(sel.candidate, null, "the successor exception never covers a differ
     // M3 — capacity stays global; a successor never takes a second slot.
     name: "M3: the successor is exempt from the global capacity count",
     file: "reconcile.mjs",
-    from: "  if (active.length >= maxDispatch) {",
+    from: "  if (counted.length >= maxDispatch) {",
     to: "  if (false) { // SHU225-MUT-M3",
     assertion: `const receipts = [receipt({ issue: OTHER, attempt: A("review"), worker: "claude-verifier", stage: "RUNNING", verdict: null }), receipt({})];
 const sel = reconcile.selectNextReservation({ ready: [readyIssue(TARGET)], config: { max_dispatch: 1 }, receipts, episodeContinuations: new Map([[TARGET, { successor: succ() }]]) });

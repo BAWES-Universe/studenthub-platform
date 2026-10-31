@@ -6,7 +6,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { pathToFileURL } from 'node:url';
 import * as shipped from '../provision-shu71-prerequisites.mjs';
-import { revision } from './provision-prerequisites-fixture.mjs';
+import { revision, holdInstallLocks } from './provision-prerequisites-fixture.mjs';
 import { targetFixture, refusal, procNoise } from './provision-target-host-fixture.mjs';
 const sourceURL = new URL('../provision-shu71-prerequisites.mjs',import.meta.url);
 const source = fs.readFileSync(sourceURL,'utf8');
@@ -93,9 +93,9 @@ const controls = {
   },
   CLI(t,m) {
     for(const broken of [false,true]) {
-      const h=targetFixture(t); h.faults.rejectConfiguration=true; h.faults.enumeration=broken;
+      const h=targetFixture(t); h.faults.rejectConfiguration=true; h.faults.enumeration=broken; holdInstallLocks(h);
       const output=[],process={exitCode:0};
-      const b={uid:()=>0,run(exe,args) {
+      const b={uid:()=>0,fs:h.boundary.fs,run(exe,args) {
         const script=args.at(-1).replace(/^import .*?; /,'');
         vm.runInNewContext(script,{provisioner:r=>m.provisioner(r,h.boundary),prerequisiteFailure:m.prerequisiteFailure,console:{log:s=>output.push(JSON.parse(s))},process});
         return {status:process.exitCode};

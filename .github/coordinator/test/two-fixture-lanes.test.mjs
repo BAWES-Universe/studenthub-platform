@@ -142,7 +142,7 @@ for (const [name, file, from, to, pattern, message] of [
   // reads the committed file, so widening the committed scope would no longer
   // reach it. Widening the scope the case is actually given still must kill it.
   ["scope admits third issue", "test/fixture/two-fixture-config.mjs", "[...TWO_FIXTURE_IDS] }", "[...TWO_FIXTURE_IDS, 'SHU-90'] }", "^TWO_SCOPE:", "TWO_SCOPE: exact two-fixture issues"],
-  ["capacity ignores active receipts", "reconcile.mjs", "if (active.length >= maxDispatch) {", "if (false) {", "^TWO_CAPACITY:", "TWO_CAPACITY: third reservation refused"],
+  ["capacity ignores active receipts", "reconcile.mjs", "if (counted.length >= maxDispatch) {", "if (false) {", "^TWO_CAPACITY:", "TWO_CAPACITY: third reservation refused"],
   ["committed dispatch enabled", "config.json", '"enable_dispatch": false', '"enable_dispatch": true', "^DISPATCH_DISABLED:", "DISPATCH_DISABLED: committed gate stays false"],
 ]) test(`TWO_LANES MUTATION: ${name}`, () => {
   const dir = fs.mkdtempSync(path.join(tmpdir(), "two-lanes-mutant-"));

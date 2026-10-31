@@ -12,6 +12,8 @@ import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
   readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
+  INSTALL_LOCK,
+  INSTALL_LOCK_KEPT,
 } from "../service/card-install.mjs";
 import { autoRun, autoClaim, busyReasons, queueConfigPath, reviewClaim } from "../service/card-run.mjs";
 
@@ -21,8 +23,9 @@ const CONTRACTS_TEXT = fs.readFileSync(path.join(HERE, "..", "card-contracts.jso
 const COMMITTED = JSON.parse(COMMITTED_TEXT);
 // M16: the committed config turns code self-install on. The Card B tests read
 // an installed revision with it off, as they always did; the M11 and M16 tests
-// turn a policy on themselves.
-const { code_self_install: _committedPolicy, ...QUEUE_ONLY } = COMMITTED;
+// turn a policy on themselves. M15: likewise one card worker, not the
+// committed two; the worker tests turn more on themselves.
+const { code_self_install: _committedPolicy, workers: _committedWorkers, ...QUEUE_ONLY } = COMMITTED;
 const QUEUE_ONLY_TEXT = JSON.stringify(QUEUE_ONLY);
 const R = "a".repeat(40);
 const N = "d".repeat(40);
@@ -1130,7 +1133,7 @@ test("M16 Q4: the committed policy is approval none, which installs on the box r
     "with the policy off, reviewed code alone is nothing to install");
   // A queue install, the stopped-queue restart, still installs itself.
   assert.deepEqual(selfInstallGate(recutFacts((f) => ({ ...f, configs: { installed: COMMITTED_TEXT,
-    main: JSON.stringify(recutConfig((c) => ({ ...c, code_self_install: NONE }))) } }))),
+    main: JSON.stringify(recutConfig((c) => ({ ...c, code_self_install: NONE, workers: COMMITTED.workers }))) } }))),
     { ok: true, queue: RECUT_SCOPE, lanes: [RECUT_ID] });
   // A policy-none install passes with no GitHub review read.
   const host = codeHost(NONE, { approved: false });
@@ -1216,4 +1219,80 @@ test("M16 Q7: a test file a runtime module imports is never a queue's to change"
   const gate = selfInstallGate(facts((f) => ({ ...f, changes: [...f.changes, { status: "M", path: RUNTIME_TEST_MODULES[0] }] })));
   assert.ok(refused(gate));
   assert.match(gate.reason, /is not a queue config path/);
+});
+
+test("M15 W5: a self-install holds the host-wide install lock, never takes another worker's, and keeps it with the run lock", async () => {
+  // Another worker is installing: this start skips and gives everything back.
+  const held = fakeHost();
+  held.put(INSTALL_LOCK, "123");
+  held.put("/proc/123", "");
+  assert.equal((await install(held)).skipped, "INSTALL_LOCKED");
+  assert.equal(held.files.get(INSTALL_LOCK).text, "123", "another worker's install lock is left alone");
+  assert.equal(held.files.has(installClaim(PATHS, N)), false);
+  untouched(held);
+  // The install runs under it, from before the idle check to the end.
+  const host = fakeHost();
+  const seen = [];
+  host.onStep = (h, name) => seen.push([name, h.files.has(INSTALL_LOCK)]);
+  assert.equal((await install(host)).result?.outcome, "INSTALLED");
+  assert.ok(seen.length > 0 && seen.every(([, locked]) => locked), JSON.stringify(seen));
+  assert.equal(host.files.has(INSTALL_LOCK), false, "released after the install");
+  // A failed install that keeps the run lock keeps this one too, so no worker
+  // starts on a half-installed host.
+  const failed = fakeHost();
+  failed.provisionFails[`install ${N}`] = true;
+  const write = failed.fs.writeFileSync;
+  failed.fs.writeFileSync = (file, text, options) => {
+    if (file === PATHS.pause) throw Object.assign(new Error(`EIO ${file}`), { code: "EIO" });
+    return write(file, text, options);
+  };
+  const out = await install(failed);
+  assert.equal(out.result?.lock_kept, true);
+  assert.equal(failed.files.has(INSTALL_LOCK), true);
+  assert.equal(failed.files.has(PATHS.lock), true);
+  // The kept lock names no process, so no later start takes it over.
+  assert.equal(failed.files.get(INSTALL_LOCK).text, INSTALL_LOCK_KEPT);
+  const after = fakeHost();
+  after.put(INSTALL_LOCK, INSTALL_LOCK_KEPT);
+  assert.equal((await install(after)).skipped, "INSTALL_LOCKED");
+  assert.equal(after.files.get(INSTALL_LOCK).text, INSTALL_LOCK_KEPT);
+  untouched(after);
+});
+
+test("M15 W5: an install lock whose holder died is never taken over, and one whose kept reason could not be written stands the same way", async () => {
+  // The holder crashed after its install step: the receipt may read VERIFIED
+  // at HEAD with no precondition or plan run, so nothing goes ahead.
+  const stale = fakeHost();
+  stale.put(INSTALL_LOCK, "424242");
+  const out = await install(stale);
+  assert.equal(out.skipped, "INSTALL_LOCKED");
+  assert.match(out.reason, /by pid 424242, which is gone: that install died and may have left the host half-installed; the owner recovers it and removes the lock/);
+  assert.equal(stale.files.get(INSTALL_LOCK).text, "424242", "the dead holder's lock stands");
+  assert.equal([...stale.files.keys()].some((file) => file.startsWith(`${INSTALL_LOCK}.`)), false, "nothing is set aside");
+  untouched(stale);
+  // A holder that is alive keeps it, whatever its age.
+  const alive = fakeHost();
+  alive.put(INSTALL_LOCK, "424242");
+  alive.put("/proc/424242", "");
+  const held = await install(alive);
+  assert.equal(held.skipped, "INSTALL_LOCKED");
+  assert.doesNotMatch(held.reason, /which is gone/);
+  assert.equal(alive.files.get(INSTALL_LOCK).text, "424242");
+  untouched(alive);
+  // A failed install whose pause and kept reason both could not be written
+  // keeps its pid in the lock; once it has exited, no later install takes it.
+  const failed = fakeHost();
+  failed.provisionFails[`install ${N}`] = true;
+  const write = failed.fs.writeFileSync;
+  failed.fs.writeFileSync = (file, text, options) => {
+    if (file === PATHS.pause || (file === INSTALL_LOCK && text === INSTALL_LOCK_KEPT)) throw Object.assign(new Error(`ENOSPC ${file}`), { code: "ENOSPC" });
+    return write(file, text, options);
+  };
+  assert.equal((await install(failed)).result?.lock_kept, true);
+  assert.equal(failed.files.get(INSTALL_LOCK).text, String(process.pid));
+  const after = fakeHost();
+  after.put(INSTALL_LOCK, "424243");
+  assert.equal((await install(after)).skipped, "INSTALL_LOCKED");
+  assert.equal(after.files.get(INSTALL_LOCK).text, "424243");
+  untouched(after);
 });

@@ -35,6 +35,7 @@ import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activ
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
+import { cardWorkers } from "./service/credential-delivery.mjs";
 import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
@@ -140,8 +141,20 @@ export function receiptsWithinDispatchScope(receipts = [], config = {}) {
 // hide an in-flight receipt from lifecycle reconciliation: every non-terminal
 // receipt still consumes the global max_dispatch capacity, so every such
 // receipt must retain a path to terminal state.
-export function receiptsForLifecycle(receipts = [], _config = {}) {
-  return receipts.filter(Boolean);
+//
+// M15 W3: except with more than one card worker. Each worker's coordinator is
+// then narrowed to its own armed card, counts only that card's receipts
+// (selectNextReservation), and reconciles only those: otherwise worker 2's
+// coordinator would resume worker 1's LAUNCH_UNKNOWN and RUNNING receipts
+// through its own supervisor socket, and write adapter pauses from them that
+// every worker reads. Each card's receipts keep their path to terminal state
+// through the worker that runs that card. One worker reconciles every
+// receipt, as before.
+export function receiptsForLifecycle(receipts = [], config = {}) {
+  const present = receipts.filter(Boolean);
+  const scope = resolveDispatchScope(config);
+  if (cardWorkers(config) === 1 || !scope.configured) return present;
+  return present.filter((receipt) => dispatchScopeAllows(scope, receipt.issue_id));
 }
 
 // The Idempotency-Key for the workspace-agents trigger. It is derived from the
@@ -1356,8 +1369,13 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
   const pauseMap = config.adapter_pause_map ?? {};
   const skipped = [];
 
-  if (active.length >= maxDispatch) {
-    return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `max_dispatch=${maxDispatch} reached (${active.length} active)` }] };
+  // M15 W2: with more than one card worker, each worker's coordinator is
+  // narrowed to its own armed card and max_dispatch is that worker's slot, so
+  // only the receipts of its dispatch scope count. One worker counts every
+  // active receipt, as before.
+  const counted = cardWorkers(config) > 1 && scope.configured ? active.filter((r) => scope.issueIds.has(r.issue_id)) : active;
+  if (counted.length >= maxDispatch) {
+    return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `max_dispatch=${maxDispatch} reached (${counted.length} active)` }] };
   }
 
   let sawScopedIssue = false;
@@ -2216,7 +2234,8 @@ export async function repairCardFor(activation, { config = {}, githubToken = "",
     repair: repairFromActivation(activation, config),
     owners: config.linear_callback_actor_ids ?? [],
     repo: config.pilot_repo ?? null,
-    head: activation.successor?.target_sha ?? activation.initial_target_sha ?? null,
+    // M15: a repair of a head a landing updated from main is bound there.
+    head: activation.successor?.target_sha ?? activation.repair_head ?? activation.initial_target_sha ?? null,
     pulls: {
       complete: read.complete === true,
       items: (read.items ?? []).filter((pr) => pullRequestClaimsIssue(pr, activation.target_issue_id)),

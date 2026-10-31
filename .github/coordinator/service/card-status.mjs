@@ -21,7 +21,8 @@
 import path from "node:path";
 
 export const STATUS_FILE = "card-run-status.json";
-export const statusPath = (paths) => path.join(paths.stateDir, STATUS_FILE);
+// M15 W5: card worker N > 1 writes its own status file beside worker 1's.
+export const statusPath = (paths) => path.join(paths.stateDir, (paths.worker ?? 1) > 1 ? `card-run-status-w${paths.worker}.json` : STATUS_FILE);
 
 export const ALERT_OUTCOMES = Object.freeze(new Set(["ERROR", "STALLED", "QUOTA_EXHAUSTED"]));
 // Self-repair B2: a landing repair that never finished is a stop for the owner.

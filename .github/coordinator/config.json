@@ -13,6 +13,9 @@
   "code_self_install": {
     "approval": "none"
   },
+  "workers": {
+    "max": 2
+  },
   "landing_thread_settle": {
     "enabled": false,
     "max_per_run": 5,
@@ -2050,6 +2053,9 @@
         "apps/gateway/test/profile-edit-http.test.ts",
         "apps/gateway/src/web-ui.ts",
         "apps/gateway/test/web-ui.test.ts"
+      ],
+      "after": [
+        "SHU-405"
       ]
     },
     {

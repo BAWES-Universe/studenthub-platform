@@ -280,16 +280,16 @@ async function fetchMergeIssue({ issueId, token, fetchImpl }) {
   return data?.issue ?? null;
 }
 
-function makeRecord({ source, snapshot, authorityRef, state = 'PREPARED', code = null, reason = null, now = new Date() }) {
+function makeRecord({ source, snapshot, authorityRef, state = 'PREPARED', code = null, reason = null, now = new Date(), head = source.handoff.target_sha }) {
   return {
     version: '1.0.0',
-    attempt_id: uuidFor(source.attempt_id, source.handoff.target_sha),
+    attempt_id: uuidFor(source.attempt_id, head),
     source_attempt_id: source.attempt_id,
     issue_id: source.issue_id,
     repo: source.repo,
     branch: source.branch,
     pr_number: snapshot.pr_number,
-    approved_head_sha: source.handoff.target_sha,
+    approved_head_sha: head,
     approved_tree_sha: snapshot.tree_sha,
     base_sha: snapshot.base_sha,
     base_ref: snapshot.base_ref,
@@ -304,12 +304,12 @@ function makeRecord({ source, snapshot, authorityRef, state = 'PREPARED', code =
   };
 }
 
-function initialHoldRecord({ source, authorityRef, code, reason, snapshot = {}, now = new Date() }) {
+function initialHoldRecord({ source, authorityRef, code, reason, snapshot = {}, now = new Date(), head = source.handoff.target_sha }) {
   return {
-    version: '1.0.0', attempt_id: uuidFor(source.attempt_id, source.handoff.target_sha),
+    version: '1.0.0', attempt_id: uuidFor(source.attempt_id, head),
     source_attempt_id: source.attempt_id, issue_id: source.issue_id, repo: source.repo, branch: source.branch,
     pr_number: Number.isInteger(snapshot.pr_number) ? snapshot.pr_number : null,
-    approved_head_sha: source.handoff.target_sha,
+    approved_head_sha: head,
     approved_tree_sha: SHA.test(snapshot.tree_sha ?? '') ? snapshot.tree_sha : null,
     base_sha: SHA.test(snapshot.base_sha ?? '') ? snapshot.base_sha : null,
     base_ref: typeof snapshot.base_ref === 'string' && snapshot.base_ref.length > 0 ? snapshot.base_ref : null,
@@ -359,7 +359,8 @@ function snapshotPolicy(snapshot, requireAllChecks = false) {
   return { ok: true };
 }
 
-async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false, external = null }) {
+async function authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks = false, external = null,
+  head = source.handoff.target_sha }) {
   let issue;
   try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
   catch { return { ok: false, code: 'EXPLICIT_HOLD', reason: 'Linear merge authority could not be re-fetched' }; }
@@ -370,7 +371,7 @@ async function authorityNow({ source, linearIssueId, linearToken, githubToken, f
   const verdict = mergeVerdict(receipts, source.attempt_id, source.handoff.target_sha, source.issue_id, source.repo, source.branch);
   if (!verdict.ok) return { ok: false, code: 'INELIGIBLE_VERDICT', reason: verdict.reason };
   const snapshot = await fetchGitHubMergeSnapshot({ repo: source.repo, branch: source.branch,
-    targetSha: source.handoff.target_sha, token: githubToken, fetchImpl, external });
+    targetSha: head, token: githubToken, fetchImpl, external });
   if (!snapshot.ok) return snapshot;
   if (!snapshot.merged) {
     const policy = snapshotPolicy(snapshot, requireAllChecks);
@@ -393,6 +394,13 @@ export async function consumeMergeReadiness({
   // and the outside checks the committed config names hold the merge; see
   // service/external-checks.mjs.
   externalPolicy = null,
+  // Opt-in (the card-run landing passes it, M15 W4): the head to merge when
+  // the landing updated the pull request from main after the PASS, and proved
+  // the update only merged main in, leaving the pull request's own files at
+  // the passed head's blobs. The PASS, its handoff and its writer lineage are
+  // still read at the passed head; the GitHub authority, the merge attempt
+  // and the conditional merge are at this head.
+  mergeHead = null,
 }) {
   if (!routineMergeEnabledFor(env, config)) return { writes: 0, merges: 0 };
   if (!linearToken || !githubToken) return { writes: 0, merges: 0, error: 'merge credentials unavailable' };
@@ -409,15 +417,16 @@ export async function consumeMergeReadiness({
     try { issue = await fetchMergeIssue({ issueId: linearIssueId, token: linearToken, fetchImpl }); }
     catch { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — Linear authority unavailable`); continue; }
     const parsedAttempts = parseMergeAttemptsFromComments(issue?.comments?.nodes ?? [], allowedActorIds);
-    const attemptId = uuidFor(source.attempt_id, source.handoff.target_sha);
+    const head = mergeHead ?? source.handoff.target_sha;
+    const attemptId = uuidFor(source.attempt_id, head);
     if (parsedAttempts.conflicts.has(attemptId)) { stdout(`merge-readiness: ${source.issue_id} HOLD=EXPLICIT_HOLD — durable merge-attempt conflict`); continue; }
     let existing = parsedAttempts.records.find(record => record.attempt_id === attemptId);
     if (existing?.state === 'COMPLETED' || existing?.state === 'HOLD') continue;
 
-    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy });
+    let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
     if (!authorityCheck.ok) {
       const held = existing ? holdFrom(existing, authorityCheck.code, authorityCheck.reason, now()) : initialHoldRecord({ source, authorityRef: authority.authority_ref,
-        code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now() });
+        code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now(), head });
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
       writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=${authorityCheck.code} — ${authorityCheck.reason}`);
@@ -429,25 +438,25 @@ export async function consumeMergeReadiness({
       continue;
     }
     if (authorityCheck.snapshot.merged) {
-      const recoveredBase = existing ?? makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now() });
+      const recoveredBase = existing ?? makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now(), head });
       const recovered = authorityCheck.snapshot.landed_tree_sha !== recoveredBase.approved_tree_sha
         ? holdFrom(recoveredBase, 'TREE_MISMATCH', 'landed squash tree does not match the approved head tree', now())
         : completedFrom(recoveredBase, authorityCheck.snapshot, now());
       await appendRecord({ record: recovered, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
       writes++;
-      stdout(`merge-readiness: ${source.issue_id} ${recovered.state} at ${source.handoff.target_sha}`);
+      stdout(`merge-readiness: ${source.issue_id} ${recovered.state} at ${head}`);
       continue;
     }
 
     if (!existing) {
-      existing = makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now() });
+      existing = makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now(), head });
       await appendRecord({ record: existing, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
       writes++;
     }
 
     // Immediate pre-merge re-fetch. No value from the earlier preflight is
     // authoritative here except the immutable values in the durable intent.
-    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy });
+    authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds, requireAllChecks, external: externalPolicy, head });
     if (!authorityCheck.ok) {
       const held = holdFrom(existing, authorityCheck.code, authorityCheck.reason, now());
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });

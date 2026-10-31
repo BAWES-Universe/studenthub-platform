@@ -550,6 +550,11 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   LAND_ERROR: "landing failed",
   // SHU-310
   THREADS_HELD: "more review bot threads were settleable than one run may settle; nothing was handed off or merged",
+  // M15 W4: what landing with more than one card worker can stop at.
+  LAND_CONFLICT: "main does not merge cleanly into the pull request; the landing never resolves a conflict, and nothing was handed off or merged",
+  LAND_DELTA_CHANGED: "main changed the pull request's own files, so its head needs a review with main's change; nothing was handed off or merged",
+  LAND_LOCK_HELD: "another worker's merge step held the landing lock past its bound; nothing was handed off or merged",
+  LAND_BASE_MOVING: "main kept moving under the pull request; nothing was handed off or merged",
   // Self-repair B2
   REPAIR_INTERRUPTED: "a landing repair round was claimed but never finished; it is never run again at this revision",
   REPAIR_TEST_WEAKENED: "the repair skipped, removed or loosened a test, or changed how tests run; nothing was handed off or merged",

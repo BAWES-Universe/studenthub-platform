@@ -10,12 +10,14 @@
 // See recovery-request.mjs for why the recovery has to happen in this process:
 // the transport credential is pinned to this unit's own credential directory.
 import { fileURLToPath } from 'node:url';
-import { ACTIVATION_FILE } from './credential-delivery.mjs';
+import { workerActivationFiles } from './credential-delivery.mjs';
 import { main } from '../reconcile.mjs';
 import { runRecoveryRequest } from './recovery-request.mjs';
+// M15: worker 1's unit gives ACTIVATION_FILE; a card worker's unit gives that
+// worker's own path. Any other path is refused.
 export function coordinatorTickArgs(argv, env) {
-  if (argv.length !== 2 || argv[0] !== '--activation' || argv[1] !== ACTIVATION_FILE) throw new Error('ACT_ACTIVATION_PATH');
-  return env.ENABLE_DISPATCH === 'true' ? ['--activation', ACTIVATION_FILE] : [];
+  if (argv.length !== 2 || argv[0] !== '--activation' || !workerActivationFiles().includes(argv[1])) throw new Error('ACT_ACTIVATION_PATH');
+  return env.ENABLE_DISPATCH === 'true' ? ['--activation', argv[1]] : [];
 }
 // The argv contract is checked FIRST and unconditionally, so a unit whose
 // ExecStart has drifted still fails ACT_ACTIVATION_PATH before anything is read,
