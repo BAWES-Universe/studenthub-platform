@@ -4153,6 +4153,16 @@ const SHU402_BRIEF = SHU400_BRIEF.replace("Card SHU-400:", "Card SHU-402:").repl
 if (!SHU402_BRIEF.startsWith("Card SHU-402:") || !SHU402_BRIEF.includes(SHU400_FINDINGS) || !SHU402_BRIEF.includes(SHU402_FINDINGS)) throw new Error("SHU402_BRIEF must name its own card and carry every attempt's findings");
 const SHU402_ACCEPTANCE = `${SHU400_ACCEPTANCE} SHU-402 is SHU-400's contract re-queued after its build used up its revisions; SHU-400 never runs again. npm test passes to the end, every mutation script included: each mutation needle is taken from the built dist output and binds exactly once. Each control (gender, driving licence, Kuwaiti mother and work status radios, the birth-date input, the nationality and university selects) is asserted inside its own Change form, so a mutant of any one control fails (SHU373_PAGE). A cleared Kuwaiti-mother flag shows "Not recorded" on My profile.`;
 
+// SHU-404: the same contract a fifth time. SHU-402's review verified every
+// earlier finding fixed and answered BLOCKED on one Postgres test fixture,
+// which the builder cannot run, and the build used up its revisions.
+const SHU404_FINDINGS = `Findings from the stopped fourth attempt (SHU-402) that this card must also fix. SHU-402 built this contract at 56c8285 (branch coordinator/SHU-402, never merged). Its review verified every finding above fixed (including each control asserted inside its own Change form and one written-values read and one catalogue read per page) and answered BLOCKED on one defect. You start again from the bound head, so its code is not there; keep everything it got right and do not repeat these:
+- (1) Blocking: the Postgres SHU373_CATALOGUE test could never pass, and you cannot run Postgres tests here, so read the schema before writing fixtures. It inserted catalogue_items rows with status 'pending' and 'rejected', and a 'deleted' row without deleted_at. packages/db/migrations/0146_reference_catalogue.sql allows catalogue_items.status only 'active' or 'deleted', and a 'deleted' row must carry deleted_at (see packages/db/test/postgres-organization-brands.test.ts for a valid deleted row); no later migration relaxes either, so every such insert raised 23514 before the store ran. Moderation statuses live on catalogue_submissions, and a pending or rejected submission's id is not in catalogue_items at all: test pending and rejected as ids unknown to catalogue_items (or as submissions with no created item), and deleted as a catalogue_items row with status 'deleted' and deleted_at set. Every fixture row you insert must satisfy every CHECK and trigger of its table.
+- Also to fix: the store's active-choices test inserts an inactive (deleted) country and university and asserts they are left out, so the status filter is pinned and the test is not vacuous on an empty catalogue; the university refusals use university-typed ids, so they are refused by status, not by a type mismatch; the Change preview shows gender by its label ("Male"), never the stored value; the work-status label map applies only to the work-status field; a malformed stored choice value makes only that field unavailable, not the whole profile; add a SHU373_CATALOGUE mutant to packages/profile/test/self-edit-mutations.mjs if one can bind in dist, otherwise report the catalogue-status and Postgres CHECK mutants as checked by hand.`;
+const SHU404_BRIEF = SHU402_BRIEF.replace("Card SHU-402:", "Card SHU-404:").replace("\n\nRead first:\n", `\n\n${SHU404_FINDINGS}\n\nRead first:\n`);
+if (!SHU404_BRIEF.startsWith("Card SHU-404:") || !SHU404_BRIEF.includes(SHU402_FINDINGS) || !SHU404_BRIEF.includes(SHU404_FINDINGS)) throw new Error("SHU404_BRIEF must name its own card and carry every attempt's findings");
+const SHU404_ACCEPTANCE = `${SHU402_ACCEPTANCE} SHU-404 is SHU-402's contract re-queued after its build used up its revisions; SHU-402 never runs again. Every Postgres fixture row satisfies its table's CHECK constraints and triggers: SHU373_CATALOGUE tests pending and rejected choices as ids unknown to catalogue_items and a deleted choice as a catalogue_items row with status 'deleted' and deleted_at set, for both countries and universities, and the store's choices read leaves out a deleted country and university that the test inserts. The Change preview shows gender by its label.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4652,6 +4662,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU373_PATHS,
     acceptance: SHU402_ACCEPTANCE,
     brief: SHU402_BRIEF,
+  }),
+  "SHU-404": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU404_ACCEPTANCE,
+    brief: SHU404_BRIEF,
   }),
 });
 
