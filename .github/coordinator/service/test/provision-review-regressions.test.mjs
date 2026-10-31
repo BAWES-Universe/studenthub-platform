@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
 import * as implementation from '../provision-shu71-prerequisites.mjs';
 import { installedModule } from '../shu71-production.mjs';
-import { fixture, revision } from './provision-prerequisites-fixture.mjs';
+import { fixture, revision, holdInstallLocks } from './provision-prerequisites-fixture.mjs';
 const { provisioner, PATHS, BROKER } = implementation;
 const row = (p, name) => p.precondition().paths.find(r => r.path === name);
 const sourceURL = new URL('../provision-shu71-prerequisites.mjs', import.meta.url);
@@ -77,7 +77,7 @@ function allocation(t, mod, variant, label) {
   assert.deepEqual(mod.provisioner(revision, h.boundary).identity(), receipt.broker, label);
 }
 function recoveryCli(t, mod, label) {
-  const h = fixture(t); unfinished(h); const output = [];
+  const h = fixture(t); unfinished(h); holdInstallLocks(h); const output = [];
   const b = {...h.boundary, run(exe, args) {
     assert.equal(exe, '/usr/bin/flock', label);
     const processDouble = {exitCode:0};
@@ -181,9 +181,9 @@ test('SHU71 review path neutral mutation killed', () => {
 
 test('SHU71 review recovery process exit status', () => {
   const script = `import vm from 'node:vm';
-    import { fixture, revision } from ${JSON.stringify(new URL('./provision-prerequisites-fixture.mjs', import.meta.url).href)};
+    import { fixture, revision, holdInstallLocks } from ${JSON.stringify(new URL('./provision-prerequisites-fixture.mjs', import.meta.url).href)};
     import { runCli, provisioner, PATHS } from ${JSON.stringify(sourceURL.href)};
-    const cleanup=[]; const h=fixture({after:fn=>cleanup.push(fn)});
+    const cleanup=[]; const h=fixture({after:fn=>cleanup.push(fn)}); holdInstallLocks(h);
     h.write(PATHS.receipt,JSON.stringify({version:1,revision,state:'INSTALLING',effects:[]}),0o600);
     const b={...h.boundary,run(exe,args){const child={exitCode:0};
       vm.runInNewContext(args.at(-1).replace(/^import .*?; /,''),{provisioner:rev=>provisioner(rev,h.boundary),console,process:child});

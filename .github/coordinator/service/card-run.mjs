@@ -146,6 +146,27 @@ export function processStart(io, pid) {
     return /^\d+$/.test(start ?? "") ? start : null;
   } catch { return null; }
 }
+// M15: a claim another worker reads is never seen empty or half-written. It
+// is written whole to a temporary file first, then published with a hard
+// link, which fails with EEXIST when the claim is already there, as the old
+// exclusive create did; a later rewrite replaces it with a rename. A crash
+// leaves at most a temporary file, which no claim pattern matches. A file
+// system without links (a test double) keeps the old exclusive write.
+function tempOf(file) { return `${file}.tmp-${process.pid}`; }
+export function publishClaim(io, file, text) {
+  if (typeof io.fs.linkSync !== "function") return io.fs.writeFileSync(file, text, { flag: "wx", mode: 0o600 });
+  const temp = tempOf(file);
+  io.fs.writeFileSync(temp, text, { mode: 0o600 });
+  try { io.fs.linkSync(temp, file); }
+  finally { try { io.fs.unlinkSync(temp); } catch { /* gone already */ } }
+}
+export function replaceClaim(io, file, text) {
+  if (typeof io.fs.linkSync !== "function") return io.fs.writeFileSync(file, text, { mode: 0o600 });
+  const temp = tempOf(file);
+  io.fs.writeFileSync(temp, text, { mode: 0o600 });
+  try { io.fs.renameSync(temp, file); }
+  catch (error) { try { io.fs.unlinkSync(temp); } catch { /* gone already */ } throw error; }
+}
 // The claimant fields of a claim or repair round: this worker, this process
 // and when it started.
 function claimant(io, paths) {
@@ -1122,7 +1143,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     claim = autoClaim(paths, revision, plan.id);
     claimedAt = io.now().toISOString();
     try {
-      io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, ...claimant(io, paths) })}\n`, { flag: "wx", mode: 0o600 });
+      publishClaim(io, claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, ...claimant(io, paths) })}\n`);
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
@@ -1155,7 +1176,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // Self-watch 0a: the final claim keeps its claimed_at, adds the run's
     // timing, and records which pull request and which reviewed head a
     // landing worked on. Nothing reads these fields to decide anything yet.
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, activation_id: result.activation_id,
+    replaceClaim(io, claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, activation_id: result.activation_id,
       outcome: result.outcome, ok: result.ok, land: result.land?.outcome ?? null,
       armed_at: result.timing?.armed_at ?? null, first_tick_at: result.timing?.first_tick_at ?? null,
       last_tick_at: result.timing?.last_tick_at ?? null, finished_at: result.timing?.finished_at ?? null,
@@ -1169,7 +1190,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       reverted: result.revert?.reverted ?? null,
       // Self-watch 0b: what the observe-only watch saw; null when it was off.
       first_dispatch_at: result.watch?.first_dispatch_at ?? null, last_progress_at: result.watch?.last_progress_at ?? null,
-      max_progress_gap_ms: result.watch?.max_progress_gap_ms ?? null, would_stall: result.watch?.would_stall ?? null })}\n`, { mode: 0o600 });
+      max_progress_gap_ms: result.watch?.max_progress_gap_ms ?? null, would_stall: result.watch?.would_stall ?? null })}\n`);
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
 }
