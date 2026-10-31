@@ -118,8 +118,8 @@ const CASES = [
   },
   {
     name: "M18 keep ticking when the tick does not report this run armed",
-    from: "  if (!armedId) return {",
-    to: "  if (false) return { // SHU86-M18\n",
+    from: "  if (!armedId) {",
+    to: "  if (false) { // SHU86-M18",
     pattern: "SHU-86 C4:",
   },
   {
@@ -1456,6 +1456,48 @@ const CASES = [
     from: 'io.exec("pgrep", ["-l", "-u", "shu-worker"]);',
     to: 'io.exec("pgrep", ["-a", "-u", "shu-worker"]); // SHU86-M214',
     pattern: "M16 K1:",
+  },
+  {
+    name: "M300 end the run on a tick that holds on Linear's rate limit",
+    from: "  if (hold) return { ended: false,",
+    to: "  if (false) return { ended: false, // SHU86-M300\n",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M301 count a held tick as the first answered tick",
+    from: "        if (outcome.hold) holds.push(",
+    to: "        if (outcome.hold) ticks.push(",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M302 tick again at once after a hold, without waiting",
+    from: "          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));",
+    to: "          // SHU86-M302",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M306 tick again while a held wait is still pending",
+    from: "          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
+    to: "          void io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, /* SHU86-M306 */",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M303 take a hold line found anywhere in the tick's output",
+    from: "TICK_HOLD_RE.exec(String(text ?? \"\").trim())",
+    to: "/^HOLD=LINEAR_RATE_LIMITED retry_after=(\\d+)$/m.exec(String(text ?? \"\")) /* SHU86-M303 */",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M304 wait out a hold past the run window",
+    from: "io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
+    to: "io.sleep(Math.min(Infinity /* SHU86-M304 */, TICK_HOLD_MAX_SLEEP_MS,",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M305 wait a whole long hold in one sleep",
+    from: "io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
+    to: "io.sleep(Math.min(left, Infinity /* SHU86-M305 */,",
+    pattern: "Rate-limit hold:",
   },
   {
     name: "M215 count every worker's processes with more than one worker",

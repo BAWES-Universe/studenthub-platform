@@ -2130,6 +2130,7 @@
     "SHU-86 C7: only a clean, installed main is armed",
     "SHU-86 C8: a missing coordinator branch is created at the installed revision; a moved one is refused",
     "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
+    "Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks again instead of ending the run",
     "SHU-86 C10: a failed arm still reverts everything it wrote",
     "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
     "SHU-86 C11b: a run whose card is excluded on the first tick stops even while other cards are eligible",
@@ -4655,6 +4656,13 @@
     "SHU-86 mutation M212 leave the stopped workers out of the report",
     "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
     "SHU-86 mutation M214 list leftover workers with their command lines",
+    "SHU-86 mutation M300 end the run on a tick that holds on Linear's rate limit",
+    "SHU-86 mutation M301 count a held tick as the first answered tick",
+    "SHU-86 mutation M302 tick again at once after a hold, without waiting",
+    "SHU-86 mutation M303 take a hold line found anywhere in the tick's output",
+    "SHU-86 mutation M304 wait out a hold past the run window",
+    "SHU-86 mutation M305 wait a whole long hold in one sleep",
+    "SHU-86 mutation M306 tick again while a held wait is still pending",
     "SHU-86 mutation M215 count every worker's processes with more than one worker",
     "SHU-86 mutation M216 make a worker busy on another worker's drop-ins",
     "SHU-86 mutation M217 sweep another worker's dependency cache",
@@ -18641,6 +18649,10 @@
     },
     {
       "name": "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
+      "capabilities": []
+    },
+    {
+      "name": "Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks again instead of ending the run",
       "capabilities": []
     },
     {
@@ -33862,6 +33874,34 @@
     },
     {
       "name": "SHU-86 mutation M214 list leftover workers with their command lines",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M300 end the run on a tick that holds on Linear's rate limit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M301 count a held tick as the first answered tick",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M302 tick again at once after a hold, without waiting",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M303 take a hold line found anywhere in the tick's output",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M304 wait out a hold past the run window",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M305 wait a whole long hold in one sleep",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M306 tick again while a held wait is still pending",
       "capabilities": []
     },
     {

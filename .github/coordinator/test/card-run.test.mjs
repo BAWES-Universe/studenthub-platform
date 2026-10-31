@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  planRun, onBase, nextCard, tickOutcome, tick, publishClaim, replaceClaim, busyReasons, runCard, revert, parseArgs, main,
+  planRun, onBase, nextCard, tickOutcome, TICK_HOLD_MAX_SLEEP_MS, tick, publishClaim, replaceClaim, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   autoServiceName, autoTimerName,
@@ -967,6 +967,86 @@ test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode,
   assert.ok(host.calls.includes("systemctl start shu71-evidence.service"));
   assert.ok(host.calls.includes("systemctl stop shu71-evidence.service"));
   assert.equal(host.ticks, 4, "three armed ticks and one dispatch-off tick");
+});
+
+test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks again instead of ending the run", async () => {
+  const id = "shu-301-run-20261009T153007Z";
+  const held = tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=120", id);
+  assert.equal(held.ended, false);
+  assert.deepEqual(held.hold, { retry_after_s: 120 });
+  // Anything else with no activation line still ends the run, and names what the tick said.
+  const failed = tickOutcome("coordinator reconcile failed: socket hang up", id);
+  assert.equal(failed.outcome, "REFUSED");
+  assert.match(failed.reason, /did not report this run armed: coordinator reconcile failed: socket hang up$/);
+  assert.equal(tickOutcome("", id).reason, "the tick did not report this run armed: null");
+  // A hold line is a hold only as the tick's whole output: next to any other
+  // text, before or after it, the run ends.
+  assert.equal(tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=5\n", id).ended, false);
+  assert.equal(tickOutcome("coordinator reconcile failed: boom\nHOLD=LINEAR_RATE_LIMITED retry_after=5", id).outcome, "REFUSED");
+  assert.equal(tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=5\ncoordinator reconcile failed: boom", id).outcome, "REFUSED");
+  assert.equal(tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=5 and more", id).outcome, "REFUSED");
+  // An activation line wins over a stray hold line.
+  assert.equal(tickOutcome(`HOLD=LINEAR_RATE_LIMITED retry_after=5\n${tickText("activation=absent (committed gates only)")}`, id).outcome, "REFUSED");
+
+  // With two workers the host's wait is asynchronous: a held wait must be
+  // awaited, so no tick starts while it is still pending.
+  let pending = 0;
+  const early = [];
+  const host = fakeHost({
+    onTick: (h) => {
+      if (pending > 0) early.push(h.ticks);
+      const armedNow = JSON.parse(h.files.get(PATHS.activation)?.text ?? "{}").activation_id;
+      if (h.ticks === 2 || h.ticks === 3) return "HOLD=LINEAR_RATE_LIMITED retry_after=300";
+      if (h.ticks < 5) return tickText(armed(armedNow));
+      if (h.ticks === 5) return tickText(spent("SHU-301", "review PASS — the episode is complete"), 0);
+      return tickText("activation=absent (committed gates only)", 0);
+    },
+  });
+  const blockingSleep = host.io.sleep;
+  host.io = { ...host.io,
+    sleep: (ms) => { blockingSleep(ms); pending += 1; return new Promise((resolve) => setImmediate(() => { pending -= 1; resolve(); })); },
+  };
+  const before = host.clock;
+  const { code, output } = await main(["run"], host.io, PATHS);
+  assert.equal(code, 0, JSON.stringify(output, null, 2));
+  assert.deepEqual(early, [], "no tick starts while a wait is still pending");
+  assert.equal(output.outcome, "PASS", "two held ticks did not end the run");
+  assert.equal(output.ticks.length, 3, "held ticks are not answered ticks");
+  assert.deepEqual(output.holds.map((h) => h.retry_after_s), [300, 300]);
+  assert.ok(host.clock - before >= 2 * (300 * 1000 + CARD_RUN_LIMITS.tickIntervalMs), "each hold waited the time Linear asked for");
+  reverted(host);
+
+  // A hold on the first tick does not skip the first-tick eligibility check.
+  const first = fakeHost({
+    onTick: (h) => {
+      const armedNow = JSON.parse(h.files.get(PATHS.activation)?.text ?? "{}").activation_id;
+      if (h.ticks === 1) return "HOLD=LINEAR_RATE_LIMITED retry_after=1";
+      if (h.ticks === 2) return tickText(armed(armedNow), 0, ["SHU-301            not in Todo"]);
+      return tickText("activation=absent (committed gates only)", 0);
+    },
+  });
+  const notEligible = await main(["run"], first.io, PATHS);
+  assert.equal(notEligible.output.outcome, "NOT_ELIGIBLE");
+
+  // A hold that outlasts the window: each wait is capped at the hold maximum
+  // and at what is left of the window, so the run ends EXPIRED at the window,
+  // never later, and writes its status between waits.
+  const long = fakeHost({
+    onTick: (h) => (h.files.has(PATHS.activation)
+      ? (h.ticks === 1 ? tickText(armed(armedId(h))) : "HOLD=LINEAR_RATE_LIMITED retry_after=999999")
+      : tickText("activation=absent (committed gates only)")),
+  });
+  // A seven-minute tick interval puts the held ticks off the half-hour grid,
+  // so an uncapped last wait would overshoot the window by minutes.
+  const expired = await runCard({ io: long.io, paths: PATHS, limits: { ...CARD_RUN_LIMITS, tickIntervalMs: 7 * 60 * 1000 } });
+  assert.equal(expired.outcome, "EXPIRED");
+  const deadline = START.getTime() + CARD_RUN_LIMITS.runMs;
+  assert.ok(expired.holds.length > 1, "a long hold is waited out over several held ticks");
+  for (const entry of expired.holds) assert.ok(Date.parse(entry.at) < deadline, `no held tick starts at or after the window: ${entry.at}`);
+  const starts = expired.holds.map((entry) => Date.parse(entry.at));
+  for (let i = 1; i < starts.length; i += 1) assert.ok(starts[i] - starts[i - 1] <= TICK_HOLD_MAX_SLEEP_MS, "no single wait is longer than the hold maximum");
+  assert.ok(long.clock <= deadline, `the last wait stops at the window, not after it: ended ${(long.clock - deadline) / 1000}s past it`);
+  reverted(long);
 });
 
 test("SHU-86 C10: a failed arm still reverts everything it wrote", async () => {
@@ -6367,6 +6447,6 @@ test("M15 W8: the committed config runs two card workers, and a queued card that
   const queue = cardQueue(COMMITTED);
   assert.equal(queue.ok, true, queue.reason);
   for (const [id, needs] of Object.entries(queue.after)) {
-    for (const need of needs) assert.ok(queue.ids.indexOf(need) < queue.ids.indexOf(id), `${id} waits on ${need}, which comes earlier`);
+    for (const need of needs) assert.ok(queue.ids.includes(need) && queue.ids.indexOf(need) < queue.ids.indexOf(id), `${id} waits on ${need}, which is queued earlier`);
   }
 });
