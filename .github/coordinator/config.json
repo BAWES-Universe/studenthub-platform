@@ -49,8 +49,12 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-404",
-      "SHU-374"
+      "SHU-198",
+      "SHU-196",
+      "SHU-215",
+      "SHU-189",
+      "SHU-104",
+      "SHU-188"
     ]
   },
   "adapter_pause_map": {},
@@ -2581,6 +2585,247 @@
         "apps/gateway/src/web-ui.ts",
         "apps/gateway/test/web-ui.test.ts",
         "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-198",
+      "authorization_ref": "SHU-198",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (platform operations), card 1: scheduled jobs record every run, never overlap, a failed or missed run raises one scrubbed alert, and admins see a Jobs page; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0300_job_runs.sql",
+        "packages/db/src/postgres-job-runs-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-job-runs.test.ts",
+        "packages/observability/src/jobs.ts",
+        "packages/observability/src/alerts.ts",
+        "packages/observability/src/schema.ts",
+        "packages/observability/src/index.ts",
+        "packages/observability/test/jobs.test.ts",
+        "packages/observability/test/jobs-mutations.mjs",
+        "apps/worker/src/index.ts",
+        "apps/worker/test/heartbeat.test.ts",
+        "apps/gateway/src/admin-jobs.ts",
+        "apps/gateway/test/admin-jobs.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "docs/observability.md"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0300_job_runs.sql",
+        "packages/db/src/postgres-job-runs-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-job-runs.test.ts",
+        "packages/observability/src/jobs.ts",
+        "packages/observability/src/alerts.ts",
+        "packages/observability/src/schema.ts",
+        "packages/observability/src/index.ts",
+        "packages/observability/test/jobs.test.ts",
+        "packages/observability/test/jobs-mutations.mjs",
+        "apps/worker/src/index.ts",
+        "apps/worker/test/heartbeat.test.ts",
+        "apps/gateway/src/admin-jobs.ts",
+        "apps/gateway/test/admin-jobs.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "docs/observability.md"
+      ]
+    },
+    {
+      "id": "SHU-196",
+      "authorization_ref": "SHU-196",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 3 (delivery and exports), card 1: one audited, time-limited export service, first used by the Companies directory's Export button; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0350_exports.sql",
+        "packages/db/src/postgres-exports-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-exports.test.ts",
+        "packages/exports/src/exports.ts",
+        "packages/exports/src/csv.ts",
+        "packages/exports/src/company-directory-export.ts",
+        "packages/exports/test/exports.test.ts",
+        "packages/exports/test/exports-mutations.mjs",
+        "apps/gateway/src/exports-http.ts",
+        "apps/gateway/test/exports-http.test.ts",
+        "apps/gateway/src/company-directory.ts",
+        "apps/gateway/test/company-directory.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0350_exports.sql",
+        "packages/db/src/postgres-exports-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-exports.test.ts",
+        "packages/exports/src/exports.ts",
+        "packages/exports/src/csv.ts",
+        "packages/exports/src/company-directory-export.ts",
+        "packages/exports/test/exports.test.ts",
+        "packages/exports/test/exports-mutations.mjs",
+        "apps/gateway/src/exports-http.ts",
+        "apps/gateway/test/exports-http.test.ts",
+        "apps/gateway/src/company-directory.ts",
+        "apps/gateway/test/company-directory.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-215",
+      "authorization_ref": "SHU-215",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (platform operations), card 2: operations runbooks and an on-call rota template, kept in step with the alerts and the integration register by a test; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "docs/runbooks/README.md",
+        "docs/runbooks/deploy.md",
+        "docs/runbooks/rollback.md",
+        "docs/runbooks/incident.md",
+        "docs/runbooks/secret-rotation.md",
+        "docs/runbooks/alerts.md",
+        "docs/runbooks/on-call.md",
+        "packages/observability/src/alerts.ts",
+        "packages/observability/test/runbooks.test.mjs",
+        "docs/observability.md"
+      ],
+      "revision_paths": [
+        "docs/runbooks/README.md",
+        "docs/runbooks/deploy.md",
+        "docs/runbooks/rollback.md",
+        "docs/runbooks/incident.md",
+        "docs/runbooks/secret-rotation.md",
+        "docs/runbooks/alerts.md",
+        "docs/runbooks/on-call.md",
+        "packages/observability/src/alerts.ts",
+        "packages/observability/test/runbooks.test.mjs",
+        "docs/observability.md"
+      ],
+      "after": [
+        "SHU-198"
+      ]
+    },
+    {
+      "id": "SHU-189",
+      "authorization_ref": "SHU-189",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 3 (delivery and exports), card 2: transactional email goes out from an outbox once, delivered by a job in lane 2's runner, nothing sent from staging; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0351_email_outbox.sql",
+        "packages/db/src/postgres-email-outbox-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-email-outbox.test.ts",
+        "packages/notifications/src/email-outbox.ts",
+        "packages/notifications/src/email-templates.ts",
+        "packages/notifications/src/email-port.ts",
+        "packages/notifications/test/email-outbox.test.ts",
+        "packages/notifications/test/email-outbox-mutations.mjs",
+        "packages/observability/src/jobs.ts",
+        "apps/worker/src/index.ts",
+        "apps/worker/test/heartbeat.test.ts",
+        "apps/gateway/src/admin-outbox.ts",
+        "apps/gateway/test/admin-outbox.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0351_email_outbox.sql",
+        "packages/db/src/postgres-email-outbox-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-email-outbox.test.ts",
+        "packages/notifications/src/email-outbox.ts",
+        "packages/notifications/src/email-templates.ts",
+        "packages/notifications/src/email-port.ts",
+        "packages/notifications/test/email-outbox.test.ts",
+        "packages/notifications/test/email-outbox-mutations.mjs",
+        "packages/observability/src/jobs.ts",
+        "apps/worker/src/index.ts",
+        "apps/worker/test/heartbeat.test.ts",
+        "apps/gateway/src/admin-outbox.ts",
+        "apps/gateway/test/admin-outbox.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-196",
+        "SHU-198"
+      ]
+    },
+    {
+      "id": "SHU-104",
+      "authorization_ref": "SHU-104",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (platform operations), card 3: a restore check that proves a restored database matches its source, with the operator's restore runbook; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/src/restore-check.ts",
+        "packages/db/src/restore-check-cli.ts",
+        "packages/db/test/postgres-restore-check.test.ts",
+        "packages/db/test/restore-check-mutations.mjs",
+        "docs/runbooks/restore.md",
+        "docs/runbooks/README.md",
+        "docs/recovery-inventory.md"
+      ],
+      "revision_paths": [
+        "packages/db/src/restore-check.ts",
+        "packages/db/src/restore-check-cli.ts",
+        "packages/db/test/postgres-restore-check.test.ts",
+        "packages/db/test/restore-check-mutations.mjs",
+        "docs/runbooks/restore.md",
+        "docs/runbooks/README.md",
+        "docs/recovery-inventory.md"
+      ],
+      "after": [
+        "SHU-215"
+      ]
+    },
+    {
+      "id": "SHU-188",
+      "authorization_ref": "SHU-188",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 3 (delivery and exports), card 3: notifications stored as events and rendered at read time, a bell and a page, first produced by a company's status change; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0352_notifications.sql",
+        "packages/db/src/postgres-notifications-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-notifications.test.ts",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/notifications/src/notifications.ts",
+        "packages/notifications/test/notifications.test.ts",
+        "packages/notifications/test/notifications-mutations.mjs",
+        "apps/gateway/src/notifications-http.ts",
+        "apps/gateway/test/notifications-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0352_notifications.sql",
+        "packages/db/src/postgres-notifications-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-notifications.test.ts",
+        "packages/db/src/postgres-organization-status-store.ts",
+        "packages/db/test/postgres-organization-status.test.ts",
+        "packages/notifications/src/notifications.ts",
+        "packages/notifications/test/notifications.test.ts",
+        "packages/notifications/test/notifications-mutations.mjs",
+        "apps/gateway/src/notifications-http.ts",
+        "apps/gateway/test/notifications-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-189"
       ]
     }
   ],

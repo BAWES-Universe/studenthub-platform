@@ -4163,6 +4163,391 @@ const SHU404_BRIEF = SHU402_BRIEF.replace("Card SHU-402:", "Card SHU-404:").repl
 if (!SHU404_BRIEF.startsWith("Card SHU-404:") || !SHU404_BRIEF.includes(SHU402_FINDINGS) || !SHU404_BRIEF.includes(SHU404_FINDINGS)) throw new Error("SHU404_BRIEF must name its own card and carry every attempt's findings");
 const SHU404_ACCEPTANCE = `${SHU402_ACCEPTANCE} SHU-404 is SHU-402's contract re-queued after its build used up its revisions; SHU-402 never runs again. Every Postgres fixture row satisfies its table's CHECK constraints and triggers: SHU373_CATALOGUE tests pending and rejected choices as ids unknown to catalogue_items and a deleted choice as a catalogue_items row with status 'deleted' and deleted_at set, for both countries and universities, and the store's choices read leaves out a deleted country and university that the test inserts. The Change preview shows gender by its label.`;
 
+// The parallel lanes (contracts/parallel-lanes.md, 10-27). Lane 2 is platform
+// operations, lane 3 is delivery and exports; both run beside lane 1
+// (organizations and profile) under more than one card worker (M15), and each
+// lane's later cards name its earlier ones in config.json's `after`. Every
+// lane owns a migration number range so two lanes never take the same number:
+// lane 2 0300 to 0349, lane 3 0350 to 0399. A migration may only reference
+// tables of its own range or a lower one, because CI builds a fresh database
+// in filename order.
+const LANE_CONTEXT = (lane, range) => `Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+This card runs in lane ${lane} of the box, beside other lanes that change other packages at the same time. Rules that keep the lanes apart:
+- Migrations: take the next free number in ${range} (this lane's range), never a number outside it. Tests and the expected schema_migrations list are discovered from the folders (tools/test-runner, packages/db/test/postgres-authz-store.test.ts reads packages/db/migrations), so do not edit package.json scripts or any list of test files; a new test under a package's test/ folder runs by itself. A migration may reference only tables created by a lower-numbered migration.
+- Shared files (apps/gateway/src/index.ts, apps/gateway/src/login-runtime.ts, apps/gateway/src/web-ui.ts, packages/db/src/index.ts): add your lines as one contiguous block next to the most similar existing block and change no other line, so another lane's card merges beside yours without a conflict.
+- Earlier cards of this lane may have landed before you: re-read any line this brief names.
+
+How this brief is written. It states what must be true and what must never happen. It does not prescribe the code: choose the shape, the queries and the helpers yourself, following the patterns of the files it names. When a guard and the code you would naturally write disagree, the guard wins; when the brief and the code at the bound head disagree, say so in your final message rather than forcing either.`;
+
+const LANE_STANDING = "Standing lines, held by every lane card: (S1) for every value this card writes or records, say in your final message where it is read and shown to a person, and a test proves it shows there; (S2) no request makes one query or port call per row: a page over many runs, exports or messages costs a fixed number of reads whatever their count, and every new lookup column is indexed.";
+
+const LANE_FINISH = `Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed, how each acceptance item is pinned, and answer S1 for each value you write or record.`;
+
+const LANE_ADMIN = "Who is an admin here: a principal holding an admin grant on an operator organization (DEFAULT_OPERATOR_ORG_IDS in packages/organizations/src/organizations.ts, read through AuthzStore.listGrantsForPrincipal). Anyone else, signed in or not, gets the same 404 not_found page as an unknown path, never 403, so the page's existence is not revealed.";
+
+// Lane 2, card 1. X2 of SHU-192: scheduled jobs record every run, never run
+// twice at once, and a failed, overlapping or missed run raises one scrubbed
+// alert. The admin Jobs page is where the recorded runs are read.
+export const SHU198_PATHS = Object.freeze([
+  "packages/db/migrations/0300_job_runs.sql",
+  "packages/db/src/postgres-job-runs-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-job-runs.test.ts",
+  "packages/observability/src/jobs.ts",
+  "packages/observability/src/alerts.ts",
+  "packages/observability/src/schema.ts",
+  "packages/observability/src/index.ts",
+  "packages/observability/test/jobs.test.ts",
+  "packages/observability/test/jobs-mutations.mjs",
+  "apps/worker/src/index.ts",
+  "apps/worker/test/heartbeat.test.ts",
+  "apps/gateway/src/admin-jobs.ts",
+  "apps/gateway/test/admin-jobs.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "docs/observability.md",
+]);
+
+const SHU198_ACCEPTANCE = [
+  "(1) Every run of a registered job through the job runner records one row with the job name, a run id, started and finished times, duration and an outcome from a closed set (succeeded, failed, refused_overlap); a run that throws records failed and rethrows; the run row is written by the runner, not by each job (SHU198_RECORDED);",
+  "(2) Two runs of the same job never overlap: the runner takes a lease (a row per job with holder and expiry, taken in one statement) before the work, and a second run while the lease is held records refused_overlap, does not run the work and raises the job_overlap alert; an expired lease (holder crashed) may be taken over; different jobs never block each other (SHU198_LEASE);",
+  "(3) A failed run raises the job_failed alert, and a job whose last success is older than its declared interval times a grace factor raises job_missed when the check runs; each alert carries only the closed job name, the alert code, the owner and the runbook path, never an error message, stack, argument or personal value, and the existing telemetry boundary (sanitizeEvent) rejects anything else (SHU198_ALERTS);",
+  "(4) The worker entrypoint runs a named job through the runner (node dist/apps/worker/src/index.js run <job>), with heartbeat as the first registered job and the missed-run check as a second; an unknown job name exits non-zero and records nothing (SHU198_WORKER);",
+  "(5) An admin's Jobs page (GET /admin/jobs, HTML, and the same as JSON with Accept: application/json) lists each registered job with its last run's start time, duration and outcome, and whether it is currently missed; everyone else gets 404 not_found; the page reads all jobs in a fixed number of queries whatever their count, proved with a counting fake (SHU198_PAGE);",
+  "(6) S1: a run recorded in a test shows on the rendered Jobs page with its outcome; S2 holds; docs/observability.md names the three new alert codes, their owner and runbook path;",
+  "(7) packages/observability/test/jobs-mutations.mjs makes each of items 1-3 fail its named test by a mutant (drop the run row on failure, skip the lease, put the error message into the alert) and passes unmutated; every existing mutant of packages/observability/test/mutations.mjs still binds once and is killed; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU198_BRIEF = `Card SHU-198: scheduled jobs record every run, never overlap, and a failed or missed run raises one scrubbed alert; admins see a Jobs page (slice X2 of SHU-192, the job half; lane 2, card 1; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head. ${LANE_CONTEXT(2, "0300 to 0349")}
+
+Why. The legacy system runs about thirty scheduled actions from cron with a cron_log table that records nothing useful: no outcome, no overlap guard, no alert on a missed run (docs/parity/platform-ops-and-integrations.md section 5). The platform's worker today runs one heartbeat through observedJob and records only an in-memory metric. Every later job (outbox delivery, exports clean-up, imports) needs one runner that records each run, refuses to overlap itself and alerts without leaking data. Mail-delivery visibility (the other half of X2) comes with the outbox card and is not this card.
+
+Read first:
+- apps/worker/src/index.ts and packages/observability/src/index.ts (observedJob, Telemetry, newSpan), schema.ts (the closed vocabularies and sanitizeEvent), alerts.ts (Alert, evaluateAlerts), local-sentry.ts, and packages/observability/test/observability.test.ts and mutations.mjs (whose anchors must keep binding once).
+- docs/observability.md (the alert table this card extends) and docs/parity/platform-ops-and-integrations.md sections 5 and 9.
+- A Postgres store with its own pool for the store pattern: packages/db/src/postgres-organization-notes-store.ts (constructor with connectionString or pool, close), packages/db/src/connection.ts, and packages/db/test/postgres-organization-notes.test.ts for the test:db pattern.
+- A gateway page for the route, session and HTML pattern: apps/gateway/src/company-directory.ts and its mounting in apps/gateway/src/index.ts, and how pages render in apps/gateway/src/web-ui.ts.
+
+Outcome:
+- A job registry (packages/observability/src/jobs.ts): each job has a closed name, a declared interval and a work function. One runner function runs a job: it takes the job's lease, records the run, runs the work inside observedJob, records the outcome and duration, releases the lease, and raises the alerts of acceptance items 2 and 3 through the existing Alert shape. The registry and the runner are what the worker and the tests call; the Postgres store sits behind a port the runner takes, with an in-memory implementation for the unit tests.
+- Storage (migration 0300): a job_runs table (run id, job name, started_at, finished_at, duration_ms, outcome with a check on the closed set) indexed on (job_name, started_at desc), and a job_leases table (job name primary key, holder run id, expires_at). No column holds free text from a job.
+- Alert codes job_failed, job_overlap and job_missed join the Alert union with owner platform-on-call and runbook docs/observability.md (the runbooks card moves runbook paths later). The job name joins the telemetry boundary only as a member of the closed registry.
+- The worker runs one named job per process start; scheduling the process (cron or a timer on the host) is an operator's step and not this card.
+- The Jobs page is read-only.
+
+Guards:
+- No error message, stack, argument, row value or personal data is stored in job_runs or put in an alert; a test throws an error whose message contains an email address and asserts it appears nowhere in the stored row, the alert or the rendered page.
+- The lease is taken in a single statement (an insert, or an update of an expired lease, guarded so only one of two concurrent callers wins); a test runs two runners of one job concurrently against the in-memory port and the Postgres test does the same against the database.
+- The runner records the outcome even when the work throws, and never swallows the error.
+- ${LANE_ADMIN}
+
+Acceptance. Each of items 1 to 3 is pinned by a mutation in packages/observability/test/jobs-mutations.mjs that makes its named test fail (copy the shape of packages/observability/test/mutations.mjs). The tests are named with their token first and a space after it.
+${SHU198_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, store, its index export and its Postgres test; jobs.ts, the alert and schema additions, the observability index export, the jobs test and mutation script; the worker entrypoint and its test (apps/worker/test/heartbeat.test.ts); the gateway admin-jobs module, its test, one route block in index.ts and its wiring in login-runtime.ts; docs/observability.md. Nothing else changes.
+
+Out of scope: mail and SMS delivery visibility (the outbox card), enabling live Sentry ingestion (an operator's call), a scheduler on the host, retries, any change to the login or authorization code, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 2, card 2. X6, the operating runbooks: docs the box can write and a test
+// over them; staging walk-throughs and the rota's names stay with people.
+export const SHU215_PATHS = Object.freeze([
+  "docs/runbooks/README.md",
+  "docs/runbooks/deploy.md",
+  "docs/runbooks/rollback.md",
+  "docs/runbooks/incident.md",
+  "docs/runbooks/secret-rotation.md",
+  "docs/runbooks/alerts.md",
+  "docs/runbooks/on-call.md",
+  "packages/observability/src/alerts.ts",
+  "packages/observability/test/runbooks.test.mjs",
+  "docs/observability.md",
+]);
+
+const SHU215_ACCEPTANCE = [
+  "(1) docs/runbooks/ holds deploy, rollback, incident, secret rotation, alert routing and an on-call rota template, each with the sections the brief lists, and README.md indexes them; every command, file and workflow a runbook names exists at the bound head (the test checks each repository path it cites) (SHU215_SECTIONS);",
+  "(2) Every alert code the platform defines (the Alert union in packages/observability/src/alerts.ts, read by the test, not copied into it) has exactly one entry in docs/runbooks/alerts.md naming its owner, its severity and the runbook section to follow, and every Alert's runbook field points at that entry; a code without an entry, or an entry for a code that no longer exists, fails the test (SHU215_ALERT_MAP);",
+  "(3) secret-rotation.md has one section for every entry in the integration register (deploy/coolify/integration-register.json, read by the test) and names secrets only by the register's names; no runbook contains anything shaped like a secret value (a long base64 or hex run, a URL with userinfo, a private key header, a token prefix such as sk_ or ghp_), proved by a whitelist test with a mutant that adds one (SHU215_SECRETS);",
+  "(4) on-call.md is a template with blank primary and backup fields for the cutover window and says plainly that blanks block the production go/no-go; no person's name, phone or email is written in by the card (SHU215_ROTA);",
+  "(5) The test file runs by itself under npm test (it is a .test.mjs under packages/observability/test/), each of items 1-3 has a mutant applied in the test itself (remove a required section, drop an alert entry, add a fake secret) that it proves would fail, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU215_BRIEF = `Card SHU-215: operations runbooks for deploy, rollback, incident, secret rotation and alert routing, with an on-call rota template, checked by a test (slice X6; lane 2, card 2; docs and one test; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-198 (the job runner and the job_failed, job_overlap and job_missed alerts). ${LANE_CONTEXT(2, "0300 to 0349")} This card has no migration.
+
+Why. The production go/no-go asks for responsible operators and runbooks, and every alert must say what to do. Today the deploy and restore knowledge is spread over deploy/coolify/*.md (DEPLOY-FLOW.md, ROLLBACK-CONTRACT.md, IMAGE-SMOKE.md, README.md) and every alert points at docs/observability.md. This card gathers it into docs/runbooks/ that an operator follows step by step, and makes a test keep the alert list, the integration register and the runbooks in step.
+
+Read first:
+- deploy/coolify/README.md, DEPLOY-FLOW.md, ROLLBACK-CONTRACT.md, IMAGE-SMOKE.md, preflight.mjs, integration-register.json and integration-register.mjs, deployment-env-manifest.json, compose.yaml, and the workflows in .github/workflows/build.yml and staging-on-dev.yml: the real deploy and rollback path the runbooks describe. Describe what exists; do not invent tooling.
+- packages/observability/src/alerts.ts and docs/observability.md: the alert codes and their owner.
+
+Each runbook has these sections, in this order: Purpose, When to use, Who does it, Before you start (checks), Steps (numbered, each with the exact command or screen), How to verify, If it goes wrong, and Related. Deploy covers the pinned image, the preflight and the post-deploy checks; rollback covers the previous image and the migration policy (migrations are forward-only, so a rollback restores the previous image against the newer schema and says when that is unsafe); incident covers severity levels, who decides on a rollback, and how people are told; secret rotation has one section per integration register entry; alerts.md is the routing table (code, owner, severity, what to do, escalation).
+
+Guards:
+- No secret value, internal hostname, IP address, personal name, phone or email anywhere; secrets are named only as the integration register and the env manifest name them.
+- The test reads the alert codes from the source and the integrations from the register, so a later card that adds an alert or an integration fails the test until it adds its runbook entry. Read the Alert union's codes by parsing alerts.ts (or by exporting a frozen list of codes from it and having the union use that list); either way the code list exists once.
+- alerts.ts changes only the runbook paths (to docs/runbooks/alerts.md#<code>) and, if you choose, an exported list of codes; packages/observability/test/mutations.mjs anchors must still bind once.
+
+Acceptance. The tests are named with their token first and a space after it.
+${SHU215_ACCEPTANCE}
+
+${LANE_STANDING} For this card S1 means: say where each runbook is linked from (README index, alert entries) and S2 does not apply.
+
+Your paths: the seven files under docs/runbooks/, packages/observability/src/alerts.ts (runbook paths and an optional exported code list only), packages/observability/test/runbooks.test.mjs, and docs/observability.md (point its alert table at the runbooks). Nothing else changes.
+
+Out of scope: running any runbook on staging (a person does that and links the redacted transcript), filling in the rota (Khalid), changing deploy scripts or workflows, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 2, card 3. SHU-104's box half: a restore check an operator runs after
+// restoring a backup into a scratch database, proved in CI on a copied
+// database; the real restore against real backups is the operator's.
+export const SHU104_PATHS = Object.freeze([
+  "packages/db/src/restore-check.ts",
+  "packages/db/src/restore-check-cli.ts",
+  "packages/db/test/postgres-restore-check.test.ts",
+  "packages/db/test/restore-check-mutations.mjs",
+  "docs/runbooks/restore.md",
+  "docs/runbooks/README.md",
+  "docs/recovery-inventory.md",
+]);
+
+const SHU104_ACCEPTANCE = [
+  "(1) The restore check compares a source database and a restored database and reports, per table of the public schema, both row counts and whether they match; the applied migrations (schema_migrations) must be identical; it exits non-zero when any table differs, any migration differs, or a table exists on one side only (SHU104_COUNTS);",
+  "(2) It checks integrity on the restored side: every foreign key holds (a query per constraint that finds orphans, run as one statement per constraint, never per row), every sequence is at or above its column's maximum, and the append-only triggers of the audit tables are present; any failure is named in the report by table and constraint, never by row content (SHU104_INTEGRITY);",
+  "(3) It refuses to run unless the restored database's name ends in an approved scratch suffix (for example _restore_check) and differs from the source, and it never writes to the source (it opens the source read-only with default_transaction_read_only); the report records start, end and elapsed seconds so recovery time is measured (SHU104_SAFE_TARGET);",
+  "(4) The report contains table names, counts, constraint names and timings only, never a row value; it prints as JSON and as a short text summary (SHU104_REPORT);",
+  "(5) The Postgres test builds a source with every migration and synthetic rows, makes the restored copy with CREATE DATABASE ... TEMPLATE, proves the check passes, then deletes a row, breaks a foreign key (with the constraint disabled during the copy) and resets a sequence on separate copies and proves each is reported; packages/db/test/restore-check-mutations.mjs makes each of items 1-3 fail by a mutant (skip one table, skip the sequence check, drop the suffix guard) and passes unmutated;",
+  "(6) docs/runbooks/restore.md gives the operator's restore procedure (where backups are, the restore command for the platform's managed PostgreSQL, running the check, recording the measured time and the data-loss window), with the same section shape as the other runbooks, and is indexed in docs/runbooks/README.md; docs/recovery-inventory.md lists what must be backed up (platform database, private document storage, configuration, identity dependencies) with owner and current coverage left as fields for the operator; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU104_BRIEF = `Card SHU-104: a restore check that proves a restored platform database matches its source, with the operator's restore runbook (the box half of SHU-104; lane 2, card 3; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-198 and SHU-215 (docs/runbooks/ and its section shape). ${LANE_CONTEXT(2, "0300 to 0349")} This card has no migration.
+
+Why. Before release someone must restore a backup and show it is complete, measure how long it took and how much data a restore loses. The box cannot reach real backups, but it can write the check that turns "the restore looks fine" into a report that names every table, count, constraint and sequence, and prove that check in CI on a copied database.
+
+Read first:
+- packages/db/src/migrate.ts and connection.ts (how the platform connects and applies migrations), packages/db/migrations (the append-only triggers, for example 0004_create_authorization_mutation_audit.sql), and packages/db/test/postgres-authz-store.test.ts (how a test:db test builds its database).
+- deploy/coolify/README.md and compose.yaml (where the database lives), and docs/runbooks/README.md and one runbook from SHU-215 for the section shape.
+
+Outcome:
+- packages/db/src/restore-check.ts exports the check as a function taking two connection strings (and options such as the scratch suffix) and returning the report; restore-check-cli.ts is the operator's command (node dist/packages/db/src/restore-check-cli.js --source <url> --restored <url>), reading URLs from arguments or environment and never printing them.
+- The check reads the catalogue (information_schema and pg_catalog) to find tables, foreign keys, sequences and triggers, so later migrations are covered without editing it.
+
+Guards:
+- Never writes to the source; refuses a restored database without the scratch suffix or equal to the source; prints no connection string, password or row value.
+- Fixed work per table and per constraint, never per row.
+- The test cleans up every database it creates.
+
+Acceptance. Tests are named with their token first and a space after it.
+${SHU104_ACCEPTANCE}
+
+${LANE_STANDING} For this card S1 means the report is what an operator reads: say where it is shown (the CLI output and the runbook's record step).
+
+Your paths: restore-check.ts, restore-check-cli.ts, the Postgres test, the mutation script, docs/runbooks/restore.md, docs/runbooks/README.md (one index line) and docs/recovery-inventory.md. Nothing else changes.
+
+Out of scope: running a restore against staging or production, backup schedules and retention, document storage restore (inventory only), and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 3, card 1. P4: one export service. Its first export is the staff
+// Companies directory, so the service has a real consumer; the notes export
+// (SHU-167) and finance exports reuse it later.
+export const SHU196_PATHS = Object.freeze([
+  "packages/db/migrations/0350_exports.sql",
+  "packages/db/src/postgres-exports-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-exports.test.ts",
+  "packages/exports/src/exports.ts",
+  "packages/exports/src/csv.ts",
+  "packages/exports/src/company-directory-export.ts",
+  "packages/exports/test/exports.test.ts",
+  "packages/exports/test/exports-mutations.mjs",
+  "apps/gateway/src/exports-http.ts",
+  "apps/gateway/test/exports-http.test.ts",
+  "apps/gateway/src/company-directory.ts",
+  "apps/gateway/test/company-directory.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU196_ACCEPTANCE = [
+  "(1) Staff or admin on the Companies directory press Export: the service rechecks the caller's context exactly as the directory does, runs the directory query with the same filters over every page, writes a CSV of only the export's whitelisted columns (name, status, approved to hire, currency, account manager name), stores it privately with an expiry 15 minutes ahead, and returns a download link; the CSV's rows equal the directory's rows for the same filters (SHU196_EXPORT);",
+  "(2) The download checks, at download time, that the caller is the export's requester and still holds a grant that covers the context; another principal, an expired export or a requester who has lost the grant gets 404 not_found and no bytes; knowing the export id alone never downloads (SHU196_DOWNLOAD);",
+  "(3) Every export, including one with zero rows and one that is refused, writes one audit row (requester principal reference, export kind, the filters as a closed set of keys, row count, outcome, time) in the same transaction as the stored file, and no row value is in the audit (SHU196_AUDIT);",
+  "(4) CSV cells are escaped (quotes doubled, fields with commas, quotes or line breaks quoted) and a cell starting with =, +, -, @, tab or carriage return is prefixed with a single quote so spreadsheets never run it as a formula; the file is UTF-8 with a byte order mark (SHU196_CSV);",
+  "(5) An export is refused above a row cap (10,000) with a named refusal shown on the page, and reading the directory for an export costs a fixed number of queries per page of results, proved with a counting fake; an expired export's bytes are deleted by a clean-up function the next card's worker job can run (SHU196_LIMITS);",
+  "(6) S1: the directory page shows an Export button for staff and admin only (employers do not see it), and a test downloads the file through the HTTP handler and reads a company written in the fixture back out of it; packages/exports/test/exports-mutations.mjs makes each of items 2-4 fail its named test by a mutant (authorize by export id alone, skip the audit on zero rows, drop the formula prefix) and passes unmutated; every existing company-directory test and mutant still passes and binds once; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU196_BRIEF = `Card SHU-196: one audited, time-limited export service, first used by the Companies directory's Export button (slice P4 of SHU-191; lane 3, card 1; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. ${LANE_CONTEXT(3, "0350 to 0399")}
+
+Why. Legacy has seven ad-hoc export actions (staff ExportController, admin CandidateController actionExport, status TransferController list exports) that write CSV straight to the response with no audit, no recheck and no expiry (findings OR-F4 and OR-F5 in docs/parity/organizations-stores-and-contacts.md; the reporting inventory is not on main yet). The platform needs one export service every later export goes through: company notes (SHU-167), finance and reports. This card builds it and gives it its first real consumer, the staff Companies directory, so the service is proved end to end.
+
+Read first:
+- apps/gateway/src/company-directory.ts (parseCompanyDirectoryQuery and createCompanyDirectory: the context recheck and the filters), packages/organizations/src/organizations.ts (OrganizationDirectory.listOrganizations, its paging and the directory entry), and how the directory page renders in apps/gateway/src/web-ui.ts.
+- packages/private-documents (how the platform already stores private bytes with expiring delivery) and packages/db/src/authorization-audit.ts (the audit reference helpers).
+- docs/parity/organizations-stores-and-contacts.md, the export findings OR-F4 and OR-F5.
+
+Outcome:
+- packages/exports is a new folder compiled by the root build like packages/observability (no package.json, relative imports), holding the service (request, store, download, clean-up), the CSV writer, and the company directory export kind. An export kind declares its id, who may run it, its closed filter keys, its column whitelist and its row reader; the service does the authorization recheck, cap, CSV, storage, audit and expiry for every kind, so a kind never writes CSV or touches the response itself.
+- Storage (migration 0350): an exports table (id, kind, requester principal id, filters as JSON of the closed keys, row count, outcome, created_at, expires_at, the CSV bytes in a bytea column capped at a few megabytes, nulled by clean-up) indexed on expires_at and on (requester, created_at desc), and the audit rows in the existing authorization audit table under a new operation export.created (widen its operation check from the latest migration's definition, adding only that operation) or in the exports table itself if you show the audit table's constraints cannot take it cleanly; either way the audit row and the file land in one transaction.
+- Routes: POST /exports/company-directory (the directory's query parameters, Origin and content-type checked as the other POST routes), GET /exports/{id} (download with Content-Disposition attachment and no caching), both behind the session.
+
+Guards:
+- The download recheck happens at download time against current grants, not the grants at request time.
+- No row value in the audit, logs or errors; the stored filters are only the closed keys with validated values.
+- No module outside packages/exports writes CSV; the gateway only streams the stored bytes.
+- Employers never see the Export button and get 404 not_found from the routes.
+
+Acceptance. Each of items 2 to 4 is pinned by a mutation in packages/exports/test/exports-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU196_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the exports store, its index export and Postgres test; the three packages/exports source files, the test and the mutation script; the gateway exports module and its test; company-directory.ts and its test (the export button's data only); web-ui.ts (the button); one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: the notes export (SHU-167), finance and report exports, XLSX, background generation (this card generates in the request, under the cap), email delivery of exports, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 3, card 2. C4a: transactional email leaves through an outbox, once.
+// The real provider stays unconfigured, so nothing is sent from staging.
+export const SHU189_PATHS = Object.freeze([
+  "packages/db/migrations/0351_email_outbox.sql",
+  "packages/db/src/postgres-email-outbox-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-email-outbox.test.ts",
+  "packages/notifications/src/email-outbox.ts",
+  "packages/notifications/src/email-templates.ts",
+  "packages/notifications/src/email-port.ts",
+  "packages/notifications/test/email-outbox.test.ts",
+  "packages/notifications/test/email-outbox-mutations.mjs",
+  "packages/observability/src/jobs.ts",
+  "apps/worker/src/index.ts",
+  "apps/worker/test/heartbeat.test.ts",
+  "apps/gateway/src/admin-outbox.ts",
+  "apps/gateway/test/admin-outbox.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU189_ACCEPTANCE = [
+  "(1) A caller enqueues a transactional email inside its own database transaction (one exported function taking the transaction's client, a message class from a closed set, the recipient principal id and the template's closed parameters); the outbox row commits or rolls back with the caller's change, and enqueueing the same idempotency key twice stores one message (SHU189_ENQUEUE);",
+  "(2) A delivery job registered in the SHU-198 job runner sends pending messages after commit: it claims a batch with FOR UPDATE SKIP LOCKED, renders each from its template at send time, resolves the recipient's address at send time, sends through the email port, and records each attempt; a sent message is never sent again, a failed one is retried with backoff up to a limit and then marked failed; two delivery jobs never send one message twice (SHU189_DELIVERY);",
+  "(3) The email port has a fake for tests and an unconfigured implementation that sends nothing and marks the message not_sent with reason delivery_not_configured; no real provider adapter is wired, and the delivery job refuses to send to any address when the environment is not production-flagged, even if a provider is configured later (SHU189_NO_SENDS);",
+  "(4) Attempt records hold the message id, class, outcome and a closed failure code only, never the address, subject, body or a provider message; job alerts keep exactly the SHU-198 scrubbed shape (job name, alert code, owner, runbook) and carry no message id, class, outcome or failure code; a test puts an email address in a provider error and asserts it is stored nowhere and that the raised alert equals the scrubbed shape (SHU189_PRIVACY);",
+  "(5) A person's per-class preference is applied when the message is claimed: a class the person turned off is marked suppressed and not sent; transactional classes marked required (account security) ignore the preference; preferences default to on (SHU189_PREFERENCES);",
+  "(6) S1: an admin's Outbox page (GET /admin/outbox) lists messages newest first, paged 50, with class, state, attempts and times and no address or content, in a fixed number of queries per page; everyone else gets 404 not_found; packages/notifications/test/email-outbox-mutations.mjs makes each of items 1-4 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU189_BRIEF = `Card SHU-189: transactional email goes out from an outbox, once, with nothing sent from staging (slice C4, the email half; lane 3, card 2; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-196 (the export service) and, from lane 2, SHU-198 (the job runner in packages/observability/src/jobs.ts and the worker's run <job> entrypoint). ${LANE_CONTEXT(3, "0350 to 0399")} If SHU-198 has not landed at the bound head, say so in your final message and stop: this card registers its delivery job in that runner.
+
+Why. Legacy sends mail inline from request handlers and campaigns, with no outbox, no record of attempts and no guard against sending twice (the communication inventory is not on main yet). The civil ID result email (queue 14), invitations and payment notices all need one outbox that commits with the event and is delivered by the worker after commit. Campaigns move out of the product (decision D-CM1) and SMS is a later card.
+
+Read first:
+- packages/observability/src/jobs.ts (the job registry and runner from SHU-198) and apps/worker/src/index.ts.
+- packages/db/src/postgres-organization-notes-store.ts and its Postgres test (store and transaction patterns), and packages/db/src/authorization-audit.ts (principal references).
+- apps/gateway/src/admin-jobs.ts from SHU-198 (the admin page pattern this card copies).
+
+Outcome:
+- packages/notifications is a new folder compiled by the root build (no package.json, relative imports) holding the outbox service, the template registry (one class to start: account.notice, a plain transactional notice with closed parameters, used by the tests; later cards add their classes) and the email port with its fake and its unconfigured implementation.
+- Storage (migration 0351): email_outbox (id, class, recipient principal id, template parameters as JSON of the class's closed keys, idempotency key unique, state from a closed set: pending, sending, sent, failed, not_sent, suppressed, attempts, next_attempt_at, created_at, sent_at) indexed for the claim (state, next_attempt_at) and the admin page (created_at desc); email_attempts (message id, attempt number, outcome, closed failure code, at); email_preferences (principal id, class, enabled).
+- The delivery job is registered in the SHU-198 registry with its interval, so its runs, overlaps and failures show on the Jobs page and alert through the existing codes.
+
+Guards:
+- The address is resolved at send time from the principal and never stored in the outbox; no address, subject, body or provider text in attempts, alerts or logs. Per-message detail (message id, class, outcome, failure code) lives only in email_attempts; a failed delivery run raises the runner's job_failed alert in SHU-198's scrubbed shape and adds no field to it.
+- Exactly once on the platform's side: a message moves pending to sending to sent in transactions that a second worker cannot interleave; a provider timeout after the send is recorded as failed and retried only when the port says it is safe to retry.
+- Nothing is sent from staging: the only implementations wired are the fake (tests) and unconfigured (runtime).
+- ${LANE_ADMIN}
+
+Acceptance. Each of items 1 to 4 is pinned by a mutation in packages/notifications/test/email-outbox-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU189_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the outbox store, its index export and Postgres test; the three packages/notifications source files, the test and the mutation script; packages/observability/src/jobs.ts (register the delivery job only); the worker entrypoint and its test (apps/worker/test/heartbeat.test.ts); the gateway admin-outbox module and its test; one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: a real email provider adapter, SMS, campaigns, the per-person delivery log on the People page (staff People pages come in queue 15), any producer of real messages (later cards enqueue their own classes), and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 3, card 3. C3: the notifications feed. The event is stored, the text is
+// rendered at read time from current data; the first producer is a company's
+// status change, seen by that company's owners.
+export const SHU188_PATHS = Object.freeze([
+  "packages/db/migrations/0352_notifications.sql",
+  "packages/db/src/postgres-notifications-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-notifications.test.ts",
+  "packages/db/src/postgres-organization-status-store.ts",
+  "packages/db/test/postgres-organization-status.test.ts",
+  "packages/notifications/src/notifications.ts",
+  "packages/notifications/test/notifications.test.ts",
+  "packages/notifications/test/notifications-mutations.mjs",
+  "apps/gateway/src/notifications-http.ts",
+  "apps/gateway/test/notifications-http.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU188_ACCEPTANCE = [
+  "(1) A notification is stored as an event (recipient principal id, kind from a closed set, one typed subject reference such as organization:<id>, the event's closed parameters, a dedupe key unique per recipient, created_at, read_at); recording the same event twice for a recipient stores one; recording happens in the producer's transaction (SHU188_EVENT);",
+  "(2) The text is rendered at read time from current data: a company's status-change notification shows the company's current name and the new status label, so a renamed company shows its new name; an item whose subject the recipient can no longer see (the company deleted, or their grant on it removed) is left out of the feed and the count; rendering a page of items reads their subjects in a fixed number of queries, proved with a counting fake (SHU188_RENDER);",
+  "(3) When staff or an admin change a company's status through the existing status write, each principal holding an org-owner grant on that company gets one organization.status_changed notification, recorded in the same transaction as the status change; a refused or stale status write records none (SHU188_PRODUCER);",
+  "(4) Signed-in people see a bell with their unread count in the page header and a Notifications page (GET /notifications, newest first, paged 25) where each item links to its subject; marking one read (POST /notifications/{id}/read) or all read changes only the caller's own items; another person's item id gets 404 not_found (SHU188_FEED);",
+  "(5) No notification text is stored: the table holds kind, subject reference and closed parameters only; the rendered text never includes a value the recipient's grants would not show them (SHU188_NO_STORED_TEXT);",
+  "(6) S1: a status change made in a test shows as a rendered item on the owner's Notifications page with the company's current name, and the bell count shows 1 then 0 after marking it read; packages/notifications/test/notifications-mutations.mjs makes each of items 1, 2 and 4 fail its named test by a mutant (drop the dedupe, render from a stored name, mark read without the recipient check) and passes unmutated; every existing organization status test and mutant still passes and binds once; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU188_BRIEF = `Card SHU-188: people see their notifications, rendered at read time from current data, starting with a company's status change (slice C3, the feed half; lane 3, card 3; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-196 and SHU-189 of this lane (packages/notifications exists, with the email outbox). ${LANE_CONTEXT(3, "0350 to 0399")}
+
+Why. Legacy stores notification text at write time in CandidateNotification and StaffNotification, so a renamed company or a revoked permission still shows stale or forbidden text, and duplicates are common. The platform stores the event and renders it when it is read. This card builds the feed, the bell and the page, and its first producer: company owners learn when staff change their company's status.
+
+Read first:
+- packages/db/src/postgres-organization-status-store.ts and packages/organizations/src/status-writes.ts (the status write and its transaction), packages/db/test/postgres-organization-status.test.ts, and packages/organizations/test/status-writes-mutations.mjs (whose anchors must keep binding once).
+- apps/gateway/src/web-ui.ts (the page shell and header, where the bell goes), apps/gateway/src/context-navigation.ts, and apps/gateway/test/web-ui.test.ts.
+- packages/db/src/organization-liveness.ts (whether a company is live) and AuthzStore.listGrantsForPrincipal (whether the recipient still sees the subject).
+
+Outcome:
+- packages/notifications/src/notifications.ts: the kind registry (one kind to start, organization.status_changed, with its closed parameters and its renderer), the record function a producer calls with its transaction client, and the feed service (list, count, mark read) that renders at read time.
+- Storage (migration 0352): notifications (id, recipient principal id, kind, subject reference, parameters JSON, dedupe key, created_at, read_at) with a unique index on (recipient, dedupe key) and an index on (recipient, read_at, created_at desc) for the count and the page.
+- The status store calls the record function inside its existing commit transaction after the status row is written; the dedupe key is the status change's receipt reference.
+- The bell count is read once per page render with one query.
+
+Guards:
+- No stored text; rendering checks visibility against current grants and liveness for the whole page in a fixed number of queries.
+- Mark read changes only rows whose recipient is the caller; ids are not guessable sequences in the URL (use the row's uuid or an opaque id).
+- The status write's existing behaviour, receipts and audit rows stay exactly as they are; a failure to record a notification rolls the status change back rather than losing it silently (they are one transaction).
+
+Acceptance. Each of items 1, 2 and 4 is pinned by a mutation in packages/notifications/test/notifications-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU188_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the notifications store, its index export and Postgres test; the status store and its Postgres test (the one record call and its test only); notifications.ts, its test and mutation script; the gateway notifications module and its test; web-ui.ts and its test (the bell and the page); one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: push to devices and the device registry, email for notifications (the outbox exists; a later card links them), other kinds (invitations, assignments, payments come with their cards), staff notifications, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4669,6 +5054,48 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU373_PATHS,
     acceptance: SHU404_ACCEPTANCE,
     brief: SHU404_BRIEF,
+  }),
+  "SHU-198": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU198_PATHS,
+    revision_paths: SHU198_PATHS,
+    acceptance: SHU198_ACCEPTANCE,
+    brief: SHU198_BRIEF,
+  }),
+  "SHU-215": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU215_PATHS,
+    revision_paths: SHU215_PATHS,
+    acceptance: SHU215_ACCEPTANCE,
+    brief: SHU215_BRIEF,
+  }),
+  "SHU-104": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU104_PATHS,
+    revision_paths: SHU104_PATHS,
+    acceptance: SHU104_ACCEPTANCE,
+    brief: SHU104_BRIEF,
+  }),
+  "SHU-196": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU196_PATHS,
+    revision_paths: SHU196_PATHS,
+    acceptance: SHU196_ACCEPTANCE,
+    brief: SHU196_BRIEF,
+  }),
+  "SHU-189": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: SHU189_ACCEPTANCE,
+    brief: SHU189_BRIEF,
+  }),
+  "SHU-188": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: SHU188_ACCEPTANCE,
+    brief: SHU188_BRIEF,
   }),
 });
 
