@@ -1471,8 +1471,14 @@ const CASES = [
   },
   {
     name: "M302 tick again at once after a hold, without waiting",
-    from: "          io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));",
+    from: "          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));",
     to: "          // SHU86-M302",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M306 tick again while a held wait is still pending",
+    from: "          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
+    to: "          void io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, /* SHU86-M306 */",
     pattern: "Rate-limit hold:",
   },
   {

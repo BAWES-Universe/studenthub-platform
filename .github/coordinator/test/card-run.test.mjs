@@ -988,8 +988,13 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
   // An activation line wins over a stray hold line.
   assert.equal(tickOutcome(`HOLD=LINEAR_RATE_LIMITED retry_after=5\n${tickText("activation=absent (committed gates only)")}`, id).outcome, "REFUSED");
 
+  // With two workers the host's wait is asynchronous: a held wait must be
+  // awaited, so no tick starts while it is still pending.
+  let pending = 0;
+  const early = [];
   const host = fakeHost({
     onTick: (h) => {
+      if (pending > 0) early.push(h.ticks);
       const armedNow = JSON.parse(h.files.get(PATHS.activation)?.text ?? "{}").activation_id;
       if (h.ticks === 2 || h.ticks === 3) return "HOLD=LINEAR_RATE_LIMITED retry_after=300";
       if (h.ticks < 5) return tickText(armed(armedNow));
@@ -997,9 +1002,14 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
       return tickText("activation=absent (committed gates only)", 0);
     },
   });
+  const blockingSleep = host.io.sleep;
+  host.io = { ...host.io,
+    sleep: (ms) => { blockingSleep(ms); pending += 1; return new Promise((resolve) => setImmediate(() => { pending -= 1; resolve(); })); },
+  };
   const before = host.clock;
   const { code, output } = await main(["run"], host.io, PATHS);
   assert.equal(code, 0, JSON.stringify(output, null, 2));
+  assert.deepEqual(early, [], "no tick starts while a wait is still pending");
   assert.equal(output.outcome, "PASS", "two held ticks did not end the run");
   assert.equal(output.ticks.length, 3, "held ticks are not answered ticks");
   assert.deepEqual(output.holds.map((h) => h.retry_after_s), [300, 300]);

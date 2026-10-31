@@ -979,10 +979,11 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           break;
         }
         // A held tick waits what Linear asked, never past the window's end
-        // (the next pass of the loop then ends the run EXPIRED).
+        // (the next pass of the loop then ends the run EXPIRED). Awaited like
+        // the ordinary wait, so other workers' runs go on meanwhile.
         if (outcome.hold) {
           const left = Math.max(0, deadline - io.now().getTime());
-          io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));
+          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));
           continue;
         }
         // On the first tick nothing has started yet, so the card being
