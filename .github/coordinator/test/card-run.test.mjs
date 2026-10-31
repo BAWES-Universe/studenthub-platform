@@ -1029,7 +1029,7 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
   for (const entry of expired.holds) assert.ok(Date.parse(entry.at) < deadline, `no held tick starts at or after the window: ${entry.at}`);
   const starts = expired.holds.map((entry) => Date.parse(entry.at));
   for (let i = 1; i < starts.length; i += 1) assert.ok(starts[i] - starts[i - 1] <= TICK_HOLD_MAX_SLEEP_MS, "no single wait is longer than the hold maximum");
-  assert.ok(long.clock - START.getTime() <= CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.tickIntervalMs, "the last wait stops at the window");
+  assert.ok(long.clock <= deadline, `the last wait stops at the window, not after it: ended ${(long.clock - deadline) / 1000}s past it`);
   reverted(long);
 });
 
