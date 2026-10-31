@@ -131,3 +131,10 @@ export function fixture(t) {
   return { boundary: { fs: f, run, uid: () => 0 }, root, f, write, directory, owners, events, faults, sources, snapshot,
     users: () => users, groups: () => groups, remove: p => fs.rmSync(local(p), { recursive: true, force: true }) };
 }
+
+// M15: what a hand or box install holds before it calls the provisioner CLI:
+// the host-wide install lock and worker 1's card-run lock, with one holder.
+export function holdInstallLocks(h, holder = 'fixture-install') {
+  h.write('/run/lock/shu-card-install.lock', holder, 0o600);
+  h.write('/run/lock/shu-card-run.lock', holder, 0o600);
+}

@@ -139,7 +139,15 @@ export const REVIEW_ONLY_ACTIVATION_KEYS = Object.freeze(["review_pr", "review_b
 // committed card lane (step 3 below). The record binds which head is repaired
 // (initial_target_sha) and with which lanes; it never picks the card.
 export const REPAIR_ACTIVATION_KEYS = Object.freeze(["repair_pr", "repair_of", "repair_findings", "repair_evidence_digest", "max_rounds"]);
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane", ...REVIEW_ONLY_ACTIVATION_KEYS, ...REPAIR_ACTIVATION_KEYS]);
+// M15: a landing that ran with more than one card worker may have brought the
+// pull request up to main before it stopped on red checks. Its repair then
+// names that updated head too (repair_head), and only beside the five above:
+// the PASS stays at initial_target_sha, the branch and the CI findings are at
+// repair_head, and the one revise starts from it. card-run checks before
+// arming that repair_head holds exactly the passed change (card-land.mjs
+// updatedHeadHolds). Without it a repair is exactly as before.
+export const REPAIR_HEAD_KEY = "repair_head";
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids", "writer_lane", ...REVIEW_ONLY_ACTIVATION_KEYS, ...REPAIR_ACTIVATION_KEYS, REPAIR_HEAD_KEY]);
 // One repair round, and only one: the record says so, and anything else refuses.
 export const REPAIR_MAX_ROUNDS = 1;
 export const PR_AUTHOR_FAMILIES = Object.freeze([...new Set(Object.values(RUNTIME_FAMILY))]);
@@ -308,6 +316,7 @@ export function repairFromActivation(source, config = {}) {
     repair_evidence_digest: source.repair_evidence_digest,
     max_rounds: source.max_rounds,
     initial_target_sha: source.initial_target_sha ?? null,
+    ...(Object.hasOwn(source, REPAIR_HEAD_KEY) ? { repair_head: source.repair_head } : {}),
     writer_lane: source.writer_lane ?? null,
     reviewer_lane: source.reviewer_lane ?? null,
     branch: typeof source.target_issue_id === "string" ? `coordinator/${source.target_issue_id}` : null,
@@ -324,6 +333,8 @@ export function repairFromActivation(source, config = {}) {
 // the repair with a named reason; it never falls back to a build.
 function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authoritativeHead }) {
   const head = repair.initial_target_sha;
+  // M15: the head the branch is at, the PASS's head unless a landing updated it.
+  const branchHead = repair.repair_head ?? head;
   const branch = `coordinator/${targetIssueId}`;
   const pass = issueReceipts
     .filter((r) => r.episode_id === repair.repair_of && r.stage === "COMPLETED" && r.verdict_stage === "PASS"
@@ -338,8 +349,8 @@ function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authori
   if (!pass) return { ended: true, reason: `repair has no trusted PASS of ${repair.repair_of} at ${head}` };
   // The live head is only known on the dispatching pass; the pure status
   // passes null. A branch that moved off the passed head is not this repair's.
-  if (authoritativeHead !== null && authoritativeHead !== head) {
-    return { ended: true, reason: `repair target moved: the branch is at ${authoritativeHead}, not the passed head ${head}` };
+  if (authoritativeHead !== null && authoritativeHead !== branchHead) {
+    return { ended: true, reason: `repair target moved: the branch is at ${authoritativeHead}, not the ${branchHead === head ? "passed" : "updated"} head ${branchHead}` };
   }
   let minted;
   try {
@@ -348,11 +359,13 @@ function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authori
     return { ended: true, reason: `repair revise cannot be minted (${err?.message ?? "error"})` };
   }
   if (!minted.ok) return { ended: true, reason: `repair revise cannot be minted (${minted.reason})` };
+  // M15: the revise starts where the branch is.
+  if (branchHead !== head) minted.order = { ...minted.order, target_sha: branchHead };
   if (minted.order.requested_worker !== repair.writer_lane) {
     return { ended: true, reason: `repair revise lane ${minted.order.requested_worker} is not the record's writer_lane ${repair.writer_lane}` };
   }
   if (!validReviewFindings(repair.repair_findings) || repair.repair_findings.target_sha !== minted.order.target_sha) {
-    return { ended: true, reason: `repair findings are not bound to the passed head ${head}` };
+    return { ended: true, reason: `repair findings are not bound to the ${branchHead === head ? "passed" : "updated"} head ${branchHead}` };
   }
   return {
     ended: false,
@@ -541,7 +554,8 @@ export function parseActivationArgs(argv = []) {
 // dispatch_scope may list up to MAX_CARD_QUEUE committed card lanes, in the
 // order the card-run timer runs them. Only the timer reads the order; the
 // coordinator still runs one card per episode, the armed activation's own.
-export const MAX_CARD_QUEUE = 5;
+// M15: with more than one card worker a longer queue keeps every worker fed.
+export const MAX_CARD_QUEUE = 20;
 const FIXTURE_PAIR = Object.freeze(["SHU-140", "SHU-254"]);
 
 // The committed queue, or why the scope is not one. A single id is not a
@@ -567,7 +581,19 @@ export function cardQueue(config = {}) {
       return no(`${id} is not a committed card lane`);
     }
   }
-  return { queue: true, ok: true, ids: [...ids], reason: null };
+  // M15: a lane may name the queued cards it builds on (after). Each must come
+  // earlier in the same queue, so the order stays a valid sequential order and
+  // one worker runs exactly as before; more workers wait on these cards only.
+  const after = {};
+  for (const [index, id] of ids.entries()) {
+    const needs = cards.find((card) => card?.id === id)?.after;
+    if (needs === undefined) continue;
+    if (!Array.isArray(needs) || needs.some((need) => typeof need !== "string" || !ids.slice(0, index).includes(need))) {
+      return no(`${id} after must name cards earlier in the same queue`);
+    }
+    after[id] = [...needs];
+  }
+  return { queue: true, ok: true, ids: [...ids], after, reason: null };
 }
 
 // The configuration one tick works with. Under a queue, the scope narrows to
@@ -642,7 +668,7 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
 // own one-round cap (and its passed head and lanes) exactly as the spend did,
 // rather than re-deciding it as an ordinary episode that would still route a
 // second revise and so report no stop.
-const REPAIR_REPORTING_KEYS = Object.freeze([...REPAIR_ACTIVATION_KEYS, "initial_target_sha", "writer_lane", "reviewer_lane"]);
+const REPAIR_REPORTING_KEYS = Object.freeze([...REPAIR_ACTIVATION_KEYS, "initial_target_sha", REPAIR_HEAD_KEY, "writer_lane", "reviewer_lane"]);
 function repairReporting(source) {
   if (!source || !REPAIR_ACTIVATION_KEYS.every((key) => Object.hasOwn(source, key))) return {};
   return Object.fromEntries(REPAIR_REPORTING_KEYS.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]));
@@ -766,6 +792,7 @@ export function validateActivationRecord(record) {
   // passed head, so it needs that head and both lanes, binds findings taken
   // at that very head, and allows one round. Every refusal names its rule.
   const repairKeys = REPAIR_ACTIVATION_KEYS.filter((key) => key in record);
+  if (REPAIR_HEAD_KEY in record && repairKeys.length === 0) return { ok: false, reason: "repair_head is only part of a landing-repair activation" };
   if (repairKeys.length > 0) {
     if (repairKeys.length !== REPAIR_ACTIVATION_KEYS.length) {
       return { ok: false, reason: `a landing-repair activation needs ${REPAIR_ACTIVATION_KEYS.join(", ")} together (got ${repairKeys.join(", ")})` };
@@ -788,8 +815,12 @@ export function validateActivationRecord(record) {
     if (!validReviewFindings(record.repair_findings) || record.repair_findings.source !== "ci") {
       return { ok: false, reason: "repair_findings must be valid CI findings (source \"ci\")" };
     }
-    if (record.repair_findings.target_sha !== record.initial_target_sha) {
-      return { ok: false, reason: "repair_findings must be taken at initial_target_sha" };
+    if (Object.hasOwn(record, REPAIR_HEAD_KEY) && (typeof record.repair_head !== "string" || !REVISION_RE.test(record.repair_head)
+      || record.repair_head === record.initial_target_sha)) {
+      return { ok: false, reason: "repair_head must be a 40-character lowercase commit SHA other than initial_target_sha" };
+    }
+    if (record.repair_findings.target_sha !== (record.repair_head ?? record.initial_target_sha)) {
+      return { ok: false, reason: Object.hasOwn(record, REPAIR_HEAD_KEY) ? "repair_findings must be taken at repair_head" : "repair_findings must be taken at initial_target_sha" };
     }
     let digest;
     try { digest = repairEvidenceDigest(record.repair_findings); } catch { digest = null; }
@@ -1089,7 +1120,8 @@ export function singleRunActivationStatus({
     initial_target_sha: record.initial_target_sha ?? null,
     ...(reviewLane ? { review_only: true, review_pr: record.review_pr, review_base_sha: record.review_base_sha, pr_author_family: record.pr_author_family } : {}),
     ...(landingRepair ? { landing_repair: true, repair_pr: record.repair_pr, repair_of: record.repair_of, repair_findings: record.repair_findings,
-      repair_evidence_digest: record.repair_evidence_digest, max_rounds: record.max_rounds } : {}),
+      repair_evidence_digest: record.repair_evidence_digest, max_rounds: record.max_rounds,
+      ...(Object.hasOwn(record, REPAIR_HEAD_KEY) ? { repair_head: record.repair_head } : {}) } : {}),
     episode: episode.reason,
     // SHU-225: the episode's routable successor, when one exists. This is what
     // re-admits the issue to selection for the NEXT step of the SAME episode.

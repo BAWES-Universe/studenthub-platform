@@ -13,7 +13,7 @@ const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const contractURL = new URL('../host-suite-contract.mjs', import.meta.url).href;
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_') && k !== 'NODE_TEST_CONTEXT'));
 const git = args => {
-  const r = spawnSync('/usr/bin/git', args, { cwd: root, env, encoding: 'utf8' });
+  const r = spawnSync('/usr/bin/git', args, { cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   assert.equal(r.status, 0, 'A12_INVENTORY_GIT'); return r.stdout;
 };
 export function checkRequirements(inventory, outcomes, audit) {

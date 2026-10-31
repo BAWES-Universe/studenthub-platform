@@ -48,7 +48,7 @@ const CASES = [
   {
     name: "M5 resolve after the head moved",
     file: "service/card-land.mjs",
-    from: "      if (!headMatches(now, { repo, branch, head })) stop(",
+    from: "      if (!headMatches(now, { repo, branch, head: landHead })) stop(",
     to: "      if (false) stop(",
     tests: "card-run.test.mjs",
     pattern: "SHU-71 M10: T5",

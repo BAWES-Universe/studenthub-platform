@@ -680,6 +680,7 @@
     "SHU251 explicit workspace override stages a visible two-writer hazard",
     "SHU251 mutation: matching foreign environment and writer lock",
     "SHU251 mutation: explicit override warning removed",
+    "M15 W2: a card worker's supervisor and coordinator render their own activation, socket, store and writer lock; worker 1 is unchanged",
     "SHU251 canonical workspace constant matches literal deployment and activation contract",
     "SHU251 mutation: canonical workspace constant repointed",
     "SHU251 non-string workspace state directory has named fail-closed refusal",
@@ -737,6 +738,7 @@
     "B2 broker: arbitrary queries, URLs and command input are refused before credentials are used",
     "B2 broker: actual child-side wiring sends no API tokens, env secrets or shell/eval source",
     "B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-B argv",
+    "M15 W2: the coordinator tick takes worker 1's activation path or a card worker's, and the credential of that worker's unit",
     "B2 allowlist refuses credential aliases and unknown environment keys",
     "B2 environment transport secret has the same strength guard as credentials",
     "B2 actual supervisor spawner applies allowlist at the fork boundary",
@@ -2028,6 +2030,7 @@
     "SHU-86 mutation M44 wait on Linear without a deadline",
     "SHU-86 mutation M45 copy the card's state name into the report unflattened",
     "SHU-86 mutation M46 let the timer run the same revision twice",
+    "SHU-86 mutation M15W1-R1 a worker that loses the claim race gives up its start",
     "SHU-86 mutation M47 run while the host is paused",
     "SHU-86 mutation M48 keep the claim when the host was taken after it",
     "SHU-86 mutation M49 stay silent about a refusal before arming",
@@ -2136,6 +2139,9 @@
     "SHU-86 C13: revert waits for a running worker and leaves the run armed while one is still running",
     "M16 K1: after the grace the revert stops leftover worker processes, records them and finishes",
     "M16 K2: a listing pgrep cannot give is marked unlisted, counted from before the signals, and never reported as zero",
+    "M15 W3: with more than one worker the busy check and the revert count and stop only the worker's own cgroup processes; one worker goes by uid",
+    "M15 W3: a self-install waits for every configured worker; with one worker it reads the worker's own busy check",
+    "M15 W3: a self-install also waits for a card worker past workers.max that still holds its run lock or armed state, without reading its cgroups",
     "SHU-86 C14: one run at a time, as root only",
     "SHU-86 C15: plan changes nothing, and review flags come all together",
     "SHU-86 C16: a unit without its resident drop-in is not armed",
@@ -2219,6 +2225,11 @@
     "SHU-312 Q2: a queue narrows each tick to the armed card alone, and without one scopes nothing",
     "SHU-312 Q3: the host gate admits only the armed card's order under a queue",
     "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
+    "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
+    "M15 W1: a claim records its process's start time, and a later process that reused the pid does not keep the card live",
+    "M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged",
+    "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
+    "M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start",
     "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
     "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
@@ -2874,6 +2885,7 @@
     "SHU-224: absent scope preserves board-wide selection",
     "SHU-224: unscoped terminal receipts cannot publish successor directives",
     "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
+    "M15 W3: with more than one card worker lifecycle reconciles only the receipts of the worker's own card; one worker reconciles every receipt",
     "SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run",
     "SHU-224: invalid trusted scope prevents dispatch before any mutation",
     "SHU-224: committed scope is pinned to the current card lanes while dispatch stays disabled",
@@ -3427,6 +3439,7 @@
     "Self-repair B1: E1 the first step is a routed-shape revise on the writer lane within revision_paths",
     "Self-repair B1: E2 only a trusted exact-head PASS of the repaired episode may start the repair",
     "Self-repair B1: E3 a branch that moved off the passed head ends the repair",
+    "M15: a repair at a landing's updated head binds the PASS at the passed head, and the branch, findings and revise at the updated head",
     "Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise",
     "Self-repair B1: E5 the re-review's PASS ends the repair complete",
     "Self-repair B1: E7 a spent or expired repair reports its stop with the repair's own cap",
@@ -3704,6 +3717,9 @@
     "SHU71 provisioning rollback process replacement at every effect",
     "SHU71 provisioning refuses to remove an identity still in use",
     "SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself",
+    "M15 SHU71 precondition measures card worker 2 as timer-install makes it, and rollback leaves it to timer-remove",
+    "M15 SHU71 precondition refuses a card worker 2 that is not as timer-install makes it",
+    "M15 SHU71 an install or rollback excludes every card worker, by hand as by the box",
     "SHU71 review worktrees production shape",
     "SHU71 review checkout capability",
     "SHU71 review named absent row codes",
@@ -4543,6 +4559,24 @@
     "SHU-71 M10: T15 the review lane runs only inside the landing's wait, so the run stays inside TimeoutStartSec",
     "SHU-71 M10: T16 the prompt limit counts bytes, so bot text full of emoji cannot overrun one argv string",
     "SHU-71 M10: T17 a thread that changes after others were resolved stops the landing and names what was already resolved",
+    "M15 W4: with two workers a landing behind main updates its pull request from main, waits for green at the new head and merges it under the landing lock",
+    "M15 W4: main that moves again before the merge step sends the landing round once more, and gives up after baseRounds",
+    "M15 W4: a conflict, or main changing the pull request's own files, stops the landing with its own outcome and nothing merged",
+    "M15 W4: a landing lock another worker holds is waited for, and past its bound the landing stops with nothing merged",
+    "M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge",
+    "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
+    "M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off",
+    "M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips",
+    "M15 W5: no card run starts while the install lock is held",
+    "M15 W5: a card run never takes over an install lock whose holder died, and says so",
+    "M15 W4: a landing lock whose holder died is taken over under a takeover marker, and a lock that changed hands or a takeover under way is left alone",
+    "M15: a card a person merged at the head a landing updated it to counts as landed when that head holds the passed blobs, and not otherwise",
+    "M15: with two workers a landing repair runs at the head a landing updated the pull request to, beside the other worker's run, which passes the live round over",
+    "M15: the watch watches every configured card worker's service and status file, alerts each stuck run once under its own key, and shows each",
+    "M15: the watch also watches a card worker past workers.max whose card-run unit is still installed",
+    "M15: two card workers run two cards at once through main auto and auto --worker 2, each on its own units, and neither reverts the other",
+    "M15 W9: a claim is published whole, so another worker never reads it empty",
+    "M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it",
     "SHU-86 mutation M146 never call a running unit's silent run stale",
     "SHU-86 mutation M147 call a run stale at the limit itself",
     "SHU-86 mutation M148 measure staleness from an earlier run's status",
@@ -4583,6 +4617,7 @@
     "SHU-86 mutation M177 match a named service's check run by slug only",
     "Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on",
     "Self-repair A: no other merge, claim or read counts a card as landed",
+    "M15: a card whose landing stopped for another worker's merge step or a moving main, then merged by a person at its updated head, counts as landed and the queue moves on",
     "SHU-86 mutation M178 count a merge at any head",
     "SHU-86 mutation M179 count a closed pull request",
     "SHU-86 mutation M180 skip the first-parent walk",
@@ -4620,6 +4655,52 @@
     "SHU-86 mutation M212 leave the stopped workers out of the report",
     "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
     "SHU-86 mutation M214 list leftover workers with their command lines",
+    "SHU-86 mutation M215 count every worker's processes with more than one worker",
+    "SHU-86 mutation M216 make a worker busy on another worker's drop-ins",
+    "SHU-86 mutation M217 sweep another worker's dependency cache",
+    "SHU-86 mutation M218 stop every worker's processes by uid",
+    "SHU-86 mutation M219 report another worker's processes as stopped",
+    "SHU-86 mutation M220 count none when the cgroups cannot tell workers apart",
+    "SHU-86 mutation M221 install under another worker's held run lock",
+    "SHU-86 mutation M222 install while only another worker is busy",
+    "SHU-86 mutation M223 merge without the landing lock",
+    "SHU-86 mutation M224 land a head behind main without updating it",
+    "SHU-86 mutation M225 take an update whose own files are not the passed blobs",
+    "SHU-86 mutation M226 update over main's change to the pull request's own files",
+    "SHU-86 mutation M227 merge although main moved under the landing lock",
+    "SHU-86 mutation M228 update from main with one worker",
+    "SHU-86 mutation M229 take over a landing lock another worker holds",
+    "SHU-86 mutation M233 count the landing lock's bound from before the wait for green",
+    "SHU-86 mutation M230 take a new head that is not main merged into the head",
+    "SHU-86 mutation M231 land as one worker with workers.max 2",
+    "SHU-86 mutation M232 merge the passed head after an update",
+    "SHU-86 mutation M234 start a card run while the install lock is held",
+    "SHU-86 mutation M235 claim a timer start while the install lock is held",
+    "SHU-86 mutation M236 start worker N's timer as worker 1",
+    "SHU-86 mutation M237 leave card worker timers behind on removal",
+    "SHU-86 mutation M238 leave a card worker's units without their resident drop-in",
+    "SHU-86 mutation M239 leave a card worker's state directory owned by root",
+    "SHU-86 mutation M240 install over a card worker unit that holds other content",
+    "SHU-86 mutation M241 run a worker the config turns off",
+    "SHU-86 mutation M242 take over a card worker directory that is not worker 1's",
+    "SHU-86 mutation M243 stop the shared evidence broker while another card worker is armed",
+    "SHU-86 mutation M244 read worker 1's drop-ins as every worker's busy check",
+    "SHU-86 mutation M245 call another worker's live repair round interrupted",
+    "SHU-86 mutation M246 repair an updated head without checking it holds the passed change",
+    "SHU-86 mutation M247 count a hand merge at any updated head as landed",
+    "SHU-86 mutation M248 take over a lock whose holder is still alive",
+    "SHU-86 mutation M249 watch worker 1 alone when more card workers are configured",
+    "SHU-86 mutation M250 alert a card worker's stuck run under worker 1's key",
+    "SHU-86 mutation M251 never count a person's merge after a landing waited on another worker's merge step or a moving main",
+    "SHU-86 mutation M252 keep a claim live on a pid another process reused",
+    "SHU-86 mutation M253 write a claim without its process's start time",
+    "SHU-86 mutation M254 install while a card worker past workers.max is still armed",
+    "SHU-86 mutation M255 arm a card worker an install has since turned off",
+    "SHU-86 mutation M256 run past an install lock whose holder died",
+    "SHU-86 mutation M257 take a landing lock over without the takeover marker",
+    "SHU-86 mutation M258 remove a landing lock without reading it again under the marker",
+    "SHU-86 mutation M259 stop watching a card worker past workers.max whose unit is installed",
+    "SHU-86 mutation M260 create the claim with an exclusive write that a reader can see empty",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -4640,6 +4721,8 @@
     "M16 Q4: the committed policy is approval none, which installs on the box review and green checks alone",
     "M16 Q6: a code install changes no config key a queue install could not",
     "M16 Q7: a test file a runtime module imports is never a queue's to change",
+    "M15 W5: a self-install holds the host-wide install lock, never takes another worker's, and keeps it with the run lock",
+    "M15 W5: an install lock whose holder died is never taken over, and one whose kept reason could not be written stands the same way",
     "SHU-322 mutation M30 install an owner-only path",
     "SHU-322 mutation M31 let code change the self-install policy",
     "SHU-322 mutation M32 read the policy from main",
@@ -4665,7 +4748,10 @@
     "SHU-322 mutation M52 let a queue install a test file a runtime module imports",
     "SHU-322 mutation M53 accept data that is not the contracts document",
     "SHU-322 mutation M54 let a card be removed",
-    "SHU-322 mutation M55 accept any path list on a new card"
+    "SHU-322 mutation M55 accept any path list on a new card",
+    "SHU-322 mutation M56 install without the host-wide install lock",
+    "SHU-322 mutation M57 keep the install lock once the install ended",
+    "SHU-322 mutation M58 tell an install lock whose holder died from a live one"
   ],
   "requirements": [
     {
@@ -8002,6 +8088,17 @@
       ]
     },
     {
+      "name": "M15 W2: a card worker's supervisor and coordinator render their own activation, socket, store and writer lock; worker 1 is unchanged",
+      "capabilities": [
+        {
+          "name": "systemd_analyze"
+        },
+        {
+          "name": "flock"
+        }
+      ]
+    },
+    {
       "name": "SHU251 canonical workspace constant matches literal deployment and activation contract",
       "capabilities": [
         {
@@ -8444,6 +8541,10 @@
     },
     {
       "name": "B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-B argv",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W2: the coordinator tick takes worker 1's activation path or a card worker's, and the credential of that worker's unit",
       "capabilities": []
     },
     {
@@ -18143,6 +18244,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M15W1-R1 a worker that loses the claim race gives up its start",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M47 run while the host is paused",
       "capabilities": []
     },
@@ -18575,6 +18680,18 @@
       "capabilities": []
     },
     {
+      "name": "M15 W3: with more than one worker the busy check and the revert count and stop only the worker's own cgroup processes; one worker goes by uid",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W3: a self-install waits for every configured worker; with one worker it reads the worker's own busy check",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W3: a self-install also waits for a card worker past workers.max that still holds its run lock or armed state, without reading its cgroups",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 C14: one run at a time, as root only",
       "capabilities": []
     },
@@ -18904,6 +19021,26 @@
     },
     {
       "name": "SHU-312 Q4: a card branch starts from main as it is now, only when main descends from the install",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W1: with two workers a card another worker is running is passed over, after cards wait, and one worker is unchanged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W1: a claim records its process's start time, and a later process that reused the pid does not keep the card live",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start",
       "capabilities": []
     },
     {
@@ -22582,6 +22719,10 @@
     },
     {
       "name": "SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W3: with more than one card worker lifecycle reconciles only the receipts of the worker's own card; one worker reconciles every receipt",
       "capabilities": []
     },
     {
@@ -26661,6 +26802,14 @@
       ]
     },
     {
+      "name": "M15: a repair at a landing's updated head binds the PASS at the passed head, and the branch, findings and revise at the updated head",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise",
       "capabilities": [
         {
@@ -28869,6 +29018,18 @@
     },
     {
       "name": "SHU71 rollback walks the filesystem with its own timeout, and a failed command names itself",
+      "capabilities": []
+    },
+    {
+      "name": "M15 SHU71 precondition measures card worker 2 as timer-install makes it, and rollback leaves it to timer-remove",
+      "capabilities": []
+    },
+    {
+      "name": "M15 SHU71 precondition refuses a card worker 2 that is not as timer-install makes it",
+      "capabilities": []
+    },
+    {
+      "name": "M15 SHU71 an install or rollback excludes every card worker, by hand as by the box",
       "capabilities": []
     },
     {
@@ -33320,6 +33481,78 @@
       "capabilities": []
     },
     {
+      "name": "M15 W4: with two workers a landing behind main updates its pull request from main, waits for green at the new head and merges it under the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: main that moves again before the merge step sends the landing round once more, and gives up after baseRounds",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: a conflict, or main changing the pull request's own files, stops the landing with its own outcome and nothing merged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: a landing lock another worker holds is waited for, and past its bound the landing stops with nothing merged",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: one worker lands as before: no update from main, no landing lock, and a moved main holds the merge",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: the landing lock, the updates and their reads keep the run inside TimeoutStartSec",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: timer-install puts each card worker's timer on the host with its state directories and resident drop-ins; timer-remove takes them all off",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: no card run starts while the install lock is held",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: a card run never takes over an install lock whose holder died, and says so",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W4: a landing lock whose holder died is taken over under a takeover marker, and a lock that changed hands or a takeover under way is left alone",
+      "capabilities": []
+    },
+    {
+      "name": "M15: a card a person merged at the head a landing updated it to counts as landed when that head holds the passed blobs, and not otherwise",
+      "capabilities": []
+    },
+    {
+      "name": "M15: with two workers a landing repair runs at the head a landing updated the pull request to, beside the other worker's run, which passes the live round over",
+      "capabilities": []
+    },
+    {
+      "name": "M15: the watch watches every configured card worker's service and status file, alerts each stuck run once under its own key, and shows each",
+      "capabilities": []
+    },
+    {
+      "name": "M15: the watch also watches a card worker past workers.max whose card-run unit is still installed",
+      "capabilities": []
+    },
+    {
+      "name": "M15: two card workers run two cards at once through main auto and auto --worker 2, each on its own units, and neither reverts the other",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W9: a claim is published whole, so another worker never reads it empty",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M146 never call a running unit's silent run stale",
       "capabilities": []
     },
@@ -33480,6 +33713,10 @@
       "capabilities": []
     },
     {
+      "name": "M15: a card whose landing stopped for another worker's merge step or a moving main, then merged by a person at its updated head, counts as landed and the queue moves on",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M178 count a merge at any head",
       "capabilities": []
     },
@@ -33628,6 +33865,190 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M215 count every worker's processes with more than one worker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M216 make a worker busy on another worker's drop-ins",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M217 sweep another worker's dependency cache",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M218 stop every worker's processes by uid",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M219 report another worker's processes as stopped",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M220 count none when the cgroups cannot tell workers apart",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M221 install under another worker's held run lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M222 install while only another worker is busy",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M223 merge without the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M224 land a head behind main without updating it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M225 take an update whose own files are not the passed blobs",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M226 update over main's change to the pull request's own files",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M227 merge although main moved under the landing lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M228 update from main with one worker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M229 take over a landing lock another worker holds",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M233 count the landing lock's bound from before the wait for green",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M230 take a new head that is not main merged into the head",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M231 land as one worker with workers.max 2",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M232 merge the passed head after an update",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M234 start a card run while the install lock is held",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M235 claim a timer start while the install lock is held",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M236 start worker N's timer as worker 1",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M237 leave card worker timers behind on removal",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M238 leave a card worker's units without their resident drop-in",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M239 leave a card worker's state directory owned by root",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M240 install over a card worker unit that holds other content",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M241 run a worker the config turns off",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M242 take over a card worker directory that is not worker 1's",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M243 stop the shared evidence broker while another card worker is armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M244 read worker 1's drop-ins as every worker's busy check",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M245 call another worker's live repair round interrupted",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M246 repair an updated head without checking it holds the passed change",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M247 count a hand merge at any updated head as landed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M248 take over a lock whose holder is still alive",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M249 watch worker 1 alone when more card workers are configured",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M250 alert a card worker's stuck run under worker 1's key",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M251 never count a person's merge after a landing waited on another worker's merge step or a moving main",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M252 keep a claim live on a pid another process reused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M253 write a claim without its process's start time",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M254 install while a card worker past workers.max is still armed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M255 arm a card worker an install has since turned off",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M256 run past an install lock whose holder died",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M257 take a landing lock over without the takeover marker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M258 remove a landing lock without reading it again under the marker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M259 stop watching a card worker past workers.max whose unit is installed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M260 create the claim with an exclusive write that a reader can see empty",
+      "capabilities": []
+    },
+    {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
       "capabilities": [
         {
@@ -33732,6 +34153,14 @@
       "capabilities": []
     },
     {
+      "name": "M15 W5: a self-install holds the host-wide install lock, never takes another worker's, and keeps it with the run lock",
+      "capabilities": []
+    },
+    {
+      "name": "M15 W5: an install lock whose holder died is never taken over, and one whose kept reason could not be written stands the same way",
+      "capabilities": []
+    },
+    {
       "name": "SHU-322 mutation M30 install an owner-only path",
       "capabilities": []
     },
@@ -33833,6 +34262,18 @@
     },
     {
       "name": "SHU-322 mutation M55 accept any path list on a new card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M56 install without the host-wide install lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M57 keep the install lock once the install ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M58 tell an install lock whose holder died from a live one",
       "capabilities": []
     }
   ],

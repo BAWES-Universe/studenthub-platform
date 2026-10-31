@@ -118,6 +118,32 @@ test('B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-
   assert.throws(() => coordinatorTickArgs(['--activation', '/tmp/foreign'], { ENABLE_DISPATCH: 'true' }), /ACT_ACTIVATION_PATH/);
 });
 
+test("M15 W2: the coordinator tick takes worker 1's activation path or a card worker's, and the credential of that worker's unit", async () => {
+  const { coordinatorTickArgs } = await import('../coordinator-tick.mjs');
+  const { workerActivationFiles, workerActivationFile, coordinatorUnitName } = await import('../credential-delivery.mjs');
+  const files = workerActivationFiles();
+  assert.equal(files[0], ACTIVATION_FILE, 'worker 1 keeps the fixed path');
+  assert.equal(files.length, 8);
+  assert.equal(workerActivationFile(2), '/srv/shu/state/w2/shu71-activation.json');
+  const { cardRunPaths } = await import('../card-run.mjs');
+  for (let worker = 1; worker <= files.length; worker += 1) {
+    assert.equal(cardRunPaths(worker).activation, files[worker - 1], 'the card run arms the path the tick accepts');
+    assert.deepEqual(coordinatorTickArgs(['--activation', files[worker - 1]], { ENABLE_DISPATCH: 'true' }), ['--activation', files[worker - 1]]);
+    assert.deepEqual(coordinatorTickArgs(['--activation', files[worker - 1]], { ENABLE_DISPATCH: 'false' }), []);
+  }
+  for (const foreign of ['/srv/shu/state/w9/shu71-activation.json', '/srv/shu/state/w1/shu71-activation.json', '/srv/shu/state/w2/../shu71-activation.json', '/tmp/foreign']) {
+    assert.throws(() => coordinatorTickArgs(['--activation', foreign], { ENABLE_DISPATCH: 'true' }), /ACT_ACTIVATION_PATH/, foreign);
+  }
+  assert.throws(() => workerActivationFile(9), /ACT_ACTIVATION_PATH/);
+  // A card worker's coordinator reads the credential systemd loaded for it.
+  const env = { CREDENTIALS_DIRECTORY: `/run/credentials/${coordinatorUnitName(2)}` };
+  assert.equal(supervisorTransportSecret(env, file => {
+    assert.equal(file, '/run/credentials/shu-coordinator-w2.service/supervisor-transport');
+    return `SHU_SUPERVISOR_SECRET=${'x'.repeat(32)}\n`;
+  }), 'x'.repeat(32));
+  assert.throws(() => supervisorTransportSecret({ CREDENTIALS_DIRECTORY: '/run/credentials/shu-coordinator-w9.service' }, () => assert.fail('no foreign read')), /ACT_CREDENTIAL_UNAVAILABLE/);
+});
+
 test('B2 allowlist refuses credential aliases and unknown environment keys', () => {
   const aliases = ['github_token', 'GITHUB_TOKEN ', 'GITHUB_TOKEN_2', 'LINEAR_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_PAT', 'SHU_SUPERVISOR_SECRET_B', 'CLAUDE_CODE_OAUTH_TOKEN_2', 'WORKSPACE_AGENT_ACCESS_TOKEN_2', 'NODE_OPTIONS', 'UNKNOWN'];
   assert.deepEqual(supervisorChildEnvironment({ ...Object.fromEntries(aliases.map(k => [k, 'POISON'])), HOME: '/worker', SHU_REVIEW_EXEC_UID: '994' }), { HOME: '/worker', SHU_REVIEW_EXEC_UID: '994' }, 'B2_EXACT_ALLOWLIST');

@@ -1,4 +1,4 @@
-import { ACTIVATION_FILE } from "./credential-delivery.mjs";
+import { ACTIVATION_FILE, MAX_CARD_WORKERS, workerActivationFile, supervisorUnitName, coordinatorUnitName } from "./credential-delivery.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
@@ -8,10 +8,44 @@ import { spawnSync } from 'node:child_process';
 // Single source of truth for service defaults and writer-lock policy.
 export const WORKSPACE_STATE_DIR = '/srv/shu/state/workspaces';
 const overrideWarning = '# SHU251_WRITER_LOCK: workspace state directory override; two-writer hazard';
-function workspaceDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride } = {}) {
+function workspaceDirectory({ worker = 1, workspaceStateDir = workerWorkspaceStateDir(worker), allowWorkspaceStateDirOverride } = {}) {
   assert.ok(typeof workspaceStateDir === 'string' && /^\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*$/.test(workspaceStateDir) && !workspaceStateDir.split('/').some(p => p === '.' || p === '..'), 'SHU251_WRITER_LOCK: canonical workspace state directory required');
-  assert.ok(workspaceStateDir === WORKSPACE_STATE_DIR || allowWorkspaceStateDirOverride === true, 'SHU251_WRITER_LOCK: foreign workspace state directory requires allowWorkspaceStateDirOverride=true');
+  assert.ok(workspaceStateDir === workerWorkspaceStateDir(worker) || allowWorkspaceStateDirOverride === true, 'SHU251_WRITER_LOCK: foreign workspace state directory requires allowWorkspaceStateDirOverride=true');
   return workspaceStateDir;
+}
+
+// M15 W2: card worker W > 1 runs its own supervisor and coordinator pair,
+// rendered from the same templates. Its workspace state directory sits under
+// the deployed one, so its socket, supervisor store and writer lock
+// (host-tick.lock) are its own and two workers' ticks never exclude each other,
+// and its supervisor reads its own activation record. A worker W > 1 has no
+// timer: its card run starts each of its ticks. Worker 1 renders as before.
+export function workerWorkspaceStateDir(worker = 1) {
+  assert.ok(Number.isInteger(worker) && worker >= 1 && worker <= MAX_CARD_WORKERS, `SHU251_WORKER: card worker must be 1 to ${MAX_CARD_WORKERS}`);
+  return worker === 1 ? WORKSPACE_STATE_DIR : `${WORKSPACE_STATE_DIR}/w${worker}`;
+}
+export function workerNames(worker = 1) {
+  workerWorkspaceStateDir(worker);
+  return worker === 1 ? names : [supervisorUnitName(worker), coordinatorUnitName(worker)];
+}
+// Worker W's pair, from worker 1's rendered text. Each line it changes must be
+// there exactly once, so a template edit cannot leave a worker naming worker
+// 1's supervisor or activation record.
+function workerUnits(worker, units) {
+  const [supervisor, coordinator] = workerNames(worker);
+  const swap = (text, pairs) => pairs.reduce((out, [from, to]) => {
+    assert.equal(out.split(`\n${from}\n`).length, 2, `SHU251_WORKER: ${from} must appear exactly once`);
+    return out.replace(`\n${from}\n`, `\n${to}\n`);
+  }, text);
+  return {
+    [supervisor]: swap(units['shu-supervisor.service'], [
+      ['Description=StudentHub persistent supervisor', `Description=StudentHub persistent supervisor, card worker ${worker}`],
+      [`Environment=SHU_SUPERVISOR_ACTIVATION_FILE=${ACTIVATION_FILE}`, `Environment=SHU_SUPERVISOR_ACTIVATION_FILE=${workerActivationFile(worker)}`]]),
+    [coordinator]: swap(units['shu-coordinator.service'], [
+      ['Description=StudentHub single coordinator writer', `Description=StudentHub coordinator writer, card worker ${worker}`],
+      ['After=shu-supervisor.service', `After=${supervisor}`],
+      ['Requires=shu-supervisor.service', `Requires=${supervisor}`]]),
+  };
 }
 
 // The supervisor's AUTHORITATIVE store location, and the ONE place it is derived.
@@ -35,8 +69,8 @@ function workspaceDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWork
 // assertPolicy() then re-reads both rendered units and refuses if they differ or
 // if either names anything but this value.
 export const SUPERVISOR_STORE_DIRNAME = 'supervisor';
-export function supervisorStoreDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir } = {}) {
-  const directory = supervisorStateDir ?? join(workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride }), SUPERVISOR_STORE_DIRNAME);
+export function supervisorStoreDirectory({ worker = 1, workspaceStateDir = workerWorkspaceStateDir(worker), allowWorkspaceStateDirOverride, supervisorStateDir } = {}) {
+  const directory = supervisorStateDir ?? join(workspaceDirectory({ worker, workspaceStateDir, allowWorkspaceStateDirOverride }), SUPERVISOR_STORE_DIRNAME);
   assert.match(directory, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
   return directory;
 }
@@ -168,10 +202,10 @@ export function readAdapterLaunchEnvironment(io = fs, uid = process.getuid(), gi
 
 // Inspect key names and nonempty values only; never include contents in errors.
 // Restrict the accepted format to unambiguous single-line systemd assignments.
-function environmentBindings(identity) {
+function environmentBindings(identity, fsio = fs) {
   const files = [identity.supervisorEnvironmentFile, identity.coordinatorEnvironmentFile];
   const stats = files.map(file => {
-    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    const stat = fsio.lstatSync(file, { throwIfNoEntry: false });
     assert.ok(stat, 'SHU251_ENV_MISSING: required environment file is absent');
     assert.ok(stat.isFile(), 'SHU251_ENV_FILE: environment binding must be a regular non-symlink file');
     return stat;
@@ -180,7 +214,7 @@ function environmentBindings(identity) {
     'SHU251_ENV_IDENTICAL: environment files must not share an inode');
   const entries = files.map(file => {
     let source;
-    try { source = fs.readFileSync(file, 'utf8'); }
+    try { source = fsio.readFileSync(file, 'utf8'); }
     catch { assert.fail('SHU251_ENV_UNREADABLE: required environment file cannot be read'); }
     return environmentEntries(source);
   });
@@ -264,37 +298,40 @@ function command(argv) {
   assert.ok(Array.isArray(argv) && argv.length > 0 && argv[0].startsWith('/'), 'SHU251_COMMAND: absolute executable argv required');
   return argv.map(quote).join(' ');
 }
-export function render({ workdir, supervisor, coordinator, writerLock, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }) {
+export function render({ worker = 1, workdir, supervisor, coordinator, writerLock, workspaceStateDir = workerWorkspaceStateDir(worker), allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }, fsio = fs) {
   assert.ok(workdir?.startsWith('/') && writerLock?.startsWith('/'), 'SHU251_PATH: absolute workdir and shared writer lock required');
   // Use the SAME lock as host-tick.sh. The supplied coordinator command must
   // invoke the reviewed tick directly, not recursively acquire this lock.
   assert.match(workdir, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: workdir must use plain absolute path characters');
-  workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
-  supervisorStateDir = supervisorStoreDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir });
+  workspaceDirectory({ worker, workspaceStateDir, allowWorkspaceStateDirOverride });
+  supervisorStateDir = supervisorStoreDirectory({ worker, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir });
   if (supervisorSocket === undefined) supervisorSocket = join(workspaceStateDir, 'supervisor.sock');
   assert.equal(writerLock, `${workspaceStateDir}/host-tick.lock`, 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
   for (const path of [supervisorStateDir, supervisorSocket]) assert.match(path, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
   command(coordinator);
   const identity = serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile });
-  environmentBindings(identity);
+  environmentBindings(identity, fsio);
   const values = { SERVICE_USER: identity.serviceUser, SERVICE_GROUP: identity.serviceGroup, SUPERVISOR_ENVIRONMENT_FILE: identity.supervisorEnvironmentFile, COORDINATOR_ENVIRONMENT_FILE: identity.coordinatorEnvironmentFile, WORKDIR: workdir, WORKSPACE_STATE_DIR: workspaceStateDir, SUPERVISOR_STATE_DIR: supervisorStateDir, SUPERVISOR_SOCKET: supervisorSocket, SUPERVISOR_EXEC: command(supervisor),
     COORDINATOR_EXEC: command(['/usr/bin/flock', '--nonblock', '--conflict-exit-code', '2', writerLock, ...coordinator]) };
   const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(new URL(`${name}.in`, import.meta.url), 'utf8')
     .replace(/@([A-Z_]+)@/g, (_, key) => { assert.ok(key in values, 'SHU251_PARAMETER: unresolved template'); return values[key]; })]));
   if (allowWorkspaceStateDirOverride === true) units['shu-coordinator.service'] = `${overrideWarning}\n${units['shu-coordinator.service']}`;
-  return units;
+  return worker === 1 ? units : workerUnits(worker, units);
 }
-export function assertPolicy(units, options = {}) {
+export function assertPolicy(units, options = {}, fsio = fs) {
+  const worker = options.worker ?? 1;
+  const [supervisorName, coordinatorName] = workerNames(worker);
+  const services = [supervisorName, coordinatorName];
   const expectedState = workspaceDirectory(options);
   const identity = serviceConfiguration(options);
-  environmentBindings(identity);
-  assert.match(units['shu-supervisor.service'], /^Type=notify$/m, 'SHU251_READINESS: supervisor must notify after recovery and listen');
-  assert.match(units['shu-supervisor.service'], /^Restart=on-failure$/m, 'SHU251_RESTART: supervisor must restart on failure');
-  assert.match(units['shu-coordinator.service'], /^Restart=on-failure$/m, 'SHU251_RESTART: writer must restart on failure');
-  assert.match(units['shu-supervisor.service'], /^KillMode=process$/m, 'SHU251_CHILDREN: routine restart must preserve workers');
-  assert.match(units['shu-coordinator.service'], /^ExecStart="\/usr\/bin\/flock" "--nonblock" "--conflict-exit-code" "2" /m, 'SHU251_WRITER: tick must hold the common flock');
-  assert.match(units['shu-coordinator.timer'], /^Unit=shu-coordinator.service$/m, 'SHU251_WAKE: timer must target the single writer');
-  const writer = units['shu-coordinator.service'];
+  environmentBindings(identity, fsio);
+  assert.match(units[supervisorName], /^Type=notify$/m, 'SHU251_READINESS: supervisor must notify after recovery and listen');
+  assert.match(units[supervisorName], /^Restart=on-failure$/m, 'SHU251_RESTART: supervisor must restart on failure');
+  assert.match(units[coordinatorName], /^Restart=on-failure$/m, 'SHU251_RESTART: writer must restart on failure');
+  assert.match(units[supervisorName], /^KillMode=process$/m, 'SHU251_CHILDREN: routine restart must preserve workers');
+  assert.match(units[coordinatorName], /^ExecStart="\/usr\/bin\/flock" "--nonblock" "--conflict-exit-code" "2" /m, 'SHU251_WRITER: tick must hold the common flock');
+  if (worker === 1) assert.match(units['shu-coordinator.timer'], /^Unit=shu-coordinator.service$/m, 'SHU251_WAKE: timer must target the single writer');
+  const writer = units[coordinatorName];
   const states = [...writer.matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
   assert.ok(states.length === 1 && states[0][1] === expectedState, 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
   if (options.allowWorkspaceStateDirOverride === true) assert.ok(writer.startsWith(`${overrideWarning}\n`), 'SHU251_WRITER_LOCK: explicit override must carry the two-writer hazard warning');
@@ -303,7 +340,7 @@ export function assertPolicy(units, options = {}) {
   // environment is filtered from the supervisor's own (credential-delivery.mjs).
   // A supervisor unit that does not name the writer's directory refuses every
   // result with BASE_BUNDLE_UNAVAILABLE, so the two must agree.
-  const supervisorStates = [...units['shu-supervisor.service'].matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
+  const supervisorStates = [...units[supervisorName].matchAll(/^Environment=SHU_WORKSPACE_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
   assert.ok(supervisorStates.length === 1 && supervisorStates[0][1] === expectedState,
     'SHU251_WORKSPACE_STATE: the supervisor unit must render the writer\'s SHU_WORKSPACE_STATE_DIR exactly once');
   // CROSS-UNIT AGREEMENT. Same shape as the SHU_WORKSPACE_STATE_DIR check above,
@@ -312,7 +349,7 @@ export function assertPolicy(units, options = {}) {
   // fails here rather than degrading the live recovery to a permanent
   // EVIDENCE_MISSING, and a unit whose value drifts independently fails too.
   const expectedStore = supervisorStoreDirectory(options);
-  const stores = names.filter(name => name.endsWith('.service')).map(name => {
+  const stores = services.map(name => {
     const found = [...units[name].matchAll(/^Environment=SHU_SUPERVISOR_STATE_DIR=(\/[a-zA-Z0-9_./-]+)$/gm)];
     assert.ok(found.length === 1 && found[0][1] === expectedStore,
       `SHU251_SUPERVISOR_STORE: ${name} must render the supervisor's authoritative store directory exactly once`);
@@ -322,17 +359,23 @@ export function assertPolicy(units, options = {}) {
     'SHU251_SUPERVISOR_STORE: supervisor and coordinator units must name the same supervisor store directory');
   const starts = writer.split('\n').filter(line => line.startsWith('ExecStart='));
   assert.ok(states.length === 1 && starts.length === 1 && starts[0].startsWith(`ExecStart="/usr/bin/flock" "--nonblock" "--conflict-exit-code" "2" ${quote(`${expectedState}/host-tick.lock`)} `), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
-  assert.match(writer, /^Requires=shu-supervisor.service$/m, 'SHU251_DEPENDENCY: coordinator must require supervisor');
-  for (const name of names) {
+  assert.match(writer, new RegExp(`^Requires=${supervisorName}$`, 'm'), 'SHU251_DEPENDENCY: coordinator must require supervisor');
+  // A card worker's pair names its own activation record on both sides.
+  if (worker !== 1) {
+    assert.ok(starts[0].endsWith(` ${quote('--activation')} ${quote(workerActivationFile(worker))}`), `SHU251_WORKER: ${coordinatorName} must tick worker ${worker}'s activation record`);
+    assert.deepEqual(units[supervisorName].split('\n').filter(line => line.startsWith('Environment=SHU_SUPERVISOR_ACTIVATION_FILE=')),
+      [`Environment=SHU_SUPERVISOR_ACTIVATION_FILE=${workerActivationFile(worker)}`], `SHU251_WORKER: ${supervisorName} must read worker ${worker}'s activation record`);
+  }
+  for (const name of worker === 1 ? names : services) {
     assert.doesNotMatch(units[name], /@[A-Z_]+@/, 'SHU251_PARAMETER: unresolved template');
     assert.doesNotMatch(units[name], /SHU_SUPERVISOR_SECRET\s*=/i, 'SHU251_SECRET_LITERAL: units must not embed supervisor secrets');
   }
-  for (const name of names.filter(n => n.endsWith('.service'))) {
+  for (const name of services) {
     for (const [directive, expected] of [['User', identity.serviceUser], ['Group', identity.serviceGroup]]) {
       assert.deepEqual(units[name].split('\n').filter(line => line.startsWith(`${directive}=`)), [`${directive}=${expected}`],
         `SHU251_IDENTITY: ${name} must run with configured ${directive}`);
     }
-    assert.deepEqual(units[name].split('\n').filter(line => line.startsWith('EnvironmentFile=')), [`EnvironmentFile=${identity[name === 'shu-supervisor.service' ? 'supervisorEnvironmentFile' : 'coordinatorEnvironmentFile']}`],
+    assert.deepEqual(units[name].split('\n').filter(line => line.startsWith('EnvironmentFile=')), [`EnvironmentFile=${identity[name === supervisorName ? 'supervisorEnvironmentFile' : 'coordinatorEnvironmentFile']}`],
       'SHU251_SECRET_FILE: each service must require its own environment file');
     assert.match(units[name], /^Environment=ENABLE_DISPATCH=false$/m, 'SHU251_GATE: staged dispatch must be off');
   }
@@ -345,11 +388,47 @@ export function verifySyntax(directory) {
 }
 
 // Concrete merged interface; secrets and activation are supplied separately at deployment.
-export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile, node = process.execPath }) {
-  workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
-  return { ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorSocket,
-    supervisorStateDir: supervisorStoreDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir }),
+export function serviceParameters({ worker = 1, workdir, workspaceStateDir = workerWorkspaceStateDir(worker), allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile, node = process.execPath }) {
+  workspaceDirectory({ worker, workspaceStateDir, allowWorkspaceStateDirOverride });
+  return { ...(worker === 1 ? {} : { worker }), ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorSocket,
+    supervisorStateDir: supervisorStoreDirectory({ worker, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir }),
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
-    coordinator: [node, join(workdir, '.github/coordinator/service/coordinator-tick.mjs'), '--activation', ACTIVATION_FILE] };
+    coordinator: [node, join(workdir, '.github/coordinator/service/coordinator-tick.mjs'), '--activation', workerActivationFile(worker)] };
+}
+
+// M15: card worker N's supervisor and coordinator, as timer-install puts them
+// on the host. They are rendered from worker 1's INSTALLED pair, never typed in
+// by a person: the two installed files are read back into the render
+// parameters (identity, environment files, workdir, node), and those must
+// render worker 1's pair again to exactly its installed bytes, with the
+// deployed workspace, store and socket. Only then is worker N rendered from
+// the same parameters, with its own workspace state directory, supervisor
+// store, socket, writer lock and activation path, and checked by assertPolicy.
+// Anything else refuses SHU251_WORKER.
+const unquote = (token) => token.slice(1, -1).replace(/\$\$|%%|\\(.)/g, (match, escaped) => escaped ?? match[0]);
+function installedLine(text, key) {
+  const lines = String(text).split('\n').filter(line => line.startsWith(`${key}=`));
+  assert.equal(lines.length, 1, `SHU251_WORKER: worker 1's installed unit must name ${key} exactly once`);
+  return lines[0].slice(key.length + 1);
+}
+export function workerUnitsFromInstalled(worker, installed, fsio = fs) {
+  assert.ok(Number.isInteger(worker) && worker > 1 && worker <= MAX_CARD_WORKERS, `SHU251_WORKER: card worker must be 2 to ${MAX_CARD_WORKERS}`);
+  const supervisor = installed?.['shu-supervisor.service'];
+  const coordinator = installed?.['shu-coordinator.service'];
+  assert.ok(typeof supervisor === 'string' && typeof coordinator === 'string', "SHU251_WORKER: worker 1's installed supervisor and coordinator are required");
+  const exec = installedLine(supervisor, 'ExecStart').match(/"(?:[^"\\]|\\.)*"/g) ?? [];
+  assert.ok(exec.length === 2, "SHU251_WORKER: worker 1's supervisor must start node on the supervisor service");
+  const environment = (text) => installedLine(text, 'EnvironmentFile');
+  const options = { workdir: installedLine(supervisor, 'WorkingDirectory'), node: unquote(exec[0]),
+    serviceUser: installedLine(supervisor, 'User'), serviceGroup: installedLine(supervisor, 'Group'),
+    supervisorEnvironmentFile: environment(supervisor), coordinatorEnvironmentFile: environment(coordinator) };
+  const own = render(serviceParameters(options), fsio);
+  for (const name of ['shu-supervisor.service', 'shu-coordinator.service']) {
+    assert.equal(own[name], installed[name], `SHU251_WORKER: worker 1's installed ${name} is not what this revision renders`);
+  }
+  const parameters = serviceParameters({ ...options, worker });
+  const units = render(parameters, fsio);
+  assertPolicy(units, parameters, fsio);
+  return units;
 }
