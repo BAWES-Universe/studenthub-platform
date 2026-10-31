@@ -4163,6 +4163,15 @@ const SHU404_BRIEF = SHU402_BRIEF.replace("Card SHU-402:", "Card SHU-404:").repl
 if (!SHU404_BRIEF.startsWith("Card SHU-404:") || !SHU404_BRIEF.includes(SHU402_FINDINGS) || !SHU404_BRIEF.includes(SHU404_FINDINGS)) throw new Error("SHU404_BRIEF must name its own card and carry every attempt's findings");
 const SHU404_ACCEPTANCE = `${SHU402_ACCEPTANCE} SHU-404 is SHU-402's contract re-queued after its build used up its revisions; SHU-402 never runs again. Every Postgres fixture row satisfies its table's CHECK constraints and triggers: SHU373_CATALOGUE tests pending and rejected choices as ids unknown to catalogue_items and a deleted choice as a catalogue_items row with status 'deleted' and deleted_at set, for both countries and universities, and the store's choices read leaves out a deleted country and university that the test inserts. The Change preview shows gender by its label.`;
 
+// SHU-405: the same contract a sixth time. SHU-404's build ran and its review
+// was under way when a coordinator tick printed no activation line (most
+// likely a Linear rate-limit hold, which the runner did not yet wait out) and
+// the run ended REFUSED.
+// An orchestrator fault, not a finding: the brief and acceptance are SHU-404's.
+const SHU405_BRIEF = SHU404_BRIEF.replace("Card SHU-404:", "Card SHU-405:");
+if (!SHU405_BRIEF.startsWith("Card SHU-405:") || !SHU405_BRIEF.includes(SHU402_FINDINGS) || !SHU405_BRIEF.includes(SHU404_FINDINGS)) throw new Error("SHU405_BRIEF must name its own card and carry every attempt's findings");
+const SHU405_ACCEPTANCE = `${SHU404_ACCEPTANCE} SHU-405 is SHU-404's contract re-queued after its run was cut off by the orchestrator, not by a review; SHU-404 never runs again.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4669,6 +4678,13 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU373_PATHS,
     acceptance: SHU404_ACCEPTANCE,
     brief: SHU404_BRIEF,
+  }),
+  "SHU-405": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU405_ACCEPTANCE,
+    brief: SHU405_BRIEF,
   }),
 });
 

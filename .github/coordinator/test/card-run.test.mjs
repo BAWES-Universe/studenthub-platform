@@ -963,6 +963,50 @@ test("SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode,
   assert.equal(host.ticks, 4, "three armed ticks and one dispatch-off tick");
 });
 
+test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks again instead of ending the run", async () => {
+  const id = "shu-301-run-20261009T153007Z";
+  const held = tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=120", id);
+  assert.equal(held.ended, false);
+  assert.deepEqual(held.hold, { retry_after_s: 120 });
+  // Anything else with no activation line still ends the run, and names what the tick said.
+  const failed = tickOutcome("coordinator reconcile failed: socket hang up", id);
+  assert.equal(failed.outcome, "REFUSED");
+  assert.match(failed.reason, /did not report this run armed: coordinator reconcile failed: socket hang up$/);
+  assert.equal(tickOutcome("", id).reason, "the tick did not report this run armed: null");
+  // An activation line wins over a stray hold line.
+  assert.equal(tickOutcome(`HOLD=LINEAR_RATE_LIMITED retry_after=5\n${tickText("activation=absent (committed gates only)")}`, id).outcome, "REFUSED");
+
+  const host = fakeHost({
+    onTick: (h) => {
+      const armedNow = JSON.parse(h.files.get(PATHS.activation)?.text ?? "{}").activation_id;
+      if (h.ticks === 2 || h.ticks === 3) return "HOLD=LINEAR_RATE_LIMITED retry_after=300";
+      if (h.ticks < 5) return tickText(armed(armedNow));
+      if (h.ticks === 5) return tickText(spent("SHU-301", "review PASS — the episode is complete"), 0);
+      return tickText("activation=absent (committed gates only)", 0);
+    },
+  });
+  const before = host.clock;
+  const { code, output } = await main(["run"], host.io, PATHS);
+  assert.equal(code, 0, JSON.stringify(output, null, 2));
+  assert.equal(output.outcome, "PASS", "two held ticks did not end the run");
+  assert.equal(output.ticks.length, 3, "held ticks are not answered ticks");
+  assert.deepEqual(output.holds.map((h) => h.retry_after_s), [300, 300]);
+  assert.ok(host.clock - before >= 2 * 300 * 1000, "each hold waited the time Linear asked for");
+  reverted(host);
+
+  // A hold on the first tick does not skip the first-tick eligibility check.
+  const first = fakeHost({
+    onTick: (h) => {
+      const armedNow = JSON.parse(h.files.get(PATHS.activation)?.text ?? "{}").activation_id;
+      if (h.ticks === 1) return "HOLD=LINEAR_RATE_LIMITED retry_after=1";
+      if (h.ticks === 2) return tickText(armed(armedNow), 0, ["SHU-301            not in Todo"]);
+      return tickText("activation=absent (committed gates only)", 0);
+    },
+  });
+  const notEligible = await main(["run"], first.io, PATHS);
+  assert.equal(notEligible.output.outcome, "NOT_ELIGIBLE");
+});
+
 test("SHU-86 C10: a failed arm still reverts everything it wrote", async () => {
   const host = fakeHost({ edit: (h, when) => { if (when === "restart") h.environ = ["PATH=/usr/bin"]; } });
   const result = await attempt(() => runCard({ io: host.io, paths: PATHS }));

@@ -2127,6 +2127,7 @@
     "SHU-86 C7: only a clean, installed main is armed",
     "SHU-86 C8: a missing coordinator branch is created at the installed revision; a moved one is refused",
     "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
+    "Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks again instead of ending the run",
     "SHU-86 C10: a failed arm still reverts everything it wrote",
     "SHU-86 C11: a run whose card is not eligible on the first tick stops and reverts",
     "SHU-86 C11b: a run whose card is excluded on the first tick stops even while other cards are eligible",
@@ -4620,6 +4621,9 @@
     "SHU-86 mutation M212 leave the stopped workers out of the report",
     "SHU-86 mutation M213 report a listing pgrep could not give as zero processes",
     "SHU-86 mutation M214 list leftover workers with their command lines",
+    "SHU-86 mutation M300 end the run on a tick that holds on Linear's rate limit",
+    "SHU-86 mutation M301 count a held tick as the first answered tick",
+    "SHU-86 mutation M302 tick again at once after a hold, without waiting",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -18536,6 +18540,10 @@
     },
     {
       "name": "SHU-86 C9: a whole run arms, ticks until the coordinator ends the episode, and reverts",
+      "capabilities": []
+    },
+    {
+      "name": "Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks again instead of ending the run",
       "capabilities": []
     },
     {
@@ -33625,6 +33633,18 @@
     },
     {
       "name": "SHU-86 mutation M214 list leftover workers with their command lines",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M300 end the run on a tick that holds on Linear's rate limit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M301 count a held tick as the first answered tick",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M302 tick again at once after a hold, without waiting",
       "capabilities": []
     },
     {

@@ -372,9 +372,16 @@ function repairStep(io, paths, revision, id, claim) {
 // spent, and a refusal that is not "spent" stops the run by its own words.
 // A tick with no activation line, an absent record, or another run's record
 // also ends the run: the runner never ticks past what it cannot read.
+// One exception: a tick that HOLDs on Linear's rate limit read nothing and
+// decided nothing (reconcile.mjs main prints only that line), so the run
+// waits the time Linear asked for and ticks again, inside its window. Before,
+// a limit hit late in a long run ended it REFUSED with its work unreviewed.
+export const TICK_HOLD_RE = /^HOLD=LINEAR_RATE_LIMITED retry_after=(\d+)\s*$/m;
 export function tickOutcome(text, activationId = null) {
   const lines = String(text ?? "").split("\n");
   const activation = lines.find((line) => line.startsWith("activation=")) ?? null;
+  const hold = activation === null ? TICK_HOLD_RE.exec(String(text ?? "")) : null;
+  if (hold) return { ended: false, outcome: null, reason: null, activation, eligible: null, excluded: [], hold: { retry_after_s: Number(hold[1]) } };
   const eligibleMatch = /^eligible=(\d+)/m.exec(text ?? "");
   const eligible = eligibleMatch ? Number(eligibleMatch[1]) : null;
   const excluded = lines.filter((line) => line.startsWith("  EXCLUDED ")).map((line) => line.trim());
@@ -389,7 +396,12 @@ export function tickOutcome(text, activationId = null) {
   const refusedMatch = activation && /^activation=REFUSED \((.*)\)$/.exec(activation);
   if (refusedMatch) return { ended: true, outcome: "REFUSED", reason: refusedMatch[1], activation, eligible, excluded };
   const armedId = /^activation=ARMED id=(\S+) /.exec(activation)?.[1] ?? null;
-  if (!armedId) return { ended: true, outcome: "REFUSED", reason: `the tick did not report this run armed: ${activation}`, activation, eligible, excluded };
+  if (!armedId) {
+    // Name what the tick said when it printed no activation line, so the
+    // report shows the cause (bounded; the coordinator prints no secrets).
+    const said = activation ?? lines.map((line) => line.trim()).filter(Boolean).at(-1)?.slice(0, 300) ?? null;
+    return { ended: true, outcome: "REFUSED", reason: `the tick did not report this run armed: ${said}`, activation, eligible, excluded };
+  }
   if (activationId && armedId !== activationId) {
     return { ended: true, outcome: "REFUSED", reason: `the tick reports activation ${armedId}, not ${activationId}`, activation, eligible, excluded };
   }
@@ -626,6 +638,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       ...repairPrepare(planned, config) });
     const plan = prepared.branch ? onBase(planned, prepared.branch.head) : planned;
     const ticks = [];
+    const holds = [];
     let result;
     let armedAt = null;
     let supervisorStateDir = null;
@@ -663,7 +676,10 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         const startedAt = io.now().toISOString();
         const output = tick(io, limits);
         const outcome = tickOutcome(output, plan.record.activation_id);
-        ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
+        // A held tick is no answer: it is kept apart, so every check below that
+        // counts ticks (the first-tick exclusion) counts only answered ones.
+        if (outcome.hold) holds.push({ at: startedAt, retry_after_s: outcome.hold.retry_after_s });
+        else ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
         // Observing reads only the tick's own output: no request and no wait,
         // so it never moves a tick, the window's end, revert or landing. Every
         // tick is observed and recorded before the run decides whether it
@@ -675,6 +691,13 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         if (outcome.ended) {
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
+        }
+        // A held tick waits what Linear asked, never past the window's end
+        // (the next pass of the loop then ends the run EXPIRED).
+        if (outcome.hold) {
+          const left = Math.max(0, deadline - io.now().getTime());
+          io.sleep(Math.min(left, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));
+          continue;
         }
         // On the first tick nothing has started yet, so the card being
         // excluded is real and no later tick changes it: stop now rather than
@@ -710,7 +733,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     // lengths can be read back from the claims.
     const timing = { armed_at: armedAt, first_tick_at: ticks[0]?.at ?? null, last_tick_at: ticks.at(-1)?.at ?? null,
       finished_at: finishedAt, landed_at: landedAt };
-    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, revert: reverted,
+    summary = { card: plan.id, kind: plan.kind, activation_id: plan.record.activation_id, trigger, revision, prepared, ...result, ticks, ...(holds.length ? { holds } : {}), revert: reverted,
       timing, ...(watch ? { watch: watch.summary(finishedAt === null ? null : Date.parse(finishedAt)) } : {}), ...(land ? { land } : {}),
       ...(plan.repair ? { repair: plan.repair } : {}), ...(plan.kind === "review" ? { review: { pr: review.pr, head: review.head, base: review.base } } : {}),
       owner_mention: ownerMention(config.owner_mention) };
