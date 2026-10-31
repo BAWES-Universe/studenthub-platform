@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { provisioner, parseCli, prerequisiteFailure, PATHS, BROKER, FIND_TIMEOUT_MS } from '../provision-shu71-prerequisites.mjs';
-import { revision } from './provision-prerequisites-fixture.mjs';
+import { provisioner, parseCli, prerequisiteFailure, installExclusion, runCli, PATHS, BROKER, FIND_TIMEOUT_MS } from '../provision-shu71-prerequisites.mjs';
+import { revision, holdInstallLocks } from './provision-prerequisites-fixture.mjs';
 import { targetFixture as fixture } from './provision-target-host-fixture.mjs';
 
 const treeFile = PATHS.tree + '/service/shu71-production.mjs';
@@ -195,5 +195,45 @@ test('M15 SHU71 precondition refuses a card worker 2 that is not as timer-instal
     const result = p.precondition();
     assert.equal(result.ok, false, name);
     assert.ok(result.paths.some(row => !row.ok && row.code === code), `${name}: ${JSON.stringify(result.paths.filter(row => !row.ok))}`);
+  }
+});
+
+test('M15 SHU71 an install or rollback excludes every card worker, by hand as by the box', t => {
+  const code = fn => { try { fn(); return 'OK'; } catch (e) { return e.code; } };
+  const h = fixture(t), fsys = h.boundary.fs;
+  // Nothing held: refused.
+  assert.equal(code(() => installExclusion(fsys)), 'ACT_INSTALL_LOCK_NOT_HELD');
+  // The install lock alone, with no card-run lock: refused.
+  h.write('/run/lock/shu-card-install.lock', 'hand-366', 0o600);
+  assert.equal(code(() => installExclusion(fsys)), 'ACT_INSTALL_LOCK_NOT_HELD');
+  // Both, one holder: allowed.
+  h.write('/run/lock/shu-card-run.lock', 'hand-366', 0o600);
+  assert.deepEqual(installExclusion(fsys), { holder: 'hand-366', run_locks: 1 });
+  // A second worker's run under way (its own run lock and activation record): refused.
+  h.write('/run/lock/shu-card-run-w2.lock', '4242', 0o600);
+  assert.equal(code(() => installExclusion(fsys)), 'ACT_INSTALL_WORKER_BUSY');
+  h.remove('/run/lock/shu-card-run-w2.lock');
+  h.write('/srv/shu/state/w2/shu71-activation.json', '{}', 0o640);
+  assert.equal(code(() => installExclusion(fsys)), 'ACT_INSTALL_WORKER_ARMED');
+  h.remove('/srv/shu/state/w2/shu71-activation.json');
+  // The box's self-install holds worker 2's run lock and the install lock with its pid.
+  h.remove('/run/lock/shu-card-run.lock');
+  h.write('/run/lock/shu-card-install.lock', '777', 0o600);
+  h.write('/run/lock/shu-card-run-w2.lock', '777', 0o600);
+  assert.deepEqual(installExclusion(fsys), { holder: '777', run_locks: 1 });
+  // A kept lock from a failed install never lets a new install through.
+  h.write('/run/lock/shu-card-install.lock', 'kept: a failed install whose pause could not be written', 0o600);
+  assert.equal(code(() => installExclusion(fsys)), 'ACT_INSTALL_WORKER_BUSY');
+
+  // The CLI refuses before it takes the /etc/shu lock or runs anything.
+  for (const action of ['install', 'rollback']) {
+    const g = fixture(t); holdInstallLocks(g);
+    g.write('/run/lock/shu-card-run-w2.lock', '4242', 0o600);
+    g.write('/srv/shu/state/w2/shu71-activation.json', '{}', 0o640);
+    const output = [], runs = [];
+    const rc = runCli([action, revision], { uid: () => 0, fs: g.boundary.fs, run: (...args) => { runs.push(args); return { status: 0 }; } }, r => output.push(r));
+    assert.equal(rc, 2, action);
+    assert.equal(runs.length, 0, `${action}: nothing ran`);
+    assert.equal(output[0].code, 'ACT_INSTALL_WORKER_BUSY', action);
   }
 });

@@ -12,6 +12,14 @@ export function cardWorkers(config) {
   return Number.isInteger(max) && max >= 1 && max <= MAX_CARD_WORKERS ? max : 1;
 }
 const validWorker = (worker) => Number.isInteger(worker) && worker >= 1 && worker <= MAX_CARD_WORKERS;
+// M15: worker N's card-run lock (card-run.mjs cardRunPaths) and the one
+// host-wide install lock (card-install.mjs INSTALL_LOCK), named here so the
+// root provisioner can read them without importing either module.
+export const CARD_INSTALL_LOCK = '/run/lock/shu-card-install.lock';
+export function workerRunLock(worker) {
+  if (!validWorker(worker)) throw new Error('ACT_ACTIVATION_PATH');
+  return worker === 1 ? '/run/lock/shu-card-run.lock' : `/run/lock/shu-card-run-w${worker}.lock`;
+}
 export function workerActivationFile(worker) {
   if (!validWorker(worker)) throw new Error('ACT_ACTIVATION_PATH');
   return worker === 1 ? ACTIVATION_FILE : `/srv/shu/state/w${worker}/shu71-activation.json`;

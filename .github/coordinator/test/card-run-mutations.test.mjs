@@ -303,8 +303,8 @@ const CASES = [
   },
   {
     name: "M46 let the timer run the same revision twice",
-    from: '{ flag: "wx", mode: 0o600 });\n      break;',
-    to: '{ mode: 0o600 }); // SHU86-M46\n      break;',
+    from: 'return io.fs.writeFileSync(file, text, { flag: "wx", mode: 0o600 });',
+    to: 'return io.fs.writeFileSync(file, text, { mode: 0o600 }); // SHU86-M46',
     pattern: "SHU-86 C31:",
   },
   {
@@ -1744,6 +1744,12 @@ const CASES = [
     from: "    if (worker <= workers || io.fs.existsSync(path.join(paths.unitDir, autoServiceName(worker)))) watched.push(worker);",
     to: "    if (worker <= workers) watched.push(worker); // SHU86-M259",
     pattern: "M15: the watch also watches",
+  },
+  {
+    name: "M260 create the claim with an exclusive write that a reader can see empty",
+    from: "  try { io.fs.linkSync(temp, file); }",
+    to: "  try { io.fs.writeFileSync(file, text, { flag: \"wx\", mode: 0o600 }); } // SHU86-M260",
+    pattern: "M15 W9:",
   },
 ];
 

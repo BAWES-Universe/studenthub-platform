@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
+  planRun, onBase, nextCard, tickOutcome, tick, publishClaim, replaceClaim, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   autoServiceName, autoTimerName,
@@ -6324,6 +6324,39 @@ test("M15: two card workers run two cards at once through main auto and auto --w
   assert.equal(host.live.size, 0);
   assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text).outcome, "PASS");
   assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-305")).text).outcome, "PASS");
+});
+
+test("M15 W9: a claim is published whole, so another worker never reads it empty", () => {
+  // A file system that records every state a reader could see at the claim's path.
+  const files = new Map();
+  const seen = [];
+  const claim = "/srv/shu/state/card-run-auto-x-SHU-1.json";
+  const watch = (file) => { if (file === claim) seen.push(files.get(claim)); };
+  const fsys = {
+    writeFileSync: (file, text, options = {}) => {
+      if (options.flag === "wx" && files.has(file)) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      if (file === claim) seen.push("");
+      files.set(file, String(text)); watch(file);
+    },
+    linkSync: (from, to) => {
+      if (files.has(to)) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      files.set(to, files.get(from)); watch(to);
+    },
+    renameSync: (from, to) => { files.set(to, files.get(from)); files.delete(from); watch(to); },
+    unlinkSync: (file) => { files.delete(file); },
+  };
+  publishClaim({ fs: fsys }, claim, "{\"card\":\"SHU-1\"}\n");
+  assert.deepEqual(seen, ["{\"card\":\"SHU-1\"}\n"], "the claim appears with its whole text");
+  assert.deepEqual([...files.keys()], [claim], "no temporary file is left");
+  // A second claimant gets EEXIST, as the old exclusive create gave it, and leaves nothing behind.
+  assert.throws(() => publishClaim({ fs: fsys }, claim, "{}\n"), { code: "EEXIST" });
+  assert.deepEqual([...files.keys()], [claim]);
+  assert.equal(files.get(claim), "{\"card\":\"SHU-1\"}\n");
+  // The final claim replaces it whole too.
+  replaceClaim({ fs: fsys }, claim, "{\"card\":\"SHU-1\",\"outcome\":\"PASS\"}\n");
+  assert.ok(!seen.includes(""), "the claim is never seen empty");
+  assert.deepEqual([...files.keys()], [claim]);
+  assert.equal(files.get(claim), "{\"card\":\"SHU-1\",\"outcome\":\"PASS\"}\n");
 });
 
 test("M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it", async () => {
