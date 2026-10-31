@@ -44,8 +44,11 @@ import { ADDED_WEAKENING_LINES } from "./fixture/test-weakening-lines.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMMITTED = JSON.parse(fs.readFileSync(path.join(HERE, "..", "config.json"), "utf8"));
 // The committed config turns M10 on; every other test starts from it off and
-// turns it on only where it means to (T7 pins the committed value).
-const BASELINE = { ...structuredClone(COMMITTED), landing_thread_review: { ...COMMITTED.landing_thread_review, enabled: false } };
+// turns it on only where it means to (T7 pins the committed value). M15: the
+// committed config runs two card workers; every other test starts from one
+// and turns more on where it means to (W8 pins the committed values).
+const { workers: _committedWorkers, ...ONE_WORKER } = structuredClone(COMMITTED);
+const BASELINE = { ...ONE_WORKER, landing_thread_review: { ...COMMITTED.landing_thread_review, enabled: false } };
 const REV = "a".repeat(40);
 const HEAD = "b".repeat(40);
 const BASE = "c".repeat(40);
@@ -6321,4 +6324,16 @@ test("M15: two card workers run two cards at once through main auto and auto --w
   assert.equal(host.live.size, 0);
   assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-301")).text).outcome, "PASS");
   assert.equal(JSON.parse(host.files.get(autoClaim(PATHS, REV, "SHU-305")).text).outcome, "PASS");
+});
+
+test("M15 W8: the committed config runs two card workers, and a queued card that shares another's files waits for it", async () => {
+  const { cardQueue } = await import("../single-run-activation.mjs");
+  const { cardWorkers } = await import("../service/card-run.mjs");
+  assert.equal(cardWorkers(COMMITTED), 2);
+  assert.equal(cardWorkers(BASELINE), 1, "every other test starts from one worker");
+  const queue = cardQueue(COMMITTED);
+  assert.equal(queue.ok, true, queue.reason);
+  for (const [id, needs] of Object.entries(queue.after)) {
+    for (const need of needs) assert.ok(queue.ids.indexOf(need) < queue.ids.indexOf(id), `${id} waits on ${need}, which comes earlier`);
+  }
 });

@@ -16,7 +16,10 @@ const committed = JSON.parse(fs.readFileSync(new URL('../../config.json', import
 export const TWO_FIXTURE_IDS = ['SHU-140', 'SHU-254'];
 
 export function twoFixtureConfig(overrides = {}) {
-  const config = { ...structuredClone(committed), max_dispatch: 2, dispatch_scope: { issue_ids: [...TWO_FIXTURE_IDS] }, ...overrides };
+  // M15: the committed config runs two card workers; the two-fixture world is
+  // one coordinator's, so it starts from one worker.
+  const { workers: _committedWorkers, ...oneWorker } = structuredClone(committed);
+  const config = { ...oneWorker, max_dispatch: 2, dispatch_scope: { issue_ids: [...TWO_FIXTURE_IDS] }, ...overrides };
   // A two-fixture world needs both committed lanes; fail loudly rather than
   // hand a case a config that only looks like one.
   const lanes = [config.fixture_lane, ...(config.fixture_lanes ?? [])].map(lane => lane?.id);

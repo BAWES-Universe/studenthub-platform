@@ -23,8 +23,9 @@ const CONTRACTS_TEXT = fs.readFileSync(path.join(HERE, "..", "card-contracts.jso
 const COMMITTED = JSON.parse(COMMITTED_TEXT);
 // M16: the committed config turns code self-install on. The Card B tests read
 // an installed revision with it off, as they always did; the M11 and M16 tests
-// turn a policy on themselves.
-const { code_self_install: _committedPolicy, ...QUEUE_ONLY } = COMMITTED;
+// turn a policy on themselves. M15: likewise one card worker, not the
+// committed two; the worker tests turn more on themselves.
+const { code_self_install: _committedPolicy, workers: _committedWorkers, ...QUEUE_ONLY } = COMMITTED;
 const QUEUE_ONLY_TEXT = JSON.stringify(QUEUE_ONLY);
 const R = "a".repeat(40);
 const N = "d".repeat(40);
@@ -1132,7 +1133,7 @@ test("M16 Q4: the committed policy is approval none, which installs on the box r
     "with the policy off, reviewed code alone is nothing to install");
   // A queue install, the stopped-queue restart, still installs itself.
   assert.deepEqual(selfInstallGate(recutFacts((f) => ({ ...f, configs: { installed: COMMITTED_TEXT,
-    main: JSON.stringify(recutConfig((c) => ({ ...c, code_self_install: NONE }))) } }))),
+    main: JSON.stringify(recutConfig((c) => ({ ...c, code_self_install: NONE, workers: COMMITTED.workers }))) } }))),
     { ok: true, queue: RECUT_SCOPE, lanes: [RECUT_ID] });
   // A policy-none install passes with no GitHub review read.
   const host = codeHost(NONE, { approved: false });
