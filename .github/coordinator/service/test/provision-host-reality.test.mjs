@@ -89,8 +89,8 @@ test('HOST_CLI_GREEN', t => { const h = prepare(t);
   h.boundary.run = (exe, args, opts) => {
     if (exe === '/usr/bin/setpriv' && args.includes('/usr/bin/git')) {
       const a = args.slice(args.indexOf('-C') + 2);
-      if (a[0] === 'ls-tree') return { status: 0, stdout: execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', 'HEAD', '--', '.github/coordinator']) };
-      if (a[0] === 'cat-file') return { status: 0, stdout: execFileSync('git', a) };
+      if (a[0] === 'ls-tree') return { status: 0, stdout: execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', 'HEAD', '--', '.github/coordinator'], { maxBuffer: 64 * 1024 * 1024 }) };
+      if (a[0] === 'cat-file') return { status: 0, stdout: execFileSync('git', a, { maxBuffer: 64 * 1024 * 1024 }) };
     }
     return run(exe, args, opts);
   };

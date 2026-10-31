@@ -115,3 +115,85 @@ test('SHU71 rollback walks the filesystem with its own timeout, and a failed com
   assert.ok(FIND_TIMEOUT_MS >= 10 * 60 * 1000);
   assert.deepEqual(finds, [FIND_TIMEOUT_MS, FIND_TIMEOUT_MS]);
 });
+
+// M15: card worker 2's directories, units and resident drop-ins, as card-run's
+// timer-install renders and makes them.
+async function workerTwoUnits() {
+  const { render, serviceParameters } = await import('../units.mjs');
+  const files = { '/etc/shu/supervisor.env': `SHU_SUPERVISOR_SECRET=${'s'.repeat(40)}\n`, '/srv/shu/coordinator.env': 'GITHUB_TOKEN=x\nLINEAR_API_TOKEN=y\n' };
+  const fsio = { lstatSync: p => (p in files ? { dev: 1, ino: p.length, isFile: () => true, isSymbolicLink: () => false } : undefined),
+    readFileSync: p => { if (p in files) return files[p]; throw Object.assign(Error('ENOENT'), { code: 'ENOENT' }); }, existsSync: p => p in files };
+  return render(serviceParameters({ workdir: PATHS.checkout, serviceUser: 'shu-coordinator', serviceGroup: 'shu-coordinator', node: '/usr/bin/node', worker: 2 }), fsio);
+}
+const W2 = Object.freeze({ dirs: ['/srv/shu/state/w2', '/srv/shu/state/workspaces/w2', '/srv/shu/state/workspaces/w2/supervisor'],
+  units: ['shu-supervisor-w2.service', 'shu-coordinator-w2.service'].map(name => '/etc/systemd/system/' + name),
+  activation: '/srv/shu/state/w2/shu71-activation.json' });
+async function stageWorkerTwo(h) {
+  const units = await workerTwoUnits();
+  for (const dir of W2.dirs) h.directory(dir, 0o700, 999, 982);
+  for (const p of W2.units) {
+    h.write(p, units[p.split('/').at(-1)]);
+    h.directory(p + '.d'); h.write(p + '.d/90-shu71.conf', '[Service]\nEnvironment=ENABLE_DISPATCH=false\n');
+  }
+}
+const rowsOf = (result, needle) => result.paths.filter(row => row.path.includes(needle));
+test('M15 SHU71 precondition measures card worker 2 as timer-install makes it, and rollback leaves it to timer-remove', async t => {
+  // One worker, nothing of another on the host: not one row more.
+  const one = fixture(t), p1 = provisioner(revision, one.boundary); p1.install();
+  const alone = p1.precondition();
+  assert.equal(alone.ok, true, JSON.stringify(alone));
+  assert.deepEqual(rowsOf(alone, 'w2'), []);
+  // The installed config turns worker 2 on before its timer-install ran: every
+  // row is measured and deferred to timer-install.
+  const h = fixture(t); h.sources.set('config.json', Buffer.from(JSON.stringify({ workers: { max: 2 } })));
+  const p = provisioner(revision, h.boundary); p.install();
+  const deferred = p.precondition();
+  assert.equal(deferred.ok, true, JSON.stringify(deferred));
+  const rows = rowsOf(deferred, 'w2');
+  for (const path of [...W2.dirs, ...W2.units, ...W2.units.map(u => u + '.d'), ...W2.units.map(u => u + '.d/90-shu71.conf')]) {
+    assert.equal(rows.find(row => row.path === path)?.window, 'DEFERRED_UNTIL_TIMER_INSTALL', path);
+  }
+  assert.equal(rows.find(row => row.path === W2.activation)?.window, 'DEFERRED_UNTIL_ARM');
+  // Made by timer-install: measured exactly, and read-only.
+  await stageWorkerTwo(h);
+  const before = h.snapshot();
+  const made = p.precondition();
+  assert.equal(made.ok, true, JSON.stringify(made));
+  assert.deepEqual(h.snapshot(), before, 'SHU71_PRECONDITION_READ_ONLY');
+  assert.ok(rowsOf(made, 'w2').filter(row => row.path !== W2.activation).every(row => row.window === undefined && row.ok), JSON.stringify(rowsOf(made, 'w2')));
+  // Rollback takes off only what the install made: worker 2's units,
+  // directories and drop-ins are timer-install's, and stay for timer-remove
+  // and a later timer-install to judge.
+  const w2Bytes = snapshot => Object.fromEntries(Object.entries(snapshot.files).filter(([path]) => /w2/.test(path)));
+  assert.equal(p.rollback().state, 'ROLLED_BACK');
+  assert.deepEqual(w2Bytes(h.snapshot()), w2Bytes(before));
+  assert.ok(Object.keys(w2Bytes(before)).length >= 9);
+  // Even with worker 2 turned off again, what is on the host is still measured.
+  const off = fixture(t), po = provisioner(revision, off.boundary); po.install(); await stageWorkerTwo(off);
+  assert.equal(rowsOf(po.precondition(), 'w2').length, rows.length);
+});
+test('M15 SHU71 precondition refuses a card worker 2 that is not as timer-install makes it', async t => {
+  const units = await workerTwoUnits();
+  const [supervisor, coordinator] = W2.units;
+  const cases = [
+    ['an armed worker 2', 'ACT_PRODUCTION_ACTIVATION_PRESENT', h => h.write(W2.activation, '{}', 0o640, 0, 982)],
+    ['a coordinator unit armed from another record', 'ACT_PRODUCTION_UNIT_BINDING',
+      h => h.write(coordinator, units['shu-coordinator-w2.service'].replace('/srv/shu/state/w2/shu71-activation.json', '/srv/shu/state/shu71-activation.json'))],
+    ['a coordinator unit under worker 1\'s writer lock', 'ACT_PRODUCTION_UNIT_BINDING',
+      h => h.write(coordinator, units['shu-coordinator-w2.service'].replace('/srv/shu/state/workspaces/w2/host-tick.lock', '/srv/shu/state/workspaces/host-tick.lock'))],
+    ['a supervisor unit on worker 1\'s workspace', 'ACT_PRODUCTION_UNIT_BINDING',
+      h => h.write(supervisor, units['shu-supervisor-w2.service'].replace('SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces/w2', 'SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces'))],
+    ['a writable unit', 'ACT_PRODUCTION_UNIT_CUSTODY', h => h.write(supervisor, units['shu-supervisor-w2.service'], 0o664)],
+    ['a dispatching resident drop-in', 'ACT_PRODUCTION_GATE', h => h.write(supervisor + '.d/90-shu71.conf', '[Service]\nEnvironment=ENABLE_DISPATCH=true\n')],
+    ['an open workspace directory', 'ACT_PREREQUISITE_CUSTODY', h => h.directory('/srv/shu/state/workspaces/w2', 0o755, 999, 982)],
+    ['a root-owned state directory', 'ACT_PREREQUISITE_CUSTODY', h => h.directory('/srv/shu/state/w2', 0o700, 0, 0)],
+  ];
+  for (const [name, code, mutate] of cases) {
+    const h = fixture(t), p = provisioner(revision, h.boundary); p.install(); await stageWorkerTwo(h);
+    assert.equal(p.precondition().ok, true, name);
+    mutate(h);
+    const result = p.precondition();
+    assert.equal(result.ok, false, name);
+    assert.ok(result.paths.some(row => !row.ok && row.code === code), `${name}: ${JSON.stringify(result.paths.filter(row => !row.ok))}`);
+  }
+});

@@ -134,12 +134,40 @@ test("SHU-224: successor backfill is scoped while lifecycle retains every capaci
   assert.deepEqual(receiptsForLifecycle(receipts, SCOPED), receipts);
 });
 
-test("SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run", async () => {
+test("M15 W3: with more than one card worker lifecycle reconciles only the receipts of the worker's own card; one worker reconciles every receipt", async () => {
+  const receipts = [
+    { issue_id: "SHU-90", stage: "LAUNCH_UNKNOWN" },
+    null,
+    { issue_id: "SHU-140", stage: "RUNNING" },
+  ];
+  const two = { ...SCOPED, workers: { max: 2 } };
+  assert.deepEqual(receiptsForLifecycle(receipts, two), [receipts[2]], "worker 2's coordinator never resumes worker 1's receipts");
+  assert.deepEqual(receiptsForLifecycle(receipts, SCOPED), [receipts[0], receipts[2]], "one worker: every receipt");
+  assert.deepEqual(receiptsForLifecycle(receipts, { ...SCOPED, workers: { max: 1 } }), [receipts[0], receipts[2]]);
+  // No dispatch scope: nothing narrows the tick, so every receipt, as before.
+  assert.deepEqual(receiptsForLifecycle(receipts, { max_dispatch: 1, workers: { max: 2 } }), [receipts[0], receipts[2]]);
+  // A whole tick: worker 2's coordinator, scoped to SHU-140, polls its own
+  // card's run and never worker 1's SHU-90 run, so it can never pause an
+  // adapter from it. One worker polls both, as before.
+  const own = { attempt_id: "00000000-0000-4000-8000-000000000140", issue_id: "SHU-140", stage: "RUNNING",
+    requested_worker: "codex-builder", external_run_id: "codexrun_00000000-0000-4000-8000-000000000140" };
+  const tick = await outOfScopeLifecycleTick({ workers: { max: 2 } }, [own]);
+  assert.equal(tick.exit, 0);
+  assert.deepEqual(tick.monitored, [own.attempt_id]);
+  assert.equal(tick.linearWrites, 0);
+  const one = await outOfScopeLifecycleTick({}, [own]);
+  assert.deepEqual(one.monitored, ["00000000-0000-4000-8000-000000000090", own.attempt_id]);
+});
+
+// One dispatch-on tick with a RUNNING receipt for SHU-90 while the scope is
+// SHU-140 (and any further receipts): the attempts whose runs were polled, and
+// how many Linear writes the tick made.
+async function outOfScopeLifecycleTick(extraConfig = {}, extraReceipts = []) {
   const dir = fs.mkdtempSync(join(tmpdir(), "shu224-main-"));
   try {
     const configPath = join(dir, "config.json");
-    fs.writeFileSync(configPath, JSON.stringify({ ...SCOPED, enable_dispatch: true }));
-    let monitorCalls = 0;
+    fs.writeFileSync(configPath, JSON.stringify({ ...SCOPED, enable_dispatch: true, ...extraConfig }));
+    const monitored = [];
     let linearWrites = 0;
     const issueNode = (id) => ({
       id: `uuid-${id}`,
@@ -179,16 +207,21 @@ test("SHU-224: an unscoped active receipt remains lifecycle-reconcilable during 
         stage: "RUNNING",
         requested_worker: "codex-builder",
         external_run_id: "codexrun_00000000-0000-4000-8000-000000000090",
-      }],
-      adapterModules: { "codex-cli": { monitorRun: async () => { monitorCalls += 1; return { kind: "UNCHANGED" }; } } },
+      }, ...extraReceipts],
+      adapterModules: { "codex-cli": { monitorRun: async ({ attempt_id }) => { monitored.push(attempt_id); return { kind: "UNCHANGED" }; } } },
       stdout: () => undefined,
     });
-    assert.equal(exit, 0);
-    assert.equal(monitorCalls, 1);
-    assert.equal(linearWrites, 0);
+    return { exit, monitorCalls: monitored.length, monitored, linearWrites };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+test("SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run", async () => {
+  const { exit, monitorCalls, linearWrites } = await outOfScopeLifecycleTick();
+  assert.equal(exit, 0);
+  assert.equal(monitorCalls, 1);
+  assert.equal(linearWrites, 0);
 });
 
 test("SHU-224: invalid trusted scope prevents dispatch before any mutation", async () => {
@@ -266,14 +299,25 @@ test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed
     },
     {
       name: "lifecycle incorrectly scoped",
-      from: "return receipts.filter(Boolean);",
-      to: "return receiptsWithinDispatchScope(receipts, _config); // SHU-224-MUTATION-LIFECYCLE-SCOPE",
+      from: "  if (cardWorkers(config) === 1 || !scope.configured) return present;",
+      to: "  return receiptsWithinDispatchScope(receipts, config); // SHU-224-MUTATION-LIFECYCLE-SCOPE",
       assertion: `
         const receipts = [{ issue_id: "SHU-90", stage: "RUNNING" }, { issue_id: "SHU-140", stage: "RUNNING" }];
         assert.deepEqual(mod.receiptsForLifecycle(receipts, config).map((r) => r.issue_id), ["SHU-90", "SHU-140"],
           "capacity-consuming receipts remain lifecycle-reconcilable");
       `,
       failure: /capacity-consuming receipts remain lifecycle-reconcilable/,
+    },
+    {
+      name: "lifecycle unscoped with two card workers",
+      from: "  return present.filter((receipt) => dispatchScopeAllows(scope, receipt.issue_id));",
+      to: "  return present; // SHU-224-MUTATION-WORKER-LIFECYCLE",
+      assertion: `
+        const receipts = [{ issue_id: "SHU-90", stage: "RUNNING" }, { issue_id: "SHU-140", stage: "RUNNING" }];
+        assert.deepEqual(mod.receiptsForLifecycle(receipts, { ...config, workers: { max: 2 } }).map((r) => r.issue_id), ["SHU-140"],
+          "a card worker reconciles only its own card's receipts");
+      `,
+      failure: /a card worker reconciles only its own card's receipts/,
     },
   ];
 

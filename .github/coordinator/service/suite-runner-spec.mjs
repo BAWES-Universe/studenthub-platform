@@ -12,7 +12,8 @@ const sorted = values => [...values].sort();
 export const suiteBoundary = Object.freeze({
   fs,
   identity: () => ({ uid: process.getuid(), gid: process.getgid(), groups: process.getgroups().sort((a, b) => a - b) }),
-  run: (file, args, options) => spawnSync(file, args, { encoding: 'utf8', timeout: 30000, ...options }),
+  // The committed inventory is read whole by `git show`, past spawnSync's 1 MiB default.
+  run: (file, args, options) => spawnSync(file, args, { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024, ...options }),
 });
 export function suiteIdentity(spec, io = suiteBoundary) {
   const actual = io.identity();

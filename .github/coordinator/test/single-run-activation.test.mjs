@@ -1382,6 +1382,56 @@ test("Self-repair B1: E3 a branch that moved off the passed head ends the repair
   assert.equal(live.successor.role, "revise");
 });
 
+test("M15: a repair at a landing's updated head binds the PASS at the passed head, and the branch, findings and revise at the updated head", () => {
+  const UPDATED = "d".repeat(40);
+  const findings = b1Findings({ target_sha: UPDATED });
+  const record = b1Record({ repair_head: UPDATED, repair_findings: findings });
+  assert.equal(validateActivationRecord(record).ok, true, validateActivationRecord(record).reason);
+  // repair_head only beside the repair keys, only a sha other than the passed head, and the findings are its.
+  assert.match(validateActivationRecord({ ...b1Without(record, "repair_pr", "repair_of", "repair_findings", "repair_evidence_digest", "max_rounds") }).reason,
+    /repair_head is only part of a landing-repair activation/);
+  for (const head of [B1_HEAD, "main", "D".repeat(40), null]) {
+    assert.match(validateActivationRecord(b1Record({ repair_head: head, repair_findings: findings })).reason ?? "", /repair_head must be a 40-character/, String(head));
+  }
+  assert.match(validateActivationRecord(b1Record({ repair_head: UPDATED })).reason, /repair_findings must be taken at repair_head/);
+  assert.match(validateActivationRecord(b1Record({ repair_findings: findings })).reason, /repair_findings must be taken at initial_target_sha/);
+  const repair = repairFromActivation(record, B1_CONFIG);
+  assert.equal(repair.repair_head, UPDATED);
+  assert.equal(repair.initial_target_sha, B1_HEAD);
+  // The PASS is still the one at the passed head; the revise starts at the updated head.
+  const verdict = b1Verdict([b1Build(), b1Pass()], { repair, authoritativeHead: UPDATED });
+  assert.equal(verdict.ended, false, verdict.reason);
+  assert.equal(verdict.successor.role, "revise");
+  assert.equal(verdict.successor.target_sha, UPDATED);
+  assert.deepEqual(verdict.successor.review_findings, findings);
+  const plain = b1Verdict([b1Build(), b1Pass()], { authoritativeHead: B1_HEAD });
+  assert.deepEqual({ ...verdict.successor, target_sha: null, review_findings: null }, { ...plain.successor, target_sha: null, review_findings: null },
+    "everything else is the revise of the passed head");
+  // A branch back at the passed head, or anywhere else, is not this repair's.
+  for (const head of [B1_HEAD, B1_NEXT]) {
+    const moved = b1Verdict([b1Build(), b1Pass()], { repair, authoritativeHead: head });
+    assert.equal(moved.ended, true);
+    assert.equal(moved.reason, `repair target moved: the branch is at ${head}, not the updated head ${UPDATED}`);
+  }
+  // The PASS must still be at the passed head: a PASS at the updated head is not one.
+  const atUpdated = b1Verdict([b1Build({ result: UPDATED }), b1Pass({ target: UPDATED })], { repair, authoritativeHead: UPDATED });
+  assert.equal(atUpdated.reason, `repair has no trusted PASS of ${B1_PASSED} at ${B1_HEAD}`);
+  // Findings bound elsewhere end the repair.
+  const unbound = b1Verdict([b1Build(), b1Pass()], { repair: { ...repair, repair_findings: b1Findings() }, authoritativeHead: UPDATED });
+  assert.equal(unbound.reason, `repair findings are not bound to the updated head ${UPDATED}`);
+  // The revise it wrote is reviewed like any repair's.
+  const revise = b1Receipt({ role: "revise", worker: verdict.successor.requested_worker, stage: "COMPLETED", verdict: "REVISION_READY", minute: 3,
+    episode: B1_REPAIR, target: UPDATED, result: B1_NEXT, identity: "codex-builder:session-2", findings,
+    scope: { workspace_scope: verdict.successor.workspace_scope, scope_phase: verdict.successor.scope_phase, allowed_paths: verdict.successor.allowed_paths, scoped_base_sha: null } });
+  const toReview = b1Verdict([b1Build(), b1Pass(), revise], { repair });
+  assert.equal(toReview.ended, false, toReview.reason);
+  assert.equal(toReview.successor.role, "review");
+  assert.equal(toReview.successor.target_sha, B1_NEXT);
+  // The status carries it.
+  const armed = b1Status(record);
+  assert.equal(armed.repair_head, UPDATED);
+});
+
 test("Self-repair B1: E4 the re-review's BLOCK ends the repair exhausted, with no second revise", () => {
   const config = structuredClone(B1_CONFIG);
   const revise = b1Revised();

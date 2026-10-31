@@ -69,14 +69,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
+import { validateActivationRecord, cardQueue, MAX_ACTIVATION_WINDOW_MS, MAX_CARD_QUEUE, REPAIR_MAX_ROUNDS } from "../single-run-activation.mjs";
+import { MAX_CARD_WORKERS, cardWorkers, workerActivationFile, supervisorUnitName, coordinatorUnitName } from "./credential-delivery.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, resolveQueueConfigReview } from "../workspace-scope.mjs";
 import { familyForLane } from "../launch-vocabulary.mjs";
 import { prepareRun, postRunReport, readCoordinatorCredentials, retryableRefusal, COORDINATOR_ENV } from "./card-prepare.mjs";
-import { landCard, readLandToken, boundedFetch, github, CARD_LAND_ENV, LAND_LIMITS } from "./card-land.mjs";
+import { landCard, readLandToken, boundedFetch, github, updatedHeadHolds, CARD_LAND_ENV, LAND_LIMITS, LAND_LOCK } from "./card-land.mjs";
 import { cardLanded } from "./card-landed.mjs";
 import { threadReviewer } from "./card-threads.mjs";
-import { selfInstall, RUNTIME_TEST_MODULES } from "./card-install.mjs";
+import { selfInstall, RUNTIME_TEST_MODULES, INSTALL_LOCK, installLockHeld } from "./card-install.mjs";
+import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME, workerUnitsFromInstalled } from "./units.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
@@ -97,8 +99,65 @@ export const CARD_RUN_PATHS = Object.freeze({
   pause: "/etc/shu/card-run.paused",
   // SHU-306: the landing token, root's alone and read only by this run.
   landEnv: CARD_LAND_ENV,
+  // M15 W4: the one landing lock every worker merges under.
+  landLock: LAND_LOCK,
+  // M15 W5: the one install lock; no card run starts while it is held.
+  installLock: INSTALL_LOCK,
 });
+// M15: card workers. Worker 1 is today's single card run and keeps its paths
+// exactly. Worker N > 1 has its own lock and activation; the state folder,
+// where every card's once-per-revision claim lives, stays shared, so a claim
+// written by one worker is the claim every worker sees. Only the count in
+// config.json (workers.max, default 1) turns more workers on. The count and the
+// activation paths live in credential-delivery.mjs, which the coordinator tick
+// and the units read too.
+export { MAX_CARD_WORKERS, cardWorkers };
+// M15 W5: `base` is worker 1's paths, CARD_RUN_PATHS on the host.
+export function cardRunPaths(worker = 1, base = CARD_RUN_PATHS) {
+  if (!Number.isInteger(worker) || worker < 1 || worker > MAX_CARD_WORKERS) refuse("CARD_RUN_WORKER", `worker must be 1 to ${MAX_CARD_WORKERS}`);
+  if (worker === 1) return base;
+  return Object.freeze({ ...base, worker, activation: workerActivationFile(worker),
+    lock: `/run/lock/shu-card-run-w${worker}.lock` });
+}
+export const workerOf = (paths) => paths.worker ?? 1;
+// Another worker's run of this card is still going: its claim has no outcome
+// yet, it names that worker, and that worker's run lock is held or the process
+// that wrote the claim is still alive (the lock is released before the run
+// report is posted and the outcome written, and taken after the claim). The
+// claim records the process's start time with its pid, so a later process
+// that reused the pid is not taken for it: a claim whose process is gone
+// stops the queue. A claim with no start time (one that could not read its
+// own) goes by the pid alone.
+function claimLive(io, paths, ran) {
+  if (!ran || ran.outcome !== undefined || !Number.isInteger(ran.worker) || ran.worker === workerOf(paths)) return false;
+  try {
+    if (io.fs.existsSync(cardRunPaths(ran.worker).lock)) return true;
+    if (!Number.isInteger(ran.pid) || ran.pid <= 0 || !io.fs.existsSync(`/proc/${ran.pid}`)) return false;
+    return ran.pid_start === undefined || processStart(io, ran.pid) === ran.pid_start;
+  } catch { return false; }
+}
+// M15: when process `pid` started, in clock ticks since boot: field 22 of
+// /proc/PID/stat, read after the command name, which may hold spaces or
+// parentheses. Null when it cannot be read.
+export function processStart(io, pid) {
+  try {
+    const text = String(io.fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+    const start = text.slice(text.lastIndexOf(")") + 2).split(" ")[19];
+    return /^\d+$/.test(start ?? "") ? start : null;
+  } catch { return null; }
+}
+// The claimant fields of a claim or repair round: this worker, this process
+// and when it started.
+function claimant(io, paths) {
+  const start = processStart(io, process.pid);
+  return { worker: workerOf(paths), pid: process.pid, ...(start ? { pid_start: start } : {}) };
+}
 export const UNITS = Object.freeze(["shu-supervisor.service", "shu-coordinator.service"]);
+// M15 W2: the supervisor and coordinator a worker arms, ticks and reverts.
+// Worker 1's are UNITS.
+export function workerUnits(worker = 1) {
+  return worker === 1 ? UNITS : Object.freeze([supervisorUnitName(worker), coordinatorUnitName(worker)]);
+}
 export const RUN_DROP_IN = "95-v1-run.conf";
 export const TARGET_DROP_IN = "96-v1-target.conf";
 export const RESIDENT_DROP_IN = "90-shu71.conf";
@@ -110,6 +169,11 @@ export const CARD_RUN_LIMITS = Object.freeze({
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
+  // M15 W3: with more than one worker, a revert removes only dependency caches
+  // older than this: twice the install's own bound (attempt-workspace.mjs
+  // DEPENDENCY_INSTALL_TIMEOUT_MS, 15 minutes), so another worker's install is
+  // never left without its cache.
+  npmCacheAgeMs: 30 * 60 * 1000,
   reportTimeoutMs: 30 * 1000,
   // SHU-306: landing a passed card. The wait for its checks is bounded so the
   // whole run (window, worker grace, landing, reports) stays inside the unit's
@@ -141,25 +205,30 @@ export const CARD_RUN_MODULE = fileURLToPath(import.meta.url);
 export const AUTO_SERVICE = "shu-card-run.service";
 export const AUTO_TIMER = "shu-card-run.timer";
 export const AUTO_SCHEDULE = "*:00/30";
-export function autoServiceUnit({ node, module }) {
+// M15 W5: card worker N > 1 has its own service and timer, on the same
+// schedule, starting `auto --worker N`; each start takes the next card no
+// other worker holds (nextCard). Worker 1's units are as they were.
+export const autoServiceName = (worker = 1) => (worker === 1 ? AUTO_SERVICE : `shu-card-run-w${worker}.service`);
+export const autoTimerName = (worker = 1) => (worker === 1 ? AUTO_TIMER : `shu-card-run-w${worker}.timer`);
+export function autoServiceUnit({ node, module, worker = 1 }) {
   return [
     "[Unit]",
-    "Description=StudentHub card run: the committed card, at most once per installed revision",
+    `Description=StudentHub card run${worker === 1 ? "" : `, card worker ${worker}`}: the committed card, at most once per installed revision`,
     "[Service]",
     "Type=oneshot",
     "User=root",
-    `ExecStart=${node} ${module} auto`,
+    `ExecStart=${node} ${module} auto${worker === 1 ? "" : ` --worker ${worker}`}`,
     "TimeoutStartSec=8h",
     "",
   ].join("\n");
 }
-export function autoTimerUnit() {
+export function autoTimerUnit(worker = 1) {
   return [
     "[Unit]",
-    "Description=Every half hour, run the installed revision's card if it has not run yet",
+    `Description=Every half hour, run the installed revision's card if it has not run yet${worker === 1 ? "" : `, as card worker ${worker}`}`,
     "[Timer]",
     `OnCalendar=${AUTO_SCHEDULE}`,
-    `Unit=${AUTO_SERVICE}`,
+    `Unit=${autoServiceName(worker)}`,
     "[Install]",
     "WantedBy=timers.target",
     "",
@@ -252,17 +321,27 @@ export function onBase(plan, base) {
 // window), with a deterministic id, the failed head as its approved input,
 // and the B1 repair keys: the pull request, the episode that passed, the
 // filtered CI findings and their digest, and one round.
+//
+// M15: a claim whose landing updated the pull request from main before it
+// stopped (updated_head) is repaired at that head: the PASS stays the
+// reviewed head's (initial_target_sha), the record names the updated head as
+// repair_head, and the failing checks and the one revise are at it.
 export function planRepair({ config, revision, now, limits = CARD_RUN_LIMITS, id, claim, evidence }) {
   const base = planRun({ config, revision, now, limits, cardId: id });
   if (base.kind !== "card") refuse("CARD_RUN_NOT_A_CARD", `${id} is not a card lane; only a card's landing is repaired`);
+  const failed = failedHead(claim);
   const record = { ...base.record, activation_id: repairActivationId(id, revision), initial_target_sha: claim.reviewed_head,
     repair_pr: claim.pr, repair_of: claim.activation_id, repair_findings: evidence.findings,
-    repair_evidence_digest: evidence.digest, max_rounds: REPAIR_MAX_ROUNDS };
+    repair_evidence_digest: evidence.digest, max_rounds: REPAIR_MAX_ROUNDS, ...(failed !== claim.reviewed_head ? { repair_head: failed } : {}) };
   const shape = validateActivationRecord(record);
   if (!shape.ok) refuse("CARD_RUN_RECORD", shape.reason);
-  return { ...base, record, repair: { pr: claim.pr, failed_head: claim.reviewed_head, repair_of: claim.activation_id,
+  return { ...base, record, repair: { pr: claim.pr, failed_head: failed, repair_of: claim.activation_id,
     check_runs: evidence.check_runs } };
 }
+
+// M15: the head a stopped landing left its pull request at: the head a
+// landing updated it to from main, else the reviewed head.
+const failedHead = (claim) => (SHA_RE.test(claim?.updated_head ?? "") && claim.updated_head !== claim.reviewed_head ? claim.updated_head : claim.reviewed_head);
 
 // Self-repair B2: everything a repair does before its round record exists,
 // then the record. Each step that fails is a named skip that writes nothing:
@@ -284,10 +363,17 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
   }
   const timeoutMs = limits.landRequestTimeoutMs ?? REPAIR_LIMITS.requestTimeoutMs;
   const branch = `coordinator/${id}`;
-  await readRepairPull({ io, token: credentials.GITHUB_TOKEN, repo, number: claim.pr, branch, head: claim.reviewed_head, timeoutMs });
+  // M15: an updated head is repaired only while it still holds exactly the
+  // reviewed change, the rule the landing took it by.
+  const failed = failedHead(claim);
+  if (failed !== claim.reviewed_head) {
+    const wrong = await updatedHeadHolds(github(boundedFetch(io, timeoutMs), credentials.GITHUB_TOKEN), { repo, passed: claim.reviewed_head, head: failed });
+    if (wrong) repairSkip("REPAIR_NOT_ELIGIBLE", `${id}'s updated head ${failed} cannot be repaired: ${wrong}`);
+  }
+  await readRepairPull({ io, token: credentials.GITHUB_TOKEN, repo, number: claim.pr, branch, head: failed, timeoutMs });
   const pass = await priorPass({ fetchImpl: boundedFetch(io, timeoutMs), linearToken: credentials.LINEAR_API_TOKEN,
     actorIds: config.linear_receipt_actor_ids, card: id, repo, claim });
-  const evidence = await readRepairEvidence({ io, token: credentials.GITHUB_TOKEN, repo, head: claim.reviewed_head,
+  const evidence = await readRepairEvidence({ io, token: credentials.GITHUB_TOKEN, repo, head: failed,
     limits: { ...REPAIR_LIMITS, requestTimeoutMs: timeoutMs } });
   let plan;
   try { plan = planRepair({ config, revision, now: io.now(), limits, id, claim, evidence }); } catch (error) {
@@ -297,8 +383,10 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
   if (io.fs.existsSync(paths.pause)) repairSkip("PAUSED", `${paths.pause} exists`);
   const round = claimRound(io, repairRecordPath(paths, revision, id), {
     card: id, revision, activation_id: plan.record.activation_id, repair_of: claim.activation_id, repo, pr: claim.pr,
-    reviewed_head: claim.reviewed_head, pass_attempt_id: pass.attempt_id, check_runs: evidence.check_runs,
-    evidence_digest: evidence.digest, evidence_truncated: evidence.truncated, claimed_at: io.now().toISOString() });
+    reviewed_head: claim.reviewed_head, ...(failed !== claim.reviewed_head ? { failed_head: failed } : {}), pass_attempt_id: pass.attempt_id, check_runs: evidence.check_runs,
+    evidence_digest: evidence.digest, evidence_truncated: evidence.truncated, claimed_at: io.now().toISOString(),
+    // M15: which worker runs the round, so another worker passes it over while it runs.
+    ...(cardWorkers(config) > 1 ? claimant(io, paths) : {}) });
   if (holder) holder.round = round;
   return plan;
 }
@@ -308,7 +396,9 @@ export async function claimRepair({ io, paths, limits = CARD_RUN_LIMITS, config,
 // at the pull request's head.
 function repairPrepare(plan, config) {
   if (!plan.repair) return {};
-  return { repair: { repair_pr: plan.record.repair_pr, initial_target_sha: plan.record.initial_target_sha,
+  // The head repair eligibility binds: the pull request's own (M15: a
+  // landing's update, when it made one).
+  return { repair: { repair_pr: plan.record.repair_pr, initial_target_sha: plan.record.repair_head ?? plan.record.initial_target_sha,
     owners: Array.isArray(config.linear_callback_actor_ids) ? config.linear_callback_actor_ids : [] } };
 }
 
@@ -333,22 +423,33 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
   const queue = cardQueue(config);
   if (!queue.queue) return { id: null };
   if (!queue.ok) return { id: null, skipped: "NOT_READY", reason: `CARD_RUN_SCOPE: ${queue.reason}` };
+  // M15: with more than one worker, a card another worker is running, or one
+  // waiting on a queued card it builds on (after), is passed over rather than
+  // stopping the queue. One worker walks the queue exactly as before.
+  const parallel = cardWorkers(config) > 1;
+  const landedIds = new Set();
+  let waiting = 0;
   for (const id of queue.ids) {
     const landed = await cardLanded(io, paths, id, { ...(landing ?? {}), record });
-    if (landed.landed) continue;
+    if (landed.landed) { landedIds.add(id); continue; }
+    if (parallel && (queue.after?.[id] ?? []).some((need) => !landedIds.has(need))) { waiting += 1; continue; }
     const claim = autoClaim(paths, revision, id);
     if (!io.fs.existsSync(claim)) return { id };
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
+    if (parallel && claimLive(io, paths, ran)) { waiting += 1; continue; }
     // Self-repair B2: only with landing_repair on, and only for a passed run
     // that stopped on red checks; otherwise nothing below differs from today.
     const repair = landingRepairOn(config) && repairCandidate(ran, { id, revision, repo: config.pilot_repo ?? null })
-      ? repairStep(io, paths, revision, id, ran) : null;
+      ? repairStep(io, paths, revision, id, ran, parallel) : null;
+    // M15: another worker's repair of this card that is still going.
+    if (repair?.live) { waiting += 1; continue; }
     if (repair?.next) return repair.next;
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
     return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
   }
+  if (waiting) return { id: null, skipped: "QUEUE_BUSY", reason: `every queued card that has not landed is running on another worker or waits on one` };
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }
 
@@ -356,10 +457,14 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
 // record yet: run the repair. A round that finished: no second one, the queue
 // stops as before. A round that never finished (a crash or a kill between its
 // claim and its end): REPAIR_INTERRUPTED, a terminal stop for the owner.
-function repairStep(io, paths, revision, id, claim) {
+function repairStep(io, paths, revision, id, claim, parallel = false) {
   const file = repairRecordPath(paths, revision, id);
   if (!io.fs.existsSync(file)) return { next: { id, repair: claim } };
   const round = readRound(io, file);
+  // M15: with more than one worker, a round another worker is still running
+  // (its run lock held, or the process that claimed it alive) is not an
+  // interrupted one: the card is passed over like any card running elsewhere.
+  if (parallel && round?.state !== "finished" && claimLive(io, paths, round)) return { live: true };
   if (round?.state !== "finished") {
     return { next: { id: null, card: id, skipped: "REPAIR_INTERRUPTED", repair_record: file,
       reason: `${id}'s landing repair at ${revision} never finished (${round ? `state ${round.state}` : "an unreadable record"}); it is never run again: ${file}` } };
@@ -401,27 +506,139 @@ export function tickOutcome(text, activationId = null) {
 export const ANSWERED = Object.freeze(new Set(["PASS", "REVIEW_PASS", "REVIEW_BLOCKED"]));
 
 // Every reason the host is not idle. A run starts only when this is empty.
-export function busyReasons(io, paths = CARD_RUN_PATHS) {
+// M15 W3: the worker's own. Its activation record and drop-ins are its own by
+// name, and its shu-worker processes are those of its own cgroups (see
+// processScope). Its hand-made build and review worktrees are its own by name
+// too (workerWorktree): a run's own attempt worktrees under SHU_WORKTREE_ROOT
+// are per attempt (a uuid each) and were never counted here.
+export function busyReasons(io, paths = CARD_RUN_PATHS, { processes = true } = {}) {
   const reasons = [];
   if (io.fs.existsSync(paths.activation)) reasons.push(`activation record present at ${paths.activation}`);
-  for (const unit of UNITS) {
+  for (const unit of workerUnits(workerOf(paths))) {
     for (const dropIn of [RUN_DROP_IN, TARGET_DROP_IN]) {
       const file = path.join(paths.unitDir, `${unit}.d`, dropIn);
       if (io.fs.existsSync(file)) reasons.push(`dispatch drop-in present: ${file}`);
     }
   }
-  const workers = workerCount(io);
+  const workers = processes ? workerCount(io, processScope(io, paths)) : 0;
   if (workers !== 0) reasons.push(`${workers} shu-worker process(es) running`);
   const trees = io.fs.existsSync(paths.worktrees) ? io.fs.readdirSync(paths.worktrees) : [];
-  for (const name of trees) if (/^(build-|review-pr)/.test(name)) reasons.push(`worktree present: ${path.join(paths.worktrees, name)}`);
+  const own = workerWorktree(workerOf(paths));
+  for (const name of trees) if (own.test(name)) reasons.push(`worktree present: ${path.join(paths.worktrees, name)}`);
   return reasons;
 }
 
-function workerCount(io) {
+// M15: which hand-made build and review worktrees under the worktree root are
+// a worker's. Worker 1's are named as they always were (build-*, review-pr*),
+// worker N's carry its number first (wN-build-*, wN-review-pr*), so worker 1's
+// leave worker 2 idle and the other way round. hostBusyReasons, before an
+// install, reads every worker's.
+export function workerWorktree(worker = 1) {
+  return worker === 1 ? /^(build-|review-pr)/ : new RegExp(`^w${worker}-(build-|review-pr)`);
+}
+
+// M15 W5: a held install lock, as a busy reason. Whoever holds it, a live
+// install, a failed one that kept it, or one that died, it stands: see
+// INSTALL_LOCK.
+function installing(io, paths) {
+  const lock = paths.installLock ?? INSTALL_LOCK;
+  if (!io.fs.existsSync(lock)) return [];
+  return [installLockHeld(io, lock)];
+}
+
+// M15 W3: what keeps a self-install off the host. The install moves the
+// checkout every worker runs from, so it waits for every configured worker:
+// each one's busy reasons, and another worker's held run lock (a run that is
+// still preparing has armed nothing yet). One worker: its busyReasons, as before.
+// A worker past the configured count is looked at too, by its files alone (run
+// lock, activation record, drop-ins, worktrees): a lower workers.max stops its
+// timer starts, not a run that read the higher count before the install that
+// lowered it. Its processes need no cgroup read: its run lock is held while it
+// has any, and with one worker every shu-worker process counts anyway.
+// This is a check, not a lock: a worker can still start just after it.
+export function hostBusyReasons(io, paths = CARD_RUN_PATHS) {
+  let workers = 1;
+  try { workers = cardWorkers(readConfig(io, paths)); } catch { /* one worker */ }
+  const self = workerOf(paths);
+  const counted = Math.max(workers, self);
+  const reasons = [];
+  for (let worker = 1; worker <= counted; worker += 1) {
+    if (worker === self) { reasons.push(...busyReasons(io, paths)); continue; }
+    const { activation, lock } = cardRunPaths(worker);
+    const other = { ...paths, worker, activation, lock };
+    if (io.fs.existsSync(lock)) reasons.push(`card run lock held: ${lock}`);
+    reasons.push(...busyReasons(io, other));
+  }
+  for (let worker = counted + 1; worker <= MAX_CARD_WORKERS; worker += 1) {
+    const { activation, lock: runLock } = cardRunPaths(worker);
+    if (io.fs.existsSync(runLock)) reasons.push(`card run lock held: ${runLock} (card worker ${worker}, past workers.max ${workers})`);
+    reasons.push(...busyReasons(io, { ...paths, worker, activation, lock: runLock }, { processes: false }));
+  }
+  return [...new Set(reasons)];
+}
+
+// M15 W3: which shu-worker processes are this worker's. With one worker
+// (workers.max unset or 1) every one is, as before: null, and the count and
+// kill go by uid. Otherwise only those in the cgroups of the worker's own
+// supervisor and coordinator: a builder is the supervisor's child, its
+// dependency install the coordinator tick's, and a process stays in its
+// cgroup when it is reparented to PID 1 (the SHU-376 orphans). A config that
+// cannot be read counts as one worker, so worker 1 then behaves as today.
+export const CGROUP_ROOT = "/sys/fs/cgroup";
+export function processScope(io, paths = CARD_RUN_PATHS) {
+  let workers = 1;
+  try { workers = cardWorkers(readConfig(io, paths)); } catch { /* one worker */ }
+  if (workerOf(paths) === 1 && workers === 1) return null;
+  return { units: workerUnits(workerOf(paths)) };
+}
+
+// The pids in the scope's cgroups. The cgroup is the one systemd reports for
+// the unit, or its default place when the unit is not running (KillMode=process
+// leaves a stopped supervisor's children there). Only the unified hierarchy
+// is read: without it the worker's processes cannot be told apart, and the
+// run refuses rather than count none.
+function cgroupPids(io, scope) {
+  if (!io.fs.existsSync(`${CGROUP_ROOT}/cgroup.controllers`)) refuse("CARD_RUN_CGROUP", `${CGROUP_ROOT} is not the unified cgroup hierarchy`);
+  const pids = new Set();
+  for (const unit of scope.units) {
+    const reported = run(io, "systemctl", ["show", "-p", "ControlGroup", "--value", unit]).trim();
+    const group = reported || `/system.slice/${unit}`;
+    if (!/^(\/[A-Za-z0-9_.@:\\-]+)+$/.test(group) || group.split("/").includes("..")) refuse("CARD_RUN_CGROUP", `${unit} reports an unexpected cgroup`);
+    let text;
+    try { text = io.fs.readFileSync(`${CGROUP_ROOT}${group}/cgroup.procs`, "utf8"); }
+    catch (error) {
+      if (error.code === "ENOENT") continue;
+      refuse("CARD_RUN_CGROUP", `the cgroup of ${unit} cannot be read`);
+    }
+    for (const pid of String(text).split("\n").map((line) => line.trim())) if (/^[1-9]\d*$/.test(pid)) pids.add(pid);
+  }
+  return pids;
+}
+
+// The shu-worker pids of the scope: every one with no scope.
+function workerPids(io, scope = null) {
   const result = io.exec("pgrep", ["-u", "shu-worker"]);
-  if (result.status === 1) return 0;
+  if (result.status === 1) return [];
   if (result.status !== 0) refuse("CARD_RUN_COMMAND", `pgrep exited ${result.status}`);
-  return result.stdout.split("\n").filter((line) => line.trim()).length;
+  const pids = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!scope) return pids;
+  const own = cgroupPids(io, scope);
+  return pids.filter((pid) => own.has(pid));
+}
+
+function workerCount(io, scope = null) {
+  return workerPids(io, scope).length;
+}
+
+// TERM or KILL to the scope's shu-worker processes: by uid with no scope, as
+// before; otherwise each pid read from the worker's own cgroups just now.
+function signalWorkers(io, scope, signal) {
+  if (!scope) {
+    io.exec("pkill", [`-${signal}`, "-u", "shu-worker"]);
+    return;
+  }
+  const pids = workerPids(io, scope);
+  if (pids.length) io.exec("kill", [`-${signal}`, "--", ...pids]);
 }
 
 function run(io, file, args, options = undefined) {
@@ -450,8 +667,8 @@ export function installedRevision(io, paths = CARD_RUN_PATHS) {
   return head;
 }
 
-function supervisorEnvironment(io) {
-  const pid = run(io, "systemctl", ["show", "-p", "MainPID", "--value", "shu-supervisor.service"]).trim();
+function supervisorEnvironment(io, supervisor = UNITS[0]) {
+  const pid = run(io, "systemctl", ["show", "-p", "MainPID", "--value", supervisor]).trim();
   if (!/^[1-9]\d*$/.test(pid)) refuse("CARD_RUN_SUPERVISOR", "shu-supervisor has no main process");
   return io.fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
 }
@@ -469,16 +686,21 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
   const gid = Number(run(io, "id", ["-g", "shu-coordinator"]).trim());
   if (!Number.isInteger(gid) || gid <= 0) refuse("CARD_RUN_GROUP", "the shu-coordinator group cannot be resolved");
   writeExclusive(io, paths.activation, JSON.stringify(plan.record), 0o640, gid);
+  // M15: with more than one worker the evidence broker is shared, and another
+  // worker's revert may have stopped it after the start above; it is started
+  // again once this worker's record is in place (see stopEvidence).
+  if (processScope(io, paths)) run(io, "systemctl", ["start", "shu71-evidence.service"]);
   const target = plan.record.initial_target_sha;
-  for (const unit of UNITS) {
+  const units = workerUnits(workerOf(paths));
+  for (const unit of units) {
     const dir = path.join(paths.unitDir, `${unit}.d`);
     if (!io.fs.existsSync(path.join(dir, RESIDENT_DROP_IN))) refuse("CARD_RUN_RESIDENT_DROP_IN", `${unit} has no ${RESIDENT_DROP_IN}`);
     writeExclusive(io, path.join(dir, RUN_DROP_IN), runDropIn(), 0o644);
     writeExclusive(io, path.join(dir, TARGET_DROP_IN), targetDropIn(target), 0o644);
   }
   run(io, "systemctl", ["daemon-reload"]);
-  run(io, "systemctl", ["restart", "shu-supervisor.service"]);
-  const environ = supervisorEnvironment(io);
+  run(io, "systemctl", ["restart", units[0]]);
+  const environ = supervisorEnvironment(io, units[0]);
   if (!environ.includes("ENABLE_DISPATCH=true") || !environ.includes(`DISPATCH_TARGET_SHA=${target}`)) {
     refuse("CARD_RUN_ARM_READBACK", "the supervisor did not come up with dispatch on at the target");
   }
@@ -495,13 +717,14 @@ export function arm(io, plan, revision, paths = CARD_RUN_PATHS) {
 // lines since just before the start, flushed first, in full (json would
 // otherwise null a field over 4096 bytes), and of those only the last
 // invocation's, which is this tick's. No line at all is a refusal, never an
-// earlier tick's output read as this one's.
-export function tick(io, limits = CARD_RUN_LIMITS) {
+// earlier tick's output read as this one's. A worker ticks its own coordinator.
+export function tick(io, limits = CARD_RUN_LIMITS, paths = CARD_RUN_PATHS) {
   const since = io.now().getTime();
   const bounded = { timeoutMs: limits.tickCallTimeoutMs ?? CARD_RUN_LIMITS.tickCallTimeoutMs };
-  run(io, "systemctl", ["start", "shu-coordinator.service"]);
+  const coordinator = workerUnits(workerOf(paths))[1];
+  run(io, "systemctl", ["start", coordinator]);
   run(io, "journalctl", ["--sync"], bounded);
-  const raw = run(io, "journalctl", ["_SYSTEMD_UNIT=shu-coordinator.service", `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"], bounded);
+  const raw = run(io, "journalctl", [`_SYSTEMD_UNIT=${coordinator}`, `--since=@${(since / 1000).toFixed(3)}`, "-o", "json", "--all", "--no-pager"], bounded);
   const entries = [];
   for (const line of raw.split("\n")) {
     let entry;
@@ -516,6 +739,21 @@ export function tick(io, limits = CARD_RUN_LIMITS) {
   return entries.filter((entry) => entry.invocation === last).map((entry) => entry.message).join("\n");
 }
 
+// M15: the evidence broker every worker's run starts is one service. With one
+// worker the revert stops it, as before. With more, a revert leaves it running
+// while another worker's activation record is in place, and reads the records
+// again after a stop, so a worker that armed meanwhile (it writes its record
+// before it starts the broker) gets its broker back.
+function otherArmed(io, paths) {
+  return Array.from({ length: MAX_CARD_WORKERS }, (_, i) => i + 1)
+    .some((worker) => worker !== workerOf(paths) && io.fs.existsSync(workerActivationFile(worker)));
+}
+function stopEvidence(io, paths, scope) {
+  if (scope && otherArmed(io, paths)) return;
+  run(io, "systemctl", ["stop", "shu71-evidence.service"]);
+  if (scope && otherArmed(io, paths)) run(io, "systemctl", ["start", "shu71-evidence.service"]);
+}
+
 // Returns the run back to dispatch off. It waits a bounded time for workers to
 // finish, because restarting the supervisor under a live worker loses its
 // result.
@@ -527,48 +765,61 @@ export function tick(io, limits = CARD_RUN_LIMITS) {
 // run's window and its episode are over, so what is still running is left
 // over: the revert stops it (TERM, then KILL), records what it stopped and
 // goes on. Only a process that survives KILL leaves the run armed, as before.
+//
+// M15 W2: the drop-ins, the supervisor restarted and the dispatch-off tick are
+// the worker's own. W3: so are the shu-worker processes it waits for, counts
+// and stops (processScope), and with more than one worker it removes only the
+// dependency caches no install can still be using.
 export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
+  const units = workerUnits(workerOf(paths));
+  const scope = processScope(io, paths);
   const waitUntil = io.now().getTime() + limits.workerGraceMs;
   let reaped = null;
-  while (workerCount(io) !== 0) {
+  while (workerCount(io, scope) !== 0) {
     if (io.now().getTime() >= waitUntil) {
-      reaped = reapWorkers(io, limits);
+      reaped = reapWorkers(io, limits, scope);
       if (!reaped.cleared) return { reverted: false, code: "CARD_RUN_WORKER_STILL_RUNNING", reaped };
       break;
     }
     io.sleep(limits.workerPollMs);
   }
-  for (const unit of UNITS) {
+  for (const unit of units) {
     for (const dropIn of [RUN_DROP_IN, TARGET_DROP_IN]) {
       const file = path.join(paths.unitDir, `${unit}.d`, dropIn);
       if (io.fs.existsSync(file)) io.fs.unlinkSync(file);
     }
   }
   run(io, "systemctl", ["daemon-reload"]);
-  run(io, "systemctl", ["restart", "shu-supervisor.service"]);
-  if (supervisorEnvironment(io).includes("ENABLE_DISPATCH=true")) refuse("CARD_RUN_REVERT_READBACK", "dispatch is still on after revert");
+  run(io, "systemctl", ["restart", units[0]]);
+  if (supervisorEnvironment(io, units[0]).includes("ENABLE_DISPATCH=true")) refuse("CARD_RUN_REVERT_READBACK", "dispatch is still on after revert");
   // Dispatch is already off here, so a failed dispatch-off tick is reported
   // and the rest of the cleanup still runs.
   let offTick;
-  try { offTick = tickOutcome(tick(io)).activation; }
+  try { offTick = tickOutcome(tick(io, CARD_RUN_LIMITS, paths)).activation; }
   catch (error) { offTick = `tick failed: ${error.message}`; }
-  run(io, "systemctl", ["stop", "shu71-evidence.service"]);
-  const killed = workerCount(io);
+  stopEvidence(io, paths, scope);
+  const killed = workerCount(io, scope);
   if (killed) {
-    io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
+    signalWorkers(io, scope, "TERM");
     io.sleep(limits.killWaitMs);
-    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
+    signalWorkers(io, scope, "KILL");
   }
-  if (workerCount(io) !== 0) refuse("CARD_RUN_REVERT_READBACK", "shu-worker processes survived cleanup");
+  if (workerCount(io, scope) !== 0) refuse("CARD_RUN_REVERT_READBACK", "shu-worker processes survived cleanup");
   // The record is retired last: until every step above succeeded it stays,
   // so the host reads busy and the next run refuses.
   let retired = null;
   if (io.fs.existsSync(paths.activation)) {
-    retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation.json`);
+    retired = path.join(paths.stateDir, `spent-${stamp(io.now())}-shu71-activation${workerOf(paths) === 1 ? "" : `-w${workerOf(paths)}`}.json`);
     io.fs.renameSync(paths.activation, retired);
   }
+  const cacheBefore = io.now().getTime() - (limits.npmCacheAgeMs ?? CARD_RUN_LIMITS.npmCacheAgeMs);
   for (const name of io.fs.readdirSync(paths.tmp)) {
-    if (/^shu-npm-cache-/.test(name)) io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
+    if (!/^shu-npm-cache-/.test(name)) continue;
+    // Every worker's install makes its cache here under one name pattern, so
+    // with more than one worker only a cache too old to be in use goes.
+    const changed = scope ? cacheMtime(io, path.join(paths.tmp, name)) : null;
+    if (scope && !(Number.isFinite(changed) && changed < cacheBefore)) continue;
+    io.fs.rmSync(path.join(paths.tmp, name), { recursive: true, force: true });
   }
   return { reverted: true, code: null, dispatch_off_tick: offTick, retired, killed, ...(reaped ? { reaped } : {}) };
 }
@@ -582,22 +833,26 @@ export function revert(io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS) {
 // they never overlap. `cleared` says none is left. A listing pgrep could not
 // give (an exit other than 0 or 1) is `listed: false`, and the count is the
 // one read just before, so the report never says a false zero.
+// M15 W3: with more than one worker, only the worker's own (scope): the
+// listing keeps the pids of its cgroups, and the signals go to those alone.
 export const REAPED_LIST_MAX = 20;
-function reapWorkers(io, limits) {
-  const running = workerCount(io);
+function reapWorkers(io, limits, scope = null) {
+  const running = workerCount(io, scope);
   const listing = io.exec("pgrep", ["-l", "-u", "shu-worker"]);
   const listed = listing.status === 0 || listing.status === 1;
-  const lines = listing.status === 0 ? String(listing.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean) : [];
+  const own = scope && listing.status === 0 ? cgroupPids(io, scope) : null;
+  const lines = listing.status === 0 ? String(listing.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean)
+    .filter((line) => !own || own.has(line.split(/\s+/)[0])) : [];
   const processes = lines.slice(0, REAPED_LIST_MAX).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
   const signals = ["TERM"];
-  io.exec("pkill", ["-TERM", "-u", "shu-worker"]);
+  signalWorkers(io, scope, "TERM");
   io.sleep(limits.killWaitMs);
-  if (workerCount(io) !== 0) {
+  if (workerCount(io, scope) !== 0) {
     signals.push("KILL");
-    io.exec("pkill", ["-KILL", "-u", "shu-worker"]);
+    signalWorkers(io, scope, "KILL");
     io.sleep(limits.killWaitMs);
   }
-  const left = workerCount(io);
+  const left = workerCount(io, scope);
   return { cleared: left === 0, listed, count: listed ? lines.length : running, processes, signals, left };
 }
 
@@ -615,10 +870,14 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   let summary;
   let credentials;
   try {
-    const busy = busyReasons(io, paths);
+    // M15 W5: looked for only once this run's own lock is held; see INSTALL_LOCK.
+    const busy = [...installing(io, paths), ...busyReasons(io, paths)];
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
     const config = readConfig(io, paths);
+    // M15: a timer start checks the worker count before this run's lock is
+    // held, so an install that lowered workers.max since then is seen here.
+    if (workerOf(paths) > cardWorkers(config)) refuse("CARD_RUN_HOST_BUSY", `card worker ${workerOf(paths)} is off: workers.max is ${cardWorkers(config)}`);
     const planned = repair ? await claimRepair({ io, paths, limits, config, revision, id: cardId, claim: repair, holder: repairRound })
       : planRun({ config, revision, now: io.now(), review, limits, cardId });
     credentials = readCoordinatorCredentials(io, paths.coordinatorEnv);
@@ -661,7 +920,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           break;
         }
         const startedAt = io.now().toISOString();
-        const output = tick(io, limits);
+        const output = tick(io, limits, paths);
         const outcome = tickOutcome(output, plan.record.activation_id);
         ticks.push({ at: startedAt, activation: outcome.activation, eligible: outcome.eligible });
         // Observing reads only the tick's own output: no request and no wait,
@@ -685,7 +944,9 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: false, outcome: "NOT_ELIGIBLE", reason: (targetExcluded.length > 0 ? targetExcluded : outcome.excluded).join("; ") || "no eligible work" };
           break;
         }
-        io.sleep(limits.tickIntervalMs);
+        // Awaited, so a host io whose wait is asynchronous lets other work go
+        // on meanwhile; the host's own wait blocks as before.
+        await io.sleep(limits.tickIntervalMs);
       }
       result = { ...result, ...armed };
     } catch (error) {
@@ -753,13 +1014,22 @@ async function landRun({ io, paths, limits, plan, config, credentials }) {
   // M10: the card's review lane, run through the reviewer sandbox, judges
   // review bot threads when the committed config turns that on.
   const adjudicate = config?.landing_thread_review?.enabled === true ? threadReviewer({ io, paths, plan }) : null;
+  // M15 W4: with more than one worker the landing updates its pull request
+  // from main and merges under the host-wide landing lock.
   return landCard({ io, plan, config, credentials, landToken: custody.token, pausePath: paths.pause, adjudicate,
+    parallel: cardWorkers(config) > 1, landLock: paths.landLock ?? LAND_LOCK,
     limits: { ...LAND_LIMITS, waitMs: limits.landWaitMs ?? LAND_LIMITS.waitMs, pollMs: limits.landPollMs ?? LAND_LIMITS.pollMs,
       requestTimeoutMs: limits.landRequestTimeoutMs ?? LAND_LIMITS.requestTimeoutMs } });
 }
 
 function readConfig(io, paths) {
   return JSON.parse(io.fs.readFileSync(path.join(paths.checkout, ".github/coordinator/config.json"), "utf8"));
+}
+
+// When a dependency cache last changed, or null when it cannot be read (it is
+// then kept: /tmp is reaped).
+function cacheMtime(io, dir) {
+  try { return io.fs.statSync(dir).mtimeMs; } catch { return null; }
 }
 
 // Refusals that mean "not now" rather than "this run went wrong": a later
@@ -807,7 +1077,11 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   const skip = (skipped, reason) => ({ ok: true, trigger: "timer", skipped, reason });
   if (io.fs.existsSync(paths.pause)) return skip("PAUSED", `${paths.pause} exists`);
   if (io.fs.existsSync(paths.lock)) return skip("LOCKED", `${paths.lock} exists`);
-  const busy = busyReasons(io, paths);
+  // M15 W5: a worker's timer outlives a config that turns it off again.
+  let workers = 1;
+  try { workers = cardWorkers(readConfig(io, paths)); } catch { /* read again below */ }
+  if (workerOf(paths) > workers) return skip("NOT_READY", `card worker ${workerOf(paths)} is off: workers.max is ${workers}`);
+  const busy = [...installing(io, paths), ...busyReasons(io, paths)];
   if (busy.length) return skip("HOST_BUSY", busy.join("; "));
   let revision;
   let plan;
@@ -815,35 +1089,46 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   let done = null;
   let interrupted = null;
   let repairNext = null;
-  try {
-    revision = installedRevision(io, paths);
-    config = readConfig(io, paths);
-    const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
-    // SHU-321: only a done queue may go on to review a queue config pull
-    // request; an invalid or paused one never does. M16: a stopped queue
-    // does what a done one does (Card B, then Card A).
-    if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
-    // Self-repair B2: an interrupted repair is reported once; a repairable
-    // card runs its one repair. Neither can come up with landing_repair off.
-    else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
-    else if (next.skipped) return skip(next.skipped, next.reason);
-    else if (next.repair) repairNext = next;
-    else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
-  } catch (error) {
-    // A review card needs its pull request from an operator, so the timer never
-    // runs one; any other planning refusal waits for the next install.
-    return skip("NOT_READY", error.message);
-  }
-  if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
-  if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
-  if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
-  const claim = autoClaim(paths, revision, plan.id);
-  const claimedAt = io.now().toISOString();
-  try {
-    io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt })}\n`, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if (error.code === "EEXIST") return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
-    throw error;
+  let claim;
+  let claimedAt;
+  // M15: with more than one worker, selecting a card and claiming it are two
+  // steps, so two workers starting together can pick the same card; the one
+  // that loses the exclusive claim selects again (the winner's live claim is
+  // then passed over) instead of giving up its start. One worker never loops.
+  for (let selection = 1; ; selection += 1) {
+    plan = undefined;
+    try {
+      revision = installedRevision(io, paths);
+      config = readConfig(io, paths);
+      const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
+      // SHU-321: only a done queue may go on to review a queue config pull
+      // request; an invalid or paused one never does. M16: a stopped queue
+      // does what a done one does (Card B, then Card A).
+      if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
+      // Self-repair B2: an interrupted repair is reported once; a repairable
+      // card runs its one repair. Neither can come up with landing_repair off.
+      else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
+      else if (next.skipped) return skip(next.skipped, next.reason);
+      else if (next.repair) repairNext = next;
+      else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
+    } catch (error) {
+      // A review card needs its pull request from an operator, so the timer never
+      // runs one; any other planning refusal waits for the next install.
+      return skip("NOT_READY", error.message);
+    }
+    if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
+    if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
+    if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
+    claim = autoClaim(paths, revision, plan.id);
+    claimedAt = io.now().toISOString();
+    try {
+      io.fs.writeFileSync(claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, ...claimant(io, paths) })}\n`, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) continue;
+      return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
+    }
   }
   let result;
   try {
@@ -877,6 +1162,10 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       // Velocity: when a merged landing was written down, for claim-to-merge times.
       landed_at: result.timing?.landed_at ?? null,
       repo: config.pilot_repo ?? null, pr: result.land?.pr ?? null, reviewed_head: result.land?.reviewed_head ?? null,
+      // M15: the head a landing with more than one worker updated the pull
+      // request to from main, when it did; a hand landing or a repair may
+      // then go on from it (card-landed.mjs, updatedHeadHolds).
+      ...(result.land?.updated_head ? { updated_head: result.land.updated_head } : {}),
       reverted: result.revert?.reverted ?? null,
       // Self-watch 0b: what the observe-only watch saw; null when it was off.
       first_dispatch_at: result.watch?.first_dispatch_at ?? null, last_progress_at: result.watch?.last_progress_at ?? null,
@@ -906,12 +1195,13 @@ async function autoRepair({ io, paths, limits, config, revision, next, skip }) {
     const record = holder.round.record;
     result = await notStarted({ io, paths, limits, error, config,
       result: { card: id, kind: "card", activation_id: record.activation_id, revision,
-        repair: { pr: record.pr, failed_head: record.reviewed_head, repair_of: record.repair_of, check_runs: record.check_runs } } });
+        repair: { pr: record.pr, failed_head: record.failed_head ?? record.reviewed_head, repair_of: record.repair_of, check_runs: record.check_runs } } });
   }
   let roundError = null;
   try {
     advanceRound(io, holder.round, "finished", { finished_at: io.now().toISOString(), outcome: result.outcome ?? null, ok: result.ok === true,
-      land: result.land?.outcome ?? null, repaired_head: result.land?.reviewed_head ?? null, merge_commit: result.land?.merge_commit ?? null,
+      land: result.land?.outcome ?? null, repaired_head: result.land?.reviewed_head ?? null,
+      ...(result.land?.updated_head ? { updated_head: result.land.updated_head } : {}), merge_commit: result.land?.merge_commit ?? null,
       armed_at: result.timing?.armed_at ?? null, reverted: result.revert?.reverted ?? null });
   } catch (error) { roundError = error.code ?? "ROUND_WRITE_FAILED"; }
   return { ...result, round: holder.round.file, ...(roundError ? { round_error: roundError } : {}) };
@@ -1113,7 +1403,7 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
 async function afterQueueDone({ io, paths, limits, config, revision, done, skip }) {
   let install;
   try {
-    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons,
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons: hostBusyReasons,
       cardLanded: async (hostIo, hostPaths, id) => (await cardLanded(hostIo, hostPaths, id, { ...landingReader(hostIo, hostPaths, config, limits), record: true })).landed } });
   } catch (error) {
     install = { skipped: "INSTALL_UNREADABLE", reason: error.message };
@@ -1230,44 +1520,157 @@ async function notStarted({ io, paths, limits, error, config, result }) {
 
 // Puts the timer on the host: the owner's one go. It never replaces units with
 // other content; take the old ones off first.
+//
+// M15 W5: with workers.max above one in the installed config, it also puts
+// each card worker N on the host before N's timer: N's supervisor and
+// coordinator units, rendered from worker 1's installed pair (units.mjs
+// workerUnitsFromInstalled: N's own workspace state directory, supervisor
+// store, socket, writer lock and --activation path), N's workspace, store and
+// activation directories (mode 0700, owned as worker 1's), and the resident
+// drop-in of each of N's units (worker 1's bytes). Nothing is typed in by a
+// person, and a code self-install, which never touches units, leaves them as
+// they are. Worker 1's units are as before.
 export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
-  const units = [[AUTO_SERVICE, autoServiceUnit({ node, module })], [AUTO_TIMER, autoTimerUnit()]];
+  const workers = cardWorkers(readConfig(io, paths));
+  const all = Array.from({ length: workers }, (_, i) => i + 1);
+  const units = all.flatMap((worker) => [[autoServiceName(worker), autoServiceUnit({ node, module, worker })], [autoTimerName(worker), autoTimerUnit(worker)]]);
+  for (const [name, text] of units) {
+    const file = path.join(paths.unitDir, name);
+    if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== text) refuse("CARD_RUN_TIMER", `${file} exists with other content; run timer-remove first`);
+  }
+  const prepared = all.length > 1 ? prepareWorkers(io, paths, all.slice(1)) : [];
   for (const [name, text] of units) {
     const file = path.join(paths.unitDir, name);
     if (!io.fs.existsSync(file)) writeExclusive(io, file, text, 0o644);
-    else if (io.fs.readFileSync(file, "utf8") !== text) refuse("CARD_RUN_TIMER", `${file} exists with other content; run timer-remove first`);
   }
   run(io, "systemctl", ["daemon-reload"]);
-  run(io, "systemctl", ["enable", "--now", AUTO_TIMER]);
-  const enabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
-  const active = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
-  if (enabled !== "enabled" || active !== "active") refuse("CARD_RUN_TIMER", `the timer reads ${enabled || "unknown"}/${active || "unknown"} after install`);
-  return { installed: true, units: units.map(([name]) => path.join(paths.unitDir, name)), enabled, active };
+  const states = [];
+  for (const worker of all) {
+    const timer = autoTimerName(worker);
+    run(io, "systemctl", ["enable", "--now", timer]);
+    const enabled = io.exec("systemctl", ["is-enabled", timer]).stdout.trim();
+    const active = io.exec("systemctl", ["is-active", timer]).stdout.trim();
+    if (enabled !== "enabled" || active !== "active") refuse("CARD_RUN_TIMER", `the timer ${timer} reads ${enabled || "unknown"}/${active || "unknown"} after install`);
+    states.push({ enabled, active });
+  }
+  const [{ enabled, active }] = states;
+  return { installed: true, units: units.map(([name]) => path.join(paths.unitDir, name)), enabled, active,
+    ...(all.length > 1 ? { workers, prepared } : {}) };
+}
+
+// M15: the directories card worker N needs: its workspace state directory and
+// supervisor store (its units name them), and the directory of its activation
+// record (credential-delivery.mjs workerActivationFile).
+export function workerDirectories(worker) {
+  const workspace = workerWorkspaceStateDir(worker);
+  return [path.dirname(workerActivationFile(worker)), workspace, path.join(workspace, SUPERVISOR_STORE_DIRNAME)];
+}
+
+// M15 W5: what card worker N needs on the host before its timer: its
+// supervisor and coordinator units, its directories, and the resident drop-in
+// of each of its units. Everything is checked before anything is made, and
+// nothing that exists is changed: a unit, directory or drop-in that is not as
+// it should be refuses. When making something fails part way, what this call
+// made is taken off again, so a later timer-install starts clean. Returns what
+// was made.
+function prepareWorkers(io, paths, workers) {
+  const stat = (file) => { try { return io.fs.lstatSync(file); } catch { return null; } };
+  const owner = stat(WORKSPACE_STATE_DIR);
+  if (!owner?.isDirectory() || owner.isSymbolicLink() || (owner.mode & 0o7777) !== 0o700) {
+    refuse("CARD_RUN_TIMER", `${WORKSPACE_STATE_DIR}, worker 1's workspace state directory, is not a private directory`);
+  }
+  const resident = path.join(paths.unitDir, `${UNITS[0]}.d`, RESIDENT_DROP_IN);
+  let gate;
+  try { gate = io.fs.readFileSync(resident, "utf8"); } catch { refuse("CARD_RUN_TIMER", `${resident} cannot be read`); }
+  const installed = {};
+  for (const unit of UNITS) {
+    try { installed[unit] = io.fs.readFileSync(path.join(paths.unitDir, unit), "utf8"); } catch { refuse("CARD_RUN_TIMER", `worker 1's ${unit} cannot be read`); }
+  }
+  const unitFiles = [];
+  const dirs = [];
+  const dropIns = [];
+  for (const worker of workers) {
+    let rendered;
+    try { rendered = workerUnitsFromInstalled(worker, installed, io.fs); }
+    catch (error) { refuse("CARD_RUN_TIMER", `card worker ${worker}'s units cannot be rendered from worker 1's: ${error.message}`); }
+    for (const unit of workerUnits(worker)) {
+      const file = path.join(paths.unitDir, unit);
+      if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== rendered[unit]) {
+        refuse("CARD_RUN_TIMER", `${file} exists with other content than card worker ${worker}'s rendered unit`);
+      }
+      unitFiles.push([file, rendered[unit]]);
+      dropIns.push(path.join(paths.unitDir, `${unit}.d`, RESIDENT_DROP_IN));
+    }
+    dirs.push(...workerDirectories(worker));
+  }
+  for (const dir of dirs) {
+    const found = stat(dir);
+    if (found && (!found.isDirectory() || found.isSymbolicLink() || found.uid !== owner.uid || found.gid !== owner.gid || (found.mode & 0o7777) !== 0o700)) {
+      refuse("CARD_RUN_TIMER", `${dir} exists but is not a private directory owned as ${WORKSPACE_STATE_DIR}`);
+    }
+  }
+  for (const file of dropIns) {
+    if (io.fs.existsSync(file) && io.fs.readFileSync(file, "utf8") !== gate) refuse("CARD_RUN_TIMER", `${file} exists with other content than ${resident}`);
+  }
+  const made = [];
+  const madeDir = (dir, mode) => { io.fs.mkdirSync(dir, { mode }); made.push({ dir }); };
+  const madeFile = (file, text) => { writeExclusive(io, file, text, 0o644); made.push({ file }); };
+  try {
+    for (const [file, text] of unitFiles) if (!io.fs.existsSync(file)) madeFile(file, text);
+    for (const dir of dirs) {
+      if (stat(dir)) continue;
+      madeDir(dir, 0o700);
+      io.fs.chownSync(dir, owner.uid, owner.gid);
+      io.fs.chmodSync(dir, 0o700);
+    }
+    for (const file of dropIns) {
+      if (io.fs.existsSync(file)) continue;
+      if (!io.fs.existsSync(path.dirname(file))) madeDir(path.dirname(file), 0o755);
+      madeFile(file, gate);
+    }
+  } catch (error) {
+    for (const item of [...made].reverse()) {
+      try { if (item.dir) io.fs.rmdirSync(item.dir); else io.fs.unlinkSync(item.file); } catch { /* named in the refusal below */ }
+    }
+    refuse("CARD_RUN_TIMER", `card worker preparation failed (${error.code ?? error.message}); what it made was taken off again`);
+  }
+  return made.map((item) => item.dir ?? item.file);
 }
 
 // Takes the timer off. It refuses while a run the timer started is still going:
 // stopping that service would kill the run before its revert.
+// M15 W5: every card worker's timer and service on the host go with worker
+// 1's, whatever the config now says; none goes while any one's run is going.
 export function removeTimer(io, paths = CARD_RUN_PATHS) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
-  const state = io.exec("systemctl", ["is-active", AUTO_SERVICE]).stdout.trim();
-  if (["active", "activating", "deactivating", "reloading"].includes(state)) {
-    refuse("CARD_RUN_TIMER_BUSY", `${AUTO_SERVICE} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
+  const workers = Array.from({ length: MAX_CARD_WORKERS }, (_, i) => i + 1)
+    .filter((worker) => worker === 1 || [autoServiceName(worker), autoTimerName(worker)].some((name) => io.fs.existsSync(path.join(paths.unitDir, name))));
+  for (const worker of workers) {
+    const service = autoServiceName(worker);
+    const state = io.exec("systemctl", ["is-active", service]).stdout.trim();
+    if (["active", "activating", "deactivating", "reloading"].includes(state)) {
+      refuse("CARD_RUN_TIMER_BUSY", `${service} is ${state}: wait for the run to finish; ${paths.pause} stops new ones`);
+    }
   }
   // The unit files stay until the timer reads back disabled and inactive, so a
   // failed disable or readback can be retried rather than leave an enabled
   // timer with no files. A retry after the timer file is gone skips the
   // disable, which would fail on a missing unit.
-  const timerFile = path.join(paths.unitDir, AUTO_TIMER);
-  if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", AUTO_TIMER]);
-  const timerEnabled = io.exec("systemctl", ["is-enabled", AUTO_TIMER]).stdout.trim();
-  const timerActive = io.exec("systemctl", ["is-active", AUTO_TIMER]).stdout.trim();
-  if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {
-    refuse("CARD_RUN_TIMER", `${AUTO_TIMER} reads ${timerEnabled || "unknown"}/${timerActive || "unknown"} after disable; its unit files stay`);
+  for (const worker of workers) {
+    const timer = autoTimerName(worker);
+    const timerFile = path.join(paths.unitDir, timer);
+    if (io.fs.existsSync(timerFile)) run(io, "systemctl", ["disable", "--now", timer]);
+    const timerEnabled = io.exec("systemctl", ["is-enabled", timer]).stdout.trim();
+    const timerActive = io.exec("systemctl", ["is-active", timer]).stdout.trim();
+    if (!["disabled", "not-found"].includes(timerEnabled) || timerActive !== "inactive") {
+      refuse("CARD_RUN_TIMER", `${timer} reads ${timerEnabled || "unknown"}/${timerActive || "unknown"} after disable; its unit files stay`);
+    }
   }
+  const names = workers.flatMap((worker) => [autoTimerName(worker), autoServiceName(worker)]);
   const failed = [];
-  for (const name of [AUTO_TIMER, AUTO_SERVICE]) {
+  for (const name of names) {
     const file = path.join(paths.unitDir, name);
     if (!io.fs.existsSync(file)) continue;
     try {
@@ -1277,7 +1680,7 @@ export function removeTimer(io, paths = CARD_RUN_PATHS) {
     }
   }
   run(io, "systemctl", ["daemon-reload"]);
-  const left = [AUTO_TIMER, AUTO_SERVICE].map((name) => path.join(paths.unitDir, name)).filter((file) => io.fs.existsSync(file));
+  const left = names.map((name) => path.join(paths.unitDir, name)).filter((file) => io.fs.existsSync(file));
   if (failed.length || left.length) refuse("CARD_RUN_TIMER", `still present: ${[...new Set([...failed, ...left])].join(", ")}`);
   return { removed: true };
 }
@@ -1303,7 +1706,15 @@ export const defaultIO = Object.freeze({
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!["plan", "run", "auto", "timer-install", "timer-remove"].includes(command)) {
-    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto | timer-install | timer-remove");
+    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto [--worker N] | timer-install | timer-remove");
+  }
+  // M15 W5: a card worker's timer starts `auto --worker N`, N from 2.
+  if (command === "auto" && rest.length) {
+    const worker = Number(rest[1]);
+    if (rest.length !== 2 || rest[0] !== "--worker" || !/^[1-9][0-9]*$/.test(rest[1] ?? "") || worker < 2 || worker > MAX_CARD_WORKERS) {
+      refuse("CARD_RUN_USAGE", `auto takes only --worker N, N from 2 to ${MAX_CARD_WORKERS}`);
+    }
+    return { command, review: null, worker };
   }
   if (!["plan", "run"].includes(command) && rest.length) refuse("CARD_RUN_USAGE", `${command} takes no flags`);
   const flags = {};
@@ -1319,7 +1730,7 @@ export function parseArgs(argv) {
 
 export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
   try {
-    const { command, review } = parseArgs(argv);
+    const { command, review, worker = 1 } = parseArgs(argv);
     if (command === "plan") {
       const revision = installedRevision(io, paths);
       const config = readConfig(io, paths);
@@ -1357,7 +1768,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
     if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath }) };
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
-      const result = await autoRun({ io, paths });
+      const result = await autoRun({ io, paths: cardRunPaths(worker, paths) });
       return { code: result.skipped || (result.ok && (result.revert?.reverted || result.kind === "install")) ? 0 : 1, output: result };
     }
     // A queue keeps its order only through the timer's claims, so it is run by

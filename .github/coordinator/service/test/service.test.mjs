@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
-import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory, assertSupervisorLaunchEnvironment, supervisorAdapterKeys, unitEnvironmentKeys, UNIT_ENVIRONMENT_KEYS } from '../units.mjs';
+import { render, assertPolicy, verifySyntax, names, workerNames, WORKSPACE_STATE_DIR, serviceParameters, supervisorStoreDirectory, assertSupervisorLaunchEnvironment, supervisorAdapterKeys, unitEnvironmentKeys, UNIT_ENVIRONMENT_KEYS } from '../units.mjs';
 import { SupervisorStore } from '../../supervisor.mjs';
 import { SUPERVISOR_RECORD_KINDS, defaultSupervisorStore } from '../../reconcile-dangling.mjs';
 import { install, rollback, snapshot } from '../install.mjs';
@@ -255,6 +255,52 @@ function assertDeployedWorkspaceState(value) {
   assert.equal(declarations.length, 1, 'SHU251_WRITER_LOCK: activation contract must declare one workspace state directory');
   assert.equal(value, declarations[0][1], 'SHU251_WRITER_LOCK: WORKSPACE_STATE_DIR must agree with activation contract');
 }
+test("M15 W2: a card worker's supervisor and coordinator render their own activation, socket, store and writer lock; worker 1 is unchanged", t => {
+  const root = fixture(t);
+  const base = fixtureParameters(root);
+  // Worker 1: the same parameters and the same three units, byte for byte.
+  assert.deepEqual(serviceParameters({ ...base, worker: 1 }), serviceParameters(base));
+  const one = render(serviceParameters(base));
+  assert.deepEqual(render({ ...serviceParameters(base), worker: 1 }), one);
+  assert.deepEqual(workerNames(1), names);
+  // Worker 2: its own pair, nothing shared with worker 1 but the identity,
+  // the environment files and the workdir.
+  const { workspaceStateDir: _deployed, writerLock: _lock, ...own } = base;
+  const params = serviceParameters({ ...own, worker: 2 });
+  assert.equal(params.workspaceStateDir, `${WORKSPACE_STATE_DIR}/w2`);
+  assert.equal(params.writerLock, `${WORKSPACE_STATE_DIR}/w2/host-tick.lock`);
+  assert.equal(params.supervisorStateDir, `${WORKSPACE_STATE_DIR}/w2/supervisor`);
+  assert.deepEqual(params.coordinator.slice(-2), ['--activation', '/srv/shu/state/w2/shu71-activation.json']);
+  const units = render(params);
+  assert.deepEqual(Object.keys(units), ['shu-supervisor-w2.service', 'shu-coordinator-w2.service']);
+  assert.deepEqual(workerNames(2), Object.keys(units));
+  assertPolicy(units, params);
+  const supervisor = units['shu-supervisor-w2.service'], coordinator = units['shu-coordinator-w2.service'];
+  assert.match(supervisor, /^Environment=SHU_SUPERVISOR_ACTIVATION_FILE=\/srv\/shu\/state\/w2\/shu71-activation\.json$/m);
+  assert.match(supervisor, /^Environment=SHU_SUPERVISOR_SOCKET=\/srv\/shu\/state\/workspaces\/w2\/supervisor\.sock$/m);
+  assert.match(coordinator, /^Environment=SHU_SUPERVISOR_SOCKET=\/srv\/shu\/state\/workspaces\/w2\/supervisor\.sock$/m);
+  assert.match(coordinator, /^Environment=SHU_SUPERVISOR_STATE_DIR=\/srv\/shu\/state\/workspaces\/w2\/supervisor$/m);
+  assert.match(coordinator, /^Requires=shu-supervisor-w2\.service$/m);
+  assert.match(coordinator, /^After=shu-supervisor-w2\.service$/m);
+  assert.match(coordinator, /^ExecStart="\/usr\/bin\/flock" "--nonblock" "--conflict-exit-code" "2" "\/srv\/shu\/state\/workspaces\/w2\/host-tick\.lock" /m);
+  assert.doesNotMatch(supervisor + coordinator, /\/srv\/shu\/state\/shu71-activation\.json|=shu-supervisor\.service$/m);
+  for (const [name, text] of Object.entries(units)) {
+    const wone = one[name.replace('-w2', '')];
+    assert.equal(text.split('\n').length, wone.split('\n').length, `${name} keeps every line of worker 1's unit`);
+  }
+  // Policy names a pair that points back at worker 1's record or supervisor.
+  named(() => assertPolicy({ ...units, 'shu-coordinator-w2.service': coordinator.replace('Requires=shu-supervisor-w2.service', 'Requires=shu-supervisor.service') }, params),
+    'SHU251_DEPENDENCY: coordinator must require supervisor');
+  named(() => assertPolicy({ ...units, 'shu-supervisor-w2.service': supervisor.replace('/srv/shu/state/w2/shu71-activation.json', '/srv/shu/state/shu71-activation.json') }, params),
+    "SHU251_WORKER: shu-supervisor-w2.service must read worker 2's activation record");
+  named(() => assertPolicy(render({ ...params, coordinator: [...params.coordinator.slice(0, -1), '/srv/shu/state/shu71-activation.json'] }), params),
+    "SHU251_WORKER: shu-coordinator-w2.service must tick worker 2's activation record");
+  // Worker 2 may not take worker 1's directory, and worker 1 may not take worker 2's.
+  named(() => serviceParameters({ ...base, worker: 2, workspaceStateDir: WORKSPACE_STATE_DIR }), 'SHU251_WRITER_LOCK: foreign workspace state directory requires allowWorkspaceStateDirOverride=true');
+  named(() => serviceParameters({ ...base, workspaceStateDir: `${WORKSPACE_STATE_DIR}/w2` }), 'SHU251_WRITER_LOCK: foreign workspace state directory requires allowWorkspaceStateDirOverride=true');
+  named(() => serviceParameters({ ...own, worker: 9 }), 'SHU251_WORKER: card worker must be 1 to 8');
+});
+
 test('SHU251 canonical workspace constant matches literal deployment and activation contract', () => {
   assertDeployedWorkspaceState(WORKSPACE_STATE_DIR);
 });
