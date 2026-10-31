@@ -376,11 +376,17 @@ function repairStep(io, paths, revision, id, claim) {
 // decided nothing (reconcile.mjs main prints only that line), so the run
 // waits the time Linear asked for and ticks again, inside its window. Before,
 // a limit hit late in a long run ended it REFUSED with its work unreviewed.
-export const TICK_HOLD_RE = /^HOLD=LINEAR_RATE_LIMITED retry_after=(\d+)\s*$/m;
+// The hold must be the tick's whole output: a hold line next to anything
+// else (an error before or after it) is not a clean hold and ends the run.
+// One wait is at most TICK_HOLD_MAX_SLEEP_MS, so a held run still writes its
+// status well inside the watchdog's stale threshold; a longer hold is waited
+// out over several held ticks.
+export const TICK_HOLD_RE = /^HOLD=LINEAR_RATE_LIMITED retry_after=(\d+)$/;
+export const TICK_HOLD_MAX_SLEEP_MS = 30 * 60 * 1000;
 export function tickOutcome(text, activationId = null) {
   const lines = String(text ?? "").split("\n");
   const activation = lines.find((line) => line.startsWith("activation=")) ?? null;
-  const hold = activation === null ? TICK_HOLD_RE.exec(String(text ?? "")) : null;
+  const hold = activation === null ? TICK_HOLD_RE.exec(String(text ?? "").trim()) : null;
   if (hold) return { ended: false, outcome: null, reason: null, activation, eligible: null, excluded: [], hold: { retry_after_s: Number(hold[1]) } };
   const eligibleMatch = /^eligible=(\d+)/m.exec(text ?? "");
   const eligible = eligibleMatch ? Number(eligibleMatch[1]) : null;
@@ -696,7 +702,7 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         // (the next pass of the loop then ends the run EXPIRED).
         if (outcome.hold) {
           const left = Math.max(0, deadline - io.now().getTime());
-          io.sleep(Math.min(left, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));
+          io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));
           continue;
         }
         // On the first tick nothing has started yet, so the card being

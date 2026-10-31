@@ -1465,8 +1465,26 @@ const CASES = [
   },
   {
     name: "M302 tick again at once after a hold, without waiting",
-    from: "          io.sleep(Math.min(left, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));",
+    from: "          io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));",
     to: "          // SHU86-M302",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M303 take a hold line found anywhere in the tick's output",
+    from: "TICK_HOLD_RE.exec(String(text ?? \"\").trim())",
+    to: "/^HOLD=LINEAR_RATE_LIMITED retry_after=(\\d+)$/m.exec(String(text ?? \"\")) /* SHU86-M303 */",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M304 wait out a hold past the run window",
+    from: "io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
+    to: "io.sleep(Math.min(Infinity /* SHU86-M304 */, TICK_HOLD_MAX_SLEEP_MS,",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M305 wait a whole long hold in one sleep",
+    from: "io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
+    to: "io.sleep(Math.min(left, Infinity /* SHU86-M305 */,",
     pattern: "Rate-limit hold:",
   },
 ];

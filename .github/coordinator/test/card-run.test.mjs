@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  planRun, onBase, nextCard, tickOutcome, tick, busyReasons, runCard, revert, parseArgs, main,
+  planRun, onBase, nextCard, tickOutcome, TICK_HOLD_MAX_SLEEP_MS, tick, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
   autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
@@ -973,6 +973,12 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
   assert.equal(failed.outcome, "REFUSED");
   assert.match(failed.reason, /did not report this run armed: coordinator reconcile failed: socket hang up$/);
   assert.equal(tickOutcome("", id).reason, "the tick did not report this run armed: null");
+  // A hold line is a hold only as the tick's whole output: next to any other
+  // text, before or after it, the run ends.
+  assert.equal(tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=5\n", id).ended, false);
+  assert.equal(tickOutcome("coordinator reconcile failed: boom\nHOLD=LINEAR_RATE_LIMITED retry_after=5", id).outcome, "REFUSED");
+  assert.equal(tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=5\ncoordinator reconcile failed: boom", id).outcome, "REFUSED");
+  assert.equal(tickOutcome("HOLD=LINEAR_RATE_LIMITED retry_after=5 and more", id).outcome, "REFUSED");
   // An activation line wins over a stray hold line.
   assert.equal(tickOutcome(`HOLD=LINEAR_RATE_LIMITED retry_after=5\n${tickText("activation=absent (committed gates only)")}`, id).outcome, "REFUSED");
 
@@ -991,7 +997,7 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
   assert.equal(output.outcome, "PASS", "two held ticks did not end the run");
   assert.equal(output.ticks.length, 3, "held ticks are not answered ticks");
   assert.deepEqual(output.holds.map((h) => h.retry_after_s), [300, 300]);
-  assert.ok(host.clock - before >= 2 * 300 * 1000, "each hold waited the time Linear asked for");
+  assert.ok(host.clock - before >= 2 * (300 * 1000 + CARD_RUN_LIMITS.tickIntervalMs), "each hold waited the time Linear asked for");
   reverted(host);
 
   // A hold on the first tick does not skip the first-tick eligibility check.
@@ -1005,6 +1011,26 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
   });
   const notEligible = await main(["run"], first.io, PATHS);
   assert.equal(notEligible.output.outcome, "NOT_ELIGIBLE");
+
+  // A hold that outlasts the window: each wait is capped at the hold maximum
+  // and at what is left of the window, so the run ends EXPIRED at the window,
+  // never later, and writes its status between waits.
+  const long = fakeHost({
+    onTick: (h) => (h.files.has(PATHS.activation)
+      ? (h.ticks === 1 ? tickText(armed(armedId(h))) : "HOLD=LINEAR_RATE_LIMITED retry_after=999999")
+      : tickText("activation=absent (committed gates only)")),
+  });
+  // A seven-minute tick interval puts the held ticks off the half-hour grid,
+  // so an uncapped last wait would overshoot the window by minutes.
+  const expired = await runCard({ io: long.io, paths: PATHS, limits: { ...CARD_RUN_LIMITS, tickIntervalMs: 7 * 60 * 1000 } });
+  assert.equal(expired.outcome, "EXPIRED");
+  const deadline = START.getTime() + CARD_RUN_LIMITS.runMs;
+  assert.ok(expired.holds.length > 1, "a long hold is waited out over several held ticks");
+  for (const entry of expired.holds) assert.ok(Date.parse(entry.at) < deadline, `no held tick starts at or after the window: ${entry.at}`);
+  const starts = expired.holds.map((entry) => Date.parse(entry.at));
+  for (let i = 1; i < starts.length; i += 1) assert.ok(starts[i] - starts[i - 1] <= TICK_HOLD_MAX_SLEEP_MS, "no single wait is longer than the hold maximum");
+  assert.ok(long.clock - START.getTime() <= CARD_RUN_LIMITS.runMs + CARD_RUN_LIMITS.tickIntervalMs, "the last wait stops at the window");
+  reverted(long);
 });
 
 test("SHU-86 C10: a failed arm still reverts everything it wrote", async () => {
