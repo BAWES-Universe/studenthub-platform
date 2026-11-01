@@ -504,9 +504,9 @@ function repairStep(io, paths, revision, id, claim, parallel = false) {
 // a limit hit late in a long run ended it REFUSED with its work unreviewed.
 // The hold must be the tick's whole output: a hold line next to anything
 // else (an error before or after it) is not a clean hold and ends the run.
-// One wait is at most TICK_HOLD_MAX_SLEEP_MS, so a held run still writes its
+// One sleep is at most TICK_HOLD_MAX_SLEEP_MS, so a held run still writes its
 // status well inside the watchdog's stale threshold; a longer hold is waited
-// out over several held ticks.
+// out over several sleeps, with no tick until the whole hold has passed.
 export const TICK_HOLD_RE = /^HOLD=LINEAR_RATE_LIMITED retry_after=(\d+)$/;
 export const TICK_HOLD_MAX_SLEEP_MS = 30 * 60 * 1000;
 export function tickOutcome(text, activationId = null) {
@@ -978,12 +978,19 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
           result = { ok: ANSWERED.has(outcome.outcome), outcome: outcome.outcome, reason: outcome.reason };
           break;
         }
-        // A held tick waits what Linear asked, never past the window's end
-        // (the next pass of the loop then ends the run EXPIRED). Awaited like
-        // the ordinary wait, so other workers' runs go on meanwhile.
+        // A held tick waits the whole time Linear asked before it ticks
+        // again, never past the window's end (the next pass of the loop then
+        // ends the run EXPIRED). The wait is cut into sleeps of at most
+        // TICK_HOLD_MAX_SLEEP_MS with a status write after each, but no tick
+        // (no Linear read) happens until the hold is over. Awaited like the
+        // ordinary wait, so other workers' runs go on meanwhile.
         if (outcome.hold) {
-          const left = Math.max(0, deadline - io.now().getTime());
-          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));
+          const wait = Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000);
+          const until = Math.min(deadline, io.now().getTime() + wait);
+          for (let now = io.now().getTime(); now < until; now = io.now().getTime()) {
+            await io.sleep(Math.min(until - now, TICK_HOLD_MAX_SLEEP_MS));
+            status.write({ step: "ticking", ...progress() });
+          }
           continue;
         }
         // On the first tick nothing has started yet, so the card being

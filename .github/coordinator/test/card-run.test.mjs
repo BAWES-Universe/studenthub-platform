@@ -1028,23 +1028,27 @@ test("Rate-limit hold: a tick that holds on Linear's rate limit waits and ticks 
   const notEligible = await main(["run"], first.io, PATHS);
   assert.equal(notEligible.output.outcome, "NOT_ELIGIBLE");
 
-  // A hold that outlasts the window: each wait is capped at the hold maximum
-  // and at what is left of the window, so the run ends EXPIRED at the window,
-  // never later, and writes its status between waits.
+  // A hold that outlasts the window is waited out whole: no second tick (no
+  // Linear read) before the time Linear asked has passed, each sleep capped at
+  // the hold maximum (with a status write between sleeps) and at what is left
+  // of the window, so the run ends EXPIRED at the window, never later.
   const long = fakeHost({
     onTick: (h) => (h.files.has(PATHS.activation)
       ? (h.ticks === 1 ? tickText(armed(armedId(h))) : "HOLD=LINEAR_RATE_LIMITED retry_after=999999")
       : tickText("activation=absent (committed gates only)")),
   });
-  // A seven-minute tick interval puts the held ticks off the half-hour grid,
-  // so an uncapped last wait would overshoot the window by minutes.
+  const sleeps = [];
+  const longSleep = long.io.sleep;
+  long.io = { ...long.io, sleep: (ms) => { sleeps.push(ms); return longSleep(ms); } };
+  // A seven-minute tick interval puts the held tick off the half-hour grid,
+  // so an uncapped last sleep would overshoot the window by minutes.
   const expired = await runCard({ io: long.io, paths: PATHS, limits: { ...CARD_RUN_LIMITS, tickIntervalMs: 7 * 60 * 1000 } });
   assert.equal(expired.outcome, "EXPIRED");
   const deadline = START.getTime() + CARD_RUN_LIMITS.runMs;
-  assert.ok(expired.holds.length > 1, "a long hold is waited out over several held ticks");
-  for (const entry of expired.holds) assert.ok(Date.parse(entry.at) < deadline, `no held tick starts at or after the window: ${entry.at}`);
-  const starts = expired.holds.map((entry) => Date.parse(entry.at));
-  for (let i = 1; i < starts.length; i += 1) assert.ok(starts[i] - starts[i - 1] <= TICK_HOLD_MAX_SLEEP_MS, "no single wait is longer than the hold maximum");
+  assert.equal(expired.holds.length, 1, "no tick reads Linear again before the hold it asked for is over");
+  assert.ok(Date.parse(expired.holds[0].at) < deadline, `the held tick starts inside the window: ${expired.holds[0].at}`);
+  assert.ok(sleeps.length > 2, "a long hold is waited out over several sleeps");
+  for (const ms of sleeps) assert.ok(ms <= TICK_HOLD_MAX_SLEEP_MS, `no single sleep is longer than the hold maximum: ${ms}`);
   assert.ok(long.clock <= deadline, `the last wait stops at the window, not after it: ended ${(long.clock - deadline) / 1000}s past it`);
   reverted(long);
 });

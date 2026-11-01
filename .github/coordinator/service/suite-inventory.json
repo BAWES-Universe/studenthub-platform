@@ -4663,6 +4663,7 @@
     "SHU-86 mutation M304 wait out a hold past the run window",
     "SHU-86 mutation M305 wait a whole long hold in one sleep",
     "SHU-86 mutation M306 tick again while a held wait is still pending",
+    "SHU-86 mutation M307 tick again after each capped sleep of a long hold",
     "SHU-86 mutation M215 count every worker's processes with more than one worker",
     "SHU-86 mutation M216 make a worker busy on another worker's drop-ins",
     "SHU-86 mutation M217 sweep another worker's dependency cache",
@@ -33902,6 +33903,10 @@
     },
     {
       "name": "SHU-86 mutation M306 tick again while a held wait is still pending",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M307 tick again after each capped sleep of a long hold",
       "capabilities": []
     },
     {

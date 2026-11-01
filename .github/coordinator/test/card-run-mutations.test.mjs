@@ -960,8 +960,8 @@ const CASES = [
   },
   {
     name: "M142 stop writing the status after each tick",
-    from: '        status.write({ step: "ticking", ...progress() });',
-    to: "        // SHU86-M142",
+    from: '\n        status.write({ step: "ticking", ...progress() });',
+    to: "\n        // SHU86-M142",
     pattern: "SHU-86 0e: the run keeps its status file",
   },
   {
@@ -1471,14 +1471,14 @@ const CASES = [
   },
   {
     name: "M302 tick again at once after a hold, without waiting",
-    from: "          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, Math.max(limits.tickIntervalMs, outcome.hold.retry_after_s * 1000)));",
-    to: "          // SHU86-M302",
+    from: "          const until = Math.min(deadline, io.now().getTime() + wait);",
+    to: "          const until = Math.min(deadline, io.now().getTime()); // SHU86-M302",
     pattern: "Rate-limit hold:",
   },
   {
     name: "M306 tick again while a held wait is still pending",
-    from: "          await io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
-    to: "          void io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS, /* SHU86-M306 */",
+    from: "            await io.sleep(Math.min(until - now, TICK_HOLD_MAX_SLEEP_MS));",
+    to: "            void io.sleep(Math.min(until - now, TICK_HOLD_MAX_SLEEP_MS)); // SHU86-M306",
     pattern: "Rate-limit hold:",
   },
   {
@@ -1489,14 +1489,20 @@ const CASES = [
   },
   {
     name: "M304 wait out a hold past the run window",
-    from: "io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
-    to: "io.sleep(Math.min(Infinity /* SHU86-M304 */, TICK_HOLD_MAX_SLEEP_MS,",
+    from: "          const until = Math.min(deadline, io.now().getTime() + wait);",
+    to: "          const until = Math.min(Infinity, io.now().getTime() + wait); // SHU86-M304",
     pattern: "Rate-limit hold:",
   },
   {
     name: "M305 wait a whole long hold in one sleep",
-    from: "io.sleep(Math.min(left, TICK_HOLD_MAX_SLEEP_MS,",
-    to: "io.sleep(Math.min(left, Infinity /* SHU86-M305 */,",
+    from: "            await io.sleep(Math.min(until - now, TICK_HOLD_MAX_SLEEP_MS));",
+    to: "            await io.sleep(until - now); // SHU86-M305",
+    pattern: "Rate-limit hold:",
+  },
+  {
+    name: "M307 tick again after each capped sleep of a long hold",
+    from: "          const until = Math.min(deadline, io.now().getTime() + wait);",
+    to: "          const until = Math.min(deadline, io.now().getTime() + Math.min(wait, TICK_HOLD_MAX_SLEEP_MS)); // SHU86-M307",
     pattern: "Rate-limit hold:",
   },
   {
