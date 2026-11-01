@@ -4195,6 +4195,24 @@ const SHU408_BRIEF = SHU374_BRIEF.replace("Card SHU-374:", "Card SHU-408:");
 if (!SHU408_BRIEF.startsWith("Card SHU-408:")) throw new Error("SHU408_BRIEF must name its own card");
 const SHU408_ACCEPTANCE = `${SHU374_ACCEPTANCE} SHU-408 is SHU-374's contract re-queued to follow SHU-407; SHU-374 never runs.`;
 
+// SHU-410: the same contract an eighth time. SHU-407 built at da6ff22 and its
+// review answered BLOCKED at b55042d after the build used up its revisions,
+// so the queue stopped. The brief adds that review's findings.
+const SHU410_FINDINGS = `Findings from the stopped seventh attempt (SHU-407) that this card must also fix. SHU-407 built this contract at da6ff22 (branch coordinator/SHU-407, reviewed head b55042d, never merged). Its review verified correct, and you must keep: the ::text reads with expectedBefore from the same read; clearing stores NULL; catalogue resolution by id inside the commit plus the 0212 trigger; KW keyed on the catalogue code; the Kuwaiti-mother row through the same fieldRow (19 rows on the unconfigured page); "Looking for work" in OWN_PROFILE_FIELD_CONTRACT and rendered from it; the highlighted top row pinned by its own anchored assertion; None and Not listed with the staff note; university preselected by id; display names, Yes/No, labels and "Unavailable" in the preview; distinct malformed, future and minimum-age messages; each control asserted inside its own Change form; one written-values read and one catalogue read per page; valid 0146 fixtures with the clear asserted NULL immediately and both store and database (23514) refusals asserting nothing stored; dist-shaped mutation needles.
+- (1) Blocking: a birth date the card's own rules accept makes the whole profile unreadable. There is no maximum age on write, so a birth date such as 1800-01-01 is accepted and stored; on read, packages/profile/src/profile.ts derives age OUTSIDE the per-field try/catch, and ageOn throws "malformed approved profile value" for an age over 150, so OwnProfileRepository.readOwn returns unavailable and the gateway answers 503 for both the HTML and JSON /profile routes, and the person can no longer reach the birth-date Change control. Every bad stored value must make only its own field unavailable (SHU-402's finding). Derive age inside the same per-field handling (on a throw the Age row renders unavailable while the rest of My profile renders), and add a test asserting exactly that for a stored birth date of 1800-01-01, through the page. The same applies to profileChoices present but missing its countries list: reading the nationality must not throw for the whole profile; that field alone is unavailable, with a test.
+- (2) The minimum age must be one setting, not a literal in two places: PERSON_PROFILE_MINIMUM_AGE in packages/profile/src/self-edit.ts and INTERVAL '16 years' in migration 0212 duplicate it. The brief asks the database to enforce only the Kuwaiti-mother rule, so drop the birth_date age CHECK from 0212 (keep the written_at CHECKs).
+- (3) Pin the Kuwaiti-mother before value end to end: the gateway's shown-value seam reads result.profile.fields[fieldName], published by packages/profile/src/profile.ts; deleting that publication currently leaves every test green. Add a gateway test that builds the preview's before value from a projection carrying a stored Kuwaiti-mother No (not by calling shownProfileValue directly) and asserts "No".
+- Before you finish, run npm run build and npm test to the end and read their output, including packages/profile/test/profile.test.ts and every mutation script: the run is only done when all of them pass.`;
+const SHU410_BRIEF = SHU407_BRIEF.replace("Card SHU-407:", "Card SHU-410:").replace("\n\nRead first:\n", `\n\n${SHU410_FINDINGS}\n\nRead first:\n`);
+if (!SHU410_BRIEF.startsWith("Card SHU-410:") || !SHU410_BRIEF.includes(SHU407_FINDINGS) || !SHU410_BRIEF.includes(SHU410_FINDINGS)) throw new Error("SHU410_BRIEF must name its own card and carry every attempt's findings");
+const SHU410_ACCEPTANCE = `${SHU407_ACCEPTANCE} SHU-410 is SHU-407's contract re-queued after its build used up its revisions; SHU-407 never runs again. A stored birth date of 1800-01-01 renders the Age row unavailable while the rest of My profile renders (no 503), and profile choices missing their countries list make only nationality unavailable, each pinned by a test. The minimum age is one setting with no literal in migration 0212. A gateway test takes the Kuwaiti-mother preview's before value from a projection carrying a stored No.`;
+
+// SHU-411: SHU-408's contract under a fresh id. SHU-408 never ran; it waited
+// on SHU-407, which stopped, so the phone card is re-queued to wait on SHU-410.
+const SHU411_BRIEF = SHU408_BRIEF.replace("Card SHU-408:", "Card SHU-411:");
+if (!SHU411_BRIEF.startsWith("Card SHU-411:")) throw new Error("SHU411_BRIEF must name its own card");
+const SHU411_ACCEPTANCE = `${SHU408_ACCEPTANCE} SHU-411 is SHU-408's contract re-queued to follow SHU-410; SHU-408 never runs.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4722,6 +4740,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU374_PATHS,
     acceptance: SHU408_ACCEPTANCE,
     brief: SHU408_BRIEF,
+  }),
+  "SHU-410": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU410_ACCEPTANCE,
+    brief: SHU410_BRIEF,
+  }),
+  "SHU-411": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU374_PATHS,
+    revision_paths: SHU374_PATHS,
+    acceptance: SHU411_ACCEPTANCE,
+    brief: SHU411_BRIEF,
   }),
 });
 
