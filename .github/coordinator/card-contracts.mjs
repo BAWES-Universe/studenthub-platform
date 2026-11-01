@@ -4172,6 +4172,29 @@ const SHU405_BRIEF = SHU404_BRIEF.replace("Card SHU-404:", "Card SHU-405:");
 if (!SHU405_BRIEF.startsWith("Card SHU-405:") || !SHU405_BRIEF.includes(SHU402_FINDINGS) || !SHU405_BRIEF.includes(SHU404_FINDINGS)) throw new Error("SHU405_BRIEF must name its own card and carry every attempt's findings");
 const SHU405_ACCEPTANCE = `${SHU404_ACCEPTANCE} SHU-405 is SHU-404's contract re-queued after its run was cut off by the orchestrator, not by a review; SHU-404 never runs again.`;
 
+// SHU-407: the same contract a seventh time. SHU-405 built at e8c2d37 and
+// its reviews answered BLOCKED twice; the build used up its revisions, so the
+// queue stopped. The brief adds both reviews' findings.
+const SHU407_FINDINGS = `Findings from the stopped sixth attempt (SHU-405) that this card must also fix. SHU-405 built this contract at e8c2d37 (branch coordinator/SHU-405, head 2e1023c, never merged). Its reviews verified correct, and you must keep: the ::text reads with expectedBefore from the same read; clearing stores NULL; catalogue resolution by id inside the commit plus the database trigger, KW keyed on the catalogue code; one age setting; distinct malformed, future and minimum-age messages; the preview showing display names, Yes/No and the gender and work-status labels, with "Unavailable" for unknown ids; None plus Not listed with the staff explanation; the university preselected by id; each control asserted inside its own Change form; catalogue fixtures valid under 0146 with a deleted country and university left out of the choices read; indexes on both new lookup columns. You start again from the bound head, so its code is not there; do not repeat these:
+- (1) Blocking: an existing test you may not edit failed. packages/profile/test/profile.test.ts asserts that the rendered unconfigured My profile contains <dt>{label}</dt> for EVERY label in the own-profile field contract (packages/profile/src/profile.ts, OWN_PROFILE_FIELD_CONTRACT). SHU-405 renamed the work-status row in apps/gateway/src/web-ui.ts with .replace("<dt>Job-search status</dt>", "<dt>Looking for work</dt>"), so the contract's label was never rendered. Rename the label once, in the field contract in packages/profile/src/profile.ts, to "Looking for work", and render it from there; never rewrite a rendered label with a string replace. The highlighted top line of item 4 is pinned by its own assertion (not by a match anywhere in the page), and no <p> sits inside <dl><div>.
+- (2) Blocking: an existing test failed. packages/profile/test/profile.test.ts (SHU371_PROJECTION "any written field makes imported completeness not recorded") writes only language over the populated fixture. Whether the person has written any field counts every written value, language included; only the profile choices object itself is excluded, so the SHU373_PAGE case in self-edit.test.ts keeps passing.
+- (3) Blocking: the Change preview's before value for Kuwaiti mother must be what My profile shows ("Yes", "No" or "Not recorded"), never always "Not recorded": the shown-value seam must read the flag where the projection publishes it, and a test asserts the preview's before for a stored No.
+- (4) Blocking: pin the guards in Postgres. Right after clearing the Kuwaiti-mother flag, assert the column is NULL (not only at the end of the test). Add a case: nationality set to the KW country, then a Kuwaiti-mother write is refused invalid_value and nothing is stored, and a direct UPDATE setting kuwaiti_mother with a KW nationality fails 23514. Assert each refusal stored nothing.
+- (5) S2 at page level: the page test counts both the written-values read and the catalogue choices read, one each per page, and a nationality or university preview page reads the choices once, not twice.
+- (6) The Kuwaiti-mother row goes through the same fieldRow helper as every other row, keeping 19 rows on the unconfigured page.
+- Also: the preview page's use of displayValue is pinned by a page-level test (deleting the call fails a test); Postgres catalogue fixtures use names suffixed with randomUUID(), as neighbouring db tests do, so a reused database's active-name index never collides; the age window uses the Asia/Kuwait day, as acceptance item 2 says; migration 0212 carries the written_at CHECK for university_id and kuwaiti_mother like its other columns; the nationality select opens on a "Not recorded" placeholder when nothing is recorded; profile-edit-http.test.ts never depends on the real clock; a malformed stored Kuwaiti-mother value makes only that field unavailable.
+- Before you finish, run npm run build and npm test to the end and read their output, including packages/profile/test/profile.test.ts and every mutation script: the run is only done when all of them pass.`;
+const SHU407_BRIEF = SHU405_BRIEF.replace("Card SHU-405:", "Card SHU-407:").replace("\n\nRead first:\n", `\n\n${SHU407_FINDINGS}\n\nRead first:\n`);
+if (!SHU407_BRIEF.startsWith("Card SHU-407:") || !SHU407_BRIEF.includes(SHU402_FINDINGS) || !SHU407_BRIEF.includes(SHU404_FINDINGS) || !SHU407_BRIEF.includes(SHU407_FINDINGS)) throw new Error("SHU407_BRIEF must name its own card and carry every attempt's findings");
+const SHU407_ACCEPTANCE = `${SHU405_ACCEPTANCE} SHU-407 is SHU-405's contract re-queued after its build used up its revisions; SHU-405 never runs again. packages/profile/test/profile.test.ts passes unedited: the work-status label is "Looking for work" in the own-profile field contract and is rendered from it, and writing only language makes imported completeness not recorded. The Change preview's before value for Kuwaiti mother is what My profile shows. Postgres tests pin that a cleared Kuwaiti-mother flag is NULL right after the clear, and that a Kuwaiti-mother write with a KW nationality is refused by the store and by the database (23514) with nothing stored. The page test counts one written-values read and one catalogue read per page.`;
+
+// SHU-408: SHU-374's contract under a fresh id. SHU-374 never ran; it waited
+// on SHU-405, which stopped, and a re-cut queue may only append lanes, so the
+// phone card is re-queued to wait on SHU-407 instead.
+const SHU408_BRIEF = SHU374_BRIEF.replace("Card SHU-374:", "Card SHU-408:");
+if (!SHU408_BRIEF.startsWith("Card SHU-408:")) throw new Error("SHU408_BRIEF must name its own card");
+const SHU408_ACCEPTANCE = `${SHU374_ACCEPTANCE} SHU-408 is SHU-374's contract re-queued to follow SHU-407; SHU-374 never runs.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4685,6 +4708,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU373_PATHS,
     acceptance: SHU405_ACCEPTANCE,
     brief: SHU405_BRIEF,
+  }),
+  "SHU-407": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU373_PATHS,
+    revision_paths: SHU373_PATHS,
+    acceptance: SHU407_ACCEPTANCE,
+    brief: SHU407_BRIEF,
+  }),
+  "SHU-408": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU374_PATHS,
+    revision_paths: SHU374_PATHS,
+    acceptance: SHU408_ACCEPTANCE,
+    brief: SHU408_BRIEF,
   }),
 });
 
