@@ -49,8 +49,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-407",
-      "SHU-408"
+      "SHU-410",
+      "SHU-411"
     ]
   },
   "adapter_pause_map": {},
@@ -2693,6 +2693,81 @@
       ],
       "after": [
         "SHU-407"
+      ]
+    },
+    {
+      "id": "SHU-410",
+      "authorization_ref": "SHU-410",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "SHU-407's contract re-queued under a fresh id after its build used up its revisions on a BLOCKED review (SHU-373's contract, eighth build): card 4 of the thirteenth card queue, gender, birth date, nationality, university, licence, Kuwaiti mother and work status, with every earlier attempt's review findings in the brief and pinned in the acceptance; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0212_person_profiles_choices.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0212_person_profiles_choices.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-411",
+      "authorization_ref": "SHU-411",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "SHU-408's contract re-queued under a fresh id so it follows SHU-410 instead of the stopped SHU-407 (SHU-408 never ran): card 5 of the thirteenth card queue, phone number and profile link; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0213_person_profiles_contact.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0213_person_profiles_contact.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts"
+      ],
+      "after": [
+        "SHU-410"
       ]
     }
   ],
