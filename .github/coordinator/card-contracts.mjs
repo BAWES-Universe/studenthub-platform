@@ -4323,8 +4323,17 @@ if (!SHU415_BRIEF.startsWith("Card SHU-415:") || !SHU415_BRIEF.includes(SPLIT_SH
 
 // SHU-414: SHU-411's contract under a fresh id. SHU-411 never ran; it waited
 // on SHU-410, which stopped, so the phone card is re-queued to follow SHU-413.
-const SHU414_BRIEF = SHU411_BRIEF.replace("Card SHU-411:", "Card SHU-414:");
-if (!SHU414_BRIEF.startsWith("Card SHU-414:")) throw new Error("SHU414_BRIEF must name its own card");
+// It also gets the split cards' preface and shared rules, and the audit
+// summary CHECK step its migration needs, which the original brief left out.
+const SHU414_ADDENDUM = `${SPLIT_PREFACE} Where this brief says SHU-373, read SHU-413 (gender, birth date, licence and work status; migration 0212); nationality, university and the Kuwaiti-mother flag come after you (SHU-415).
+
+Receipts: the audit summary CHECK on authorization_mutation_audit allows profile.safe_write only for a listed set of fields. Restate it in your migration from the newest migration that restates it (0212), with your phone and handle fields added to the profile.safe_write field list, or every receipt of your writes fails 23514.
+
+Rows: phone and profile link are not in OWN_PROFILE_FIELD_CONTRACT, and the unconfigured My profile page is pinned at exactly 19 rows and 19 unavailable markers. Show each as a row only when it is recorded; when it is not, offer its Change form on My profile without adding a <dt> row or an unavailable marker.
+
+${SPLIT_SHARED_RULES}`;
+const SHU414_BRIEF = SHU411_BRIEF.replace("Card SHU-411:", "Card SHU-414:").replace("\n\nRead first:", `\n\n${SHU414_ADDENDUM}\n\nRead first:`);
+if (!SHU414_BRIEF.startsWith("Card SHU-414:") || !SHU414_BRIEF.includes(SHU414_ADDENDUM)) throw new Error("SHU414_BRIEF must name its own card and carry the split rules");
 const SHU414_ACCEPTANCE = `${SHU411_ACCEPTANCE} SHU-414 is SHU-411's contract re-queued to follow SHU-413; SHU-411 never runs.`;
 
 export const CARD_CONTRACTS = Object.freeze({
