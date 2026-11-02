@@ -4336,6 +4336,17 @@ const SHU414_BRIEF = SHU411_BRIEF.replace("Card SHU-411:", "Card SHU-414:").repl
 if (!SHU414_BRIEF.startsWith("Card SHU-414:") || !SHU414_BRIEF.includes(SHU414_ADDENDUM)) throw new Error("SHU414_BRIEF must name its own card and carry the split rules");
 const SHU414_ACCEPTANCE = `${SHU411_ACCEPTANCE} SHU-414 is SHU-411's contract re-queued to follow SHU-413; SHU-411 never runs.`;
 
+// SHU-413 landed by hand after its card PR's CI caught one test, so its queue
+// stopped before the phone card ran. Both remaining cards re-queue under fresh
+// ids with the same contracts: SHU-417 (phone, was SHU-414) then SHU-418
+// (origin, was SHU-415).
+const SHU417_BRIEF = SHU414_BRIEF.replace("Card SHU-414:", "Card SHU-417:").replace("come after you (SHU-415)", "come after you (SHU-418)");
+if (!SHU417_BRIEF.startsWith("Card SHU-417:") || !SHU417_BRIEF.includes("(SHU-418)")) throw new Error("SHU417_BRIEF must name its own card and its successor");
+const SHU417_ACCEPTANCE = `${SHU414_ACCEPTANCE} SHU-417 is SHU-414's contract re-queued after SHU-413 landed by hand; SHU-414 never runs.`;
+const SHU418_BRIEF = SHU415_BRIEF.replace("Card SHU-415:", "Card SHU-418:").replace("profile-link card SHU-414 (migration 0213)", "profile-link card SHU-417 (migration 0213)");
+if (!SHU418_BRIEF.startsWith("Card SHU-418:") || !SHU418_BRIEF.includes("card SHU-417 (migration 0213)")) throw new Error("SHU418_BRIEF must name its own card and the phone card");
+const SHU418_ACCEPTANCE = `${SHU415_ACCEPTANCE} SHU-418 is SHU-415's contract re-queued to follow SHU-417; SHU-415 never runs.`;
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -4898,6 +4909,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU415_PATHS,
     acceptance: SHU415_ACCEPTANCE,
     brief: SHU415_BRIEF,
+  }),
+  "SHU-417": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU374_PATHS,
+    revision_paths: SHU374_PATHS,
+    acceptance: SHU417_ACCEPTANCE,
+    brief: SHU417_BRIEF,
+  }),
+  "SHU-418": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU415_PATHS,
+    revision_paths: SHU415_PATHS,
+    acceptance: SHU418_ACCEPTANCE,
+    brief: SHU418_BRIEF,
   }),
 });
 
