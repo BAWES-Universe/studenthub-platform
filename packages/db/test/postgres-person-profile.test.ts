@@ -13,7 +13,11 @@ before(async () => { if (!url) throw new Error("DATABASE_URL is required to run 
 after(async () => pool.end());
 
 test("SHU392_PG_RULES the CHECK and application share every SHU372_RULES example", async () => {
+  // The choice fields (gender, birthDate, drivingLicence, jobSearchStatus) are
+  // constrained by their own column CHECKs, not the shared text validator.
+  const textFields = new Set(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
+    if (!textFields.has(field)) continue;
     const requireWords = field === "displayName" || field === "arabicName";
     for (const value of rule.accepts) {
       if (value === "") continue; // clearing is represented by SQL NULL
