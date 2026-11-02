@@ -15,6 +15,9 @@ const mutations = [
   ["SHU372_RULES", "value.normalize(\"NFC\")", "value"],
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
+  ["SHU413_AGE", "minimum.setUTCFullYear(minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE);", "minimum.setUTCFullYear(minimum.getUTCFullYear() - 15);"],
+  ["SHU413_WRITE", 'if (field === "gender" && !["male", "female", "other"].includes(normalized))', 'if (field === "gender" && false)'],
+  ["SHU413_PAGE", "summary(shownAfter(selected, values.value))", "summary(values.value)", pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
 for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite] of mutations) {

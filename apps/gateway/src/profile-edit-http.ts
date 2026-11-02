@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -36,6 +36,7 @@ function refusal(reason: RejectionReason): ProfileEditResult {
     : reason.startsWith("token_") || reason === "state_changed" ? 409 : 400, body: { error: reason } };
 }
 export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; store: PersonProfileEditStore; secret: SafeWriteSecret; clock?: SafeWriteClock }): ProfileEdit {
+  const clock = ports.clock ?? { now: () => new Date() };
   const principal = async (session: string | undefined) => session ? (await ports.sessions.get(session))?.personId : undefined;
   const writer = (id: string) => createPersonSelfEdit({ store: ports.store.forPrincipal(id), secret: ports.secret, ...(ports.clock ? { clock: ports.clock } : {}) });
   return {
@@ -43,6 +44,11 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       const id = await principal(session); if (!id) return { status: 401, body: { error: "unauthorized" } };
       if (!exact(body, ["field", "value"])) return { status: 400, body: { error: "invalid_request" } };
       const selected = field(body.field); if (!selected || typeof body.value !== "string") return refusal("invalid_value");
+      const today = kuwaitDate(clock.now());
+      if (selected === "birthDate" && validPersonBirthDate(body.value)) {
+        if (body.value > today) return { status: 400, body: { error: "future_date" } };
+        if (!isPersonProfileMinimumAge(body.value, today)) return { status: 400, body: { error: "minimum_age" } };
+      }
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : refusal(result.reason);
     },
@@ -90,21 +96,46 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
-  return field.state === "available" ? String(field.value)
-    : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField: string } }): string {
+  if (field.state === "unavailable") return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
+  if (field.value === true) return "Yes";
+  if (field.value === false) return "No";
+  if (field.provenance?.sourceField === "candidate_gender") {
+    return ({ male: "Male", female: "Female", other: "Other" })[String(field.value)] ?? String(field.value);
+  }
+  if (field.provenance?.sourceField === "candidate_job_search_status") {
+    return ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[String(field.value)] ?? String(field.value);
+  }
+  return String(field.value);
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work" };
+const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
+  : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
+    : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
+      : value;
+function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
+  const described = invalid ? ' aria-describedby="value-error"' : "";
+  const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}${described}>${label}</label>`).join("");
+  if (selected === "gender") return radios([["male","Male"],["female","Female"],["other","Other"]]);
+  if (selected === "drivingLicence") return radios([["true","Yes"],["false","No"]]);
+  if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
+  if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
+  if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
+  return `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}"${described}>`;
+}
 export function profileEditSummary(value: string): string {
   let result = "", count = 0;
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) { const length = [...segment].length; if (count + length > 120) break; result += segment; count += length; }
   return result + (result.length < value.length ? "…" : "");
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
-function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
-  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
-  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string, reason: "invalid_value" | "minimum_age" | "future_date") {
+  const label = FIELD_LABELS[selected], control = editControl(selected, value, true);
+  const message = reason === "minimum_age" ? `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`
+    : reason === "future_date" ? "Birth date cannot be in the future."
+      : `Enter a value that follows the rules for ${label.toLowerCase()}.`;
+  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
   const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
@@ -117,12 +148,12 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, values.value, reason); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(values.value!)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, values.value!))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));
