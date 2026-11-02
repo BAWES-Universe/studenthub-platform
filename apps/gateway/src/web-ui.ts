@@ -354,7 +354,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     if (login.profileEdit && editable.has(field) && field !== "jobSearchStatus") {
       const raw = profile.fields[field].state === "available" ? profile.fields[field].value : "";
       const value = String(raw);
-      const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}"${value === code ? " checked" : ""}>${label}</label>`).join("");
+      const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}>${label}</label>`).join("");
       const control = field === "gender" ? radios([["male","Male"],["female","Female"],["other","Other"]])
         : field === "drivingLicence" ? radios([["true","Yes"],["false","No"]])
           : field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">`
@@ -365,7 +365,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   }).join("");
   const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";
   const workStatusChoices = ([['not_looking','Not looking right now'],['active','Actively looking for work'],['open_to_offers','Open to offers']] as const)
-    .map(([code, label]) => `<label><input type="radio" name="value" value="${code}"${workStatusValue === code ? " checked" : ""}>${label}</label>`).join("");
+    .map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${workStatusValue === code ? " checked" : ""}>${label}</label>`).join("");
   const workStatusLabel = OWN_PROFILE_FIELD_CONTRACT.jobSearchStatus.label;
   const workStatusControl = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(workStatusLabel)}"><input type="hidden" name="field" value="jobSearchStatus"><label>Change ${escapeHtml(workStatusLabel)}${workStatusChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
   const workStatusNotice = profile.fields.jobSearchStatus.state === "available" ? `<p class="notice"><strong>${escapeHtml(workStatusLabel)}:</strong> ${fieldText(profile.fields.jobSearchStatus, fieldFormatters.jobSearchStatus)}</p>` : "";

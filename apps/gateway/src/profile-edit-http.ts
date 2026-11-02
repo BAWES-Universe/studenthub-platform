@@ -116,7 +116,7 @@ const shownAfter = (field: PersonSelfEditField, value: string) => field === "dri
       : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";
-  const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}"${value === code ? " checked" : ""}${described}>${label}</label>`).join("");
+  const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}${described}>${label}</label>`).join("");
   if (selected === "gender") return radios([["male","Male"],["female","Female"],["other","Other"]]);
   if (selected === "drivingLicence") return radios([["true","Yes"],["false","No"]]);
   if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
