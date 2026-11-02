@@ -13,7 +13,11 @@ before(async () => { if (!url) throw new Error("DATABASE_URL is required to run 
 after(async () => pool.end());
 
 test("SHU392_PG_RULES the CHECK and application share every SHU372_RULES example", async () => {
+  // The choice fields (gender, birthDate, drivingLicence, jobSearchStatus) are
+  // constrained by their own column CHECKs, not the shared text validator.
+  const textFields = new Set(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
+    if (!textFields.has(field)) continue;
     const requireWords = field === "displayName" || field === "arabicName";
     for (const value of rule.accepts) {
       if (value === "") continue; // clearing is represented by SQL NULL
@@ -117,4 +121,23 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
   if (!preview.ok) return;
   await pool.query("INSERT INTO person_profiles(principal_id,objective,objective_written_at) VALUES($1,'Concurrent',clock_timestamp())", [id]);
   assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
+});
+
+test("SHU413_WRITE Postgres writes every choice twice with stable text state", async () => {
+  const id = `shu413-${randomUUID()}`, authz = new PostgresAuthzStore(pool);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const store = new PostgresPersonProfileStore({ pool });
+  const writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32), clock: { now: () => new Date("2026-10-30T12:00:00.000Z") } });
+  const changes = { gender: ["male", "female"], birthDate: ["2000-02-28", "2000-02-29"], drivingLicence: ["true", "false"], jobSearchStatus: ["active", "open_to_offers"] } as const;
+  for (const [field, values] of Object.entries(changes)) {
+    for (const [attempt, value] of values.entries()) {
+      const change = { personRef: personRecordRef(id), field, value }, principalRef = safeWritePrincipalRef(id);
+      const preview = await writer().preview({ principalRef, change }); assert.ok(preview.ok, `${field} preview ${attempt}`);
+      if (preview.ok) assert.ok((await writer().confirm({ principalRef, change, token: preview.token })).ok, `${field} confirm ${attempt}`);
+    }
+  }
+  const preferences = await store.readOwnPreferences(id) as Record<string, { value: unknown; updatedAt: string }>;
+  assert.deepEqual(Object.fromEntries(Object.entries(preferences).filter(([key]) => ["gender", "birthDate", "drivingLicence", "jobSearchStatus"].includes(key)).map(([key, entry]) => [key, entry.value])),
+    { gender: "female", birthDate: "2000-02-29", drivingLicence: "false", jobSearchStatus: "open_to_offers" });
+  for (const field of Object.keys(changes)) assert.match(preferences[field]!.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
