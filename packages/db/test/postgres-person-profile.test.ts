@@ -141,3 +141,37 @@ test("SHU413_WRITE Postgres writes every choice twice with stable text state", a
     { gender: "female", birthDate: "2000-02-29", drivingLicence: "false", jobSearchStatus: "open_to_offers" });
   for (const field of Object.keys(changes)) assert.match(preferences[field]!.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
+
+test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone holder the same refusal", async () => {
+  const ids = [`shu374-${randomUUID()}`, `shu374-${randomUUID()}`], authz = new PostgresAuthzStore(pool);
+  for (const id of ids) await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const store = new PostgresPersonProfileStore({ pool });
+  const preview = async (id: string, field: "phone" | "handle", value: string) => {
+    const writer = createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+    const principalRef = safeWritePrincipalRef(id), change = { personRef: personRecordRef(id), field, value };
+    const result = await writer.preview({ principalRef, change });
+    return { result, writer, principalRef, change };
+  };
+  const write = async (id: string, field: "phone" | "handle", value: string) => {
+    const attempt = await preview(id, field, value); assert.ok(attempt.result.ok); if (!attempt.result.ok) return attempt.result;
+    return attempt.writer.confirm({ principalRef: attempt.principalRef, change: attempt.change, token: attempt.result.token });
+  };
+  const suffix = BigInt(`0x${randomUUID().replaceAll("-", "")}`).toString().slice(0, 11);
+  const phone = `+44${suffix}`, racePhone = `+33${suffix}`;
+  assert.ok((await write(ids[0]!, "phone", phone)).ok);
+  assert.ok((await write(ids[0]!, "phone", phone)).ok);
+  assert.ok((await write(ids[0]!, "handle", `first.${suffix}`)).ok);
+  assert.ok((await write(ids[0]!, "handle", `first_${suffix}`)).ok);
+  assert.deepEqual((await preview(ids[1]!, "phone", phone)).result, { ok: false, reason: "invalid_value" });
+  assert.deepEqual((await preview(ids[1]!, "handle", `first_${suffix}`)).result, { ok: false, reason: "invalid_value" });
+  const racers = await Promise.all(ids.map(id => preview(id, "phone", racePhone)));
+  assert.ok(racers.every(attempt => attempt.result.ok));
+  const outcomes = await Promise.all(racers.map(attempt => attempt.result.ok
+    ? attempt.writer.confirm({ principalRef: attempt.principalRef, change: attempt.change, token: attempt.result.token }) : attempt.result));
+  assert.deepEqual(outcomes.map(outcome => outcome.ok).sort(), [false, true]);
+  assert.equal(outcomes.find(outcome => !outcome.ok)?.reason, "invalid_value");
+  // Mutation checked manually: dropping person_profiles_phone_uq makes both
+  // racing confirmations above succeed, so the [false, true] assertion fails.
+  const preferences = await store.readOwnPreferences(ids[0]!) as Record<string, { value: unknown }>;
+  assert.equal(preferences.handle!.value, `first_${suffix}`);
+});

@@ -302,7 +302,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
     throw new Error("invalid authorized profile");
   }
   const keys = Object.keys(projection.fields);
-  if (keys.length !== OWN_PROFILE_FIELD_NAMES.length
+  if (keys.some(key => !OWN_PROFILE_FIELD_NAMES.includes(key as OwnProfileFieldName) && key !== "phone" && key !== "handle")
     || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
     throw new Error("invalid authorized profile");
   }
@@ -363,6 +363,14 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     }
     return row;
   }).join("");
+  const contacts = ([['phone','Phone number','tel',32],['handle','Profile link','text',30]] as const).map(([field,label,type,max]) => {
+    const contact = profile.fields[field];
+    const value = contact?.state === "available" ? String(contact.value) : "";
+    const form = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${label}"><input type="hidden" name="field" value="${field}"><label>Change ${label}<input type="${type}" name="value" value="${escapeHtml(value)}" maxlength="${max}"></label><button class="button primary" type="submit">Review change</button></form>` : "";
+    const shown = field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}` : value;
+    return contact?.state === "available" ? `<div><dt>${label}</dt><dd>${escapeHtml(shown)}</dd><small class="field-meta">Updated by you · ${escapeHtml(contact.freshness.observedAt.slice(0,10))}</small>${form}</div>` : form ? `<div>${form}</div>` : "";
+  }).join("");
+  rows += contacts;
   const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";
   const workStatusChoices = ([['not_looking','Not looking right now'],['active','Actively looking for work'],['open_to_offers','Open to offers']] as const)
     .map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${workStatusValue === code ? " checked" : ""}>${label}</label>`).join("");
