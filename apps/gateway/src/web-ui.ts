@@ -363,7 +363,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     }
     return row;
   }).join("");
-  const contacts = ([['phone','Phone number','tel',16],['handle','Profile link','text',30]] as const).map(([field,label,type,max]) => {
+  const contacts = ([['phone','Phone number','tel',32],['handle','Profile link','text',30]] as const).map(([field,label,type,max]) => {
     const contact = profile.fields[field];
     const value = contact?.state === "available" ? String(contact.value) : "";
     const form = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${label}"><input type="hidden" name="field" value="${field}"><label>Change ${label}<input type="${type}" name="value" value="${escapeHtml(value)}" maxlength="${max}"></label><button class="button primary" type="submit">Review change</button></form>` : "";

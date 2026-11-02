@@ -133,7 +133,7 @@ function editControl(selected: PersonSelfEditField, value: string, invalid = fal
   if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
   if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
   if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
-  if (selected === "phone") return `<input type="tel" name="value" value="${esc(value)}" maxlength="16"${described}>`;
+  if (selected === "phone") return `<input type="tel" name="value" value="${esc(value)}" maxlength="32"${described}>`;
   if (selected === "handle") return `<input name="value" value="${esc(value)}" maxlength="30"${described}>`;
   return `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}"${described}>`;
 }

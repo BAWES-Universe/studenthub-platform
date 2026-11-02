@@ -20,7 +20,7 @@ const mutations = [
   ["SHU413_WRITE", 'if (field === "gender" && !["male", "female", "other"].includes(normalized))', 'if (field === "gender" && false)'],
   ["SHU374_PHONE", '!/^\\+[0-9]{8,15}$/.test(normalized)', "false"],
   ["SHU374_HANDLE", '!/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)', "false"],
-  ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 16]", "['phone', 'Phone number', 'text', 16]", webUiModuleFile, pageSuite],
+  ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 32]", "['phone', 'Phone number', 'text', 32]", webUiModuleFile, pageSuite],
   ["SHU413_PAGE", "summary(shownAfter(selected, after))", "summary(after)", pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
