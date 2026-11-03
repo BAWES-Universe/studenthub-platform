@@ -46,7 +46,7 @@ export async function discover(root = process.cwd()) {
     /^(apps|packages)\/.+\/test\/.+\.test\.mjs$/.test(file) &&
     !file.startsWith("packages/db/test/") &&
     !privilegedSourceTest(file));
-  const mutationFile = (file) => /\/test\/[^/]*mutations[^/]*\.mjs$/.test(file);
+  const mutationFile = (file) => !file.endsWith(".test.mjs") && /\/test\/[^/]*mutations[^/]*\.mjs$/.test(file);
 
   const discovered = {
     runnerTests: sorted(tools.filter((file) => /^tools\/test-runner\/test\/.+\.test\.mjs$/.test(file))),
@@ -75,6 +75,18 @@ export async function discover(root = process.cwd()) {
     dbMutationTests: sorted(source.filter((file) =>
       file.startsWith("packages/db/test/") && mutationFile(file))),
   };
+  // Runner tests have two executable naming conventions: *.test.mjs and
+  // *-mutations.mjs. Fail on other test/spec/mutation token names instead of
+  // silently losing a test when its suffix, extension or capitalization drifts.
+  // Ordinary helpers (helper.mjs, fixtures.mjs, etc.) remain unclassified.
+  // Inspect basenames, not parent directories, so nested helpers stay valid.
+  const runnerFiles = tools.filter((file) => file.startsWith("tools/test-runner/test/"));
+  const runnerEntries = new Set([...discovered.runnerTests, ...discovered.runnerMutationTests]);
+  const unclassifiedRunnerTests = runnerFiles.filter((file) => !runnerEntries.has(file) &&
+    /(?:^|[._-])(?:tests?|specs?|mutations?)(?:[._-]|$)/i.test(path.basename(file)));
+  if (unclassifiedRunnerTests.length > 0) {
+    throw new Error(`unsupported runner test names: ${sorted(unclassifiedRunnerTests).join(", ")}`);
+  }
   assertRunnableDiscovery(discovered);
   return discovered;
 }

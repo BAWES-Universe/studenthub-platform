@@ -81,3 +81,61 @@ test("SHU370_MIGRATIONS migration inventory is derived from sorted SQL files", a
   ]);
   assert.deepEqual(await discoverMigrations(root), ["0001_first", "0002_second"]);
 });
+
+test("SHU377_RUNNER_NAMES unsupported test-like files fail rather than disappear", async () => {
+  const lookalikes = [
+    "example.test.js", "example.test.cjs", "example.test.ts", "example.test.mts",
+    "example.spec.mjs", "example.tests.mjs", "example-test.mjs", "test-example.mjs",
+    "example_test.mjs", "example.TEST.mjs", "mutations.mjs", "mutations-extra.mjs",
+    "example-mutations.js", "example-mutation.mjs", "nested/example.spec.ts",
+  ];
+  for (const name of lookalikes) {
+    const file = `tools/test-runner/test/${name}`;
+    const root = await fixture(["tools/test-runner/test/kept.test.mjs", file]);
+    await assert.rejects(discover(root), (error) =>
+      error.message.startsWith("unsupported runner test names:") && error.message.includes(file),
+    `SHU377_RUNNER_NAMES must refuse ${name}`);
+  }
+});
+
+test("SHU377_RUNNER_HELPERS genuine helpers are permitted without becoming tests", async () => {
+  const root = await fixture([
+    "tools/test-runner/test/example.test.mjs",
+    "tools/test-runner/test/example-mutations.mjs",
+    "tools/test-runner/test/helper.mjs",
+    "tools/test-runner/test/fixtures.mjs",
+    "tools/test-runner/test/nested/helper.mjs",
+    "tools/test-runner/test/contest.mjs",
+    "tools/test-runner/test/README.md",
+  ]);
+  const found = await discover(root);
+  assert.deepEqual(found.runnerTests, ["tools/test-runner/test/example.test.mjs"]);
+  assert.deepEqual(found.runnerMutationTests, ["tools/test-runner/test/example-mutations.mjs"]);
+  assert.equal(Object.values(found).flat().length, 2);
+});
+
+test("SHU377_MUTATION_NAMED_TESTS normal tests are classified once and real mutation scripts remain", async () => {
+  const normalTests = [
+    ["apps/example/test/example-mutations.test.mjs", "nodeTests"],
+    ["packages/example/test/example-mutations.test.mjs", "nodeTests"],
+    ["packages/db/test/example-mutations.test.mjs", "dbNodeTests"],
+    ["packages/private-documents/test/example-mutations.test.mjs", "documentTests"],
+    ["tools/test-runner/test/example-mutations.test.mjs", "runnerTests"],
+  ];
+  const scripts = [
+    ["apps/example/test/example-mutations.mjs", "mutationTests"],
+    ["packages/example/test/mutations-extra.mjs", "mutationTests"],
+    ["packages/db/test/example-mutations.mjs", "dbMutationTests"],
+    ["packages/private-documents/test/example-mutations.mjs", "mutationTests"],
+    ["tools/test-runner/test/example-mutations.mjs", "runnerMutationTests"],
+  ];
+  const root = await fixture([...normalTests, ...scripts].map(([file]) => file));
+  let found;
+  await assert.doesNotReject(async () => { found = await discover(root); },
+    "SHU377_MUTATION_NAMED_TESTS discovery must not double-classify test files");
+  const all = Object.values(found).flat();
+  for (const [file, lane] of [...normalTests, ...scripts]) {
+    assert.ok(found[lane].includes(file), `${file} must remain in ${lane}`);
+    assert.equal(all.filter((entry) => entry === file).length, 1, `${file} occurs exactly once`);
+  }
+});

@@ -59,3 +59,62 @@ async function fixture(files) {
 }
 
 console.log("SHU370_CONVENTION db-lane mutant and SHU370_FAILS_CLOSED fail-closed mutants killed by assertions");
+
+// The follow-up mutants run the actual suite in an isolated copy. Each control
+// must pass, and each mutant must fail its named assertion (not module loading).
+const { spawnSync } = await import("node:child_process");
+const { rm } = await import("node:fs/promises");
+const runOriginal = await readFile(new URL("../run.mjs", import.meta.url), "utf8");
+const suites = Object.fromEntries(await Promise.all(["discover.test.mjs", "run.test.mjs"].map(async (name) =>
+  [name, await readFile(new URL(name, import.meta.url), "utf8")])));
+async function killByRealSuite(name, moduleName, find, replacement, suite, assertion) {
+  const source = moduleName === "discover.mjs" ? original : runOriginal;
+  assert.equal(source.split(find).length, 2, `${name}: exactly one mutation target`);
+  const root = await mkdtemp(path.join(tmpdir(), `runner-real-mutant-${name}-`));
+  try {
+    await mkdir(path.join(root, "test"));
+    await writeFile(path.join(root, "discover.mjs"), original);
+    await writeFile(path.join(root, "run.mjs"), runOriginal);
+    await writeFile(path.join(root, "test", suite), suites[suite]);
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const execute = () => spawnSync(process.execPath,
+      ["--test", "--test-reporter=tap", `--test-name-pattern=${assertion}`, path.join(root, "test", suite)],
+      { encoding: "utf8", env, timeout: 30_000 });
+    const control = execute();
+    assert.equal(control.error, undefined, `${name}: control launch`);
+    assert.equal(control.status, 0, `${name}: control must pass\n${control.stdout}\n${control.stderr}`);
+    assert.match(control.stdout, new RegExp(`ok \\d+ - ${assertion}`));
+    await writeFile(path.join(root, moduleName), source.replace(find, replacement));
+    const result = execute();
+    assert.equal(result.error, undefined, `${name}: mutant launch`);
+    assert.equal(result.signal, null, `${name}: mutant must terminate normally`);
+    assert.notEqual(result.status, 0, `${name}: mutant must fail`);
+    assert.match(result.stdout, new RegExp(`not ok \\d+ - ${assertion}`));
+    assert.match(result.stdout, /code: 'ERR_ASSERTION'/, `${name}: assertion-bound failure`);
+    assert.doesNotMatch(result.stdout + result.stderr, /SyntaxError|ERR_MODULE_NOT_FOUND/);
+    console.log(`${assertion}: ${name} killed by the real suite assertion`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+await killByRealSuite("ignore-runner-lookalikes", "discover.mjs",
+  "if (unclassifiedRunnerTests.length > 0) {", "if (false) {",
+  "discover.test.mjs", "SHU377_RUNNER_NAMES");
+await killByRealSuite("double-classify-mutation-tests", "discover.mjs",
+  '!file.endsWith(".test.mjs") && /\\/test\\/', '/\\/test\\/',
+  "discover.test.mjs", "SHU377_MUTATION_NAMED_TESTS");
+await killByRealSuite("empty-node-lane", "run.mjs",
+  "if (files.length === 0) return;", "if (false) return;",
+  "run.test.mjs", "SHU377_EMPTY_LANES");
+await killByRealSuite("empty-vitest-lane", "run.mjs",
+  "if (discovered.assertionTests.length) add", "if (true) add",
+  "run.test.mjs", "SHU377_EMPTY_LANES");
+await killByRealSuite("ignore-child-failure", "run.mjs",
+  'if (code !== 0) throw new Error', 'if (false) throw new Error',
+  "run.test.mjs", "SHU377_FAILURES");
+
+await killByRealSuite("unresolved-entry-path", "run.mjs",
+  'realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)',
+  'path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)',
+  "run.test.mjs", "SHU377_ENTRY");
