@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { buildRunPlan, runDiscovered, runTests } from "../run.mjs";
@@ -160,6 +161,15 @@ test("SHU377_ENTRY importing is inert and direct CLI preserves normal and databa
     { cwd: root, encoding: "utf8", env });
   assert.equal(imported.status, 0, imported.stderr);
   assert.equal(imported.stdout, "");
+  const broken = await fixture(t);
+  const link = path.join(broken, "runner-link");
+  await symlink(path.dirname(fileURLToPath(runner)), link, "dir");
+  const linked = spawnSync(process.execPath, [path.join(link, "run.mjs")],
+    { cwd: broken, encoding: "utf8", env });
+  assert.equal(linked.error, undefined);
+  assert.equal(linked.signal, null);
+  assert.notEqual(linked.status, 0, "symlinked CLI must not silently skip discovery");
+  assert.match(linked.stderr, /test discovery was empty/);
   for (const db of [false, true]) {
     const result = spawnSync(process.execPath, [runner.pathname, ...(db ? ["--db"] : [])], { cwd: root, encoding: "utf8", env });
     assert.equal(result.status, 0, result.stderr);

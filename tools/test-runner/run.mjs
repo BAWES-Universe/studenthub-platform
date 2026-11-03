@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { assertBaseline, assertRunnableDiscovery, discover, formatRun, loadBaseline } from "./discover.mjs";
 
 // Planning is pure: callers can verify every filtered lane without invoking Node.
@@ -80,6 +81,6 @@ export async function runTests({ root = process.cwd(), ...options } = {}) {
 }
 
 // Importing the runner for tests never starts a subprocess.
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await runTests({ db: process.argv.includes("--db") });
 }

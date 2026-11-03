@@ -113,3 +113,8 @@ await killByRealSuite("empty-vitest-lane", "run.mjs",
 await killByRealSuite("ignore-child-failure", "run.mjs",
   'if (code !== 0) throw new Error', 'if (false) throw new Error',
   "run.test.mjs", "SHU377_FAILURES");
+
+await killByRealSuite("unresolved-entry-path", "run.mjs",
+  'realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)',
+  'path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)',
+  "run.test.mjs", "SHU377_ENTRY");
