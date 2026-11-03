@@ -63,6 +63,7 @@
     ".github/coordinator/test/card-usage.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
+    ".github/coordinator/test/disk-prune.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
     ".github/coordinator/test/durable-handoff.test.mjs",
     ".github/coordinator/test/eligibility.test.mjs",

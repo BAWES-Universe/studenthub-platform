@@ -258,6 +258,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
       return ok();
     }
     if (file === "journalctl") {
+      // Disk upkeep's cap after the revert (disk-prune.mjs).
+      if (line === "--vacuum-size=1G") { host.vacuums = (host.vacuums ?? 0) + 1; return ok(); }
       if (line === "--sync") {
         host.syncs += 1;
         host.journal.push(...host.pending.splice(0));
@@ -2510,7 +2512,8 @@ test("SHU-86 0b: a journal read that times out ends the run as an ERROR; the coo
   const reads = [];
   host.io.exec = (file, args, options) => {
     if (file === "systemctl" && args[0] === "start" && args[1] === "shu-coordinator.service") starts.push(options?.timeoutMs);
-    if (file === "journalctl") {
+    // The disk upkeep's vacuum after the revert is not a read of the run's ticks.
+    if (file === "journalctl" && !args[0].startsWith("--vacuum-")) {
       reads.push(options?.timeoutMs);
       if (args[0] === "--sync" && starts.length === 2) return { status: 1, stdout: "", stderr: "", timedOut: true };
     }
@@ -2556,6 +2559,9 @@ test("SHU-86 0e: the run keeps its status file at every step, with no request of
   assert.equal(output.outcome, "PASS");
   assert.deepEqual(log.map((s) => s.step), ["armed", "ticking", "ticking", "ticking", "ticking", "ticking", "reverting", "landing", "finished"]);
   assert.ok(linearAt.every((n) => n === 0 || n === log.length), "no Linear request between arming and the end of the run");
+  // Disk upkeep (2026-11-03): a reverted run cuts the journal back and reports its clone cleanup.
+  assert.ok(output.disk?.clones, "a reverted run records its disk upkeep");
+  assert.deepEqual(output.disk.journal, { capped: true, max: "1G" });
   const last = log.at(-1);
   const { launch, heartbeat } = host.watched();
   assert.equal(last.version, 1);
