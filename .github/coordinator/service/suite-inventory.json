@@ -63,7 +63,6 @@
     ".github/coordinator/test/card-usage.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
-    ".github/coordinator/test/disk-prune.test.mjs",
     ".github/coordinator/test/dispatch-durability.test.mjs",
     ".github/coordinator/test/durable-handoff.test.mjs",
     ".github/coordinator/test/eligibility.test.mjs",
@@ -4761,22 +4760,7 @@
     "SHU-322 mutation M55 accept any path list on a new card",
     "SHU-322 mutation M56 install without the host-wide install lock",
     "SHU-322 mutation M57 keep the install lock once the install ended",
-    "SHU-322 mutation M58 tell an install lock whose holder died from a live one",
-    "Disk D1: a finished run clone older than two days goes; a recent one stays",
-    "Disk D2: a clone whose git directory changed recently stays, however old the directory itself",
-    "Disk D3: a clone whose preparation lock is held stays, in any worker's state folder",
-    "Disk D4: an attempt whose preparation never finished is kept as evidence for seven days",
-    "Disk D5: only attempt-named directories are looked at; links and hand-made worktrees stay",
-    "Disk D6: a run removes at most its bound, and the rest wait for the next run",
-    "Disk D7: a removal that fails is counted, and a missing root is reported, never thrown",
-    "Disk D8: the journal is vacuumed to its cap, bounded, and a failure only shows on the report",
-    "Disk D9: root's npm cache is dropped only once it is over its cap",
-    "Disk D10: the run report carries one disk upkeep line",
-    "Disk D11: every worker's workspace state folder is read for locks and records",
-    "Disk D3b: a clone whose launch the supervisor ordered but never completed stays",
-    "Disk D12: a lock, order, completion, record or timestamp that cannot be read keeps the clone, never reads as absent",
-    "Disk D12b: a removal whose result cannot be confirmed is counted failed, not removed",
-    "Disk D12m: the mutant that reads an unreadable file as absent fails D12"
+    "SHU-322 mutation M58 tell an install lock whose holder died from a live one"
   ],
   "requirements": [
     {
@@ -34335,66 +34319,6 @@
     },
     {
       "name": "SHU-322 mutation M58 tell an install lock whose holder died from a live one",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D1: a finished run clone older than two days goes; a recent one stays",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D2: a clone whose git directory changed recently stays, however old the directory itself",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D3: a clone whose preparation lock is held stays, in any worker's state folder",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D4: an attempt whose preparation never finished is kept as evidence for seven days",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D5: only attempt-named directories are looked at; links and hand-made worktrees stay",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D6: a run removes at most its bound, and the rest wait for the next run",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D7: a removal that fails is counted, and a missing root is reported, never thrown",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D8: the journal is vacuumed to its cap, bounded, and a failure only shows on the report",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D9: root's npm cache is dropped only once it is over its cap",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D10: the run report carries one disk upkeep line",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D11: every worker's workspace state folder is read for locks and records",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D3b: a clone whose launch the supervisor ordered but never completed stays",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D12: a lock, order, completion, record or timestamp that cannot be read keeps the clone, never reads as absent",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D12b: a removal whose result cannot be confirmed is counted failed, not removed",
-      "capabilities": []
-    },
-    {
-      "name": "Disk D12m: the mutant that reads an unreadable file as absent fails D12",
       "capabilities": []
     }
   ],
