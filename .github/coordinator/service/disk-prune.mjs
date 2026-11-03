@@ -35,6 +35,11 @@
 //
 // Everything here is best effort: a failure is counted for the report and
 // never changes the run's result.
+//
+// Fail closed: only ENOENT (or ENOTDIR) means a file is absent. Any other
+// error reading a lock, an order, a completion, a record or a timestamp makes
+// the clone's safety unknown, so the clone is kept and counted as uncertain;
+// a removal counts only when the clone is then confirmed gone.
 import path from "node:path";
 import { MAX_CARD_WORKERS } from "./credential-delivery.mjs";
 import { workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME } from "./units.mjs";
@@ -54,12 +59,18 @@ export const ATTEMPT_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 
 export const workspaceStateDirs = () => Array.from({ length: MAX_CARD_WORKERS }, (_, i) => workerWorkspaceStateDir(i + 1));
 
+const ABSENT = new Set(["ENOENT", "ENOTDIR"]);
+
+// A file's lstat, null when it is confirmed absent; any other error throws.
 function lstat(io, file) {
-  try { return io.fs.lstatSync(file); } catch { return null; }
+  try { return io.fs.lstatSync(file); } catch (error) {
+    if (ABSENT.has(error?.code)) return null;
+    throw error;
+  }
 }
 
 // The newest change of the clone and its record, or null when the clone itself
-// cannot be read.
+// is gone. An unreadable timestamp throws (the caller keeps the clone).
 function lastChanged(io, dir, record) {
   const own = lstat(io, dir);
   if (!own) return null;
@@ -88,8 +99,13 @@ function attemptState(io, stateDirs, id) {
     const file = path.join(dir, `${id}.workspace.json`);
     const st = lstat(io, file);
     if (!st) continue;
+    let text;
+    try { text = String(io.fs.readFileSync(file, "utf8")); } catch (error) {
+      if (ABSENT.has(error?.code)) continue;
+      throw error;
+    }
     record = st;
-    try { ready = JSON.parse(String(io.fs.readFileSync(file, "utf8"))).status === "ready"; } catch { ready = false; }
+    try { ready = JSON.parse(text).status === "ready"; } catch { ready = false; }
   }
   return { locked, pending, record, ready };
 }
@@ -99,8 +115,9 @@ function freeBytes(io, dir) {
 }
 
 export function pruneRunClones(io, { root, stateDirs = workspaceStateDirs(), limits = DISK_LIMITS } = {}) {
-  const result = { removed: 0, failed: 0, kept: 0, other: 0, left: 0, freed_bytes: null };
-  const rootStat = lstat(io, root);
+  const result = { removed: 0, failed: 0, kept: 0, uncertain: 0, other: 0, left: 0, freed_bytes: null };
+  let rootStat;
+  try { rootStat = lstat(io, root); } catch (error) { return { ...result, skipped: `worktree root unreadable (${error?.code ?? "error"})` }; }
   if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) return { ...result, skipped: "no worktree root" };
   const before = freeBytes(io, root);
   const started = io.now().getTime();
@@ -109,19 +126,25 @@ export function pruneRunClones(io, { root, stateDirs = workspaceStateDirs(), lim
   for (const name of names) {
     if (!ATTEMPT_DIR.test(name)) { result.other += 1; continue; }
     const dir = path.join(root, name);
-    const st = lstat(io, dir);
     const keep = () => { result.kept += 1; };
-    if (!st?.isDirectory() || st.isSymbolicLink() || st.dev !== rootStat.dev) { keep(); continue; }
-    const { locked, pending, record, ready } = attemptState(io, stateDirs, name);
-    if (locked || pending) { keep(); continue; }
-    const changed = lastChanged(io, dir, record);
+    let st, state, changed;
+    try {
+      st = lstat(io, dir);
+      if (!st?.isDirectory() || st.isSymbolicLink() || st.dev !== rootStat.dev) { keep(); continue; }
+      state = attemptState(io, stateDirs, name);
+      if (state.locked || state.pending) { keep(); continue; }
+      changed = lastChanged(io, dir, state.record);
+    } catch { result.uncertain += 1; continue; }
+    const { record, ready } = state;
     const age = record && !ready ? limits.preparingAgeMs : limits.cloneAgeMs;
     const now = io.now().getTime();
     if (changed === null || now - changed < age) { keep(); continue; }
     if (result.removed + result.failed >= limits.maxRemovals || now - started >= limits.pruneBudgetMs) { result.left += 1; continue; }
     let status;
     try { status = io.exec("rm", ["-rf", "--one-file-system", "--", dir], { timeoutMs: Math.max(1000, limits.pruneBudgetMs - (now - started)) }).status; } catch { status = null; }
-    if (status === 0 && !lstat(io, dir)) result.removed += 1;
+    let gone = false;
+    if (status === 0) { try { gone = lstat(io, dir) === null; } catch { gone = false; } }
+    if (gone) result.removed += 1;
     else result.failed += 1;
   }
   const after = freeBytes(io, root);
@@ -141,7 +164,8 @@ export function capJournal(io, limits = DISK_LIMITS) {
 // Root's npm cache is a cache: dropped whole once it is over the limit.
 export function capNpmCache(io, limits = DISK_LIMITS) {
   const dir = limits.npmCache;
-  const st = lstat(io, dir);
+  let st;
+  try { st = lstat(io, dir); } catch { return { dropped: false, bytes: null }; }
   if (!st?.isDirectory() || st.isSymbolicLink()) return { dropped: false, bytes: null };
   let bytes = null;
   try {
@@ -172,6 +196,7 @@ export function diskLine(disk) {
   else if (c.skipped) parts.push(`no run clones were looked at (${c.skipped})`);
   else {
     parts.push(`removed ${c.removed} old run clone${c.removed === 1 ? "" : "s"}${c.freed_bytes ? ` (${gb(c.freed_bytes)} freed)` : ""}`, `kept ${c.kept} recent`);
+    if (c.uncertain) parts.push(`${c.uncertain} kept because their state could not be read`);
     if (c.left) parts.push(`${c.left} more wait for the next run`);
     if (c.failed) parts.push(`${c.failed} could not be removed`);
   }

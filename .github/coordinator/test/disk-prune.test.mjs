@@ -230,3 +230,99 @@ test("Disk D11: every worker's workspace state folder is read for locks and reco
   assert.equal(dirs[1], "/srv/shu/state/workspaces/w2");
   assert.ok(dirs.length >= 2);
 });
+
+// An io whose lstatSync and readFileSync throw `code` for the paths `hit`
+// matches, as a permission or disk error would.
+function failingAt(io, hit, code) {
+  const fail = (file) => { const error = new Error(`${code}: ${file}`); error.code = code; throw error; };
+  const wrapped = {
+    ...fs,
+    lstatSync: (file, ...rest) => (hit(String(file)) ? fail(file) : fs.lstatSync(file, ...rest)),
+    readFileSync: (file, ...rest) => (hit(String(file)) ? fail(file) : fs.readFileSync(file, ...rest)),
+  };
+  return { ...io, fs: wrapped };
+}
+
+// Every probe that guards a clone: an old, finished clone with a completed
+// launch, whose only unknown is the one unreadable file.
+function guardedProbes(b, name) {
+  const dir = path.join(b.root, name);
+  const store = path.join(b.state, "supervisor");
+  return [
+    ["the clone itself", dir],
+    ["its preparation lock", path.join(b.state, `${name}.workspace.lock`)],
+    ["its supervisor order", path.join(store, "orders", `${name}.json`)],
+    ["its supervisor completion", path.join(store, "completions", `${name}.json`)],
+    ["its workspace record", path.join(b.state, `${name}.workspace.json`)],
+    ["its git index timestamp", path.join(dir, ".git/index")],
+    ["its HEAD log timestamp", path.join(dir, ".git/logs/HEAD")],
+  ];
+}
+
+function oldCompletedClone(b, name) {
+  const dir = b.clone(name, 10 * DAY);
+  for (const sub of ["orders", "completions"]) fs.mkdirSync(path.join(b.state, "supervisor", sub), { recursive: true });
+  fs.writeFileSync(path.join(b.state, "supervisor/orders", `${name}.json`), "{}");
+  fs.writeFileSync(path.join(b.state, "supervisor/completions", `${name}.json`), "{}");
+  return dir;
+}
+
+function failClosedScenario(prune) {
+  for (const code of ["EACCES", "EIO"]) {
+    const b = box();
+    try {
+      const name = id(1);
+      const dir = oldCompletedClone(b, name);
+      for (const [what, file] of guardedProbes(b, name)) {
+        const io = failingAt(b.io, (probe) => probe === file, code);
+        const result = prune(io, { root: b.root, stateDirs: [b.state] });
+        assert.equal(fs.existsSync(dir), true, `${code} reading ${what} keeps the clone`);
+        assert.equal(b.calls.some((call) => call.file === "rm"), false, `${code} reading ${what} issues no removal`);
+        assert.deepEqual([result.removed, result.uncertain], [0, 1], `${code} reading ${what} is reported as uncertain`);
+      }
+    } finally { b.done(); }
+  }
+}
+
+test("Disk D12: a lock, order, completion, record or timestamp that cannot be read keeps the clone, never reads as absent", () => {
+  failClosedScenario(pruneRunClones);
+  // The same clone with every probe readable goes, so the scenario is not
+  // kept for some other reason.
+  const b = box();
+  try {
+    const dir = oldCompletedClone(b, id(1));
+    assert.equal(pruneRunClones(b.io, { root: b.root, stateDirs: [b.state] }).removed, 1);
+    assert.equal(fs.existsSync(dir), false);
+  } finally { b.done(); }
+  assert.match(diskLine({ clones: { removed: 0, kept: 2, uncertain: 1, left: 0, failed: 0, freed_bytes: null }, journal: { capped: true, max: "1G" } }),
+    /; 1 kept because their state could not be read\.$/);
+});
+
+test("Disk D12b: a removal whose result cannot be confirmed is counted failed, not removed", () => {
+  const b = box();
+  try {
+    const dir = b.clone(id(1), 10 * DAY);
+    let removed = false;
+    const io = { ...b.io, fs: { ...fs, lstatSync: (file, ...rest) => {
+      if (removed && String(file) === dir) { const error = new Error("EIO"); error.code = "EIO"; throw error; }
+      return fs.lstatSync(file, ...rest);
+    } }, exec: (file, args, options) => { const out = b.io.exec(file, args, options); if (file === "rm") removed = true; return out; } };
+    const result = pruneRunClones(io, { root: b.root, stateDirs: [b.state] });
+    assert.deepEqual([result.removed, result.failed], [0, 1]);
+  } finally { b.done(); }
+});
+
+test("Disk D12m: the mutant that reads an unreadable file as absent fails D12", async () => {
+  const source = fs.readFileSync(new URL("../service/disk-prune.mjs", import.meta.url), "utf8");
+  const anchor = "    if (ABSENT.has(error?.code)) return null;\n    throw error;";
+  assert.equal(source.split(anchor).length, 2, "the mutant's anchor binds once");
+  const service = new URL("../service/", import.meta.url).href;
+  const mutated = source.replace(anchor, "    return null;").replace(/from "\.\//g, `from "${service}`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "disk-prune-mutant-"));
+  try {
+    const file = path.join(dir, "disk-prune.mjs");
+    fs.writeFileSync(file, mutated);
+    const mutant = await import(`file://${file}`);
+    assert.throws(() => failClosedScenario(mutant.pruneRunClones), assert.AssertionError);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
