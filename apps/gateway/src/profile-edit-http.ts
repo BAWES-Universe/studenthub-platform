@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, normalizePersonSelfEditValue, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
 export interface PersonProfileEditStore {
   forPrincipal(principalId: string): SafeWriteStore;
   readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null>;
+  contactValueAvailable?(principalId: string, field: "phone" | "handle", value: string): Promise<boolean>;
 }
 export type ProfileEditResult = { readonly status: 200; readonly body: unknown }
   | { readonly status: 400 | 401 | 403 | 404 | 409 | 503; readonly body: { readonly error: string } };
@@ -48,6 +49,10 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       if (selected === "birthDate" && validPersonBirthDate(body.value)) {
         if (body.value > today) return { status: 400, body: { error: "future_date" } };
         if (!isPersonProfileMinimumAge(body.value, today)) return { status: 400, body: { error: "minimum_age" } };
+      }
+      if ((selected === "phone" || selected === "handle") && body.value !== "" && ports.store.contactValueAvailable) {
+        const normalized = normalizePersonSelfEditValue(selected, body.value, today);
+        if (normalized !== null && normalized !== "" && !await ports.store.contactValueAvailable(id, selected, normalized)) return { status: 400, body: { error: "contact_value_unavailable" } };
       }
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : refusal(result.reason);
@@ -96,7 +101,8 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField: string } }): string {
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField: string } } | undefined): string {
+  if (!field) return "Not recorded";
   if (field.state === "unavailable") return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
   if (field.value === true) return "Yes";
   if (field.value === false) return "No";
@@ -106,14 +112,19 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
   if (field.provenance?.sourceField === "candidate_job_search_status") {
     return ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[String(field.value)] ?? String(field.value);
   }
+  if (field.provenance?.sourceField === "phone" && /^\+965[0-9]{8}$/.test(String(field.value))) {
+    const value = String(field.value);
+    return `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}`;
+  }
   return String(field.value);
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work", phone: "Phone number", handle: "Profile link" };
 const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
     : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
-      : value;
+      : field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}`
+        : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";
   const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}${described}>${label}</label>`).join("");
@@ -122,6 +133,8 @@ function editControl(selected: PersonSelfEditField, value: string, invalid = fal
   if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
   if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
   if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
+  if (selected === "phone") return `<input type="tel" name="value" value="${esc(value)}" maxlength="32"${described}>`;
+  if (selected === "handle") return `<input name="value" value="${esc(value)}" maxlength="30"${described}>`;
   return `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}"${described}>`;
 }
 export function profileEditSummary(value: string): string {
@@ -148,12 +161,13 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, values.value, reason); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, selected === "phone" ? "" : values.value, reason); else if (reason === "contact_value_unavailable") write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Your profile wasn’t changed.</h1><p>That ${selected === "phone" ? "phone number" : "profile link"} is not available.</p><a class="button primary" href="/profile">Back to My profile</a></main>`); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
+      const after = (result.body as { changes: readonly { after: string | null }[] }).changes[0]?.after ?? "";
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, values.value!))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, after))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));

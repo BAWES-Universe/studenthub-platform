@@ -83,6 +83,7 @@ import { createWatch, parseWatchLine } from "./card-watch.mjs";
 import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
 import { readRunUsage, hostSnapshot } from "./card-usage.mjs";
+import { diskUpkeep } from "./disk-prune.mjs";
 import { landingRepairOn, repairCandidate, repairRecordPath, repairAlertPath, repairActivationId, readRound, claimRound, advanceRound,
   repairSkip, readRepairPull, priorPass, readRepairEvidence, REPAIR_LIMITS } from "./card-repair.mjs";
 
@@ -1049,6 +1050,12 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
         if (usage?.length) summary.usage = usage;
       }
     } catch { /* the report goes out without it */ }
+    // Disk upkeep (2026-11-03): once the host is reverted, old run clones,
+    // the journal and root's npm cache are cut back (disk-prune.mjs), still
+    // under the lock and before the box line reads the free disk. Best effort.
+    if (reverted.reverted === true) {
+      try { summary.disk = diskUpkeep(io, { root: paths.worktrees }); } catch { /* the report goes out without it */ }
+    }
     try { summary.host = hostSnapshot(io, paths.stateDir); } catch { /* the report goes out without it */ }
     status.write({ step: "finished", ...progress(), outcome: summary.outcome, land: land?.outcome ?? null,
       reverted: reverted.reverted === true, needs_owner: summary.needs_owner });

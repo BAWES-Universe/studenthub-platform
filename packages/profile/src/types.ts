@@ -75,6 +75,11 @@ export interface OwnProfileFields {
   readonly civilExpired: ProfileField<boolean>;
 }
 
+export interface OwnProfileContactFields {
+  readonly phone?: ProfileField<string>;
+  readonly handle?: ProfileField<string>;
+}
+
 export type OwnProfileFieldName = keyof OwnProfileFields;
 
 export interface OwnProfileProjection {
@@ -82,7 +87,7 @@ export interface OwnProfileProjection {
   readonly version: typeof OWN_PROFILE_VERSION;
   /** Date used for age and civil-expiry derivations. */
   readonly asOfDate: string;
-  readonly fields: Readonly<OwnProfileFields>;
+  readonly fields: Readonly<OwnProfileFields & OwnProfileContactFields>;
 }
 
 export interface OwnProfileFieldContract {
