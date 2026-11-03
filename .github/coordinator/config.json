@@ -49,7 +49,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-420",
+      "SHU-423",
       "SHU-198",
       "SHU-196",
       "SHU-215",
@@ -3213,6 +3213,43 @@
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
       "note": "SHU-418's contract (first SHU-415's) re-queued under a fresh id after SHU-417 landed by hand, which stopped the queue before SHU-418 ran: nationality, university and the Kuwaiti-mother flag against the reference catalogue, migration 0214; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0214_person_profiles_origin.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0214_person_profiles_origin.sql",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/test/postgres-person-profile.test.ts",
+        "packages/profile/src/self-edit.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/self-edit.test.ts",
+        "packages/profile/test/self-edit-mutations.mjs",
+        "apps/gateway/src/profile-edit-http.ts",
+        "apps/gateway/test/profile-edit-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-423",
+      "authorization_ref": "SHU-423",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "SHU-420's contract (first SHU-415's) re-queued under a fresh id after SHU-420's run ended without a verdict (its third review crashed), which stopped the queue: nationality, university and the Kuwaiti-mother flag against the reference catalogue, migration 0214, with both earlier reviews' findings in the brief; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "packages/db/migrations/0214_person_profiles_origin.sql",
         "packages/db/src/person-profile-store.ts",
