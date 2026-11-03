@@ -4757,6 +4757,29 @@ Out of scope: push to devices and the device registry, email for notifications (
 
 ${LANE_FINISH}`;
 
+// SHU-424 to SHU-428 (2026-11-03): SHU-198's run built its change, but the
+// review could not run and the run ended on hold. Its branch keeps that
+// unlanded build, and card-prepare never moves such a branch, so no install
+// can plan a queue that holds SHU-198. SHU-198 is re-queued as SHU-424, and
+// the lanes that wait on it (SHU-215, SHU-189) and on those (SHU-104,
+// SHU-188) are re-cut under fresh ids too, since an installed lane is never
+// edited. Each contract is the old one with the card ids moved over.
+const RECUT_198 = Object.freeze({ "SHU-198": "SHU-424", "SHU-215": "SHU-425", "SHU-189": "SHU-426", "SHU-104": "SHU-427", "SHU-188": "SHU-428" });
+const recut198 = (text) => text.replace(/\bSHU-(198|215|189|104|188)\b/g, (id) => RECUT_198[id]);
+const recutAcceptance = (from, text) => `${recut198(text)} ${RECUT_198[from]} is ${from}'s contract re-queued under a fresh id after SHU-198's run ended on hold; ${from} never lands.`;
+const SHU424_BRIEF = `${recut198(SHU198_BRIEF)}
+
+An earlier run of this same contract (SHU-198) built a change that was never reviewed and is not merged; you start from the bound head and do not look for or reuse that build.`;
+const SHU425_BRIEF = recut198(SHU215_BRIEF);
+const SHU426_BRIEF = recut198(SHU189_BRIEF);
+// SHU-104 itself stays the parent story this card is the box half of.
+const SHU427_BRIEF = recut198(SHU104_BRIEF).replace("(the box half of SHU-427;", "(the box half of SHU-104;");
+const SHU428_BRIEF = recut198(SHU188_BRIEF);
+for (const [brief, id] of [[SHU424_BRIEF, "SHU-424"], [SHU425_BRIEF, "SHU-425"], [SHU426_BRIEF, "SHU-426"], [SHU427_BRIEF, "SHU-427"], [SHU428_BRIEF, "SHU-428"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+if (!SHU427_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU427_BRIEF must keep its parent story");
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -5389,6 +5412,41 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: SHU188_ACCEPTANCE,
     brief: SHU188_BRIEF,
+  }),
+  "SHU-424": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU198_PATHS,
+    revision_paths: SHU198_PATHS,
+    acceptance: recutAcceptance("SHU-198", SHU198_ACCEPTANCE),
+    brief: SHU424_BRIEF,
+  }),
+  "SHU-425": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU215_PATHS,
+    revision_paths: SHU215_PATHS,
+    acceptance: recutAcceptance("SHU-215", SHU215_ACCEPTANCE),
+    brief: SHU425_BRIEF,
+  }),
+  "SHU-426": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance("SHU-189", SHU189_ACCEPTANCE),
+    brief: SHU426_BRIEF,
+  }),
+  "SHU-427": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU104_PATHS,
+    revision_paths: SHU104_PATHS,
+    acceptance: recutAcceptance("SHU-104", SHU104_ACCEPTANCE),
+    brief: SHU427_BRIEF,
+  }),
+  "SHU-428": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance("SHU-188", SHU188_ACCEPTANCE),
+    brief: SHU428_BRIEF,
   }),
 });
 
