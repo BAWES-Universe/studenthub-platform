@@ -4353,6 +4353,24 @@ const SHU418_ACCEPTANCE = `${SHU415_ACCEPTANCE} SHU-418 is SHU-415's contract re
 const SHU420_BRIEF = SHU418_BRIEF.replace("Card SHU-418:", "Card SHU-420:");
 if (!SHU420_BRIEF.startsWith("Card SHU-420:") || !SHU420_BRIEF.includes("card SHU-417 (migration 0213)")) throw new Error("SHU420_BRIEF must name its own card and the phone card");
 const SHU420_ACCEPTANCE = `${SHU418_ACCEPTANCE} SHU-420 is SHU-418's contract re-queued after SHU-417 landed by hand; SHU-418 never runs.`;
+// SHU-423: SHU-420's contract again. SHU-420's build went through two blocked
+// reviews and its third review crashed, so the run ended without a verdict and
+// the queue stopped. SHU-423 starts fresh from main, with both reviews'
+// findings in its brief so the first build already meets them.
+const SHU423_REVIEW_FINDINGS = `What earlier reviews of this same contract found. A previous run (SHU-420) built this card and was blocked twice; its branch is not merged, so you start from the bound head. Every point below must hold in your build, each pinned by a test where it is behaviour:
+- University "None" must store NULL. The rules accept "" for university and the page's None option sends "", so the store must skip the catalogue lookup for "" (a WHERE id=$1 with '' makes Postgres fail 22P02 on the uuid cast, which surfaced as a 503) and write NULL. The Postgres test writes university "" and reads NULL back, and the page flow test chooses None and sees it saved.
+- The Kuwaiti-mother guard covers every stored value, not only true. With a Kuwaiti nationality the field must be NULL (not recorded); a false or "" written beside a KW nationality is refused just like true, in the rules, in the store and in the trigger (the trigger tests IS NOT NULL, not IS TRUE). Tests cover false and "" with KW, and setting KW while a stored No exists.
+- Tests prove a university-typed unknown id and a deleted (inactive) catalogue id are each refused with the named refusal, through the store and through the page.
+- The gateway test reads the Kuwaiti-mother preview's before value through the real projection seam for a stored No, not a hand-built object.
+- The preview and the read view show catalogue names, never a raw id; a cleared value previews and reads as "Not recorded" (never "No"); the empty choice of each select reads "Not recorded"; the "Not listed" university choice carries one line saying what it means.
+- Selects pre-select the stored value by id, not by name. Use the existing fieldRow helper for the new rows of the edit page.
+- Mutants must not be circular: a mutant of the catalogue check changes the production check, not the test's own copy of the catalogue.
+- Page tests find the rows by a stable needle (an id or data attribute) that exists only on this page; fixtures use fixed ids, not randomUUID suffixes; the page's reads stay a fixed count, proved with a counting fake.`;
+const SHU423_BRIEF = `${SHU420_BRIEF.replace("Card SHU-420:", "Card SHU-423:")}
+
+${SHU423_REVIEW_FINDINGS}`;
+if (!SHU423_BRIEF.startsWith("Card SHU-423:") || !SHU423_BRIEF.includes("card SHU-417 (migration 0213)")) throw new Error("SHU423_BRIEF must name its own card and the phone card");
+const SHU423_ACCEPTANCE = `${SHU420_ACCEPTANCE} SHU-423 is SHU-420's contract re-queued after SHU-420's run ended without a verdict; SHU-420 never lands, and every point of the brief's earlier review findings holds.`;
 
 // The parallel lanes (contracts/parallel-lanes.md, 10-27). Lane 2 is platform
 // operations, lane 3 is delivery and exports; both run beside lane 1
@@ -4738,6 +4756,29 @@ Your paths: the migration, the notifications store, its index export and Postgre
 Out of scope: push to devices and the device registry, email for notifications (the outbox exists; a later card links them), other kinds (invitations, assignments, payments come with their cards), staff notifications, and any network call, credential, staging or production access.
 
 ${LANE_FINISH}`;
+
+// SHU-424 to SHU-428 (2026-11-03): SHU-198's run built its change, but the
+// review could not run and the run ended on hold. Its branch keeps that
+// unlanded build, and card-prepare never moves such a branch, so no install
+// can plan a queue that holds SHU-198. SHU-198 is re-queued as SHU-424, and
+// the lanes that wait on it (SHU-215, SHU-189) and on those (SHU-104,
+// SHU-188) are re-cut under fresh ids too, since an installed lane is never
+// edited. Each contract is the old one with the card ids moved over.
+const RECUT_198 = Object.freeze({ "SHU-198": "SHU-424", "SHU-215": "SHU-425", "SHU-189": "SHU-426", "SHU-104": "SHU-427", "SHU-188": "SHU-428" });
+const recut198 = (text) => text.replace(/\bSHU-(198|215|189|104|188)\b/g, (id) => RECUT_198[id]);
+const recutAcceptance = (from, text) => `${recut198(text)} ${RECUT_198[from]} is ${from}'s contract re-queued under a fresh id after SHU-198's run ended on hold; ${from} never lands.`;
+const SHU424_BRIEF = `${recut198(SHU198_BRIEF)}
+
+An earlier run of this same contract (SHU-198) built a change that was never reviewed and is not merged; you start from the bound head and do not look for or reuse that build.`;
+const SHU425_BRIEF = recut198(SHU215_BRIEF);
+const SHU426_BRIEF = recut198(SHU189_BRIEF);
+// SHU-104 itself stays the parent story this card is the box half of.
+const SHU427_BRIEF = recut198(SHU104_BRIEF).replace("(the box half of SHU-427;", "(the box half of SHU-104;");
+const SHU428_BRIEF = recut198(SHU188_BRIEF);
+for (const [brief, id] of [[SHU424_BRIEF, "SHU-424"], [SHU425_BRIEF, "SHU-425"], [SHU426_BRIEF, "SHU-426"], [SHU427_BRIEF, "SHU-427"], [SHU428_BRIEF, "SHU-428"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+if (!SHU427_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU427_BRIEF must keep its parent story");
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
@@ -5323,6 +5364,13 @@ export const CARD_CONTRACTS = Object.freeze({
     acceptance: SHU420_ACCEPTANCE,
     brief: SHU420_BRIEF,
   }),
+  "SHU-423": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU415_PATHS,
+    revision_paths: SHU415_PATHS,
+    acceptance: SHU423_ACCEPTANCE,
+    brief: SHU423_BRIEF,
+  }),
   "SHU-198": Object.freeze({
     workspace_mode: "repo",
     initial_build_paths: SHU198_PATHS,
@@ -5364,6 +5412,41 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: SHU188_ACCEPTANCE,
     brief: SHU188_BRIEF,
+  }),
+  "SHU-424": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU198_PATHS,
+    revision_paths: SHU198_PATHS,
+    acceptance: recutAcceptance("SHU-198", SHU198_ACCEPTANCE),
+    brief: SHU424_BRIEF,
+  }),
+  "SHU-425": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU215_PATHS,
+    revision_paths: SHU215_PATHS,
+    acceptance: recutAcceptance("SHU-215", SHU215_ACCEPTANCE),
+    brief: SHU425_BRIEF,
+  }),
+  "SHU-426": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance("SHU-189", SHU189_ACCEPTANCE),
+    brief: SHU426_BRIEF,
+  }),
+  "SHU-427": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU104_PATHS,
+    revision_paths: SHU104_PATHS,
+    acceptance: recutAcceptance("SHU-104", SHU104_ACCEPTANCE),
+    brief: SHU427_BRIEF,
+  }),
+  "SHU-428": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance("SHU-188", SHU188_ACCEPTANCE),
+    brief: SHU428_BRIEF,
   }),
 });
 
