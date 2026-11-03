@@ -585,12 +585,6 @@
     ]
   },
   {
-    "file": ".github/coordinator/test/disk-prune.test.mjs",
-    "capabilities": [],
-    "justification": "Node core filesystem APIs on real temporary directories (read errors injected by wrapping lstatSync and readFileSync); rm, du and journalctl are doubled in memory; the D12m mutant is a rewritten copy imported from a temporary directory; no external tool runs",
-    "call_sites": []
-  },
-  {
     "file": ".github/coordinator/test/dispatch-durability.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
