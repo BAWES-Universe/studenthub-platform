@@ -585,12 +585,6 @@
     ]
   },
   {
-    "file": ".github/coordinator/test/disk-prune.test.mjs",
-    "capabilities": [],
-    "justification": "Node core filesystem APIs on real temporary directories; rm, du and journalctl are doubled in memory, no external tool runs",
-    "call_sites": []
-  },
-  {
     "file": ".github/coordinator/test/dispatch-durability.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
