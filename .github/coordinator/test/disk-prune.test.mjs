@@ -69,6 +69,7 @@ test("Disk D1: a finished run clone older than two days goes; a recent one stays
     assert.ok(fs.existsSync(path.join(b.state, `${id(1)}.workspace.json`)), "the workspace record is never touched");
     const rm = b.calls.find((call) => call.file === "rm");
     assert.deepEqual(rm.args, ["-rf", "--one-file-system", "--", old], "removal never leaves the root's file system");
+    assert.ok(rm.timeoutMs <= DISK_LIMITS.pruneBudgetMs, "a removal is bounded by what is left of the budget");
   } finally { b.done(); }
 });
 
@@ -90,6 +91,22 @@ test("Disk D3: a clone whose preparation lock is held stays, in any worker's sta
     fs.writeFileSync(path.join(w2, `${id(1)}.workspace.lock`), "");
     assert.equal(pruneRunClones(b.io, { root: b.root, stateDirs: [b.state, w2] }).removed, 0);
     assert.equal(fs.existsSync(locked), true);
+  } finally { b.done(); }
+});
+
+test("Disk D3b: a clone whose launch the supervisor ordered but never completed stays", () => {
+  const b = box();
+  try {
+    const pending = b.clone(id(1), 10 * DAY);
+    const done = b.clone(id(2), 10 * DAY);
+    for (const sub of ["orders", "completions"]) fs.mkdirSync(path.join(b.state, "supervisor", sub), { recursive: true });
+    fs.writeFileSync(path.join(b.state, "supervisor/orders", `${id(1)}.json`), "{}");
+    fs.writeFileSync(path.join(b.state, "supervisor/orders", `${id(2)}.json`), "{}");
+    fs.writeFileSync(path.join(b.state, "supervisor/completions", `${id(2)}.json`), "{}");
+    const result = pruneRunClones(b.io, { root: b.root, stateDirs: [b.state] });
+    assert.equal(fs.existsSync(pending), true, "a pending launch keeps its clone");
+    assert.equal(fs.existsSync(done), false, "a completed launch's clone goes");
+    assert.deepEqual([result.removed, result.kept], [1, 1]);
   } finally { b.done(); }
 });
 
@@ -199,6 +216,8 @@ test("Disk D10: the run report carries one disk upkeep line", () => {
   assert.equal(diskLine({ clones: { removed: 3, kept: 0, left: 4, failed: 1, freed_bytes: 3 * 1024 ** 3 }, journal: { capped: false, max: "1G" }, npm_cache: { dropped: true, bytes: 2 * 1024 ** 3 } }),
     "Disk upkeep: removed 3 old run clones (3.0 GB freed); kept 0 recent; 4 more wait for the next run; 1 could not be removed; the journal cap of 1G did not apply; dropped root's npm cache (2.0 GB).");
   assert.equal(diskLine({ clones: { error: "EIO" } }), "Disk upkeep: the run clone cleanup failed (EIO).");
+  assert.equal(diskLine({ clones: { skipped: "no worktree root" }, journal: { capped: false, max: "1G" } }),
+    "Disk upkeep: no run clones were looked at (no worktree root); the journal cap of 1G did not apply.", "the journal result shows whatever the clones did");
   assert.equal(diskLine(undefined), null);
   const report = renderRunReport({ card: "SHU-5", kind: "card", outcome: "PASS", ok: true, ticks: [], revert: { reverted: true },
     disk: { clones: { removed: 2, kept: 1, left: 0, failed: 0, freed_bytes: null }, journal: { capped: true, max: "1G" }, npm_cache: { dropped: false } } });

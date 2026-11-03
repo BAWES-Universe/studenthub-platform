@@ -4772,7 +4772,8 @@
     "Disk D8: the journal is vacuumed to its cap, bounded, and a failure only shows on the report",
     "Disk D9: root's npm cache is dropped only once it is over its cap",
     "Disk D10: the run report carries one disk upkeep line",
-    "Disk D11: every worker's workspace state folder is read for locks and records"
+    "Disk D11: every worker's workspace state folder is read for locks and records",
+    "Disk D3b: a clone whose launch the supervisor ordered but never completed stays"
   ],
   "requirements": [
     {
@@ -34375,6 +34376,10 @@
     },
     {
       "name": "Disk D11: every worker's workspace state folder is read for locks and records",
+      "capabilities": []
+    },
+    {
+      "name": "Disk D3b: a clone whose launch the supervisor ordered but never completed stays",
       "capabilities": []
     }
   ],

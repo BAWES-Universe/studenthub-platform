@@ -109,6 +109,8 @@ function fakeHost({ id = "SHU-301", config = configFor(id), onTick, workers = ()
   host.fs = {
     existsSync: (file) => files.has(file) || dirs.has(file) || children(file).length > 0,
     lstatSync: (file) => {
+      // Disk upkeep scans the worktree root, a real directory on the host.
+      if (file === PATHS.worktrees) return { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, uid: 0, mode: 0o43770, dev: 1 };
       if (!files.has(file)) throw Object.assign(new Error(`ENOENT ${file}`), { code: "ENOENT" });
       const entry = files.get(file);
       return { isFile: () => true, isSymbolicLink: () => false, uid: entry.uid, mode: 0o100000 | entry.mode };
@@ -2561,6 +2563,8 @@ test("SHU-86 0e: the run keeps its status file at every step, with no request of
   assert.ok(linearAt.every((n) => n === 0 || n === log.length), "no Linear request between arming and the end of the run");
   // Disk upkeep (2026-11-03): a reverted run cuts the journal back and reports its clone cleanup.
   assert.ok(output.disk?.clones, "a reverted run records its disk upkeep");
+  assert.equal(output.disk.clones.skipped, undefined, "clone cleanup scans the worktree root");
+  assert.equal(output.disk.clones.error, undefined, "clone cleanup does not fail");
   assert.deepEqual(output.disk.journal, { capped: true, max: "1G" });
   const last = log.at(-1);
   const { launch, heartbeat } = host.watched();

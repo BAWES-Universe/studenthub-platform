@@ -12,7 +12,9 @@
 // - only directories named exactly like an attempt id (a uuid); every other
 //   name (the hand-made build-* and review-pr* worktrees busyReasons counts,
 //   anything a person made) is left alone;
-// - never one whose preparation lock is held, in any worker's state directory;
+// - never one whose preparation lock is held, in any worker's state directory,
+//   nor one whose launch the supervisor ordered but never completed (a
+//   pending LAUNCH_UNKNOWN may still resume it);
 // - never one changed within CLONE_AGE_MS (two days; a run, worker grace and
 //   landing together are bounded to well under seven hours), measured as the
 //   newest change time of the directory, its git directory, index, HEAD and
@@ -35,7 +37,7 @@
 // never changes the run's result.
 import path from "node:path";
 import { MAX_CARD_WORKERS } from "./credential-delivery.mjs";
-import { workerWorkspaceStateDir } from "./units.mjs";
+import { workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME } from "./units.mjs";
 
 export const DISK_LIMITS = Object.freeze({
   cloneAgeMs: 2 * 24 * 60 * 60 * 1000,
@@ -74,17 +76,22 @@ function lastChanged(io, dir, record) {
 // directory holds them.
 function attemptState(io, stateDirs, id) {
   let locked = false;
+  // A launch the supervisor took an order for but never completed is still
+  // pending (a LAUNCH_UNKNOWN receipt may resume it): its clone is kept.
+  let pending = false;
   let record = null;
   let ready = false;
   for (const dir of stateDirs) {
     if (lstat(io, path.join(dir, `${id}.workspace.lock`))) locked = true;
+    const store = path.join(dir, SUPERVISOR_STORE_DIRNAME);
+    if (lstat(io, path.join(store, "orders", `${id}.json`)) && !lstat(io, path.join(store, "completions", `${id}.json`))) pending = true;
     const file = path.join(dir, `${id}.workspace.json`);
     const st = lstat(io, file);
     if (!st) continue;
     record = st;
     try { ready = JSON.parse(String(io.fs.readFileSync(file, "utf8"))).status === "ready"; } catch { ready = false; }
   }
-  return { locked, record, ready };
+  return { locked, pending, record, ready };
 }
 
 function freeBytes(io, dir) {
@@ -105,15 +112,15 @@ export function pruneRunClones(io, { root, stateDirs = workspaceStateDirs(), lim
     const st = lstat(io, dir);
     const keep = () => { result.kept += 1; };
     if (!st?.isDirectory() || st.isSymbolicLink() || st.dev !== rootStat.dev) { keep(); continue; }
-    const { locked, record, ready } = attemptState(io, stateDirs, name);
-    if (locked) { keep(); continue; }
+    const { locked, pending, record, ready } = attemptState(io, stateDirs, name);
+    if (locked || pending) { keep(); continue; }
     const changed = lastChanged(io, dir, record);
     const age = record && !ready ? limits.preparingAgeMs : limits.cloneAgeMs;
     const now = io.now().getTime();
     if (changed === null || now - changed < age) { keep(); continue; }
     if (result.removed + result.failed >= limits.maxRemovals || now - started >= limits.pruneBudgetMs) { result.left += 1; continue; }
     let status;
-    try { status = io.exec("rm", ["-rf", "--one-file-system", "--", dir], { timeoutMs: limits.pruneBudgetMs }).status; } catch { status = null; }
+    try { status = io.exec("rm", ["-rf", "--one-file-system", "--", dir], { timeoutMs: Math.max(1000, limits.pruneBudgetMs - (now - started)) }).status; } catch { status = null; }
     if (status === 0 && !lstat(io, dir)) result.removed += 1;
     else result.failed += 1;
   }
@@ -160,12 +167,14 @@ const gb = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 export function diskLine(disk) {
   if (!disk?.clones) return null;
   const c = disk.clones;
-  if (c.error) return `Disk upkeep: the run clone cleanup failed (${c.error}).`;
-  if (c.skipped) return `Disk upkeep: no run clones were looked at (${c.skipped}).`;
-  const parts = [`removed ${c.removed} old run clone${c.removed === 1 ? "" : "s"}${c.freed_bytes ? ` (${gb(c.freed_bytes)} freed)` : ""}`,
-    `kept ${c.kept} recent`];
-  if (c.left) parts.push(`${c.left} more wait for the next run`);
-  if (c.failed) parts.push(`${c.failed} could not be removed`);
+  const parts = [];
+  if (c.error) parts.push(`the run clone cleanup failed (${c.error})`);
+  else if (c.skipped) parts.push(`no run clones were looked at (${c.skipped})`);
+  else {
+    parts.push(`removed ${c.removed} old run clone${c.removed === 1 ? "" : "s"}${c.freed_bytes ? ` (${gb(c.freed_bytes)} freed)` : ""}`, `kept ${c.kept} recent`);
+    if (c.left) parts.push(`${c.left} more wait for the next run`);
+    if (c.failed) parts.push(`${c.failed} could not be removed`);
+  }
   if (disk.journal && !disk.journal.capped) parts.push(`the journal cap of ${disk.journal.max} did not apply`);
   if (disk.npm_cache?.dropped) parts.push(`dropped root's npm cache (${gb(disk.npm_cache.bytes)})`);
   return `Disk upkeep: ${parts.join("; ")}.`;
