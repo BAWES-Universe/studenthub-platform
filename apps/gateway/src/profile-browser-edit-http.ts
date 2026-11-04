@@ -22,8 +22,8 @@ export interface BrowserProfileSession {
 export interface VerifiedProfileNotice { readonly title: string; readonly message: string }
 export interface ProfileBrowserResult { readonly status: number; readonly title: string; readonly html: string; readonly language?: ProfileLanguage; readonly setCookie?: string; readonly location?: string }
 export interface ProfileBrowserEdit {
-  edit(session: string | undefined, field: PersonSelfEditField): Promise<ProfileBrowserResult>;
-  submit(session: string | undefined, field: PersonSelfEditField, body: unknown, mode: "save" | "status"): Promise<ProfileBrowserResult>;
+  edit(session: string | undefined, field: PersonSelfEditField, resolvedLanguage?: (language: ProfileLanguage) => void): Promise<ProfileBrowserResult>;
+  submit(session: string | undefined, field: PersonSelfEditField, body: unknown, mode: "save" | "status", resolvedLanguage?: (language: ProfileLanguage) => void): Promise<ProfileBrowserResult>;
   notice(session: string | undefined, cookieHeader: string | undefined): Promise<{ notice?: VerifiedProfileNotice; clearCookie?: string }>;
 }
 type PlainCopyKey = { [K in ProfileCopyKey]: Parameters<typeof profileCopyText<K>>["length"] extends 2 ? K : never }[ProfileCopyKey];
@@ -143,16 +143,18 @@ export function createProfileBrowserEdit(ports: {
     } catch { return undefined; }
   };
   return {
-    async edit(session, field) {
+    async edit(session, field, resolvedLanguage) {
       const auth = await authorized(session); if (!auth) return fail(401,"Sign in again to continue safely.");
+      resolvedLanguage?.(auth.language ?? "en");
       const localizedFail = (status: number, text: string) => fail(status,text,auth.language ?? "en");
       if (field === "kuwaitiMother" && await auth.store.canEdit?.(field) !== true) return localizedFail(403,"This question applies only when your nationality is not Kuwaiti.");
       let prepared: BrowserProfilePrepared;
       try { prepared = await auth.store.prepare(field); } catch (error) { if (error instanceof Error && error.message === "not_authorized") return localizedFail(401,"Sign in again to continue safely."); throw error; }
       return render(session,field,prepared.token,visible(prepared,field),{language:auth.language ?? "en",...((field === "nationality" || field === "university") && prepared.persisted.kind === "null" && prepared.persisted.writtenAt === null && prepared.shownFallback ? {importedSelection:String(prepared.shownFallback.value)} : {})});
     },
-    async submit(session, field, body, mode) {
+    async submit(session, field, body, mode, resolvedLanguage) {
       const auth = await authorized(session); if (!auth) return fail(401,"Sign in again to continue safely.");
+      resolvedLanguage?.(auth.language ?? "en");
       const localizedFail = (status: number, text: string) => fail(status,text,auth.language ?? "en");
       // Unchecked radio groups are omitted by browsers. Only this exact normal
       // save shape is recoverable; never repair missing payloads in proof retries.
@@ -231,6 +233,9 @@ export async function handleProfileBrowserEdit(request: IncomingMessage,response
   const match = /^\/profile\/edit\/([A-Za-z]+)(\/(?:save|status))?$/.exec(path);
   if (!match || !selected(match[1]!)) return false;
   const field = match[1], mode = match[2] === "/status" ? "status" : "save";
+  // Request-local presentation only. Never infer a locale from untrusted form data.
+  let language: ProfileLanguage = "en";
+  const resolvedLanguage = (value: ProfileLanguage) => { language = value; };
   const send = (r: ProfileBrowserResult) => {
     response.setHeader("cache-control","no-store"); response.setHeader("referrer-policy","no-referrer"); response.setHeader("x-content-type-options","nosniff");
     if (r.setCookie) response.setHeader("set-cookie",r.setCookie);
@@ -239,7 +244,7 @@ export async function handleProfileBrowserEdit(request: IncomingMessage,response
   try {
     if (!service || !origin) {send(fail(503,"The profile service is unavailable. Please try again."));return true;}
     const session = cookie(request.headers.cookie,"__Host-studenthub_session");
-    if (request.method === "GET" && !match[2]) {send(await service.edit(session,field));return true;}
+    if (request.method === "GET" && !match[2]) {send(await service.edit(session,field,resolvedLanguage));return true;}
     if (request.method !== "POST" || !match[2]) {send(fail(404,"This page is not available."));return true;}
     if (request.headers.origin !== origin || request.headers["sec-fetch-site"] === "cross-site") {request.resume();send(fail(403,"We could not verify this request."));return true;}
     if (!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(request.headers["content-type"] ?? "") || Number(request.headers["content-length"]) > LIMIT) {request.resume();send(fail(400,"Invalid request."));return true;}
@@ -247,7 +252,7 @@ export async function handleProfileBrowserEdit(request: IncomingMessage,response
     for await (const chunk of request.iterator({destroyOnReturn:false})) {const bytes=Buffer.from(chunk);size+=bytes.length;if(size>LIMIT){request.resume();send(fail(400,"Invalid request."));return true;}chunks.push(bytes);}
     const body:Record<string,string>=Object.create(null) as Record<string,string>;
     for (const [key,value] of new URLSearchParams(Buffer.concat(chunks).toString("utf8"))) {if(Object.hasOwn(body,key)){send(fail(400,"Invalid request."));return true;}body[key]=value;}
-    send(await service.submit(session,field,body,mode));
-  } catch {if(!response.headersSent)send(fail(503,"The profile service is unavailable. Please try again."));else response.destroy();}
+    send(await service.submit(session,field,body,mode,resolvedLanguage));
+  } catch {if(!response.headersSent)send(fail(503,"The profile service is unavailable. Please try again.",language));else response.destroy();}
   return true;
 }

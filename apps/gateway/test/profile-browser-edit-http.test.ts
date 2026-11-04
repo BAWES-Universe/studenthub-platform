@@ -10,7 +10,8 @@ import { PersonProfileBrowserRetryableError } from "@studenthub/db";
 import { createProfileBrowserEdit, handleProfileBrowserEdit, type BrowserProfilePrepared, type BrowserProfileSession } from "../src/profile-browser-edit-http.js";
 import type { PersonSelfEditField } from "@studenthub/profile";
 const S="s".repeat(43), ACTOR="a".repeat(64), PERSON="b".repeat(64), O="https://example.invalid", SECRET="a-secret-of-at-least-thirty-two-bytes", NOW=new Date("2026-11-04T12:00:00.000Z");
-function fixture(language: "en" | "ar" = "en") {
+function fixture(language: "en" | "ar" = "en", options: { authorizeThrows?: boolean; choicesThrow?: boolean; reauthorizeThrows?: boolean } = {}) {
+  let authorizationCalls=0;
   const tokens=createBrowserWriteTokens({activeKeyVersion:"v1",keys:{v1:SECRET}});
   let persisted:BrowserProfilePrepared["persisted"]={kind:"present",value:"Before",writtenAt:NOW.toISOString()};
   let fallback:BrowserProfilePrepared["shownFallback"]=null, prepares=0,saves=0,statuses=0,authorized=true, rollback=false;
@@ -26,7 +27,7 @@ function fixture(language: "en" | "ar" = "en") {
     },
     async receiptStatus(token) {statuses++;return receipts.has(token.tokenRef)?{status:"committed",receipt:receipts.get(token.tokenRef)!}:{status:"not_found"};},
   };
-  const service=createProfileBrowserEdit({authorize:async session=>authorized&&session===S?{actorRef:ACTOR,store,language}:null,secret:SECRET,secure:true,clock:{now:()=>new Date(clockTime)},choices:async()=>({countries:[{id:"11111111-1111-4111-8111-111111111111",name:"Country label"}],universities:[]})});
+  const service=createProfileBrowserEdit({authorize:async session=>{authorizationCalls++;if(options.authorizeThrows || options.reauthorizeThrows && authorizationCalls>1)throw Error("private authorization detail");return authorized&&session===S?{actorRef:ACTOR,store,language}:null;},secret:SECRET,secure:true,clock:{now:()=>new Date(clockTime)},choices:async()=>{if(options.choicesThrow)throw Error("private catalogue detail");return {countries:[{id:"11111111-1111-4111-8111-111111111111",name:"Country label"}],universities:[]};}});
   return {service,store,calls,receipts,advance(ms:number){clockTime+=ms;},get prepares(){return prepares;},get saves(){return saves;},get statuses(){return statuses;},set persisted(v:typeof persisted){persisted=v;},set fallback(v:typeof fallback){fallback=v;},set outcome(v:typeof outcome){outcome=v;},revoke(){authorized=false;},rollback(){rollback=true;}};
 }
 const decode=(s:string)=>s.replaceAll("&quot;",'"').replaceAll("&#39;","'").replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&amp;","&");
@@ -200,4 +201,26 @@ test("U3A_EDITOR_BIDI imported selection isolates escaped data without interpret
     assert.match(page.html,/<option dir="auto" value="11111111-1111-4111-8111-111111111111">Country label<\/option>/,"U3A_EDITOR_BIDI native option direction");
     assert.doesNotMatch(page.html,/<Mixed>|value="جامعة/);
   }
+});
+
+
+test("U3A_EDITOR_UNAVAILABLE HTTP preserves only an already-authorized locale through unexpected failures",async()=>{
+  const unavailable="خدمة الملف الشخصي غير متاحة. حاول مجدداً.";
+  const check=(response:Awaited<ReturnType<typeof request>>,language:"en"|"ar")=>{
+    assert.equal(response.status,503,"U3A_EDITOR_UNAVAILABLE unchanged failure status");
+    assert.equal(response.language,language,"U3A_EDITOR_UNAVAILABLE trusted locale");
+    assert.ok(response.html.includes(language==="ar"?unavailable:"The profile service is unavailable. Please try again."));
+    assert.doesNotMatch(response.html,/private |secret-draft|Before|name="token"|name="value"/,"U3A_EDITOR_UNAVAILABLE generic no disclosure");
+  };
+  const prepare=fixture("ar");prepare.store.prepare=async()=>{throw Error("private prepare detail");};check(await request(prepare,{method:"GET"}),"ar");assert.equal(prepare.saves,0);
+  const choices=fixture("ar",{choicesThrow:true});check(await request(choices,{method:"GET",path:"/profile/edit/nationality"}),"ar");assert.equal(choices.saves,0);
+  const receipts=fixture("ar"),receiptToken=await open(receipts);receipts.outcome="unknown";
+  const pending=await receipts.service.submit(S,"objective",body(receiptToken,"secret-draft"),"save");
+  receipts.store.receiptStatus=async()=>{throw Error("private receipt detail");};
+  check(await request(receipts,{path:"/profile/edit/objective/status",data:new URLSearchParams({...body(receiptToken,"secret-draft"),recovery:proofFrom(pending.html)}).toString()}),"ar");assert.equal(receipts.saves,1,"U3A_EDITOR_UNAVAILABLE status never writes");
+  const recovery=fixture("ar",{reauthorizeThrows:true});const recoveryToken=(await recovery.store.prepare("objective")).token;recovery.outcome="unknown";
+  check(await request(recovery,{data:new URLSearchParams(body(recoveryToken,"secret-draft")).toString()}),"ar");assert.equal(recovery.saves,1,"U3A_EDITOR_UNAVAILABLE no retry on failed recovery authorization");
+  const initial=fixture("ar",{authorizeThrows:true});check(await request(initial,{method:"GET"}),"en");assert.equal(initial.prepares,0);assert.equal(initial.saves,0);
+  // A later request cannot inherit the locale of an earlier Arabic request.
+  check(await request(fixture("en",{choicesThrow:true}),{method:"GET",path:"/profile/edit/nationality"}),"en");
 });
