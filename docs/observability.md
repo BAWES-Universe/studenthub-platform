@@ -90,7 +90,7 @@ Current five-minute tumbling-window metrics are local counters keyed by
 component/journey/outcome, with total duration and cumulative buckets at 10, 50,
 100, 500, 1000, 5000, 30000 and 3600000 ms. Duration is capped at one hour;
 counts/sums saturate at MAX_SAFE_INTEGER. Cardinality is bounded by the closed
-vocabulary (3 × 11 × 4), never by trace ID, URL or person. These metrics include
+vocabulary (3 × 12 × 4), never by trace ID, URL or person. These metrics include
 records dropped from the Sentry queue. A disabled or failed worker does not
 retain journey metrics; unavailability is separately counted.
 

@@ -27,24 +27,25 @@ export async function runJob(job:Job,store:JobRunsStore,options:RunnerOptions={}
   const now=options.now??(()=>new Date()),runId=randomUUID(),startedAt=now(),leaseMs=options.leaseMs??30_000;
   const acquired=await store.acquire(job.name,runId,leaseMs,startedAt);
   if(!acquired){const finishedAt=now();await store.record({runId,jobName:job.name,startedAt,finishedAt,durationMs:Math.max(0,finishedAt.getTime()-startedAt.getTime()),outcome:"refused_overlap"});await options.alert?.(alert("job_overlap",job.name));return undefined}
-  const controller=new AbortController();let lost=false,renewing=false;
-  const renew=async()=>{if(renewing||controller.signal.aborted)return;renewing=true;try{const at=now();if(!await store.renew(job.name,runId,leaseMs,at)){lost=true;controller.abort()}}catch{lost=true;controller.abort()}finally{renewing=false}};
+  const controller=new AbortController();let lost=false,pending:Promise<void>|undefined;
+  // A renewal still in flight is returned, not skipped, so the final renew() waits for it before the outcome is recorded.
+  const renew=():Promise<void>=>{if(pending)return pending;if(controller.signal.aborted)return Promise.resolve();pending=(async()=>{try{const at=now();if(!await store.renew(job.name,runId,leaseMs,at)){lost=true;controller.abort()}}catch{lost=true;controller.abort()}})().finally(()=>{pending=undefined});return pending};
   const setTimer=options.setTimer??((callback,delay)=>setInterval(()=>void callback(),delay));
   const clearTimer=options.clearTimer??(timer=>clearInterval(timer as ReturnType<typeof setInterval>));
   const timer=setTimer(()=>void renew(),Math.max(1,Math.floor(leaseMs/3)));
   let outcome:JobOutcome="succeeded",result:unknown,error:unknown;
   try{result=await observedJob(()=>job.work(controller.signal),options.telemetry??disabledTelemetry,job.name)}catch(caught){outcome="failed";error=caught}
-  finally{clearTimer(timer);await renew();if(lost&&outcome==="succeeded"){outcome="failed";error=new Error("job lease lost")}const finishedAt=now();await store.record({runId,jobName:job.name,startedAt,finishedAt,durationMs:Math.max(0,finishedAt.getTime()-startedAt.getTime()),outcome});await store.release(job.name,runId);if(outcome==="failed")await options.alert?.(alert("job_failed",job.name))}
+  finally{clearTimer(timer);await renew();if(lost&&outcome==="succeeded"){outcome="failed";error=new Error("job lease lost")}const finishedAt=now();try{await store.record({runId,jobName:job.name,startedAt,finishedAt,durationMs:Math.max(0,finishedAt.getTime()-startedAt.getTime()),outcome})}finally{try{await store.release(job.name,runId)}finally{if(outcome==="failed")await options.alert?.(alert("job_failed",job.name))}}}
   if(error!==undefined)throw error;return result;
 }
 
-export async function missedJobAlerts(jobs:readonly Job[],store:Pick<JobRunsStore,"lastSuccesses">,emit:(alert:JobAlert)=>void|Promise<void>,now=new Date()):Promise<JobAlert[]> {
+export async function missedJobAlerts(jobs:readonly Job[],store:Pick<JobRunsStore,"lastSuccesses">,emit:(alert:JobAlert)=>void|Promise<void>,now=new Date(),signal?:AbortSignal):Promise<JobAlert[]> {
   const successes=await store.lastSuccesses(),alerts:JobAlert[]=[];
-  for(const job of jobs)if(isJobMissed(job,successes.get(job.name),now)){const value=alert("job_missed",job.name);alerts.push(value);await emit(value)}
+  for(const job of jobs){if(signal?.aborted)break;if(isJobMissed(job,successes.get(job.name),now)){const value=alert("job_missed",job.name);alerts.push(value);await emit(value)}}
   return alerts;
 }
 export function createJobRegistry(store:JobRunsStore,emit:(alert:JobAlert)=>void|Promise<void>):readonly Job[]{
-  const jobs:Job[]=[{name:"heartbeat",intervalMs:60_000,work:async()=>({status:"ok"})},{name:"missed_run_check",intervalMs:60_000,work:async()=>{await missedJobAlerts(jobs,store,emit)}}];return Object.freeze(jobs);
+  const jobs:Job[]=[{name:"heartbeat",intervalMs:60_000,work:async()=>({status:"ok"})},{name:"missed_run_check",intervalMs:60_000,work:async signal=>{await missedJobAlerts(jobs,store,emit,new Date(),signal)}}];return Object.freeze(jobs);
 }
 export class MemoryJobRunsStore implements JobRunsStore {
   readonly runs:JobRun[]=[];readonly leases=new Map<JobName,{holder:string;expiresAt:Date}>();failRenewal=false;

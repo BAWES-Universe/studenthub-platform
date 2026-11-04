@@ -11,6 +11,6 @@ export class PostgresJobRunsStore {
   async renew(name:JobName,id:string,leaseMs:number,_now:Date){return (await this.#pool.query(`UPDATE job_leases SET expires_at=CURRENT_TIMESTAMP+($3*interval '1 millisecond') WHERE job_name=$1 AND holder_run_id=$2 AND expires_at>CURRENT_TIMESTAMP`,[name,id,leaseMs])).rowCount===1}
   async release(name:JobName,id:string){await this.#pool.query(`DELETE FROM job_leases WHERE job_name=$1 AND holder_run_id=$2`,[name,id])}
   async record(run:JobRun){await this.#pool.query(`INSERT INTO job_runs(run_id,job_name,started_at,finished_at,duration_ms,outcome) VALUES($1,$2,$3,$4,$5,$6)`,[run.runId,run.jobName,run.startedAt,run.finishedAt,run.durationMs,run.outcome])}
-  async latest(){const rows=(await this.#pool.query<Row>(`SELECT DISTINCT ON(job_name) run_id,job_name,started_at,finished_at,duration_ms,outcome FROM job_runs ORDER BY job_name,started_at DESC`)).rows;return rows.map(mapped)}
+  async latest(){const rows=(await this.#pool.query<Row>(`SELECT DISTINCT ON(job_name) run_id,job_name,started_at,finished_at,duration_ms,outcome FROM job_runs ORDER BY job_name,started_at DESC,finished_at DESC,run_id DESC`)).rows;return rows.map(mapped)}
   async lastSuccesses(){const rows=(await this.#pool.query<{job_name:JobName;finished_at:Date}>(`SELECT job_name,max(finished_at) finished_at FROM job_runs WHERE outcome='succeeded' GROUP BY job_name`)).rows;return new Map(rows.map(row=>[row.job_name,row.finished_at]))}
 }
