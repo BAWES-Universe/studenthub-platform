@@ -27,7 +27,19 @@ export interface PersonProfileSessionLiveness {
  * The approved source is a batch-loaded read-only snapshot; this port does not
  * freeze an external source through COMMIT. Throw if source evidence is unavailable.
  */
+export interface PersonProfileShownFallback {
+  readonly sourceField: string;
+  readonly value: string | boolean;
+  readonly evidence: NonNullable<BrowserBaseline["shownFallback"]>;
+}
+export interface PersonProfileBrowserPrepared {
+  readonly token: BrowserWriteToken;
+  readonly persisted: BrowserBaseline["persisted"] & { readonly writtenAt: string | null };
+  readonly shownFallback: PersonProfileShownFallback | null;
+}
 export interface PersonProfileImportedFallback {
+  /** Required when prepare must render an imported value; old issue/save ports remain supported. */
+  readShown?(principalId: string, field: PersonProfileField): Promise<PersonProfileShownFallback | null>;
   read(principalId: string, field: PersonProfileField): Promise<BrowserBaseline["shownFallback"]>;
 }
 export interface PersonProfileBrowserOptions {
@@ -139,6 +151,7 @@ export class PostgresPersonProfileStore {
 
   /** No route is installed here. U2b supplies the real adapters and validated canonical values. */
   forBrowserSession(options: PersonProfileBrowserOptions): {
+    prepare(field: PersonProfileField): Promise<PersonProfileBrowserPrepared>;
     issue(field: PersonProfileField): Promise<BrowserWriteToken>;
     save(input: Parameters<BrowserWriteAPI["save"]>[0]): Promise<BrowserWriteOutcome>;
     receiptStatus(token: BrowserWriteToken): Promise<BrowserReceiptStatus>;
@@ -146,6 +159,7 @@ export class PostgresPersonProfileStore {
     if (!options.principalId || !options.sessionToken || !options.normalizationVersion) throw new TypeError("Browser session binding required");
     options = Object.freeze({ ...options });
     return Object.freeze({
+      prepare: (field: PersonProfileField) => this.#prepareBrowser(options, field),
       issue: (field: PersonProfileField) => this.#issueBrowser(options, field),
       save: (input: { token: BrowserWriteToken; canonicalValue: string | boolean | null }) => this.#saveBrowser(options, input),
       receiptStatus: (token: BrowserWriteToken) => this.#browserReceiptStatus(options, token),
@@ -175,6 +189,31 @@ export class PostgresPersonProfileStore {
     // A cleared (NULL) override is still written and hides the imported value.
     const shownFallback = row?.written_at ? null : await options.importedFallback.read(options.principalId, field);
     return { persisted: row?.value == null ? { kind: "null" } : { kind: "present", value: row.value }, shownFallback };
+  }
+  async #prepareBrowser(options: PersonProfileBrowserOptions, field: PersonProfileField): Promise<PersonProfileBrowserPrepared> {
+    if (!PERSON_PROFILE_FIELDS.includes(field)) throw new TypeError("Unsupported profile field");
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY");
+      await this.#lockBrowser(client, options);
+      if (!await this.#exists(client, options.principalId)) throw new BrowserRefusal("not_authorized");
+      const column = COLUMNS[field];
+      const row = (await client.query(`SELECT ${column}::text AS value, ${column}_written_at AS written_at FROM person_profiles WHERE principal_id=$1`, [options.principalId])).rows[0];
+      const persisted = Object.freeze({ ...(row?.value == null ? { kind: "null" as const } : { kind: "present" as const, value: row.value as string }),
+        writtenAt: row?.written_at ? (row.written_at as Date).toISOString() : null });
+      let shownFallback: PersonProfileShownFallback | null = null;
+      if (persisted.writtenAt === null) {
+        if (!options.importedFallback.readShown) throw new TypeError("Browser prepare requires a shown fallback reader");
+        const shown = await options.importedFallback.readShown(options.principalId, field);
+        if (shown !== null) shownFallback = Object.freeze({ sourceField: shown.sourceField, value: shown.value, evidence: Object.freeze({ ...shown.evidence }) });
+      }
+      const baseline: BrowserBaseline = { persisted, shownFallback: shownFallback?.evidence ?? null };
+      const now = (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now;
+      const token = options.tokens.issue(this.#browserBinding(options, field), browserBaselineDigest(baseline), now);
+      await client.query("COMMIT");
+      return Object.freeze({ token, persisted, shownFallback });
+    } catch (error) { try { await client.query("ROLLBACK"); } catch {} throw error; }
+    finally { client.release(); }
   }
   async #issueBrowser(options: PersonProfileBrowserOptions, field: PersonProfileField): Promise<BrowserWriteToken> {
     if (!PERSON_PROFILE_FIELDS.includes(field)) throw new TypeError("Unsupported profile field");

@@ -122,21 +122,26 @@ export function createPersonImportedFallbackReader(options: {
   readonly today?: () => string;
 }) {
   const digest = (parts: readonly unknown[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+  const readShown = async (principalId: string, field: PersonSelfEditField) => {
+    const link = await options.source.resolveLink(principalId);
+    if (link.kind === "unconfigured") return null;
+    if (link.kind !== "linked") throw new Error("Approved profile link unavailable");
+    const row = await options.source.readCandidate(link.candidateRef);
+    if (row === undefined) throw new Error("Approved profile snapshot unavailable");
+    const profile = projectApprovedProfile(row, options.today?.() ?? kuwaitDate(new Date()));
+    const shown = profile.fields[field];
+    if (!shown || shown.state !== "available") return null;
+    const evidence = Object.freeze({
+      sourceRef: digest(["profile-fallback-source-v1", link.candidateRef, shown.provenance.sourceField]),
+      valueDigest: digest(["profile-fallback-value-v1", shown.value]),
+      revision: PERSON_FALLBACK_COMPARISON_V1,
+    });
+    return Object.freeze({ sourceField: shown.provenance.sourceField, value: shown.value, evidence });
+  };
   return Object.freeze({
+    readShown,
     async read(principalId: string, field: PersonSelfEditField): Promise<BrowserBaseline["shownFallback"]> {
-      const link = await options.source.resolveLink(principalId);
-      if (link.kind === "unconfigured") return null;
-      if (link.kind !== "linked") throw new Error("Approved profile link unavailable");
-      const row = await options.source.readCandidate(link.candidateRef);
-      if (row === undefined) throw new Error("Approved profile snapshot unavailable");
-      const profile = projectApprovedProfile(row, options.today?.() ?? kuwaitDate(new Date()));
-      const shown = profile.fields[field];
-      if (!shown || shown.state !== "available") return null;
-      return Object.freeze({
-        sourceRef: digest(["profile-fallback-source-v1", link.candidateRef, shown.provenance.sourceField]),
-        valueDigest: digest(["profile-fallback-value-v1", shown.value]),
-        revision: PERSON_FALLBACK_COMPARISON_V1,
-      });
+      return (await readShown(principalId, field))?.evidence ?? null;
     },
   });
 }

@@ -529,6 +529,14 @@ if (process.env.PROFILE_BROWSER_MUTANTS !== "0") test("U2A_MUTANTS every browser
   const loginModule = new URL("../src/postgres-login-store.js", import.meta.url);
   const suite = fileURLToPath(import.meta.url);
   const mutations = [
+    { name: "prepare hides persisted override", assertion: "U2B_PREPARE", module: storeModule,
+      from: 'value: row.value }),', to: 'value: "wrong snapshot" }),' },
+    { name: "prepare discards explicit clear timestamp", assertion: "U2B_PREPARE_CLEAR", module: storeModule,
+      from: 'writtenAt: row?.written_at ? row.written_at.toISOString() : null',
+      to: 'writtenAt: null' },
+    { name: "prepare skips locked authorization", assertion: "U2B_PREPARE_AUTH", module: storeModule,
+      from: 'await this.#lockBrowser(client, options);\n            if (!await this.#exists(client, options.principalId))\n                throw new BrowserRefusal("not_authorized");\n            const column = COLUMNS[field];',
+      to: 'await this.#authorizeBrowser(client, options);\n            const column = COLUMNS[field];' },
     { name: "dependent mother clear removed", assertion: "U2A_ORIGIN", module: storeModule,
       from: 'if (field === "nationality" && selected.code === "KW")',
       to: 'if (false)' },
@@ -703,4 +711,81 @@ test("U2A_ORIGIN nationality save atomically clears dependent mother answer and 
   assert.deepEqual(added[0]!.after_summary.fields, ["nationality"]);
   assert.deepEqual(await x.api.save({ token: staleMother, canonicalValue: "false" }), { status: "state_changed" });
   assert.deepEqual(await x.snapshot(), after, "stale mother token writes nothing");
+});
+
+test("U2B_PREPARE returns exactly the signed snapshot and conflicts refresh it without writing", async () => {
+  const x = await browserFixture(), before = await x.snapshot();
+  let reads = 0;
+  const api = x.store.forBrowserSession({ ...x.options, sessionLiveness: { read: async (client, session) => {
+    assert.equal((await client.query("SHOW transaction_read_only")).rows[0].transaction_read_only, "on", "prepare uses a read-only transaction");
+    return readLiveLoginSessionPerson(client, session);
+  } }, importedFallback: {
+    read: async () => { throw new Error("prepare must not separately read evidence"); },
+    readShown: async (principal, field) => { reads++; return x.options.importedFallback.readShown!(principal, field); },
+  } });
+  const start = await databaseNow(), prepared = await api.prepare("objective"), end = await databaseNow();
+  assert.equal(reads, 1, "prepare renders and signs one fallback read");
+  assert.deepEqual(prepared.persisted, { kind: "null", writtenAt: null });
+  assert.equal(prepared.shownFallback?.value, "Build welcoming customer experiences");
+  assert.equal(prepared.shownFallback?.sourceField, "candidate_objective");
+  assert.equal(prepared.token.baselineDigest, browserBaselineDigest({ persisted: prepared.persisted, shownFallback: prepared.shownFallback!.evidence }));
+  assert.ok(Date.parse(prepared.token.issuedAt) >= start.getTime() && Date.parse(prepared.token.issuedAt) <= end.getTime());
+  assert.deepEqual(await x.snapshot(), before, "prepare is read-only");
+  const winner = await x.api.issue("objective");
+  assert.equal((await x.api.save({ token: winner, canonicalValue: "Other tab" })).status, "committed");
+  const committed = await x.snapshot();
+  assert.deepEqual(await x.api.save({ token: prepared.token, canonicalValue: "Stale draft" }), { status: "state_changed" });
+  const refreshed = await api.prepare("objective");
+  assert.equal(refreshed.persisted.kind, "present");
+  assert.equal(refreshed.persisted.kind === "present" && refreshed.persisted.value, "Other tab");
+  assert.ok(refreshed.persisted.writtenAt);
+  assert.equal(refreshed.shownFallback, null);
+  assert.notEqual(refreshed.token.baselineDigest, prepared.token.baselineDigest);
+  assert.deepEqual(await x.snapshot(), committed, "conflict and fresh prepare write nothing");
+});
+
+test("U2B_PREPARE_CLEAR explicit NULL hides imports in render and save", async () => {
+  const x = await browserFixture(), first = await x.api.prepare("objective");
+  assert.equal((await x.api.save({ token: first.token, canonicalValue: "" })).status, "committed");
+  const api = x.store.forBrowserSession({ ...x.options, importedFallback: {
+    read: async () => { throw new Error("hidden fallback must not be read"); },
+    readShown: async () => { throw new Error("hidden fallback must not be shown"); },
+  } });
+  let prepared!: Awaited<ReturnType<typeof api.prepare>>;
+  await assert.doesNotReject(async () => { prepared = await api.prepare("objective"); }, "explicit clear must not consult import");
+  assert.equal(prepared.persisted.kind, "null");
+  assert.ok(prepared.persisted.writtenAt, "explicit clear retains write presence");
+  assert.equal(prepared.shownFallback, null, "explicit clear never resurrects import");
+  assert.equal((await api.save({ token: prepared.token, canonicalValue: "" })).status, "committed");
+});
+
+test("U2B_PREPARE_FALLBACK changed import refuses save and old evidence-only ports stay compatible", async () => {
+  const x = await browserFixture(), prepared = await x.api.prepare("objective");
+  x.setRow({ ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_objective: "New imported value" });
+  const before = await x.snapshot();
+  assert.deepEqual(await x.api.save({ token: prepared.token, canonicalValue: "Draft" }), { status: "state_changed" });
+  assert.equal((await x.api.prepare("objective")).shownFallback?.value, "New imported value");
+  assert.deepEqual(await x.snapshot(), before);
+  const legacy = x.store.forBrowserSession({ ...x.options, importedFallback: { read: (...args) => x.options.importedFallback.read(...args) } });
+  await assert.rejects(legacy.prepare("objective"), /shown fallback reader/);
+  assert.equal((await legacy.save({ token: await legacy.issue("objective"), canonicalValue: "Legacy supported" })).status, "committed");
+});
+
+test("U2B_PREPARE_AUTH revoked session waiting for the lock receives no snapshot", async () => {
+  const x = await browserFixture(), precheck = deferred(), resume = deferred();
+  let calls = 0, fallbackReads = 0;
+  const api = x.store.forBrowserSession({ ...x.options, sessionLiveness: { read: async (client, session) => {
+    const result = await readLiveLoginSessionPerson(client, session);
+    if (++calls === 1) { precheck.resolve(); await resume.promise; }
+    return result;
+  } }, importedFallback: { ...x.options.importedFallback, readShown: async () => { fallbackReads++; return null; } } });
+  const unlock = await holdBrowserLock(x.id);
+  const pending = assert.rejects(api.prepare("objective"), /not_authorized/);
+  await precheck.promise;
+  await pool.query("UPDATE login_sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [sessionHash(x.sessionToken)]);
+  const before = await x.snapshot();
+  resume.resolve(); await unlock(); await pending;
+  assert.ok(calls >= 2, "prepare reauthorizes inside the lock");
+  assert.equal(fallbackReads, 0, "revoked sessions cannot read import");
+  assert.deepEqual(await x.snapshot(), before);
 });

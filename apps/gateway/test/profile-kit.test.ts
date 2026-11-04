@@ -85,7 +85,9 @@ test("U1_A11Y: radio group has a legend, unique linked labels, errors and no gue
     assert.ok(html.includes(`for="${id}"`));
     assert.ok(html.includes(`id="${id}"`));
   }
-  assert.equal((html.match(/aria-invalid="true"/g) ?? []).length, 3);
+  assert.equal((html.match(/aria-invalid="true"/g) ?? []).length, 1);
+  assert.equal((html.match(/aria-describedby=/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /<input[^>]*aria-(?:describedby|invalid)=/, "U2B_RADIO_GROUP: associations belong to the fieldset only");
   const selected = profileControl({ ...options, value: "false" }).html;
   assert.match(selected, /value="false" checked/);
   assert.equal((selected.match(/ checked/g) ?? []).length, 1);
@@ -202,6 +204,8 @@ test("U1_RTL: explicit locale direction and mixed-direction values without dupli
 // counts as killed only after the same probe passed unmodified and its named assertion
 // fails (not because of a syntax error, missing module, or import failure).
 const probes = [
+  { name: "U2B_RADIO_GROUP", target: "kit", from: '${required}>${escape(choice.label)}', to: '${required}${associations}>${escape(choice.label)}',
+    assertion: `assert.doesNotMatch(kit.profileControl({key:"drivingLicence",type:"radio",label:"Licence",value:"",hint:"Choose",error:"Required",choices:[{value:"true",label:"Yes"},{value:"false",label:"No"}]}).html, /<input[^>]*aria-(?:describedby|invalid)=/, "U2B_RADIO_GROUP mutant");` },
   { name: "U1_SCOPED", target: "kit", from: ".profile-ui {", to: "body {",
     assertion: `assert.ok(kit.PROFILE_KIT_CSS.trimStart().startsWith('.profile-ui {'), 'U1_SCOPED mutant');` },
   { name: "U1_A11Y", target: "kit", from: ' aria-invalid="true"', to: ' aria-invalid="false"',

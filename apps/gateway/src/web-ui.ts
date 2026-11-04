@@ -2,6 +2,8 @@ import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
 import type { ContextNavigation, NavigationResult, OrganizationAccountManagerHistoryPanel, OrganizationAccountManagerOptionsPanel, OrganizationAccountManagerPanel, OrganizationCountsPanel, OrganizationStatusHistoryPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
+import type { ProfileBrowserEdit, VerifiedProfileNotice } from "./profile-browser-edit-http.js";
+import { profileNotice } from "./ui/profile-kit.js";
 import type { ProfileEdit } from "./profile-edit-http.js";
 import type { BankDetailsService } from "./bank-details.js";
 import {
@@ -33,6 +35,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   /** SHU-84 safe write; absent unless a signing key is configured. */
   readonly preferences?: LanguagePreference;
   readonly profileEdit?: ProfileEdit;
+  readonly browserEdit?: ProfileBrowserEdit;
   readonly bankDetails?: BankDetailsService;
   readonly web?: {
     readonly origin: string;
@@ -341,7 +344,7 @@ function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): str
   return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
 }
 
-export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>): Promise<{ status: number; html: string }> {
+export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
   const profile = projectionFrom(result);
   const displayName = profile.fields.displayName;
@@ -355,8 +358,10 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     universities: Array.isArray(loadedOriginChoices?.universities) ? loadedOriginChoices.universities : [],
   };
   const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "nationality", "university"]);
+  const editLink = (field: string, label: string) => `<a href="/profile/edit/${field}" aria-label="Edit ${escapeHtml(label)}">Edit</a>`;
   let rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
-    const row = fieldRow(profile, field);
+    const row = fieldRow(profile, field).replace("<div>", `<div id="field-${field}"${login.browserEdit ? ' tabindex="-1"' : ""}>`);
+    if (login.browserEdit && editable.has(field)) return row.replace("</div>", `${editLink(field, OWN_PROFILE_FIELD_CONTRACT[field].label)}</div>`);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field) && field !== "jobSearchStatus") {
       const raw = profile.fields[field].state === "available" ? profile.fields[field].editValue ?? profile.fields[field].value : "";
@@ -374,9 +379,9 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const contacts = ([['phone','Phone number','tel',32],['handle','Profile link','text',30]] as const).map(([field,label,type,max]) => {
     const contact = profile.fields[field];
     const value = contact?.state === "available" ? String(contact.value) : "";
-    const form = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${label}"><input type="hidden" name="field" value="${field}"><label>Change ${label}<input type="${type}" name="value" value="${escapeHtml(value)}" maxlength="${max}"></label><button class="button primary" type="submit">Review change</button></form>` : "";
+    const form = login.browserEdit ? editLink(field, label) : login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${label}"><input type="hidden" name="field" value="${field}"><label>Change ${label}<input type="${type}" name="value" value="${escapeHtml(value)}" maxlength="${max}"></label><button class="button primary" type="submit">Review change</button></form>` : "";
     const shown = field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}` : value;
-    return contact?.state === "available" ? `<div><dt>${label}</dt><dd>${escapeHtml(shown)}</dd><small class="field-meta">Updated by you · ${escapeHtml(contact.freshness.observedAt.slice(0,10))}</small>${form}</div>` : form ? `<div>${form}</div>` : "";
+    return contact?.state === "available" ? `<div id="field-${field}"${login.browserEdit ? ' tabindex="-1"' : ""}><dt>${label}</dt><dd>${escapeHtml(shown)}</dd><small class="field-meta">Updated by you · ${escapeHtml(contact.freshness.observedAt.slice(0,10))}</small>${form}</div>` : form ? login.browserEdit ? `<div id="field-${field}" tabindex="-1"><dt>${label}</dt><dd>Not recorded</dd>${form}</div>` : `<div>${form}</div>` : "";
   }).join("");
   rows += contacts;
   const mother = profile.fields.kuwaitiMother;
@@ -385,18 +390,19 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const nationalityIsKuwaiti = originChoices.countries.some(item => item.id === nationalityId && item.code === "KW");
   const nationalityAllowsMother = originChoices.countries.some(item => item.id === nationalityId && item.code !== "KW");
   const motherChoices = ([['true','Yes'],['false','No']] as const).map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${motherValue === code ? " checked" : ""}>${label}</label>`).join("");
-  const motherForm = login.profileEdit && nationalityAllowsMother && !nationalityIsKuwaiti ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother${motherChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
+  const motherForm = login.browserEdit ? (nationalityAllowsMother && !nationalityIsKuwaiti ? editLink("kuwaitiMother", "Kuwaiti mother") : "") : login.profileEdit && nationalityAllowsMother && !nationalityIsKuwaiti ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother${motherChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
   const motherShown = mother?.state === "available" ? (mother.value ? "Yes" : "No") : "Not recorded";
-  const motherPanel = motherForm || mother ? `<div data-origin-field="kuwaitiMother"><dt>Kuwaiti mother</dt><dd>${motherShown}</dd><small class="field-meta">${mother?.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}` : "Not recorded"}</small>${motherForm}</div>` : "";
+  const motherPanel = motherForm || mother ? `<div id="field-kuwaitiMother"${login.browserEdit ? ' tabindex="-1"' : ""} data-origin-field="kuwaitiMother"><dt>Kuwaiti mother</dt><dd>${motherShown}</dd><small class="field-meta">${mother?.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}` : "Not recorded"}</small>${motherForm}</div>` : "";
   const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";
   const workStatusChoices = ([['not_looking','Not looking right now'],['active','Actively looking for work'],['open_to_offers','Open to offers']] as const)
     .map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${workStatusValue === code ? " checked" : ""}>${label}</label>`).join("");
   const workStatusLabel = OWN_PROFILE_FIELD_CONTRACT.jobSearchStatus.label;
-  const workStatusControl = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(workStatusLabel)}"><input type="hidden" name="field" value="jobSearchStatus"><label>Change ${escapeHtml(workStatusLabel)}${workStatusChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
+  const workStatusControl = !login.browserEdit && login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(workStatusLabel)}"><input type="hidden" name="field" value="jobSearchStatus"><label>Change ${escapeHtml(workStatusLabel)}${workStatusChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
   const workStatusNotice = profile.fields.jobSearchStatus.state === "available" ? `<p class="notice"><strong>${escapeHtml(workStatusLabel)}:</strong> ${fieldText(profile.fields.jobSearchStatus, fieldFormatters.jobSearchStatus)}</p>` : "";
   const workStatus = workStatusNotice + workStatusControl;
-  const profileFields = `${workStatus}<dl class="profile-fields">${rows}${motherPanel}</dl>`;
-  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div>${profileFields}<div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
+  const verifiedNoticeHtml = verifiedNotice ? profileNotice(verifiedNotice.title, verifiedNotice.message).html : "";
+  const profileFields = `${verifiedNoticeHtml}${workStatus}<dl class="profile-fields">${rows}${motherPanel}</dl>`;
+  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section id="profile-summary" class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div>${profileFields}<div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>${login.browserEdit ? "Choose Edit beside a field to update it, then Save or Cancel." : "You can view this profile, but editing isn’t enabled yet."}</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 
 export const WEB_CSS = `
