@@ -592,6 +592,12 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         .map((context) => context.orgId));
       const deletedIds=covered.size>0&&this.#deletions?await this.#deletions.deletedAmong([...covered]):new Set<string>();
       for(const id of deletedIds)covered.delete(id);
+      const coveredChildCounts = new Map<string, number>();
+      for (const child of organizations) {
+        if (child.parentOrgId !== undefined && covered.has(child.id)) {
+          coveredChildCounts.set(child.parentOrgId, (coveredChildCounts.get(child.parentOrgId) ?? 0) + 1);
+        }
+      }
       const shown: Organization[] = [];
       for (const org of organizations) {
         if (!covered.has(org.id)) continue;
@@ -618,7 +624,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         const statusRecord = batchRecords
           ? batchRecords.get(org.id) ?? { kind: "absent" as const }
           : await this.#statusRecords?.read(org.id);
-        const children = organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length;
+        const children = coveredChildCounts.get(org.id) ?? 0;
         const approvedRecord=approvedBatch?.get(org.id)??{kind:"absent" as const};
         const entry = {...directoryEntry(org, row, children, statusRecord,approvedRecord,termsBatch?.get(org.id),storeTotals ? storeTotals.get(org.id) ?? 0 : null),...(managers?{accountManager:managers.get(org.id)??null}:{})};
         if (matchesDirectoryFilters(entry, filters)) entries.push(entry);
