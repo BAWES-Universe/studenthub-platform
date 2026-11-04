@@ -4780,6 +4780,22 @@ for (const [brief, id] of [[SHU424_BRIEF, "SHU-424"], [SHU425_BRIEF, "SHU-425"],
 }
 if (!SHU427_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU427_BRIEF must keep its parent story");
 
+// SHU-424 passed review but its pull request (#387) merged by hand after a fix
+// for a hung test, which the box does not count as landed, so every lane that
+// waited on it (SHU-425 to SHU-428) is re-cut under a fresh id once more. The
+// operations card no longer waits on anything, since SHU-424 is on main.
+const RECUT_425 = Object.freeze({ "SHU-425": "SHU-431", "SHU-426": "SHU-432", "SHU-427": "SHU-433", "SHU-428": "SHU-434" });
+const recut425 = (text) => text.replace(/\bSHU-(425|426|427|428)\b/g, (id) => RECUT_425[id]);
+const recutAcceptance425 = (from, text) => `${recut425(text)} ${RECUT_425[from]} is ${from}'s contract re-queued under a fresh id after SHU-424 merged by hand; ${from} never lands.`;
+const SHU431_BRIEF = recut425(SHU425_BRIEF);
+const SHU432_BRIEF = recut425(SHU426_BRIEF);
+const SHU433_BRIEF = recut425(SHU427_BRIEF);
+const SHU434_BRIEF = recut425(SHU428_BRIEF);
+for (const [brief, id] of [[SHU431_BRIEF, "SHU-431"], [SHU432_BRIEF, "SHU-432"], [SHU433_BRIEF, "SHU-433"], [SHU434_BRIEF, "SHU-434"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+if (!SHU433_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU433_BRIEF must keep its parent story");
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -5447,6 +5463,34 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance("SHU-188", SHU188_ACCEPTANCE),
     brief: SHU428_BRIEF,
+  }),
+  "SHU-431": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU215_PATHS,
+    revision_paths: SHU215_PATHS,
+    acceptance: recutAcceptance425("SHU-425", recutAcceptance("SHU-215", SHU215_ACCEPTANCE)),
+    brief: SHU431_BRIEF,
+  }),
+  "SHU-432": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE)),
+    brief: SHU432_BRIEF,
+  }),
+  "SHU-433": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU104_PATHS,
+    revision_paths: SHU104_PATHS,
+    acceptance: recutAcceptance425("SHU-427", recutAcceptance("SHU-104", SHU104_ACCEPTANCE)),
+    brief: SHU433_BRIEF,
+  }),
+  "SHU-434": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)),
+    brief: SHU434_BRIEF,
   }),
 });
 
