@@ -61,12 +61,73 @@ async function counts(actor, receipts, writes) {
   assert.equal(state.writeCount,writes,'Unexpected durable field write count');
   return state;
 }
-// Hold original form only inside the live browser realm. Never serialize it to runner/log/artifact.
-async function rememberForm(page) {
-  await page.evaluate(() => {const form=document.querySelector('#profile-edit-form'); window.__acceptanceForm={action:form.action,body:new URLSearchParams(new FormData(form)).toString()};});
-}
-async function replay(page) {
-  return page.evaluate(async()=>{try {const r=await fetch(window.__acceptanceForm.action,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:window.__acceptanceForm.body,redirect:'manual'});return {status:r.status,type:r.type};}catch{return {transportLost:true};}});
+// Submit the untouched form through the browser's native navigation path. CSP
+// deliberately disallows fetch; no CSP bypass or fabricated save response is used.
+// The source document remains open, retaining the exact original signed form.
+let replayTargetSequence=0;
+async function nativeReplay(source,{expectLoss=false,holdRedirect=false}={}) {
+  const name=`acceptance-save-${++replayTargetSequence}`;
+  const popupReady=source.waitForEvent('popup');
+  await source.evaluate(name=>{window.open('about:blank',name);},name);
+  const target=await popupReady;
+  await target.waitForLoadState('load');
+  await source.locator('#profile-edit-form').evaluate((form,name)=>{form.target=name;},name);
+  let releaseRedirect;
+  let markHeld, rejectHeld;
+  const held=new Promise((resolve,reject)=>{markHeld=resolve; rejectHeld=reject;});
+  // Interception may fail before the main flow starts awaiting this promise.
+  held.catch(()=>{});
+  if(holdRedirect) {
+    // Playwright route() handles only the first URL in a redirect chain.
+    // Chromium Fetch interception also sees the actual subsequent GET, without
+    // inventing responses, changing headers, or relaxing the production CSP.
+    const cdp=await source.context().newCDPSession(target);
+    let pausedRequestId, disposed=false;
+    const paused=event=>{
+      const url=new URL(event.request.url);
+      if(event.request.method==='GET' && url.origin===new URL(fixture.baseURL).origin && url.pathname==='/profile') {
+        pausedRequestId=event.requestId;
+        markHeld();
+      } else {
+        cdp.send('Fetch.continueRequest',{requestId:event.requestId}).catch(()=>rejectHeld(new Error('Could not continue native browser request')));
+      }
+    };
+    cdp.on('Fetch.requestPaused',paused);
+    releaseRedirect=async()=>{
+      if(disposed) return;
+      disposed=true;
+      try {
+        if(pausedRequestId) await cdp.send('Fetch.failRequest',{requestId:pausedRequestId,errorReason:'Aborted'});
+      } finally {
+        // Always restore normal networking, including assertion/setup failures.
+        await cdp.send('Fetch.disable').catch(()=>{});
+        cdp.off('Fetch.requestPaused',paused);
+        await cdp.detach().catch(()=>{});
+      }
+    };
+    restorers.push(releaseRedirect);
+    await cdp.send('Fetch.enable',{patterns:[{urlPattern:`${fixture.baseURL}/profile*`,requestStage:'Request'}]});
+  }
+  const isSave=request=>request.method()==='POST' && new URL(request.url()).pathname.endsWith('/save');
+  const resultReady=expectLoss
+    ? target.waitForEvent('requestfailed',{predicate:isSave,timeout:15000}).then(()=>({transportLost:true}))
+    : target.waitForResponse(response=>isSave(response.request()),{timeout:15000}).then(response=>({status:response.status()}));
+  resultReady.catch(()=>{}); // The click can fail before its listener is awaited.
+  const navigation=target.waitForNavigation({waitUntil:'load',timeout:30000}).then(response=>({response}),()=>({navigationFailed:true}));
+  await source.locator('#profile-edit-form button[type=submit]').click({noWaitAfter:true});
+  const result=await resultReady;
+  if(holdRedirect) {
+    assert.equal(result.status,303,'Native save emits real HTTP303 before deferred GET');
+    let timer;
+    try {
+      await Promise.race([held,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Redirect GET interception timed out')),15000);})]);
+    } finally {clearTimeout(timer);}
+    return {...result,page:target,stopRedirect:async()=>{await releaseRedirect(); await navigation;}};
+  }
+  const outcome=await navigation;
+  if(expectLoss) check(outcome.navigationFailed,'Transport loss interrupts real browser navigation');
+  else {assert.equal(result.status,303,'Native save emits real HTTP303'); check(outcome.response?.status()===200,'Native save reaches rendered profile');}
+  return {...result,page:target};
 }
 async function run(name, action) {
   const record=evidence.cases.find(c=>c.name===name), start=Date.now();
@@ -87,7 +148,7 @@ async function run(name, action) {
 async function report() {
   await mkdir(output,{recursive:true});
   await writeFile(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
-  const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
+  const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.disclosureScreenshot ? ` ([expanded disclosure](${c.disclosureScreenshot}))` : ''}${c.notes ? ` — ${c.notes}` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
   if(evidence.blocker) lines.push('',`Blocker: ${evidence.blocker}`);
   await writeFile(path.join(output,'evidence.md'),lines.join('\n')+'\n');
 }
@@ -204,14 +265,20 @@ try {
     await visible(page.locator('#field-language'));
     await page.keyboard.press('Space');
     check(!(await page.locator('#section-details').evaluate(n=>n.open)),'Keyboard disclosure closes');
-    for(const link of await page.locator('.p-edit').all()) check((await link.getAttribute('aria-label') || await link.innerText()).trim().length>0,'Accessible edit name');
+    await summary.focus(); await page.keyboard.press('Enter');
+    check(await page.locator('#section-details').evaluate(n=>n.open),'Open details before checking nested edit names');
+    for(const link of await page.locator('.p-edit').all()) {
+      await visible(link);
+      check((await link.ariaSnapshot()).split('\n').some(line=>/^- link \"[^\"]+\"/.test(line.trim())),'Accessible edit link has nonempty computed name');
+    }
+    const disclosureScreenshot=await screenshot(page,'keyboard-expanded-disclosure');
     await edit(page,'objective');
     await visible(page.getByRole('textbox',{name:/objective/i}));
     await visible(page.getByRole('button',{name:'Save',exact:true}));
     await page.locator('#field-objective').focus(); await page.keyboard.press('Tab');
     check(await page.locator('button[type=submit]').evaluate(n=>n===document.activeElement),'Tab reaches Save');
     check(await page.locator('button[type=submit]').evaluate(n=>getComputedStyle(n).outlineStyle!=='none'),'Visible keyboard focus');
-    return {screenshot:await screenshot(page,'keyboard-focus')};
+    return {screenshot:await screenshot(page,'keyboard-focus'),disclosureScreenshot};
   });
   await run('one-field-save-and-clear',async()=>{
     const {actor,page}=await subject(); const before=await fixture.inspect(actor);
@@ -275,21 +342,30 @@ try {
     check(!(await page.locator('body').innerText()).includes('Synthetic cancelled draft'),'Cancelled draft not published'); await counts(actor,0,0);
   });
   await run('repeated-submission',async()=>{
-    const {actor,page}=await subject(); await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic exact replay'); await rememberForm(page);
-    assert.equal((await replay(page)).type,'opaqueredirect','First real save redirects successfully');
-    assert.equal((await replay(page)).type,'opaqueredirect','Exact repeated submission redirects successfully');
-    await counts(actor,1,1);
-    await page.goto(`${fixture.baseURL}/profile`); await saved(page); await textIncludes(page,'Synthetic exact replay');
+    const {actor,page}=await subject(); await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic exact replay');
+    const first=await nativeReplay(page); await saved(first.page);
+    const second=await nativeReplay(page); await saved(second.page);
+    await counts(actor,1,1); await textIncludes(second.page,'Synthetic exact replay');
+    return {notes:'Two native Save clicks submit the unchanged original form into separate named popup targets. Both real HTTP303 responses render verified notices; one durable write and receipt.'};
   });
   await run('two-tab-notice-overwrite-clear',async()=>{
     const {actor,context,page}=await subject(); const other=await context.newPage();
-    await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic tab one'); await rememberForm(page); assert.equal((await replay(page)).type,'opaqueredirect','First tab save succeeds');
-    await edit(other,'preferredTime'); await other.locator('[name=value]').fill('Synthetic tab two'); await rememberForm(other); assert.equal((await replay(other)).type,'opaqueredirect','Second tab save succeeds');
-    check((await context.cookies()).some(c=>c.name==='studenthub_profile_notice'),'Real shared notice cookie exists');
+    await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic tab one');
+    const first=await nativeReplay(page,{holdRedirect:true});
+    const firstCookie=(await context.cookies()).find(c=>c.name==='studenthub_profile_notice')?.value;
+    check(firstCookie,'First genuine save sets shared notice cookie');
+    await edit(other,'preferredTime'); await other.locator('[name=value]').fill('Synthetic tab two');
+    const second=await nativeReplay(other,{holdRedirect:true});
+    const secondCookie=(await context.cookies()).find(c=>c.name==='studenthub_profile_notice')?.value;
+    check(secondCookie && secondCookie!==firstCookie,'Second real save overwrites shared notice cookie');
+    await first.stopRedirect(); await second.stopRedirect();
+    // Fresh navigation must send the current shared cookie, not a Cookie header
+    // captured by a redirect request before the other tab overwrote it.
     await page.goto(`${fixture.baseURL}/profile#field-objective`); await saved(page);
     assert.equal((await page.locator('#profile-notice p').innerText()).trim(),'A profile change was saved. Your current profile is shown below.','Notice remains generic across tabs');
     check(!(await context.cookies()).some(c=>c.name==='studenthub_profile_notice'),'Receipt notice cleared across context');
     await other.goto(`${fixture.baseURL}/profile`); assert.equal(await other.locator('#profile-notice').count(),0,'Second tab cannot reuse cleared notice'); await counts(actor,2,2);
+    return {notes:'Native POST303 responses set and overwrite a shared cookie. Only redirect GETs are paused with Chromium Fetch interception then stopped; fresh first-tab navigation sends the current cookie, verifies the generic notice and clears it for the second tab.'};
   });
   for(const mode of ['revocation','expiry']) await run(`session-${mode}`,async()=>{
     const {actor,page}=await subject(); const protectedName=await page.locator('#profile-name').innerText();
@@ -303,12 +379,13 @@ try {
     check(!(await page.locator('body').innerText()).includes(protectedName),'Protected name removed after session loss');
   });
   await run('committed-response-loss',async()=>{
-    const {actor,page}=await subject(); await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic lost response'); await rememberForm(page);
+    const {actor,page}=await subject(); await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic lost response');
     const droppedBefore=fixture.evidence.transportResponsesDropped;
-    await fixture.armTransportLoss(); const result=await replay(page);
+    await fixture.armTransportLoss(); const result=await nativeReplay(page,{expectLoss:true});
     assert.equal(fixture.evidence.transportResponsesDropped,droppedBefore+1,'Server actually dropped committed HTTP response'); check(result.transportLost,'Real HTTP connection loss observed'); await counts(actor,1,1);
-    assert.equal((await replay(page)).type,'opaqueredirect','Lost-response exact retry succeeds');
-    await counts(actor,1,1); await page.goto(`${fixture.baseURL}/profile`); await saved(page); await textIncludes(page,'Synthetic lost response');
+    const retry=await nativeReplay(page); await saved(retry.page);
+    await counts(actor,1,1); await textIncludes(retry.page,'Synthetic lost response');
+    return {notes:'Actual committed HTTP response is destroyed by the fixture. Native navigation fails; a second native Save click uses the untouched original form and recovers with HTTP303, one write and one receipt.'};
   });
   for(const variant of ['status-read-only','exact-retry','changed-draft-rejected']) await run(`uncertain-commit-${variant}`,async()=>{
     const {actor,page}=await subject(); const faultBefore=fixture.evidence.commitBoundaryThrows; const restore=await fixture.useCommitBoundaryFault(); restorers.push(restore);
