@@ -110,10 +110,10 @@ async function nativeReplay(source,{expectLoss=false,holdRedirect=false}={}) {
   }
   const isSave=request=>request.method()==='POST' && new URL(request.url()).pathname.endsWith('/save');
   const resultReady=expectLoss
-    ? target.waitForEvent('requestfailed',{predicate:isSave,timeout:15000}).then(()=>({transportLost:true}))
-    : target.waitForResponse(response=>isSave(response.request()),{timeout:15000}).then(response=>({status:response.status()}));
+    ? target.waitForEvent('requestfailed',{predicate:isSave,timeout:15000}).then(()=>({transportLost:true}),()=>assert.fail('Native POST did not expose a transport failure within 15 seconds'))
+    : target.waitForResponse(response=>isSave(response.request()),{timeout:15000}).then(response=>({status:response.status()}),()=>assert.fail('Native Save did not receive an HTTP response within 15 seconds'));
   resultReady.catch(()=>{}); // The click can fail before its listener is awaited.
-  const navigation=target.waitForNavigation({waitUntil:'load',timeout:30000}).then(response=>({response}),()=>({navigationFailed:true}));
+  const navigation=target.waitForNavigation({waitUntil:'load',timeout:30000}).then(response=>({response}),error=>({navigationFailed:error?.name!=='TimeoutError',navigationTimedOut:error?.name==='TimeoutError'}));
   await source.locator('#profile-edit-form button[type=submit]').click({noWaitAfter:true});
   const result=await resultReady;
   if(holdRedirect) {
@@ -125,7 +125,10 @@ async function nativeReplay(source,{expectLoss=false,holdRedirect=false}={}) {
     return {...result,page:target,stopRedirect:async()=>{await releaseRedirect(); await navigation;}};
   }
   const outcome=await navigation;
-  if(expectLoss) check(outcome.navigationFailed,'Transport loss interrupts real browser navigation');
+  if(expectLoss) {
+    check(!outcome.navigationTimedOut,'Transport-loss navigation must fail, not time out');
+    check(outcome.navigationFailed,'Transport loss interrupts real browser navigation');
+  }
   else {assert.equal(result.status,303,'Native save emits real HTTP303'); check(outcome.response?.status()===200,'Native save reaches rendered profile');}
   return {...result,page:target};
 }
@@ -380,12 +383,29 @@ try {
   });
   await run('committed-response-loss',async()=>{
     const {actor,page}=await subject(); await edit(page,'objective'); await page.locator('[name=value]').fill('Synthetic lost response');
+    const record=evidence.cases.find(c=>c.name==='committed-response-loss');
     const droppedBefore=fixture.evidence.transportResponsesDropped;
-    await fixture.armTransportLoss(); const result=await nativeReplay(page,{expectLoss:true});
-    assert.equal(fixture.evidence.transportResponsesDropped,droppedBefore+1,'Server actually dropped committed HTTP response'); check(result.transportLost,'Real HTTP connection loss observed'); await counts(actor,1,1);
+    const requestsBefore=fixture.evidence.transportSaveRequestsObserved;
+    const restore=await fixture.armTransportLoss({untilRestored:true});
+    restorers.push(restore);
+    try {
+      const result=await nativeReplay(page,{expectLoss:true});
+      check(fixture.evidence.transportResponsesDropped>droppedBefore,'Server actually dropped at least one committed HTTP response');
+      check(result.transportLost,'Real HTTP connection loss observed'); await counts(actor,1,1);
+    } finally {
+      // Chromium can transparently retransmit a POST after a socket disappears.
+      // Keep dropping real committed responses until navigation actually fails;
+      // restore the transport before the explicit user-visible same-form retry.
+      await restore();
+      record.transportResponsesDropped=fixture.evidence.transportResponsesDropped-droppedBefore;
+      record.transportSaveRequestsObserved=fixture.evidence.transportSaveRequestsObserved-requestsBefore;
+      const durable=await fixture.inspect(actor);
+      record.receiptsBeforeExplicitRetry=durable.receiptCount;
+      record.writesBeforeExplicitRetry=durable.writeCount;
+    }
     const retry=await nativeReplay(page); await saved(retry.page);
     await counts(actor,1,1); await textIncludes(retry.page,'Synthetic lost response');
-    return {notes:'Actual committed HTTP response is destroyed by the fixture. Native navigation fails; a second native Save click uses the untouched original form and recovers with HTTP303, one write and one receipt.'};
+    return {notes:'Real committed HTTP responses, including any transparent browser retransmission, are destroyed until native navigation fails. Transport is restored before a second native Save click uses the untouched form and recovers with HTTP303, one write and one receipt.'};
   });
   for(const variant of ['status-read-only','exact-retry','changed-draft-rejected']) await run(`uncertain-commit-${variant}`,async()=>{
     const {actor,page}=await subject(); const faultBefore=fixture.evidence.commitBoundaryThrows; const restore=await fixture.useCommitBoundaryFault(); restorers.push(restore);

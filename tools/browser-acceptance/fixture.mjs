@@ -63,15 +63,21 @@ export async function createFixture({
       VALUES($1,'country',$2,$3,$4,'active',$5,$5,clock_timestamp(),clock_timestamp())`,
     [id, code === 'KW' ? 'Kuwait' : 'Bahrain', code === 'KW' ? 'kuwait' : 'bahrain', code, 'a'.repeat(64)]);
   }
-  let gateway, runtime, dropResponse = false, faultArmed = false;
-  const evidence = { transportResponsesDropped: 0, commitBoundaryThrows: 0, nearExpiryIssuances: 0 };
+  let gateway, runtime, dropResponse = null, faultArmed = false;
+  const evidence = { transportResponsesDropped: 0, transportSaveRequestsObserved: 0, commitBoundaryThrows: 0, nearExpiryIssuances: 0 };
   const server = createServer({ cert: await readFile(certPath), key: await readFile(keyPath) }, (req, res) => {
     if (dropResponse && req.method === 'POST' && /^\/profile\/edit\/[^/]+\/save$/.test(req.url ?? '')) {
+      const transportFault = dropResponse;
+      evidence.transportSaveRequestsObserved++;
       const writeHead = res.writeHead.bind(res), end = res.end.bind(res);
       let dropped = false;
       res.writeHead = function(status, ...args) {
-        if (status === 303 && dropResponse) {
-          dropResponse = false; dropped = true; evidence.transportResponsesDropped++;
+        if (status === 303 && dropResponse === transportFault) {
+          // Chromium may transparently retransmit after losing a response on a
+          // reused connection. Persistent mode drops those real successful
+          // responses too, until the runner observes failure and restores.
+          if (!transportFault.untilRestored) dropResponse = null;
+          dropped = true; evidence.transportResponsesDropped++;
           res.destroy(); return res;
         }
         return writeHead(status, ...args);
@@ -198,7 +204,13 @@ export async function createFixture({
       assert.equal(result.rowCount, 1, 'Expiration must affect exactly one session');
       assert.equal(await readLiveLoginSessionPerson(pool, session), undefined, 'Expired session must fail live-session read');
     },
-    armTransportLoss() { assert(!dropResponse); dropResponse = true; },
+    armTransportLoss({ untilRestored = false } = {}) {
+      assert(!dropResponse, 'Transport fault already armed');
+      assert.equal(typeof untilRestored, 'boolean');
+      const fault = { untilRestored };
+      dropResponse = fault;
+      return () => { if (dropResponse === fault) dropResponse = null; };
+    },
     useCommitBoundaryFault() { faultArmed = true; application.browserEdit = composeEditor(); return () => { faultArmed = false; application.browserEdit = normalEditor; }; },
     useNearExpiryTokens({ remainingMs = 1000 } = {}) { assert(remainingMs > 0 && remainingMs < BROWSER_WRITE_LIFETIME_MS); application.browserEdit = composeEditor({ nearExpiryMs: remainingMs }); return { remainingMs, restore() { application.browserEdit = normalEditor; } }; },
     close,
