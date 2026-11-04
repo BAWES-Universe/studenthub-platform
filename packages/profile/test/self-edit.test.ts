@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
+import { OwnProfileRepository, validatePersonSelfEditValue, createPersonImportedFallbackReader, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 const TODAY = "2026-10-30";
@@ -179,4 +179,92 @@ test("SHU374_HANDLE stores lowercase handles with the complete public alphabet",
   for (const value of ["noor-al-sabah", "noor_2026", "noor.sabah", ""]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), value);
   assert.equal(normalizePersonSelfEditValue("handle", "Noor.Sabah", TODAY), "noor.sabah");
   for (const value of ["no", "1noor", "noor al-sabah", "-noor"]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), null);
+});
+
+test("U2A_CANON reason-returning validation preserves canonical values and explains refusals", () => {
+  const cases = [
+    ["displayName", "", "required"], ["objective", "x".repeat(101), "length"],
+    ["displayName", "Noor", "name"], ["arabicName", "Noor Smith", "arabic_name"],
+    ["objective", " a", "spacing"], ["objective", "a  b", "spacing"],
+    ["objective", "a\u0000b", "characters"], ["intro", "\u0000", "characters"],
+    ["birthDate", "2000-02-30", "date"], ["birthDate", "2027-01-01", "future"],
+    ["birthDate", "2011-01-01", "minimum_age"], ["gender", "Male", "choice"],
+    ["nationality", "Kuwait", "choice"], ["university", "not-an-id", "choice"],
+    ["kuwaitiMother", "yes", "choice"],
+  ] as const;
+  for (const [field, value, reason] of cases) {
+    assert.deepEqual(validatePersonSelfEditValue(field, value, TODAY), { ok: false, reason }, `${field}: ${reason}`);
+    assert.equal(normalizePersonSelfEditValue(field, value, TODAY), null);
+  }
+  assert.deepEqual(validatePersonSelfEditValue("phone", "+96550000000", TODAY, { contactAvailable: false }), { ok: false, reason: "contact_unavailable" });
+  assert.deepEqual(validatePersonSelfEditValue("handle", "noor", TODAY, { contactAvailable: false }), { ok: false, reason: "contact_unavailable" });
+  assert.deepEqual(validatePersonSelfEditValue("phone", "", TODAY, { contactAvailable: false }), { ok: true, value: "" });
+  for (const [field, input, value] of [
+    ["displayName", "Noe\u0308l Al-Sabah", "Noël Al-Sabah"],
+    ["phone", "٥٠٠٠٠٠٠٠", "+96550000000"], ["phone", "+965 (5000) 0000", "+96550000000"],
+    ["handle", "Noor.Sabah", "noor.sabah"], ["university", "", ""],
+    ["kuwaitiMother", "false", "false"], ["intro", "a\nb", null],
+  ] as const) {
+    const result = validatePersonSelfEditValue(field, input, TODAY);
+    assert.equal(result.ok ? result.value : null, value);
+    assert.equal(normalizePersonSelfEditValue(field, input, TODAY), value);
+  }
+});
+
+test("U2A_FALLBACK binds the exact projected display value and source, not unrelated import metadata", async () => {
+  let row: unknown = { ...SYNTHETIC_PROFILE_FIXTURES.populated };
+  let candidateRef = "candidate";
+  const reader = createPersonImportedFallbackReader({
+    source: { resolveLink: async () => ({ kind: "linked", candidateRef }), readCandidate: async () => row }, today: () => TODAY,
+  });
+  const original = await reader.read("person", "objective");
+  assert.ok(original);
+  row = { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_objective: "Different displayed value" };
+  const changed = await reader.read("person", "objective");
+  assert.ok(changed);
+  assert.notEqual(changed.valueDigest, original.valueDigest, "same source revision does not hide a changed displayed value");
+  assert.equal(changed.sourceRef, original.sourceRef);
+  row = { ...SYNTHETIC_PROFILE_FIXTURES.populated, imported_at: "2026-11-01T00:00:00.000Z", snapshot_revision: "new-import" };
+  assert.deepEqual(await reader.read("person", "objective"), original, "metadata-only revision does not change displayed fallback evidence");
+  candidateRef = "another-candidate";
+  assert.notEqual((await reader.read("person", "objective"))?.sourceRef, original.sourceRef);
+  candidateRef = "candidate";
+  assert.notEqual((await reader.read("person", "intro"))?.sourceRef, original.sourceRef);
+  const gender = await reader.read("person", "gender");
+  assert.equal(gender?.valueDigest, createHash("sha256").update(JSON.stringify(["profile-fallback-value-v1", "female"])).digest("hex"), "bind projected enum, not production integer");
+  const licence = await reader.read("person", "drivingLicence");
+  assert.equal(licence?.valueDigest, createHash("sha256").update(JSON.stringify(["profile-fallback-value-v1", true])).digest("hex"));
+  for (const field of ["phone", "handle", "kuwaitiMother"] as const) assert.equal(await reader.read("person", field), null);
+  row = SYNTHETIC_PROFILE_FIXTURES.partial;
+  assert.equal(await reader.read("person", "objective"), null);
+  row = SYNTHETIC_PROFILE_FIXTURES.unavailable;
+  assert.equal(await reader.read("person", "objective"), null);
+  row = { ...SYNTHETIC_PROFILE_FIXTURES.populated, source_revision: "unapproved" };
+  await assert.rejects(reader.read("person", "objective"), /unapproved profile source revision/);
+  row = { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_gender: "female" };
+  await assert.rejects(reader.read("person", "objective"), /malformed approved profile value/);
+  row = undefined;
+  await assert.rejects(reader.read("person", "objective"), /snapshot unavailable/);
+});
+
+test("U2A_FALLBACK no configured import is absent while unresolved links fail closed", async () => {
+  for (const kind of ["unconfigured", "missing", "conflict"] as const) {
+    const reader = createPersonImportedFallbackReader({ source: {
+      resolveLink: async () => ({ kind }), readCandidate: async () => { throw new Error("must not read without a link"); },
+    }, today: () => TODAY });
+    if (kind === "unconfigured") assert.equal(await reader.read("person", "objective"), null);
+    else await assert.rejects(reader.read("person", "objective"), /link unavailable/);
+  }
+});
+
+test("U2A_CANON legacy preview and confirm refuse NUL without writing", async () => {
+  const x = writeFixture();
+  assert.deepEqual(await x.writer.preview(x.request("a\u0000b")), { ok: false, reason: "invalid_value" });
+  const valid = x.request("Valid objective");
+  const preview = await x.writer.preview(valid);
+  assert.ok(preview.ok);
+  if (!preview.ok) return;
+  assert.deepEqual(await x.writer.confirm({ ...x.request("a\u0000b"), token: preview.token }), { ok: false, reason: "invalid_value" });
+  assert.equal(x.value(), null);
+  assert.ok((await x.writer.confirm({ ...valid, token: preview.token })).ok, "refused NUL did not spend the valid token");
 });

@@ -8,7 +8,10 @@ const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/self-ed
 const pageModuleFile = new URL("../../../dist/apps/gateway/src/profile-edit-http.js", import.meta.url);
 const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/profile-edit-http.test.js", import.meta.url));
 const webUiModuleFile = new URL("../../../dist/apps/gateway/src/web-ui.js", import.meta.url);
+let killed = 0;
 const mutations = [
+  ["U2A_CANON", "\\u0000-\\u001f", "\\u0001-\\u001f"],
+  ["U2A_CANON", 'value.normalize("NFC")', 'value.normalize("NFC").trim()'],
   ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
   ["SHU372_RULES", "/\\s{2}/u.test(normalized)", "false"],
   ["SHU372_RULES", "!NAME.test(normalized)", "false"],
@@ -36,6 +39,8 @@ for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite]
     assert.notEqual(result.status, 0, `${token} mutant survived: ${from}`);
     assert.match(result.stdout + result.stderr, new RegExp(`not ok \\d+ - ${token} `), JSON.stringify({ status: result.status, signal: result.signal, error: String(result.error), stdout: result.stdout, stderr: result.stderr }));
     assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
+    killed++;
+    console.log(`Killed ${typeof token === "string" ? token : "Postgres catalogue"} mutant`);
   } finally { await writeFile(selectedModule, original); }
 }
 
@@ -55,6 +60,7 @@ if (process.env.DATABASE_URL) {
     assert.notEqual(result.status, 0, "SHU415_CATALOGUE status-filter mutant survived");
     assert.match(result.stdout + result.stderr, /not ok \d+ - SHU415_CATALOGUE /);
     assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
+    killed++; console.log("Killed Postgres catalogue mutant");
   } finally { await writeFile(catalogueModule, original); }
 
   const commitFrom = "SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'";
@@ -67,5 +73,8 @@ if (process.env.DATABASE_URL) {
     assert.notEqual(result.status, 0, "SHU415_WRITE commit catalogue mutant survived");
     assert.match(result.stdout + result.stderr, /not ok \d+ - SHU415_WRITE /);
     assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
+    killed++; console.log("Killed Postgres catalogue mutant");
   } finally { await writeFile(catalogueModule, commitOriginal); }
 }
+
+console.log(`Killed ${killed} self-edit mutants; Postgres catalogue mutants ${process.env.DATABASE_URL ? "included" : "not run (DATABASE_URL unset)"}.`);

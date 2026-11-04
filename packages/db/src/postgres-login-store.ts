@@ -188,3 +188,11 @@ function positiveTtl(value: number, name: string): number {
 function storedToken(value: string): string {
   return createHash("sha256").update(value).digest("base64url");
 }
+
+/** Non-mutating session authorization, executed on the caller's locked transaction. */
+export async function readLiveLoginSessionPerson(client: Pick<pg.PoolClient, "query">, sessionToken: string): Promise<string | undefined> {
+  const { rows } = await client.query<{ person_id: string }>(
+    "SELECT person_id FROM login_sessions WHERE id = $1 AND expires_at > clock_timestamp()", [storedToken(sessionToken)],
+  );
+  return rows[0]?.person_id;
+}
