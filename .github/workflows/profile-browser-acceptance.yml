@@ -1,0 +1,80 @@
+name: Profile browser acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'tools/browser-acceptance/**'
+      - '.github/workflows/profile-browser-acceptance.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'apps/gateway/**'
+      - 'packages/db/**'
+      - 'packages/profile/**'
+      - 'packages/safe-write-contract/**'
+  workflow_dispatch:
+
+# This is an additive, initially non-required check. No deploy credentials.
+permissions:
+  contents: read
+
+jobs:
+  browser-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: browser-acceptance-only
+          POSTGRES_DB: browser_acceptance
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BROWSER_ACCEPTANCE_DATABASE_URL: postgresql://postgres:browser-acceptance-only@127.0.0.1:55432/browser_acceptance
+      BROWSER_ACCEPTANCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BROWSER_ACCEPTANCE_ARTIFACTS: ${{ github.workspace }}/browser-acceptance-artifacts
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.browser-acceptance-browsers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Initialize honest NOT_RUN evidence
+        run: node tools/browser-acceptance/run.mjs --initialize-report
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Assert pinned browser package
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; const p=JSON.parse(fs.readFileSync('node_modules/playwright/package.json')); if(p.version !== '1.64.1') throw Error('Playwright pin changed'); const b=JSON.parse(fs.readFileSync('node_modules/playwright-core/browsers.json')).browsers.find(x=>x.name==='chromium'); if(b.revision !== '1248' || b.browserVersion !== '156.0.8078.4') throw Error('Chromium pin changed');"
+      - name: Install pinned Chromium and TLS tools
+        run: |
+          npx --no-install playwright install --with-deps chromium
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libnss3-tools openssl
+      - name: Build real gateway and stores
+        run: npm run build
+      - name: Prepare a trusted disposable browser CA
+        run: node tools/browser-acceptance/prepare-tls.mjs
+      - name: Execute profile browser matrix
+        run: node tools/browser-acceptance/run.mjs
+      - name: Upload synthetic screenshots and case evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-browser-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            browser-acceptance-artifacts/*.png
+            browser-acceptance-artifacts/evidence.json
+            browser-acceptance-artifacts/evidence.md
+          if-no-files-found: warn
+          retention-days: 7
