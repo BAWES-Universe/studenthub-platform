@@ -4796,6 +4796,37 @@ for (const [brief, id] of [[SHU431_BRIEF, "SHU-431"], [SHU432_BRIEF, "SHU-432"],
 }
 if (!SHU433_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU433_BRIEF must keep its parent story");
 
+// SHU-431's first build ended BLOCKED: the job alerts that SHU-424 put in
+// packages/observability/src/jobs.ts also carry runbook docs/observability.md,
+// and two tests assert that path, all outside the card's paths, so "every
+// Alert's runbook field points at that entry" could not be met. SHU-436 is the
+// same card with those three files added for their runbook strings only, and
+// SHU-437 re-cuts the restore card that waited on SHU-431.
+const SHU436_PATHS = Object.freeze([
+  ...SHU215_PATHS,
+  "packages/observability/src/jobs.ts",
+  "packages/observability/test/observability.test.ts",
+  "apps/worker/test/heartbeat.test.ts",
+]);
+const RECUT_431 = Object.freeze({ "SHU-431": "SHU-436", "SHU-433": "SHU-437" });
+const recut431 = (text) => text.replace(/\bSHU-(431|433)\b/g, (id) => RECUT_431[id]);
+const recutAcceptance431 = (from, reason, text) => `${recut431(text)} ${RECUT_431[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const replaceOnce = (text, from, to, name) => {
+  if (text.split(from).length !== 2) throw new Error(`${name}: the anchor must occur exactly once`);
+  return text.replace(from, to);
+};
+const SHU436_GUARD_FROM = "- alerts.ts changes only the runbook paths (to docs/runbooks/alerts.md#<code>) and, if you choose, an exported list of codes; packages/observability/test/mutations.mjs anchors must still bind once.";
+const SHU436_GUARD_TO = `${SHU436_GUARD_FROM}
+- The job alerts (job_failed, job_overlap, job_missed) are built in packages/observability/src/jobs.ts with their own runbook string, and packages/observability/test/observability.test.ts and apps/worker/test/heartbeat.test.ts assert the old docs/observability.md path. Point the jobs.ts alerts at their docs/runbooks/alerts.md entries and update those two assertions to the new paths; change no other line in those three files.`;
+const SHU436_PATHS_FROM = "packages/observability/test/runbooks.test.mjs, and docs/observability.md (point its alert table at the runbooks). Nothing else changes.";
+const SHU436_PATHS_TO = "packages/observability/test/runbooks.test.mjs, docs/observability.md (point its alert table at the runbooks), and the runbook strings only in packages/observability/src/jobs.ts, packages/observability/test/observability.test.ts and apps/worker/test/heartbeat.test.ts. Nothing else changes.";
+const SHU436_BRIEF = replaceOnce(replaceOnce(recut431(SHU431_BRIEF), SHU436_GUARD_FROM, SHU436_GUARD_TO, "SHU436_BRIEF guard"), SHU436_PATHS_FROM, SHU436_PATHS_TO, "SHU436_BRIEF paths");
+const SHU437_BRIEF = recut431(SHU433_BRIEF);
+for (const [brief, id] of [[SHU436_BRIEF, "SHU-436"], [SHU437_BRIEF, "SHU-437"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+if (!SHU437_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU437_BRIEF must keep its parent story");
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -5491,6 +5522,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)),
     brief: SHU434_BRIEF,
+  }),
+  "SHU-436": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU436_PATHS,
+    revision_paths: SHU436_PATHS,
+    acceptance: recutAcceptance431("SHU-431", "after its first build could not reach the job alerts' runbook paths", recutAcceptance425("SHU-425", recutAcceptance("SHU-215", SHU215_ACCEPTANCE))),
+    brief: SHU436_BRIEF,
+  }),
+  "SHU-437": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU104_PATHS,
+    revision_paths: SHU104_PATHS,
+    acceptance: recutAcceptance431("SHU-433", "because its lane waited on SHU-431", recutAcceptance425("SHU-427", recutAcceptance("SHU-104", SHU104_ACCEPTANCE))),
+    brief: SHU437_BRIEF,
   }),
 });
 

@@ -22,11 +22,13 @@ import {
 import type { ActiveOrganization } from "./context-navigation.js";
 import type { CompanyDirectoryPage, CompanyDirectoryResult } from "./company-directory.js";
 import type { AssignedCompaniesResult, OrganizationAccountManager } from "./organization-account-manager.js";
+import type { ExportsHttp } from "./exports-http.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
+  readonly exports?: ExportsHttp;
   readonly organizationAccountManager?: OrganizationAccountManager;
   /** SHU-84 safe write; absent unless a signing key is configured. */
   readonly preferences?: LanguagePreference;
@@ -255,7 +257,7 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
     `<option value="${escapeHtml(value)}"${selected === value ? " selected" : ""}>${escapeHtml(label)}</option>`;
   const approved = filters.approvedToHire === undefined ? undefined : filters.approvedToHire ? "yes" : "no";
   const managerFilter=accountManagerOptions===undefined?"":`<label>Account manager<select name="manager">${option("","Any",accountManagerSelection)}${option("me","Me",accountManagerSelection)}${accountManagerOptions?.map(person=>option(person.principalId,person.displayName??"Unnamed staff member",accountManagerSelection)).join("")??""}${accountManagerSelection&&accountManagerSelection!=="me"&&!accountManagerOptions?.some(person=>person.principalId===accountManagerSelection)?option(accountManagerSelection,"Selected account manager",accountManagerSelection):""}</select></label>`;
-  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label>${managerFilter}<button class="sign-out" type="submit">Search</button></form>`;
+  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label>${managerFilter}<button class="sign-out" type="submit">Search</button></form><form method="post" action="/exports/company-directory?${escapeHtml(String(new URLSearchParams(query)))}"><button class="button" type="submit">Export</button></form>`;
   const table = directory.entries.length
     ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th><th scope="col">Stores</th><th scope="col">Account manager</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-contexts" role="status">${directory.total === 0 ? "No companies match these filters." : "There are no more companies on this page."}</p>`;

@@ -49,10 +49,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-431",
+      "SHU-436",
       "SHU-196",
       "SHU-432",
-      "SHU-433",
+      "SHU-437",
       "SHU-434"
     ]
   },
@@ -3624,6 +3624,71 @@
       ],
       "after": [
         "SHU-432"
+      ]
+    },
+    {
+      "id": "SHU-436",
+      "authorization_ref": "SHU-436",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (platform operations), card 2: operations runbooks and an on-call rota template, kept in step with the alerts and the integration register by a test, re-queued from SHU-215 under a fresh id after SHU-198's run ended on hold; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs Re-cut from SHU-425 as SHU-431 after SHU-424 merged by hand. Re-cut from SHU-431 as SHU-436 with the job alerts' runbook strings in jobs.ts and its two tests added to its paths, after SHU-431's first build could not reach them.",
+      "initial_build_paths": [
+        "docs/runbooks/README.md",
+        "docs/runbooks/deploy.md",
+        "docs/runbooks/rollback.md",
+        "docs/runbooks/incident.md",
+        "docs/runbooks/secret-rotation.md",
+        "docs/runbooks/alerts.md",
+        "docs/runbooks/on-call.md",
+        "packages/observability/src/alerts.ts",
+        "packages/observability/test/runbooks.test.mjs",
+        "docs/observability.md",
+        "packages/observability/src/jobs.ts",
+        "packages/observability/test/observability.test.ts",
+        "apps/worker/test/heartbeat.test.ts"
+      ],
+      "revision_paths": [
+        "docs/runbooks/README.md",
+        "docs/runbooks/deploy.md",
+        "docs/runbooks/rollback.md",
+        "docs/runbooks/incident.md",
+        "docs/runbooks/secret-rotation.md",
+        "docs/runbooks/alerts.md",
+        "docs/runbooks/on-call.md",
+        "packages/observability/src/alerts.ts",
+        "packages/observability/test/runbooks.test.mjs",
+        "docs/observability.md",
+        "packages/observability/src/jobs.ts",
+        "packages/observability/test/observability.test.ts",
+        "apps/worker/test/heartbeat.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-437",
+      "authorization_ref": "SHU-437",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 2 (platform operations), card 3: a restore check that proves a restored database matches its source, with the operator's restore runbook, re-queued from SHU-104 under a fresh id after SHU-198's run ended on hold; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs Re-cut from SHU-427 as SHU-433 after SHU-424 merged by hand. Re-cut from SHU-433 as SHU-437 because its lane waited on SHU-431.",
+      "initial_build_paths": [
+        "packages/db/src/restore-check.ts",
+        "packages/db/src/restore-check-cli.ts",
+        "packages/db/test/postgres-restore-check.test.ts",
+        "packages/db/test/restore-check-mutations.mjs",
+        "docs/runbooks/restore.md",
+        "docs/runbooks/README.md",
+        "docs/recovery-inventory.md"
+      ],
+      "revision_paths": [
+        "packages/db/src/restore-check.ts",
+        "packages/db/src/restore-check-cli.ts",
+        "packages/db/test/postgres-restore-check.test.ts",
+        "packages/db/test/restore-check-mutations.mjs",
+        "docs/runbooks/restore.md",
+        "docs/runbooks/README.md",
+        "docs/recovery-inventory.md"
+      ],
+      "after": [
+        "SHU-436"
       ]
     }
   ],
