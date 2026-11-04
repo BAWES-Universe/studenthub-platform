@@ -117,11 +117,11 @@ test("real login application serves the same typed projection to HTML and JSON w
   assert.equal(response.status, 200);
   assert.match(body, /Noor Al-Sabah/);
   assert.match(body, /C00231/);
-  assert.match(body, /Open to offers/);
+  assert.match(body, /أرحّب بعروض العمل/);
   assert.doesNotMatch(body, /Other Person|registry@example|person-1|person-2|SENSITIVE-|candidate_civil_id|candidate_resume/);
   assert.deepEqual(f.reads, ["person-1"]);
   assert.match(body, /method="post"/);
-  assert.match(body, /editing isn’t enabled/);
+  assert.doesNotMatch(body, /editing isn’t enabled/);
   for (const accept of ["application/json", "*/*", "text/html;q=0, application/json"]) {
     const api = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, accept } });
     const projection = await api.json();
@@ -501,11 +501,11 @@ test("U2B_MOTHER_LINK: unconditional edit-link mutant dies at named assertion", 
   await probe(profileDocument);
   const sourceUrl = new URL("../src/web-ui.js", import.meta.url);
   const source = readFileSync(sourceUrl, "utf8");
-  const from = 'nationalityAllowsMother && !nationalityIsKuwaiti ? editLink("kuwaitiMother", "Kuwaiti mother") : ""';
+  const from = 'originChoices.countries.some(item => item.id === nationalityId && item.code !== "KW")';
   assert.equal(source.split(from).length, 2, "one mother-link mutation point");
   const mutantUrl = new URL(`./web-ui-mother-mutant-${randomUUID()}.mjs`, sourceUrl);
   try {
-    writeFileSync(mutantUrl, source.replace(from, 'true ? editLink("kuwaitiMother", "Kuwaiti mother") : ""'));
+    writeFileSync(mutantUrl, source.replace(from, 'true'));
     const mutant = await import(mutantUrl.href) as { profileDocument: typeof profileDocument };
     await assert.rejects(probe(mutant.profileDocument), { name: "AssertionError", message: /U2B_MOTHER_LINK mutant/ });
   } finally { unlinkSync(mutantUrl); }

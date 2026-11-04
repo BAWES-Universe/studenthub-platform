@@ -56,7 +56,9 @@ test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and
   const headers = { cookie: `__Host-studenthub_session=${session}`, accept: "text/html", origin: originHolder.value,
     "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded" };
   const overSnapshot = await (await fetch(`${originHolder.value}/profile`, { headers: { cookie: headers.cookie, accept: "text/html" } })).text();
-  assert.match(overSnapshot, /<dt>Language<\/dt><dd>AR<\/dd><small class="field-meta">StudentHub snapshot/);
+  assert.match(overSnapshot, /<html lang="ar" dir="rtl">/);
+  assert.match(overSnapshot, /id="field-language"[\s\S]*?<dt>اللغة<\/dt><dd><bdi[^>]*>العربية<\/bdi>/);
+  assert.match(overSnapshot, /class="p-provenance"[\s\S]*?<dt>اللغة<\/dt><dd>تم الاستيراد/);
   const preview = await fetch(`${originHolder.value}/profile/language/preview`, { method: "POST", headers, body: "language=en" });
   const review = await preview.text();
   assert.equal(preview.status, 200); assert.equal(preview.headers.get("cache-control"), "no-store");
@@ -78,8 +80,9 @@ test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and
   });
   assert.equal(rejected.status, 403); assert.match(await rejected.text(), /language wasn’t changed/);
   const shown = await (await fetch(`${originHolder.value}/profile`, { headers: { cookie: headers.cookie, accept: "text/html" } })).text();
-  assert.match(shown, /<dt>Language<\/dt><dd>EN<\/dd><small class="field-meta">Updated by you · 2026-09-15/,
-    "SHU371_SHOWN_OVER_SNAPSHOT renders written English and its write date over Arabic snapshot");
+  assert.match(shown, /id="field-language"[\s\S]*?<dt>Language<\/dt><dd><bdi[^>]*>English<\/bdi>/,
+    "SHU371_SHOWN_OVER_SNAPSHOT renders written English over Arabic snapshot");
+  assert.match(shown, /class="p-provenance"[\s\S]*?<dt>Language<\/dt><dd>Updated by you on 15 Sept 2026<\/dd>/, "SHU371_SHOWN_OVER_SNAPSHOT retains actual write date in provenance");
   assert.match(shown, /Checked once your documents are on file/);
 });
 

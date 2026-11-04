@@ -3,6 +3,7 @@ import type { BrowserResponse, LoginApplication } from "@studenthub/login-contra
 import type { ContextNavigation, NavigationResult, OrganizationAccountManagerHistoryPanel, OrganizationAccountManagerOptionsPanel, OrganizationAccountManagerPanel, OrganizationCountsPanel, OrganizationStatusHistoryPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
 import type { ProfileBrowserEdit, VerifiedProfileNotice } from "./profile-browser-edit-http.js";
+import { PROFILE_COPY, type ProfileLanguage, type ProfileCopyKey } from "./ui/profile-copy.js";
 import { profileNotice } from "./ui/profile-kit.js";
 import type { ProfileEdit } from "./profile-edit-http.js";
 import type { BankDetailsService } from "./bank-details.js";
@@ -13,7 +14,6 @@ import {
   type OwnProfileFieldName,
   type OwnProfileProjection,
   type OwnProfileReader,
-  type ProfileField,
 } from "@studenthub/profile";
 import {
   ORGANIZATION_FIELD_CONTRACT,
@@ -89,13 +89,14 @@ export function writeHtml(response: ServerResponse, status: number, html: string
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 
-export function pageDocument(title: string, content: string): string {
-  return document(title, content);
+export function pageDocument(title: string, content: string, language?: ProfileLanguage): string {
+  return document(title, content, false, language);
 }
 
-function document(title: string, content: string, workspaceHistory = false): string {
-  const rendered = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css">${workspaceHistory ? '<script src="/assets/workspace-history.js" defer></script>' : ""}</head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
-  return title === "My profile" ? rendered.replace('<span class="badge">Read-only</span>', "") : rendered;
+function document(title: string, content: string, workspaceHistory = false, language?: ProfileLanguage): string {
+  const locale = language === undefined ? 'lang="en"' : `lang="${language}" dir="${language === "ar" ? "rtl" : "ltr"}"`;
+  const skip = language === undefined ? "Skip to content" : PROFILE_COPY[language]["nav.skip"];
+  return `<!doctype html><html ${locale}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css">${workspaceHistory ? '<script src="/assets/workspace-history.js" defer></script>' : ""}</head><body><a class="skip" href="#main">${escapeHtml(skip)}</a>${content}</body></html>`;
 }
 
 // A back/forward-cache restoration may not issue a request even with no-store.
@@ -314,95 +315,70 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
   return projection as OwnProfileProjection;
 }
 
-function fieldText(field: ProfileField<unknown>, format: (value: unknown) => string = String): string {
-  if (field.state === "unavailable") return `<span class="missing" data-state="unavailable">${field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable"}</span>`;
-  return escapeHtml(format(field.value));
-}
-
-const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unknown) => string>>> = {
-  gender: (value) => ({ male: "Male", female: "Female", other: "Other" })[String(value)] ?? String(value),
-  age: (value) => `${String(value)} years`,
-  language: (value) => String(value).toUpperCase(),
-  drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
-  committed: (value) => value ? "Yes" : "No",
-  isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
-  pendingFields: (value) => Array.isArray(value) && value.length > 0
-    ? value.map((item) => String(item).replaceAll("_", " ")).join(", ") : "None",
-  civilExpired: (value) => value ? "Expired" : "Not expired",
-};
-
-function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): string {
-  const field = profile.fields[name] as ProfileField<unknown>;
-  const contract = OWN_PROFILE_FIELD_CONTRACT[name];
-  if ((name === "isProfileCompleted" || name === "pendingFields")
-    && Object.values(profile.fields).some(({ freshness }) => freshness.kind === "written_by_person")) {
-    return `<div><dt>${escapeHtml(contract.label)}</dt><dd>Checked once your documents are on file</dd><small class="field-meta">Not recorded</small></div>`;
-  }
-  const observed = field.freshness.observedAt.slice(0, 10);
-  const source = field.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`;
-  return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
-}
-
 export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
   const profile = projectionFrom(result);
-  const displayName = profile.fields.displayName;
-  const name = displayName.state === "available" ? displayName.value : undefined;
-  const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
-  const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
-  const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const loadedOriginChoices = login.profileEdit?.choices ? await login.profileEdit.choices() : { countries: [], universities: [] };
-  const originChoices = {
-    countries: Array.isArray(loadedOriginChoices?.countries) ? loadedOriginChoices.countries : [],
-    universities: Array.isArray(loadedOriginChoices?.universities) ? loadedOriginChoices.universities : [],
-  };
-  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "nationality", "university"]);
-  const editLink = (field: string, label: string) => `<a href="/profile/edit/${field}" aria-label="Edit ${escapeHtml(label)}">Edit</a>`;
-  let rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
-    const row = fieldRow(profile, field).replace("<div>", `<div id="field-${field}"${login.browserEdit ? ' tabindex="-1"' : ""}>`);
-    if (login.browserEdit && editable.has(field)) return row.replace("</div>", `${editLink(field, OWN_PROFILE_FIELD_CONTRACT[field].label)}</div>`);
-    if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
-    if (login.profileEdit && editable.has(field) && field !== "jobSearchStatus") {
-      const raw = profile.fields[field].state === "available" ? profile.fields[field].editValue ?? profile.fields[field].value : "";
-      const value = String(raw);
-      const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}>${label}</label>`).join("");
-      const control = field === "gender" ? radios([["male","Male"],["female","Female"],["other","Other"]])
-        : field === "drivingLicence" ? radios([["true","Yes"],["false","No"]])
-          : field === "nationality" || field === "university" ? `<select name="value" data-origin-field="${field}"><option value="">${field === "university" ? "None" : "Not recorded"}</option>${field === "university" ? '<option value="">Not listed</option>' : ""}${(field === "nationality" ? originChoices.countries : originChoices.universities).map(item => `<option value="${escapeHtml(item.id)}"${value === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select>${field === "university" ? "<small>Not listed records no university; ask staff to add a university.</small>" : ""}`
-          : field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">`
-              : field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
-      return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
-    }
-    return row;
-  }).join("");
-  const contacts = ([['phone','Phone number','tel',32],['handle','Profile link','text',30]] as const).map(([field,label,type,max]) => {
-    const contact = profile.fields[field];
-    const value = contact?.state === "available" ? String(contact.value) : "";
-    const form = login.browserEdit ? editLink(field, label) : login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${label}"><input type="hidden" name="field" value="${field}"><label>Change ${label}<input type="${type}" name="value" value="${escapeHtml(value)}" maxlength="${max}"></label><button class="button primary" type="submit">Review change</button></form>` : "";
-    const shown = field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}` : value;
-    return contact?.state === "available" ? `<div id="field-${field}"${login.browserEdit ? ' tabindex="-1"' : ""}><dt>${label}</dt><dd>${escapeHtml(shown)}</dd><small class="field-meta">Updated by you · ${escapeHtml(contact.freshness.observedAt.slice(0,10))}</small>${form}</div>` : form ? login.browserEdit ? `<div id="field-${field}" tabindex="-1"><dt>${label}</dt><dd>Not recorded</dd>${form}</div>` : `<div>${form}</div>` : "";
-  }).join("");
-  rows += contacts;
-  const mother = profile.fields.kuwaitiMother;
-  const motherValue = mother?.state === "available" ? String(mother.value) : "";
+  const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
+  const text = (key: ProfileCopyKey, params: Readonly<Record<string, string | number>> = {}): string => PROFILE_COPY[language][key].replace(/\{([A-Za-z]+)\}/g, (_, name: string) => String(params[name] ?? ""));
+  const copy = (key: ProfileCopyKey, params?: Readonly<Record<string, string | number>>) => escapeHtml(text(key, params));
+  type Key = OwnProfileFieldName | "phone" | "handle" | "kuwaitiMother";
+  const label = (key: Key) => text(`field.${key}`);
+  const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
+  const loaded = login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
+  const originChoices = { countries: Array.isArray(loaded?.countries) ? loaded.countries : [], universities: Array.isArray(loaded?.universities) ? loaded.universities : [] };
   const nationalityId = profile.fields.nationality.state === "available" ? profile.fields.nationality.editValue : undefined;
   const nationalityIsKuwaiti = originChoices.countries.some(item => item.id === nationalityId && item.code === "KW");
   const nationalityAllowsMother = originChoices.countries.some(item => item.id === nationalityId && item.code !== "KW");
-  const motherChoices = ([['true','Yes'],['false','No']] as const).map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${motherValue === code ? " checked" : ""}>${label}</label>`).join("");
-  const motherForm = login.browserEdit ? (nationalityAllowsMother && !nationalityIsKuwaiti ? editLink("kuwaitiMother", "Kuwaiti mother") : "") : login.profileEdit && nationalityAllowsMother && !nationalityIsKuwaiti ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother${motherChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const motherShown = mother?.state === "available" ? (mother.value ? "Yes" : "No") : "Not recorded";
-  const motherPanel = motherForm || mother ? `<div id="field-kuwaitiMother"${login.browserEdit ? ' tabindex="-1"' : ""} data-origin-field="kuwaitiMother"><dt>Kuwaiti mother</dt><dd>${motherShown}</dd><small class="field-meta">${mother?.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}` : "Not recorded"}</small>${motherForm}</div>` : "";
-  const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";
-  const workStatusChoices = ([['not_looking','Not looking right now'],['active','Actively looking for work'],['open_to_offers','Open to offers']] as const)
-    .map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${workStatusValue === code ? " checked" : ""}>${label}</label>`).join("");
-  const workStatusLabel = OWN_PROFILE_FIELD_CONTRACT.jobSearchStatus.label;
-  const workStatusControl = !login.browserEdit && login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(workStatusLabel)}"><input type="hidden" name="field" value="jobSearchStatus"><label>Change ${escapeHtml(workStatusLabel)}${workStatusChoices}</label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const workStatusNotice = profile.fields.jobSearchStatus.state === "available" ? `<p class="notice"><strong>${escapeHtml(workStatusLabel)}:</strong> ${fieldText(profile.fields.jobSearchStatus, fieldFormatters.jobSearchStatus)}</p>` : "";
-  const workStatus = workStatusNotice + workStatusControl;
-  const verifiedNoticeHtml = verifiedNotice ? profileNotice(verifiedNotice.title, verifiedNotice.message).html : "";
-  const profileFields = `${verifiedNoticeHtml}${workStatus}<dl class="profile-fields">${rows}${motherPanel}</dl>`;
-  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section id="profile-summary" class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div>${profileFields}<div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>${login.browserEdit ? "Choose Edit beside a field to update it, then Save or Cancel." : "You can view this profile, but editing isn’t enabled yet."}</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
+  if (nationalityAllowsMother && !nationalityIsKuwaiti) editable.add("kuwaitiMother");
+  const hasWrites = Object.values(profile.fields).some(field => field.freshness.kind === "written_by_person");
+  const date = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value.slice(0,10)) && Number.isFinite(Date.parse(value.slice(0,10)))
+    ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
+  const formatted = (key: Key): string => {
+    const field = profile.fields[key];
+    if ((key === "isProfileCompleted" || key === "pendingFields") && hasWrites) return text("profile.checkedLater");
+    if (!field || field.state !== "available") return text(field?.freshness.kind === "written_by_person" || !field ? "value.missing" : "value.unavailable");
+    const value = field.value;
+    if (key === "gender") return text(({male:"value.male",female:"value.female",other:"value.other"} as const)[String(value) as "male" | "female" | "other"] ?? "value.unavailable");
+    if (key === "jobSearchStatus") return text(({not_looking:"value.notLooking",active:"value.active",open_to_offers:"value.open"} as const)[String(value) as "not_looking" | "active" | "open_to_offers"] ?? "value.unavailable");
+    if (key === "drivingLicence" || key === "committed" || key === "kuwaitiMother") return text(value ? "value.yes" : "value.no");
+    if (key === "isProfileCompleted") return text(value ? "value.complete" : "value.incomplete");
+    if (key === "civilExpired") return text(value ? "value.expired" : "value.notExpired");
+    if (key === "language") return text(value === "ar" ? "value.arabic" : "value.english");
+    if (key === "age") return text("value.years", {count: String(value)});
+    if (key === "birthDate") return date(String(value));
+    if (key === "pendingFields") return Array.isArray(value) && value.length ? value.map(v => text(`pending.${v}` as ProfileCopyKey)).join(language === "ar" ? "، " : ", ") : text("value.none");
+    if (key === "phone" && /^\+965[0-9]{8}$/.test(String(value))) return `${String(value).slice(0,4)} ${String(value).slice(4,8)} ${String(value).slice(8)}`;
+    return String(value);
+  };
+  const valueHtml = (key: Key): string => {
+    const field = profile.fields[key];
+    return `<bdi class="p-value" dir="${key === "phone" || key === "handle" || key === "employeeIdentifier" ? "ltr" : "auto"}"${field?.state === "unavailable" ? ' data-state="unavailable"' : ""}>${escapeHtml(formatted(key))}</bdi>`;
+  };
+  const editLink = (field: Key, fieldLabel: string) => `<a class="p-edit" href="/profile/edit/${field}" aria-label="${copy("action.editField", {field:fieldLabel})}">${copy("action.edit")}</a>`;
+  // Keep the existing preview/confirm protocol usable when browser single-Save is absent.
+  const legacyForm = (key: Key): string => {
+    if (!login.profileEdit || !editable.has(key)) return "";
+    const field = profile.fields[key], value = field?.state === "available" ? String(field.editValue ?? field.value) : "";
+    const choices = key === "gender" ? [["male",text("value.male")],["female",text("value.female")],["other",text("value.other")]] : key === "drivingLicence" || key === "kuwaitiMother" ? [["true",text("value.yes")],["false",text("value.no")]] : key === "jobSearchStatus" ? [["not_looking",text("value.notLooking")],["active",text("value.active")],["open_to_offers",text("value.open")]] : undefined;
+    const control = choices ? `<fieldset><legend>${escapeHtml(label(key))}</legend>${choices.map(([code,name]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}>${escapeHtml(name!)}</label>`).join("")}</fieldset>`
+      : key === "nationality" || key === "university" ? `<label>${escapeHtml(label(key))}<select name="value" data-origin-field="${key}"><option value="">${copy(key === "university" ? "value.none" : "value.missing")}</option>${key === "university" ? `<option value="">${copy("value.notListed")}</option>` : ""}${(key === "nationality" ? originChoices.countries : originChoices.universities).map(item => `<option value="${escapeHtml(item.id)}"${value === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>${key === "university" ? `<small>${copy("help.university")}</small>` : ""}`
+      : `<label>${escapeHtml(label(key))}${key === "intro" ? `<textarea name="value">${escapeHtml(value)}</textarea>` : `<input type="${key === "birthDate" ? "date" : key === "phone" ? "tel" : "text"}" name="value" value="${escapeHtml(value)}"${key === "handle" ? ' maxlength="30"' : key === "phone" ? ' maxlength="32"' : ""}>`}</label>`;
+    return `<form method="post" action="/profile/edit/preview" aria-label="${copy("profile.changeField",{field:label(key)})}"><input type="hidden" name="field" value="${key}">${control}<button class="p-button" type="submit">${copy("action.review")}</button></form>`;
+  };
+  const row = (key: Key): string => `<div id="field-${key}" class="p-row" tabindex="-1"${key === "kuwaitiMother" ? ' data-origin-field="kuwaitiMother"' : ""}><dt>${escapeHtml(label(key))}</dt><dd>${valueHtml(key)}${editable.has(key) ? login.browserEdit ? `<div class="p-row-actions">${editLink(key,label(key))}</div>` : login.profileEdit ? legacyForm(key) : `<p class="p-meta">${copy("meta.readOnly")}</p>` : key === "language" && login.preferences ? `<a class="p-edit" href="#profile-language">${copy("profile.changeLanguage")}</a>` : `<p class="p-meta">${copy("meta.readOnly")}</p>`}</dd></div>`;
+  const section = (key: "work" | "personal" | "background", fields: readonly Key[], extra = "") => `<section id="section-${key}" class="p-card" aria-labelledby="${key}-heading"><h2 id="${key}-heading">${copy(`section.${key}`)}</h2>${extra}<dl class="p-fields">${fields.map(row).join("")}</dl></section>`;
+  const displayName = profile.fields.displayName, name = displayName.state === "available" ? displayName.value : text("title.fallback");
+  const initial = Array.from(name.trim())[0]?.toUpperCase() ?? "S";
+  const languageForm = login.preferences ? `<form class="p-language" method="post" action="/profile/language/preview"><label for="profile-language">${copy("profile.changeLanguage")}</label><select id="profile-language" name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select><button class="p-button" type="submit">${copy("action.review")}</button></form>` : "";
+  const provenanceKeys: Key[] = [...OWN_PROFILE_FIELD_NAMES,...(["phone","handle","kuwaitiMother"] as const).filter(key => profile.fields[key])];
+  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(label(key))}</dt><dd>${copy(field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "not_imported" ? "meta.notImported" : "meta.imported",{date:date(field.freshness.observedAt)})}</dd></div>`; }).join("")}</dl></details>`;
+  const summary = `<section id="profile-summary" class="p-card p-identity" aria-labelledby="profile-name"><div class="p-monogram" aria-hidden="true">${escapeHtml(initial)}</div><div class="p-identity-text"><p class="p-kicker">${copy("profile.account")}</p><h2 id="profile-name"><bdi dir="auto">${escapeHtml(name)}</bdi></h2>${profile.fields.arabicName.state === "available" ? `<p lang="ar"><bdi dir="auto">${escapeHtml(profile.fields.arabicName.value)}</bdi></p>` : ""}${profile.fields.objective.state === "available" ? `<p class="p-lead"><bdi dir="auto">${escapeHtml(profile.fields.objective.value)}</bdi></p>` : ""}</div><dl class="p-status">${row("jobSearchStatus")}</dl></section>`;
+  const navigation = `<nav class="p-nav" aria-label="${copy("nav.main")}"><a href="/profile" aria-current="page">${copy("nav.profile")}</a><a href="/profile/background">${copy("nav.background")}</a>${login.navigation ? `<a href="/workspace">${copy("nav.workspaces")}</a>` : ""}</nav>`;
+  const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
+  const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}</dl>${provenance}</details>`;
+  const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
+  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"])}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
+  return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }
 
 export const WEB_CSS = `
@@ -413,4 +389,7 @@ export const WEB_CSS = `
 .topbar{flex-wrap:wrap}body{overflow-wrap:anywhere}.entry-grid>*{min-width:0}
 .context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.org-card,.org-notice{margin-bottom:2rem}.directory-filters{display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-end;margin-bottom:1.5rem}.directory-filters label{display:flex;flex-direction:column;gap:.35rem;font-size:.875rem;color:var(--muted)}.directory-filters input,.directory-filters select{font:inherit;min-height:2.75rem;padding:.5rem .75rem;border:1px solid var(--border);border-radius:.6rem;background:white;color:inherit}.directory-table{overflow-x:auto;background:white;border:1px solid var(--border);border-radius:1rem}.directory-table table{width:100%;min-width:40rem;border-collapse:collapse}.directory-filters label:first-of-type{flex:1 1 18rem}.directory-table td,.directory-table thead th{white-space:nowrap}.directory-table caption{text-align:left;padding:1rem 1.25rem;font-size:.875rem;color:var(--muted)}.directory-table th,.directory-table td{text-align:left;padding:.85rem 1.25rem;border-top:1px solid var(--border);font-size:.9375rem}.directory-table thead th{font-size:.8125rem;color:var(--muted);font-weight:650}.pager{display:flex;gap:1.5rem;margin-top:1.25rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
 @media(prefers-reduced-motion:no-preference){.button,.sign-out{transition:background-color .15s ease}}
+/* Profile journey only: no selector changes the legacy workspace or landing pages. */
+.profile-ui.p-journey{min-block-size:100svh}.profile-ui .p-topbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:1.25rem;padding:1rem clamp(1rem,4vw,3rem);border-block-end:1px solid var(--p-line);background:var(--p-surface)}.profile-ui .brand{direction:ltr;unicode-bidi:isolate}.profile-ui .brand-mark{margin:0;margin-inline-end:.65rem}.profile-ui .p-header-actions,.profile-ui .p-language{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}.profile-ui .p-language label{font-size:.8125rem;flex-basis:100%;color:var(--p-muted)}.profile-ui .p-language select{min-block-size:2.75rem;padding:.5rem;border:1px solid var(--p-control-line);border-radius:var(--p-radius);background:white;font:inherit;color:inherit;max-inline-size:100%}.profile-ui .p-layout{max-inline-size:88rem;margin-inline:auto;display:grid;grid-template-columns:minmax(0,1fr)}.profile-ui .p-rail{padding:1rem;border-block-end:1px solid var(--p-line)}.profile-ui .p-nav{display:flex;flex-wrap:wrap;gap:.25rem}.profile-ui .p-nav a{display:flex;align-items:center;min-block-size:2.75rem;padding:.65rem .85rem;border-radius:var(--p-radius);text-decoration:none;font-size:.9375rem;font-weight:650}.profile-ui .p-nav a[aria-current]{background:#e8eeff;color:#1d46b8}.profile-ui .p-rail>.p-meta{display:none}.profile-ui .p-layout>.p-main{inline-size:100%;max-inline-size:64rem;padding:2rem 1rem;gap:1.5rem}.profile-ui .p-header h1{font-size:clamp(2.25rem,4vw,3.2rem);font-weight:750;letter-spacing:-.035em}.profile-ui[dir=rtl] .p-header h1,[dir=rtl] .profile-ui .p-header h1{letter-spacing:normal}.profile-ui .p-header .p-hint{font-size:1rem}.profile-ui .p-identity{display:flex;align-items:flex-start;flex-wrap:wrap;gap:1rem;border-block-start:4px solid var(--p-blue);box-shadow:0 12px 35px #182b4b06}.profile-ui .p-monogram{display:grid;place-items:center;inline-size:3.25rem;block-size:3.25rem;flex-shrink:0;border-radius:.9rem;background:#e8eeff;color:#1d46b8;font-size:1.5rem;font-weight:750}.profile-ui .p-identity-text{flex:1 1 12rem;min-inline-size:0;display:grid;gap:.5rem}.profile-ui .p-identity h2{font-size:clamp(1.6rem,3vw,2.25rem);line-height:1.3;overflow-wrap:anywhere}.profile-ui .p-kicker{font-size:.75rem;font-weight:650;color:var(--p-muted)}.profile-ui .p-lead{max-inline-size:60ch;line-height:1.7}.profile-ui .p-status{flex-basis:100%;margin:0}.profile-ui .p-status .p-row{padding-block-end:0}.profile-ui .p-status .p-value{font-weight:650}.profile-ui .p-sections{display:flex;flex-wrap:wrap;gap:.5rem .75rem}.profile-ui .p-sections a{display:inline-flex;align-items:center;min-block-size:2.75rem;padding:.5rem .75rem;text-underline-offset:.3rem;font-size:.875rem;font-weight:650;color:var(--p-muted)}.profile-ui .p-card>h2{padding-block-end:.25rem}.profile-ui .p-card>.p-hint{margin-block-start:.5rem;line-height:1.7}.profile-ui .p-row{scroll-margin-block-start:1rem}.profile-ui .p-row:target{outline:2px solid var(--p-blue);outline-offset:4px;border-radius:.25rem}.profile-ui .p-row .p-value{display:block;max-inline-size:65ch;line-height:1.7}.profile-ui .p-row-actions{margin-block-start:.5rem}.profile-ui .p-edit{padding:.4rem .8rem;min-inline-size:4.5rem}.profile-ui .p-background-link{display:inline-flex;gap:1rem;align-items:center;min-block-size:2.75rem;margin-block-start:.75rem;color:var(--p-blue);font-weight:650;text-underline-offset:.3rem}.profile-ui .p-details>summary{font-size:1.25rem;font-weight:650;cursor:pointer;min-block-size:2.75rem;padding-block:.35rem}.profile-ui .p-provenance{margin-block-start:1rem;border-block-start:1px solid var(--p-line);padding-block-start:1rem;color:var(--p-muted);font-size:.875rem}.profile-ui .p-provenance summary{min-block-size:2.75rem;cursor:pointer;padding-block:.5rem;font-weight:650}.profile-ui .p-provenance dl{margin:0}.profile-ui .p-provenance dl>div{padding-block:.5rem}.profile-ui .p-provenance dt,.profile-ui .p-provenance dd{font-size:.8125rem}.profile-ui .p-guide{display:grid;gap:.75rem;padding:0 .25rem;color:var(--p-muted);font-size:.875rem;line-height:1.7;max-inline-size:70ch}.profile-ui .p-footer{padding-block-start:1.25rem;border-block-start:1px solid var(--p-line);font-size:.8125rem;color:var(--p-muted)}.profile-ui :is(a,button,input,select,textarea,summary):focus-visible{outline:3px solid var(--p-focus);outline-offset:4px}.profile-ui .p-row form{display:grid;gap:.75rem;margin-block-start:.75rem}.profile-ui .p-row :is(input:not([type=radio]),select,textarea){font:inherit;max-inline-size:100%;inline-size:100%;min-block-size:2.75rem;border:1px solid var(--p-control-line);border-radius:var(--p-radius);padding:.625rem}.profile-ui .p-row fieldset{border:0;padding:0;margin:0}.profile-ui .p-row fieldset label{display:flex;gap:.75rem;min-block-size:2.75rem;align-items:center}.profile-ui .p-row input[type=radio]{inline-size:1.25rem;block-size:1.25rem}
+@media(min-width:64rem){.profile-ui .p-layout{grid-template-columns:14rem minmax(0,1fr)}.profile-ui .p-rail{border-block-end:0;border-inline-end:1px solid var(--p-line);padding:2.5rem 1rem;display:flex;flex-direction:column;gap:3rem}.profile-ui .p-nav{display:grid;gap:.25rem}.profile-ui .p-rail>.p-meta{display:block;margin-block-start:auto}.profile-ui .p-layout>.p-main{padding:3rem clamp(1.5rem,4vw,4rem)}.profile-ui .p-identity{padding:2rem}.profile-ui .p-provenance dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem 1.5rem}}
 `;

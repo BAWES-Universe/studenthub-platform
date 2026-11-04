@@ -111,10 +111,14 @@ test("SHU395_PG_S1 Postgres writes and clears override a populated snapshot on M
     return (await profileDocument({ status: 200, body: found.profile }, { profileEdit: {} } as BrowserLoginApplication)).html;
   };
   await write("Postgres objective");
-  assert.match(await render(), /<dt>Objective<\/dt><dd>Postgres objective<\/dd><small class="field-meta">Updated by you/);
+  const written = await render();
+  assert.match(written, /<html lang="ar" dir="rtl">/);
+  assert.match(written, /id="field-objective"[^]*?<dt>الهدف المهني<\/dt><dd><bdi[^>]*>Postgres objective<\/bdi>/);
+  assert.match(written, /class="p-provenance"[^]*?<dt>الهدف المهني<\/dt><dd>آخر تحديث منك في/);
   await write("");
   const cleared = await render();
-  assert.match(cleared, /<dt>Objective<\/dt><dd><span class="missing"[^>]*>Not recorded<\/span><\/dd><small class="field-meta">Updated by you/);
+  assert.match(cleared, /id="field-objective"[^]*?<dt>الهدف المهني<\/dt><dd><bdi[^>]*data-state="unavailable">غير مسجل<\/bdi>/);
+  assert.match(cleared, /class="p-provenance"[^]*?<dt>الهدف المهني<\/dt><dd>آخر تحديث منك في/);
   assert.doesNotMatch(cleared, /Build welcoming customer experiences/);
 });
 
@@ -214,8 +218,8 @@ test("SHU415_CATALOGUE choices contain only active countries and universities", 
   assert.equal(found.kind, "found");
   if (found.kind === "found") {
     const html = (await profileDocument({ status: 200, body: found.profile }, {} as BrowserLoginApplication)).html;
-    assert.match(html, new RegExp(`<dt>Nationality</dt><dd>${items[0][2]}</dd>`));
-    assert.match(html, new RegExp(`<dt>University</dt><dd>${items[1][2]}</dd>`));
+    assert.match(html, new RegExp(`id="field-nationality"[^]*?<dt>Nationality</dt><dd><bdi[^>]*>${items[0][2]}</bdi>`));
+    assert.match(html, new RegExp(`id="field-university"[^]*?<dt>University</dt><dd><bdi[^>]*>${items[1][2]}</bdi>`));
     assert.doesNotMatch(html, new RegExp(`${items[0][0]}|${items[1][0]}`));
   }
 });
