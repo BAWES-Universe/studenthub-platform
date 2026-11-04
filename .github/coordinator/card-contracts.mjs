@@ -4827,6 +4827,20 @@ for (const [brief, id] of [[SHU436_BRIEF, "SHU-436"], [SHU437_BRIEF, "SHU-437"]]
 }
 if (!SHU437_BRIEF.includes("(the box half of SHU-104;")) throw new Error("SHU437_BRIEF must keep its parent story");
 
+// SHU-432 waited on SHU-196, which has landed, so the queue can no longer list
+// SHU-196 and an installed lane cannot be edited. SHU-440 is the same card
+// waiting on SHU-436 instead, since both change packages/observability/src/jobs.ts
+// and apps/worker/test/heartbeat.test.ts, and SHU-441 re-cuts the notification
+// card that waited on SHU-432.
+const RECUT_432 = Object.freeze({ "SHU-432": "SHU-440", "SHU-434": "SHU-441" });
+const recut432 = (text) => text.replace(/\bSHU-(432|434)\b/g, (id) => RECUT_432[id]);
+const recutAcceptance432 = (from, reason, text) => `${recut432(text)} ${RECUT_432[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const SHU440_BRIEF = recut432(SHU432_BRIEF);
+const SHU441_BRIEF = recut432(SHU434_BRIEF);
+for (const [brief, id] of [[SHU440_BRIEF, "SHU-440"], [SHU441_BRIEF, "SHU-441"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -5536,6 +5550,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU104_PATHS,
     acceptance: recutAcceptance431("SHU-433", "because its lane waited on SHU-431", recutAcceptance425("SHU-427", recutAcceptance("SHU-104", SHU104_ACCEPTANCE))),
     brief: SHU437_BRIEF,
+  }),
+  "SHU-440": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE))),
+    brief: SHU440_BRIEF,
+  }),
+  "SHU-441": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))),
+    brief: SHU441_BRIEF,
   }),
 });
 
