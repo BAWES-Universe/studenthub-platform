@@ -187,7 +187,13 @@ export const runDropIn = () => "[Service]\nEnvironment=ENABLE_DISPATCH=true\n";
 export const targetDropIn = (sha) => `[Service]\nEnvironment=DISPATCH_TARGET_SHA=${sha}\n`;
 export const CARD_RUN_LIMITS = Object.freeze({
   runMs: 5 * 60 * 60 * 1000,
-  tickIntervalMs: 60 * 1000,
+  // Every tick reads the whole Linear board (about 80,000 complexity points),
+  // and Linear allows one key 3,000,000 points an hour. Two workers ticking
+  // every minute spent that in about 18 minutes and then sat in a rate-limit
+  // hold for the rest of the hour (2026-11-04). Every five minutes keeps two
+  // workers near 2,000,000 an hour; a stage takes tens of minutes, so a tick
+  // that lands up to five minutes later costs little.
+  tickIntervalMs: 5 * 60 * 1000,
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
