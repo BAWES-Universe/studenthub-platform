@@ -71,6 +71,8 @@ export function parseCompanyDirectoryQuery(query: URLSearchParams): Parsed {
   return { ok: true, orgId, role, filters: Object.freeze(filters), page: page === null ? 1 : Number(page) };
 }
 
+export function parseCompanyDirectoryExportQuery(query:URLSearchParams){const parsed=parseCompanyDirectoryQuery(query);if(!parsed.ok||query.has("page")||(parsed.role!=="staff"&&parsed.role!=="admin"))return null;return Object.freeze({orgId:parsed.orgId,role:parsed.role,...parsed.filters}) as import("../../../packages/exports/src/company-directory-export.js").CompanyDirectoryExportFilters;}
+
 export function createCompanyDirectory(
   sessions: Pick<SessionStore, "get">,
   store: AuthzStore,
