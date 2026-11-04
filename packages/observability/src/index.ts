@@ -4,6 +4,7 @@ import { Worker } from 'node:worker_threads';
 import { sanitizeEvent, type Component, type Journey, type Outcome, type Fault } from './schema.js';
 export * from './schema.js';
 export * from './alerts.js';
+export * from './jobs.js';
 const context = new AsyncLocalStorage<Span>();
 const minted = new WeakSet<object>();
 export interface Span { readonly traceId: string; readonly spanId: string; readonly parentSpanId?: string }
