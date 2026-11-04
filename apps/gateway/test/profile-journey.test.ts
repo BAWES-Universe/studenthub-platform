@@ -60,6 +60,15 @@ test("U3A_JOURNEY: coherent grouped profile, one work status, full current edita
 test("U3A_COPY: truthful current profile and localized ready/empty strings",async()=>{
   for(const language of ["en","ar"] as const)for(const empty of [false,true]){const {html}=await render(language,empty);truthful(html);shell(html,language);assert.ok(html.includes(PROFILE_COPY[language]["value.missing"]));if(language==="ar")assert.doesNotMatch(html,/>\s*(?:My profile|Edit|Save|Cancel|Personal details|About my work|Sources and update history|Not recorded|Unavailable|Read-only|Looking for work|Change language)\s*</,"U3A_COPY Arabic journey has no English UI labels");}
 });
+test("U3A_PROVENANCE: never-imported fields disclose no invented import date in either language",async()=>{
+  for(const language of ["en","ar"] as const){
+    const profile=fixture(language,true);
+    const fields={...profile.fields,objective:{...profile.fields.objective,freshness:{kind:"not_imported" as const,observedAt:""}}};
+    const {html}=await profileDocument({status:200,body:{...profile,fields}},login);
+    assert.ok(html.includes(`<dt>${PROFILE_COPY[language]["field.objective"]}</dt><dd>${PROFILE_COPY[language]["meta.notImported"]}</dd>`),"U3A_PROVENANCE never imported is explicit");
+    assert.ok(!html.includes(PROFILE_COPY[language]["meta.imported"].replace("{date}","")+"<"),"U3A_PROVENANCE no empty imported date");
+  }
+});
 test("U3A_JOURNEY: person markup is escaped, supplementary characters and long text survive",async()=>{
   const p=fixture("ar");const attack='<script>alert("x")</script>😀';const fields={...p.fields,displayName:{...p.fields.displayName,state:"available",value:attack}};
   const {html}=await profileDocument({status:200,body:{...p,fields}},login);assert.doesNotMatch(html,/<script>/);assert.match(html,/&lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;😀/);assert.ok(html.includes("A long readable introduction ".repeat(80)));
