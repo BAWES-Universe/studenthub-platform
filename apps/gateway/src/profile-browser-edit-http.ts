@@ -12,6 +12,7 @@ export interface BrowserProfilePrepared {
   readonly shownFallback: null | { readonly sourceField: string; readonly value: string | boolean; readonly evidence: NonNullable<BrowserBaseline["shownFallback"]> };
 }
 export interface BrowserProfileSession {
+  canEdit?(field: PersonSelfEditField): Promise<boolean>;
   validate?(field: PersonSelfEditField, canonicalValue: string): Promise<"choice" | "contact_unavailable" | null>;
   prepare(field: PersonSelfEditField): Promise<BrowserProfilePrepared>;
   save(input: { token: BrowserWriteToken; canonicalValue: string }): Promise<BrowserWriteOutcome>;
@@ -71,7 +72,7 @@ function displayCurrent(field: PersonSelfEditField, value: string, choices?: Ori
   if (field === "jobSearchStatus") return ({not_looking:"Not looking right now",active:"Actively looking for work",open_to_offers:"Open to offers"} as Record<string,string>)[value] ?? "Current selection unavailable";
   return value;
 }
-function form(field: PersonSelfEditField, token: BrowserWriteToken, value: string, options: { status?: number; error?: string; message?: string; current?: string; recovery?: boolean; recoveryProof?: string; choices?: OriginChoices } = {}): ProfileBrowserResult {
+function form(field: PersonSelfEditField, token: BrowserWriteToken, value: string, options: { status?: number; error?: string; message?: string; current?: string; currentImportedLabel?: string; recovery?: boolean; recoveryProof?: string; choices?: OriginChoices } = {}): ProfileBrowserResult {
   const error = options.error, safeValue = field === "phone" && (options.recovery || error) ? "" : value;
   const summary = error ? (["nationality","university","kuwaitiMother"].includes(field) ? `<section tabindex="-1" id="profile-error-summary"><h2>Correct this field</h2><a href="#field-${field}">${esc(error)}</a></section>` : profileErrorSummary("Correct this field", [{key:field as ProfileFieldKey,message:error}]).html) : "";
   return {status:options.status ?? 200,title:`Edit ${LABELS[field]}`,html:`<main id="main" class="profile-ui"><h1>Edit ${LABELS[field]}</h1>${summary.replace('tabindex="-1"', 'tabindex="-1" autofocus')}${options.message ? `<p>${esc(options.message)}</p>` : ""}${options.current !== undefined && field !== "phone" ? `<p>Current value: <bdi>${esc(options.current || "Not recorded")}</bdi></p><p>Your draft</p>` : ""}${field === "phone" && (options.recovery || error) ? "<p>Enter your phone number again. Your previous entry is not shown.</p>" : ""}<form id="profile-edit-form" method="post" action="/profile/edit/${field}/save">${hidden("token",JSON.stringify(token))}${options.recoveryProof ? hidden("recovery",options.recoveryProof) : ""}${control(field,safeValue,!!options.recovery,error,options.choices)}<button type="submit">Save</button><a href="/profile">Cancel</a></form></main>`};
@@ -95,7 +96,7 @@ export function createProfileBrowserEdit(ports: {
   const render = async (session: string | undefined, field: PersonSelfEditField, token: BrowserWriteToken, value: string, options: Parameters<typeof form>[3] = {}) => {
     const choices = await choiceList(field), live = await authorized(session);
     if (!live || live.actorRef !== token.principalRef) return fail(401,"Sign in again to continue safely.");
-    return form(field,token,value,{...options,choices,...(options.current !== undefined ? {current:displayCurrent(field,options.current,choices)} : {})});
+    return form(field,token,value,{...options,choices,...(options.current !== undefined ? {current:displayCurrent(field,options.current,choices)} : {}),...(options.currentImportedLabel !== undefined ? {current:`${options.currentImportedLabel} (imported)`} : {})});
   };
   const recover = async (session: string | undefined, field: PersonSelfEditField, token: BrowserWriteToken, value: string, message: string, retry: boolean, proof: string) => {
     const live = await authorized(session);
@@ -121,6 +122,7 @@ export function createProfileBrowserEdit(ports: {
   return {
     async edit(session, field) {
       const auth = await authorized(session); if (!auth) return fail(401,"Sign in again to continue safely.");
+      if (field === "kuwaitiMother" && await auth.store.canEdit?.(field) !== true) return fail(403,"This question applies only when your nationality is not Kuwaiti.");
       let prepared: BrowserProfilePrepared;
       try { prepared = await auth.store.prepare(field); } catch (error) { if (error instanceof Error && error.message === "not_authorized") return fail(401,"Sign in again to continue safely."); throw error; }
       return render(session,field,prepared.token,visible(prepared,field),{...((field === "nationality" || field === "university") && prepared.persisted.kind === "null" && prepared.persisted.writtenAt === null && prepared.shownFallback ? {message:`Imported display value: ${String(prepared.shownFallback.value)}. Choose an available option to save a selection.`} : {})});
@@ -169,7 +171,7 @@ export function createProfileBrowserEdit(ports: {
       if (outcome.status === "recovery_unavailable") return fail(409,"Save recovery is unavailable. Review your current profile before editing again.");
       let fresh: BrowserProfilePrepared;
       try { fresh = await auth.store.prepare(field); } catch (error) { if (error instanceof Error && error.message === "not_authorized") return fail(401,"Sign in again to continue safely."); throw error; }
-      return render(session,field,fresh.token,body.value!,{status:409,recovery:true,current:visible(fresh,field),message:outcome.status === "state_changed" ? "This value changed since you opened the form. Review the current value and your draft before saving." : outcome.status === "expired" ? "This form expired. Review the current value before saving your draft." : "This save attempt contains a different change. Review your draft before saving again."});
+      return render(session,field,fresh.token,body.value!,{status:409,recovery:true,current:visible(fresh,field),currentImportedLabel:(field === "nationality" || field === "university") && fresh.persisted.kind === "null" && fresh.persisted.writtenAt === null && fresh.shownFallback ? String(fresh.shownFallback.value) : undefined,message:outcome.status === "state_changed" ? "This value changed since you opened the form. Review the current value and your draft before saving." : outcome.status === "expired" ? "This form expired. Review the current value before saving your draft." : "This save attempt contains a different change. Review your draft before saving again."});
     },
     async notice(session, header) {
       const encoded = cookie(header,NOTICE); if (!encoded) return (header ?? "").split(";").some(part => part.trim().startsWith(`${NOTICE}=`)) ? {clearCookie} : {};

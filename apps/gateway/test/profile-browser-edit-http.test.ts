@@ -17,6 +17,7 @@ function fixture() {
   let outcome:BrowserWriteOutcome["status"]="committed",clockTime=NOW.getTime();
   const receipts=new Map<string,Receipt>(), calls:{token:BrowserWriteToken;canonicalValue:string}[]=[];
   const store:BrowserProfileSession={
+    async canEdit() {return true;},
     async prepare(field) {prepares++;if(!authorized)throw Error("revoked");return {token:tokens.issue({principalRef:ACTOR,personRef:PERSON,field,normalizationVersion:"v1"},browserBaselineDigest({persisted,shownFallback:fallback?.evidence??null}),NOW),persisted,shownFallback:fallback};},
     async save(input) {saves++;calls.push(input);if(rollback)throw new PersonProfileBrowserRetryableError();if(outcome!=="committed"&&outcome!=="already_committed")return {status:outcome};
       const receipt:Receipt={contractVersion:"1.0.0",receiptRef:"c".repeat(64),principalRef:ACTOR,personRef:PERSON,fields:[input.token.field],changeSetDigest:browserChangeSetDigest(input.token,input.canonicalValue),committedAt:NOW.toISOString()};
@@ -84,6 +85,16 @@ test("U2B_RADIO omitted choices get linked correction without saving or repairin
     const incompleteRetry=await x.service.submit(S,field,{token:JSON.stringify(token),recovery:"invalid-proof"},"save");assert.doesNotMatch(incompleteRetry.html,/id="profile-error-summary"/);assert.equal(x.saves,0);
   }
 });
+test("U2B_MOTHER_ELIGIBILITY direct GET refuses Kuwaiti or missing nationality before issuing a token",async()=>{
+  for(const nationality of ["KW",null,"BH"]){const x=fixture();x.store.canEdit=async field=>field!=="kuwaitiMother"||nationality==="BH";const r=await request(x,{method:"GET",path:"/profile/edit/kuwaitiMother"});
+    if(nationality==="BH"){assert.equal(r.status,200);assert.match(r.html,/name="token"/);assert.equal(x.prepares,1);}else{assert.equal(r.status,403,"U2B_MOTHER_ELIGIBILITY refusal");assert.match(r.html,/This question applies only when your nationality is not Kuwaiti/);assert.doesNotMatch(r.html,/name="token"/);assert.equal(x.prepares,0,"U2B_MOTHER_ELIGIBILITY no prepare");}}
+});
+test("U2B_IMPORTED_CONFLICT current imported reference label is display-only and explicit clear hides it",async()=>{
+  for(const field of ["nationality","university"] as const){const x=fixture(),token=await open(x,field),draft="11111111-1111-4111-8111-111111111111";x.outcome="state_changed";x.persisted={kind:"null",writtenAt:null};x.fallback={sourceField:field,value:"Imported <label>",evidence:{sourceRef:"e".repeat(64),valueDigest:"f".repeat(64),revision:"2"}};
+    const r=await x.service.submit(S,field,body(token,draft),"save");assert.match(r.html,/Current value: <bdi>Imported &lt;label&gt; \(imported\)<\/bdi>/,"U2B_IMPORTED_CONFLICT imported display");assert.equal(x.calls[0]!.canonicalValue,draft);assert.doesNotMatch(r.html,/value="Imported/);
+    x.persisted={kind:"null",writtenAt:NOW.toISOString()};const cleared=await x.service.submit(S,field,body(token,draft),"save");assert.match(cleared.html,/Current value: <bdi>Not recorded<\/bdi>/);assert.doesNotMatch(cleared.html,/Imported &lt;label&gt;/);assert.equal(x.calls[1]!.canonicalValue,draft);
+  }
+});
 test("U2B_CONFLICT_LABELS current choices show labels while submitted draft remains canonical",async()=>{
   const country="11111111-1111-4111-8111-111111111111",unknown="33333333-3333-4333-8333-333333333333";
   const cases:readonly [PersonSelfEditField,string,string,string][]=[
@@ -135,6 +146,8 @@ if (process.env.U2B_MUTATIONS === "1") {
   test("U2B_MUTANTS each acceptance guard kills its named mutant",async()=>{
     const target=new URL("../src/profile-browser-edit-http.js",import.meta.url),suite=fileURLToPath(import.meta.url),original=await readFile(target,"utf8");
     const mutations=[
+      ["U2B_MOTHER_ELIGIBILITY",'field === "kuwaitiMother" && await auth.store.canEdit?.(field) !== true',"false"],
+      ["U2B_IMPORTED_CONFLICT","options.currentImportedLabel !== undefined","false"],
       ["U2B_RADIO","RADIO_FIELDS.includes(field)","false"],
       ["U2B_CONFLICT_LABELS","current: displayCurrent(field, options.current, choices)","current: options.current"],
       ["U2B_SAVE","canonicalValue: validation.value","canonicalValue: body.value"],

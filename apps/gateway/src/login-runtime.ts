@@ -331,12 +331,24 @@ export function createRuntimeLoginFromEnv(
             if (!session) return null;
             const principalId = await readLiveLoginSessionPerson(browserSessionPool, session);
             if (!principalId || !await authzStore.getPrincipal(principalId)) return null;
+            const canEdit = async (field: string): Promise<boolean> => {
+              if (field !== "kuwaitiMother") return true;
+              const own = await profiles.readOwn({ requesterPrincipalId: principalId, targetPersonId: principalId });
+              if (own.kind !== "found" || own.profile.fields.nationality.state !== "available") return false;
+              const nationalityId = own.profile.fields.nationality.editValue;
+              const { countries } = await personProfiles.readOriginChoices();
+              return countries.some(country => country.id === nationalityId && country.code !== "KW") &&
+                !countries.some(country => country.id === nationalityId && country.code === "KW") &&
+                await personProfiles.originValueAvailable(principalId, "kuwaitiMother", "true");
+            };
             return { actorRef: safeWritePrincipalRef(principalId), store: { ...personProfiles.forBrowserSession({
               principalId, sessionToken: session, tokens: browserTokens,
               normalizationVersion: browserNormalizationVersion,
               sessionLiveness: { read: readLiveLoginSessionPerson }, importedFallback,
             }),
+              canEdit,
               async validate(field, canonicalValue) {
+                if (field === "kuwaitiMother" && !await canEdit(field)) return "choice";
                 if (field === "phone" || field === "handle") return canonicalValue !== "" &&
                   !await personProfiles.contactValueAvailable(principalId, field, canonicalValue) ? "contact_unavailable" : null;
                 if (field === "nationality" || field === "university" || field === "kuwaitiMother") return await personProfiles.originValueAvailable(principalId, field, canonicalValue) ? null : "choice";

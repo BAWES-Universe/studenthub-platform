@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import pg from "pg";
+import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
@@ -14,7 +16,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
@@ -26,6 +28,7 @@ const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESS
 
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];
+  readonly nationalityId?: string | null;
 } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
@@ -52,6 +55,9 @@ async function fixture(t: TestContext, options: {
       ],
       rows,
     }),
+    ...(Object.hasOwn(options, "nationalityId") ? { preferences: { async readOwnPreferences() {
+      return { language: "en", updatedAt: "2026-09-13T00:00:00.000Z", nationality: { value: options.nationalityId ? "Country" : null, updatedAt: "2026-09-13T00:00:00.000Z", ...(options.nationalityId ? { editValue: options.nationalityId } : {}) } };
+    } } } : {}),
     today: () => "2026-09-13",
   });
   const profiles = {
@@ -60,7 +66,11 @@ async function fixture(t: TestContext, options: {
       return repository.readOwn(request);
     },
   };
-  const login: BrowserLoginApplication = { ...rig.app, web: {
+  const login: BrowserLoginApplication = { ...rig.app,
+    ...(Object.hasOwn(options, "nationalityId") ? { profileEdit: {
+      async preview() { throw new Error("unexpected preview"); }, async confirm() { throw new Error("unexpected confirm"); }, async receipt() { throw new Error("unexpected receipt"); },
+      async choices() { return { countries: [{ id: "11111111-1111-4111-8111-111111111111", name: "Kuwait", code: "KW" }, { id: "22222222-2222-4222-8222-222222222222", name: "Other country", code: "JO" }], universities: [] }; },
+    } } : {}), web: {
     origin: ORIGIN, returnTo: rig.config.allowedReturnUrls[1],
     profiles,
   } };
@@ -398,7 +408,7 @@ test("SHU357_MY_COMPANIES_SIGN_IN distinguishes an expired session from an unava
 
 
 test("U2B_NOTICE_SEAM: verified notices are escaped, cleared and linked field edits replace only browser forms", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { nationalityId: "22222222-2222-4222-8222-222222222222" });
   let noticeReads = 0;
   Object.assign(f.login, { browserEdit: {
     async edit() { return { status: 200, title: "Edit", html: "<main>Edit seam</main>" }; },
@@ -463,4 +473,40 @@ test("U2B_LIVENESS: browser runtime profile reads never run session housekeeping
   queries.length = 0;
   await runtime.application.logout(SESSION);
   assert.match(queries[0]!, /^DELETE FROM login_sessions/, "logout still deletes the session");
+});
+
+
+test("U2B_MOTHER_LINK: only a known non-Kuwaiti nationality exposes the mother edit", async (t) => {
+  for (const [nationalityId, eligible] of [["11111111-1111-4111-8111-111111111111", false], [null, false], ["22222222-2222-4222-8222-222222222222", true]] as const) {
+    const f = await fixture(t, { nationalityId });
+    Object.assign(f.login, { browserEdit: { async notice() { return {}; } } });
+    const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.equal(html.includes('href="/profile/edit/kuwaitiMother"'), eligible, "U2B_MOTHER_LINK eligibility");
+    assert.ok(html.includes('href="/profile/edit/nationality"'));
+  }
+});
+
+test("U2B_MOTHER_LINK: unconditional edit-link mutant dies at named assertion", async (t) => {
+  const f = await fixture(t, { nationalityId: null });
+  Object.assign(f.login, { browserEdit: { async notice() { return {}; } } });
+  const projection = await f.profiles.readOwn({ requesterPrincipalId: "person-1", targetPersonId: "person-1" });
+  assert.equal(projection.kind, "found");
+  if (projection.kind !== "found") throw new Error("fixture unavailable");
+  const probe = async (render: typeof profileDocument) => {
+    const page = await render({ status: 200, body: projection.profile }, f.login);
+    assert.equal(page.html.includes('href="/profile/edit/kuwaitiMother"'), false, "U2B_MOTHER_LINK mutant");
+  };
+  await probe(profileDocument);
+  const sourceUrl = new URL("../src/web-ui.js", import.meta.url);
+  const source = readFileSync(sourceUrl, "utf8");
+  const from = 'nationalityAllowsMother && !nationalityIsKuwaiti ? editLink("kuwaitiMother", "Kuwaiti mother") : ""';
+  assert.equal(source.split(from).length, 2, "one mother-link mutation point");
+  const mutantUrl = new URL(`./web-ui-mother-mutant-${randomUUID()}.mjs`, sourceUrl);
+  try {
+    writeFileSync(mutantUrl, source.replace(from, 'true ? editLink("kuwaitiMother", "Kuwaiti mother") : ""'));
+    const mutant = await import(mutantUrl.href) as { profileDocument: typeof profileDocument };
+    await assert.rejects(probe(mutant.profileDocument), { name: "AssertionError", message: /U2B_MOTHER_LINK mutant/ });
+  } finally { unlinkSync(mutantUrl); }
 });
