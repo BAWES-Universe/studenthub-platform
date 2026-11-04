@@ -341,7 +341,10 @@ export function createRuntimeLoginFromEnv(
                 !countries.some(country => country.id === nationalityId && country.code === "KW") &&
                 await personProfiles.originValueAvailable(principalId, "kuwaitiMother", "true");
             };
-            return { actorRef: safeWritePrincipalRef(principalId), store: { ...personProfiles.forBrowserSession({
+            const ownProfile = await profiles.readOwn({ requesterPrincipalId: principalId, targetPersonId: principalId });
+            const language = ownProfile.kind === "found" && ownProfile.profile.fields.language.state === "available"
+              && ownProfile.profile.fields.language.value === "ar" ? "ar" : "en";
+            return { actorRef: safeWritePrincipalRef(principalId), language, store: { ...personProfiles.forBrowserSession({
               principalId, sessionToken: session, tokens: browserTokens,
               normalizationVersion: browserNormalizationVersion,
               sessionLiveness: { read: readLiveLoginSessionPerson }, importedFallback,
