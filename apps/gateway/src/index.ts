@@ -197,7 +197,7 @@ export function createGatewayServer(
       })) return;
     if (await handleProfileEdit(request, response, login?.profileEdit, login?.web?.origin)) return;
     if (await handleProfileBrowserEdit(request, response, login?.browserEdit, login?.web?.origin,
-      (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)))) return;
+      (status, title, body, language) => writeHtml(response, status, pageDocument(title, body, language)))) return;
     if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
       (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
       async (sessionId) => {
@@ -238,7 +238,7 @@ export function createGatewayServer(
         "content-type": "text/css; charset=utf-8", "cache-control": "no-cache",
         "x-content-type-options": "nosniff",
       });
-      response.end(WEB_CSS + PROFILE_RECORDS_CSS);
+      response.end(WEB_CSS + PROFILE_RECORDS_CSS + (await import("./ui/profile-kit.js")).PROFILE_KIT_CSS);
       return;
     }
     if (request.method === "GET" && request.url === "/assets/workspace-history.js") {

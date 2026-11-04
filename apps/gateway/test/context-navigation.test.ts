@@ -133,8 +133,10 @@ test("workspace lists only this session's granted contexts and never defaults to
   const profile = await f.get("/profile", { accept: "text/html" });
   const profileHtml = await profile.text();
   assert.match(profileHtml, /href="\/workspace"/);
-  assert.match(profileHtml, /Approved imported snapshot/);
-  assert.match(profileHtml, /StudentHub snapshot/);
+  assert.match(profileHtml, /id="profile-summary"[\s\S]*?id="profile-name"/);
+  assert.match(profileHtml, /id="field-displayName"/);
+  assert.doesNotMatch(profileHtml, /Approved imported snapshot/);
+  assert.match(profileHtml, /class="p-provenance"[\s\S]*?تم الاستيراد في/);
   assert.doesNotMatch(profileHtml, /one@example.invalid|Email address|StudentHub account ID/);
 });
 

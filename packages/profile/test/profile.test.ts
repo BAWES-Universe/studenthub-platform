@@ -333,10 +333,15 @@ test("PROFILE-DEFAULT-HTML unconfigured adapter renders 200 with all 19 fields u
   const html = await response.text();
   assert.match(response.headers.get("content-type")!, /^text\/html/);
   assert.equal((html.match(/data-state="unavailable"/g) ?? []).length, 19);
-  assert.equal((html.match(/<dt>/g) ?? []).length, 19);
-  for (const contract of Object.values(OWN_PROFILE_FIELD_CONTRACT)) assert.ok(html.includes(`<dt>${contract.label}</dt>`));
+  for (const key of Object.keys(OWN_PROFILE_FIELD_CONTRACT)) {
+    assert.equal((html.match(new RegExp(`id="field-${key}"`, "g")) ?? []).length, 1, `PROFILE-DEFAULT-HTML one row for ${key}`);
+    const row = new RegExp(`id="field-${key}"[^]*?</div>`).exec(html)?.[0];
+    assert.ok(row, `PROFILE-DEFAULT-HTML row ${key}`);
+    assert.match(row, /<dt>[^<]+<\/dt><dd><bdi[^>]*data-state="unavailable"/, `PROFILE-DEFAULT-HTML unavailable ${key}`);
+  }
   assert.doesNotMatch(html, /Read-only/);
-  assert.match(html, /editing isn’t enabled/);
+  assert.doesNotMatch(html, /editing isn’t enabled/);
+  assert.match(html, /This detail cannot be edited here yet/);
   assert.doesNotMatch(html, /Registry must not win|registry@example|Synthetic|noor@example|This profile isn’t available/);
   assert.equal(response.headers.get("cache-control"), "no-store");
 });
