@@ -42,6 +42,8 @@ export interface AvailableProfileField<T> {
   readonly value: T;
   readonly provenance: FieldProvenance;
   readonly freshness: FieldFreshness;
+  /** Stable stored choice id used only to pre-select an edit control. */
+  readonly editValue?: string;
 }
 
 export interface UnavailableProfileField {
@@ -78,6 +80,7 @@ export interface OwnProfileFields {
 export interface OwnProfileContactFields {
   readonly phone?: ProfileField<string>;
   readonly handle?: ProfileField<string>;
+  readonly kuwaitiMother?: ProfileField<boolean>;
 }
 
 export type OwnProfileFieldName = keyof OwnProfileFields;

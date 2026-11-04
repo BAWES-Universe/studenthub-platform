@@ -5,12 +5,13 @@ import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./safe-write-store.js";
 
-export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle"] as const;
+export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university", "kuwaitiMother"] as const;
 export type PersonProfileField = (typeof PERSON_PROFILE_FIELDS)[number];
 const COLUMNS: Record<PersonProfileField, string> = {
   displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time",
   gender: "gender", birthDate: "birth_date", drivingLicence: "driving_licence", jobSearchStatus: "job_search_status",
   phone: "phone", handle: "profile_handle",
+  nationality: "nationality_id", university: "university_id", kuwaitiMother: "kuwaiti_mother",
 };
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
@@ -32,11 +33,32 @@ export class PostgresPersonProfileStore {
     return rows[0]?.available === true;
   }
 
+  async originValueAvailable(principalId: string, field: "nationality" | "university" | "kuwaitiMother", value: string): Promise<boolean> {
+    if (field === "university" && value === "") return true;
+    if (field === "kuwaitiMother") {
+      if (value !== "" && value !== "true" && value !== "false") return false;
+      const { rows } = await this.#pool.query(`SELECT NOT EXISTS (SELECT 1 FROM person_profiles pp JOIN catalogue_items c ON c.id=pp.nationality_id WHERE pp.principal_id=$1 AND c.catalogue_type='country' AND c.code='KW') AS available`, [principalId]);
+      return rows[0]?.available === true;
+    }
+    const type = field === "nationality" ? "country" : "university";
+    const { rows } = await this.#pool.query(`SELECT EXISTS (SELECT 1 FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active') AS available`, [value, type]);
+    return rows[0]?.available === true;
+  }
+
+  async readOriginChoices() {
+    const { rows } = await this.#pool.query(`SELECT id::text,name,code,catalogue_type FROM catalogue_items WHERE status='active' AND catalogue_type IN ('country','university') ORDER BY catalogue_type,normalized_name COLLATE "C",id`);
+    return Object.freeze({
+      countries: Object.freeze(rows.filter(row => row.catalogue_type === "country").map(row => Object.freeze({ id: row.id as string, name: row.name as string, code: row.code as string | null }))),
+      universities: Object.freeze(rows.filter(row => row.catalogue_type === "university").map(row => Object.freeze({ id: row.id as string, name: row.name as string }))),
+    });
+  }
+
   forPrincipal(principalId: string): SafeWriteStore {
     if (!principalId) throw new TypeError("principal id required");
     const principalRef = safeWritePrincipalRef(principalId), personRef = personRecordRef(principalId);
     return {
       contactValueAvailable: (field: "phone" | "handle", value: string) => this.contactValueAvailable(principalId, field, value),
+      originValueAvailable: (field: "nationality" | "university" | "kuwaitiMother", value: string) => this.originValueAvailable(principalId, field, value),
       ownedRecord: async ref => ref === principalRef && await this.#exists(this.#pool, principalId) ? personRef : null,
       readField: async (record, field) => record === personRef && PERSON_PROFILE_FIELDS.includes(field as PersonProfileField)
         ? this.#readField(principalId, field as PersonProfileField) : null,
@@ -55,13 +77,19 @@ export class PostgresPersonProfileStore {
               pp.driving_licence::text, pp.driving_licence_written_at,
               pp.job_search_status::text, pp.job_search_status_written_at,
               pp.phone::text, pp.phone_written_at, pp.profile_handle::text, pp.profile_handle_written_at
-         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id WHERE p.id=$1`, [principalId]);
+              ,pp.nationality_id::text, pp.nationality_id_written_at, nationality.name AS nationality_name
+              ,pp.university_id::text, pp.university_id_written_at, university.name AS university_name
+              ,pp.kuwaiti_mother::text, pp.kuwaiti_mother_written_at
+         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id
+         LEFT JOIN catalogue_items nationality ON nationality.id=pp.nationality_id AND nationality.catalogue_type='country'
+         LEFT JOIN catalogue_items university ON university.id=pp.university_id AND university.catalogue_type='university'
+         WHERE p.id=$1`, [principalId]);
     const row = rows[0];
     if (!row) return null;
     const result: Record<string, unknown> = {};
     for (const [field, column] of Object.entries(COLUMNS)) {
       const at = row[`${column}_written_at`];
-      if (at instanceof Date) result[field] = Object.freeze({ value: row[column], updatedAt: at.toISOString() });
+      if (at instanceof Date) result[field] = Object.freeze({ value: field === "nationality" ? row.nationality_name : field === "university" ? row.university_name : row[column], updatedAt: at.toISOString(), ...((field === "nationality" || field === "university") && row[column] !== null ? { editValue: row[column] } : {}) });
     }
     return Object.freeze(result);
   }
@@ -98,6 +126,19 @@ export class PostgresPersonProfileStore {
       if (!await this.#exists(client, id)) throw new Refusal("not_own_record");
       const current = (await client.query(`SELECT ${column}::text AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
       if (current !== input.expectedBefore) throw new Refusal("state_changed");
+      if (field === "nationality" || field === "university") {
+        if (field === "university" && input.value === "") { /* None is stored as NULL without a UUID lookup. */ }
+        else {
+          const type = field === "nationality" ? "country" : "university";
+          const selected = (await client.query(`SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'`, [input.value, type])).rows[0];
+          if (!selected) throw new Refusal("invalid_value");
+          if (field === "nationality" && selected.code === "KW") await client.query(`UPDATE person_profiles SET kuwaiti_mother=NULL, kuwaiti_mother_written_at=NULL WHERE principal_id=$1`, [id]);
+        }
+      }
+      if (field === "kuwaitiMother") {
+        const kuwaiti = (await client.query(`SELECT 1 FROM person_profiles pp JOIN catalogue_items c ON c.id=pp.nationality_id WHERE pp.principal_id=$1 AND c.catalogue_type='country' AND c.code='KW'`, [id])).rows.length > 0;
+        if (kuwaiti) throw new Refusal("invalid_value");
+      }
       await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
         ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, input.value === "" ? null : input.value]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
