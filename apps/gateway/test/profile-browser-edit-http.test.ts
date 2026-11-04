@@ -62,10 +62,36 @@ test("U2B_NOTICE shared-cookie two-tab handoff is receipt-verified and never nam
   x.advance(120000);const expired=await x.service.notice(S,saved.setCookie);assert.equal(expired.notice,undefined);assert.match(expired.clearCookie!,/Max-Age=0/);
   x.revoke();assert.equal((await x.service.notice(S,saved.setCookie)).notice,undefined);
 });
+test("U2B_NOTICE_AUTH notice authorization outage clears cookie without receipt disclosure",async()=>{
+  const x=fixture(),token=await open(x),saved=await x.service.submit(S,"objective",body(token,"Saved value"),"save");
+  let receiptReads=0;x.store.receiptStatus=async()=>{receiptReads++;throw Error("must not read receipt");};
+  const unavailable=createProfileBrowserEdit({authorize:async()=>{throw Error("authorization database unavailable");},secret:SECRET,secure:true,clock:{now:()=>NOW}});
+  const result=await unavailable.notice(S,saved.setCookie);
+  assert.equal(result.notice,undefined,"U2B_NOTICE_AUTH no notice");assert.match(result.clearCookie!,/Max-Age=0/,"U2B_NOTICE_AUTH cookie consumed");assert.equal(receiptReads,0);
+});
 test("U2B_INVALID correction retains escaped draft but never phone, without saving",async()=>{
   const x=fixture(),token=await open(x),result=await x.service.submit(S,"objective",body(token," bad  <draft> "),"save");
   assert.equal(result.status,400);assert.equal(x.saves,0,"U2B_INVALID no save");assert.match(result.html,/ bad  &lt;draft&gt; /);assert.match(result.html,/aria-invalid="true"/);assert.match(result.html,/id="profile-error-summary"/);assert.match(result.html,/href="#field-objective"/);assert.deepEqual(tokenFrom(result.html),token);
   const phone=await open(x,"phone"),failed=await x.service.submit(S,"phone",body(phone,"phone-secret-123"),"save");assert.doesNotMatch(failed.html,/phone-secret-123/);assert.match(failed.html,/Enter your phone number again/);
+});
+test("U2B_RADIO omitted choices get linked correction without saving or repairing proof retries",async()=>{
+  for (const field of ["gender","drivingLicence","jobSearchStatus","kuwaitiMother"] as const) {
+    const x=fixture(),page=await x.service.edit(S,field),token=tokenFrom(page.html);
+    const radios=[...page.html.matchAll(/<input[^>]+type="radio"[^>]*>/g)];assert.ok(radios.length);assert.ok(radios.every(match=>/ required(?: |>|=)/.test(match[0])),"U2B_RADIO required inputs");
+    const r=await x.service.submit(S,field,{token:JSON.stringify(token)},"save");
+    assert.equal(r.status,400);assert.match(r.html,/id="profile-error-summary"/,"U2B_RADIO correction summary");assert.match(r.html,new RegExp(`href="#field-${field}"`));assert.match(r.html,/Choose one of the available options/);assert.deepEqual(tokenFrom(r.html),token);assert.equal(x.saves,0);
+    const extra=await x.service.submit(S,field,{token:JSON.stringify(token),unexpected:"x"},"save");assert.doesNotMatch(extra.html,/id="profile-error-summary"/);
+    const incompleteRetry=await x.service.submit(S,field,{token:JSON.stringify(token),recovery:"invalid-proof"},"save");assert.doesNotMatch(incompleteRetry.html,/id="profile-error-summary"/);assert.equal(x.saves,0);
+  }
+});
+test("U2B_CONFLICT_LABELS current choices show labels while submitted draft remains canonical",async()=>{
+  const country="11111111-1111-4111-8111-111111111111",unknown="33333333-3333-4333-8333-333333333333";
+  const cases:readonly [PersonSelfEditField,string,string,string][]=[
+    ["nationality",country,country,"Country label"],["university",unknown,"","Current selection unavailable"],
+    ["gender","female","male","Female"],["drivingLicence","false","true","No"],
+    ["kuwaitiMother","false","true","No"],["jobSearchStatus","open_to_offers","active","Open to offers"],
+  ];
+  for(const [field,current,draft,label] of cases){const x=fixture(),token=await open(x,field);x.outcome="state_changed";x.persisted={kind:"present",value:current,writtenAt:NOW.toISOString()};const r=await x.service.submit(S,field,body(token,draft),"save");assert.equal(r.status,409);assert.ok(r.html.includes(`Current value: <bdi>${label}</bdi>`),`U2B_CONFLICT_LABELS ${field} display label`);assert.equal(x.calls[0]!.canonicalValue,draft);}
 });
 test("U2B_CONFLICT reloads atomic snapshot and preserves draft for explicit review",async()=>{
   const x=fixture(),token=await open(x);x.outcome="state_changed";x.persisted={kind:"present",value:"Fresh current",writtenAt:NOW.toISOString()};
@@ -109,6 +135,8 @@ if (process.env.U2B_MUTATIONS === "1") {
   test("U2B_MUTANTS each acceptance guard kills its named mutant",async()=>{
     const target=new URL("../src/profile-browser-edit-http.js",import.meta.url),suite=fileURLToPath(import.meta.url),original=await readFile(target,"utf8");
     const mutations=[
+      ["U2B_RADIO","RADIO_FIELDS.includes(field)","false"],
+      ["U2B_CONFLICT_LABELS","current: displayCurrent(field, options.current, choices)","current: options.current"],
       ["U2B_SAVE","canonicalValue: validation.value","canonicalValue: body.value"],
       ["U2B_NOTICE",'message: "A profile change was saved. Your current profile is shown below."','message: `Saved ${LABELS[token.field]}`'],
       ["U2B_INVALID","const validation = validatePersonSelfEditValue(field, body.value, kuwaitDate(new Date(now())));","const validation = {ok:true,value:body.value};"],

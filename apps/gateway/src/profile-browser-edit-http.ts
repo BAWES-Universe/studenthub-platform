@@ -49,15 +49,27 @@ function cookie(header: string | undefined, key: string): string | undefined {
   return values.length === 1 ? values[0]!.slice(key.length + 1) : undefined;
 }
 const fail = (status: number, message: string): ProfileBrowserResult => ({ status, title: "Edit profile", html: `<main id="main" class="profile-ui"><h1>Profile update unavailable.</h1><p>${esc(message)}</p><a href="/profile">Back to my profile</a></main>` });
+const RADIO_FIELDS: readonly PersonSelfEditField[] = ["gender","drivingLicence","jobSearchStatus","kuwaitiMother"];
 const reasons: Record<string, string> = { required: "Enter a value.", length: "This value is too long. Shorten it and try again.", name: "Use at least two letter-based name parts with single spaces; check punctuation.", arabic_name: "Enter a name containing Arabic letters.", spacing: "Remove spaces at the start or end and repeated spaces.", characters: "Remove line breaks and unsupported characters.", date: "Enter a valid calendar date.", future: "Birth date cannot be in the future.", minimum_age: "You must be at least 16 to complete a StudentHub profile.", choice: "Choose one of the available options.", contact_unavailable: "This contact value is not available." };
 function control(field: PersonSelfEditField, value: string, recovery: boolean, error: string | undefined, choices?: OriginChoices): string {
   if (field === "nationality" || field === "university") {
     const list = (field === "nationality" ? choices?.countries : choices?.universities) ?? [];
     return `<label for="field-${field}">${LABELS[field]}</label><select id="field-${field}" name="value"${error ? ` aria-invalid="true" aria-describedby="field-${field}-error"` : ""}><option value="">${field === "nationality" ? "Choose nationality" : "Not recorded"}</option>${value && !list.some(c => c.id === value) ? `<option value="${esc(value)}" selected>Current selection (unavailable)</option>` : ""}${list.map(c => `<option value="${esc(c.id)}"${c.id === value ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select>${error ? `<p id="field-${field}-error">${esc(error)}</p>` : ""}`;
   }
-  if (field === "kuwaitiMother") return `<fieldset id="field-kuwaitiMother"${error ? ' aria-invalid="true" aria-describedby="field-kuwaitiMother-error"' : ""}><legend>Kuwaiti mother</legend>${[["","Not recorded"],["true","Yes"],["false","No"]].map(([v,l]) => `<label><input type="radio" name="value" value="${v}"${value === v ? " checked" : ""}>${l}</label>`).join("")}${error ? `<p id="field-kuwaitiMother-error">${esc(error)}</p>` : ""}</fieldset>`;
+  if (field === "kuwaitiMother") return `<fieldset id="field-kuwaitiMother"${error ? ' aria-invalid="true" aria-describedby="field-kuwaitiMother-error"' : ""}><legend>Kuwaiti mother</legend>${[["","Not recorded"],["true","Yes"],["false","No"]].map(([v,l]) => `<label><input type="radio" name="value" required value="${v}"${value === v ? " checked" : ""}>${l}</label>`).join("")}${error ? `<p id="field-kuwaitiMother-error">${esc(error)}</p>` : ""}</fieldset>`;
   const values = field === "gender" ? [["male","Male"],["female","Female"],["other","Other"]] : field === "drivingLicence" ? [["true","Yes"],["false","No"]] : field === "jobSearchStatus" ? [["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]] : undefined;
-  return profileControl({ key: field as ProfileFieldKey, label: LABELS[field], value, recovery, ...(error ? {error} : {}), ...(values ? { type: "radio" as const, choices: values.map(([value,label]) => ({value:value!,label:label!})) } : {}) }).html;
+  return profileControl({ key: field as ProfileFieldKey, label: LABELS[field], value, recovery, ...(error ? {error} : {}), ...(values ? { type: "radio" as const, required:true, requiredLabel:"Required", choices: values.map(([value,label]) => ({value:value!,label:label!})) } : {}) }).html;
+}
+function displayCurrent(field: PersonSelfEditField, value: string, choices?: OriginChoices): string {
+  if (value === "") return "Not recorded";
+  if (field === "nationality" || field === "university") {
+    const list = field === "nationality" ? choices?.countries : choices?.universities;
+    return list?.find(choice => choice.id.toLowerCase() === value.toLowerCase())?.name ?? "Current selection unavailable";
+  }
+  if (field === "drivingLicence" || field === "kuwaitiMother") return ({true:"Yes",false:"No"} as Record<string,string>)[value] ?? "Current selection unavailable";
+  if (field === "gender") return ({male:"Male",female:"Female",other:"Other"} as Record<string,string>)[value] ?? "Current selection unavailable";
+  if (field === "jobSearchStatus") return ({not_looking:"Not looking right now",active:"Actively looking for work",open_to_offers:"Open to offers"} as Record<string,string>)[value] ?? "Current selection unavailable";
+  return value;
 }
 function form(field: PersonSelfEditField, token: BrowserWriteToken, value: string, options: { status?: number; error?: string; message?: string; current?: string; recovery?: boolean; recoveryProof?: string; choices?: OriginChoices } = {}): ProfileBrowserResult {
   const error = options.error, safeValue = field === "phone" && (options.recovery || error) ? "" : value;
@@ -83,7 +95,7 @@ export function createProfileBrowserEdit(ports: {
   const render = async (session: string | undefined, field: PersonSelfEditField, token: BrowserWriteToken, value: string, options: Parameters<typeof form>[3] = {}) => {
     const choices = await choiceList(field), live = await authorized(session);
     if (!live || live.actorRef !== token.principalRef) return fail(401,"Sign in again to continue safely.");
-    return form(field,token,value,{...options,choices});
+    return form(field,token,value,{...options,choices,...(options.current !== undefined ? {current:displayCurrent(field,options.current,choices)} : {})});
   };
   const recover = async (session: string | undefined, field: PersonSelfEditField, token: BrowserWriteToken, value: string, message: string, retry: boolean, proof: string) => {
     const live = await authorized(session);
@@ -115,10 +127,15 @@ export function createProfileBrowserEdit(ports: {
     },
     async submit(session, field, body, mode) {
       const auth = await authorized(session); if (!auth) return fail(401,"Sign in again to continue safely.");
+      // Unchecked radio groups are omitted by browsers. Only this exact normal
+      // save shape is recoverable; never repair missing payloads in proof retries.
+      const missingRadio = mode === "save" && RADIO_FIELDS.includes(field) && exact(body,["token"]);
+      if (missingRadio) body = {...body as Record<string,string>,value:""};
       const hasProof = !!body && typeof body === "object" && Object.hasOwn(body,"recovery");
       if (!exact(body, [...(mode === "status" && field === "phone" ? ["token"] : ["token","value"]), ...(hasProof ? ["recovery"] : [])])) return fail(400,"We could not verify this request. Reopen the form and try again.");
       const token = parseToken(body.token!);
       if (!token || token.field !== field || token.principalRef !== auth.actorRef) return fail(403,"We could not verify this request. Reopen the form and try again.");
+      if (missingRadio) return render(session,field,token,"",{status:400,error:reasons.choice!,recovery:true});
       const proofDigest = hasProof ? verifyRecovery(body.recovery!,session!,token) : undefined;
       if ((hasProof && !proofDigest) || (mode === "status" && !proofDigest)) return fail(403,"We could not verify this recovery request. Review your current profile.");
       if (mode === "status") {
@@ -157,7 +174,11 @@ export function createProfileBrowserEdit(ports: {
     async notice(session, header) {
       const encoded = cookie(header,NOTICE); if (!encoded) return (header ?? "").split(";").some(part => part.trim().startsWith(`${NOTICE}=`)) ? {clearCookie} : {};
       const result: {notice?:VerifiedProfileNotice;clearCookie:string} = {clearCookie};
-      const auth = await authorized(session); if (!auth) return result;
+      // Notice delivery is optional. The profile route independently requires its
+      // own authorization; this catch must not bypass or replace that check.
+      let auth: Awaited<ReturnType<typeof authorized>>;
+      try { auth = await authorized(session); } catch { return result; }
+      if (!auth) return result;
       try {
         if (encoded.length > 4096) return result;
         const parts = encoded.split("."); if (parts.length !== 2) return result;
