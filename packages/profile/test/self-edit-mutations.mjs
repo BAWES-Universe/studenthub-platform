@@ -43,7 +43,7 @@ for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite]
 // load-bearing. Keep this here with the card's other mutants while allowing
 // the ordinary, database-free profile suite to run locally.
 if (process.env.DATABASE_URL) {
-  const catalogueModule = new URL("../../../dist/packages/db/src/person-profile-store.js", import.meta.url);
+  const catalogueModule = new URL("../../db/dist/person-profile-store.js", import.meta.url);
   const catalogueSuite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-person-profile.test.js", import.meta.url));
   const from = "WHERE status='active' AND catalogue_type IN ('country','university')";
   const to = "WHERE status IN ('active','deleted') AND catalogue_type IN ('country','university')";
