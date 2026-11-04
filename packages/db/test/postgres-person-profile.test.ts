@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
+import { spawnSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "@studenthub/db";
-import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SHU372_RULES, SYNTHETIC_PROFILE_FIXTURES, createPersonSelfEdit } from "@studenthub/profile";
+import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SHU372_RULES, SYNTHETIC_PROFILE_FIXTURES, createPersonSelfEdit, createPersonImportedFallbackReader } from "@studenthub/profile";
 import { profileDocument, type BrowserLoginApplication } from "../../../apps/gateway/src/web-ui.js";
+
+import { PostgresPersonProfileStore as BrowserPostgresPersonProfileStore, PersonProfileBrowserRetryableError, type PersonProfileBrowserOptions } from "../src/person-profile-store.js";
+import { readLiveLoginSessionPerson } from "../src/postgres-login-store.js";
+import { browserBaselineDigest, browserChangeSetDigest, createBrowserWriteTokens, type BrowserWriteToken } from "@studenthub/safe-write-contract";
 
 const url = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool;
@@ -261,4 +268,439 @@ test("SHU415_WRITE origin fields write twice, commit resolves active ids, None i
   const guarded = (await pool.query("SELECT nationality_id,kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0];
   assert.equal(guarded?.nationality_id, kuwait);
   assert.equal(guarded?.kuwaiti_mother, null);
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+}
+const browserKeys = { activeKeyVersion: "key1", keys: { key1: "browser-test-key-".repeat(4) } };
+const sessionHash = (token: string) => createHash("sha256").update(token).digest("base64url");
+
+async function browserFixture() {
+  const id = `u2a-${randomUUID()}`, sessionToken = randomUUID();
+  await new PostgresAuthzStore(pool).registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  await pool.query("INSERT INTO login_sessions(id,person_id,expires_at) VALUES($1,$2,clock_timestamp()+interval '1 hour')", [sessionHash(sessionToken), id]);
+  const tokens = createBrowserWriteTokens(browserKeys);
+  let row: unknown = { ...SYNTHETIC_PROFILE_FIXTURES.populated };
+  const fallback = createPersonImportedFallbackReader({ source: {
+    resolveLink: async principal => { assert.equal(principal, id); return { kind: "linked", candidateRef: `candidate-${id}` }; },
+    readCandidate: async () => row,
+  }, today: () => "2026-10-30" });
+  const options: PersonProfileBrowserOptions = { principalId: id, sessionToken, tokens, normalizationVersion: "profile-v1",
+    sessionLiveness: { read: readLiveLoginSessionPerson }, importedFallback: fallback };
+  const store = new BrowserPostgresPersonProfileStore({ pool });
+  const api = store.forBrowserSession(options);
+  const snapshot = async () => ({
+    profile: (await pool.query("SELECT * FROM person_profiles WHERE principal_id=$1", [id])).rows,
+    audit: (await pool.query("SELECT * FROM authorization_mutation_audit WHERE target_principal_ref=$1 AND operation='profile.safe_write' ORDER BY request_ref", [safeWritePrincipalRef(id)])).rows,
+    allAudit: (await pool.query("SELECT * FROM authorization_mutation_audit WHERE target_principal_ref=$1 ORDER BY request_ref", [safeWritePrincipalRef(id)])).rows,
+    sessions: (await pool.query("SELECT * FROM login_sessions WHERE person_id=$1 ORDER BY id", [id])).rows,
+  });
+  const tokenAt = async (now: Date) => {
+    const issued = await api.issue("objective");
+    return tokens.issue(issued, issued.baselineDigest, now);
+  };
+  return { id, sessionToken, options, tokens, store, api, snapshot, tokenAt, setRow: (value: unknown) => { row = value; } };
+}
+
+/** Execute real SQL, replacing only the selected client boundary with a deterministic fault. */
+function interceptPool(intercept: (sql: string, run: () => Promise<unknown>) => Promise<unknown>): pg.Pool {
+  return new Proxy(pool, { get(target, property) {
+    if (property === "connect") return async () => {
+      const client = await target.connect();
+      return new Proxy(client, { get(connection, key) {
+        if (key === "query") return (query: string, values?: unknown[]) => intercept(query, () => connection.query(query, values));
+        const member = Reflect.get(connection, key);
+        return typeof member === "function" ? member.bind(connection) : member;
+      } });
+    };
+    const member = Reflect.get(target, property);
+    return typeof member === "function" ? member.bind(target) : member;
+  } });
+}
+
+async function databaseNow() { return (await pool.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now; }
+
+async function holdBrowserLock(id: string) {
+  const client = await pool.connect();
+  await client.query("BEGIN");
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,5959))", [id]);
+  return async () => { try { await client.query("ROLLBACK"); } finally { client.release(); } };
+}
+
+test("U2A_ONE_COMMIT concurrent connections spend one token once and preserve receipt A after edit B", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective");
+  const second = new BrowserPostgresPersonProfileStore({ pool }).forBrowserSession(x.options);
+  const results = await Promise.all([x.api.save({ token, canonicalValue: "Objective A" }), second.save({ token, canonicalValue: "Objective A" })]);
+  assert.deepEqual(results.map(result => result.status).sort(), ["already_committed", "committed"]);
+  const a = results.find(result => result.status === "committed")!;
+  assert.ok("receipt" in a);
+  if (!("receipt" in a)) return;
+  assert.deepEqual(results.map(result => "receipt" in result ? result.receipt : null), [a.receipt, a.receipt]);
+  let state = await x.snapshot();
+  assert.equal(state.profile.length, 1); assert.equal(state.profile[0]!.objective, "Objective A"); assert.equal(state.audit.length, 1);
+  assert.equal(state.audit[0]!.after_summary.tokenRef, token.tokenRef);
+  const bToken = await x.api.issue("objective");
+  assert.equal((await x.api.save({ token: bToken, canonicalValue: "Objective B" })).status, "committed");
+  state = await x.snapshot();
+  assert.deepEqual(await x.api.save({ token, canonicalValue: "Objective A" }), { status: "already_committed", receipt: a.receipt });
+  assert.deepEqual(await x.api.save({ token, canonicalValue: "Different payload" }), { status: "token_payload_mismatch" });
+  assert.deepEqual(await x.api.receiptStatus(token), { status: "committed", receipt: a.receipt });
+  assert.deepEqual(await x.snapshot(), state, "replay and status never rewrite B or add audit rows");
+  assert.equal(state.profile[0]!.objective, "Objective B"); assert.equal(state.audit.length, 2);
+});
+
+test("U2A_REPLAY receipt recovery precedes expiry and baselines while expired unspent tokens cannot write", async () => {
+  const x = await browserFixture();
+  const now = await databaseNow();
+  const token = await x.tokenAt(new Date(now.getTime() - 299_000));
+  const committed = await x.api.save({ token, canonicalValue: "Durable result" });
+  assert.equal(committed.status, "committed");
+  if (!("receipt" in committed)) return;
+  await pool.query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp())))+0.05)", [token.expiresAt]);
+  const before = await x.snapshot();
+  assert.deepEqual(await x.api.save({ token, canonicalValue: "Durable result" }), { status: "already_committed", receipt: committed.receipt });
+  assert.deepEqual(await x.api.save({ token, canonicalValue: "Changed" }), { status: "token_payload_mismatch" });
+  assert.deepEqual(await x.api.receiptStatus(token), { status: "committed", receipt: committed.receipt });
+  const expired = await x.tokenAt(new Date((await databaseNow()).getTime() - 301_000));
+  assert.deepEqual(await x.api.save({ token: expired, canonicalValue: "Never saved" }), { status: "expired" });
+  assert.deepEqual(await x.api.receiptStatus(expired), { status: "not_found" });
+  assert.deepEqual(await x.snapshot(), before);
+  const retired = x.store.forBrowserSession({ ...x.options, tokens: createBrowserWriteTokens({ activeKeyVersion: "key2", keys: { key2: "k".repeat(32) } }) });
+  assert.deepEqual(await retired.save({ token, canonicalValue: "Durable result" }), { status: "recovery_unavailable" });
+  assert.deepEqual(await retired.receiptStatus(token), { status: "recovery_unavailable" });
+});
+
+test("U2A_FALLBACK rechecks exact shown values under lock and explicit clears hide imports", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective"), before = await x.snapshot();
+  const locked = deferred(), unlock = await holdBrowserLock(x.id);
+  const raced = new BrowserPostgresPersonProfileStore({ pool: interceptPool(async (sql, run) => {
+    if (sql.includes("pg_advisory_xact_lock")) { const pending = run(); locked.resolve(); return pending; }
+    return run();
+  }) }).forBrowserSession(x.options);
+  const pending = raced.save({ token, canonicalValue: "Draft" });
+  try {
+    await locked.promise;
+    x.setRow({ ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_objective: "Changed during lock wait" });
+  } finally { await unlock(); }
+  assert.deepEqual(await pending, { status: "state_changed" });
+  assert.deepEqual(await x.snapshot(), before, "same revision changed value causes zero writes");
+  x.setRow({ ...SYNTHETIC_PROFILE_FIXTURES.populated, imported_at: "2026-11-01T00:00:00.000Z", snapshot_revision: "changed-metadata" });
+  assert.equal((await x.api.save({ token, canonicalValue: "" })).status, "committed", "same displayed value survives metadata revision change");
+  const clear = await x.snapshot(); assert.equal(clear.profile[0]!.objective, null); assert.ok(clear.profile[0]!.objective_written_at);
+  let fallbackReads = 0;
+  const withoutFallback = x.store.forBrowserSession({ ...x.options, importedFallback: { read: async () => { fallbackReads++; throw new Error("hidden fallback must not be read"); } } });
+  const clearedToken = await withoutFallback.issue("objective");
+  assert.equal(clearedToken.baselineDigest, browserBaselineDigest({ persisted: { kind: "null" }, shownFallback: null }));
+  assert.equal((await withoutFallback.save({ token: clearedToken, canonicalValue: "Written after clear" })).status, "committed");
+  assert.equal(fallbackReads, 0);
+});
+
+test("U2A_BOUNDARY revoked sessions between precheck and lock cannot save, replay or read receipts", async () => {
+  for (const operation of ["save", "replay", "status"] as const) {
+    const x = await browserFixture(), token = await x.api.issue("objective");
+    if (operation !== "save") assert.equal((await x.api.save({ token, canonicalValue: "Secret prior draft" })).status, "committed");
+    const precheck = deferred(), resume = deferred(); let calls = 0;
+    const api = x.store.forBrowserSession({ ...x.options, sessionLiveness: { read: async (client, session) => {
+      const result = await readLiveLoginSessionPerson(client, session);
+      if (++calls === 1) { precheck.resolve(); await resume.promise; }
+      return result;
+    } } });
+    const unlock = await holdBrowserLock(x.id);
+    const pending = operation === "status" ? api.receiptStatus(token) : api.save({ token, canonicalValue: operation === "save" ? "Never written" : "Secret prior draft" });
+    await precheck.promise;
+    await pool.query("UPDATE login_sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [sessionHash(x.sessionToken)]);
+    const before = await x.snapshot(); resume.resolve(); await unlock();
+    assert.deepEqual(await pending, { status: "not_authorized" }, operation);
+    assert.ok(calls >= 2, "session liveness checked inside the acquired lock");
+    assert.deepEqual(await x.snapshot(), before);
+  }
+});
+
+test("U2A_CLOCK issuance uses DB clock despite app skew and lock expiry uses wall clock", async () => {
+  const x = await browserFixture();
+  let seen: Date | undefined;
+  const skewed = x.store.forBrowserSession({ ...x.options, tokens: {
+    ...x.tokens,
+    issue: (binding, baseline, now) => { seen = now; return x.tokens.issue(binding, baseline, now); },
+  } });
+  const dbBefore = await databaseNow();
+  const token = await skewed.issue("objective");
+  const dbAfter = await databaseNow();
+  assert.ok(seen); assert.ok(Date.parse(token.issuedAt) >= dbBefore.getTime() && Date.parse(token.issuedAt) <= dbAfter.getTime());
+  // Deliberately skew application Date construction; the store must use the SQL result.
+  const realDate = globalThis.Date;
+  class SkewedDate extends realDate { constructor(value?: string | number) { super(value === undefined ? realDate.now() + 1_000 : value); } }
+  let skewToken: BrowserWriteToken;
+  try { globalThis.Date = SkewedDate as DateConstructor; skewToken = await skewed.issue("objective"); }
+  finally { globalThis.Date = realDate; }
+  assert.equal((await skewed.save({ token: skewToken!, canonicalValue: "Fresh with app skew" })).status, "committed");
+  const nearExpiry = await x.tokenAt(new Date((await databaseNow()).getTime() - 299_000));
+  const lockEntered = deferred(), unlock = await holdBrowserLock(x.id);
+  const api = new BrowserPostgresPersonProfileStore({ pool: interceptPool(async (sql, run) => {
+    if (sql.includes("pg_advisory_xact_lock")) { const pending = run(); lockEntered.resolve(); return pending; }
+    return run();
+  }) }).forBrowserSession(x.options);
+  const before = await x.snapshot(), pending = api.save({ token: nearExpiry, canonicalValue: "Expired during wait" });
+  try {
+    await lockEntered.promise;
+    await pool.query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp())))+0.05)", [nearExpiry.expiresAt]);
+  } finally { await unlock(); }
+  assert.deepEqual(await pending, { status: "expired" });
+  assert.deepEqual(await x.snapshot(), before);
+});
+
+test("U2A_STATUS real session reader and status are read-only even for valid unspent tokens", async () => {
+  let x!: Awaited<ReturnType<typeof browserFixture>>;
+  await assert.doesNotReject(async () => { x = await browserFixture(); });
+  let token!: BrowserWriteToken;
+  await assert.doesNotReject(async () => { token = await x.api.issue("objective"); }, "SELECT-only liveness works in the read-only issue transaction");
+  const expiredSession = randomUUID();
+  await pool.query("INSERT INTO login_sessions(id,person_id,expires_at) VALUES($1,$2,clock_timestamp()-interval '1 second')", [sessionHash(expiredSession), x.id]);
+  const before = await x.snapshot(), client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    assert.equal(await readLiveLoginSessionPerson(client, x.sessionToken), x.id);
+    assert.equal(await readLiveLoginSessionPerson(client, expiredSession), undefined);
+    assert.equal(await readLiveLoginSessionPerson(client, "unrecognized-session"), undefined);
+    await client.query("COMMIT");
+  } finally { client.release(); }
+  const queries: string[] = [];
+  const api = new BrowserPostgresPersonProfileStore({ pool: interceptPool(async (sql, run) => { queries.push(sql); return run(); }) }).forBrowserSession(x.options);
+  assert.deepEqual(await api.receiptStatus(token), { status: "not_found" });
+  assert.ok(queries.includes("BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY"));
+  assert.ok(queries.every(sql => !/\b(?:INSERT|UPDATE|DELETE)\b/i.test(sql)), "status executes no write statement or session housekeeping");
+  assert.deepEqual(await x.snapshot(), before);
+  assert.equal((await api.save({ token, canonicalValue: "Status did not spend token" })).status, "committed");
+  const after = await x.snapshot(); assert.equal(after.audit.length, 1);
+  assert.equal((await api.receiptStatus(token)).status, "committed");
+  assert.deepEqual(await x.snapshot(), after);
+});
+
+test("U2A_UNKNOWN pre-COMMIT rollback retries once; dropped COMMIT response reconciles one durable result", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective"), before = await x.snapshot();
+  let failBefore = true;
+  const faulted = new BrowserPostgresPersonProfileStore({ pool: interceptPool(async (sql, run) => {
+    if (failBefore && sql.includes("INSERT INTO authorization_mutation_audit")) { failBefore = false; throw new Error("injected pre-COMMIT transport failure"); }
+    return run();
+  }) }).forBrowserSession(x.options);
+  await assert.rejects(faulted.save({ token, canonicalValue: "Retry once" }), error => error instanceof PersonProfileBrowserRetryableError);
+  assert.deepEqual(await x.snapshot(), before);
+  assert.deepEqual(await x.api.receiptStatus(token), { status: "not_found" });
+  assert.equal((await faulted.save({ token, canonicalValue: "Retry once" })).status, "committed");
+  assert.equal((await x.snapshot()).audit.length, 1);
+  const next = await x.api.issue("objective"); let dropCommit = true;
+  const dropped = new BrowserPostgresPersonProfileStore({ pool: interceptPool(async (sql, run) => {
+    const result = await run();
+    if (dropCommit && sql === "COMMIT") { dropCommit = false; throw new Error("injected lost COMMIT response"); }
+    return result;
+  }) }).forBrowserSession(x.options);
+  assert.deepEqual(await dropped.save({ token: next, canonicalValue: "Durable despite response loss" }), { status: "unknown" });
+  const resolved = await x.api.receiptStatus(next); assert.equal(resolved.status, "committed");
+  const after = await x.snapshot(); assert.equal(after.audit.length, 2); assert.equal(after.profile[0]!.objective, "Durable despite response loss");
+  const replay = await x.api.save({ token: next, canonicalValue: "Durable despite response loss" });
+  assert.equal(replay.status, "already_committed");
+  if ("receipt" in resolved && "receipt" in replay) assert.deepEqual(resolved.receipt, replay.receipt);
+  assert.deepEqual(await x.snapshot(), after);
+});
+
+test("U2A_NAMESPACE browser and legacy tokens with the same raw id never collide", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective");
+  const legacyRef = createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(token.tokenId).digest("hex");
+  assert.notEqual(legacyRef, token.tokenRef);
+  const legacy = await x.store.forPrincipal(x.id).commit({ principalRef: token.principalRef, personRef: token.personRef,
+    field: "intro", expectedBefore: null, value: "Legacy intro", tokenId: token.tokenId, changeSetDigest: "c".repeat(64),
+    receipt: { contractVersion: "3.0.0", receiptRef: requestAuditRef(randomUUID()), personRef: token.personRef, principalRef: token.principalRef,
+      fields: ["intro"], changeSetDigest: "c".repeat(64), committedAt: (await databaseNow()).toISOString() } });
+  assert.ok(legacy.ok);
+  await assert.doesNotReject(async () => {
+    assert.equal((await x.api.save({ token, canonicalValue: "Browser objective" })).status, "committed");
+  }, "legacy token namespace does not block browser write");
+  const state = await x.snapshot(); assert.equal(state.audit.length, 2);
+  assert.deepEqual(state.audit.map(row => row.after_summary.tokenRef).sort(), [legacyRef, token.tokenRef].sort());
+});
+
+// Serial mutation run against this exact emitted suite and real Postgres.
+// Child processes select a named assertion; source is always restored before exit.
+if (process.env.PROFILE_BROWSER_MUTANTS !== "0") test("U2A_MUTANTS every browser boundary mutant dies at its named assertion", async () => {
+  const storeModule = new URL("../src/person-profile-store.js", import.meta.url);
+  const loginModule = new URL("../src/postgres-login-store.js", import.meta.url);
+  const suite = fileURLToPath(import.meta.url);
+  const mutations = [
+    { name: "dependent mother clear removed", assertion: "U2A_ORIGIN", module: storeModule,
+      from: 'if (field === "nationality" && selected.code === "KW")',
+      to: 'if (false)' },
+    { name: "expiry before receipt", assertion: "U2A_REPLAY", module: storeModule,
+      from: "const receipt = await this.#findBrowserReceipt(client, options, token);",
+      to: 'if (browserFirstWriteExpired(token, (await client.query("SELECT clock_timestamp() AS now")).rows[0].now)) throw new BrowserRefusal("expired"); const receipt = await this.#findBrowserReceipt(client, options, token);' },
+    { name: "transaction start rather than wall clock", assertion: "U2A_CLOCK", module: storeModule,
+      from: 'if (browserFirstWriteExpired(token, now))',
+      to: 'if (browserFirstWriteExpired(token, (await client.query("SELECT now() AS now")).rows[0].now))' },
+    { name: "legacy browser token namespace", assertion: "U2A_NAMESPACE", module: storeModule,
+      from: "fields: [field], committedAt, tokenRef: token.tokenRef",
+      to: "fields: [field], committedAt, tokenRef: tokenRef(token.tokenId)" },
+    { name: "status spends token", assertion: "U2A_STATUS", module: storeModule,
+      from: "const receipt = await this.#findBrowserReceipt(client, options, verified.token);",
+      to: `await client.query("INSERT INTO authorization_mutation_audit(request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary) VALUES($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)", [randomBytes(32).toString("hex"), verified.token.principalRef, SAFE_WRITE_OPERATION, JSON.stringify({valuePresent:false}), JSON.stringify({contractVersion:BROWSER_WRITE_VERSION,personRef:verified.token.personRef,changeSetDigest:"0".repeat(64),fields:[verified.token.field],committedAt:new Date().toISOString(),tokenRef:verified.token.tokenRef})]); const receipt = await this.#findBrowserReceipt(client, options, verified.token);` },
+    { name: "liveness deletes expired sessions", assertion: "U2A_STATUS", module: loginModule,
+      from: "SELECT person_id FROM login_sessions WHERE id = $1 AND expires_at > clock_timestamp()",
+      to: "WITH expired AS (DELETE FROM login_sessions WHERE expires_at <= clock_timestamp()) SELECT person_id FROM login_sessions WHERE id = $1 AND expires_at > clock_timestamp()" },
+    { name: "fallback compares revision only", assertion: "U2A_FALLBACK", module: storeModule,
+      from: 'value: row.value }, shownFallback };',
+      to: 'value: row.value }, shownFallback: shownFallback === null ? null : { ...shownFallback, sourceRef: "0".repeat(64), valueDigest: "0".repeat(64) } };' },
+    { name: "pre-COMMIT failure is unknown", assertion: "U2A_UNKNOWN", module: storeModule,
+      from: "else\n                throw new PersonProfileBrowserRetryableError({ cause: error });",
+      to: 'else return { status: "unknown" };' },
+  ];
+  for (const mutant of mutations) {
+    const original = await readFile(mutant.module, "utf8");
+    assert.equal(original.split(mutant.from).length - 1, 1, `${mutant.name}: unique mutation site`);
+    try {
+      await writeFile(mutant.module, original.replace(mutant.from, mutant.to));
+      const childEnv = { ...process.env, PROFILE_BROWSER_MUTANTS: "0" };
+      delete (childEnv as NodeJS.ProcessEnv).NODE_TEST_CONTEXT;
+      const result = spawnSync(process.execPath, ["--test", `--test-name-pattern=^${mutant.assertion} `, suite], {
+        encoding: "utf8", timeout: 45_000, env: childEnv,
+      });
+      const output = result.stdout + result.stderr;
+      assert.equal(result.signal, null, `${mutant.name}: must fail an assertion, not time out\n${output}`);
+      assert.notEqual(result.status, 0, `${mutant.name}: survived\n${output}`);
+      assert.match(output, new RegExp(`not ok \\d+ - ${mutant.assertion} `), `${mutant.name}\n${output}`);
+      assert.match(output, /ERR_ASSERTION/, `${mutant.name}: must fail its named assertion\n${output}`);
+      console.log(`Killed ${mutant.name} at ${mutant.assertion}`);
+    } finally { await writeFile(mutant.module, original); }
+  }
+});
+
+test("U2A_BASELINE browser persisted edits invalidate older tokens and SQL CHECK rollback leaves token unspent", async () => {
+  const x = await browserFixture(), stale = await x.api.issue("objective"), winner = await x.api.issue("objective");
+  assert.equal((await x.api.save({ token: winner, canonicalValue: "Changed persisted value" })).status, "committed");
+  const before = await x.snapshot();
+  assert.deepEqual(await x.api.save({ token: stale, canonicalValue: "Stale overwrite" }), { status: "state_changed" });
+  assert.deepEqual(await x.snapshot(), before);
+  const retry = await x.api.issue("objective");
+  await assert.rejects(x.api.save({ token: retry, canonicalValue: "Invalid  doubled spaces" }), error => error instanceof PersonProfileBrowserRetryableError);
+  assert.deepEqual(await x.snapshot(), before, "SQL CHECK violation rolls back profile and audit together");
+  assert.deepEqual(await x.api.receiptStatus(retry), { status: "not_found" });
+  assert.equal((await x.api.save({ token: retry, canonicalValue: "Corrected valid value" })).status, "committed");
+});
+
+test("U2A_VERIFY forged tokens are refused before any authorization or fallback read", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective"), before = await x.snapshot();
+  let reads = 0;
+  const api = x.store.forBrowserSession({ ...x.options,
+    sessionLiveness: { read: async () => { reads++; throw new Error("invalid token must not authorize"); } },
+    importedFallback: { read: async () => { reads++; throw new Error("invalid token must not read fallback"); } },
+  });
+  for (const forged of [{ ...token, mac: "A".repeat(43) }, { ...token, personRef: "0".repeat(64) }, { ...token, normalizationVersion: "other-version" }]) {
+    assert.deepEqual(await api.save({ token: forged, canonicalValue: "Draft" }), { status: "not_authorized" });
+    assert.deepEqual(await api.receiptStatus(forged), { status: "not_authorized" });
+  }
+  assert.equal(reads, 0);
+  assert.deepEqual(await x.snapshot(), before);
+});
+
+test("U2A_ROLLBACK non-token unique violation is a confirmed rollback with no spent token", async () => {
+  const x = await browserFixture(), holder = await browserFixture();
+  const phone = `+44${BigInt(`0x${randomUUID().replaceAll("-", "")}`).toString().slice(0, 11)}`;
+  await pool.query("INSERT INTO person_profiles(principal_id,phone,phone_written_at) VALUES($1,$2,clock_timestamp())", [holder.id, phone]);
+  const token = await x.api.issue("phone"), before = await x.snapshot();
+  await assert.rejects(x.api.save({ token, canonicalValue: phone }), error => error instanceof PersonProfileBrowserRetryableError);
+  assert.deepEqual(await x.snapshot(), before);
+  assert.deepEqual(await x.api.receiptStatus(token), { status: "not_found" });
+  assert.equal((await x.api.save({ token, canonicalValue: `+33${phone.slice(3)}` })).status, "committed");
+  assert.equal((await x.snapshot()).audit.length, 1);
+});
+
+
+test("U2A_CANON_STORE profile receipts have one canonical string representation", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective"), before = await x.snapshot();
+  for (const canonicalValue of [null, false]) {
+    await assert.rejects(x.api.save({ token, canonicalValue }), TypeError);
+    assert.deepEqual(await x.snapshot(), before);
+  }
+  const result = await x.api.save({ token, canonicalValue: "" });
+  assert.equal(result.status, "committed");
+  if (!("receipt" in result)) return;
+  assert.equal(result.receipt.changeSetDigest, browserChangeSetDigest(token, ""));
+  assert.deepEqual(await x.api.save({ token, canonicalValue: null }), { status: "token_payload_mismatch" });
+  const choice = await x.api.issue("drivingLicence");
+  const saved = await x.api.save({ token: choice, canonicalValue: "false" });
+  assert.equal(saved.status, "committed");
+  if (!("receipt" in saved)) return;
+  const current = (await pool.query("SELECT driving_licence::text AS value FROM person_profiles WHERE principal_id=$1", [x.id])).rows[0]!.value;
+  assert.equal(saved.receipt.changeSetDigest, browserChangeSetDigest(choice, current));
+});
+
+
+test("U2A_PAYLOAD snapshot cannot change between digest and locked write", async () => {
+  const x = await browserFixture(), token = await x.api.issue("objective");
+  const locked = deferred(), unlock = await holdBrowserLock(x.id);
+  const api = new BrowserPostgresPersonProfileStore({ pool: interceptPool(async (sql, run) => {
+    if (sql.includes("pg_advisory_xact_lock")) { const pending = run(); locked.resolve(); return pending; }
+    return run();
+  }) }).forBrowserSession(x.options);
+  const input = { token, canonicalValue: "Payload A" };
+  const pending = api.save(input);
+  try { await locked.promise; input.canonicalValue = "Payload B"; } finally { await unlock(); }
+  const result = await pending;
+  assert.equal(result.status, "committed");
+  if (!("receipt" in result)) return;
+  assert.equal((await x.snapshot()).profile[0]!.objective, "Payload A");
+  assert.equal(result.receipt.changeSetDigest, browserChangeSetDigest(token, "Payload A"));
+});
+
+test("U2A_NOOP fresh no-op operation gets one receipt and snapshots session configuration", async () => {
+  const x = await browserFixture();
+  const mutableOptions = { ...x.options };
+  const api = x.store.forBrowserSession(mutableOptions);
+  mutableOptions.principalId = "changed-after-construction";
+  mutableOptions.sessionToken = "changed-after-construction";
+  mutableOptions.normalizationVersion = "changed-after-construction";
+  const first = await api.issue("objective");
+  assert.equal(first.principalRef, safeWritePrincipalRef(x.id));
+  assert.equal(first.normalizationVersion, x.options.normalizationVersion);
+  const a = await api.save({ token: first, canonicalValue: "Unchanged objective" });
+  assert.equal(a.status, "committed");
+  const token = await api.issue("objective");
+  const b = await api.save({ token, canonicalValue: "Unchanged objective" });
+  assert.equal(b.status, "committed");
+  if (!("receipt" in a) || !("receipt" in b)) return;
+  assert.notEqual(a.receipt.receiptRef, b.receipt.receiptRef);
+  assert.equal(a.receipt.changeSetDigest, b.receipt.changeSetDigest);
+  assert.equal((await x.snapshot()).audit.length, 2);
+  const before = await x.snapshot();
+  assert.deepEqual(await api.save({ token, canonicalValue: "Unchanged objective" }), { status: "already_committed", receipt: b.receipt });
+  assert.deepEqual(await x.snapshot(), before);
+});
+
+
+test("U2A_ORIGIN nationality save atomically clears dependent mother answer and stales its prior token", async () => {
+  const x = await browserFixture(), country = randomUUID(), actor = "a".repeat(64);
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at)
+    VALUES($1,'country',$2,$2,'KW','active',$3,$3,clock_timestamp(),clock_timestamp())`, [country, `browser kuwait ${country}`, actor]);
+  const mother = await x.api.issue("kuwaitiMother");
+  assert.equal((await x.api.save({ token: mother, canonicalValue: "true" })).status, "committed");
+  const staleMother = await x.api.issue("kuwaitiMother");
+  const nationality = await x.api.issue("nationality");
+  const before = await x.snapshot();
+  await assert.doesNotReject(async () => {
+    const result = await x.api.save({ token: nationality, canonicalValue: country });
+    assert.equal(result.status, "committed");
+    if (!("receipt" in result)) return;
+    assert.deepEqual(result.receipt.fields, ["nationality"]);
+    assert.equal(result.receipt.changeSetDigest, browserChangeSetDigest(nationality, country));
+  }, "nationality save preserves the origin invariant through its one allowed dependent clear");
+  const after = await x.snapshot();
+  assert.equal(after.profile[0]!.nationality_id, country);
+  assert.equal(after.profile[0]!.kuwaiti_mother, null);
+  assert.equal(after.profile[0]!.kuwaiti_mother_written_at, null);
+  assert.equal(after.audit.length, before.audit.length + 1);
+  const added = after.audit.filter(row => !before.audit.some(prior => prior.request_ref === row.request_ref));
+  assert.equal(added.length, 1);
+  assert.deepEqual(added[0]!.after_summary.fields, ["nationality"]);
+  assert.deepEqual(await x.api.save({ token: staleMother, canonicalValue: "false" }), { status: "state_changed" });
+  assert.deepEqual(await x.snapshot(), after, "stale mother token writes nothing");
 });

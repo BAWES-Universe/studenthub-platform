@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
+import { projectApprovedProfile } from "./profile.js";
+import type { ApprovedProfileAdapter } from "./types.js";
 import {
   createSafeWrite,
+  type BrowserBaseline,
   type ConfirmRequest,
   type ConfirmResult,
   type PreviewRequest,
@@ -30,7 +34,7 @@ export const SHU372_RULES = Object.freeze({
   kuwaitiMother: Object.freeze({ maxLength: 5, allowClear: true, accepts: ["true", "false", ""], refuses: ["yes", "1"] }),
 } satisfies Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
 
-const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
+const FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
 const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06fa-\u06fc]/u;
 
@@ -60,33 +64,81 @@ export function isPersonProfileMinimumAge(value: string, today: string): boolean
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && validBirthDate(value, today);
 }
 
-export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today: string): string | null {
-  if (typeof value !== "string") return null;
+export type PersonSelfEditInvalidReason = "required" | "length" | "name" | "arabic_name" | "spacing" | "characters" | "date" | "future" | "minimum_age" | "choice" | "contact_unavailable";
+export type PersonSelfEditValidation = { readonly ok: true; readonly value: string } | { readonly ok: false; readonly reason: PersonSelfEditInvalidReason };
+
+/** Canonical validation never trims, collapses or truncates the person's input. */
+export function validatePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today: string, options: { readonly contactAvailable?: boolean } = {}): PersonSelfEditValidation {
+  if (typeof value !== "string") return { ok: false, reason: "characters" };
   let normalized = value.normalize("NFC");
   const rule = SHU372_RULES[field];
-  if ([...normalized].length > rule.maxLength || FORBIDDEN.test(normalized)) return null;
-  if (normalized === "") return rule.allowClear ? "" : null;
+  if ([...normalized].length > rule.maxLength) return { ok: false, reason: "length" };
+  if (FORBIDDEN.test(normalized)) return { ok: false, reason: "characters" };
+  if (normalized === "") return rule.allowClear ? { ok: true, value: "" } : { ok: false, reason: "required" };
   if (field === "phone") {
     normalized = normalized.replace(/[\u0660-\u0669\u06f0-\u06f9]/g, character => String(character.charCodeAt(0) % 16));
-    if (!/^[+0-9 ()-]+$/.test(normalized) || normalized.trim() !== normalized) return null;
+    if (!/^[+0-9 ()-]+$/.test(normalized)) return { ok: false, reason: "characters" };
+    if (normalized.trim() !== normalized) return { ok: false, reason: "spacing" };
     const compact = normalized.replace(/[ ()-]/g, "");
     const international = compact.startsWith("+") || compact.startsWith("00");
     const digits = compact.startsWith("+") ? compact.slice(1) : compact.startsWith("00") ? compact.slice(2) : compact;
     normalized = digits.length === 8 && !international ? `+965${digits}` : international || digits.startsWith("965") ? `+${digits}` : compact;
   }
-  if (field === "gender" && !["male", "female", "other"].includes(normalized)) return null;
-  if (field === "birthDate" && !validBirthDate(normalized, today)) return null;
-  if (field === "drivingLicence" && !["true", "false"].includes(normalized)) return null;
-  if (field === "jobSearchStatus" && !["not_looking", "active", "open_to_offers"].includes(normalized)) return null;
-  if (field === "phone" && !/^\+[0-9]{8,15}$/.test(normalized)) return null;
+  if (field === "gender" && !["male", "female", "other"].includes(normalized)) return { ok: false, reason: "choice" };
+  if (field === "birthDate") {
+    if (!validPersonBirthDate(normalized) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return { ok: false, reason: "date" };
+    if (normalized > today) return { ok: false, reason: "future" };
+    if (!validBirthDate(normalized, today)) return { ok: false, reason: "minimum_age" };
+  }
+  if (field === "drivingLicence" && !["true", "false"].includes(normalized)) return { ok: false, reason: "choice" };
+  if (field === "jobSearchStatus" && !["not_looking", "active", "open_to_offers"].includes(normalized)) return { ok: false, reason: "choice" };
+  if (field === "phone" && !/^\+[0-9]{8,15}$/.test(normalized)) return { ok: false, reason: "characters" };
   if (field === "handle") normalized = normalized.toLowerCase();
-  if (field === "handle" && !/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)) return null;
-  if ((field === "nationality" || (field === "university" && normalized !== "")) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) return null;
-  if (field === "kuwaitiMother" && !["true", "false"].includes(normalized)) return null;
-  if (normalized !== normalized.trim() || /\s{2}/u.test(normalized)) return null;
-  if ((field === "displayName" || field === "arabicName") && !NAME.test(normalized)) return null;
-  if (field === "arabicName" && !ARABIC_LETTER.test(normalized)) return null;
-  return normalized;
+  if (field === "handle" && !/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)) return { ok: false, reason: "characters" };
+  if ((field === "nationality" || (field === "university" && normalized !== "")) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) return { ok: false, reason: "choice" };
+  if (field === "kuwaitiMother" && !["true", "false"].includes(normalized)) return { ok: false, reason: "choice" };
+  if (normalized !== normalized.trim() || /\s{2}/u.test(normalized)) return { ok: false, reason: "spacing" };
+  if ((field === "displayName" || field === "arabicName") && !NAME.test(normalized)) return { ok: false, reason: "name" };
+  if (field === "arabicName" && !ARABIC_LETTER.test(normalized)) return { ok: false, reason: "arabic_name" };
+  if ((field === "phone" || field === "handle") && options.contactAvailable === false) return { ok: false, reason: "contact_unavailable" };
+  return { ok: true, value: normalized };
+}
+
+export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today: string): string | null {
+  const result = validatePersonSelfEditValue(field, value, today);
+  return result.ok ? result.value : null;
+}
+
+export const PERSON_FALLBACK_COMPARISON_V1 = "profile-fallback-v1";
+
+/**
+ * Read only when no platform-owned override (including an explicit clear) is shown.
+ * U2b must use the same reader for rendering the baseline and for saving it.
+ * Revision identifies digest policy, not snapshot freshness. The projector still
+ * enforces its fixed approved source revision without alteration or bypass.
+ */
+export function createPersonImportedFallbackReader(options: {
+  readonly source: ApprovedProfileAdapter;
+  readonly today?: () => string;
+}) {
+  const digest = (parts: readonly unknown[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+  return Object.freeze({
+    async read(principalId: string, field: PersonSelfEditField): Promise<BrowserBaseline["shownFallback"]> {
+      const link = await options.source.resolveLink(principalId);
+      if (link.kind === "unconfigured") return null;
+      if (link.kind !== "linked") throw new Error("Approved profile link unavailable");
+      const row = await options.source.readCandidate(link.candidateRef);
+      if (row === undefined) throw new Error("Approved profile snapshot unavailable");
+      const profile = projectApprovedProfile(row, options.today?.() ?? kuwaitDate(new Date()));
+      const shown = profile.fields[field];
+      if (!shown || shown.state !== "available") return null;
+      return Object.freeze({
+        sourceRef: digest(["profile-fallback-source-v1", link.candidateRef, shown.provenance.sourceField]),
+        valueDigest: digest(["profile-fallback-value-v1", shown.value]),
+        revision: PERSON_FALLBACK_COMPARISON_V1,
+      });
+    },
+  });
 }
 
 export function createPersonSelfEdit(options: {
