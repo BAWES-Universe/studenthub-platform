@@ -26,7 +26,7 @@ const mutations = [
   ["SHU374_PHONE", '!/^\\+[0-9]{8,15}$/.test(normalized)', "false"],
   ["SHU374_HANDLE", '!/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)', "false"],
   ["SHU415_WRITE", '(field === "nationality" || (field === "university" && normalized !== ""))', 'field === "university" && normalized !== ""'],
-  ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 32]", "['phone', 'Phone number', 'text', 32]", webUiModuleFile, pageSuite],
+  ["SHU374_PAGE", 'key === "phone" ? "tel" : "text"', 'key === "phone" ? "text" : "text"', webUiModuleFile, pageSuite],
   ["SHU413_PAGE", "summary(afterShown)", "summary(after)", pageModuleFile, pageSuite],
   ["SHU415_PAGE", 'field === "kuwaitiMother" ? value === "" ? "Not recorded" : value === "true" ? "Yes" : "No"', 'field === "kuwaitiMother" ? value', pageModuleFile, pageSuite],
   ["SHU415_PAGE", 'catalogue.find(item => item.id === after)?.name ?? "Unavailable"', 'catalogue.find(item => item.id === after)?.name ?? "Not recorded"', pageModuleFile, pageSuite],
