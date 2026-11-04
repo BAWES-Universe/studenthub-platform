@@ -5,6 +5,7 @@ Use these documents for production readiness and operational response. The
 
 - [Deploy](deploy.md): pinned image deployment, preflight, and verification.
 - [Rollback](rollback.md): restore the previous image under the forward-only migration policy.
+- [Platform database restore](restore.md): restore to an isolated database and verify counts and integrity.
 - [Incident](incident.md): severity, decision authority, and communications.
 - [Secret rotation](secret-rotation.md): every registered integration.
 - [Alert routing](alerts.md): every platform alert and its response.
