@@ -4841,6 +4841,24 @@ for (const [brief, id] of [[SHU440_BRIEF, "SHU-440"], [SHU441_BRIEF, "SHU-441"]]
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
 
+// SHU-440's build passed review but its pull request failed CI: the new db
+// test imported runMigrations from ../src/index.js, so under dist the
+// migrations folder did not resolve, and its one repair round stopped when the
+// worker exited. SHU-444 is the same card with that import named in its guards,
+// waiting on nothing now that SHU-436 has landed, and SHU-445 re-cuts the
+// notification card that waited on SHU-440.
+const RECUT_440 = Object.freeze({ "SHU-440": "SHU-444", "SHU-441": "SHU-445" });
+const recut440 = (text) => text.replace(/\bSHU-(440|441)\b/g, (id) => RECUT_440[id]);
+const recutAcceptance440 = (from, reason, text) => `${recut440(text)} ${RECUT_440[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const SHU444_GUARD_FROM = "- Nothing is sent from staging: the only implementations wired are the fake (tests) and unconfigured (runtime).";
+const SHU444_GUARD_TO = `${SHU444_GUARD_FROM}
+- packages/db/test/postgres-email-outbox.test.ts imports runMigrations and the stores from "@studenthub/db", as every other Postgres test in packages/db/test does, never from ../src/index.js: the db suite runs the compiled tests, and only the package import finds the migrations folder there.`;
+const SHU444_BRIEF = replaceOnce(recut440(SHU440_BRIEF), SHU444_GUARD_FROM, SHU444_GUARD_TO, "SHU444_BRIEF guard");
+const SHU445_BRIEF = recut440(SHU441_BRIEF);
+for (const [brief, id] of [[SHU444_BRIEF, "SHU-444"], [SHU445_BRIEF, "SHU-445"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
@@ -5564,6 +5582,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))),
     brief: SHU441_BRIEF,
+  }),
+  "SHU-444": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance440("SHU-440", "after its pull request failed CI on the db test's migrations import", recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE)))),
+    brief: SHU444_BRIEF,
+  }),
+  "SHU-445": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)))),
+    brief: SHU445_BRIEF,
   }),
 });
 
