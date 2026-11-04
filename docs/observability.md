@@ -122,9 +122,9 @@ restricted stream; SHU-90 exports only their random request correlation ID.
 
 ## Alerts and runbook
 
-All rules are implemented by `evaluateAlerts`. **Owner: platform-on-call**;
-**accountable operator: Khalid** until a staffed rotation is established. Rule
-outputs point to this runbook. Evaluation is local and sending is disabled.
+All rules are implemented by `evaluateAlerts`. **Owner: platform-on-call**.
+Evaluation is local and sending is disabled. The authoritative routing table and
+operator responses are in [alert routing](runbooks/alerts.md).
 
 | Rule | Trigger | Response |
 | --- | --- | --- |
@@ -136,7 +136,7 @@ outputs point to this runbook. Evaluation is local and sending is disabled.
 | job_overlap | A run was refused because the same job already held a live lease | Confirm the existing run is progressing and its lease is renewing; do not start overlapping work |
 | job_missed | The last successful run is older than its declared interval times the grace factor | Check host scheduling and the latest scrubbed run outcome, then restore the operator-managed schedule |
 
-The three job alerts are owned by **platform-on-call** and use this document as their runbook. Job runs retain only a closed job name, timestamps, numeric duration and closed outcome. The read-only `/admin/jobs` page is restricted to principals with an admin grant on an operator organization and performs two bulk run reads regardless of registry size.
+The three job alerts are owned by **platform-on-call** and link to their entries in [alert routing](runbooks/alerts.md). Job runs retain only a closed job name, timestamps, numeric duration and closed outcome. The read-only `/admin/jobs` page is restricted to principals with an admin grant on an operator organization and performs two bulk run reads regardless of registry size.
 
 For `dependency_unavailable`, inspect configured dependency health using approved
 operator tooling. For `render_failure`, reproduce with synthetic profile data.

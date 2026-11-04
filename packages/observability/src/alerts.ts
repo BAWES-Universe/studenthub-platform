@@ -2,7 +2,7 @@
 export interface Alert {
   code: 'journey_failures' | 'journey_latency' | 'telemetry_dropped' | 'telemetry_unavailable' | 'job_failed' | 'job_overlap' | 'job_missed';
   owner: 'platform-on-call';
-  runbook: 'docs/observability.md';
+  runbook: `docs/runbooks/alerts.md#${Alert['code']}`;
 }
 export function evaluateAlerts(snapshot: {
   metrics: Record<string, { count: number; buckets: number[] }>;
@@ -25,5 +25,5 @@ export function evaluateAlerts(snapshot: {
   }
   if (snapshot.counters.dropped > 0) codes.add('telemetry_dropped');
   if (snapshot.counters.unavailable > 0) codes.add('telemetry_unavailable');
-  return [...codes].map(code => ({ code, owner: 'platform-on-call', runbook: 'docs/observability.md' }));
+  return [...codes].map(code => ({ code, owner: 'platform-on-call', runbook: `docs/runbooks/alerts.md#${code}` }));
 }
