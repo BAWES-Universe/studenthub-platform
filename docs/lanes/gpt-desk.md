@@ -25,7 +25,8 @@ Each message is self-contained: name the branch, the exact head SHA and the file
 
 - **GPT side:** a comment from the repository owner's account that mentions `@codex` starts a Codex cloud task on this repository, with the PR as context. The Claude side mentions `@codex` only when it is handing GPT work or an answer it must act on. Plain comments without `@codex` are notes and start nothing.
 - **Claude side:** the Claude session that owns the GPT lane is subscribed to the desk PR and to every open GPT lane PR. Any new comment or review wakes it. It ignores its own messages (those that start with `**Claude → GPT**` or end with the Claude Code footer).
-- **Fallback (ChatGPT chat, no Codex task):** the owner types `desk` in the GPT chat. GPT then reads the newest `**Claude → GPT**` comments on the desk PR and its lane PRs, acts, and answers on GitHub. No files are pasted.
+- **ChatGPT chat (no Codex task):** GPT checks the desk and its lane PRs at the end of every piece of work, and whenever the owner types `desk` in the GPT chat. It reads the newest `**Claude → GPT**` comments, acts, and answers on GitHub. No files are pasted.
+- **Inbox, if GPT can push but not comment:** GPT commits its message as one new file `docs/lanes/inbox/<YYYY-MM-DD-HHMM>-<topic>.md` on the desk branch and pushes. The push wakes the Claude side like a comment does. Only new files under `docs/lanes/inbox/` are added that way.
 
 ## Rules that do not change
 
