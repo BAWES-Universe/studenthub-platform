@@ -372,3 +372,99 @@ test("SHU357_TERMS_BATCH_REQUIRED a configured directory adapter must provide it
   // @ts-expect-error SHU-357: directory-capable commercial terms adapters require the fixed-cost batch read.
   void setup({commercialTerms});
 }assert.ok(true)});
+
+test("DIR_CHILD_COUNTS counts only covered immediate children per parent before filtering and paging", async () => {
+  const companies = Array.from({ length: 23 }, (_, index) => ({
+    id: `counts-${String(index).padStart(2, "0")}`,
+    name: `Counts ${String(index).padStart(2, "0")}`,
+    parentOrgId: "root",
+  }));
+  const children = [
+    { id: "a-covered", name: "Covered A", parentOrgId: "counts-00" },
+    { id: "a-uncovered", name: "Uncovered A", parentOrgId: "counts-00" },
+    { id: "a-deleted", name: "Deleted A", parentOrgId: "counts-00" },
+    { id: "a-operator", name: "Operator A", parentOrgId: "counts-00" },
+    { id: "b-covered-1", name: "Covered B1", parentOrgId: "counts-01" },
+    { id: "b-covered-2", name: "Covered B2", parentOrgId: "counts-01" },
+    { id: "b-deleted", name: "Deleted B", parentOrgId: "counts-01" },
+    { id: "b-uncovered", name: "Uncovered B", parentOrgId: "counts-01" },
+    { id: "b-operator", name: "Operator B", parentOrgId: "counts-01" },
+    { id: "c-uncovered", name: "Uncovered C", parentOrgId: "counts-02" },
+  ];
+  const store = new InMemoryAuthzStore({
+    principals: PEOPLE,
+    // Deliberately reverse input order: output ordering must remain independent.
+    organizations: [{ id: "root", name: "StudentHub" }, ...[...companies].reverse(), ...children],
+  });
+  await store.grantMany("staff", [
+    { orgId: "root", role: "staff" },
+    ...companies.map(({ id }) => ({ orgId: id, role: "staff" as const })),
+    ...children.filter(({ id }) => !id.endsWith("uncovered")).map(({ id }) => ({ orgId: id, role: "staff" as const })),
+  ]);
+  let deleted = new Set(["a-deleted", "b-deleted"]);
+  const repository = new OrganizationRepository({
+    store,
+    source: new UnconfiguredApprovedOrganizationAdapter(),
+    operatorOrgIds: ["root", "a-operator", "b-operator"],
+    deletions: {
+      async isDeleted(id) { return deleted.has(id); },
+      async deletedAmong(ids) { return new Set(ids.filter((id) => deleted.has(id))); },
+    },
+  });
+  const first = await repository.listOrganizations(STAFF);
+  const second = await repository.listOrganizations({ ...STAFF, page: 2 });
+  const third = await repository.listOrganizations({ ...STAFF, page: 3 });
+  for (const result of [first, second, third]) {
+    assert.equal(result.kind, "found");
+    if (result.kind === "found") assert.equal(result.directory.total, 23);
+  }
+  assert.deepEqual(ids(first), companies.slice(0, 20).map(({ id }) => id));
+  assert.deepEqual(ids(second), companies.slice(20).map(({ id }) => id));
+  assert.deepEqual(ids(third), []);
+  assert.deepEqual([...entries(first), ...entries(second)].map((entry) => entry.subOrganizationCount), [1, 2, ...Array<number>(21).fill(0)]);
+  const filtered = await repository.listOrganizations({ ...STAFF, filters: { query: "Counts 01" } });
+  assert.deepEqual(entries(filtered).map((entry) => [entry.orgId, entry.subOrganizationCount]), [["counts-01", 2]]);
+  if (filtered.kind === "found") assert.equal(filtered.directory.total, 1);
+  // A later request must rebuild from its final coverage, not reuse stale counts.
+  deleted = new Set(["a-deleted", "b-deleted", "b-covered-2"]);
+  assert.deepEqual(entries(await repository.listOrganizations({ ...STAFF, filters: { query: "Counts 01" } })).map((entry) => entry.subOrganizationCount), [1]);
+});
+
+test("DIR_CHILD_SCAN does not filter the full organization list once per shown company", async () => {
+  for (const count of [1, 20, 60]) {
+    const companies = Array.from({ length: count }, (_, index) => ({ id: `scan-${index}`, name: `Scan ${index}`, parentOrgId: "root" }));
+    const original = new InMemoryAuthzStore({
+      principals: PEOPLE,
+      organizations: [
+        { id: "root", name: "StudentHub" },
+        ...companies,
+        ...companies.map(({ id }) => ({ id: `${id}-child`, name: `Child ${id}`, parentOrgId: id })),
+      ],
+    });
+    await original.grantMany("staff", [{ orgId: "root", role: "staff", scope: "subtree" }]);
+    let fullListFilters = 0;
+    const store = new Proxy(original, {
+      get(target, property) {
+        if (property === "listOrganizations") return async () => new Proxy(await target.listOrganizations(), {
+          get(organizations, key, receiver) {
+            if (key === "filter") fullListFilters += 1;
+            return Reflect.get(organizations, key, receiver);
+          },
+        });
+        const member = Reflect.get(target, property);
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+    const repository = new OrganizationRepository({ store, source: new UnconfiguredApprovedOrganizationAdapter() });
+    for (const request of [{}, { filters: { query: "Scan" } }, { page: 2 }] as const) {
+      fullListFilters = 0;
+      const result = await repository.listOrganizations({ ...STAFF, ...request });
+      assert.equal(result.kind, "found");
+      assert.ok(entries(result).every((entry) => entry.subOrganizationCount === 1));
+      // Only the organization-list filter is instrumented, not hierarchy walks or
+      // contexts/entry filters. This is a deterministic regression guard, not a
+      // timing threshold or a claim that the whole directory is linear-time.
+      assert.ok(fullListFilters <= 1, `DIR_CHILD_SCAN: ${count} companies caused ${fullListFilters} full-list filters`);
+    }
+  }
+});

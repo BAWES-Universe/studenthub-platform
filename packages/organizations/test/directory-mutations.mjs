@@ -11,6 +11,14 @@ const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/organizations/test/organization-directory.test.js", import.meta.url));
 const mutations = [
   [
+    "borrow another parent's child count", "DIR_CHILD_COUNTS",
+    "coveredChildCounts.get(org.id) ?? 0", "[...coveredChildCounts.values()].reduce((sum, count) => sum + count, 0)",
+  ],
+  [
+    "restore the per-company child count scan", "DIR_CHILD_SCAN",
+    "coveredChildCounts.get(org.id) ?? 0", "organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length",
+  ],
+  [
     "ignore the directory currency batch", "SHU353_DIRECTORY_CURRENCY",
     "termsBatch?.get(org.id)", "undefined",
   ],
@@ -30,7 +38,7 @@ const mutations = [
   ],
   [
     "count uncovered sub-organizations", "SHU-163/AC-01 SCOPE",
-    "child.parentOrgId === org.id && covered.has(child.id)", "child.parentOrgId === org.id",
+    "child.parentOrgId !== undefined && covered.has(child.id)", "child.parentOrgId !== undefined",
   ],
   [
     "skip context resolution", "SHU-163/AC-01 SCOPE",
