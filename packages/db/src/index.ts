@@ -24,7 +24,7 @@ export {
   safeWritePrincipalRef,
   type Language,
 } from "./safe-write-store.js";
-export { PostgresLoginStore } from "./postgres-login-store.js";
+export { PostgresLoginStore, readLiveLoginSessionPerson } from "./postgres-login-store.js";
 export { PostgresCatalogueStore } from "./postgres-catalogue-store.js";
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "./postgres-profile-records-store.js";
 export { PostgresFinanceReferenceResolver, PostgresPayContractStore } from "./postgres-pay-contract-store.js";
@@ -47,6 +47,6 @@ export {PostgresOrganizationDeletionStore,ORGANIZATION_DELETION_OPERATION,type P
 export {PostgresPayContractSafeWriteStore,PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATION,type PostgresPayContractSafeWriteStoreOptions} from "./postgres-pay-contract-safe-write-store.js";
 export {PostgresOrganizationAccountManagerStore,ORGANIZATION_ACCOUNT_MANAGER_OPERATION,type PostgresOrganizationAccountManagerStoreOptions} from "./postgres-organization-account-manager-store.js";
 export {PostgresOrganizationAccountManagerReads} from "./postgres-organization-account-manager-reads.js";
-export { PostgresPersonProfileStore, PERSON_PROFILE_FIELDS, type PersonProfileField } from "./person-profile-store.js";
+export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_PROFILE_FIELDS, type PersonProfileField, type PersonProfileBrowserOptions, type PersonProfileBrowserPrepared, type PersonProfileShownFallback, type PersonProfileSessionLiveness, type PersonProfileImportedFallback } from "./person-profile-store.js";
 export { PostgresJobRunsStore } from "./postgres-job-runs-store.js";
 export { PostgresExportsStore } from "./postgres-exports-store.js";

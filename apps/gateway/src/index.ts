@@ -30,6 +30,7 @@ import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
+import { handleProfileBrowserEdit } from "./profile-browser-edit-http.js";
 import { handleProfileEdit, handleProfileEditPage, shownProfileValue } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
@@ -195,6 +196,8 @@ export function createGatewayServer(
         return shown ? shownProfileValue(shown) : undefined;
       })) return;
     if (await handleProfileEdit(request, response, login?.profileEdit, login?.web?.origin)) return;
+    if (await handleProfileBrowserEdit(request, response, login?.browserEdit, login?.web?.origin,
+      (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)))) return;
     if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
       (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
       async (sessionId) => {
@@ -415,8 +418,9 @@ export function createGatewayServer(
       }
       if (html) {
         try {
-          const page = await profileDocument(result, login);
-          writeHtml(response, page.status, page.html);
+          const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
+          const page = await profileDocument(result, login, notice?.notice);
+          writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
           writeHtml(response, 503, renderError(503, login));

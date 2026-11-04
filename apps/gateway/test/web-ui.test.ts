@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import pg from "pg";
 import test, { type TestContext } from "node:test";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
@@ -7,6 +8,7 @@ import {
   OwnProfileRepository,
   OWN_PROFILE_FIELD_NAMES,
   PROFILE_PARITY_REVISION,
+  PERSON_SELF_EDIT_FIELDS,
   SYNTHETIC_PROFILE_FIXTURES,
 } from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
@@ -393,3 +395,72 @@ test("SHU354_SHOWN shows each assigned name as a company link without principal 
 });
 
 test("SHU357_MY_COMPANIES_SIGN_IN distinguishes an expired session from an unavailable read",()=>{const login={organizationAccountManager:{} as OrganizationAccountManager,web:{origin:"https://studenthub.example.invalid",returnTo:"https://studenthub.example.invalid/workspace/my-companies"}} as BrowserLoginApplication,active={orgId:"employer",organizationName:"Employer",role:"staff" as const};const expired=renderAssignedCompanies({status:401,body:{error:"unauthorized"}},login,active);assert.match(expired,/Sign in/);assert.match(expired,/href="\/login\/universe\?return_to=https%3A%2F%2Fstudenthub\.example\.invalid%2Fworkspace%2Fmy-companies"/);assert.doesNotMatch(expired,/Try again/);const unavailable=renderAssignedCompanies({status:503,body:{error:"unavailable"}},login,active);assert.match(unavailable,/Try again/);assert.doesNotMatch(unavailable,/>Sign in</)});
+
+
+test("U2B_NOTICE_SEAM: verified notices are escaped, cleared and linked field edits replace only browser forms", async (t) => {
+  const f = await fixture(t);
+  let noticeReads = 0;
+  Object.assign(f.login, { browserEdit: {
+    async edit() { return { status: 200, title: "Edit", html: "<main>Edit seam</main>" }; },
+    async submit() { throw new Error("unexpected write"); },
+    async notice(session: string | undefined, cookieHeader: string | undefined) {
+      assert.equal(session, SESSION);
+      assert.ok(cookieHeader?.includes("studenthub_profile_notice=verified"));
+      noticeReads++;
+      return { notice: { title: "Saved <title>", message: 'Name <script>unsafe</script>' },
+        clearCookie: "studenthub_profile_notice=; Max-Age=0; Path=/profile; HttpOnly; SameSite=Strict" };
+    },
+  } });
+  const response = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, cookie: `${BROWSER.cookie}; studenthub_profile_notice=verified` } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.match(response.headers.get("set-cookie")!, /Max-Age=0/);
+  const html = await response.text();
+  assert.equal(noticeReads, 1);
+  assert.match(html, /id="profile-notice"/);
+  assert.match(html, /Saved &lt;title&gt;/);
+  assert.match(html, /Name &lt;script&gt;unsafe&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>unsafe/);
+  for (const field of PERSON_SELF_EDIT_FIELDS) {
+    assert.ok(html.includes(`href="/profile/edit/${field}"`), `Edit link for ${field}`);
+    assert.ok(html.includes(`id="field-${field}"`), `Anchor for ${field}`);
+  }
+  assert.match(html, /id="profile-summary"/);
+  assert.match(html, /Choose Edit beside a field/);
+  assert.doesNotMatch(html, /editing isn’t enabled yet/);
+  assert.doesNotMatch(html, /action="\/profile\/edit\/preview"/);
+  const edit = await fetch(`${f.url}/profile/edit/displayName`, { headers: BROWSER });
+  assert.equal(edit.status, 200);
+  assert.match(await edit.text(), /Edit seam/);
+});
+
+test("U2B_LIVENESS: browser runtime profile reads never run session housekeeping, legacy preview and logout retain their bindings", async (t) => {
+  const queries: string[] = [];
+  t.mock.method(pg.Pool.prototype, "query", async (sql: string) => {
+    queries.push(sql);
+    return { rows: [{ person_id: "authorized-person" }], rowCount: 1 };
+  });
+  t.mock.method(PostgresAuthzStore.prototype, "getPrincipal", async (id: string) => ({ id, pbuuids: [] }));
+  const runtime = createRuntimeLoginFromEnv({
+    DATABASE_URL: "postgres://synthetic:synthetic@127.0.0.1:1/synthetic", OIDC_ISSUER: "https://identity.test.invalid/",
+    OIDC_CLIENT_ID: "synthetic", OIDC_CLIENT_SECRET: "synthetic", OIDC_CALLBACK_URL: `${ORIGIN}/login/callback`,
+    OIDC_AUTHORIZATION_URL: "https://identity.test.invalid/authorize", OIDC_TOKEN_URL: "https://identity.test.invalid/token",
+    OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: `${ORIGIN}/profile`,
+    SAFE_WRITE_SIGNING_KEY: Buffer.alloc(32, 7).toString("base64"),
+  })!;
+  t.after(() => runtime.close());
+  assert.ok(runtime.application.browserEdit);
+  const profile = await runtime.application.profile({ sessionId: SESSION });
+  assert.equal(profile.status, 200);
+  assert.equal(profile.body?.personId, "authorized-person");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0]!, /^SELECT person_id FROM login_sessions/);
+  assert.match(queries[0]!, /expires_at > clock_timestamp\(\)/);
+  assert.doesNotMatch(queries.join(" "), /DELETE|UPDATE|INSERT/, "U2B_LIVENESS no housekeeping on browser profile notice path");
+  queries.length = 0;
+  assert.equal((await runtime.application.profileEdit!.preview(SESSION, {})).status, 400);
+  assert.match(queries[0]!, /WITH expired AS/ , "legacy preview retains its session store");
+  queries.length = 0;
+  await runtime.application.logout(SESSION);
+  assert.match(queries[0]!, /^DELETE FROM login_sessions/, "logout still deletes the session");
+});

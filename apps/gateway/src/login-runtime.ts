@@ -1,4 +1,8 @@
 import { randomBytes } from "node:crypto";
+import pg from "pg";
+import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
+import { readLiveLoginSessionPerson, safeWritePrincipalRef } from "@studenthub/db";
+import { createProfileBrowserEdit } from "./profile-browser-edit-http.js";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
@@ -13,6 +17,7 @@ import type {
 } from "@studenthub/login-contract";
 import {
   OwnProfileRepository,
+  createPersonImportedFallbackReader,
   UnconfiguredApprovedProfileAdapter,
   type ApprovedProfileAdapter,
 } from "@studenthub/profile";
@@ -225,6 +230,13 @@ export function createRuntimeLoginFromEnv(
   // SHU-84: the first safe write is off unless its own signing key is set. The
   // deployment does not pass this variable, so no deployed gateway writes.
   const safeWriteKey = safeWriteSigningKey(env.SAFE_WRITE_SIGNING_KEY);
+  // Freeze both protocol versions once, never derive them from a request.
+  const browserKeyVersion = "profile-browser-key-v1";
+  const browserNormalizationVersion = "profile-browser-normalization-v1";
+  const browserTokens = safeWriteKey ? createBrowserWriteTokens({ activeKeyVersion: browserKeyVersion,
+    keys: { [browserKeyVersion]: safeWriteKey } }) : undefined;
+  const browserSessionPool = browserTokens ? new pg.Pool({ connectionString: value("DATABASE_URL") }) : undefined;
+  const importedFallback = createPersonImportedFallbackReader({ source: approvedProfiles });
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
@@ -266,7 +278,14 @@ export function createRuntimeLoginFromEnv(
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
     entropy: { bytes: (length) => randomBytes(length) },
     states: loginStore.states,
-    sessions: loginStore.sessions,
+    sessions: browserSessionPool ? {
+      put: loginStore.sessions.put,
+      delete: loginStore.sessions.delete,
+      async get(id) {
+        const personId = await readLiveLoginSessionPerson(browserSessionPool, id);
+        return personId ? { id, personId } : undefined;
+      },
+    } : loginStore.sessions,
     identities: loginStore.identities,
     authorization: {
       async roleFor(personId) {
@@ -303,6 +322,30 @@ export function createRuntimeLoginFromEnv(
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
+      ...(personProfiles && safeWriteKey && browserTokens && browserSessionPool ? {
+        browserEdit: createProfileBrowserEdit({
+          secret: safeWriteKey,
+          secure: true,
+          choices: () => personProfiles.readOriginChoices(),
+          async authorize(session) {
+            if (!session) return null;
+            const principalId = await readLiveLoginSessionPerson(browserSessionPool, session);
+            if (!principalId || !await authzStore.getPrincipal(principalId)) return null;
+            return { actorRef: safeWritePrincipalRef(principalId), store: { ...personProfiles.forBrowserSession({
+              principalId, sessionToken: session, tokens: browserTokens,
+              normalizationVersion: browserNormalizationVersion,
+              sessionLiveness: { read: readLiveLoginSessionPerson }, importedFallback,
+            }),
+              async validate(field, canonicalValue) {
+                if (field === "phone" || field === "handle") return canonicalValue !== "" &&
+                  !await personProfiles.contactValueAvailable(principalId, field, canonicalValue) ? "contact_unavailable" : null;
+                if (field === "nationality" || field === "university" || field === "kuwaitiMother") return await personProfiles.originValueAvailable(principalId, field, canonicalValue) ? null : "choice";
+                return null;
+              },
+            } };
+          },
+        }),
+      } : {}),
       ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: loginStore.sessions, store: personProfiles, secret: safeWriteKey }) } : {}),
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
@@ -331,7 +374,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), personProfiles?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
+      await Promise.all([browserSessionPool?.end(), loginStore.close(), authzStore.close(), safeWrites?.close(), personProfiles?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
         organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close(),jobRuns.close(),exportsStore.close()]);
     },
   };

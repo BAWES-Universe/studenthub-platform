@@ -268,3 +268,23 @@ test("U2A_CANON legacy preview and confirm refuse NUL without writing", async ()
   assert.equal(x.value(), null);
   assert.ok((await x.writer.confirm({ ...valid, token: preview.token })).ok, "refused NUL did not spend the valid token");
 });
+
+test("U2B_SHOWN fallback value and evidence come from one approved snapshot read", async () => {
+  let reads = 0;
+  const reader = createPersonImportedFallbackReader({ source: {
+    resolveLink: async () => ({ kind: "linked", candidateRef: "shown-candidate" }),
+    readCandidate: async () => ({ ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_objective: `Snapshot ${++reads}` }),
+  }, today: () => TODAY });
+  const shown = await reader.readShown("person", "objective");
+  assert.equal(reads, 1, "one read supplies both display and evidence");
+  assert.equal(shown?.value, "Snapshot 1");
+  assert.equal(shown?.sourceField, "candidate_objective");
+  assert.equal(shown?.evidence.valueDigest, createHash("sha256").update(JSON.stringify(["profile-fallback-value-v1", shown?.value])).digest("hex"));
+  const evidence = await reader.read("person", "objective");
+  assert.equal(reads, 2, "legacy reader delegates to exactly one snapshot read");
+  assert.equal(evidence?.valueDigest, createHash("sha256").update(JSON.stringify(["profile-fallback-value-v1", "Snapshot 2"])).digest("hex"));
+  assert.deepEqual(Object.keys(evidence!).sort(), ["revision", "sourceRef", "valueDigest"], "legacy evidence exposes no display value");
+  const licence = await reader.readShown("person", "drivingLicence");
+  assert.equal(licence?.value, true, "render gets the projected boolean, not the source integer");
+  assert.equal(await reader.readShown("person", "phone"), null);
+});

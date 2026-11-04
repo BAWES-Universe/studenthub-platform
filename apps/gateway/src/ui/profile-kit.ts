@@ -179,7 +179,7 @@ export function profileControl(options: ProfileControlOptions): ProfileHtml {
   if (type === "radio") {
     const choices = options.choices ?? [];
     if (!choices.length || new Set(choices.map(choice => choice.value)).size !== choices.length) throw new TypeError("Unique choices required");
-    return fragment(`<fieldset class="p-choice-group"${associations}><legend>${label}</legend>${hint}${choices.map((choice, index) => `<label class="p-choice" for="${id}${index ? `-${index}` : ""}"><input id="${id}${index ? `-${index}` : ""}" type="radio" name="value" value="${escape(choice.value)}"${choice.value === value ? " checked" : ""}${required}${associations}>${escape(choice.label)}</label>`).join("")}${error}</fieldset>`);
+    return fragment(`<fieldset class="p-choice-group"${associations}><legend>${label}</legend>${hint}${choices.map((choice, index) => `<label class="p-choice" for="${id}${index ? `-${index}` : ""}"><input id="${id}${index ? `-${index}` : ""}" type="radio" name="value" value="${escape(choice.value)}"${choice.value === value ? " checked" : ""}${required}>${escape(choice.label)}</label>`).join("")}${error}</fieldset>`);
   }
   const common = `class="p-control" id="${id}" name="value"${required}${associations}`;
   let control: string;

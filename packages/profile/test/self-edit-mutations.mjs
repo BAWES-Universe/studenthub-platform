@@ -10,6 +10,8 @@ const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/profile
 const webUiModuleFile = new URL("../../../dist/apps/gateway/src/web-ui.js", import.meta.url);
 let killed = 0;
 const mutations = [
+  ["U2B_SHOWN", "value: shown.value, evidence", "value: String(shown.value) + ' drift', evidence"],
+  ["U2B_SHOWN", "sourceField: shown.provenance.sourceField, value:", "sourceField: 'wrong_source', value:"],
   ["U2A_CANON", "\\u0000-\\u001f", "\\u0001-\\u001f"],
   ["U2A_CANON", 'value.normalize("NFC")', 'value.normalize("NFC").trim()'],
   ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
