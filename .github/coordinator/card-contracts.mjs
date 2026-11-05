@@ -4858,6 +4858,17 @@ const SHU445_BRIEF = recut440(SHU441_BRIEF);
 for (const [brief, id] of [[SHU444_BRIEF, "SHU-444"], [SHU445_BRIEF, "SHU-445"]]) {
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
+const RECUT_444 = Object.freeze({ "SHU-444": "SHU-447", "SHU-445": "SHU-448" });
+const recut444 = (text) => text.replace(/\bSHU-(444|445)\b/g, (id) => RECUT_444[id]);
+const recutAcceptance444 = (from, reason, text) => `${recut444(text)} ${RECUT_444[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const SHU447_GUARD_FROM = SHU444_GUARD_TO.split("\n").at(-1);
+const SHU447_GUARD_TO = `${SHU447_GUARD_FROM}
+- Every SQL parameter that appears in more than one expression of one statement carries an explicit cast at each use, for example \`attempts=$3::int\` and \`power(2,$3::int)\`: without it Postgres refuses the statement with "inconsistent types deduced for parameter" (42P08). The fake store cannot catch this, so packages/db/test/postgres-email-outbox.test.ts must exercise processDue's retry and sent paths against Postgres.`;
+const SHU447_BRIEF = replaceOnce(recut444(SHU444_BRIEF), SHU447_GUARD_FROM, SHU447_GUARD_TO, "SHU447_BRIEF guard");
+const SHU448_BRIEF = recut444(SHU445_BRIEF);
+for (const [brief, id] of [[SHU447_BRIEF, "SHU-447"], [SHU448_BRIEF, "SHU-448"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
@@ -5596,6 +5607,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)))),
     brief: SHU445_BRIEF,
+  }),
+  "SHU-447": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance444("SHU-444", "after its pull request failed CI on an untyped SQL parameter", recutAcceptance440("SHU-440", "after its pull request failed CI on the db test's migrations import", recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE))))),
+    brief: SHU447_BRIEF,
+  }),
+  "SHU-448": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))))),
+    brief: SHU448_BRIEF,
   }),
 });
 
