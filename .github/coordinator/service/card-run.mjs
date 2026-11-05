@@ -1234,6 +1234,14 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     }
     if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
     if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
+    // Velocity A3: an install main has ready goes before a new run: no worker
+    // starts one while it waits, and the first start that finds the host idle
+    // installs it. So a merged queue or code change never waits for the whole
+    // installed queue to finish.
+    if (selection === 1 && cardQueue(config).queue) {
+      const drained = await drainForInstall({ io, paths, limits, config, revision, skip });
+      if (drained) return drained;
+    }
     if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
     claim = autoClaim(paths, revision, plan.id);
     claimedAt = io.now().toISOString();
@@ -1536,6 +1544,26 @@ async function afterQueueDone({ io, paths, limits, config, revision, done, skip 
   if (install.paused) return skip("PAUSED", install.reason);
   const review = await autoReview({ io, paths, limits, config, revision, done, skip });
   return install.skipped ? { ...review, install: { skipped: install.skipped, reason: install.reason } } : review;
+}
+
+// Velocity A3: Card B before a card start. An install main has ready that
+// finds the host busy holds this start (INSTALL_PENDING), so the host drains;
+// an idle host installs it and this start ends there, as a done queue's would.
+// Anything else (nothing to install, a read that failed, a refusal already
+// claimed) lets the card start as before.
+async function drainForInstall({ io, paths, limits, config, revision, skip }) {
+  let install;
+  try {
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons: hostBusyReasons,
+      cardLanded: async (hostIo, hostPaths, id) => (await cardLanded(hostIo, hostPaths, id, { ...landingReader(hostIo, hostPaths, config, limits), record: true })).landed } });
+  } catch {
+    return null;
+  }
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });
+  if (install.result) return install.result;
+  if (install.paused) return skip("PAUSED", install.reason);
+  if (install.skipped === "INSTALL_HOST_BUSY") return skip("INSTALL_PENDING", `main's install waits for the host to be idle: ${install.reason}`);
+  return null;
 }
 
 // A refused self-install's finished status: no card, nothing armed, and the

@@ -340,12 +340,19 @@ export function selfInstallGate(facts) {
   // be an installed lane. The first is new: nextCard runs the first card that
   // has not landed, so an installed stopped card first would stop the queue
   // again. None has landed.
+  // Velocity A3: an appended queue keeps the installed dispatch_scope as it
+  // is, in order, and adds cards after it. It may install while the installed
+  // queue still has cards to run (card-run drains the host for it first), so
+  // its installed cards may have landed already, and what ran at R carries
+  // over to N (carryClaims): a stopped card stays stopped.
+  const prior = installed.dispatch_scope?.issue_ids;
+  const append = Array.isArray(prior) && prior.length > 0 && ids.length > prior.length && prior.every((id, i) => ids[i] === id);
   for (const id of ids) {
     if (!added.includes(id) && !known.has(id)) return no(`${String(id)} in the new dispatch_scope is neither a newly appended nor an installed card lane`);
   }
-  if (!added.includes(ids[0])) return no(`${String(ids[0])}, first in the new dispatch_scope, is not a newly appended card lane`);
+  if (!append && !added.includes(ids[0])) return no(`${String(ids[0])}, first in the new dispatch_scope, is not a newly appended card lane`);
   const landed = new Set(facts.landed ?? []);
-  for (const id of ids) if (landed.has(id)) return no(`${id} already landed`);
+  for (const id of ids) if (landed.has(id) && !(append && prior.includes(id))) return no(`${id} already landed`);
   const installedContracts = contractEntries(facts.contractTexts?.installed);
   const nextContracts = contractEntries(facts.contractTexts?.main);
   if (!installedContracts || !nextContracts) return no("CARD_CONTRACTS cannot be read at both revisions");
@@ -356,7 +363,8 @@ export function selfInstallGate(facts) {
 
   const reviewed = reviewedAndGreen(facts, { changes, code, policy });
   if (!reviewed.ok) return reviewed;
-  return { ok: true, queue: [...ids], lanes: added, ...(code.length ? { code: code.map((change) => change.path), approval: reviewed.approval } : {}) };
+  return { ok: true, queue: [...ids], lanes: added, ...(append ? { append: true } : {}),
+    ...(code.length ? { code: code.map((change) => change.path), approval: reviewed.approval } : {}) };
 }
 
 const coordinatorFile = (file) => typeof file === "string" && file.startsWith(COORDINATOR)
@@ -548,6 +556,26 @@ function planCheck(io, paths, queue) {
   if (refused) throw new Error(`a dry-run preparation is refused: ${plainReason(refused.prepare?.reason ?? refused.prepare?.refused ?? "no preparation")}`);
 }
 
+// Velocity A3: a card's timer claim at a revision, as card-run.mjs names it
+// (autoClaim). An appended queue installs at N with each of its cards' claims
+// at R copied to N, so a card that ran at R is not run again at N. A claim
+// already at N is left as it is.
+export const revisionClaim = (paths, revision, id) => path.join(paths.stateDir, `card-run-auto-${revision}-${id}.json`);
+export function carryClaims(io, paths, revision, main, queue) {
+  const carried = [];
+  for (const id of queue) {
+    const from = revisionClaim(paths, revision, id);
+    const to = revisionClaim(paths, main, id);
+    if (!io.fs.existsSync(from) || io.fs.existsSync(to)) continue;
+    const text = String(io.fs.readFileSync(from, "utf8"));
+    const claim = parse(text);
+    if (!plainObject(claim)) throw new Error(`the claim of ${id} at ${revision} cannot be read`);
+    io.fs.writeFileSync(to, `${JSON.stringify({ ...claim, carried_from: revision })}\n`, { flag: "wx", mode: 0o600 });
+    carried.push(id);
+  }
+  return carried;
+}
+
 // M11: a code install leaves the queue as it was. N's own card-run.mjs must
 // still plan: exit 0, read the same queue, and refuse no queued preparation.
 function codePlanCheck(io, paths, scope) {
@@ -700,11 +728,11 @@ export async function selfInstall({ io, paths, config, revision, deps, limits = 
     }
     return { result: { ...(await report(result)), claim } };
   }
-  return installMain({ io, paths, deps, credentials, repo, revision, main: facts.main, queue: gate.queue, code: gate.code ?? null,
+  return installMain({ io, paths, deps, credentials, repo, revision, main: facts.main, queue: gate.queue, append: gate.append === true, code: gate.code ?? null,
     approval: gate.approval ?? null, scope: scopeIds(facts.configs?.main), claim, base, report });
 }
 
-async function installMain({ io, paths, deps, credentials, repo, revision, main, queue, code = null, approval = null, scope = [], claim, base, report }) {
+async function installMain({ io, paths, deps, credentials, repo, revision, main, queue, append = false, code = null, approval = null, scope = [], claim, base, report }) {
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { return { skipped: "INSTALL_LOCKED", reason: `${paths.lock} exists` }; }
   const installLock = paths.installLock ?? INSTALL_LOCK;
@@ -762,7 +790,10 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
           throw error;
         }
       }
-      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));
+      // Velocity A3: an appended queue's cards that ran at R and did not land
+      // are as they were at N, and its next card is whichever runs first.
+      if (append) run("carry", () => carryClaims(io, paths, revision, main, queue));
+      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope)));
       result = { ...base, ok: true, outcome: "INSTALLED", queue, ...(code ? { code, approval } : {}), steps: [...steps],
         reason: queue ? `the next timer start runs ${queue[0]}` : "the next timer start runs the installed code" };
     } catch (error) {
