@@ -4273,7 +4273,7 @@
       "authorization_ref": "SHU-456",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
-      "note": "lane 4 (access), card 4: a store manager sees only their own store through a store-level access table, no change to the closed role and scope unions; waits on SHU-454; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "note": "lane 4 (access), card 4: a store manager sees only their own store through a store-level access table, no change to the closed role and scope unions; waits on SHU-455, so it does not build beside it on the same files; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
       "initial_build_paths": [
         "packages/db/migrations/0403_store_manager_access.sql",
         "packages/db/src/postgres-store-access-store.ts",
@@ -4317,7 +4317,7 @@
         "apps/gateway/src/login-runtime.ts"
       ],
       "after": [
-        "SHU-454"
+        "SHU-455"
       ]
     },
     {
