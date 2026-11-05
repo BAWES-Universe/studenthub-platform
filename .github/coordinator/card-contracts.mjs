@@ -4395,6 +4395,48 @@ const LANE_FINISH = `Finish with npm run typecheck and npm test passing, run to 
 
 const LANE_ADMIN = "Who is an admin here: a principal holding an admin grant on an operator organization (DEFAULT_OPERATOR_ORG_IDS in packages/organizations/src/organizations.ts, read through AuthzStore.listGrantsForPrincipal). Anyone else, signed in or not, gets the same 404 not_found page as an unknown path, never 403, so the page's existence is not revealed.";
 
+// Lanes 4 and 5 (recruit, work and hours). Written 2026-11-05 from
+// contracts/recruit.md, contracts/work-hours.md and the legacy drafts in
+// project files (drafts/recruit-R*.md), against main. Each lane owns a
+// migration range: recruit 0450 to 0499, work 0500 to 0549.
+const RW_GUARDS = [
+  "A caller without the needed grant, an unknown id and a row that belongs to another organization or person all get the same 404 not_found body, never 403, so existence is not revealed. Sessions come from SessionStore.get(sessionId).personId and grants from AuthzStore.listGrantsForPrincipal, with the grant-decision pattern of packages/organizations/src/organization-stores.ts (a decision function over grant rows, the organization's ancestors and DEFAULT_OPERATOR_ORG_IDS), and the HTTP module pattern of apps/gateway/src/organization-stores.ts.",
+  "This card's history lives in its own events table, written in the same transaction as the change. Do not add an operation to authorization_mutation_audit: its operation list is a constraint shared with every other lane.",
+  "A migration references only tables created by a lower-numbered migration (organizations, principals, organization_stores, pay_contracts, person_profiles or this lane's earlier tables). Every column a query filters or orders by is indexed.",
+  "packages/db/test/<this card's>.test.ts imports runMigrations and the stores from \"@studenthub/db\", as every other Postgres test in packages/db/test does, never from ../src/index.js. Every SQL parameter that appears in more than one expression of one statement carries an explicit cast at each use, for example $3::int, and no parameter's type is left to inference: the fake store cannot catch that, so the Postgres test must exercise each write path against Postgres.",
+  "The result changes only the paths this card lists, as regular files. Leave every other file as it is on main: package manifests and lockfiles, other packages' tests, shared test helpers, other migrations and any list of migration names. Add no symlinks. When a listed change seems to need another file, find a way inside the listed paths, because a result that touches anything else is refused before review.",
+];
+
+const rwBrief = (c) => `Card ${c.id}: ${c.title} (slice ${c.slice}; lane ${c.lane}, card ${c.n}; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. ${LANE_CONTEXT(c.lane, c.range)}${c.landed ? ` ${c.landed}` : ""}
+
+Why. ${c.why}
+
+Read first:
+${c.readFirst.map((line) => `- ${line}`).join("\n")}
+
+Outcome:
+${c.outcome.map((line) => `- ${line}`).join("\n")}
+
+Guards:
+${[...c.guards, ...RW_GUARDS].map((line) => `- ${line}`).join("\n")}
+
+Where legacy behaviour was not fully verified, this card builds the safer legacy-equivalent behaviour. Assumptions made (say in your final message if the code at the bound head disagrees with any):
+${c.assumptions.map((line) => `- ${line}`).join("\n")}
+
+Acceptance. Each of the items named by a token is pinned by a mutation in ${c.mutations} that makes its named test fail. Tests are named with their token first and a space after it.
+${c.acceptance}
+
+${LANE_STANDING}
+
+Your paths: ${c.pathsText} Nothing else changes.
+
+Out of scope: ${c.outOfScope}
+
+${LANE_FINISH}`;
+
+
 // Lane 2, card 1. X2 of SHU-192: scheduled jobs record every run, never run
 // twice at once, and a failed, overlapping or missed run raises one scrubbed
 // alert. The admin Jobs page is where the recorded runs are read.
@@ -4880,6 +4922,301 @@ const SHU451_BRIEF = recut447(SHU448_BRIEF);
 for (const [brief, id] of [[SHU450_BRIEF, "SHU-450"], [SHU451_BRIEF, "SHU-451"]]) {
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
+
+// ---- Lane 5: work and hours (migrations 0500 to 0549) ----
+const WK_RANGE = "0500 to 0549";
+const WK_READ = "packages/db/src/postgres-organization-stores-store.ts and its Postgres test (store, grant and fixture patterns), packages/pay-contracts/src/resolution.ts (resolveEffectiveRate, the recorded provenance steps) and packages/db/src/postgres-pay-contract-store.ts";
+const WK_COUNTED = "work_live_sessions, the one view that defines which sessions count: closed (stopped_at not null), not discarded (discarded_at null) and not superseded by a staff correction (superseded_at null). Approved, pending and rejected seconds are always summed separately from it; no reader recomputes the filter by hand";
+
+const wkPaths = (n, name, extra = []) => Object.freeze([
+  ...(n ? [`packages/db/migrations/${n}_${name}.sql`] : []),
+  `packages/db/src/postgres-work-${name}-store.ts`,
+  "packages/db/src/index.ts",
+  `packages/db/test/postgres-work-${name}.test.ts`,
+  `packages/work/src/${name}.ts`,
+  `packages/work/test/${name}.test.ts`,
+  `packages/work/test/${name}-mutations.mjs`,
+  `apps/gateway/src/work-${name}-http.ts`,
+  `apps/gateway/test/work-${name}-http.test.ts`,
+  ...extra,
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+const WK_NAV = [];
+
+export const SHU169_PATHS = wkPaths("0500", "assignments", WK_NAV);
+const SHU169_ACCEPTANCE = [
+  "(1) Staff and admin on an operator organization place a person at a store for a period: person, store, start date (default today in Asia/Kuwait, dates inclusive) and optional end date not before the start; the company is the store's organization and its parent is recorded as the parent's id, never a boolean; the F1 contract whose rates apply is resolved at placement time with resolveEffectiveRate over that person's pay contracts for that company and store, and the assignment records the contract id, the resolved rates and the resolution steps as provenance; a placement with no resolvable contract is refused with a clear reason and writes nothing (SHU169_PLACE);",
+  "(2) A person has at most one assignment whose period overlaps another's, across all stores and companies, checked under a per-person advisory lock so two simultaneous placements commit one, proved against Postgres; an unknown or deleted store and an operator organization are refused as not_found; an end date before the start is refused (SHU169_OVERLAP);",
+  "(3) The civil ID gate of the contract is built as a port that returns valid-through date, none or unavailable: a valid-through date earlier than the start date refuses the placement; none or unavailable is recorded on the assignment as civil_id_state = unchecked and does not refuse, because the check source (queue 14 and 15) is not on main yet; a single exported constant switches unchecked to refusing, with a test of both settings (SHU169_CIVIL_ID);",
+  "(4) Staff end an assignment (end date today or later, not before the start) or extend it (new end date later than the old, no new overlap); each change writes an event row in the same transaction; an ended assignment never reactivates (SHU169_END);",
+  "(5) A company's org-owner or recruiter raises an assignment request for a named person at one of its own stores; staff accept it, which creates the assignment in the same transaction and links the request, or reject it; the company cancels its own pending request; a request status moves only pending to accepted, rejected or cancelled; an unknown request id or one of another company is refused, and accepting a request whose placement is refused leaves it pending (SHU169_REQUESTS);",
+  "(6) A person's Where I work page lists their current and past assignments with store, company and period and nothing about rates; a company's People page lists its assigned people per store, scoped by its grants and never by a request parameter, in a fixed number of queries; navigation entries come with the per-domain navigation card (SHU169_VIEWS);",
+  "(7) packages/work/test/assignments-mutations.mjs makes each of items 2 to 5 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU169_BRIEF = rwBrief({
+  id: "SHU-169", title: "a person is placed at a store for a period, with the contract's rates recorded at placement; employers can ask for a person", slice: "W1", lane: 5, n: 1, range: WK_RANGE,
+  why: "In legacy, placement is staff/.../CandidateController.php actionAssign: one transaction that sets the candidate's single store, creates a contract, writes history and a note and accepts the matching store assignment request. Its defects are a parent company stored as a boolean (|| instead of the id), an unknown request id skipped silently, and no check that the period does not overlap. Placement is on the money path, since every later hours and pay row hangs off the assignment.",
+  readFirst: [WK_READ, "apps/gateway/src/organization-stores.ts (HTTP and grant pattern)", "packages/db/src/postgres-recruit-pipeline-store.ts if it exists at the bound head (the placement row this card will be fed from later; this card does not depend on it)"],
+  outcome: [
+    "packages/work is a new folder compiled by the root build (no package.json, relative imports) holding the assignment rules: date handling in Asia/Kuwait, the overlap rule, the civil ID port with its constant, the request status rules and the grant decisions.",
+    "Storage (migration 0500): work_assignments (id uuid, person_principal_id references principals, org_id and store_id references organization_stores, parent_org_id text nullable, start_date, end_date nullable, status active or ended, pay_contract_id uuid references pay_contracts, resolved_rates jsonb, resolution_steps jsonb, civil_id_state from valid, unchecked, created_at), work_assignment_requests (id, org_id, store_id, person_principal_id, status, requested_by_ref, created_at, decided_at), work_assignment_events (assignment_id, kind, actor_ref, at). Indexes serve the person's page and the company's per-store page.",
+    "Routes: POST /work/staff/assignments, POST /work/staff/assignments/:id/end, POST /work/staff/assignments/:id/extend, POST /work/requests, POST /work/staff/requests/:id/accept, reject, POST /work/requests/:id/cancel, GET /my/work, GET /work/people.",
+  ],
+  guards: [
+    "Placement and the request acceptance are one transaction; a failure of either leaves both untouched.",
+    "The rates in resolved_rates are strings of decimals, never floating point numbers, and the person's page never returns them.",
+    "A work assignment ends or is extended only by staff; the company can only raise or cancel requests.",
+    "Ending an assignment while the person has an open work session is the work sessions card's rule (it adds a trigger in migration 0501); this card does not reference sessions.",
+  ],
+  assumptions: [
+    "Contract and legacy differ on the civil ID gate (legacy has none): the contract wins, so the gate is built, and it enforces once a check source exists; until then the assignment records civil_id_state = unchecked rather than blocking every placement.",
+    "Legacy allowed one store per candidate at a time and refused a second; the contract allows a person many assignments over time, so only overlapping periods are refused.",
+    "Legacy created the contract inside assign; here F1 contracts are created by finance cards first and placement resolves one, so a placement with none is refused.",
+    "The legacy store counter (store_total_candidates) is derived on read here, not stored.",
+  ],
+  mutations: "packages/work/test/assignments-mutations.mjs",
+  acceptance: SHU169_ACCEPTANCE,
+  pathsText: "the migration; the assignments store with its index export and Postgres test; packages/work/src/assignments.ts with its test and mutation script; the gateway work-assignments-http module and its test; one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "creating F1 contracts, work sessions, hours, creating assignments from recruit placements (a later card consumes recruit_placements), certificates, notes, the importer, and any network call or credential.",
+});
+
+export const SHU170_PATHS = wkPaths("0501", "sessions", WK_NAV);
+const SHU170_ACCEPTANCE = [
+  "(1) A person with an active assignment today presses Start on the Today page and a work session opens with the server's time as start and the work date taken from the start in Asia/Kuwait; start requires both latitude and longitude (decision SHU-204: location is required and shown to the approver), refuses a missing or out-of-range pair, refuses when the assignment's store is deleted, and refuses without an active assignment, all as the same not_found or a clear validation error (SHU170_START);",
+  "(2) A person has at most one open session across all stores, enforced by a partial unique index on the person where stopped_at is null, proved against Postgres by two simultaneous starts that open one session (SHU170_ONE_OPEN);",
+  "(3) Stop closes the person's open session with the server's time, requires a stop latitude and longitude, computes the duration in seconds on the server, and keeps the start and stop locations in separate columns; a test starts at one pair and stops at another and reads both back (regression of legacy WK-F2, where stop overwrote the start location); stop with no open session is refused and writes nothing (SHU170_STOP);",
+  "(4) A session that crosses midnight keeps its start date as its work date (SHU170_MIDNIGHT);",
+  "(5) A person adds a late session by hand with start and end both present, end after start, neither in the future, the whole span inside one of their assignments' periods, and no overlap with another of their sessions; it is stored as via manual, status pending and flagged late for the approver, and legacy's negative or null durations cannot be stored (SHU170_MANUAL);",
+  "(6) A person discards only their own open session; a closed session cannot be discarded by them; discarding sets discarded_at and keeps the row (SHU170_DISCARD);",
+  "(7) Migration 0501 adds a trigger on work_assignments that refuses ending or deactivating an assignment while one of its sessions is open, and creates work_live_sessions: " + WK_COUNTED + "; every session row carries a pending, approved or rejected status that starts pending, and discarded_at, superseded_at and a nullable supersedes_session_id exist from the start for the later cards (SHU170_SCHEMA);",
+  "(8) The Today page shows the open session or the Start button, the person's sessions today and their statuses; packages/work/test/sessions-mutations.mjs makes each of items 1 to 3 and 5 to 7 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU170_BRIEF = rwBrief({
+  id: "SHU-170", title: "a person clocks in and out, with both locations kept, one open session, and the duration computed on the server", slice: "W2", lane: 5, n: 2, range: WK_RANGE,
+  landed: "This card builds on SHU-169 (work_assignments); if SHU-169 has not landed at the bound head, say so in your final message and stop.",
+  why: "Legacy start and stop live in candidate/.../AccountController.php (actionStartWorkingTime, actionStopWorkingTime). The stop handler overwrites the start location with the stop location (WK-F2), the open-session check looks at the current store only, the duration is filled by a database trigger on update only, and manual add stores negative or null durations. Decision SHU-204 (2026-10-27): location is required and shown to the approver, no geofence, both locations kept, late submissions accepted and flagged.",
+  readFirst: ["packages/db/src/postgres-work-assignments-store.ts and packages/work/src/assignments.ts from SHU-169", WK_READ],
+  outcome: [
+    "Storage (migration 0501): work_sessions (id uuid, person_principal_id, assignment_id references work_assignments, store_id, work_date date, started_at, stopped_at nullable, duration_seconds nullable, start_lat and start_lng and stop_lat and stop_lng as numeric(9,6), via timer or manual, flagged boolean, flag_reason nullable from late and manual, status pending or approved or rejected, discarded_at, superseded_at, supersedes_session_id, created_at) with CHECKs that a closed session has a positive duration and a stop time after the start; the one-open partial unique index; the trigger on work_assignments; the work_live_sessions view.",
+    "packages/work/src/sessions.ts holds the session rules and the Kuwait date handling.",
+    "Routes: GET /work/today, POST /work/sessions/start, POST /work/sessions/stop, POST /work/sessions/manual, POST /work/sessions/discard.",
+  ],
+  guards: [
+    "Server time is the only time source for start and stop; the body carries only coordinates.",
+    "Locations are validated as latitude -90 to 90 and longitude -180 to 180 and are never written to logs, alerts or events; they are returned only to the owner and, later, to the approver.",
+    "Duration is computed in the application inside the closing statement, not by a trigger that may be missing.",
+  ],
+  assumptions: [
+    "The contract text recommended optional location; the recorded decision (SHU-204, 2026-10-27) says required, so required is built.",
+    "Hard delete in legacy discard becomes soft discard here (the contract calls deletion reversible).",
+  ],
+  mutations: "packages/work/test/sessions-mutations.mjs",
+  acceptance: SHU170_ACCEPTANCE,
+  pathsText: "the migration; the sessions store with its index export and Postgres test; packages/work/src/sessions.ts with its test and mutation script; the gateway work-sessions-http module and its test; one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "approvals, hours views for employers and staff, appeals, payable inputs, push or email reminders, offline queueing, geofencing, the mobile apps, and any network call or credential.",
+});
+
+export const SHU172_PATHS = wkPaths("0502", "decisions", WK_NAV);
+const SHU172_ACCEPTANCE = [
+  "(1) VERIFY FIRST. The only status that finance can ever read is the session's own status, written by the decision in the same transaction; no column or counter holds a separate day status. A Postgres test approves two of three sessions of one day, rejects the third, and reads through work_live_sessions that the approved seconds are the two sessions' and the rejected seconds the third's, never summed together (legacy's decision path may never set the day status finance filters on, and its day total sums rejected sessions) (SHU172_STATUS_SOURCE);",
+  "(2) A company's org-owner or recruiter (directly or through a subtree grant on an ancestor) approves or rejects a closed pending session of a store of that company, or of a sub-company's; the scope is derived from the caller's grants and the session's store, never from the request body, and a session of another company, an open one and one already decided are all refused as not_found, so existence is not revealed (SHU172_SCOPE);",
+  "(3) A decision is one row (session, approved or rejected, reason up to 255 and required for rejection, rating 1 to 5 optional, decider reference, time), and it changes the session status in the same transaction; re-deciding a decided session is refused until it is undone, so an earlier decision is never overwritten (SHU172_DECISION);",
+  "(4) Bulk decide takes up to 100 session ids and is all or nothing: if any id is out of scope, open, already decided or unknown, no session changes and no decision row is written, and the reply is the same not_found whichever id caused it (SHU172_BULK);",
+  "(5) Undo by a grantee of the deciding company within 24 hours of the decision sets the decision's undone_at, returns the session to pending and keeps the decision row for audit; after 24 hours undo is refused (the contract adds a fixed window that legacy lacked; this card fixes it at 24 hours in one constant); undoing an open session is impossible (SHU172_UNDO);",
+  "(6) Rating, reason and any note are never returned to the person, a different company or an unrelated caller; staff and the deciding company's grantees read them (decision SHU-205 keeps employer ratings visible to other employers in search, which the people search card will read from this table; this card only stores them) (SHU172_PRIVACY);",
+  "(7) Every change of a session's status, including a re-approval after an undo, writes one row to work_notification_events (closed kinds approved, rejected, undone; session; person; time; no personal text) in the same transaction, and no provider is called (SHU172_EVENTS);",
+  "(8) The company's Pending hours page lists pending closed sessions of its stores grouped by person and day, with start and stop times and the locations the person gave, and offers approve, reject, bulk and undo, in a fixed number of queries; packages/work/test/decisions-mutations.mjs makes each of items 1 to 5 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU172_BRIEF = rwBrief({
+  id: "SHU-172", title: "the employer approves, rejects and undoes hours as an explicit audited state machine, scoped to its own company (verify-first card)", slice: "W4", lane: 5, n: 3, range: WK_RANGE,
+  landed: "This card builds on SHU-169 and SHU-170 (work_assignments, work_sessions and work_live_sessions); if SHU-170 has not landed at the bound head, say so in your final message and stop.",
+  why: "Legacy decisions are candidate_work_log_feedback rows (company/.../CandidateWorkLogFeedbackController.php actionSave, actionBulkSave, actionUndo). The save and bulk-save actions take the company and store from the request body and check only that the store exists, so one company can decide another company's sessions; the day path rewrites every closed session and overwrites earlier decisions; undo has no window and keeps the old decision link; and the model hook updates sessions with updateAll without writing the day status that the finance export filters on. This is a money-path card and the first item proves the hand-off from approval to approved seconds.",
+  readFirst: ["packages/db/src/postgres-work-sessions-store.ts and packages/work/src/sessions.ts from SHU-170, and the work_live_sessions view in migration 0501", WK_READ, "packages/organizations/src/organization-stores.ts (grant decisions with ancestors for a subtree grant)"],
+  outcome: [
+    "Storage (migration 0502): work_session_decisions (id, session_id references work_sessions, status approved or rejected, reason, rating smallint check 1 to 5 nullable, decided_by_ref, decided_at, undone_at nullable) with a partial unique index allowing one live decision per session (undone_at null); work_notification_events (id, kind, session_id, person_principal_id, at).",
+    "packages/work/src/decisions.ts holds the status rules, the 24 hour window constant and the scope decision.",
+    "Routes: GET /work/company/pending, POST /work/company/decisions, POST /work/company/decisions/bulk, POST /work/company/decisions/:id/undo.",
+  ],
+  guards: [
+    "Never take a company id, store id or person id from the request body to decide scope; join from the session to its store to its organization and compare with the caller's grants.",
+    "Dates in any filter are validated as YYYY-MM-DD and bound as parameters; no request value is interpolated into SQL.",
+    "A session's status changes only inside the decision functions of this card; there is no trigger or second writer for it.",
+  ],
+  assumptions: [
+    "Verify-first: the legacy claim that approval never sets the day status is unconfirmed on the production copy; this card removes the question by making the session the only source, and the replay on the production copy (SHU-105) should compare finance-visible approved seconds before this lands.",
+    "The contract and legacy differ on undo: the contract's window is built (24 hours, one constant), legacy had none.",
+    "Store managers (A4) are not built, so only org-owner and recruiter grants decide; manager scope is added with A4.",
+    "Rating is stored 1 to 5 (documented range); legacy had no rule.",
+  ],
+  mutations: "packages/work/test/decisions-mutations.mjs",
+  acceptance: SHU172_ACCEPTANCE,
+  pathsText: "the migration; the decisions store with its index export and Postgres test; packages/work/src/decisions.ts with its test and mutation script; the gateway work-decisions-http module and its test; one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "the people search that shows ratings, hours views for the person and staff (the views card), payable inputs, appeals and corrections, staff decisions, delivering notifications, and any network call or credential.",
+});
+
+export const SHU171_PATHS = Object.freeze([
+  "packages/db/src/postgres-work-hours-reads.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-work-hours-reads.test.ts",
+  "packages/work/src/hours-views.ts",
+  "packages/work/test/hours-views.test.ts",
+  "packages/work/test/hours-views-mutations.mjs",
+  "apps/gateway/src/work-hours-http.ts",
+  "apps/gateway/test/work-hours-http.test.ts",
+  ...WK_NAV,
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+const SHU171_ACCEPTANCE = [
+  "(1) My hours lists the signed-in person's own sessions and day totals only, newest first, with a stable keyset cursor on work date, start time and id so equal dates never repeat or skip a row across pages; every day shows approved, pending and rejected seconds separately and open sessions as a count, all read through work_live_sessions, and no other person's row is reachable by any id (SHU171_OWN);",
+  "(2) The person's rows carry the session's times, locations, via, flag and status and nothing from the decision row: no rating, reason or note, even if the request asks for extra fields; the response field lists are closed and a request parameter that names extra fields is ignored (SHU171_CLOSED_FIELDS);",
+  "(3) A company's grantees (org-owner, recruiter) list the sessions of their stores and sub-companies' stores, with the person's display name, filtered by an optional store they may see, scoped by their grants and never by a default store or a body parameter; another company's store id answers not_found (SHU171_COMPANY);",
+  "(4) Staff and admin on an operator organization list every person's sessions, filtered by company, store, person or date range, with the decision's reason and rating (SHU171_STAFF);",
+  "(5) A date range is two YYYY-MM-DD values bound as parameters, start not after end and at most 366 days apart; any other value, including text with quote characters, is a 400 validation error that runs no query (legacy built this filter from raw request text) (SHU171_DATES);",
+  "(6) Every page costs a fixed number of queries whatever its row count, proved with a counting wrapper over the pool for pages of 1 and 50 rows (SHU171_QUERIES);",
+  "(7) The pages are served by their routes (navigation entries come with the per-domain navigation card), S1 holds for what is shown, and packages/work/test/hours-views-mutations.mjs makes each of items 1 to 3 and 5 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU171_BRIEF = rwBrief({
+  id: "SHU-171", title: "everyone sees the hours they may see: the person's own, the company's stores, and staff's view", slice: "W3", lane: 5, n: 4, range: WK_RANGE,
+  landed: "This card builds on SHU-170 and SHU-172 (sessions and decisions); if SHU-172 has not landed at the bound head, say so in your final message and stop. It adds no migration.",
+  why: "Legacy has four near-copies of the hours list (candidate, company, manager, staff apps). Defects found: the candidate side can expand the employer's feedback (note, rating, reason) regardless of is_public; the date filter builds SQL from the raw request values (common/models/query/CandidateWorkingDateQuery.php filterByDateRange); the company list takes its store from the query or the candidate's current store; the day total sums rejected sessions; the stats endpoint reports only the last session's status.",
+  readFirst: ["packages/db/src/postgres-work-sessions-store.ts and the work_live_sessions view (0501), packages/db/src/postgres-work-decisions-store.ts (0502)", WK_READ, "apps/gateway/src/organization-stores.ts (HTTP and grant pattern)"],
+  outcome: [
+    "A read-only store packages/db/src/postgres-work-hours-reads.ts (no migration) with the three scoped reads, and packages/work/src/hours-views.ts with the closed projections and the cursor.",
+    "Routes: GET /my/hours, GET /work/company/hours, GET /work/staff/hours, each as JSON plus a rendered page.",
+  ],
+  guards: [
+    "Scope for every read is derived from the session's person and grants, joined to the store's organization; no request parameter widens it.",
+    "The projections are allow-lists; a new column added to a table later is hidden until a card shows it.",
+  ],
+  assumptions: [
+    "Legacy staff-only notes live on the feedback row; the contract says they are never shown to the person or the employer, so the person's projection omits the whole decision row.",
+    "The legacy rule that the person sees the employer's note when is_public is set is not carried (the decision row here has no note field); the person sees the status only.",
+    "Store managers (A4) are not built; their scope is added with A4.",
+  ],
+  mutations: "packages/work/test/hours-views-mutations.mjs",
+  acceptance: SHU171_ACCEPTANCE,
+  pathsText: "the reads store with its index export and Postgres test; packages/work/src/hours-views.ts with its test and mutation script; the gateway work-hours-http module and its test; one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "decisions, appeals, payable inputs, exports of hours (the export service covers them), day-total repair, and any network call or credential.",
+});
+
+export const SHU175_PATHS = wkPaths("0503", "payable", WK_NAV);
+const SHU175_ACCEPTANCE = [
+  "(1) VERIFY FIRST. For one assignment and one Kuwait calendar month (by work date), the payable input on an hours basis holds the sum of approved seconds from work_live_sessions only, with rejected seconds, pending seconds and the open-session count stored beside it for audit and never paid; a Postgres test with one approved 2 hour session and one rejected 1 hour session on the same day yields 7200 payable seconds and 3600 rejected (legacy summed every closed session of an approved day) (SHU175_APPROVED_ONLY);",
+  "(2) The sum is keyed by assignment id, not by the person's current store, so hours worked at an earlier store of the same assignment are included and a later placement elsewhere does not drop them (SHU175_BY_ASSIGNMENT);",
+  "(3) An assignment whose resolved contract is fixed_price or monthly_salary gets an input with basis fixed or monthly, carrying the contract id and the contract's amounts as recorded on the assignment, and no hour sum; this card computes no money and rounds nothing (SHU175_BASIS);",
+  "(4) Hours are also exposed as hours, minutes and seconds with floor division per unit and the remainder shown, by one exported pure function, because the replay against legacy must match to the second (SHU175_HMS);",
+  "(5) A company's org-owner or recruiter confirms a month for an assignment of its own stores on a Confirm month page: the input moves draft to confirmed in a transaction that recomputes the sums and stores the session and decision ids as provenance; confirming another company's assignment is refused as not_found; only confirmed inputs are returned by the exported read the finance transfer card will call (SHU175_CONFIRM);",
+  "(6) A change after confirmation reopens the month in the database: triggers in migration 0503 mark the affected confirmed input invalidated when a session of that assignment and month changes status, is discarded or is superseded, or a decision of it is undone, and an invalidated input is not offered to finance until it is confirmed again, which recomputes and restores it (SHU175_REOPEN);",
+  "(7) Staff read all inputs; a person has no access to payable inputs (not_found); packages/work/test/payable-mutations.mjs makes each of items 1 to 3, 5 and 6 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU175_BRIEF = rwBrief({
+  id: "SHU-175", title: "approved hours become payable inputs, and the employer confirms the month before finance sees them (verify-first card)", slice: "W7", lane: 5, n: 5, range: WK_RANGE,
+  landed: "This card builds on SHU-169, SHU-170 and SHU-172; if SHU-172 has not landed at the bound head, say so in your final message and stop.",
+  why: "Legacy exports hours for transfers from staff/.../TransferController.php (actionApprovedWorkLog, actionTransferExcelTemplate): it sums candidate_working_date.total_time where the day status is approved, filtered by the candidate's current store. The day total sums rejected sessions too, the day status may never be set by the approval path, and the current-store filter drops hours worked at a previous store. There is no confirm step in legacy; the contract adds one (D-WK3). Hour logging is rare in production (43 rows in 12 months) but this is the contract finance transfers consume.",
+  readFirst: ["packages/db/src/postgres-work-decisions-store.ts and the work_live_sessions view (0501) from SHU-170 and SHU-172", "packages/pay-contracts/src/types.ts (pay models) and the assignment's recorded rates in migration 0500", WK_READ],
+  outcome: [
+    "Storage (migration 0503): work_payable_inputs (id, assignment_id, month_start date, basis hours or fixed or monthly, approved_seconds, rejected_seconds, pending_seconds, open_sessions, contract_id, contract_amounts jsonb, provenance jsonb, status draft or confirmed or invalidated, confirmed_by_ref, confirmed_at, unique on assignment and month) and the invalidation triggers.",
+    "packages/work/src/payable.ts holds the month bounds, the sum rules, the hours-minutes-seconds function and the confirm rules; an exported read listConfirmedPayableInputs(monthStart) for the finance card.",
+    "Routes: GET /work/company/months, POST /work/company/months/confirm, GET /work/staff/payable.",
+  ],
+  guards: [
+    "Confirmation recomputes inside the transaction; a stored sum is never trusted from the client.",
+    "The invalidation is a database trigger so a writer that bypasses the application still reopens the month.",
+    "No amount of money appears in any column, response or log of this card except the contract amounts copied as recorded on the assignment.",
+  ],
+  assumptions: [
+    "Verify-first: whether legacy finance sees approved hours at all in production is unconfirmed; this card derives everything from session status, and the replay on the production copy should compare one legacy month's export hours, minutes and seconds with this card's before this lands.",
+    "Reopening on a correction follows D-WK3 as recorded (2026-10-27): staff may still correct approved hours; the correction appears to finance as an adjustment, and the employer re-confirms the month.",
+    "Month boundaries are Kuwait calendar months by session work date.",
+  ],
+  mutations: "packages/work/test/payable-mutations.mjs",
+  acceptance: SHU175_ACCEPTANCE,
+  pathsText: "the migration; the payable store with its index export and Postgres test; packages/work/src/payable.ts with its test and mutation script; the gateway work-payable-http module and its test; one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "pay arithmetic and rounding, transfer generation (finance), appeals and corrections (the next card), day-total reconciliation, exports, and any network call or credential.",
+});
+
+export const SHU173_PATHS = wkPaths("0504", "appeals", WK_NAV);
+const SHU173_ACCEPTANCE = [
+  "(1) A person appeals one of their own closed sessions with a required reason up to 2000 characters; an appeal of another person's session, an open session, a discarded session or a superseded one is refused as not_found, and one live appeal per session is enforced by a unique index (SHU173_RAISE);",
+  "(2) Appeal status is one of submitted, awaiting_review, in_progress, resolved with an explicit transition list (submitted to awaiting_review or in_progress; awaiting_review to in_progress; in_progress to resolved; resolved final), a table test walks every ordered pair, and any other value is refused (legacy accepted any integer) (SHU173_STATUS);",
+  "(3) Staff and the person converse on the appeal thread: staff post updates (label up to 255, detail), the person replies, each message is a row with author kind, an unread marker per reader, and the reader marks only messages of their own appeal as read; marking another person's message answers not_found (SHU173_THREAD);",
+  "(4) Staff correct a session with a required reason, a valid start and end (end after start, no overlap with the person's other live sessions): in one transaction a new approved session is created with supersedes_session_id and the original gets superseded_at, the original is kept for audit, and a test reads work_live_sessions and sees the corrected session counted once and the original not at all (legacy left both counted) (SHU173_SUPERSEDE);",
+  "(5) A correction of a session whose month for that assignment is confirmed reopens the month through the migration 0503 invalidation, and the notification event for the correction is written once (SHU173_REOPEN);",
+  "(6) The person's Appeals page shows their appeals with status, thread and the corrected session; staff see an appeals list filtered by status and bound dates, in a fixed number of queries; nobody else can read an appeal; packages/work/test/appeals-mutations.mjs makes each of items 1 to 5 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU173_BRIEF = rwBrief({
+  id: "SHU-173", title: "a person appeals hours and staff correct them with a recorded reason, without counting a corrected session twice", slice: "W5", lane: 5, n: 6, range: WK_RANGE,
+  landed: "This card builds on SHU-170, SHU-172 and SHU-175; if SHU-175 has not landed at the bound head, say so in your final message and stop.",
+  why: "Legacy appeals (candidate/.../CandidateWorkingHourController.php actionAppeal, staff actionAppealUpdate and actionAddHour) do not check that the appealed session belongs to the person, so staff correction then creates an approved session for the appealer at another person's store; the correction adds a new approved session and nothing removes the original from the totals; staff set any integer status; the person cannot reply; mark-read has no ownership check; deletes are hard.",
+  readFirst: ["packages/db/src/postgres-work-sessions-store.ts, migration 0501 (work_live_sessions, superseded_at), and migration 0503 (the reopen trigger)", WK_READ, "apps/gateway/src/organization-stores.ts (HTTP and grant pattern)"],
+  outcome: [
+    "Storage (migration 0504): work_appeals (id, session_id, person_principal_id, reason, status, created_at, updated_at, unique on live session), work_appeal_messages (id, appeal_id, author_kind person or staff, author_ref, label, detail, created_at), work_appeal_reads (message_id, reader_ref, read_at); the correction uses work_sessions columns that migration 0501 created.",
+    "packages/work/src/appeals.ts holds the status transitions and the correction validation.",
+    "Routes: POST /my/appeals, GET /my/appeals, POST /my/appeals/:id/reply, POST /my/appeals/messages/:id/read, GET /work/staff/appeals, POST /work/staff/appeals/:id/status, POST /work/staff/appeals/:id/messages, POST /work/staff/appeals/:id/correct.",
+  ],
+  guards: [
+    "Every appeal and message read or write checks ownership in the query itself (person id in the WHERE), not after a fetch.",
+    "Staff means staff or admin on an operator organization; the check is per action.",
+    "Dates in the staff list filter are validated and bound as parameters.",
+  ],
+  assumptions: [
+    "The person's reply is not in legacy; the contract asks for a conversation thread, so it is built (contract wins).",
+    "Decision D-WK3 (2026-10-27): staff may still correct approved hours without re-approval; a reason is required and history is kept; no new notifications beyond the one event; the month reopens for re-confirmation.",
+    "A correction is a new session that supersedes the original; the original is never deleted.",
+  ],
+  mutations: "packages/work/test/appeals-mutations.mjs",
+  acceptance: SHU173_ACCEPTANCE,
+  pathsText: "the migration; the appeals store with its index export and Postgres test; packages/work/src/appeals.ts with its test and mutation script; the gateway work-appeals-http module and its test; one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "deleting sessions and the reconciliation report (the next card), delivering notifications, email or push, and any network call or credential.",
+});
+
+export const SHU174_PATHS = wkPaths("0505", "integrity", [...WK_NAV, "packages/observability/src/jobs.ts"]);
+const SHU174_ACCEPTANCE = [
+  "(1) Day totals are derived on read from work_live_sessions, not stored: for any person, assignment and work date the response shows approved, pending and rejected seconds separately, the open-session count and no single day status; a test with approved 1 hour, rejected 1 hour and an open session shows 3600, 0, 3600 and one open (SHU174_DERIVED);",
+  "(2) Staff delete a session with a required reason by setting discarded_at, and restore it; each writes an audit row (session, kind deleted or restored, reason, actor reference, time) in the same transaction, a restore returns the totals, and a hard delete of a session or a day is impossible (a trigger refuses DELETE on work_sessions) (SHU174_REVERSIBLE);",
+  "(3) A reconciliation job registered in the platform's job runner (packages/observability/src/jobs.ts, SHU-198) runs nightly, recomputes each recent assignment-day from sessions and compares it with anything stored or exported for it (confirmed payable inputs' sums), and writes one report row per drift (kind, assignment, work date, stored seconds, recomputed seconds) and changes no other row; a test plants a drift and sees exactly one report row and no change to any session or input (SHU174_REPORT);",
+  "(4) The staff Hours integrity page lists open drift rows newest first, paged, with no write button, and staff may mark one acknowledged with a note; a person and an employer get not_found (SHU174_PAGE);",
+  "(5) The report is the replacement for legacy's two repair crons: no code in this card or lane updates a total, session time or status in order to repair; a test asserts the job's SQL contains no UPDATE of work_sessions or work_payable_inputs (SHU174_NO_REPAIR);",
+  "(6) packages/work/test/integrity-mutations.mjs makes each of items 1, 2, 3 and 5 fail its named test by a mutant and passes unmutated; nothing outside the card's paths changes.",
+].join(" ");
+const SHU174_BRIEF = rwBrief({
+  id: "SHU-174", title: "day totals are a derived invariant, deletion is reversible, and a reconciliation report replaces the repair jobs", slice: "W6", lane: 5, n: 7, range: WK_RANGE,
+  landed: "This card builds on SHU-170 to SHU-173 and on the job runner SHU-198 (packages/observability/src/jobs.ts); if either has not landed at the bound head, say so in your final message and stop.",
+  why: "Legacy keeps day totals on candidate_working_date, rewritten after every session change by CandidateWorkingHour::updateStats, then repairs drift with two console actions (fix-work-logs, fix-work-log-dates) that are not in the repository's cron list. The total sums every closed session regardless of status, the day status is whatever the last saved session had, a hotfix migration wrote a zero end time, and staff deletes of sessions and days are hard.",
+  readFirst: ["migration 0501 (work_live_sessions) and packages/db/src/postgres-work-payable-store.ts from SHU-175", "packages/observability/src/jobs.ts and apps/worker/src/index.ts from SHU-198 (how a job is registered)", "apps/gateway/src/admin-jobs.ts (the admin page pattern)"],
+  outcome: [
+    "Storage (migration 0505): work_session_audit (session_id, kind, reason, actor_ref, at), work_reconciliation_report (id, kind, assignment_id, work_date, stored_seconds, recomputed_seconds, found_at, acknowledged_at, acknowledged_note), the trigger refusing DELETE on work_sessions.",
+    "packages/work/src/integrity.ts holds the derived totals and the drift comparison; the nightly job is registered in the SHU-198 registry; the worker entrypoint and its heartbeat test are not edited, because the registry read by the runner picks the job up (if that is not so at the bound head, say so in your final message and stop).",
+    "Routes: GET /work/staff/integrity, POST /work/staff/sessions/:id/delete, POST /work/staff/sessions/:id/restore, POST /work/staff/integrity/:id/acknowledge, and the derived totals read used by the other cards' pages.",
+  ],
+  guards: [
+    "The report writes only to its own table; the job runs without a person and repairs nothing.",
+    "The job's alerts keep exactly the SHU-198 scrubbed shape and carry no person id, session id or time.",
+  ],
+  assumptions: [
+    "Whether the legacy repair crons run in production (Railway) is unconfirmed; the cutover contract needs that check, and this card does not depend on it.",
+    "Contract wins on soft deletion; legacy hard-deleted days and sessions.",
+  ],
+  mutations: "packages/work/test/integrity-mutations.mjs",
+  acceptance: SHU174_ACCEPTANCE,
+  pathsText: "the migration; the integrity store with its index export and Postgres test; packages/work/src/integrity.ts with its test and mutation script; the gateway work-integrity-http module and its test; packages/observability/src/jobs.ts (register the reconciliation job only); one route block in index.ts and the wiring in login-runtime.ts.",
+  outOfScope: "repairing any total, appeals, payable inputs, exports, importing legacy day rows, and any network call or credential.",
+});
+
+const WORK_CARD_DEFS = [
+  ["SHU-169", SHU169_PATHS, SHU169_ACCEPTANCE, SHU169_BRIEF],
+  ["SHU-170", SHU170_PATHS, SHU170_ACCEPTANCE, SHU170_BRIEF],
+  ["SHU-172", SHU172_PATHS, SHU172_ACCEPTANCE, SHU172_BRIEF],
+  ["SHU-171", SHU171_PATHS, SHU171_ACCEPTANCE, SHU171_BRIEF],
+  ["SHU-175", SHU175_PATHS, SHU175_ACCEPTANCE, SHU175_BRIEF],
+  ["SHU-173", SHU173_PATHS, SHU173_ACCEPTANCE, SHU173_BRIEF],
+  ["SHU-174", SHU174_PATHS, SHU174_ACCEPTANCE, SHU174_BRIEF],
+];
+const WORK_CONTRACTS = Object.fromEntries(WORK_CARD_DEFS.map(([id, paths, acceptance, brief]) => [id, Object.freeze({
+  workspace_mode: "repo", initial_build_paths: paths, revision_paths: paths, acceptance, brief,
+})]));
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
@@ -5647,6 +5984,7 @@ export const CARD_CONTRACTS = Object.freeze({
     acceptance: recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)))))),
     brief: SHU451_BRIEF,
   }),
+  ...WORK_CONTRACTS,
 });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
