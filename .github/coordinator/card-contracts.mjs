@@ -4880,6 +4880,17 @@ const SHU451_BRIEF = recut447(SHU448_BRIEF);
 for (const [brief, id] of [[SHU450_BRIEF, "SHU-450"], [SHU451_BRIEF, "SHU-451"]]) {
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
+const RECUT_450 = Object.freeze({ "SHU-450": "SHU-458", "SHU-451": "SHU-459" });
+const recut450 = (text) => text.replace(/\bSHU-(450|451)\b/g, (id) => RECUT_450[id]);
+const recutAcceptance450 = (from, reason, text) => `${recut450(text)} ${RECUT_450[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const SHU458_GUARD_FROM = SHU450_GUARD_TO.split("\n").at(-1);
+const SHU458_GUARD_TO = `${SHU458_GUARD_FROM}
+- A Postgres test that enqueues a message and then calls processDue passes an explicit \`now\` at least one second ahead, for example \`service.processDue(25, new Date(Date.now() + 1000))\`: next_attempt_at defaults to the database's now(), which carries microseconds, while a JavaScript Date is truncated to milliseconds, so a row enqueued in the same millisecond is not yet due and the test sees no send. Every test in packages/db/test/postgres-email-outbox.test.ts must pass against Postgres.`;
+const SHU458_BRIEF = replaceOnce(recut450(SHU450_BRIEF), SHU458_GUARD_FROM, SHU458_GUARD_TO, "SHU458_BRIEF guard");
+const SHU459_BRIEF = recut450(SHU451_BRIEF);
+for (const [brief, id] of [[SHU458_BRIEF, "SHU-458"], [SHU459_BRIEF, "SHU-459"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
@@ -5646,6 +5657,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)))))),
     brief: SHU451_BRIEF,
+  }),
+  "SHU-458": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance450("SHU-450", "after its pull request failed CI on a Postgres test that processed a message before it was due", recutAcceptance447("SHU-447", "after its build was refused for touching a path outside the card", recutAcceptance444("SHU-444", "after its pull request failed CI on an untyped SQL parameter", recutAcceptance440("SHU-440", "after its pull request failed CI on the db test's migrations import", recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE))))))),
+    brief: SHU458_BRIEF,
+  }),
+  "SHU-459": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance450("SHU-451", "because its lane waited on SHU-450", recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))))))),
+    brief: SHU459_BRIEF,
   }),
 });
 
