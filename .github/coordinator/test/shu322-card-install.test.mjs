@@ -459,6 +459,34 @@ test("SHU-322 B8: a read that fails or checks not yet green skip with no claim; 
   untouched(red);
 });
 
+test("SHU-442: the coordinator's reconcile job on main never holds back or refuses an install; the commit's own checks still do", async () => {
+  const reconcile = (status, conclusion) => ({ name: "reconcile", status, conclusion, app: { slug: "github-actions" } });
+  const ci = (conclusion) => ({ name: "ci", status: "completed", conclusion, app: { slug: "github-actions" } });
+  for (const run of [reconcile("queued", null), reconcile("in_progress", null), reconcile("completed", "cancelled"), reconcile("completed", "failure")]) {
+    const host = fakeHost();
+    host.checks.runs = [ci("success"), run];
+    const result = await install(host);
+    assert.equal(result.result?.outcome, "INSTALLED", `${run.status}/${run.conclusion}: ${JSON.stringify(result)}`);
+  }
+  const pending = fakeHost();
+  pending.checks.runs = [{ ...ci(null), status: "in_progress" }, reconcile("completed", "success")];
+  assert.equal((await install(pending)).skipped, "INSTALL_NOT_READY", "the commit's own pending CI still holds it back");
+  const red = fakeHost();
+  red.checks.runs = [ci("failure"), reconcile("queued", null)];
+  const refused = await install(red);
+  assert.equal(refused.result?.outcome, "NEEDS_OWNER", "a red push CI run is still refused");
+  assert.match(refused.result?.reason, /red: ci: failure/);
+  assert.doesNotMatch(refused.result?.reason, /reconcile/);
+  const only = fakeHost();
+  only.checks.runs = [reconcile("queued", null)];
+  assert.equal((await install(only)).skipped, "INSTALL_NOT_READY", "a reconcile run alone is not a green commit");
+  const named = fakeHost();
+  named.checks.runs = [ci("success"), { name: "reconcile", status: "completed", conclusion: "failure", app: { slug: "some-other-app" } }];
+  const other = await install(named);
+  assert.equal(other.result?.outcome, "NEEDS_OWNER", "only the Actions job named reconcile is set aside");
+  assert.match(other.result?.reason, /red: reconcile: failure/);
+});
+
 test("SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated", async () => {
   const host = fakeHost({ changes: [...CHANGES, { status: "M", path: ".github/coordinator/service/card-run.mjs" }] });
   const first = await install(host);

@@ -536,6 +536,17 @@ export function judgeChecks(runsResponse, runs, statusResponse, status, external
   return { green: true, ...(advisory ? { advisory } : {}) };
 }
 
+// SHU-442: the coordinator workflow's reconcile job is a dry-run read of the
+// board, not a test of the commit. Every issue comment on any pull request
+// starts one against main's tip, where it queues and is often cancelled by the
+// next, so it would hold an install back (pending) or refuse it (cancelled)
+// for as long as a pull request has comment traffic. It never decides whether
+// main's tip is green; every other check run and status still does.
+export const BOARD_ONLY_CHECKS = Object.freeze(["reconcile"]);
+export function boardOnlyCheck(run) {
+  return BOARD_ONLY_CHECKS.includes(run?.name) && run?.app?.slug === "github-actions";
+}
+
 // SHU-322: the same judgement of any commit, such as main's tip, read with
 // whatever token the caller's client carries.
 export async function readCommitChecks(gh, repo, sha) {
@@ -544,7 +555,8 @@ export async function readCommitChecks(gh, repo, sha) {
     gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/status?per_page=100`),
   ]);
   const [runs, status] = await Promise.all([runsResponse.json(), statusResponse.json()]);
-  return judgeChecks(runsResponse, runs, statusResponse, status);
+  const commitRuns = Array.isArray(runs?.check_runs) ? { ...runs, check_runs: runs.check_runs.filter((run) => !boardOnlyCheck(run)) } : runs;
+  return judgeChecks(runsResponse, commitRuns, statusResponse, status);
 }
 
 // One read of the head's checks and the pull request's own state.
