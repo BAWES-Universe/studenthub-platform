@@ -197,6 +197,10 @@ export const CARD_RUN_LIMITS = Object.freeze({
   workerGraceMs: 30 * 60 * 1000,
   workerPollMs: 30 * 1000,
   killWaitMs: 10 * 1000,
+  // Velocity: how long a start waits for another worker's selection (every
+  // worker's timer starts at the same minute), and how often it looks.
+  selectWaitMs: 3 * 60 * 1000,
+  selectPollMs: 500,
   // M15 W3: with more than one worker, a revert removes only dependency caches
   // older than this: twice the install's own bound (attempt-workspace.mjs
   // DEPENDENCY_INSTALL_TIMEOUT_MS, 15 minutes), so another worker's install is
@@ -447,6 +451,103 @@ export function landingReader(io, paths, config, limits = CARD_RUN_LIMITS) {
 // first card a timer run has not landed, unless that card already ran at this
 // revision: it did not land, so the queue stops there until a new install.
 // A hand landing is proven from GitHub and, with `record`, written down.
+// Velocity A: the files a queued card may write, or null when its lane names
+// none (a whole-tree card), which overlaps every other card.
+function lanePaths(config, id) {
+  const lane = (config.card_lanes ?? []).find((card) => card?.id === id);
+  const listed = [...(lane?.initial_build_paths ?? []), ...(lane?.revision_paths ?? [])].filter((file) => typeof file === "string");
+  return listed.length ? new Set(listed) : null;
+}
+// Two cards that may write the same file never run at once: the second would
+// build on a main the first is about to change, and land conflicted.
+function pathsOverlap(a, b) {
+  if (a === null || b === null) return true;
+  for (const file of a) if (b.has(file)) return true;
+  return false;
+}
+// The queued cards another worker is running now: their claim is live, or a
+// landing repair of theirs is still going (it revises the same lane files).
+function liveCards(io, paths, ids, revision) {
+  const live = [];
+  for (const id of ids) {
+    // A landing repair another worker selected and has not claimed a round
+    // for yet: its intent stands for the round until the round exists.
+    if (intentLive(io, paths, revision, id)) { live.push(id); continue; }
+    const claim = autoClaim(paths, revision, id);
+    if (!io.fs.existsSync(claim)) continue;
+    let ran = null;
+    try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { continue; }
+    if (claimLive(io, paths, ran)) { live.push(id); continue; }
+    const record = repairRecordPath(paths, revision, id);
+    if (!io.fs.existsSync(record)) continue;
+    const round = readRound(io, record);
+    if (round?.state !== "finished" && claimLive(io, paths, round)) live.push(id);
+  }
+  return live;
+}
+
+// Velocity: with more than one worker, selecting a card and publishing that
+// it runs are one step: a start holds the selection lock from the read of
+// the running cards until its claim (or, for a landing repair, its intent)
+// exists, so a worker selecting next sees it. Otherwise two workers could
+// each pick a card the other's would overlap. The lock records its holder, and
+// a lock whose holder is gone is taken over.
+export const selectLock = (paths) => path.join(paths.stateDir, "card-run-select.lock");
+export const repairIntent = (paths, revision, id) => path.join(paths.stateDir, `card-run-intent-${revision}-${id}.json`);
+function holderAlive(io, holder) {
+  if (!Number.isInteger(holder?.pid) || holder.pid <= 0) return false;
+  try {
+    if (!io.fs.existsSync(`/proc/${holder.pid}`)) return false;
+    return holder.pid_start === undefined || processStart(io, holder.pid) === holder.pid_start;
+  } catch { return false; }
+}
+// The lock is published whole (publishClaim), so a reader never sees it
+// half-written. A lock whose holder is gone, or whose text cannot be read as
+// a holder, is taken over by one worker at a time, as the landing lock is
+// (card-land.mjs, clearStaleLock): the taker creates `${lock}.takeover`
+// exclusively, reads the lock again, and removes it only when it is
+// byte-for-byte the stale lock it judged. A lock a live worker took in the
+// meantime is never removed. A marker left by a takeover that died is never
+// removed but by a person; until then every start waits and skips QUEUE_BUSY.
+function clearStaleSelectLock(io, lock) {
+  let text;
+  try { text = String(io.fs.readFileSync(lock, "utf8")); } catch { return; }
+  let holder = null;
+  try { holder = JSON.parse(text); } catch { /* not a holder: stale */ }
+  if (holder && holderAlive(io, holder)) return;
+  const marker = `${lock}.takeover`;
+  try { io.fs.writeFileSync(marker, `${process.pid}\n`, { flag: "wx", mode: 0o600 }); } catch { return; }
+  try {
+    let again = null;
+    try { again = String(io.fs.readFileSync(lock, "utf8")); } catch { /* gone: another takeover finished */ }
+    if (again === text) { try { io.fs.unlinkSync(lock); } catch { /* gone already */ } }
+  } finally {
+    try { io.fs.unlinkSync(marker); } catch { /* gone already */ }
+  }
+}
+async function takeSelectLock(io, paths, limits) {
+  const lock = selectLock(paths);
+  const tries = Math.max(1, Math.ceil((limits.selectWaitMs ?? CARD_RUN_LIMITS.selectWaitMs) / (limits.selectPollMs ?? CARD_RUN_LIMITS.selectPollMs)));
+  for (let attempt = 0; attempt <= tries; attempt += 1) {
+    try {
+      publishClaim(io, lock, `${JSON.stringify(claimant(io, paths))}\n`);
+      return () => { try { io.fs.unlinkSync(lock); } catch { /* gone already */ } };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    const before = io.fs.existsSync(lock);
+    clearStaleSelectLock(io, lock);
+    if (before && !io.fs.existsSync(lock)) continue;
+    if (attempt < tries) await io.sleep(limits.selectPollMs ?? CARD_RUN_LIMITS.selectPollMs);
+  }
+  return null;
+}
+function intentLive(io, paths, revision, id) {
+  const file = repairIntent(paths, revision, id);
+  if (!io.fs.existsSync(file)) return false;
+  try { return claimLive(io, paths, JSON.parse(io.fs.readFileSync(file, "utf8"))); } catch { return false; }
+}
+
 export async function nextCard(io, paths, config, revision, { landing = null, record = false } = {}) {
   const queue = cardQueue(config);
   if (!queue.queue) return { id: null };
@@ -456,28 +557,53 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
   // stopping the queue. One worker walks the queue exactly as before.
   const parallel = cardWorkers(config) > 1;
   const landedIds = new Set();
+  // Velocity A: with more than one worker, a card that ran and did not land
+  // stops only itself (and the cards queued after it), never the other
+  // workers. The first such stop is reported once no card is left to run.
+  const stoppedIds = new Set();
+  let stopped = null;
   let waiting = 0;
+  const running = parallel ? liveCards(io, paths, queue.ids, revision).map((id) => lanePaths(config, id)) : [];
   for (const id of queue.ids) {
     const landed = await cardLanded(io, paths, id, { ...(landing ?? {}), record });
     if (landed.landed) { landedIds.add(id); continue; }
-    if (parallel && (queue.after?.[id] ?? []).some((need) => !landedIds.has(need))) { waiting += 1; continue; }
+    const needs = queue.after?.[id] ?? [];
+    if (parallel && needs.some((need) => stoppedIds.has(need))) { stoppedIds.add(id); continue; }
+    if (parallel && needs.some((need) => !landedIds.has(need))) { waiting += 1; continue; }
     const claim = autoClaim(paths, revision, id);
-    if (!io.fs.existsSync(claim)) return { id };
+    if (!io.fs.existsSync(claim)) {
+      if (parallel && running.some((files) => pathsOverlap(files, lanePaths(config, id)))) { waiting += 1; continue; }
+      return { id };
+    }
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
-    if (parallel && claimLive(io, paths, ran)) { waiting += 1; continue; }
+    // A card found running here that the first look missed is running all the
+    // same: no later card that shares its files starts beside it.
+    if (parallel && claimLive(io, paths, ran)) { running.push(lanePaths(config, id)); waiting += 1; continue; }
     // Self-repair B2: only with landing_repair on, and only for a passed run
     // that stopped on red checks; otherwise nothing below differs from today.
     const repair = landingRepairOn(config) && repairCandidate(ran, { id, revision, repo: config.pilot_repo ?? null })
       ? repairStep(io, paths, revision, id, ran, parallel) : null;
     // M15: another worker's repair of this card that is still going.
-    if (repair?.live) { waiting += 1; continue; }
-    if (repair?.next) return repair.next;
+    if (repair?.live) { running.push(lanePaths(config, id)); waiting += 1; continue; }
+    if (repair?.next && (!parallel || repair.next.id)) {
+      // A repair revises its card's files, so it waits like a first build for
+      // a running card that shares them.
+      if (parallel && running.some((files) => pathsOverlap(lanePaths(config, id), files))) { waiting += 1; continue; }
+      return repair.next;
+    }
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
-    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
+    const stop = repair?.next ?? { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
+    if (!parallel) return stop;
+    if (!stopped) stopped = { id, stop };
+    stoppedIds.add(id);
   }
-  if (waiting) return { id: null, skipped: "QUEUE_BUSY", reason: `every queued card that has not landed is running on another worker or waits on one` };
+  if (waiting) return { id: null, skipped: "QUEUE_BUSY", reason: `every queued card that has not landed is running on another worker or waits on one${stopped ? `; stopped: ${[...stoppedIds].join(", ")}` : ""}` };
+  if (stopped) {
+    const others = [...stoppedIds].filter((id) => id !== stopped.id);
+    return others.length ? { ...stopped.stop, reason: `${stopped.stop.reason}; also stopped, or queued after a stopped card: ${others.join(", ")}` } : stopped.stop;
+  }
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }
 
@@ -620,7 +746,29 @@ export function hostBusyReasons(io, paths = CARD_RUN_PATHS) {
     if (io.fs.existsSync(runLock)) reasons.push(`card run lock held: ${runLock} (card worker ${worker}, past workers.max ${workers})`);
     reasons.push(...busyReasons(io, { ...paths, worker, activation, lock: runLock }, { processes: false }));
   }
+  reasons.push(...reportingRuns(io, paths));
   return [...new Set(reasons)];
+}
+
+// Velocity A3: a card run releases its run lock before it posts its report,
+// and writes its claim's outcome only after that. A claim with no outcome
+// whose writer is still alive is such a run: the host waits for it, so an
+// appended install never carries a claim whose outcome is still to come. A
+// claim whose writer is gone stays as it is, and is carried as it is.
+const RUN_CLAIM = /^card-run-auto-[0-9a-f]{40}-[A-Z]+-[1-9]\d*\.json$/;
+export function reportingRuns(io, paths = CARD_RUN_PATHS) {
+  let names = [];
+  try { names = io.fs.readdirSync(paths.stateDir); } catch { return []; }
+  const reasons = [];
+  for (const name of names) {
+    if (!RUN_CLAIM.test(name)) continue;
+    let ran = null;
+    try { ran = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, name), "utf8")); } catch { continue; }
+    if (!ran || typeof ran !== "object" || Object.hasOwn(ran, "outcome")) continue;
+    if (ran.pid === process.pid || !holderAlive(io, ran)) continue;
+    reasons.push(`card run still reporting: ${path.join(paths.stateDir, name)}`);
+  }
+  return reasons;
 }
 
 // M15 W3: which shu-worker processes are this worker's. With one worker
@@ -909,7 +1057,7 @@ function reapWorkers(io, limits, scope = null) {
 // repair of that claim's pull request; `repairRound` receives its round record
 // as soon as it is written, so the caller can finish it whatever happens.
 export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LIMITS, review = null, trigger = "operator", cardId = null,
-  repair = null, repairRound = null, claimedAt = null }) {
+  repair = null, repairRound = null, claimedAt = null, expectRevision = null }) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   try { io.fs.writeFileSync(paths.lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
   catch { refuse("CARD_RUN_LOCKED", `${paths.lock} exists: another card run is in progress or crashed`); }
@@ -920,6 +1068,13 @@ export async function runCard({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     const busy = [...installing(io, paths), ...busyReasons(io, paths)];
     if (busy.length) refuse("CARD_RUN_HOST_BUSY", busy.join("; "));
     const revision = installedRevision(io, paths);
+    // Velocity: a timer start selected and claimed its card at a revision. An
+    // install that finished since then (before this run's lock was held, so
+    // it saw an idle host) moved the revision under it: the claim is at the
+    // old one, so this start gives the card back rather than run it at the new.
+    if (expectRevision !== null && revision !== expectRevision) {
+      refuse("CARD_RUN_HOST_BUSY", `the installed revision moved from ${expectRevision} to ${revision} after this start selected its card`);
+    }
     const config = readConfig(io, paths);
     // M15: a timer start checks the worker count before this run's lock is
     // held, so an install that lowered workers.max since then is seen here.
@@ -1166,44 +1321,74 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   // steps, so two workers starting together can pick the same card; the one
   // that loses the exclusive claim selects again (the winner's live claim is
   // then passed over) instead of giving up its start. One worker never loops.
+  // Velocity: with more than one worker, each selection holds the selection
+  // lock until its claim or repair intent is published (takeSelectLock).
+  const parallel = workers > 1;
+  let intent = null;
   for (let selection = 1; ; selection += 1) {
     plan = undefined;
+    const release = parallel ? await takeSelectLock(io, paths, limits) : () => {};
+    if (!release) return skip("QUEUE_BUSY", `another worker has held ${selectLock(paths)} for longer than this start waits`);
+    let again = false;
     try {
-      revision = installedRevision(io, paths);
-      config = readConfig(io, paths);
-      const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
-      // SHU-321: only a done queue may go on to review a queue config pull
-      // request; an invalid or paused one never does. M16: a stopped queue
-      // does what a done one does (Card B, then Card A).
-      if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
-      // Self-repair B2: an interrupted repair is reported once; a repairable
-      // card runs its one repair. Neither can come up with landing_repair off.
-      else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
-      else if (next.skipped) return skip(next.skipped, next.reason);
-      else if (next.repair) repairNext = next;
-      else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
-    } catch (error) {
-      // A review card needs its pull request from an operator, so the timer never
-      // runs one; any other planning refusal waits for the next install.
-      return skip("NOT_READY", error.message);
+      try {
+        revision = installedRevision(io, paths);
+        config = readConfig(io, paths);
+        const next = await nextCard(io, paths, config, revision, { landing: landingReader(io, paths, config, limits), record: true });
+        // SHU-321: only a done queue may go on to review a queue config pull
+        // request; an invalid or paused one never does. M16: a stopped queue
+        // does what a done one does (Card B, then Card A).
+        if (next.skipped === "QUEUE_DONE" || next.skipped === "QUEUE_STOPPED") done = next;
+        // Self-repair B2: an interrupted repair is reported once; a repairable
+        // card runs its one repair. Neither can come up with landing_repair off.
+        else if (next.skipped === "REPAIR_INTERRUPTED") interrupted = next;
+        else if (next.skipped) return skip(next.skipped, next.reason);
+        else if (next.repair) repairNext = next;
+        else plan = planRun({ config, revision, now: io.now(), limits, cardId: next.id });
+      } catch (error) {
+        // A review card needs its pull request from an operator, so the timer never
+        // runs one; any other planning refusal waits for the next install.
+        return skip("NOT_READY", error.message);
+      }
+      if (done || interrupted) break;
+      // Velocity A3: an install main has ready goes before a new run: no worker
+      // starts one while it waits, and the first start that finds the host idle
+      // installs it. So a merged queue or code change never waits for the whole
+      // installed queue to finish.
+      if (selection === 1 && cardQueue(config).queue) {
+        const drained = await drainForInstall({ io, paths, limits, config, revision, skip });
+        if (drained) return drained;
+      }
+      if (repairNext) {
+        if (cardWorkers(config) > 1) {
+          intent = repairIntent(paths, revision, repairNext.id);
+          replaceClaim(io, intent, `${JSON.stringify({ card: repairNext.id, revision, intent: "repair", ...claimant(io, paths) })}\n`);
+        }
+        break;
+      }
+      claim = autoClaim(paths, revision, plan.id);
+      claimedAt = io.now().toISOString();
+      try {
+        publishClaim(io, claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, ...claimant(io, paths) })}\n`);
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) again = true;
+        else return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
+      }
+    } finally {
+      release();
     }
-    if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
-    if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
-    if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
-    claim = autoClaim(paths, revision, plan.id);
-    claimedAt = io.now().toISOString();
-    try {
-      publishClaim(io, claim, `${JSON.stringify({ card: plan.id, revision, claimed_at: claimedAt, ...claimant(io, paths) })}\n`);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) continue;
-      return skip("ALREADY_RAN", `${plan.id} already ran at ${revision}: ${claim}`);
-    }
+    if (!again) break;
+  }
+  if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
+  if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
+  if (repairNext) {
+    try { return await autoRepair({ io, paths, limits, config, revision, next: repairNext, skip }); }
+    finally { if (intent) { try { io.fs.unlinkSync(intent); } catch { /* gone already */ } } }
   }
   let result;
   try {
-    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt });
+    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt, expectRevision: revision });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       io.fs.unlinkSync(claim);
@@ -1256,7 +1441,7 @@ async function autoRepair({ io, paths, limits, config, revision, next, skip }) {
   const holder = { round: null };
   let result;
   try {
-    result = await runCard({ io, paths, limits, trigger: "timer", cardId: id, repair: next.repair, repairRound: holder });
+    result = await runCard({ io, paths, limits, trigger: "timer", cardId: id, repair: next.repair, repairRound: holder, expectRevision: revision });
   } catch (error) {
     if (!holder.round) {
       if (NOT_NOW.has(error.code)) return skip(error.code === "CARD_RUN_LOCKED" ? "LOCKED" : "HOST_BUSY", error.message);
@@ -1440,11 +1625,15 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
   const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : [])];
-  const listed = open.filter((pull) => listedCandidate(pull, repo, labels)).sort((a, b) => a.number - b.number);
-  for (const pull of listed) {
+  // Velocity A: the pull request reviewed least at this revision goes first,
+  // then the oldest. By number alone, every new head on an older pull request
+  // (each merge of main gives one) went ahead of a newer one for ever.
+  const listed = open.filter((pull) => listedCandidate(pull, repo, labels))
+    .map((pull) => ({ pull, claims: reviewClaims(io, paths, pull.number, revision) }))
+    .sort((a, b) => a.claims.atRevision - b.claims.atRevision || a.pull.number - b.pull.number);
+  for (const { pull, claims } of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
-    const claims = reviewClaims(io, paths, pr, revision);
     if (claims.heads.has(head)) continue;
     if (claims.atRevision >= policy.maxHeadsPerPr) {
       capped.push(pr);
@@ -1491,6 +1680,27 @@ async function afterQueueDone({ io, paths, limits, config, revision, done, skip 
   if (install.paused) return skip("PAUSED", install.reason);
   const review = await autoReview({ io, paths, limits, config, revision, done, skip });
   return install.skipped ? { ...review, install: { skipped: install.skipped, reason: install.reason } } : review;
+}
+
+// Velocity A3: Card B before a card start. An install main has ready that
+// finds the host busy holds this start (INSTALL_PENDING), so the host drains;
+// an idle host installs it and this start ends there, as a done queue's would.
+// Anything else (nothing to install, a read that failed, a refusal already
+// claimed) lets the card start as before.
+async function drainForInstall({ io, paths, limits, config, revision, skip }) {
+  let install;
+  try {
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons: hostBusyReasons,
+      cardLanded: async (hostIo, hostPaths, id) => (await cardLanded(hostIo, hostPaths, id, { ...landingReader(hostIo, hostPaths, config, limits), record: true })).landed } });
+  } catch {
+    return null;
+  }
+  const ended = install.result;
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(ended?.outcome)) installRefusedStatus({ io, paths, config, result: ended });
+  if (ended) return ended;
+  if (install.paused) return skip("PAUSED", install.reason);
+  if (install.skipped === "INSTALL_HOST_BUSY") return skip("INSTALL_PENDING", `main's install waits for the host to be idle: ${install.reason}`);
+  return null;
 }
 
 // A refused self-install's finished status: no card, nothing armed, and the
@@ -1548,7 +1758,7 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   }
   let result;
   try {
-    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: policy.lane });
+    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: policy.lane, expectRevision: revision });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       // Not now, so the head is given back for a later start.
@@ -1601,10 +1811,18 @@ async function notStarted({ io, paths, limits, error, config, result }) {
 // drop-in of each of N's units (worker 1's bytes). Nothing is typed in by a
 // person, and a code self-install, which never touches units, leaves them as
 // they are. Worker 1's units are as before.
-export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
+//
+// Velocity A2: `timer-install --workers N` puts N workers on the host even when
+// workers.max is lower. A worker past workers.max skips every start
+// (NOT_READY), so raising workers.max later is a config change the box can
+// install itself, with no person at the host.
+export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE, provision = null } = {}) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
-  const workers = cardWorkers(readConfig(io, paths));
+  if (provision !== null && (!Number.isInteger(provision) || provision < 1 || provision > MAX_CARD_WORKERS)) {
+    refuse("CARD_RUN_USAGE", `--workers takes N from 1 to ${MAX_CARD_WORKERS}`);
+  }
+  const workers = Math.max(cardWorkers(readConfig(io, paths)), provision ?? 1);
   const all = Array.from({ length: workers }, (_, i) => i + 1);
   const units = all.flatMap((worker) => [[autoServiceName(worker), autoServiceUnit({ node, module, worker })], [autoTimerName(worker), autoTimerUnit(worker)]]);
   for (const [name, text] of units) {
@@ -1777,7 +1995,7 @@ export const defaultIO = Object.freeze({
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!["plan", "run", "auto", "timer-install", "timer-remove"].includes(command)) {
-    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto [--worker N] | timer-install | timer-remove");
+    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto [--worker N] | timer-install [--workers N] | timer-remove");
   }
   // M15 W5: a card worker's timer starts `auto --worker N`, N from 2.
   if (command === "auto" && rest.length) {
@@ -1786,6 +2004,14 @@ export function parseArgs(argv) {
       refuse("CARD_RUN_USAGE", `auto takes only --worker N, N from 2 to ${MAX_CARD_WORKERS}`);
     }
     return { command, review: null, worker };
+  }
+  // Velocity A2: timer-install --workers N provisions N workers' units.
+  if (command === "timer-install" && rest.length) {
+    const provision = Number(rest[1]);
+    if (rest.length !== 2 || rest[0] !== "--workers" || !/^[1-9][0-9]*$/.test(rest[1] ?? "") || provision > MAX_CARD_WORKERS) {
+      refuse("CARD_RUN_USAGE", `timer-install takes only --workers N, N from 1 to ${MAX_CARD_WORKERS}`);
+    }
+    return { command, review: null, provision };
   }
   if (!["plan", "run"].includes(command) && rest.length) refuse("CARD_RUN_USAGE", `${command} takes no flags`);
   const flags = {};
@@ -1801,7 +2027,7 @@ export function parseArgs(argv) {
 
 export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
   try {
-    const { command, review, worker = 1 } = parseArgs(argv);
+    const { command, review, worker = 1, provision = null } = parseArgs(argv);
     if (command === "plan") {
       const revision = installedRevision(io, paths);
       const config = readConfig(io, paths);
@@ -1836,7 +2062,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
       return { code: 0, output: { ...nextPlan, queue: queue.ids, next, busy: busyReasons(io, paths),
         ...(next.id ? { prepare: queued.find((entry) => entry.id === next.id).prepare } : {}), queued } };
     }
-    if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath }) };
+    if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath, provision }) };
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
       const result = await autoRun({ io, paths: cardRunPaths(worker, paths) });
