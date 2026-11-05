@@ -243,7 +243,11 @@ function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), ch
     const api = `https://api.github.com/repos/${REPO}`;
     host.github.push(url.slice(api.length + 1));
     if (host.githubFails) return respond(502, null);
-    if (url === `${api}/commits/${host.main}/check-runs?filter=latest&per_page=100`) return respond(200, { total_count: host.checks.runs.length, check_runs: host.checks.runs });
+    const runsPage = new RegExp(`^${api.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/commits/${host.main}/check-runs\\?filter=latest&per_page=100(?:&page=(\\d+))?$`).exec(url);
+    if (runsPage) {
+      const page = Number(runsPage[1] ?? 1);
+      return respond(200, { total_count: host.checks.runs.length, check_runs: host.checks.runs.slice((page - 1) * 100, page * 100) });
+    }
     if (url === `${api}/commits/${host.main}/status?per_page=100`) return respond(200, { statuses: host.checks.statuses });
     if (url === `${api}/pulls?state=open&base=main&per_page=100`) return respond(200, []);
     const pull = /^pulls\/(\d+)(\/reviews\?per_page=100)?$/.exec(url.slice(api.length + 1));
@@ -485,6 +489,17 @@ test("SHU-442: the coordinator's reconcile job on main never holds back or refus
   const other = await install(named);
   assert.equal(other.result?.outcome, "NEEDS_OWNER", "only the Actions job named reconcile is set aside");
   assert.match(other.result?.reason, /red: reconcile: failure/);
+  // Comment traffic can push main's tip past one page of check runs: every
+  // page is read, reconcile is set aside, and the commit's own runs decide.
+  const crowded = fakeHost();
+  crowded.checks.runs = [...Array.from({ length: 150 }, () => reconcile("completed", "cancelled")), ci("success")];
+  assert.equal((await install(crowded)).result?.outcome, "INSTALLED", "more than 100 reconcile runs beside green CI still install");
+  const crowdedRed = fakeHost();
+  crowdedRed.checks.runs = [...Array.from({ length: 150 }, () => reconcile("queued", null)), ci("failure")];
+  assert.equal((await install(crowdedRed)).result?.outcome, "NEEDS_OWNER", "a red run on a later page is still read and refused");
+  const unbounded = fakeHost();
+  unbounded.checks.runs = [...Array.from({ length: 1001 }, () => reconcile("queued", null)), ci("success")];
+  assert.equal((await install(unbounded)).skipped, "INSTALL_NOT_READY", "runs past the page bound are never assumed green");
 });
 
 test("SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated", async () => {

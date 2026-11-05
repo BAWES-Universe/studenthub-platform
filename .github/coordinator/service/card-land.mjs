@@ -549,14 +549,33 @@ export function boardOnlyCheck(run) {
 
 // SHU-322: the same judgement of any commit, such as main's tip, read with
 // whatever token the caller's client carries.
+// Board-only runs are set aside only once every check run has been read: the
+// comment traffic that starts them can push a commit past one page, so the
+// pages are read up to COMMIT_CHECK_PAGES and the judgement then sees exactly
+// the commit's own runs, counted after the filter. Anything left unread is
+// still "could not be read in full".
+export const COMMIT_CHECK_PAGES = 10;
 export async function readCommitChecks(gh, repo, sha) {
+  const runsUrl = `https://api.github.com/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100`;
   const [runsResponse, statusResponse] = await Promise.all([
-    gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100`),
+    gh("GET", runsUrl),
     gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/status?per_page=100`),
   ]);
   const [runs, status] = await Promise.all([runsResponse.json(), statusResponse.json()]);
-  const commitRuns = Array.isArray(runs?.check_runs) ? { ...runs, check_runs: runs.check_runs.filter((run) => !boardOnlyCheck(run)) } : runs;
-  return judgeChecks(runsResponse, commitRuns, statusResponse, status);
+  if (!runsResponse?.ok || !Array.isArray(runs?.check_runs) || !Number.isInteger(runs?.total_count)) {
+    return judgeChecks(runsResponse, runs, statusResponse, status);
+  }
+  const listed = [...runs.check_runs];
+  for (let page = 2; listed.length < runs.total_count && page <= COMMIT_CHECK_PAGES; page += 1) {
+    const response = await gh("GET", `${runsUrl}&page=${page}`);
+    const more = response?.ok ? await response.json() : null;
+    if (!Array.isArray(more?.check_runs) || more.check_runs.length === 0) return judgeChecks({ ok: false }, runs, statusResponse, status);
+    listed.push(...more.check_runs);
+  }
+  if (listed.length < runs.total_count) return judgeChecks(runsResponse, { ...runs, total_count: runs.total_count }, statusResponse, status);
+  const own = listed.filter((run) => !boardOnlyCheck(run));
+  if (own.length > 100) return { green: false, note: "the checks could not be read in full" };
+  return judgeChecks(runsResponse, { ...runs, total_count: own.length, check_runs: own }, statusResponse, status);
 }
 
 // One read of the head's checks and the pull request's own state.
