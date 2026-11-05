@@ -190,11 +190,22 @@ test("Velocity B: a worker that exits without a result names why, as a fixed cod
   let order = null;
   await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
   await f.drain();
-  f.children[0].stderr.emit("data", "some adapter output\nCHILD_ADAPTER_MONITOR_THREW\n");
+  // The exit is seen before the code is read: the run ends only once stderr,
+  // still open, has ended.
+  f.children[0].stderr.readable = true;
   f.children[0].emit("exit", 1);
+  assert.equal((await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"))).detail_code ?? null, null, "not finished before stderr ends");
+  f.children[0].stderr.emit("data", "some adapter output\nCHILD_ADAPTER_MONITOR_THREW\n");
+  f.children[0].stderr.emit("end");
   const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
   assert.equal(status.detail_code, "WORKER_EXIT_CHILD_ADAPTER_MONITOR_THREW");
   assert.equal(carriedSupervisorOutcome(status, f.h.receipts()[0]).reason_code, "SUPERVISOR_WORKER_EXIT_CHILD_ADAPTER_MONITOR_THREW");
+  // A stderr that never ends holds the run back for a bounded time only.
+  const { WORKER_EXIT_DRAIN_MS } = await import("../supervisor.mjs");
+  assert.ok(WORKER_EXIT_DRAIN_MS > 0 && WORKER_EXIT_DRAIN_MS <= 1000);
+  // The worker writes its code before it exits (a pipe write is asynchronous).
+  const worker = fs.readFileSync(new URL("../supervisor-worker.mjs", import.meta.url), "utf8");
+  assert.match(worker, /process\.stderr\.write\(`\$\{childFailureCode\(error\)\}\\n`, \(\) => process\.exit\(1\)\);/);
 });
 
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {

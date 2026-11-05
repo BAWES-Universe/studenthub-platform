@@ -96,7 +96,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.send) {
       }
       await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
     catch (error) {
-      process.stderr.write(`${childFailureCode(error)}\n`); process.exit(1);
+      // Velocity B: exit only once the code is written, so it is never lost.
+      process.stderr.write(`${childFailureCode(error)}\n`, () => process.exit(1));
     }
   });
 }

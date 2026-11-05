@@ -41,6 +41,8 @@ const CHILD_AUTH_RE = /^CHILD_AUTH_[A-Z][A-Z0-9_]{1,23}$/;
 export function childFailureCodeAllowed(code) {
   return typeof code === "string" && (CHILD_FAILURE_CODES.includes(code) || CHILD_AUTH_RE.test(code));
 }
+// Velocity B: how long a failed worker's stderr may take to end after its exit.
+export const WORKER_EXIT_DRAIN_MS = 500;
 const WORKER_EXIT_TAIL_BYTES = 256;
 export function workerExitCode(stderrTail) {
   const last = String(stderrTail ?? "").split("\n").map((line) => line.trim()).filter(Boolean).pop() ?? "";
@@ -667,11 +669,24 @@ export class DurableSupervisor {
     child.stdout?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stdout failed" }));
     child.stderr?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stderr failed" }));
     child.once?.("error", (error) => finish("failed", { error_code: "WORKER_ERROR", reason: String(error?.message ?? error) }));
-    child.once?.("exit", (code, signal) => finish(code === 0 ? "completed" : "failed", {
-      exit_code: code,
-      signal: signal ?? null,
-      ...(code === 0 ? {} : { error_code: workerExitCode(stderrTail) }),
-    }));
+    // Velocity B: a failed worker's last stderr line names its cause, and the
+    // exit can be seen before that line is read, so the tail is read once
+    // stderr has ended, for at most WORKER_EXIT_DRAIN_MS.
+    child.once?.("exit", (code, signal) => {
+      const done = () => finish(code === 0 ? "completed" : "failed", {
+        exit_code: code,
+        signal: signal ?? null,
+        ...(code === 0 ? {} : { error_code: workerExitCode(stderrTail) }),
+      });
+      const stderr = child.stderr;
+      if (code === 0 || stderr?.readable !== true || typeof stderr.once !== "function") return done();
+      let settled = false;
+      const drained = setTimeout(() => settle(), WORKER_EXIT_DRAIN_MS);
+      const settle = () => { if (settled) return; settled = true; clearTimeout(drained); done(); };
+      drained.unref?.();
+      stderr.once("end", settle);
+      stderr.once("close", settle);
+    });
     if (!terminal) {
       deadline = setTimeout(() => {
         if (terminal) return;
