@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { Readable } from "node:stream";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { failedScenarios, runSafeWriteConformance, SAFE_WRITE_SCENARIOS } from "@studenthub/safe-write-contract";
@@ -60,9 +64,12 @@ test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and
   assert.match(overSnapshot, /<html lang="ar" dir="rtl">/);
   assert.match(overSnapshot, /id="field-language"[\s\S]*?<dt>اللغة<\/dt><dd><bdi[^>]*>العربية<\/bdi>/);
   assert.match(overSnapshot, /class="p-provenance"[\s\S]*?<dt>اللغة<\/dt><dd>تم الاستيراد/);
-  const preview = await fetch(`${originHolder.value}/profile/language/preview`, { method: "POST", headers, body: "language=en" });
-  const review = await preview.text();
-  assert.equal(preview.status, 200); assert.equal(preview.headers.get("cache-control"), "no-store");
+  const preview = await fetch(`${originHolder.value}/profile/language/preview`, { method: "POST", headers, body: "language=en", redirect: "manual" });
+  assert.equal(preview.status, 303); assert.equal(preview.headers.get("location"), "/profile/language/review?language=en");
+  assert.equal(preview.headers.get("cache-control"), "no-store"); assert.equal(await preview.text(), "");
+  const reviewResponse = await fetch(`${originHolder.value}${preview.headers.get("location")}`, { headers: { cookie: headers.cookie, accept: "text/html" } });
+  const review = await reviewResponse.text();
+  assert.equal(reviewResponse.status, 200); assert.equal(reviewResponse.headers.get("cache-control"), "no-store");
   assert.match(review, /اللغة: <strong>العربية<\/strong> ← <strong>الإنجليزية<\/strong>/,
     "SHU371_PAGE_FLOW preview before comes from My profile, not the empty write store");
   assert.doesNotMatch(review, /token[^<]*(?:href|location)=/i);
@@ -127,18 +134,19 @@ async function localizedGateway(t: TestContext) {
   for (const account of Object.values(LOCALIZED_ACCOUNTS)) {
     await rig.sessions.put({ id: account.session, personId: account.personId });
   }
-  const values = new Map<string, string | null>(), receipts = new Map<string, Receipt>();
-  const controls = { failRead: false, denyWrite: false, failCommit: false, reads: [] as string[], authorizations: [] as (string | undefined)[], commits: 0 };
+  const values = new Map<string, string | null>(), receipts = new Map<string, Receipt>(), spentTokens = new Set<string>();
+  const controls = { now: Date.parse("2026-11-05T08:00:00Z"), failRead: false, denyWrite: false, failCommit: false, reads: [] as string[], authorizations: [] as (string | undefined)[], commits: 0 };
   const store = {
     forPrincipal(personId: string): SafeWriteStore {
       return {
         ownedRecord: (ref) => !controls.denyWrite && ref === safeWritePrincipalRef(personId) ? personRecordRef(personId) : null,
         readField: () => values.get(personId) ?? null,
         commit: (input) => {
+          if (spentTokens.has(input.tokenId)) return { ok: false, reason: "token_already_used" };
           controls.commits++;
           if (controls.failCommit) throw Error("SYNTHETIC-PRIVATE-COMMIT-FAILURE");
           if (input.expectedBefore !== (values.get(personId) ?? null)) return { ok: false, reason: "state_changed" };
-          values.set(personId, input.value); receipts.set(personId, input.receipt);
+          values.set(personId, input.value); receipts.set(personId, input.receipt); spentTokens.add(input.tokenId);
           return { ok: true };
         },
       };
@@ -158,7 +166,7 @@ async function localizedGateway(t: TestContext) {
     }),
     preferences: store, today: () => "2026-11-05",
   });
-  const service = createLanguagePreference({ sessions: rig.sessions, store, secret: "synthetic-localized-language-secret-at-least-32-bytes" });
+  const service = createLanguagePreference({ sessions: rig.sessions, store, secret: "synthetic-localized-language-secret-at-least-32-bytes", clock: { now: () => new Date(controls.now) } });
   const origin = { value: "" };
   const app = {
     ...rig.app, preferences: service as LanguagePreference | undefined,
@@ -191,7 +199,19 @@ async function localizedGateway(t: TestContext) {
     method: options.method ?? "POST", headers: { ...headers(account), ...options.headers },
     ...(options.method === "GET" ? {} : { body }), redirect: "manual",
   });
-  return { app, rig, service, controls, values, origin, headers, post };
+  const getReview = (account: LocalizedAccount | undefined, query = "language=en", extraHeaders: Record<string, string> = {}) => fetch(`${origin.value}/profile/language/review?${query}`, {
+    headers: { accept: "text/html", ...(account ? { cookie: headers(account).cookie! } : {}), ...extraHeaders }, redirect: "manual",
+  });
+  const review = async (account: LocalizedAccount, body: string, options: Parameters<typeof post>[2] = {}) => {
+    const response = await post(account, body, options);
+    assert.equal(response.status, 303, "LANGUAGE_HISTORY_POST_REDIRECT Preview must leave POST history before Review");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const target = new URLSearchParams(body).get("language");
+    assert.equal(response.headers.get("location"), `/profile/language/review?language=${target}`);
+    assert.equal(await response.text(), "", "redirect carries no inline Review or token");
+    return getReview(account, `language=${target}`, options.headers);
+  };
+  return { app, rig, service, controls, values, origin, headers, post, review, getReview };
 }
 
 function decodeFormValue(value: string): string {
@@ -224,7 +244,7 @@ function assertArabicPage(document: string): void {
 test("LANGUAGE_LOCALE_REVIEW gateway uses current authorized language, not target, query or headers", async (t) => {
   const x = await localizedGateway(t);
   for (const [account, target] of [["en", "ar"], ["ar", "en"]] as const) {
-    const response = await x.post(account, `language=${target}`, {
+    const response = await x.review(account, `language=${target}`, {
       path: `/profile/language/preview?language=${target}&lang=${target}&locale=${target}`,
       headers: { "accept-language": target, "x-language": target, "x-locale": target },
     });
@@ -249,7 +269,7 @@ test("LANGUAGE_LOCALE_REVIEW gateway uses current authorized language, not targe
       assert.match(document, /<a class="text-link" href="\/profile">Cancel<\/a>/);
     }
   }
-  assert.deepEqual(x.controls.reads, [LOCALIZED_ACCOUNTS.en.personId, LOCALIZED_ACCOUNTS.ar.personId], "one own-profile read per page request");
+  assert.deepEqual(x.controls.reads, [LOCALIZED_ACCOUNTS.en.personId, LOCALIZED_ACCOUNTS.en.personId, LOCALIZED_ACCOUNTS.ar.personId, LOCALIZED_ACCOUNTS.ar.personId], "POST and fresh GET each authorize their own profile read");
   assert.equal(x.controls.commits, 0);
 });
 
@@ -269,7 +289,7 @@ test("LANGUAGE_LOCALE_ERRORS malformed forms, invalid values and ownership refus
     assert.doesNotMatch(document, /<form|name="token\./);
   }
   x.controls.denyWrite = true;
-  const refused = await x.post("ar", "language=en");
+  const refused = await x.getReview("ar");
   const document = await refused.text();
   assert.equal(refused.status, 403); assertArabicPage(document); assert.match(document, /لم يعد هذا التغيير متاحًا\./);
   assert.equal(x.controls.commits, 0);
@@ -277,14 +297,14 @@ test("LANGUAGE_LOCALE_ERRORS malformed forms, invalid values and ownership refus
 
 test("LANGUAGE_LOCALE_CONFLICT real stale token stays Arabic and a successful confirm keeps its 303", async (t) => {
   const x = await localizedGateway(t);
-  const form = localizedConfirmForm(await (await x.post("ar", "language=en")).text());
+  const form = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
   x.values.set(LOCALIZED_ACCOUNTS.ar.personId, "ar");
   const stale = await x.post("ar", form, { path: "/profile/language/confirm" });
   const document = await stale.text();
   assert.equal(stale.status, 409); assertArabicPage(document);
   assert.match(document, /تغيّر ملفك الشخصي أثناء المراجعة\. افتحه مجددًا وأعد المحاولة\./);
   assert.equal(x.values.get(LOCALIZED_ACCOUNTS.ar.personId), "ar");
-  const current = localizedConfirmForm(await (await x.post("ar", "language=en")).text());
+  const current = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
   const done = await x.post("ar", current, { path: "/profile/language/confirm" });
   assert.equal(done.status, 303); assert.equal(done.headers.get("location"), "/profile");
   assert.equal(done.headers.get("cache-control"), "no-store"); assert.equal(await done.text(), "");
@@ -299,10 +319,10 @@ test("LANGUAGE_LOCALE_UNAVAILABLE trusted Arabic covers missing service, depende
   assert.equal(missing.status, 503); assertArabicPage(missingDocument);
   assert.match(missingDocument, /خدمة الملف الشخصي غير متاحة\. يرجى المحاولة مجددًا بعد قليل\./);
   x.app.preferences = { ...x.service, preview: async () => { throw Error("SYNTHETIC-PRIVATE-SERVICE-FAILURE"); } };
-  const failed = await x.post("ar", "language=en");
+  const failed = await x.getReview("ar");
   assert.equal(failed.status, 503); assertArabicPage(await failed.text());
   x.app.preferences = x.service;
-  const form = localizedConfirmForm(await (await x.post("ar", "language=en")).text());
+  const form = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
   x.controls.failCommit = true;
   const unconfirmed = await x.post("ar", form, { path: "/profile/language/confirm" });
   const document = await unconfirmed.text();
@@ -362,14 +382,14 @@ test("LANGUAGE_LOCALE_BOUNDARY unsigned, invalid-cookie and cross-origin forms d
 
 test("LANGUAGE_LOCALE_FALLBACK unknown locale uses English while a failed successful-preview lookup remains 503", async (t) => {
   const x = await localizedGateway(t);
-  const unknown = await x.post("unknown", "language=ar", { headers: { "accept-language": "ar" } });
+  const unknown = await x.review("unknown", "language=ar", { headers: { "accept-language": "ar" } });
   const unknownDocument = await unknown.text();
   assert.equal(unknown.status, 200); assert.match(unknownDocument, /<html lang="en" dir="ltr">/);
   assert.match(unknownDocument, /Language: <strong>Unavailable<\/strong> → <strong>Arabic<\/strong>/);
   assert.doesNotMatch(unknownDocument, /unsupported-locale/);
-  const form = localizedConfirmForm(await (await x.post("ar", "language=en")).text());
+  const form = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
   x.controls.failRead = true;
-  const fallbackPreview = await x.post("ar", "language=en");
+  const fallbackPreview = await x.review("ar", "language=en");
   const fallbackDocument = await fallbackPreview.text();
   assert.equal(fallbackPreview.status, 503); assert.match(fallbackDocument, /<html lang="en" dir="ltr">/);
   assert.match(fallbackDocument, /The profile service is unavailable/);
@@ -386,7 +406,7 @@ test("LANGUAGE_LOCALE_FALLBACK unknown locale uses English while a failed succes
   }
   for (const status of [401, 403, 409, 503] as const) {
     x.app.preferences = { ...x.service, preview: async () => ({ status, body: { error: "SYNTHETIC-PRIVATE-ERROR" } }) };
-    const response = await x.post("ar", "language=en");
+    const response = await x.getReview("ar");
     const document = await response.text();
     assert.equal(response.status, status, "locale lookup failure does not replace a service status");
     assert.match(document, /<html lang="en"(?: dir="ltr")?>/);
@@ -402,10 +422,10 @@ test("LANGUAGE_LOCALE_VALIDATION only exact trusted en/ar values select interfac
   const x = await localizedGateway(t);
   for (const shown of ["fr", "AR", "ar-KW", '<script>locale()</script>', undefined]) {
     const request = Readable.from(["language=ar"]) as IncomingMessage;
-    request.url = "/profile/language/preview?locale=ar"; request.method = "POST";
+    request.url = "/profile/language/review?language=ar"; request.method = "GET";
     request.headers = { ...x.headers("ar"), "accept-language": "ar" };
     let document = "", reads = 0;
-    const handled = await handleLanguagePreferencePage(request, {} as ServerResponse, x.service, x.origin.value,
+    const handled = await handleLanguagePreferencePage(request, { setHeader() {} } as unknown as ServerResponse, x.service, x.origin.value,
       (status, title, body, language) => { assert.equal(status, 200); document = pageDocument(title, body, language); },
       async (sessionId) => { reads++; assert.equal(sessionId, LOCALIZED_ACCOUNTS.ar.session); return shown; });
     assert.equal(handled, true); assert.equal(reads, 1);
@@ -421,15 +441,15 @@ test("LANGUAGE_LOCALE_ESCAPE hidden token and form values remain escaped without
   const token = Object.fromEntries(LOCALIZED_TOKEN_KEYS.map((key) => [key, `${key}${hostile}`]));
   // This deliberately permissive service isolates the rendering boundary. Real
   // requests still validate the language enum in the production service above.
-  x.app.preferences = { ...x.service, preview: async () => ({ status: 200, body: { token } }) };
-  const response = await x.post("ar", new URLSearchParams({ language: hostile }));
+  x.app.preferences = { ...x.service, preview: async () => ({ status: 200, body: { changes: [], token } }) };
+  const response = await x.getReview("ar");
   const document = await response.text();
   assert.equal(response.status, 200); assertArabicPage(document);
-  assert.match(document, /اللغة: <strong>العربية<\/strong> ← <strong>غير متاح<\/strong>/);
+  assert.match(document, /اللغة: <strong>العربية<\/strong> ← <strong>الإنجليزية<\/strong>/);
   assert.doesNotMatch(document, /<script>|<img|value="">/);
   assert.match(document, /&quot;&gt;&lt;script&gt;syntheticToken\(\)&lt;\/script&gt;&amp;&#39;/);
   const form = localizedConfirmForm(document);
-  assert.equal(form.get("language"), hostile);
+  assert.equal(form.get("language"), "en");
   for (const key of LOCALIZED_TOKEN_KEYS) assert.equal(form.get(`token.${key}`), token[key]);
 });
 
@@ -459,9 +479,9 @@ test("LANGUAGE_LOCALE_ISOLATION overlapping Arabic and English requests retain t
     if (sessionId === LOCALIZED_ACCOUNTS.ar.session) { entered(); await gate; }
     return x.service.preview(sessionId, body);
   } };
-  const arabic = x.post("ar", "language=en");
+  const arabic = x.getReview("ar");
   await waiting;
-  const english = await x.post("en", "language=ar");
+  const english = await x.getReview("en", "language=ar");
   const englishDocument = await english.text();
   assert.equal(english.status, 200); assert.match(englishDocument, /<html lang="en" dir="ltr">/);
   assert.match(englishDocument, /Language: <strong>English<\/strong> → <strong>Arabic<\/strong>/);
@@ -482,7 +502,7 @@ test("LANGUAGE_LOCALE_UNKNOWN_OUTCOME a committed service throw never claims the
     throw Error("SYNTHETIC-PRIVATE-AFTER-COMMIT-FAILURE");
   } };
   for (const [account, target] of [["ar", "en"], ["en", "ar"]] as const) {
-    const form = localizedConfirmForm(await (await x.post(account, `language=${target}`)).text());
+    const form = localizedConfirmForm(await (await x.review(account, `language=${target}`)).text());
     const response = await x.post(account, form, { path: "/profile/language/confirm" });
     const document = await response.text();
     assert.equal(response.status, 503); assert.equal(response.headers.get("location"), null);
@@ -506,7 +526,7 @@ test("LANGUAGE_LOCALE_CONFIRM_AUTHORITY display lookup failure preserves confirm
   const outcomes: unknown[] = [];
   for (const failRead of [false, true]) {
     const x = await localizedGateway(t);
-    const form = localizedConfirmForm(await (await x.post("ar", "language=en")).text());
+    const form = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
     let committedReceipt: Receipt | undefined;
     x.app.preferences = { ...x.service, confirm: async (sessionId, body) => {
       const result = await x.service.confirm(sessionId, body);
@@ -543,4 +563,216 @@ test("LANGUAGE_LOCALE_CONFIRM_AUTHORITY display lookup failure preserves confirm
   // Independent writes have distinct receipt IDs/timestamps. Their semantic
   // receipt content and HTTP outcomes must not depend on a display-only read.
   assert.deepEqual(outcomes[1], outcomes[0]);
+});
+
+test("LANGUAGE_HISTORY_POST_REDIRECT native Preview has no inline token and fresh GET revalidates", async (t) => {
+  const x = await localizedGateway(t);
+  let previews = 0;
+  x.app.preferences = { ...x.service, preview: async (sessionId, body) => { previews++; return x.service.preview(sessionId, body); } };
+  const redirect = await x.post("ar", "language=en");
+  assert.equal(redirect.status, 303, "LANGUAGE_HISTORY_POST_REDIRECT Preview must redirect instead of rendering inline 200");
+  assert.equal(redirect.headers.get("location"), "/profile/language/review?language=en");
+  assert.equal(redirect.headers.get("cache-control"), "no-store");
+  assert.equal(await redirect.text(), ""); assert.equal(previews, 0, "POST must not issue a discarded signed token");
+  const first = await x.getReview("ar"), firstDocument = await first.text();
+  assert.equal(first.status, 200); assert.equal(first.headers.get("cache-control"), "no-store");
+  const original = localizedConfirmForm(firstDocument);
+  const fresh = await x.getReview("ar"), freshDocument = await fresh.text();
+  assert.equal(fresh.status, 200); assert.equal(fresh.headers.get("cache-control"), "no-store");
+  const displayed = localizedConfirmForm(freshDocument);
+  assert.notEqual(displayed.get("token.tokenId"), original.get("token.tokenId"), "GET revalidates rather than restoring the original token");
+  assert.equal(previews, 2); assert.equal(x.controls.commits, 0);
+  for (const document of [firstDocument, freshDocument]) {
+    assertArabicPage(document);
+    assert.doesNotMatch(document, /(?:href|action)="[^"]*(?:token|mac|principalRef|changeSetDigest)/i);
+    assert.doesNotMatch(document, /localStorage|sessionStorage|indexedDB|serviceWorker|<script/i);
+  }
+  for (const response of [redirect, first, fresh]) {
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.doesNotMatch(JSON.stringify([...response.headers]), /tokenId|principalRef|changeSetDigest|SYNTHETIC-PRIVATE/);
+  }
+  const done = await x.post("ar", displayed, { path: "/profile/language/confirm" });
+  assert.equal(done.status, 303); assert.equal(done.headers.get("location"), "/profile");
+  assert.equal(x.values.get(LOCALIZED_ACCOUNTS.ar.personId), "en");
+});
+
+test("LANGUAGE_HISTORY_QUERY invalid Review URLs refuse generically without echo or writes", async (t) => {
+  const x = await localizedGateway(t);
+  for (const query of ["", "language=", "language=xx", "language=EN", "language=en&language=en", "language=en&language=ar", "language=en&locale=ar", "language=en&token.mac=SYNTHETIC-PRIVATE-QUERY", "language=%3Cscript%3ESYNTHETIC-PRIVATE%3C%2Fscript%3E", "language=%", "language=%00en"]) {
+    const response = await x.getReview("ar", query);
+    const document = await response.text();
+    assert.equal(response.status, 400, query); assert.equal(response.headers.get("cache-control"), "no-store");
+    assertArabicPage(document); assert.match(document, /لم يتم تغيير لغتك\./);
+    assert.doesNotMatch(document, /<form|name="token\.|<script>|SYNTHETIC-PRIVATE|language=|token\.mac/);
+    assert.equal(response.headers.get("location"), null);
+  }
+  assert.equal(x.controls.commits, 0);
+});
+
+test("LANGUAGE_HISTORY_SESSION restored Review reauthenticates and never reuses another session", async (t) => {
+  const x = await localizedGateway(t);
+  const old = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
+  await x.rig.sessions.delete(LOCALIZED_ACCOUNTS.ar.session);
+  for (const account of [undefined, "ar"] as const) {
+    const response = await x.getReview(account), document = await response.text();
+    assert.equal(response.status, 401); assert.match(document, /Sign in/);
+    assert.doesNotMatch(document, /name="token\.|SYNTHETIC-PRIVATE|العربية/);
+  }
+  const crossSession = await x.post("en", old, { path: "/profile/language/confirm" });
+  assert.equal(crossSession.status, 409);
+  assert.equal(x.controls.commits, 0);
+});
+
+test("LANGUAGE_HISTORY_NO_CHANGE current target has existing not-changed copy without Confirm", async (t) => {
+  const x = await localizedGateway(t);
+  for (const account of ["ar", "en"] as const) {
+    const response = await x.getReview(account, `language=${account}`), document = await response.text();
+    assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.match(document, account === "ar" ? /لم يتم تغيير لغتك\./ : /Your language wasn’t changed/);
+    assert.doesNotMatch(document, /<form|name="token\.|Confirm change|تأكيد التغيير/);
+  }
+  assert.equal(x.controls.commits, 0);
+});
+
+test("LANGUAGE_HISTORY_OLD_TOKEN fresh GET does not revoke earlier valid tokens or relax stale expiry and single-use rules", async (t) => {
+  for (const scenario of ["valid", "stale", "expired", "used"] as const) {
+    const x = await localizedGateway(t);
+    const old = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
+    if (scenario === "stale") x.values.set(LOCALIZED_ACCOUNTS.ar.personId, "ar");
+    if (scenario === "expired") x.controls.now += 24 * 60 * 60 * 1000;
+    if (scenario === "used") {
+      assert.equal((await x.post("ar", old, { path: "/profile/language/confirm" })).status, 303);
+      // Restore the original value so the store's durable single-use guard,
+      // rather than merely state_changed, is what rejects this replay.
+      x.values.set(LOCALIZED_ACCOUNTS.ar.personId, null);
+    }
+    const fresh = await x.getReview("ar");
+    assert.equal(fresh.status, 200); await fresh.text();
+    const before = x.controls.commits;
+    const result = await x.post("ar", old, { path: "/profile/language/confirm" });
+    assert.equal(result.status, scenario === "valid" ? 303 : 409, scenario);
+    assert.equal(x.controls.commits, before + (scenario === "valid" ? 1 : 0), scenario);
+  }
+});
+
+test("LANGUAGE_HISTORY_GET_BOUNDARY review works without form Content-Type or Origin and preserves dependency refusals", async (t) => {
+  const x = await localizedGateway(t);
+  const response = await x.getReview("ar", "language=en", { "accept-language": "en", "x-locale": "en", "content-type": "application/json" });
+  assert.equal(response.status, 200); assertArabicPage(await response.text());
+  x.controls.denyWrite = true;
+  assert.equal((await x.getReview("ar")).status, 403);
+  x.controls.denyWrite = false; x.controls.failRead = true;
+  const failed = await x.getReview("ar"); assert.equal(failed.status, 503);
+  assert.doesNotMatch(await failed.text(), /SYNTHETIC-PRIVATE|name="token\./);
+  x.controls.failRead = false; x.app.preferences = undefined;
+  const missing = await x.getReview("ar"); assert.equal(missing.status, 503); assertArabicPage(await missing.text());
+  assert.equal(x.controls.commits, 0);
+});
+
+test("LANGUAGE_HISTORY_INLINE_200_MUTANT dies at the native Preview redirect assertion", () => {
+  const sourcePath = new URL("../src/language-preference.js", import.meta.url);
+  const original = readFileSync(sourcePath, "utf8");
+  const from = 'response.writeHead(303, { location: `${FORM_REVIEW}?language=${target}`, "cache-control": "no-store" });';
+  const to = 'write(200, "Review language", "<main>Review language change</main>", locale);';
+  assert.equal(original.split(from).length, 2, "exactly one native Preview redirect mutation site");
+  const dir = mkdtempSync(join(dirname(fileURLToPath(sourcePath)), "language-history-mutant-"));
+  try {
+    const modulePath = join(dir, "language-preference.mjs");
+    const script = `import assert from 'node:assert/strict';
+      import { Readable } from 'node:stream';
+      import { handleLanguagePreferencePage } from ${JSON.stringify(pathToFileURL(modulePath).href)};
+      const request = Readable.from(['language=en']);
+      request.url='/profile/language/preview'; request.method='POST';
+      request.headers={'content-type':'application/x-www-form-urlencoded',origin:'https://studenthub.invalid','sec-fetch-site':'same-origin',cookie:'__Host-studenthub_session='+'a'.repeat(43)};
+      let status=0;
+      const response={writeHead(code){status=code;},end(){},setHeader(){}};
+      const service={validatePreview:async()=>({status:200,body:{language:'en'}})};
+      assert.equal(await handleLanguagePreferencePage(request,response,service,'https://studenthub.invalid',(code)=>{status=code;},async()=> 'ar'),true);
+      assert.equal(status,303,'LANGUAGE_HISTORY_INLINE_200_MUTANT native Preview must redirect');`;
+    const run = () => spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
+    writeFileSync(modulePath, original);
+    const baseline = run(); assert.equal(baseline.error, undefined); assert.equal(baseline.status, 0, baseline.stderr);
+    writeFileSync(modulePath, original.replace(from, to));
+    const mutant = run(); assert.equal(mutant.error, undefined); assert.equal(mutant.status, 1, mutant.stderr);
+    assert.match(mutant.stderr, /AssertionError/); assert.match(mutant.stderr, /LANGUAGE_HISTORY_INLINE_200_MUTANT native Preview must redirect/);
+    assert.doesNotMatch(mutant.stderr, /SyntaxError|ERR_MODULE_NOT_FOUND/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test("LANGUAGE_HISTORY_LOOKUP_PRECEDENCE failed display lookup cannot mask malformed query or service refusal", async (t) => {
+  const x = await localizedGateway(t);
+  x.controls.failRead = true;
+  for (const query of ["", "language=en&locale=ar", "language=en&language=ar"]) {
+    const response = await x.getReview("ar", query), document = await response.text();
+    assert.equal(response.status, 400);
+    assert.match(document, /<html lang="en" dir="ltr">/);
+    assert.doesNotMatch(document, /SYNTHETIC-PRIVATE|name="token\./);
+  }
+  for (const status of [401, 403, 409, 503] as const) {
+    x.app.preferences = { ...x.service, preview: async () => ({ status, body: { error: "SYNTHETIC-PRIVATE-ERROR" } }) };
+    const response = await x.getReview("ar"), document = await response.text();
+    assert.equal(response.status, status, "fresh GET preserves the authoritative service refusal");
+    assert.match(document, /<html lang="en"(?: dir="ltr")?>/);
+    assert.doesNotMatch(document, /SYNTHETIC-PRIVATE|name="token\./);
+  }
+  x.app.preferences = undefined;
+  const missing = await x.getReview("ar"), document = await missing.text();
+  assert.equal(missing.status, 503); assert.match(document, /The profile service is unavailable/);
+  assert.doesNotMatch(document, /SYNTHETIC-PRIVATE|name="token\./);
+  assert.equal(x.controls.commits, 0);
+});
+
+test("LANGUAGE_HISTORY_SHARED_VALIDATION both preview entry points preserve exact-body and authentication precedence", async () => {
+  const session = "v".repeat(43), personId = "synthetic-validation-person";
+  let writerCalls = 0, clockCalls = 0, commits = 0;
+  const service = createLanguagePreference({
+    sessions: { get: async (id) => id === session ? { id, personId } : undefined },
+    store: {
+      forPrincipal: (principalId) => {
+        writerCalls++;
+        assert.equal(principalId, personId);
+        return {
+          ownedRecord: (ref) => ref === safeWritePrincipalRef(personId) ? personRecordRef(personId) : null,
+          readField: () => null,
+          commit: () => { commits++; return { ok: false, reason: "not_own_record" }; },
+        };
+      },
+      readReceipt: async () => null,
+    },
+    clock: { now: () => { clockCalls++; return new Date("2026-11-05T08:00:00Z"); } },
+    secret: "synthetic-preview-validation-secret-at-least-32-bytes",
+  });
+  const malformedBodies: unknown[] = [
+    undefined, null, "language=en", [], ["en"], {}, { locale: "en" },
+    { language: "en", locale: "ar" }, { language: "en", token: {} },
+    { language: "xx", extra: true },
+  ];
+  const invalidValues: unknown[] = [undefined, null, "", "xx", "EN", "ar-KW", " en", "en ", 1, true, [], {}];
+  for (const method of ["validatePreview", "preview"] as const) {
+    for (const body of malformedBodies) {
+      assert.deepEqual(await service[method](session, body), { status: 400, body: { error: "invalid_request" } }, method);
+    }
+    for (const value of invalidValues) {
+      assert.deepEqual(await service[method](session, { language: value }), { status: 400, body: { error: "invalid_value" } }, method);
+    }
+    for (const sessionId of [undefined, "missing-session"]) {
+      for (const body of [...malformedBodies, ...invalidValues.map((language) => ({ language })), { language: "en" }]) {
+        assert.deepEqual(await service[method](sessionId, body), { status: 401, body: { error: "unauthorized" } }, `${method} authenticates before reporting body errors`);
+      }
+    }
+  }
+  assert.equal(writerCalls, 0, "invalid and unauthorized requests never enter safe-write");
+  assert.equal(clockCalls, 0);
+  for (const language of ["en", "ar"]) {
+    assert.deepEqual(await service.validatePreview(session, { language }), { status: 200, body: { language } });
+  }
+  assert.equal(writerCalls, 0, "native POST validation never builds a writer or issues a discarded token");
+  assert.equal(clockCalls, 0, "native POST validation never reads the token issuance clock");
+  const preview = await service.preview(session, { language: "en" });
+  assert.equal(preview.status, 200);
+  assert.deepEqual(Object.keys(preview.body as object).sort(), ["changes", "token"]);
+  assert.equal(writerCalls, 1, "the shared validator still permits JSON and GET preview to issue a token");
+  assert.ok(clockCalls > 0);
+  assert.equal(commits, 0);
 });
