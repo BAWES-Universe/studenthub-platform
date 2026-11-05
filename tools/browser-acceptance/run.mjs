@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
+const phoneRecoveryStates=['conflict-reentry','status-read-only','same-phone-retry','changed-phone-rejected'];
 const names = [
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `layout-${language}-${width}`)),
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `editor-error-${language}-${width}`)),
@@ -24,6 +25,7 @@ const names = [
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `language-review-confirm-reload-${language}-${width}`)),
   ...['en','ar'].flatMap(language => ['cancel-history-resubmission-known-gap','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
   ...['en','ar'].flatMap(language => ['missing-preview','revoked-confirm','expired-confirm'].map(state => `language-session-${state}-${language}`)),
+  ...['en','ar'].flatMap(language => phoneRecoveryStates.map(state => `phone-recovery-${state}-${language}`)),
 ];
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
   chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:names.map(name=>({name,status:'NOT_RUN'})),
@@ -260,6 +262,46 @@ async function languageReplayTarget(source) {
   // Only the native form target changes; all signed fields remain untouched.
   await source.locator(languageConfirm).evaluate((form,name)=>{form.target=name;},name);
   return target;
+}
+// Phone recovery checks never persist numbers, tokens, serialized HTML or receipt IDs.
+const phoneRecoveryCopy={
+  en:{label:'Phone number',conflict:'This value changed since you opened the form. Review the current value and your draft before saving.',reentry:'Enter your phone number again. Your previous entry is not shown.',unknownHeading:'Save not confirmed',unknown:'We could not confirm whether your change was saved. Check its status before trying another change.',retryHelp:'Enter the same phone number again to retry this save. Your previous entry is not shown.',check:'Check save status',retry:'Try again',different:'This is a different change. Review your current profile and open a new form before saving it.',saved:'Save confirmed'},
+  ar:{label:'رقم الهاتف',conflict:'تغيّرت هذه القيمة منذ فتح النموذج. راجع القيمة الحالية ومسودتك قبل الحفظ.',reentry:'أدخل رقم هاتفك مجددًا. لن يظهر إدخالك السابق.',unknownHeading:'لم يتم تأكيد الحفظ',unknown:'تعذّر التأكد من حفظ تغييرك. تحقق من حالته قبل محاولة إجراء تغيير آخر.',retryHelp:'أدخل رقم الهاتف نفسه مجدداً لإعادة محاولة الحفظ. لن يظهر إدخالك السابق.',check:'التحقق من حالة الحفظ',retry:'المحاولة مرة أخرى',different:'هذا تغيير مختلف. راجع ملفك الشخصي الحالي وافتح نموذجاً جديداً قبل حفظه.',saved:'تم تأكيد الحفظ'},
+};
+async function phoneRecoveryLocale(page,language) {
+  assert.equal(await page.locator('html').getAttribute('lang'),language,'Phone recovery trusted locale');
+  assert.equal(await page.locator('html').getAttribute('dir'),language==='ar'?'rtl':'ltr','Phone recovery trusted direction');
+}
+async function phonePayloadAbsent(page,numbers) {
+  // Include local-number digits to catch formatted/escaped country-code variants.
+  const needles=[...new Set(numbers.filter(Boolean).flatMap(number=>[number,number.replace(/\D/g,'').slice(-8)]))];
+  check(needles.length>0,'Phone non-echo requires nonempty payload witnesses');
+  check(!needles.some(value=>(value.length<8)),'Phone non-echo witnesses must be meaningful');
+  // Full serialization is inspected only in memory; assertion receives a boolean.
+  const html=await page.content();
+  check(!needles.some(value=>html.includes(value)),'Phone payload absent from full serialized HTML');
+  check(await page.evaluate(values=>{
+    const contains=value=>values.some(needle=>value.includes(needle));
+    return !contains(document.body.innerText)
+      && [...document.querySelectorAll('*')].every(node=>[...node.attributes].every(attr=>!contains(attr.value)))
+      && [...document.querySelectorAll('input,textarea,select')].every(node=>!contains(node.value));
+  },needles),'Phone payload absent from visible text, all attributes, hidden controls and live values');
+}
+async function phoneRecoveryPost(page,button,route,expectedStatus) {
+  const responseReady=page.waitForResponse(response=>response.request().method()==='POST' && new URL(response.url()).pathname===route,{timeout:15000});
+  responseReady.catch(()=>{});
+  const destination=await submit(page,button), response=await responseReady;
+  assert.equal(response.status(),expectedStatus,'Phone native POST status');
+  assert.equal(destination?.status(),expectedStatus===303?200:expectedStatus,'Phone native navigation status');
+  assert.equal(response.headers()['cache-control'],'no-store','Phone recovery response is not cached');
+  if(expectedStatus===303) {
+    assert.equal(response.headers().location,'/profile#field-phone','Phone recovery redirects to actual phone field');
+    assert.equal(new URL(page.url()).pathname,'/profile','Phone recovery reaches actual profile');
+  }
+}
+async function phoneRecoverySaved(page,language) {
+  await saved(page); await phoneRecoveryLocale(page,language);
+  assert.equal(await page.locator('#profile-notice-heading').innerText(),phoneRecoveryCopy[language].saved,'Localized verified save notice');
 }
 async function run(name, action) {
   const record=evidence.cases.find(c=>c.name===name), start=Date.now();
@@ -784,6 +826,76 @@ try {
       await languagePost(page,languageConfirm,{expectedStatus:409}); await languageError(page,language,'conflict');
       assert.deepEqual(await fixture.inspectLanguage(actor),before,'Expired language token cannot write');
       return {screenshot:await screenshot(page,`language-token-expiry-${language}`),notes:'Production signer with backdated issuance only; unmodified lifetime and real verification clock.'};
+    });
+  }
+  // Eight additive cases: conflict and each independent unknown-outcome action,
+  // in both trusted locales. The original 82 case bodies remain unchanged above.
+  for(const language of ['en','ar']) for(const [index,stateName] of phoneRecoveryStates.entries()) {
+    const name=`phone-recovery-${stateName}-${language}`;
+    await run(name,async()=>{
+      const copy=phoneRecoveryCopy[language], {actor,context,page}=await subject({language});
+      // Distinct valid synthetic contacts prevent cross-case uniqueness collisions.
+      const suffix=String((language==='ar'?20:10)+index).padStart(4,'0');
+      const draft=`+9655000${suffix}`, current=`+9656000${suffix}`, changed=`+9659000${suffix}`;
+      await edit(page,'phone');
+      const initial=await page.locator('#field-phone').inputValue();
+      await page.locator('#field-phone').fill(draft);
+      if(stateName==='conflict-reentry') {
+        const other=await context.newPage(); await edit(other,'phone');
+        await other.locator('#field-phone').fill(current); await save(other); await phoneRecoverySaved(other,language);
+        const before=await counts(actor,1,1); check(before.values.phone===current,'Concurrent phone persisted');
+        await phoneRecoveryPost(page,page.locator('#profile-edit-form button[type=submit]'),'/profile/edit/phone/save',409);
+        await phoneRecoveryLocale(page,language);
+        await visible(page.getByText(copy.conflict,{exact:true})); await visible(page.getByText(copy.reentry,{exact:true}));
+        await visible(page.getByRole('textbox',{name:copy.label,exact:true}));
+        check(await page.locator('#field-phone').inputValue()==='','Conflict requires deliberate phone re-entry');
+        assert.equal(await page.locator('#field-phone').getAttribute('dir'),'ltr','Conflict phone input stays LTR');
+        await phonePayloadAbsent(page,[initial,current,draft]); await noOverflow(page);
+        const screenshotName=await screenshot(page,name);
+        check((await counts(actor,1,1)).values.phone===current,'Stale phone submission does not overwrite concurrent value');
+        await page.locator('#field-phone').fill(draft);
+        await phoneRecoveryPost(page,page.locator('#profile-edit-form button[type=submit]'),'/profile/edit/phone/save',303);
+        await phoneRecoverySaved(page,language);
+        check((await counts(actor,2,2)).values.phone===draft,'Deliberate conflict re-entry persists intended phone');
+        return {screenshot:screenshotName};
+      }
+      const faultBefore=fixture.evidence.commitBoundaryThrows;
+      const restore=await fixture.useCommitBoundaryFault(); restorers.push(restore);
+      await phoneRecoveryPost(page,page.locator('#profile-edit-form button[type=submit]'),'/profile/edit/phone/save',503);
+      assert.equal(fixture.evidence.commitBoundaryThrows,faultBefore+1,'Phone save exercises actual lost COMMIT acknowledgement');
+      await phoneRecoveryLocale(page,language);
+      await visible(page.getByRole('heading',{level:1,name:copy.unknownHeading,exact:true}));
+      await visible(page.getByText(copy.unknown,{exact:true})); await visible(page.getByText(copy.retryHelp,{exact:true}));
+      await visible(page.getByRole('textbox',{name:copy.label,exact:true}));
+      await visible(page.getByRole('button',{name:copy.check,exact:true})); await visible(page.getByRole('button',{name:copy.retry,exact:true}));
+      check(await page.locator('#field-phone').inputValue()==='','Unknown phone save requires deliberate retry re-entry');
+      assert.equal(await page.locator('#field-phone').getAttribute('dir'),'ltr','Unknown phone input stays LTR');
+      assert.equal(await page.locator('form[action="/profile/edit/phone/status"] [name=value]').count(),0,'Read-only phone status carries no phone payload');
+      await phonePayloadAbsent(page,[initial,draft]); await noOverflow(page);
+      const screenshotName=await screenshot(page,name), before=await counts(actor,1,1);
+      check(before.values.phone===draft,'Unknown acknowledgement follows a durable phone commit');
+      const receiptUnchanged=await fixture.capturePhoneReceipt(actor);
+      let errorScreenshot;
+      await restore();
+      if(stateName==='status-read-only') {
+        // Leave the retry input empty. Native status must not demand phone re-entry.
+        await phoneRecoveryPost(page,page.getByRole('button',{name:copy.check,exact:true}),'/profile/edit/phone/status',303);
+        await phoneRecoverySaved(page,language);
+      } else {
+        await page.locator('#field-phone').fill(stateName==='same-phone-retry'?draft:changed);
+        await phoneRecoveryPost(page,page.getByRole('button',{name:copy.retry,exact:true}),'/profile/edit/phone/save',stateName==='same-phone-retry'?303:409);
+        if(stateName==='same-phone-retry') await phoneRecoverySaved(page,language);
+        else {
+          await phoneRecoveryLocale(page,language); await visible(page.getByText(copy.different,{exact:true}));
+          assert.equal(await page.locator('#profile-edit-form').count(),0,'Changed phone retry has no resubmission form');
+          await phonePayloadAbsent(page,[initial,draft,changed]); await noOverflow(page);
+          errorScreenshot=await screenshot(page,`${name}-refused`);
+        }
+      }
+      const after=await counts(actor,1,1);
+      check(JSON.stringify(after.values)===JSON.stringify(before.values),'Recovery leaves all durable profile values unchanged');
+      check(await receiptUnchanged(),'Recovery retains the exact original durable receipt');
+      return {screenshot:screenshotName,...(errorScreenshot?{errorScreenshot}:{}),notes:'Real lost COMMIT acknowledgement; one durable phone write and the unchanged original receipt. No phone payload or receipt identifiers recorded.'};
     });
   }
 } catch {
