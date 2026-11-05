@@ -51,11 +51,6 @@
     "issue_ids": [
       "SHU-489",
       "SHU-490",
-      "SHU-453",
-      "SHU-457",
-      "SHU-454",
-      "SHU-455",
-      "SHU-456",
       "SHU-461",
       "SHU-478",
       "SHU-479",
@@ -4395,6 +4390,9 @@
         "apps/gateway/test/login-reassign.test.ts",
         "apps/gateway/test/login-reassign-mutations.mjs",
         "docs/authz-roles.md"
+      ],
+      "after": [
+        "SHU-490"
       ]
     },
     {
@@ -4426,6 +4424,9 @@
         "apps/gateway/src/routes/pay-contracts.ts",
         "apps/gateway/test/routes-order.test.ts",
         "apps/gateway/test/routes-mutations.mjs"
+      ],
+      "after": [
+        "SHU-461"
       ]
     },
     {
@@ -4653,6 +4654,7 @@
         "packages/db/src/profile/index.ts"
       ],
       "after": [
+        "SHU-462",
         "SHU-480"
       ]
     },
@@ -4707,6 +4709,7 @@
         "packages/db/src/profile/index.ts"
       ],
       "after": [
+        "SHU-460",
         "SHU-462",
         "SHU-480"
       ]
@@ -4760,6 +4763,7 @@
         "packages/db/src/profile/index.ts"
       ],
       "after": [
+        "SHU-463",
         "SHU-480"
       ]
     },
@@ -4913,6 +4917,7 @@
         "packages/db/src/profile/index.ts"
       ],
       "after": [
+        "SHU-466",
         "SHU-464",
         "SHU-462",
         "SHU-480"
@@ -5002,6 +5007,7 @@
         "packages/db/src/profile/index.ts"
       ],
       "after": [
+        "SHU-469",
         "SHU-467",
         "SHU-480"
       ]

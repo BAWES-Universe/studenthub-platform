@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-489", "SHU-490", "SHU-453", "SHU-457", "SHU-454", "SHU-455", "SHU-456", "SHU-461", "SHU-478", "SHU-479", "SHU-480", "SHU-462", "SHU-460", "SHU-463", "SHU-464", "SHU-465", "SHU-466", "SHU-467", "SHU-469", "SHU-468"], "SHU-224: the scope names the current card queue (SHU-312)");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-489", "SHU-490", "SHU-461", "SHU-478", "SHU-479", "SHU-480", "SHU-462", "SHU-460", "SHU-463", "SHU-464", "SHU-465", "SHU-466", "SHU-467", "SHU-469", "SHU-468"], "SHU-224: the scope names the current card queue (SHU-312)");
   assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-489").after, undefined, "SHU-224: SHU-489 waits on nothing");
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-490").after, ["SHU-489"], "SHU-224: SHU-490 waits on SHU-489");
   assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-453").after, undefined, "SHU-224: SHU-453 waits on nothing");
@@ -262,12 +262,19 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-454").after, ["SHU-453"], "SHU-224: SHU-454 waits on SHU-453");
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-455").after, ["SHU-454"], "SHU-224: SHU-455 waits on SHU-454");
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-456").after, ["SHU-455"], "SHU-224: SHU-456 waits on SHU-455");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-461").after, undefined, "SHU-224: SHU-461 waits on nothing");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-478").after, undefined, "SHU-224: SHU-478 waits on nothing");
+  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-461").after, ["SHU-490"], "SHU-224: SHU-461 waits on SHU-490");
+  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-478").after, ["SHU-461"], "SHU-224: SHU-478 waits on SHU-461");
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-479").after, ["SHU-478"], "SHU-224: SHU-479 waits on SHU-478");
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-480").after, ["SHU-479"], "SHU-224: SHU-480 waits on SHU-479");
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
+  }
+  // Two workers take cards from one queue and nothing yet stops them building
+  // cards that change the same files, so each card waits on the one before it.
+  const scoped = config.dispatch_scope.issue_ids;
+  for (let i = 1; i < scoped.length; i += 1) {
+    const lane = config.card_lanes.find((entry) => entry.id === scoped[i]);
+    assert.ok(Array.isArray(lane.after) && lane.after.includes(scoped[i - 1]), `SHU-224: ${scoped[i]} waits on ${scoped[i - 1]}`);
   }
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
