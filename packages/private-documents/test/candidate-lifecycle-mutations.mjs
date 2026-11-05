@@ -8,6 +8,14 @@ import assert from 'node:assert/strict';
 // monkeypatched test implementation and no syntax/import/process failures count.
 const root=resolve(new URL('../../../',import.meta.url).pathname);
 const mutations=[
+ ['M23 candidate gate restored','SHU366_PERSON_OWNS','candidate-lifecycle.js',
+  'return principalId;',
+  "if (!(await this.options.authz.listGrantsForPrincipal(principalId)).some(g => g.orgId === this.options.orgId && g.role === 'candidate')) return deny(); return principalId;", undefined,
+  'SHU366_PERSON_OWNS: own empty list requires no candidate grant'],
+ ['M24 own namespace restriction dropped','SHU366_NO_WIDENING','index.js',
+  'scope.personId !== undefined && scope.orgId === this.options.ownDocumentOrgId',
+  'scope.personId !== undefined && this.options.ownDocumentOrgId !== undefined', undefined,
+  'SHU366_NO_WIDENING: own namespace option must not authorize another organization'],
  ['M21 finalized sibling staging purged','SHU-145/NC-RETENTION','candidate-lifecycle.js',
   'delete t.data;\n            delete t.digest;',
   'delete t.data;\n            delete t.digest;\n            for (const sibling of s.lifecycle.uploads) { if (sibling !== t) { delete sibling.data; delete sibling.digest; } }', undefined,

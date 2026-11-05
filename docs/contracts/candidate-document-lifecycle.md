@@ -11,9 +11,14 @@ No SHU-92 field projection or profile UI is changed.
 
 `createCandidateDocuments` takes configured `store`, `authz`, and `sessions`
 ports. It resolves each opaque browser session through the existing session store
-and then requires a current `candidate` grant in the configured organization.
-Personal ownership is always the resolved platform principal. Being an employer,
-recruiter or org owner confers no candidate-document access. SHU-200 remains a
+and authorizes own documents for any registered principal, without requiring a
+`candidate` grant. Principal-row existence is the liveness check; a missing principal
+is refused. The same session's principal and configured organization existence are
+rechecked inside every transaction, including empty lists, delivery and receipt
+replays. Personal ownership is always the resolved platform principal within the
+configured `DOCUMENT_ORG_ID` namespace. Employer, recruiter, staff, admin and org
+owner grants confer no access to another person's documents. Organization-only
+documents retain their existing grant and deletion checks. SHU-200 remains a
 separate decision. Anonymous and cross-person operations fail closed.
 
 The runtime supports explicit `DOCUMENT_STORAGE=synthetic-file` or `r2`. The

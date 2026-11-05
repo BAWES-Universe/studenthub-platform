@@ -1,18 +1,25 @@
 /** Isolated acceptance fixture. No control is reachable over HTTP.
- * Normal traffic uses the exact runtime composition. Only the two explicitly
- * selected fault fixtures replace browserEdit, using the exported editor/store.
+ * Normal profile traffic uses the exact runtime composition. Explicit profile
+ * faults use the exported editor/store. Documents use the actual lifecycle and
+ * a new private synthetic FileDocumentStore; only its failure boundary is injected.
  */
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, lstat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer } from 'node:https';
 import pg from 'pg';
-import { createPrincipal } from '@studenthub/contracts';
+import { createOrganization, createPrincipal } from '@studenthub/contracts';
 import { PostgresAuthzStore, PostgresLoginStore, PostgresPersonProfileStore, runMigrations, readLiveLoginSessionPerson, safeWritePrincipalRef } from '@studenthub/db';
 import { InMemoryApprovedProfileAdapter, SYNTHETIC_PROFILE_FIXTURES, createPersonImportedFallbackReader } from '@studenthub/profile';
 import { createBrowserWriteTokens, BROWSER_WRITE_LIFETIME_MS } from '@studenthub/safe-write-contract';
 import { createRuntimeLoginFromEnv } from '../../dist/apps/gateway/src/login-runtime.js';
 import { createGatewayServer } from '../../dist/apps/gateway/src/index.js';
+import { createCandidateDocuments } from '../../dist/apps/gateway/src/candidate-documents-runtime.js';
+import { FileDocumentStore } from '../../dist/packages/private-documents/src/index.js';
+import { createIdempotencyKey } from '../../dist/packages/idempotency-contract/src/index.js';
+import { png } from '../../packages/private-documents/test/candidate-fixtures.mjs';
 import { createProfileBrowserEdit } from '../../dist/apps/gateway/src/profile-browser-edit-http.js';
 
 export async function createFixture({
@@ -52,6 +59,25 @@ export async function createFixture({
     FOR EACH ROW EXECUTE FUNCTION acceptance_count_write()`);
   const authz = new PostgresAuthzStore(pool), sessions = new PostgresLoginStore(pool);
   const actorAdapters = new Map(), actors = new Map();
+  // A new private throwaway store only. Never discover or open configured data.
+  const documentTemp = await mkdtemp(join(tmpdir(), 'studenthub-browser-documents-'));
+  cleanups.push(() => rm(documentTemp, { recursive: true, force: true }));
+  const documentRoot = join(documentTemp, 'private');
+  const documentDisk = await FileDocumentStore.create(documentRoot);
+  assert.equal((await lstat(documentRoot)).mode & 0o777, 0o700);
+  assert.equal((await lstat(join(documentRoot, 'state.json'))).mode & 0o777, 0o600);
+  const documentOrg = `synthetic-documents-${randomUUID()}`;
+  await authz.upsertOrganization(createOrganization({ id: documentOrg, name: 'Synthetic document acceptance' }));
+  let documentStoreFailure = false, documentStoreCalls = 0;
+  const documents = createCandidateDocuments({ authz, sessions: sessions.sessions,
+    origin: 'https://localhost', orgId: documentOrg, signingKey: randomBytes(32),
+    store: { transaction(fn) {
+      documentStoreCalls++;
+      if (documentStoreFailure) throw new Error('synthetic-document-store-private-sentinel');
+      return documentDisk.transaction(fn);
+    } },
+  });
+
   const approvedProfiles = {
     async resolveLink(id) { return actorAdapters.get(id)?.resolveLink(id) ?? { kind: 'missing' }; },
     async readCandidate(ref) { for (const adapter of actorAdapters.values()) { const row = await adapter.readCandidate(ref); if (row) return row; } },
@@ -162,6 +188,29 @@ export async function createFixture({
   }
   return {
     baseURL, countries, evidence,
+    useDocuments({ configured = true, failStore = false } = {}) {
+      documentStoreFailure = failStore;
+      gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null, undefined, configured ? documents : undefined);
+      return () => {
+        documentStoreFailure = false;
+        gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null);
+      };
+    },
+    documentStoreCalls() { return documentStoreCalls; },
+    async finalizeSyntheticPhoto(actor) {
+      assert(actors.has(actor.id), 'Unknown synthetic actor');
+      const session = actors.get(actor.id).session, bytes = png();
+      const authorized = await documents.authorizeUpload(session, createIdempotencyKey(new Date()), {
+        type: 'personal-photo', mime: 'image/png', size: bytes.length, expectedVersion: null,
+      });
+      assert.equal(authorized.status, 201, 'Real synthetic upload authorized');
+      const ticket = authorized.body;
+      const uploaded = await documents.put(session, createIdempotencyKey(new Date()), ticket.uploadId, ticket.objectKey, ticket.credential, bytes);
+      assert.equal(uploaded.status, 204, 'Real synthetic bytes validated');
+      const finalized = await documents.finalize(session, createIdempotencyKey(new Date()), { uploadId: ticket.uploadId });
+      assert.equal(finalized.status, 200, 'Real synthetic document finalized');
+      return { ...finalized.body.metadata };
+    },
     async seedActor({ language = 'en', sparse = false, nationality = 'KW', longValues = false } = {}) {
       assert(['en', 'ar'].includes(language)); assert(nationality === null || ['KW', 'BH'].includes(nationality));
       const id = `acceptance-${randomUUID()}`, candidateRef = `synthetic-${randomUUID()}`, session = randomBytes(32).toString('base64url');
