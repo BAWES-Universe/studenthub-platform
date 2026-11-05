@@ -245,6 +245,7 @@ function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), ch
     if (host.githubFails) return respond(502, null);
     const boardRuns = new RegExp(`^${api.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/actions/workflows/coordinator\\.yml/runs\\?head_sha=${host.main}&per_page=100(?:&page=(\\d+))?$`).exec(url);
     if (boardRuns) {
+      if (host.checks.boardDenied) return respond(403, { message: "Resource not accessible by integration" });
       const all = host.checks.boardSuites ?? [77];
       const page = Number(boardRuns[1] ?? 1);
       return respond(200, { total_count: all.length, workflow_runs: all.slice((page - 1) * 100, page * 100).map((id) => ({ check_suite_id: id })) });
@@ -521,8 +522,18 @@ test("SHU-442: the coordinator's reconcile job on main never holds back or refus
   assert.equal((await install(noSuite)).skipped, "INSTALL_NOT_READY", "a reconcile run with no check suite is never set aside");
   const boardUnread = fakeHost();
   boardUnread.checks.runs = [ci("success"), reconcile("queued", null)];
-  boardUnread.checks.boardSuites = Array.from({ length: 1001 }, (_, i) => i + 1000);
+  boardUnread.checks.boardSuites = [77, ...Array.from({ length: 1000 }, (_, i) => i + 1000)];
   assert.equal((await install(boardUnread)).skipped, "INSTALL_NOT_READY", "unread coordinator runs never let reconcile be set aside");
+  // A token without Actions read: reconcile is judged like any other check,
+  // so a pending one holds the install and a green one lets it through.
+  const deniedPending = fakeHost();
+  deniedPending.checks.runs = [ci("success"), reconcile("queued", null)];
+  deniedPending.checks.boardDenied = true;
+  assert.equal((await install(deniedPending)).skipped, "INSTALL_NOT_READY", "an unreadable workflow listing never sets a pending reconcile aside");
+  const deniedGreen = fakeHost();
+  deniedGreen.checks.runs = [ci("success"), reconcile("completed", "success")];
+  deniedGreen.checks.boardDenied = true;
+  assert.equal((await install(deniedGreen)).result?.outcome, "INSTALLED", "an unreadable workflow listing does not hold back a green commit");
 });
 
 test("SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated", async () => {

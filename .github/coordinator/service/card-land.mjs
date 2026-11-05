@@ -588,9 +588,11 @@ export async function readCommitChecks(gh, repo, sha) {
   }
   let boardSuites = new Set();
   if (listed.some((run) => BOARD_ONLY_CHECKS.includes(run?.name) && run?.app?.slug === "github-actions")) {
+    // When the coordinator's runs cannot be read in full (a token without
+    // Actions read, a failed page), nothing is set aside: every reconcile run
+    // is judged like any other check, which is how commits were judged before.
     const workflowRuns = await readAllPages(gh, `${api}/actions/workflows/${BOARD_ONLY_WORKFLOW}/runs?head_sha=${sha}&per_page=100`, "workflow_runs");
-    if (!workflowRuns.items) return { green: false, note: "the checks could not be read in full" };
-    boardSuites = new Set(workflowRuns.items.map((run) => run?.check_suite_id).filter(Number.isInteger));
+    if (workflowRuns.items) boardSuites = new Set(workflowRuns.items.map((run) => run?.check_suite_id).filter(Number.isInteger));
   }
   const own = listed.filter((run) => !boardOnlyCheck(run, boardSuites));
   if (own.length > 100) return { green: false, note: "the checks could not be read in full" };
