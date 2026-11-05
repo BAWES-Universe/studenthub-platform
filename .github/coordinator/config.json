@@ -49,8 +49,26 @@
   },
   "dispatch_scope": {
     "issue_ids": [
+      "SHU-462",
       "SHU-450",
-      "SHU-451"
+      "SHU-451",
+      "SHU-366",
+      "SHU-460",
+      "SHU-461",
+      "SHU-463",
+      "SHU-464",
+      "SHU-465",
+      "SHU-466",
+      "SHU-467",
+      "SHU-468",
+      "SHU-469",
+      "SHU-470",
+      "SHU-471",
+      "SHU-472",
+      "SHU-473",
+      "SHU-474",
+      "SHU-475",
+      "SHU-476"
     ]
   },
   "adapter_pause_map": {},
@@ -4037,6 +4055,705 @@
       ],
       "after": [
         "SHU-450"
+      ]
+    },
+    {
+      "id": "SHU-460",
+      "authorization_ref": "SHU-460",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q14-L: legacy account link (the LegacyLogin port, the link store behind ApprovedProfileAdapter.resolveLink, and the link page on My profile); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0215_legacy_account_links.sql",
+        "packages/db/src/postgres-legacy-link-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-legacy-link.test.ts",
+        "apps/gateway/src/legacy-login.ts",
+        "apps/gateway/test/legacy-login.test.ts",
+        "apps/gateway/src/legacy-link-http.ts",
+        "apps/gateway/test/legacy-link-http.test.ts",
+        "apps/gateway/test/legacy-link-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0215_legacy_account_links.sql",
+        "packages/db/src/postgres-legacy-link-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-legacy-link.test.ts",
+        "apps/gateway/src/legacy-login.ts",
+        "apps/gateway/test/legacy-login.test.ts",
+        "apps/gateway/src/legacy-link-http.ts",
+        "apps/gateway/test/legacy-link-http.test.ts",
+        "apps/gateway/test/legacy-link-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-461",
+      "authorization_ref": "SHU-461",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q14-L guard: stable-id binding and lock on external identities; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0226_external_identity_stable_id.sql",
+        "packages/login-contract/src/types.ts",
+        "apps/gateway/src/login-application.ts",
+        "packages/db/src/postgres-login-store.ts",
+        "packages/db/test/postgres-login-stable-id.test.ts",
+        "apps/gateway/test/login-reassign.test.ts",
+        "apps/gateway/test/login-reassign-mutations.mjs",
+        "docs/authz-roles.md"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0226_external_identity_stable_id.sql",
+        "packages/login-contract/src/types.ts",
+        "apps/gateway/src/login-application.ts",
+        "packages/db/src/postgres-login-store.ts",
+        "packages/db/test/postgres-login-stable-id.test.ts",
+        "apps/gateway/test/login-reassign.test.ts",
+        "apps/gateway/test/login-reassign-mutations.mjs",
+        "docs/authz-roles.md"
+      ]
+    },
+    {
+      "id": "SHU-462",
+      "authorization_ref": "SHU-462",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q14-3: civil ID number and expiry (rules, encrypted store, Civil ID row and form on My profile); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0216_person_civil_id.sql",
+        "packages/db/src/postgres-person-civil-id-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-civil-id.test.ts",
+        "packages/profile/src/civil-id.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/civil-id.test.ts",
+        "packages/profile/test/civil-id-mutations.mjs",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0216_person_civil_id.sql",
+        "packages/db/src/postgres-person-civil-id-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-civil-id.test.ts",
+        "packages/profile/src/civil-id.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/civil-id.test.ts",
+        "packages/profile/test/civil-id-mutations.mjs",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-463",
+      "authorization_ref": "SHU-463",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q14-5: area catalogue kind, area choice and optional coordinates on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0217_person_area.sql",
+        "packages/reference-catalogue/src/types.ts",
+        "packages/db/src/postgres-person-location-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-location.test.ts",
+        "packages/profile/src/area.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/area.test.ts",
+        "packages/profile/test/area-mutations.mjs",
+        "apps/gateway/src/area-http.ts",
+        "apps/gateway/test/area-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0217_person_area.sql",
+        "packages/reference-catalogue/src/types.ts",
+        "packages/db/src/postgres-person-location-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-location.test.ts",
+        "packages/profile/src/area.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/src/profile.ts",
+        "packages/profile/test/area.test.ts",
+        "packages/profile/test/area-mutations.mjs",
+        "apps/gateway/src/area-http.ts",
+        "apps/gateway/test/area-http.test.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-462"
+      ]
+    },
+    {
+      "id": "SHU-464",
+      "authorization_ref": "SHU-464",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 3: a person uploads or replaces a document from My documents with a plain file form (Q14-1); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/documents-upload-http.ts",
+        "apps/gateway/test/documents-upload-http.test.ts",
+        "apps/gateway/test/documents-upload-mutations.mjs",
+        "apps/gateway/src/documents-page.ts",
+        "apps/gateway/test/documents-page.test.ts",
+        "apps/gateway/src/index.ts",
+        "packages/private-documents/src/candidate-lifecycle.ts",
+        "packages/private-documents/test/candidate-lifecycle.test.mjs",
+        "packages/private-documents/test/r2-lifecycle.test.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/documents-upload-http.ts",
+        "apps/gateway/test/documents-upload-http.test.ts",
+        "apps/gateway/test/documents-upload-mutations.mjs",
+        "apps/gateway/src/documents-page.ts",
+        "apps/gateway/test/documents-page.test.ts",
+        "apps/gateway/src/index.ts",
+        "packages/private-documents/src/candidate-lifecycle.ts",
+        "packages/private-documents/test/candidate-lifecycle.test.mjs",
+        "packages/private-documents/test/r2-lifecycle.test.mjs"
+      ],
+      "after": [
+        "SHU-366"
+      ]
+    },
+    {
+      "id": "SHU-465",
+      "authorization_ref": "SHU-465",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 4: a person removes or views a document and sees their photo on My profile (Q14-2); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/documents-actions-http.ts",
+        "apps/gateway/test/documents-actions-http.test.ts",
+        "apps/gateway/test/documents-actions-mutations.mjs",
+        "apps/gateway/src/profile-avatar.ts",
+        "apps/gateway/test/profile-avatar.test.ts",
+        "apps/gateway/src/documents-page.ts",
+        "apps/gateway/test/documents-page.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/ui/profile-copy.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/documents-actions-http.ts",
+        "apps/gateway/test/documents-actions-http.test.ts",
+        "apps/gateway/test/documents-actions-mutations.mjs",
+        "apps/gateway/src/profile-avatar.ts",
+        "apps/gateway/test/profile-avatar.test.ts",
+        "apps/gateway/src/documents-page.ts",
+        "apps/gateway/test/documents-page.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/ui/profile-copy.ts"
+      ],
+      "after": [
+        "SHU-464"
+      ]
+    },
+    {
+      "id": "SHU-466",
+      "authorization_ref": "SHU-466",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 5: a person sees what is missing from their profile (Q14-4); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/profile/src/completeness.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/completeness.test.ts",
+        "packages/profile/test/completeness-mutations.mjs",
+        "apps/gateway/src/profile-completeness.ts",
+        "apps/gateway/test/profile-completeness.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/test/language-preference.test.ts"
+      ],
+      "revision_paths": [
+        "packages/profile/src/completeness.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/completeness.test.ts",
+        "packages/profile/test/completeness-mutations.mjs",
+        "apps/gateway/src/profile-completeness.ts",
+        "apps/gateway/test/profile-completeness.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/test/language-preference.test.ts"
+      ],
+      "after": [
+        "SHU-462",
+        "SHU-366",
+        "SHU-465"
+      ]
+    },
+    {
+      "id": "SHU-467",
+      "authorization_ref": "SHU-467",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-1 part one: civil ID photo OCR job, port, Textract adapter and worker command; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0218_civil_id_ocr.sql",
+        "packages/db/src/postgres-civil-id-ocr-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-civil-id-ocr.test.ts",
+        "packages/profile/src/civil-id-ocr.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/civil-id-ocr.test.ts",
+        "packages/profile/test/civil-id-ocr-mutations.mjs",
+        "packages/private-documents/src/civil-id-reads.ts",
+        "packages/private-documents/test/civil-id-reads.test.mjs",
+        "apps/worker/src/civil-id-ocr-worker.ts",
+        "apps/worker/src/index.ts",
+        "apps/worker/test/civil-id-ocr-worker.test.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0218_civil_id_ocr.sql",
+        "packages/db/src/postgres-civil-id-ocr-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-civil-id-ocr.test.ts",
+        "packages/profile/src/civil-id-ocr.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/civil-id-ocr.test.ts",
+        "packages/profile/test/civil-id-ocr-mutations.mjs",
+        "packages/private-documents/src/civil-id-reads.ts",
+        "packages/private-documents/test/civil-id-reads.test.mjs",
+        "apps/worker/src/civil-id-ocr-worker.ts",
+        "apps/worker/src/index.ts",
+        "apps/worker/test/civil-id-ocr-worker.test.ts"
+      ],
+      "after": [
+        "SHU-464",
+        "SHU-462"
+      ]
+    },
+    {
+      "id": "SHU-468",
+      "authorization_ref": "SHU-468",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-1 part two: suggestion line, accept and dismiss on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "apps/gateway/src/civil-id-suggestion-http.ts",
+        "apps/gateway/test/civil-id-suggestion-http.test.ts",
+        "apps/gateway/test/civil-id-suggestion-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/civil-id-suggestion-http.ts",
+        "apps/gateway/test/civil-id-suggestion-http.test.ts",
+        "apps/gateway/test/civil-id-suggestion-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-467"
+      ]
+    },
+    {
+      "id": "SHU-469",
+      "authorization_ref": "SHU-469",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-2: staff civil ID review queue, decision page, audited staff image delivery and result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0219_civil_id_reviews.sql",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/private-documents/src/staff-delivery.ts",
+        "packages/private-documents/test/staff-delivery.test.mjs",
+        "packages/private-documents/test/staff-delivery-mutations.mjs",
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0219_civil_id_reviews.sql",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/private-documents/src/staff-delivery.ts",
+        "packages/private-documents/test/staff-delivery.test.mjs",
+        "packages/private-documents/test/staff-delivery-mutations.mjs",
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-462",
+        "SHU-464",
+        "SHU-467"
+      ]
+    },
+    {
+      "id": "SHU-470",
+      "authorization_ref": "SHU-470",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3: staff People directory (search, filters, paging, JSON, indexes); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0220_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0220_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-466",
+        "SHU-462",
+        "SHU-469",
+        "SHU-460",
+        "SHU-463"
+      ]
+    },
+    {
+      "id": "SHU-471",
+      "authorization_ref": "SHU-471",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-4: staff Person page (staff projection, documents, civil ID, background, account links, audited views); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/staff-person.test.ts",
+        "packages/db/src/postgres-person-account-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-account.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/test/person-page.test.ts",
+        "apps/gateway/test/person-page-mutations.mjs",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/profile/src/profile.ts",
+        "packages/profile/src/types.ts",
+        "packages/profile/test/staff-person.test.ts",
+        "packages/db/src/postgres-person-account-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-account.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/test/person-page.test.ts",
+        "apps/gateway/test/person-page-mutations.mjs",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-470",
+        "SHU-469",
+        "SHU-460",
+        "SHU-466"
+      ]
+    },
+    {
+      "id": "SHU-472",
+      "authorization_ref": "SHU-472",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 15: staff change a person's profile fields with a reason (preview, confirm, ledger, 'Updated by StudentHub staff' marker); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0221_person_profile_staff_edits.sql",
+        "packages/db/src/postgres-person-staff-edit-store.ts",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-staff-edit.test.ts",
+        "packages/profile/src/staff-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/staff-edit.test.ts",
+        "apps/gateway/src/person-staff-edit-http.ts",
+        "apps/gateway/test/person-staff-edit-http.test.ts",
+        "apps/gateway/test/person-staff-edit-mutations.mjs",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0221_person_profile_staff_edits.sql",
+        "packages/db/src/postgres-person-staff-edit-store.ts",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-staff-edit.test.ts",
+        "packages/profile/src/staff-edit.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/staff-edit.test.ts",
+        "apps/gateway/src/person-staff-edit-http.ts",
+        "apps/gateway/test/person-staff-edit-http.test.ts",
+        "apps/gateway/test/person-staff-edit-mutations.mjs",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-471"
+      ]
+    },
+    {
+      "id": "SHU-473",
+      "authorization_ref": "SHU-473",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 16: staff tag people with a reason (catalogue tags, history, directory filter); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0222_person_tags.sql",
+        "packages/db/src/postgres-person-tags-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-tags.test.ts",
+        "packages/profile/src/person-tags.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/person-tags.test.ts",
+        "packages/profile/test/person-tags-mutations.mjs",
+        "apps/gateway/src/person-tags-http.ts",
+        "apps/gateway/test/person-tags-http.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/people-directory.ts",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0222_person_tags.sql",
+        "packages/db/src/postgres-person-tags-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-tags.test.ts",
+        "packages/profile/src/person-tags.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/person-tags.test.ts",
+        "packages/profile/test/person-tags-mutations.mjs",
+        "apps/gateway/src/person-tags-http.ts",
+        "apps/gateway/test/person-tags-http.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/people-directory.ts",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-471"
+      ]
+    },
+    {
+      "id": "SHU-474",
+      "authorization_ref": "SHU-474",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 17: staff warnings on a person (issue, versioned edit, history, 'Notes from StudentHub' on My profile without the author); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0223_person_warnings.sql",
+        "packages/db/src/postgres-person-warnings-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-warnings.test.ts",
+        "packages/profile/src/person-warnings.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/person-warnings.test.ts",
+        "packages/profile/test/person-warnings-mutations.mjs",
+        "apps/gateway/src/person-warnings-http.ts",
+        "apps/gateway/test/person-warnings-http.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0223_person_warnings.sql",
+        "packages/db/src/postgres-person-warnings-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-warnings.test.ts",
+        "packages/profile/src/person-warnings.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/person-warnings.test.ts",
+        "packages/profile/test/person-warnings-mutations.mjs",
+        "apps/gateway/src/person-warnings-http.ts",
+        "apps/gateway/test/person-warnings-http.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/test/web-ui.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-471"
+      ]
+    },
+    {
+      "id": "SHU-475",
+      "authorization_ref": "SHU-475",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 18: staff toggle committed with a note, outbox message when turned off; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0224_person_commitment.sql",
+        "packages/db/src/postgres-person-commitment-store.ts",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-commitment.test.ts",
+        "packages/profile/src/profile.ts",
+        "packages/notifications/src/email-templates.ts",
+        "apps/gateway/src/person-commitment-http.ts",
+        "apps/gateway/test/person-commitment-http.test.ts",
+        "apps/gateway/test/person-commitment-mutations.mjs",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/people-directory.ts",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0224_person_commitment.sql",
+        "packages/db/src/postgres-person-commitment-store.ts",
+        "packages/db/src/person-profile-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-commitment.test.ts",
+        "packages/profile/src/profile.ts",
+        "packages/notifications/src/email-templates.ts",
+        "apps/gateway/src/person-commitment-http.ts",
+        "apps/gateway/test/person-commitment-http.test.ts",
+        "apps/gateway/test/person-commitment-mutations.mjs",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/people-directory.ts",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-471",
+        "SHU-450"
+      ]
+    },
+    {
+      "id": "SHU-476",
+      "authorization_ref": "SHU-476",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 19: staff merge two profiles (side-by-side preview, one-transaction move, pointer, merge ledger); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0225_person_merges.sql",
+        "packages/db/src/postgres-person-merge-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-merge.test.ts",
+        "packages/profile/src/person-merge.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/person-merge.test.ts",
+        "packages/profile/test/person-merge-mutations.mjs",
+        "apps/gateway/src/person-merge-http.ts",
+        "apps/gateway/test/person-merge-http.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/people-directory.ts",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0225_person_merges.sql",
+        "packages/db/src/postgres-person-merge-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-merge.test.ts",
+        "packages/profile/src/person-merge.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/person-merge.test.ts",
+        "packages/profile/test/person-merge-mutations.mjs",
+        "apps/gateway/src/person-merge-http.ts",
+        "apps/gateway/test/person-merge-http.test.ts",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/people-directory.ts",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-473",
+        "SHU-474",
+        "SHU-475",
+        "SHU-472"
+      ]
+    },
+    {
+      "id": "SHU-477",
+      "authorization_ref": "SHU-477",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card 20: staff undo a profile merge within 90 days (move-log restore, ledger, pointer removed); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/src/postgres-person-merge-undo-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-merge-undo.test.ts",
+        "apps/gateway/src/person-merge-undo-http.ts",
+        "apps/gateway/test/person-merge-undo-http.test.ts",
+        "apps/gateway/test/person-merge-undo-mutations.mjs",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/src/postgres-person-merge-undo-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-person-merge-undo.test.ts",
+        "apps/gateway/src/person-merge-undo-http.ts",
+        "apps/gateway/test/person-merge-undo-http.test.ts",
+        "apps/gateway/test/person-merge-undo-mutations.mjs",
+        "apps/gateway/src/person-page.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-476"
       ]
     }
   ],
