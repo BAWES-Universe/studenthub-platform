@@ -36,10 +36,15 @@ export const SUPERVISOR_PROTOCOL_VERSION = "2.0.0";
 export const CHILD_FAILURE_CODES = Object.freeze(["CHILD_AUTH_REFUSED", "CHILD_RUNTIME_UNSUPPORTED",
   "CHILD_COMPLETION_UNRECORDED", "CHILD_ADAPTER_LAUNCH_THREW", "CHILD_ADAPTER_MONITOR_THREW",
   "SHU251_ENV_CUSTODY", "SHU251_ENV_CROSSED", "SHU71_SUPERVISOR_ENV_REQUIRED", "SHU251_CHILD_FAILED"]);
+// A refused order also names the host policy's clause: CHILD_AUTH_<clause>.
+const CHILD_AUTH_RE = /^CHILD_AUTH_[A-Z][A-Z0-9_]{1,23}$/;
+export function childFailureCodeAllowed(code) {
+  return typeof code === "string" && (CHILD_FAILURE_CODES.includes(code) || CHILD_AUTH_RE.test(code));
+}
 const WORKER_EXIT_TAIL_BYTES = 256;
 export function workerExitCode(stderrTail) {
   const last = String(stderrTail ?? "").split("\n").map((line) => line.trim()).filter(Boolean).pop() ?? "";
-  return CHILD_FAILURE_CODES.includes(last) ? `WORKER_EXIT_${last}` : "WORKER_EXIT";
+  return childFailureCodeAllowed(last) ? `WORKER_EXIT_${last}` : "WORKER_EXIT";
 }
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const DEFAULT_DEADLINE_MS = 60 * 60 * 1000;

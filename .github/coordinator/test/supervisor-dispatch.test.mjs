@@ -179,7 +179,12 @@ test("Velocity B: a worker that exits without a result names why, as a fixed cod
   const policy = join(dir, "policy.mjs");
   fs.writeFileSync(policy, "export const authorizeWorkOrder = () => false;\n");
   const refused = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: policy }).catch((error) => error);
-  assert.equal(childFailureCode(refused), "CHILD_AUTH_REFUSED");
+  assert.equal(childFailureCode(refused), "CHILD_AUTH_REFUSED", "a plain false names no clause");
+  fs.writeFileSync(join(dir, "named.mjs"), "export const workOrderAuthorization = () => ({ ok: false, code: \"HOST_AUTH_ATTEMPT_SCOPE\" });\n");
+  const named = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: join(dir, "named.mjs") }).catch((error) => error);
+  assert.equal(childFailureCode(named), "CHILD_AUTH_ATTEMPT_SCOPE", "the policy's clause is named");
+  assert.equal(workerExitCode("CHILD_AUTH_ATTEMPT_SCOPE\n"), "WORKER_EXIT_CHILD_AUTH_ATTEMPT_SCOPE");
+  for (const odd of ["CHILD_AUTH_lower", "CHILD_AUTH_" + "X".repeat(30), "CHILD_AUTH_A B"]) assert.equal(workerExitCode(`${odd}\n`), "WORKER_EXIT", odd);
   // End to end through the supervisor: the code reaches the receipt.
   const f = setup(t);
   let order = null;

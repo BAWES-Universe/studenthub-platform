@@ -5,7 +5,7 @@ import { supervisorChildEnvironment } from "./service/credential-delivery.mjs";
 import { fork } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { recordSupervisorCompletion, SUPERVISOR_PROTOCOL_VERSION, CHILD_FAILURE_CODES } from "./supervisor.mjs";
+import { recordSupervisorCompletion, SUPERVISOR_PROTOCOL_VERSION, childFailureCodeAllowed } from "./supervisor.mjs";
 
 // Authorization is host policy, not a claim in the work order. The service must
 // supply a child-side module that rechecks the activation before launch and each
@@ -29,6 +29,11 @@ export function createSupervisorSpawner({ stateDir, authorizationModule = fileUR
 // Velocity B: why a worker exited without a result, as a fixed code only (never
 // error text, which may carry credentials). The supervisor carries the code
 // into the run's error_code, so the receipt names the cause.
+// The policy's named clause (HOST_AUTH_<clause>) becomes CHILD_AUTH_<clause>.
+function authCode(code) {
+  const clause = /^HOST_AUTH_([A-Z][A-Z0-9_]{1,23})$/.exec(String(code ?? ""))?.[1];
+  return clause ? `CHILD_AUTH_${clause}` : "CHILD_AUTH_REFUSED";
+}
 function childFailure(error, code) {
   const failure = error instanceof Error ? error : new Error(String(error));
   if (!failure.childCode) failure.childCode = code;
@@ -37,7 +42,7 @@ function childFailure(error, code) {
 export function childFailureCode(error) {
   const custody = /SHU251_ENV_CUSTODY|SHU251_ENV_CROSSED|SHU71_SUPERVISOR_ENV_REQUIRED/.exec(String(error?.message ?? ""))?.[0];
   if (custody) return custody;
-  return CHILD_FAILURE_CODES.includes(error?.childCode) ? error.childCode : "SHU251_CHILD_FAILED";
+  return childFailureCodeAllowed(error?.childCode) ? error.childCode : "SHU251_CHILD_FAILED";
 }
 
 export async function executeSupervisedOrder({ order, contract, stateDir, authorizationModule }, { env = process.env, send = () => {}, loadAdapter = name => import(`./adapters/${name}.mjs`) } = {}) {
@@ -51,7 +56,7 @@ export async function executeSupervisedOrder({ order, contract, stateDir, author
     return verdict?.ok === true ? true : { code: verdict?.code ?? null };
   };
   const launch = authorized();
-  if (launch !== true) throw Object.assign(new Error(`host authorization refused supervised order${launch?.code ? ` (${launch.code})` : ""}`), { childCode: "CHILD_AUTH_REFUSED" });
+  if (launch !== true) throw Object.assign(new Error(`host authorization refused supervised order${launch?.code ? ` (${launch.code})` : ""}`), { childCode: authCode(launch?.code) });
   const adapters = { "codex-cli": "codex-cli", "claude-code": "claude-code", "hermes-pool": "hermes-pool", "workspace-agents": "workspace-agents" };
   const name = adapters[order.runtime];
   if (!name) throw Object.assign(new Error("unsupported supervised runtime"), { childCode: "CHILD_RUNTIME_UNSUPPORTED" });
