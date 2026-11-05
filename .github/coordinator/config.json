@@ -49,6 +49,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
+      "SHU-176",
+      "SHU-177",
+      "SHU-179",
+      "SHU-180",
       "SHU-450",
       "SHU-451"
     ]
@@ -4037,6 +4041,147 @@
       ],
       "after": [
         "SHU-450"
+      ]
+    },
+    {
+      "id": "SHU-176",
+      "authorization_ref": "SHU-176",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 4 (recruit), card 1: a company raises a request for people and tracks it with one status convention; contracts/recruit.md R-1, migration 0450; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0450_recruit_requests.sql",
+        "packages/db/src/postgres-recruit-requests-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-requests.test.ts",
+        "packages/recruit/src/requests.ts",
+        "packages/recruit/test/requests.test.ts",
+        "packages/recruit/test/requests-mutations.mjs",
+        "apps/gateway/src/recruit-requests-http.ts",
+        "apps/gateway/test/recruit-requests-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0450_recruit_requests.sql",
+        "packages/db/src/postgres-recruit-requests-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-requests.test.ts",
+        "packages/recruit/src/requests.ts",
+        "packages/recruit/test/requests.test.ts",
+        "packages/recruit/test/requests-mutations.mjs",
+        "apps/gateway/src/recruit-requests-http.ts",
+        "apps/gateway/test/recruit-requests-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-177",
+      "authorization_ref": "SHU-177",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 4 (recruit), card 2: staff assign a recruiter and move people through pipeline stages, placement recorded once; contracts/recruit.md R-2, migration 0451; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0451_recruit_pipeline.sql",
+        "packages/db/src/postgres-recruit-pipeline-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-pipeline.test.ts",
+        "packages/recruit/src/pipeline.ts",
+        "packages/recruit/test/pipeline.test.ts",
+        "packages/recruit/test/pipeline-mutations.mjs",
+        "apps/gateway/src/recruit-pipeline-http.ts",
+        "apps/gateway/test/recruit-pipeline-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0451_recruit_pipeline.sql",
+        "packages/db/src/postgres-recruit-pipeline-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-pipeline.test.ts",
+        "packages/recruit/src/pipeline.ts",
+        "packages/recruit/test/pipeline.test.ts",
+        "packages/recruit/test/pipeline-mutations.mjs",
+        "apps/gateway/src/recruit-pipeline-http.ts",
+        "apps/gateway/test/recruit-pipeline-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-176"
+      ]
+    },
+    {
+      "id": "SHU-179",
+      "authorization_ref": "SHU-179",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 4 (recruit), card 3: staff suggest and invite people, the person accepts or declines; contracts/recruit.md R-4, migration 0452; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0452_recruit_invitations.sql",
+        "packages/db/src/postgres-recruit-invitations-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-invitations.test.ts",
+        "packages/recruit/src/invitations.ts",
+        "packages/recruit/test/invitations.test.ts",
+        "packages/recruit/test/invitations-mutations.mjs",
+        "apps/gateway/src/recruit-invitations-http.ts",
+        "apps/gateway/test/recruit-invitations-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0452_recruit_invitations.sql",
+        "packages/db/src/postgres-recruit-invitations-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-invitations.test.ts",
+        "packages/recruit/src/invitations.ts",
+        "packages/recruit/test/invitations.test.ts",
+        "packages/recruit/test/invitations-mutations.mjs",
+        "apps/gateway/src/recruit-invitations-http.ts",
+        "apps/gateway/test/recruit-invitations-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-177"
+      ]
+    },
+    {
+      "id": "SHU-180",
+      "authorization_ref": "SHU-180",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 4 (recruit), card 4: the job board, staff publish and people browse, apply once and see their applications; contracts/recruit.md R-7, migration 0453; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0453_recruit_jobs.sql",
+        "packages/db/src/postgres-recruit-jobs-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-jobs.test.ts",
+        "packages/recruit/src/jobs.ts",
+        "packages/recruit/test/jobs.test.ts",
+        "packages/recruit/test/jobs-mutations.mjs",
+        "apps/gateway/src/recruit-jobs-http.ts",
+        "apps/gateway/test/recruit-jobs-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0453_recruit_jobs.sql",
+        "packages/db/src/postgres-recruit-jobs-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-recruit-jobs.test.ts",
+        "packages/recruit/src/jobs.ts",
+        "packages/recruit/test/jobs.test.ts",
+        "packages/recruit/test/jobs-mutations.mjs",
+        "apps/gateway/src/recruit-jobs-http.ts",
+        "apps/gateway/test/recruit-jobs-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-176"
       ]
     }
   ],
