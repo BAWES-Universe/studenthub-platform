@@ -52,7 +52,7 @@ const mutations = [
   ],
   [
     gateway, "accept a page write from any origin", "SHU371_PAGE_FLOW",
-    "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\") {\n        request.resume();\n        pageError(write, 403);", "if (false) {\n        request.resume();\n        pageError(write, 403);", gatewaySuite,
+    "if (request.headers.origin !== origin || request.headers[\"sec-fetch-site\"] === \"cross-site\") {\n        request.resume();\n        fail(403);", "if (false) {\n        request.resume();\n        fail(403);", gatewaySuite,
   ],
   [
     gateway, "accept unknown body keys", "SHU-84/AC-11 BOUNDARY",
