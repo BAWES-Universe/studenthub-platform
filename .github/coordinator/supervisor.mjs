@@ -29,6 +29,18 @@ import { dirname, join } from "node:path";
 import { validWorkOrder } from "./review-routing.mjs";
 
 export const SUPERVISOR_PROTOCOL_VERSION = "2.0.0";
+// Velocity B: the fixed codes a worker prints as its last stderr line when it
+// exits without a result (supervisor-worker.mjs). Only these are carried, as
+// WORKER_EXIT_<code>; anything else on stderr stays plain WORKER_EXIT, so no
+// text the adapter printed can reach a receipt.
+export const CHILD_FAILURE_CODES = Object.freeze(["CHILD_AUTH_REFUSED", "CHILD_RUNTIME_UNSUPPORTED",
+  "CHILD_COMPLETION_UNRECORDED", "CHILD_ADAPTER_LAUNCH_THREW", "CHILD_ADAPTER_MONITOR_THREW",
+  "SHU251_ENV_CUSTODY", "SHU251_ENV_CROSSED", "SHU71_SUPERVISOR_ENV_REQUIRED", "SHU251_CHILD_FAILED"]);
+const WORKER_EXIT_TAIL_BYTES = 256;
+export function workerExitCode(stderrTail) {
+  const last = String(stderrTail ?? "").split("\n").map((line) => line.trim()).filter(Boolean).pop() ?? "";
+  return CHILD_FAILURE_CODES.includes(last) ? `WORKER_EXIT_${last}` : "WORKER_EXIT";
+}
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const DEFAULT_DEADLINE_MS = 60 * 60 * 1000;
 export const MAX_REQUEST_BYTES = 64 * 1024;
@@ -622,6 +634,7 @@ export class DurableSupervisor {
         ...(recorded?.ok ? { completion_durable: true } : {}),
       });
     };
+    let stderrTail = "";
     const output = (chunk) => {
       if (terminal) return;
       outputBytes += Buffer.byteLength(chunk);
@@ -645,14 +658,14 @@ export class DurableSupervisor {
       }
     });
     child.stdout?.on?.("data", output);
-    child.stderr?.on?.("data", output);
+    child.stderr?.on?.("data", (chunk) => { stderrTail = `${stderrTail}${chunk}`.slice(-WORKER_EXIT_TAIL_BYTES); output(chunk); });
     child.stdout?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stdout failed" }));
     child.stderr?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stderr failed" }));
     child.once?.("error", (error) => finish("failed", { error_code: "WORKER_ERROR", reason: String(error?.message ?? error) }));
     child.once?.("exit", (code, signal) => finish(code === 0 ? "completed" : "failed", {
       exit_code: code,
       signal: signal ?? null,
-      ...(code === 0 ? {} : { error_code: "WORKER_EXIT" }),
+      ...(code === 0 ? {} : { error_code: workerExitCode(stderrTail) }),
     }));
     if (!terminal) {
       deadline = setTimeout(() => {

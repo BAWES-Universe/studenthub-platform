@@ -162,6 +162,36 @@ test("SHU-71 hold cause: the supervisor reports its own hold code in status", as
   assert.equal(outcome.reason_code, "SUPERVISOR_WORKER_EXIT");
 });
 
+test("Velocity B: a worker that exits without a result names why, as a fixed code only", async t => {
+  const { workerExitCode, CHILD_FAILURE_CODES } = await import("../supervisor.mjs");
+  const { childFailureCode } = await import("../supervisor-worker.mjs");
+  for (const code of CHILD_FAILURE_CODES) assert.equal(workerExitCode(`codex said hello\n${code}\n`), `WORKER_EXIT_${code}`, code);
+  for (const tail of ["", "\n", "AKIAABCDEFGHIJKLMNOP\n", "CHILD_AUTH_REFUSED please\n", "CHILD_AUTH_REFUSED\nother text\n", null])
+    assert.equal(workerExitCode(tail), "WORKER_EXIT", JSON.stringify(tail));
+  assert.equal(childFailureCode(Object.assign(new Error("x"), { childCode: "CHILD_AUTH_REFUSED" })), "CHILD_AUTH_REFUSED");
+  assert.equal(childFailureCode(Object.assign(new Error("x"), { childCode: "MADE_UP" })), "SHU251_CHILD_FAILED");
+  assert.equal(childFailureCode(new Error("SHU251_ENV_CROSSED: token")), "SHU251_ENV_CROSSED");
+  assert.equal(childFailureCode("plain"), "SHU251_CHILD_FAILED");
+  // A refused order is reported as such, with no error text.
+  const { executeSupervisedOrder } = await import("../supervisor-worker.mjs");
+  const dir = fs.mkdtempSync(join(tmpdir(), "velocity-b-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const policy = join(dir, "policy.mjs");
+  fs.writeFileSync(policy, "export const authorizeWorkOrder = () => false;\n");
+  const refused = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: policy }).catch((error) => error);
+  assert.equal(childFailureCode(refused), "CHILD_AUTH_REFUSED");
+  // End to end through the supervisor: the code reaches the receipt.
+  const f = setup(t);
+  let order = null;
+  await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
+  await f.drain();
+  f.children[0].stderr.emit("data", "some adapter output\nCHILD_ADAPTER_MONITOR_THREW\n");
+  f.children[0].emit("exit", 1);
+  const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
+  assert.equal(status.detail_code, "WORKER_EXIT_CHILD_ADAPTER_MONITOR_THREW");
+  assert.equal(carriedSupervisorOutcome(status, f.h.receipts()[0]).reason_code, "SUPERVISOR_WORKER_EXIT_CHILD_ADAPTER_MONITOR_THREW");
+});
+
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
   const f = setup(t); await f.tick(); await f.drain();
   // Also exercise a review transport directly: input head matches but a forged
