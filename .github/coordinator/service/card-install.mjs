@@ -74,6 +74,7 @@ import { inPushRepository, mainTip, coordinatorRunner, postRunReport, plainReaso
 import { boundedFetch, github, readCommitChecks } from "./card-land.mjs";
 import { BROKER_GIT_CONFIG_ARGS, validateRepoUrl } from "../push-broker.mjs";
 import { MAX_CARD_QUEUE } from "../single-run-activation.mjs";
+import { MAX_CARD_WORKERS } from "./credential-delivery.mjs";
 import { isFixtureIssue, validateAllowedPaths, validateCardContractMode } from "../workspace-scope.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -187,6 +188,13 @@ export function codeInstallPolicy(config) {
   return null;
 }
 
+// Velocity A2: the one workers setting a code self-install may change: a
+// plain { max: N }, N from 1 to MAX_CARD_WORKERS.
+export function workersSetting(workers) {
+  return plainObject(workers) && JSON.stringify(Object.keys(workers)) === JSON.stringify(["max"])
+    && Number.isInteger(workers.max) && workers.max >= 1 && workers.max <= MAX_CARD_WORKERS;
+}
+
 export const installClaim = (paths, main) => path.join(paths.stateDir, `card-install-auto-${main}.json`);
 export const installActivationId = (main) => `card-install-${main}`;
 
@@ -267,7 +275,11 @@ export function selfInstallGate(facts) {
   // M11: with code self-install on, main may commit coordinator code with no
   // new queue; without it, only a new queue is anything to install.
   const code = Array.isArray(changes) ? changes.filter((change) => !installablePath(change?.path)) : [];
-  if (!scopeChanged && (!policy || code.length === 0)) return no("main commits no new dispatch_scope", { quiet: true });
+  // Velocity A2: with code self-install on, a new workers.max is something to
+  // install too (the workers' units are put on the host by a person once,
+  // with timer-install --workers N; a worker past workers.max skips).
+  const workersChanged = !isDeepStrictEqual(installed.workers, next.workers);
+  if (!scopeChanged && (!policy || (code.length === 0 && !workersChanged))) return no("main commits no new dispatch_scope", { quiet: true });
 
   if (!Array.isArray(changes) || changes.length === 0) return no("the coordinator changes cannot be read", { transient: true });
   for (const change of changes) {
@@ -286,6 +298,7 @@ export function selfInstallGate(facts) {
   const keys = new Set([...Object.keys(installed), ...Object.keys(next)]);
   for (const key of keys) {
     if (key === "dispatch_scope" || key === "card_lanes") continue;
+    if (key === "workers" && policy && workersSetting(next.workers)) continue;
     const same = Object.hasOwn(installed, key) && Object.hasOwn(next, key) && isDeepStrictEqual(installed[key], next[key]);
     // M16: code changes the config no more than a queue does, and never the
     // policy that let it in.

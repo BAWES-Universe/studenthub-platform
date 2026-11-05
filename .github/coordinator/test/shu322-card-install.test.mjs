@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
-  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
+  readApproval, ownerOnlyPath, codeInstallPolicy, workersSetting, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
   INSTALL_LOCK,
   INSTALL_LOCK_KEPT,
 } from "../service/card-install.mjs";
@@ -835,6 +835,24 @@ test("M11 C2: the paths that install or check everything else as root, and the p
   const deleted = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, changes: [{ status: "D", path: CODE_PATH }] })));
   assert.ok(refused(deleted));
   assert.match(deleted.reason, /deleted/);
+});
+
+test("Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else", () => {
+  const raise = (workers, policy = { approval: "none" }) => selfInstallGate(codeFacts(policy, (f) => ({ ...f,
+    configs: { ...f.configs, main: JSON.stringify({ ...withPolicy(policy), workers }) }, changes: [{ status: "M", path: CONFIG_PATH }],
+    blobs: { [CONFIG_PATH]: "9".repeat(40) }, passes: [{ ...f.passes[0], files: { [CONFIG_PATH]: { sha: "9".repeat(40) } } }] })));
+  const four = raise({ max: 4 });
+  assert.equal(four.ok, true, JSON.stringify(four));
+  assert.equal(raise({ max: 8 }).ok, true);
+  for (const workers of [{ max: 9 }, { max: 0 }, { max: 2.5 }, { max: "4" }, { max: 4, extra: true }, [4], null]) {
+    const gate = raise(workers);
+    assert.ok(refused(gate), JSON.stringify(workers));
+    assert.match(gate.reason, /config\.json changes workers/, JSON.stringify(workers));
+  }
+  assert.equal(raise({ max: 4 }, null).quiet, true, "with the policy off, a workers change is nothing to self-install");
+  assert.equal(workersSetting({ max: 1 }), true);
+  assert.equal(workersSetting({ max: 9 }), false);
+  assert.equal(workersSetting({}), false);
 });
 
 test("M11 C7: every module the root install tools import, at any depth, is owner-only or installable", () => {

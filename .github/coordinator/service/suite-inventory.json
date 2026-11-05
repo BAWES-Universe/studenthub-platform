@@ -4441,6 +4441,8 @@
     "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
     "SHU-71 hold cause: the supervisor reports its own hold code in status",
     "Velocity B: a worker that exits without a result names why, as a fixed code only",
+    "Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else",
+    "Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised",
     "SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line",
     "SHU71_TMP_FLOOR: a launch needs room to publish, and an armed activation never depends on it",
     "SHU71_LANE_WRITERS: an armed pair carries each lane writer, and the selected lane names its own",
@@ -32692,6 +32694,14 @@
     },
     {
       "name": "Velocity B: a worker that exits without a result names why, as a fixed code only",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised",
       "capabilities": []
     },
     {

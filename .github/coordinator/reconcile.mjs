@@ -1524,11 +1524,19 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
 // the batched query stays CHEAPER than the unbatched one that runs today — one
 // extra issues page per tick is nothing against one request per card per tick.
 export const LINEAR_ISSUE_PAGE = 50;
+// Velocity A2: the board read leaves out Done cards as well as canceled ones.
+// About a third of the board is Done, and every tick of every card worker
+// paid for their comment threads: two workers already came near the
+// workspace's 3,000,000 points an hour, so more workers would sit in rate-
+// limit holds. A Done card is never dispatched; the box moves a card to Done
+// only after its run has ended and landed, so no live receipt is left behind.
+// As with a canceled card, moving a card to Done by hand takes its thread
+// (receipts and pause markers) out of what the tick reads.
 export const LINEAR_ISSUE_COMMENT_PAGE = 50;
 
 export const LINEAR_ISSUES_QUERY = `
   query CoordinatorIssues($team: String!, $after: String) {
-    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: ${LINEAR_ISSUE_PAGE}, after: $after) {
+    issues(filter: { team: { key: { eq: $team } }, state: { type: { nin: ["canceled", "completed"] } } }, first: ${LINEAR_ISSUE_PAGE}, after: $after) {
       nodes {
         id
         identifier

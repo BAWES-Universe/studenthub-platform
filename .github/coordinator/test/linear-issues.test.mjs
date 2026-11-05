@@ -47,6 +47,8 @@ test("SHU-63: the live Linear query uses the supported team filter and requests 
   assert.equal(LINEAR_ISSUE_COMMENT_PAGE, 50);
   assert.ok(LINEAR_ISSUE_PAGE * LINEAR_ISSUE_COMMENT_PAGE <= 100 * 50, "a board read that Linear refuses reads nothing at all");
   assert.match(LINEAR_ISSUES_QUERY, /pageInfo \{ hasNextPage endCursor \}/);
+  // Velocity A2: Done cards, like canceled ones, cost the tick nothing.
+  assert.match(LINEAR_ISSUES_QUERY, /state: \{ type: \{ nin: \["canceled", "completed"\] \} \}/);
 });
 
 test("SHU-63: fetchLinearIssues follows every Linear page and preserves order", async () => {
