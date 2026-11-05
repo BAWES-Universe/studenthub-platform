@@ -8,6 +8,7 @@ import path from 'node:path';
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
 const phoneRecoveryStates=['conflict-reentry','status-read-only','same-phone-retry','changed-phone-rejected'];
+const backgroundRecoveryNames=['en','ar'].flatMap(language=>['education','experience','skill','link'].map(kind=>`background-draft-recovery-${kind}-${language}`));
 const names = [
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `layout-${language}-${width}`)),
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `editor-error-${language}-${width}`)),
@@ -26,6 +27,7 @@ const names = [
   ...['en','ar'].flatMap(language => ['cancel-history-safe-review','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
   ...['en','ar'].flatMap(language => ['missing-preview','revoked-confirm','expired-confirm'].map(state => `language-session-${state}-${language}`)),
   ...['en','ar'].flatMap(language => phoneRecoveryStates.map(state => `phone-recovery-${state}-${language}`)),
+  ...backgroundRecoveryNames,
 ];
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
   chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:names.map(name=>({name,status:'NOT_RUN'})),
@@ -358,6 +360,7 @@ async function report() {
     `History-safe Review: ${evidence.languageAcceptance.historySafeReview}. Both native history cases must pass to establish it within the pinned runner.`,
     `History scope: ${evidence.languageAcceptance.historyScope}`,
     `Limitation: ${evidence.languageAcceptance.limitation}`);
+  for(const entry of evidence.cases.filter(c=>c.screenshots)) lines.push('',`${entry.name}:`,...entry.screenshots.map(file=>`- [${file}](${file})`));
   if(evidence.blocker) lines.push('',`Blocker: ${evidence.blocker}`);
   await writeFile(path.join(output,'evidence.md'),lines.join('\n')+'\n');
 }
@@ -970,6 +973,112 @@ try {
       check(JSON.stringify(after.values)===JSON.stringify(before.values),'Recovery leaves all durable profile values unchanged');
       check(await receiptUnchanged(),'Recovery retains the exact original durable receipt');
       return {screenshot:screenshotName,...(errorScreenshot?{errorScreenshot}:{}),notes:'Real lost COMMIT acknowledgement; one durable phone write and the unchanged original receipt. No phone payload or receipt identifiers recorded.'};
+    });
+  }
+  // Additive native form recovery cases. en/ar describes entered text only;
+  // the background UI and synthetic actor preference stay English in every case.
+  for(const enteredLanguage of ['en','ar']) for(const kind of ['education','experience','skill','link']) {
+    const name=`background-draft-recovery-${kind}-${enteredLanguage}`;
+    await run(name,async()=>{
+      const restore=fixture.useBackgroundRecords(); restorers.push(restore);
+      const {actor,page}=await subject({language:'en',width:390});
+      const arabic=enteredLanguage==='ar';
+      const first=arabic ? '  مختبر  "نور" & <b>تعلم</b>  ' : '  Noor  "Lab" & <b>Learning</b>  ';
+      const second=arabic ? "  بحث  'وتطوير' <img src=x onerror=alert(1)>  " : "  Research  'and design' <img src=x onerror=alert(1)>  ";
+      const normalize=value=>value.trim().replace(/\s+/gu,' ').normalize('NFKC');
+      const inputs={
+        education:{educationType:'custom_university',institutionName:first,customMajor:second,graduationYear:'1900'},
+        experience:{title:first,employer:second,startYear:'2024',endYear:'2023'},
+        skill:{name:first},
+        link:{title:second,url:arabic?'ftp://example.invalid/ملف?x=1&y=2':'ftp://example.invalid/portfolio?x=1&y=2'},
+      }[kind];
+      const offending={education:'graduationYear',experience:'endYear',skill:'name',link:'url'}[kind];
+      const corrected={education:'2026',experience:'2025',skill:second,
+        link:arabic?'https://example.invalid/ملف?x=1&y=2':'https://example.invalid/portfolio?x=1&y=2'}[kind];
+      const expected={
+        education:{educationType:'custom_university',institutionName:normalize(first),customMajor:normalize(second),graduationYear:2026,currentlyStudying:false},
+        experience:{title:normalize(first),employer:normalize(second),startYear:2024,endYear:2025},
+        skill:{name:normalize(second)},
+        link:{title:normalize(second),url:kind==='link'?new URL(corrected).href:''},
+      }[kind];
+      if(kind==='skill') await fixture.seedBackgroundSkill(actor,first);
+      const before=await fixture.inspectBackground(actor,kind);
+      assert.equal(before.activeCount,kind==='skill'?1:0,'Explicit synthetic baseline active count');
+      assert.equal(before.auditCount,kind==='skill'?1:0,'Explicit synthetic baseline audit count');
+      await page.goto(`${fixture.baseURL}/profile/background`);
+      const section=page.locator(`#${kind}`), form=section.locator('form.record-form');
+      await section.locator('details > summary').click();
+      await visible(form);
+      for(const [field,value] of Object.entries(inputs)) {
+        const control=form.locator(`[name="${field}"]`);
+        if(field==='educationType') await control.selectOption(value);
+        else await control.fill(value);
+      }
+      check(await form.evaluate(node=>node.checkValidity()),'Server-invalid draft passes unchanged native HTML validation');
+      const postPath=`/profile/background/${kind}`;
+      const post=async status=>{
+        const responseReady=page.waitForResponse(response=>response.request().method()==='POST' && new URL(response.url()).pathname===postPath);
+        const navigation=await submit(page,form.getByRole('button',{name:'Save',exact:false}));
+        const response=await responseReady;
+        assert.equal(response.status(),status,'Original native POST status');
+        assert.equal(response.headers()['cache-control'],'no-store','Native refusal and successful POST are not cached');
+        if(status===303) {
+          assert.equal(response.headers().location,`/profile/background?saved=${kind}#${kind}`,'Normal save redirect preserved');
+          assert.equal(navigation.status(),200,'Correction follows redirect to successful GET');
+          assert.equal(navigation.request().method(),'GET','Correction uses PRG');
+          assert.equal(new URL(page.url()).pathname,'/profile/background');
+        } else {
+          assert.equal(response.headers().location,undefined,'Validation refusal does not redirect');
+          assert.equal(response.request().redirectedFrom(),null,'Refusal is original POST');
+          assert.equal(navigation.status(),status,'Browser receives original validation response');
+          assert.equal(new URL(page.url()).pathname,postPath,'Same submitted form remains open');
+        }
+      };
+      await post(kind==='skill'?409:400);
+      await visible(form);
+      check(await section.locator('details').evaluate(node=>node.open),'Refused Add form remains expanded');
+      const errors={education:'Enter a graduation year between 1950 and 2100.',experience:'The end year can’t be before the start year.',skill:'You already have that skill.',link:'Enter a full web address starting with https://'};
+      assert.equal(await section.getByRole('alert').innerText(),errors[kind],'Specific service validation error');
+      assert.equal(await page.getByRole('status').count(),0,'No false save notice');
+      for(const [field,value] of Object.entries(inputs)) assert.equal(await form.locator(`[name="${field}"]`).inputValue(),value,'Exact raw draft retained');
+      if(kind==='education') assert.equal(await form.locator('[name="currentlyStudying"]').isChecked(),false,'Unchecked state retained');
+      assert.deepEqual(await fixture.inspectBackground(actor,kind),before,'Refusal changes neither active records nor real audit rows');
+      const captures=[];
+      const capture=async state=>{
+        // Check privacy and escaping BEFORE capture, including literal markup-like
+        // synthetic strings. No HTML, traces, HAR, cookies or IDs enter evidence.
+        await visible(page.getByRole('heading',{level:1,name:'Education and experience.',exact:true}));
+        assert.equal(await page.locator('html').getAttribute('lang'),'en','Entered Arabic does not imply a localized UI');
+        const shown=await page.locator('body').innerText();
+        check(!shown.includes(actor.id) && !shown.includes(actor.cookie.value),'No principal or credential in screenshot');
+        assert.equal(await page.locator('main img, main b, main script, main iframe').count(),0,'Draft markup never becomes injected elements');
+        check(await page.locator('main *').evaluateAll(nodes=>nodes.every(node=>[...node.attributes].every(attr=>!/^on/i.test(attr.name)))),'Draft quotes never become executable attributes');
+        for(const width of [320,390]) {
+          await page.setViewportSize({width,height:900});
+          await noOverflow(page);
+          check(await page.locator('.record-section').evaluateAll(nodes=>nodes.every(node=>node.scrollWidth<=node.clientWidth+1)),'Background section has no horizontal overflow');
+          check(await page.locator('.record-form input:visible, .record-form select:visible').evaluateAll(nodes=>nodes.every(node=>{const rect=node.getBoundingClientRect();return rect.left>=0 && rect.right<=innerWidth+1;})),'Native controls fit narrow viewport');
+          captures.push(await screenshot(page,`${name}-${state}-${width}`));
+        }
+      };
+      await capture('invalid');
+      // Deliberate user correction changes only the offending control; all other
+      // controls continue to hold their exact original draft values.
+      await form.locator(`[name="${offending}"]`).fill(corrected);
+      for(const [field,value] of Object.entries(inputs)) assert.equal(await form.locator(`[name="${field}"]`).inputValue(),field===offending?corrected:value,'Only offending control corrected');
+      await post(303);
+      assert.equal(await section.getByRole('status').innerText(),'Saved.','Actual success notice after correction');
+      assert.equal(await page.getByRole('alert').count(),0,'No stale validation alert after correction');
+      const after=await fixture.inspectBackground(actor,kind);
+      assert.equal(after.activeCount,before.activeCount+1,'Exactly one new durable active record');
+      assert.equal(after.auditCount,before.auditCount+1,'Exactly one new durable mutation audit');
+      assert.deepEqual(after.fields,[...before.fields,expected],'Durable stored fields match service normalization, not raw draft echo');
+      await capture('corrected');
+      await page.reload();
+      assert.deepEqual(await fixture.inspectBackground(actor,kind),after,'Reload is read-only and durable values remain');
+      return {screenshots:captures,baselineActiveRecords:before.activeCount,baselineAudits:before.auditCount,
+        refusedRecordDelta:0,refusedAuditDelta:0,correctedRecordDelta:1,correctedAuditDelta:1,
+        notes:`${enteredLanguage==='ar'?'Arabic':'English'} entered text; English UI. Exact raw draft survives native ${kind==='skill'?'409 duplicate refusal against one seeded skill/audit':'400 validation refusal'}. Only offending control corrected; native 303 to GET; normalized durable fields verified in real PostgreSQL. Invalid and corrected screenshots at 320/390.`};
     });
   }
 } catch {

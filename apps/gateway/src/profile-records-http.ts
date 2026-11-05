@@ -31,7 +31,7 @@ function sessionCredential(request: IncomingMessage): string | undefined {
   return undefined;
 }
 
-async function readBody(request: IncomingMessage): Promise<string> {
+async function readBody(request: IncomingMessage, strict = false): Promise<string> {
   if (Number(request.headers["content-length"]) > BODY_LIMIT) { request.resume(); throw new ProfileRecordError("profile_record_too_large", 400); }
   const chunks: Buffer[] = [];
   let size = 0;
@@ -41,7 +41,10 @@ async function readBody(request: IncomingMessage): Promise<string> {
     if (size > BODY_LIMIT) { request.resume(); throw new ProfileRecordError("profile_record_too_large", 400); }
     chunks.push(buffer);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  const bytes = Buffer.concat(chunks);
+  if (!strict) return bytes.toString("utf8");
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { throw new ProfileRecordError("invalid_profile_record", 400); }
 }
 
 async function jsonBody(request: IncomingMessage): Promise<unknown> {
@@ -50,16 +53,53 @@ async function jsonBody(request: IncomingMessage): Promise<unknown> {
   catch (error) { if (error instanceof ProfileRecordError) throw error; throw new ProfileRecordError("invalid_profile_record", 400); }
 }
 
-/** Native form posts. Only named fields pass; blanks are treated as absent. */
-async function formBody(request: IncomingMessage, allowed: readonly string[]): Promise<Record<string, string>> {
-  if (!request.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) throw new ProfileRecordError("invalid_profile_record", 400);
-  const params = new URLSearchParams(await readBody(request));
-  const out: Record<string, string> = {};
-  for (const [key, value] of params) {
-    if (!allowed.includes(key) || Object.hasOwn(out, key)) throw new ProfileRecordError("invalid_profile_record", 400);
-    if (value.trim() !== "") out[key] = value;
+interface FormBody {
+  readonly fields: Record<string, string>;
+  readonly draft: Readonly<Record<string, string>>;
+}
+
+/** Keep raw strings only after the entire bounded, closed form has parsed successfully. */
+async function formBody(request: IncomingMessage, allowed: readonly string[]): Promise<FormBody> {
+  if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/x-www-form-urlencoded") throw new ProfileRecordError("invalid_profile_record", 400);
+  const body = await readBody(request, true);
+  const fields: Record<string, string> = {};
+  const draft: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (const pair of body.split("&")) {
+    if (!pair) continue;
+    const separator = pair.indexOf("=");
+    let key: string;
+    let value: string;
+    try {
+      key = decodeURIComponent((separator < 0 ? pair : pair.slice(0, separator)).replace(/\+/g, " "));
+      value = decodeURIComponent((separator < 0 ? "" : pair.slice(separator + 1)).replace(/\+/g, " "));
+    } catch { throw new ProfileRecordError("invalid_profile_record", 400); }
+    if (!allowed.includes(key) || seen.has(key)) throw new ProfileRecordError("invalid_profile_record", 400);
+    seen.add(key);
+    draft[key] = value;
+    // Keep the existing service contract: whitespace-only controls are absent.
+    if (value.trim() !== "") fields[key] = value;
   }
-  return out;
+  return { fields, draft };
+}
+
+interface FormRecovery {
+  readonly kind: ProfileRecordKind;
+  readonly draft: Readonly<Record<string, string>>;
+}
+
+const VALIDATION_ERRORS: Readonly<Record<ProfileRecordKind, readonly string[]>> = {
+  education: ["invalid_education_type", "invalid_institution", "invalid_institution_name", "invalid_university", "invalid_degree", "invalid_major", "invalid_custom_major", "invalid_graduation_year", "invalid_currently_studying"],
+  experience: ["invalid_experience_title", "invalid_employer", "invalid_start_year", "invalid_end_year"],
+  skill: ["invalid_skill"],
+  link: ["invalid_link_title", "invalid_link_url"],
+};
+
+function recoverable(error: unknown, kind: ProfileRecordKind): error is ProfileRecordError {
+  return error instanceof ProfileRecordError && (
+    (error.status === 400 && VALIDATION_ERRORS[kind].includes(error.code)) ||
+    (error.status === 409 && (error.code === "profile_record_limit" || (kind === "skill" && error.code === "duplicate_skill")))
+  );
 }
 
 const FORM_FIELDS: Readonly<Record<ProfileRecordKind, readonly string[]>> = {
@@ -128,6 +168,7 @@ export async function handleProfileRecords(
     return true;
   }
 
+  let recovery: FormRecovery | undefined;
   try {
     if (json) {
       await routeJson(request, response, runtime.service, ownerId, parts);
@@ -145,7 +186,12 @@ export async function handleProfileRecords(
     }
     if (request.method === "POST" && parts.length === 1 && isProfileRecordKind(parts[0])) {
       const kind = parts[0];
-      await runtime.service.create(ownerId, kind, await formBody(request, FORM_FIELDS[kind]));
+      const parsed = await formBody(request, FORM_FIELDS[kind]);
+      try { await runtime.service.create(ownerId, kind, parsed.fields); }
+      catch (error) {
+        if (recoverable(error, kind)) recovery = { kind, draft: parsed.draft };
+        throw error;
+      }
       redirect(response, `?saved=${kind}#${kind}`);
       return true;
     }
@@ -160,7 +206,23 @@ export async function handleProfileRecords(
   } catch (error) {
     const { status, code } = errorCode(error);
     if (json) { sendJson(response, status, { error: code }); return true; }
-    if (status === 400 || status === 409) {
+    if (recovery) {
+      try {
+        // Revalidate before reading and again after asynchronous reads, before disclosure.
+        if (!credential || (await runtime.sessions.get(credential))?.personId !== ownerId) {
+          renderPage(401, signedOutPage());
+          return true;
+        }
+        const [background, universities, degrees, majors] = await Promise.all([
+          runtime.service.background(ownerId), runtime.options("university"), runtime.options("degree"), runtime.options("major"),
+        ]);
+        if ((await runtime.sessions.get(credential))?.personId !== ownerId) {
+          renderPage(401, signedOutPage());
+          return true;
+        }
+        renderPage(status, backgroundPage(background, { universities, degrees, majors }, new URLSearchParams({ error: code, on: recovery.kind }), recovery));
+      } catch { renderPage(503, unavailablePage()); }
+    } else if (status === 400 || status === 409) {
       const kind = parts[0] && isProfileRecordKind(parts[0]) ? parts[0] : "education";
       redirect(response, `?error=${encodeURIComponent(code)}&on=${kind}#${kind}`);
     } else renderPage(status === 404 ? 404 : 503, status === 404 ? deniedPage() : unavailablePage());
@@ -206,6 +268,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   invalid_degree: "That degree isn’t in the list any more. Please pick another.",
   invalid_major: "Pick a major from the list or type your own, not both.",
   invalid_custom_major: "The major is too long or has unusual characters.",
+  invalid_currently_studying: "Choose whether you are studying here now.",
   invalid_graduation_year: "Enter a graduation year between 1950 and 2100.",
   invalid_experience_title: "Enter your role, up to 128 characters.",
   invalid_employer: "Enter the employer, up to 128 characters.",
@@ -240,8 +303,9 @@ function removeButton(record: ProfileRecord): string {
   return `<form method="post" action="/profile/background/${record.kind}/${record.id}/remove"><button class="link-button" type="submit">Remove</button></form>`;
 }
 
-function select(name: string, label: string, options: readonly ReferenceOption[], blank: string): string {
-  return `<label>${label}<select name="${name}"><option value="">${blank}</option>${options.map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.name)}</option>`).join("")}</select></label>`;
+function select(name: string, label: string, options: readonly ReferenceOption[], blank: string, value?: string, required = false): string {
+  const missing = value !== undefined && value !== "" && !options.some((option) => option.id === value);
+  return `<label>${label}<select name="${name}"${required ? " required" : ""}><option value=""${value === "" ? " selected" : ""}>${blank}</option>${missing ? `<option value="${escapeHtml(value)}" selected>Submitted choice (not in the current list): ${escapeHtml(value)}</option>` : ""}${options.map((o) => `<option value="${escapeHtml(o.id)}"${o.id === value ? " selected" : ""}>${escapeHtml(o.name)}</option>`).join("")}</select></label>`;
 }
 
 function nameOf(options: readonly ReferenceOption[], id: string | undefined): string | undefined {
@@ -285,12 +349,26 @@ function section(kind: ProfileRecordKind, records: readonly ProfileRecord[], opt
   return `<section class="record-section" id="${kind}" aria-labelledby="${kind}-title"><h2 id="${kind}-title">${KIND_TITLES[kind]}</h2>${message(params, kind)}${list(records, options, empty)}<details class="record-add"${params.get("on") === kind ? " open" : ""}><summary>Add ${kind === "skill" ? "a skill" : kind === "link" ? "a link" : kind === "education" ? "education" : "experience"}</summary><form class="record-form" method="post" action="/profile/background/${kind}">${form}<button class="button primary" type="submit">Save <span aria-hidden="true">→</span></button></form></details></section>`;
 }
 
-export function backgroundPage(background: ProfileBackground, options: Options, params: URLSearchParams = new URLSearchParams()): string {
+export function backgroundPage(background: ProfileBackground, options: Options, params: URLSearchParams = new URLSearchParams(), recovery?: FormRecovery): string {
+  const draft = (kind: ProfileRecordKind): Readonly<Record<string, string>> => recovery?.kind === kind ? recovery.draft : {};
+  const value = (kind: ProfileRecordKind, name: string): string => Object.hasOwn(draft(kind), name) ? ` value="${escapeHtml(draft(kind)[name]!)}"` : "";
+  const education = draft("education");
   const listed = options.universities.length > 0;
-  const educationForm = `<label>Type of study<select name="educationType" required>${listed ? '<option value="standard">A university in the list</option>' : ""}<option value="custom_university">A school that isn’t listed</option><option value="studying_abroad">Studying abroad</option><option value="not_studying">Not studying</option></select></label>${listed ? select("universityId", "University", options.universities, "Choose a university") : ""}<label>School name (if it isn’t listed)<input name="institutionName" maxlength="160"></label>${options.degrees.length ? select("degreeId", "Degree", options.degrees, "No degree selected") : ""}${options.majors.length ? select("majorId", "Major", options.majors, "Choose a major") : ""}<label>Major (if it isn’t listed)<input name="customMajor" maxlength="128"></label><label>Graduation year<input name="graduationYear" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label><label class="check"><input type="checkbox" name="currentlyStudying" value="true"> I’m studying here now</label>`;
-  const experienceForm = `<label>Role<input name="title" maxlength="128" required></label><label>Employer<input name="employer" maxlength="128" required></label><label>Start year<input name="startYear" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label><label>End year (leave blank if you still work there)<input name="endYear" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>`;
-  const skillForm = `<label>Skill<input name="name" maxlength="128" required></label>`;
-  const linkForm = `<label>Title<input name="title" maxlength="128" required></label><label>Web address<input name="url" type="url" maxlength="2048" placeholder="https://" required></label>`;
+  const studyTypes = [
+    ...(listed || education.educationType === "standard" ? [{ id: "standard", name: "A university in the list" }] : []),
+    { id: "custom_university", name: "A school that isn’t listed" }, { id: "studying_abroad", name: "Studying abroad" }, { id: "not_studying", name: "Not studying" },
+  ];
+  const studyType = recovery?.kind === "education"
+    ? select("educationType", "Type of study", studyTypes, "Choose a type of study", education.educationType ?? "", true)
+    : `<label>Type of study<select name="educationType" required>${studyTypes.map((o) => `<option value="${o.id}">${o.name}</option>`).join("")}</select></label>`;
+  const studying = education.currentlyStudying;
+  const checkbox = studying === undefined || studying === "true" || studying === "on"
+    ? `<label class="check"><input type="checkbox" name="currentlyStudying" value="${studying ?? "true"}"${studying === undefined ? "" : " checked"}> I’m studying here now</label>`
+    : `<label>Studying now (enter true or false)<input name="currentlyStudying"${value("education", "currentlyStudying")}></label>`;
+  const educationForm = `${studyType}${listed || Object.hasOwn(education, "universityId") ? select("universityId", "University", options.universities, "Choose a university", education.universityId) : ""}<label>School name (if it isn’t listed)<input name="institutionName"${value("education", "institutionName")} maxlength="160"></label>${options.degrees.length || Object.hasOwn(education, "degreeId") ? select("degreeId", "Degree", options.degrees, "No degree selected", education.degreeId) : ""}${options.majors.length || Object.hasOwn(education, "majorId") ? select("majorId", "Major", options.majors, "Choose a major", education.majorId) : ""}<label>Major (if it isn’t listed)<input name="customMajor"${value("education", "customMajor")} maxlength="128"></label><label>Graduation year<input name="graduationYear"${value("education", "graduationYear")} inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>${checkbox}`;
+  const experienceForm = `<label>Role<input name="title"${value("experience", "title")} maxlength="128" required></label><label>Employer<input name="employer"${value("experience", "employer")} maxlength="128" required></label><label>Start year<input name="startYear"${value("experience", "startYear")} inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label><label>End year (leave blank if you still work there)<input name="endYear"${value("experience", "endYear")} inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>`;
+  const skillForm = `<label>Skill<input name="name"${value("skill", "name")} maxlength="128" required></label>`;
+  const linkForm = `<label>Title<input name="title"${value("link", "title")} maxlength="128" required></label><label>Web address<input name="url"${value("link", "url")} type="url" maxlength="2048" placeholder="https://" required></label>`;
   const removed = background.removed.length === 0 ? "" : `<section class="record-section" id="removed" aria-labelledby="removed-title"><h2 id="removed-title">Recently removed</h2><ul class="record-list">${background.removed.map((record) => {
     const { title } = describe(record, options);
     return `<li><div><strong>${escapeHtml(title)}</strong><small>${KIND_TITLES[record.kind]}</small></div><form method="post" action="/profile/background/${record.kind}/${record.id}/restore"><button class="link-button" type="submit">Restore</button></form></li>`;
@@ -307,7 +385,7 @@ function deniedPage(): string {
 }
 
 function unavailablePage(): string {
-  return `<header class="topbar">${brand}<a class="text-link" href="/">Back to StudentHub</a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB ACCOUNT</div><h1>We couldn’t load that just now.</h1><p>Nothing was changed. Please try again in a moment.</p><a class="button primary" href="/profile/background">Try again <span aria-hidden="true">→</span></a></main>`;
+  return `<header class="topbar">${brand}<a class="text-link" href="/">Back to StudentHub</a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB ACCOUNT</div><h1>We couldn’t complete that request.</h1><p>Return to education and experience to check your entries before trying again.</p><a class="button primary" href="/profile/background">Try again <span aria-hidden="true">→</span></a></main>`;
 }
 
 export const PROFILE_RECORDS_CSS = `
