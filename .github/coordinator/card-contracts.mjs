@@ -4880,6 +4880,363 @@ const SHU451_BRIEF = recut447(SHU448_BRIEF);
 for (const [brief, id] of [[SHU450_BRIEF, "SHU-450"], [SHU451_BRIEF, "SHU-451"]]) {
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
+const RECUT_450 = Object.freeze({ "SHU-450": "SHU-458", "SHU-451": "SHU-459" });
+const recut450 = (text) => text.replace(/\bSHU-(450|451)\b/g, (id) => RECUT_450[id]);
+const recutAcceptance450 = (from, reason, text) => `${recut450(text)} ${RECUT_450[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const SHU458_GUARD_FROM = SHU450_GUARD_TO.split("\n").at(-1);
+const SHU458_GUARD_TO = `${SHU458_GUARD_FROM}
+- A Postgres test that enqueues a message and then calls processDue passes an explicit \`now\` at least one second ahead, for example \`service.processDue(25, new Date(Date.now() + 1000))\`: next_attempt_at defaults to the database's now(), which carries microseconds, while a JavaScript Date is truncated to milliseconds, so a row enqueued in the same millisecond is not yet due and the test sees no send. Every test in packages/db/test/postgres-email-outbox.test.ts must pass against Postgres.`;
+const SHU458_BRIEF = replaceOnce(recut450(SHU450_BRIEF), SHU458_GUARD_FROM, SHU458_GUARD_TO, "SHU458_BRIEF guard");
+const SHU459_BRIEF = recut450(SHU451_BRIEF);
+for (const [brief, id] of [[SHU458_BRIEF, "SHU-458"], [SHU459_BRIEF, "SHU-459"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
+
+// Lane 4, Access (contracts/access.md, queue 17: A1 to A5). The access lane owns
+// migrations 0400 to 0449 and the new package packages/access. It changes who
+// may do what, so it holds three rules on top of the lane rules: the closed
+// unions stay closed, every grant write leaves the same audit row the
+// AuthzStore leaves, and nothing here changes how a request is authorized.
+const ACCESS_RULES = `Access lane rules (held by every card of this lane):
+- (A-R1) The closed unions stay closed. ROLES (packages/contracts/src/authz/roles.ts), GRANT_SCOPES and the CHECK constraints on the grants table do not change, and neither does resolveActiveContext or the order of the gateway middleware's decisions. If a card seems to need one of them, finish what you can inside the card's paths and say so plainly in your final message; do not change them.
+- (A-R2) Grant changes keep the audit the AuthzStore keeps. A grant or a revocation is one transaction that changes the grants row, writes the authorization_mutation_audit row through insertAuthorizationMutationAudit (packages/db/src/authorization-audit.ts) with the operation grants.grant or grants.revoke and the actor's context, and writes this lane's own event row. Take the same per-principal advisory lock PostgresAuthzStore takes (pg_advisory_xact_lock(hashtextextended(principal_id, 5959))) so the before and after summaries describe the serialized change. Never edit the operation check or the cardinality check of authorization_mutation_audit: other lanes redefine them in their own migrations, and a second redefinition would silently drop their operations.
+- (A-R3) A grant is read from the grants table on every request. Nothing in this lane caches a grant, a role or a decision between requests.
+- (A-R4) An unauthorized caller gets the same 404 not_found as an unknown path, never 403, for admin and owner pages and writes, so their existence is not revealed (as admin-jobs.ts does).
+- (A-R6) Migration numbers are fixed for this lane, because its cards run side by side: SHU-453 takes 0400, SHU-454 0401, SHU-455 0402, SHU-456 0403, SHU-457 0404. Use the number your brief names even when a lower number in the range looks free, and reference only tables of a lower-numbered migration or of this lane's earlier cards that your card waits on.
+- (A-R5) The packages/access package is new: it needs no package.json or tsconfig change (packages/exports shows the shape: src and test folders compiled by the root build). Tests are named with their token first and a space after it, and every mutation script is named *-mutations.mjs so the test runner discovers it.`;
+
+const ACCESS_CONTEXT = `${LANE_CONTEXT(4, "0400 to 0449")}
+
+${ACCESS_RULES}`;
+
+// Lane 4, card 1. A1 (I1): admins grant and revoke roles from the app.
+export const SHU453_PATHS = Object.freeze([
+  "packages/db/migrations/0400_access_grant_events.sql",
+  "packages/db/src/postgres-access-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-access-store.test.ts",
+  "packages/access/src/grant-catalogue.ts",
+  "packages/access/src/grant-writes.ts",
+  "packages/access/test/grant-catalogue.test.ts",
+  "packages/access/test/grant-writes.test.ts",
+  "packages/access/test/grant-writes-mutations.mjs",
+  "apps/gateway/src/admin-access.ts",
+  "apps/gateway/test/admin-access.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU453_ACCEPTANCE = [
+  "(1) The catalogue (packages/access/src/grant-catalogue.ts) is one pure function that answers, for a caller's grants and a target organization, which roles and scopes the caller may grant or revoke there: on an operator organization (DEFAULT_OPERATOR_ORG_IDS) only an admin, for staff, admin and finance; on any other organization an admin or staff member whose grant covers it, for org-owner, recruiter and finance; the candidate role is never grantable here; a subtree scope only by an admin; holding a role never confers the right to grant it, and a candidate, recruiter or finance grant grants nothing (SHU453_CATALOGUE);",
+  "(2) An admin finds a person by exact email address (case-insensitive) or by a display-name prefix of at least 3 characters, 25 results at most, through an indexed lookup, and opens that person's Access page (GET /admin/access, GET /admin/access/{principalId}) listing every grant: organization name, role, scope, who granted it and when, and the reason, read from the events table; a grant made before this card shows the granter and date as unknown and is never hidden (SHU453_LIST);",
+  "(3) Adding a grant and revoking one each go through a preview and a confirm that both name the person, the organization, the role, the scope and a reason of 3 to 500 characters; the confirm carries a single-use token bound to the caller and the exact change that expires after 15 minutes; a replayed or altered token is refused; a refused preview or confirm changes nothing and writes no audit row (SHU453_PREVIEW_CONFIRM);",
+  "(4) Guards, each refused with a typed reason and no change: no self-escalation (a caller cannot add a grant to themselves, nor widen their own); the last admin grant on an operator organization cannot be revoked; granting a role the catalogue does not allow for that caller and organization is refused; granting a grant the person already holds at that scope is a no-op that records nothing (SHU453_GUARDS);",
+  "(5) One transaction per change writes the grants row, an authorization_mutation_audit row (operation grants.grant or grants.revoke, the caller as actor) and one access_grant_events row (target principal, organization, role, scope, action, actor, reason, occurred_at); a failure of any of the three rolls back all three; the next request of the person resolves with the change, proved by resolving the context before and after through the AuthzStore with no restart (SHU453_ATOMIC);",
+  "(6) S1: the person's own Access list is read-only on My profile (GET /profile shows the roles they hold, each with its organization name and scope, and nothing about who granted it); a non-admin, a signed-out visitor and an unknown principal id all get the same 404 not_found page as an unknown path, for the pages and for the writes (SHU453_READ_SITES);",
+  "(7) packages/access/test/grant-writes-mutations.mjs makes each of items 1, 3, 4 and 5 fail its named test by a mutant (let a recruiter grant, accept an altered token, allow self-escalation, write the grant before the audit outside the transaction) and passes unmutated; every existing authz, audit and organization test and mutant still passes; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU453_BRIEF = `Card SHU-453: admins grant and revoke roles from a person's Access page, with a reason and a history (slice A1 of contracts/access.md, identity inventory I1; lane 4, card 1; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. ${ACCESS_CONTEXT}
+
+Why. Today a grant is created only by the bootstrap admin script and by tests; nobody can give or take a role in the app, and nothing records why. Legacy administered permission sections per staff user in the admin app but enforced none of them on the server (identity inventory finding F4), so there is nothing to port: the platform defines the catalogue fresh. This card gives admins one place to see and change a person's grants, and gives every person a read-only list of their own.
+
+Read first:
+- packages/contracts/src/authz/ (roles.ts, grants.ts, store.ts, context.ts) and docs/authz-roles.md: the closed model, explicit grants, self and subtree, no implicit parent access.
+- packages/db/src/postgres-authz-store.ts (grantMany, revokeMany, the audit calls and the lock) and packages/db/src/authorization-audit.ts (insertAuthorizationMutationAudit, principalAuditRef, organizationAuditRef, requestAuditRef); packages/db/migrations/0001, 0002 and 0004.
+- apps/gateway/src/admin-jobs.ts (the admin-only page and its 404 rule), apps/gateway/src/organization-account-manager.ts and packages/organizations/src/account-manager-writes.ts (a preview and confirm write with a single-use token; packages/safe-write-contract is the shared token machinery), and apps/gateway/src/organization-stores.ts for the request and body-limit habits.
+- packages/organizations/src/organizations.ts (DEFAULT_OPERATOR_ORG_IDS, the ancestors helpers) and packages/db/src/organization-liveness.ts (a deleted organization takes no grant).
+- apps/gateway/src/web-ui.ts, apps/gateway/test/web-ui.test.ts and the profile page in apps/gateway/src/index.ts and login-runtime.ts, where the read-only list goes.
+
+Outcome:
+- packages/access/src/grant-catalogue.ts and grant-writes.ts: the catalogue (item 1) and the write service (preview, confirm, revoke) over a store port; packages/safe-write-contract may carry the token if its change shape fits a grant and a reason, otherwise build a preview and confirm pair in packages/access with the same token properties and its own tests. Do not edit packages/safe-write-contract (it is outside your paths).
+- Migration 0400: access_grant_events (id, target principal id, organization id, role, scope, action grant or revoke, actor principal id, reason, occurred_at); append-only (refuse UPDATE and DELETE with a trigger, as organization_notes do in 0198), indexed on (target principal id, occurred_at desc) and (organization id, occurred_at desc); an index on lower(principals.email) for the exact-email lookup if none exists (check 0001 first). Do not touch authorization_mutation_audit's constraints (A-R2).
+- packages/db/src/postgres-access-store.ts: the list, the lookup and the one-transaction write (item 5), exported from packages/db/src/index.ts.
+- apps/gateway/src/admin-access.ts: the pages and the JSON writes, mounted as one route block in index.ts and built in login-runtime.ts; web-ui.ts renders the Access page and the read-only list on My profile.
+
+Guards:
+- The caller's right is decided from their grants read inside the write's transaction, not from the page that rendered the form.
+- The page and the writes answer a non-admin with the same 404 as an unknown path (A-R4).
+- Email addresses appear only on the lookup result for an admin and on that person's own page; the events table stores principal ids, never an email or a name.
+- The reason is shown to admins and never to the person it is about (it may say why a staff member was removed).
+
+Acceptance. Each of items 1, 3, 4 and 5 is pinned by a mutation in packages/access/test/grant-writes-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU453_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the access store, its index export and Postgres test; the catalogue, the write service, their tests and the mutation script under packages/access; the gateway admin-access module and its test; web-ui.ts and its test (the Access page and the read-only list); one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: the People page and Person page (queue 15 adds the Access tab link to them later; this card's page is reachable from /admin/access), company invitations and the Team page, store-scoped grants, deactivation, act-as, any new role or scope, the importer's mapping of legacy permission rows (the importer cards own it), and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 4, card 2 (after card 1). A2 (I3): a company invites people to its team.
+export const SHU454_PATHS = Object.freeze([
+  "packages/db/migrations/0401_company_invitations.sql",
+  "packages/db/src/postgres-invitations-store.ts",
+  "packages/db/src/postgres-access-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-invitations-store.test.ts",
+  "packages/db/test/postgres-access-store.test.ts",
+  "packages/access/src/invitations.ts",
+  "packages/access/src/invitation-mail.ts",
+  "packages/access/src/grant-catalogue.ts",
+  "packages/access/test/invitations.test.ts",
+  "packages/access/test/invitations-mutations.mjs",
+  "packages/access/test/grant-catalogue.test.ts",
+  "apps/gateway/src/company-team.ts",
+  "apps/gateway/test/company-team.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU454_ACCEPTANCE = [
+  "(1) An owner of a company (an org-owner grant covering it) opens its Team page (GET /workspace/companies/{orgId}/team) and sees the people who hold a grant on it (name, role, scope) and the pending invitations (address, role, invited by, expires); staff and admin whose grants cover the company see the same page read-only; anyone else gets the same 404 not_found as an unknown path (SHU454_TEAM_PAGE);",
+  "(2) An owner invites an email address with one of the roles org-owner, recruiter or finance (the contract's \"member\" is not a role of the closed union and is not added); the invitation holds the organization, the role, the scope (self, or subtree only when the owner's own grant is subtree), the normalized address, who invited, created_at and expires_at = created_at + 7 days, and an opaque 32-byte token of which only a SHA-256 hash is stored; the link is shown once to the inviting owner and handed to an InvitationMailer port that the card gives a recording fake and a no-send default (no provider is wired here); at most 50 pending invitations per company, and an owner cannot invite for a role or scope the catalogue does not allow them to grant (SHU454_INVITE);",
+  "(3) The invitee opens the link while signed in (GET /invitations/{token}) and sees the company name and the role, never the invited address; accepting (POST /invitations/{token}/accept, same-origin form post) creates the grant only then, in one transaction that marks the invitation used (UPDATE ... WHERE used_at IS NULL AND expires_at > now() RETURNING), writes the grant through the A-R2 path and one access_grant_events row (actor = the inviting owner, reason = \"invitation accepted\"); the grant binds to the signed-in principal, never to the email (SHU454_ACCEPT);",
+  "(4) Accepting requires the signed-in principal's Universe email, compared trimmed and lower-cased, to equal the invited address at the time of acceptance; a different address gets the page \"This invitation is for a different address\" without naming either address, and the invitation is not consumed; an expired, used, revoked or unknown token all get one identical \"This invitation is no longer valid\" page with the same status, so tokens cannot be probed; a signed-out visitor is sent to sign in and returned to the link (SHU454_MATCH);",
+  "(5) Replay is dead: accepting twice, accepting after revocation, accepting after expiry (clock injected), and two concurrent accepts create exactly one grant and one event; revoking a pending invitation (owner only) makes its link invalid at once (SHU454_REPLAY);",
+  "(6) An owner removes a member (revokes that person's grants on this company) through a confirm step that names the person; the last owner of a company cannot be removed or demoted, checked inside the transaction under a per-company advisory lock so two concurrent removals of the last two owners leave one; a removal writes the grants.revoke audit row and an events row; access to sub-companies comes only from an explicit subtree grant and removing a parent grant never removes a child's (SHU454_REMOVE);",
+  "(7) S1: the invitee's \"Your access\" list on My profile (the A1 list) shows the new company and role after acceptance, and the owner's Team page shows the new member in the same request that follows; packages/access/test/invitations-mutations.mjs makes each of items 3, 4, 5 and 6 fail its named test by a mutant (create the grant at invite time, skip the email match, skip the used_at check, drop the last-owner check) and passes unmutated; every A1 test and mutant still passes; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU454_BRIEF = `Card SHU-454: a company owner invites people to the team by email, and the grant is created only when the invitee accepts (slice A2 of contracts/access.md, identity inventory I3, organizations O4; lane 4, card 2, after SHU-453; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-453 (migration 0400, packages/access with the grant catalogue and the A-R2 grant write, the admin Access page). ${ACCESS_CONTEXT}
+
+Why. Legacy employer team management is broken: contacts were added by staff, an employer's RemoveMember hard-deleted the shared person record and every membership of it (docs/parity/organizations-stores-and-contacts.md section 4.3), and the invitation table was never wired to a working journey. The platform replaces it with grants: an owner invites an address, the person accepts with their own Universe sign-in, and removing a member revokes that company's grants only, so a person who also works for another company, or who is looking for work, keeps everything else.
+
+Read first:
+- packages/access/src/grant-catalogue.ts, grant-writes.ts and packages/db/src/postgres-access-store.ts from SHU-453: the catalogue, the one-transaction grant write and the events table you reuse. Extend the catalogue so an org-owner may grant org-owner, recruiter and finance on their own company at no wider scope than they hold; change nothing else in it.
+- docs/parity/organizations-stores-and-contacts.md sections 4.3 and 4.4 and rows OR-13 to OR-16; docs/authz-roles.md (subtree is explicit, nearest ancestor wins).
+- apps/gateway/src/login-application.ts and login-runtime.ts (the session and the principal's email), apps/gateway/src/organization-stores.ts and organization-account-manager.ts (request, origin and body-limit habits), and apps/gateway/src/web-ui.ts.
+- packages/db/src/organization-liveness.ts (a deleted company takes no invitation).
+
+Outcome:
+- Migration 0401: company_invitations (id uuid, organization id, role, scope, invited_email_normalized, token_hash char(64) unique, invited_by principal id, created_at, expires_at, used_at, used_by principal id, revoked_at), a partial index on (organization id) where used_at is null and revoked_at is null, and a unique index on (organization id, role, invited_email_normalized) where pending, so a duplicate invitation is refused with a typed reason.
+- packages/access/src/invitations.ts: create, preview of the accept page, accept, revoke, remove member, over a store port; invitation-mail.ts: the InvitationMailer port, its recording fake and its no-send default.
+- packages/db/src/postgres-invitations-store.ts (exported from index.ts) and any small additions to postgres-access-store.ts that the shared transaction needs.
+- apps/gateway/src/company-team.ts: the Team page, the invite, revoke and remove writes, and the invitation pages; mounted as one route block in index.ts; built in login-runtime.ts; rendered in web-ui.ts.
+
+Guards:
+- The token is generated from the platform entropy source, at least 32 random bytes; only its hash is stored and compared in constant time; it never appears in a log, an audit row or an error.
+- Accepting reads the principal's current email at acceptance, inside the transaction; a stale session value is not used.
+- The grant is created for the principal who is signed in, never looked up by email.
+- A deleted or non-live company, a company the owner no longer owns, or an owner whose own grant was revoked after the invitation was written, cannot be accepted into: acceptance re-checks the inviter still holds the right to grant that role (SHU454_ACCEPT covers it).
+- Every page and write answers someone with no right with the same 404 as an unknown path (A-R4).
+
+Acceptance. Each of items 3, 4, 5 and 6 is pinned by a mutation in packages/access/test/invitations-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU454_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the invitations store and its Postgres test, the small additions to the access store and its test; invitations.ts, invitation-mail.ts, the catalogue extension and their tests and mutation script; the gateway company-team module and its test; web-ui.ts and its test; one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: sending the invitation email (a later card hands the mailer port to the outbox once lane 3's email card has landed), company contacts without access and switching (SHU-455), store-scoped invitations (SHU-456), the importer's mapping of company_contact rows with allow_access into grants (the importer cards), sign-up of a new company, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 4, card 3 (after card 2). A3 (O4): company contacts and switching.
+export const SHU455_PATHS = Object.freeze([
+  "packages/db/migrations/0402_company_contacts.sql",
+  "packages/db/src/postgres-company-contacts-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-company-contacts.test.ts",
+  "packages/access/src/company-contacts.ts",
+  "packages/access/test/company-contacts.test.ts",
+  "packages/access/test/company-contacts-mutations.mjs",
+  "apps/gateway/src/company-contacts-http.ts",
+  "apps/gateway/test/company-contacts-http.test.ts",
+  "apps/gateway/src/context-navigation.ts",
+  "apps/gateway/test/context-navigation.test.ts",
+  "apps/gateway/test/context-navigation-mutations.mjs",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU455_ACCEPTANCE = [
+  "(1) A company keeps extra contacts that have no access: a contact is a name (1 to 120 characters), a role title (optional, 1 to 120), up to 5 phone numbers and up to 5 email addresses (each validated and normalized, each with a label of at most 40 characters), created and changed only by an org-owner of the company, or by staff or admin whose grant covers it; a contact has no principal, holds no grant and cannot sign in (SHU455_CONTACT);",
+  "(2) The company's Team page (SHU-454) shows its contacts below its members, and the company card lists them; reading is allowed to the company's owners, recruiters, finance members and to staff and admin, writing only to the people in item 1; anyone else gets the same 404 not_found as an unknown path (SHU455_READ_SITES);",
+  "(3) Removing a contact deletes only that contact and its phones and emails, and never a grant, a principal or a profile; a contact that matches a member's email is a separate record and is never merged by the card; soft removal keeps the row with removed_at so the importer and the audit trail can still tell it existed, and removed contacts are never listed (SHU455_REMOVE);",
+  "(4) A person with grants in more than one company sees a company switcher in the workspace header on every workspace page: the current company and role, and the other contexts they hold (company name, role) as links to /workspace?org_id=...&role=...; one context shows no switcher; the list comes from listEffectiveContexts and drops deleted companies, exactly as /workspace does, in one read for all of the person's organizations (SHU455_SWITCHER);",
+  "(5) Switching changes nothing the server trusts: a selection the person does not hold, or a company they were removed from a moment ago, answers 403 context_forbidden through the resolver as today; the legacy per-request Company-Id header is not read anywhere; two tabs on two companies never see each other's data (SHU455_SWITCH_GUARD);",
+  "(6) S1: a contact added on the Team page shows on that page in the next request and on the company card; the switcher shows a company the person is invited into as soon as they accept it, and stops showing it as soon as their grant is revoked, with no restart; packages/access/test/company-contacts-mutations.mjs makes each of items 1, 2 and 3 fail its named test by a mutant (let a recruiter write, list a removed contact, remove a grant with the contact) and apps/gateway/test/context-navigation-mutations.mjs still binds once; every existing navigation and web test passes; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU455_BRIEF = `Card SHU-455: company contacts without access, and switching between the companies a person works for (slice A3 of contracts/access.md, organizations O4 and OR-17, OR-18; lane 4, card 3, after SHU-454; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-453 and SHU-454 (the Team page, invitations, packages/access). ${ACCESS_CONTEXT}
+
+Why. Legacy companies keep extra contacts (an accountant, a branch manager) with their own phones and emails, and a person who works for several companies picks one with a Company-Id header the client sends on every request, which the server only checks (docs/parity/organizations-stores-and-contacts.md section 4.4). The platform keeps contacts as plain records that never carry access, and keeps the server-side rule that a selection is only a preference the resolver re-checks, with a visible switcher.
+
+Read first:
+- packages/access/src/invitations.ts and apps/gateway/src/company-team.ts from SHU-454: the Team page you add the contacts block to.
+- apps/gateway/src/context-navigation.ts and apps/gateway/test/context-navigation.test.ts and context-navigation-mutations.mjs: how /workspace lists effective contexts and refuses a selection (the mutation anchors there must keep binding once).
+- apps/gateway/src/web-ui.ts and apps/gateway/test/web-ui.test.ts: the header and the workspace pages.
+- docs/parity/organizations-stores-and-contacts.md rows OR-13, OR-17 and OR-18 and sections 2.2 and 4.3.
+- packages/db/migrations/0198_organization_notes_refuse_delete.sql and 0201 (soft removal and liveness habits).
+
+Outcome:
+- Migration 0402: company_contacts (id uuid, organization id, name, role_title, created_by principal id, created_at, updated_at, removed_at) and company_contact_channels (contact id, kind phone or email, value, label, position) with CHECKs for the length and count limits, a partial index on (organization id) where removed_at is null and an index on contact id.
+- packages/access/src/company-contacts.ts: the validation (phone and email normalization), the decision (who may write, who may read) and the service over a store port.
+- packages/db/src/postgres-company-contacts-store.ts, exported from index.ts: the list reads a company's contacts and all their channels in a fixed number of queries.
+- apps/gateway/src/company-contacts-http.ts: create, update, remove and list, one route block in index.ts, built in login-runtime.ts.
+- context-navigation.ts and web-ui.ts: the switcher in the header and the contacts block on the Team page and the company card.
+
+Guards:
+- A contact never becomes a grant, a principal or a profile, and a grant change never edits a contact.
+- Phone and email values are validated (a phone is digits with an optional leading plus, 6 to 20 digits; an email has one @ and a dot in the domain, at most 254 characters), stored normalized, and shown only to people item 2 allows.
+- The switcher is built from the same read as the workspace list; it adds no query per company.
+- Do not read a Company-Id header or any client-supplied company context as authority.
+
+Acceptance. Each of items 1, 2 and 3 is pinned by a mutation in packages/access/test/company-contacts-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU455_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the contacts store, its index export and Postgres test; company-contacts.ts, its test and mutation script; the gateway contacts module and its test; context-navigation.ts, its test and its mutation script (the switcher only); web-ui.ts and its test; one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: giving a contact access (that is an invitation, SHU-454), the legacy contact notification preferences (receive email, suggestions, notification), merging duplicate contacts, the importer's mapping of company_contact rows without allow_access (the importer cards), and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 4, card 4 (after card 2). A4 (I4): a store manager sees only their store.
+export const SHU456_PATHS = Object.freeze([
+  "packages/db/migrations/0403_store_manager_access.sql",
+  "packages/db/src/postgres-store-access-store.ts",
+  "packages/db/src/postgres-invitations-store.ts",
+  "packages/db/src/index.ts",
+  "packages/db/test/postgres-store-access.test.ts",
+  "packages/db/test/postgres-invitations-store.test.ts",
+  "packages/access/src/store-access.ts",
+  "packages/access/src/invitations.ts",
+  "packages/access/test/store-access.test.ts",
+  "packages/access/test/store-access-mutations.mjs",
+  "packages/access/test/invitations.test.ts",
+  "apps/gateway/src/store-manager-http.ts",
+  "apps/gateway/test/store-manager-http.test.ts",
+  "apps/gateway/src/company-team.ts",
+  "apps/gateway/test/company-team.test.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+
+const SHU456_ACCEPTANCE = [
+  "(1) The store scope is one rule, written once in packages/access/src/store-access.ts: a store manager grant is a row in store_manager_access naming one store id and one principal; it is not a row of the grants table, adds no role and no scope to the closed unions, and so is invisible to resolveActiveContext and to every company page by construction; a store grant holds only while the store is active and its company is live (SHU456_RULE);",
+  "(2) An owner of the company (an org-owner grant covering it), or staff or admin whose grant covers it, offers store manager for one named store through the SHU-454 invitation (the invitation gains an optional store id; the role of such an invitation is the store manager access, not a company role) and accepting it creates the store_manager_access row in the same transaction that marks the invitation used, with the same email match, expiry, single-use and no-probing rules; a store of another company, a removed store or a deleted company is refused (SHU456_GRANT);",
+  "(3) The manager's workspace (GET /workspace/my-stores, GET /workspace/stores/{storeId}) lists only the stores they manage, each with name, location, brand and mall, and opens one store; a store they do not manage, a sibling store of the same company, a store of a sub-company, and the company's own pages all answer the same 404 not_found as an unknown path, tested with a company that has two sibling stores and a sub-company with a store (SHU456_NO_LEAK);",
+  "(4) A person who is both a manager of a store and a recruiter of another company sees each at its own scope: the store grant adds nothing to the company grant and the company grant adds nothing to the store grant, tested both ways (SHU456_INDEPENDENT);",
+  "(5) Removing the grant (an owner, staff or admin, through a confirm step naming the person and the store) takes effect on the next request; removing or soft-deleting the store, or deleting the company, ends every store grant on it on the next request without deleting the rows; a removal writes an access_grant_events row with scope store (actor, store, principal, reason); the authorization_mutation_audit constraints are not touched (SHU456_REVOKE);",
+  "(6) S1: the manager sees their store's name, location, brand and mall on My stores, read from the organization_stores row at request time (so a renamed store shows its new name), and the owner's Team page lists store managers with their store; packages/access/test/store-access-mutations.mjs makes each of items 1, 3, 4 and 5 fail its named test by a mutant (read a store without the grant row, list a sibling store, let the store grant satisfy a company check, ignore a removed store) and passes unmutated; every existing organization stores test and mutant still passes; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU456_BRIEF = `Card SHU-456: a store manager sees only their own store, never a sibling store or the company (slice A4 of contracts/access.md, identity inventory I4, rows OR-21 and ID-14; lane 4, card 4, after SHU-454; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-453 and SHU-454 (invitations, the Team page, packages/access) and the stores of migration 0202 (organization_stores). ${ACCESS_CONTEXT}
+
+Why. In legacy a store manager is a separate credential row tied to one store and one company (the parent company when nested), created by staff as a side effect of creating a store, and the manager app was never finished (identity inventory section 2.1 and 4). The contract left open whether the store scope is a new grant scope or a store-level organization node. This card settles it without touching the authorization model: the store grant is its own small table, read only by store pages, so no company-level check can ever be satisfied by it and no sibling-store leak is possible by construction.
+
+Read first:
+- packages/access/src/invitations.ts and apps/gateway/src/company-team.ts from SHU-454, and packages/db/src/postgres-invitations-store.ts: the invitation you extend with an optional store id.
+- packages/db/migrations/0202_organization_stores.sql, packages/db/src/postgres-organization-stores-store.ts, packages/organizations/src/organization-stores.ts and apps/gateway/src/organization-stores.ts: the store rows, their soft removal and the read shape (name, location, brand, mall).
+- packages/db/src/organization-liveness.ts (a deleted company ends its store grants).
+- docs/parity/organizations-stores-and-contacts.md sections 4.5 and rows OR-19 to OR-22; docs/authz-roles.md (why the closed unions stay closed).
+- apps/gateway/src/web-ui.ts for the workspace pages.
+
+Outcome:
+- Migration 0403: store_manager_access (store id uuid references organization_stores(id), principal id references principals(id) on delete cascade, granted_by principal id, created_at, unique (store id, principal id)) with indexes on principal id and on store id; and an ALTER TABLE company_invitations (migration 0401, which this card waits on) adding a nullable store id uuid references organization_stores(id) with a CHECK that a store invitation names the store manager access and no company role.
+- packages/access/src/store-access.ts: the one rule (item 1) and the decisions for the grant, the read and the removal; packages/access/src/invitations.ts gains the optional store id.
+- packages/db/src/postgres-store-access-store.ts (exported from index.ts): the manager's stores and one store in a fixed number of queries; the grant, accept and removal writes; and the additions to postgres-invitations-store.ts that the shared accept transaction needs.
+- apps/gateway/src/store-manager-http.ts: the two workspace pages and the removal write; company-team.ts and web-ui.ts: the store manager offer on the Team page and the managers list; one route block in index.ts and the wiring in login-runtime.ts.
+
+Guards:
+- The store pages never call resolveActiveContext and never read the grants table; the company pages never read store_manager_access. A test makes either read throw to prove it.
+- Every store read joins the store's current status and its company's liveness in the same query as the grant row.
+- Unauthorized and cross-store requests answer the same 404 as an unknown path (A-R4).
+- If you find this cannot meet the acceptance without adding a role or a scope to the closed unions, stop and say so in your final message with the reason; do not add one.
+
+Acceptance. Each of items 1, 3, 4 and 5 is pinned by a mutation in packages/access/test/store-access-mutations.mjs that makes its named test fail. Tests are named with their token first and a space after it.
+${SHU456_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the migration, the store access store, the invitations store additions, their index export and Postgres tests; store-access.ts, the invitations change, their tests and the mutation script; the gateway store-manager module and its test; company-team.ts and its test (the offer and the list); web-ui.ts and its test; one route block in index.ts and the wiring in login-runtime.ts. Nothing else changes.
+
+Out of scope: the store's own candidate lists and assignments (the work lane), requests for a candidate to a store (OR-22, work), creating a store (O7 is done), manager impersonation, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
+
+// Lane 4, card 5 (no after). A5 (I2): signing out ends the session everywhere.
+export const SHU457_PATHS = Object.freeze([
+  "packages/login-contract/src/types.ts",
+  "packages/login-contract/src/conformance.ts",
+  "packages/login-contract/src/index.ts",
+  "apps/gateway/src/login-application.ts",
+  "apps/gateway/test/login-application.test.ts",
+  "apps/gateway/test/login-http.test.ts",
+  "packages/db/migrations/0404_login_session_upstream.sql",
+  "packages/db/src/postgres-login-store.ts",
+  "packages/db/test/postgres-login-session-upstream.test.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/test/web-ui.test.ts",
+]);
+
+const SHU457_ACCEPTANCE = [
+  "(1) The login contract gains one optional port, UpstreamSessions, with two calls: end(reference) answers ended or unreachable, and isActive(reference) answers active, ended or unknown; a login application built without it behaves exactly as before and the conformance suite passes unchanged for it; a login application built with it passes the new conformance scenarios, and LOGIN_CONTRACT_VERSION moves to 1.1.0 (additive) (SHU457_PORT);",
+  "(2) At sign-in the session records the upstream session reference from the identity token's sid claim and nothing more: no identity, access or refresh token is stored; migration 0404 adds the nullable reference, a last_confirmed_at and a last_checked_at to login_sessions and changes no other column; a token without a sid claim makes a session with no reference, which is checked only by its own expiry as today (SHU457_RECORD);",
+  "(3) Signing out (POST /logout, same-origin as today) deletes the local session first, always, then asks the upstream to end its session; an upstream that is unreachable or slow (bounded to 3 seconds) does not fail or delay the sign-out: the person is signed out locally, the response is the same, and the failure is counted for the log without the reference in it; the cookie is cleared as today (SHU457_SIGN_OUT);",
+  "(4) The browser then lands on a Signed out page (GET /signed-out, public, no session needed, no personal data) that says they are signed out and offers Sign in again; the POST /logout redirect goes there for a browser and keeps answering 204 for a non-browser client (SHU457_SIGNED_OUT_PAGE);",
+  "(5) A session whose upstream session was ended elsewhere stops working within a fixed bound T, default 900 seconds, set by one configuration value validated to 60 to 3600: sessions.get checks a session with a reference upstream at most once per T per session, measured from last_checked_at, which every check sets whatever its result (no check on the requests in between, so a busy page costs no extra call), a result of ended deletes the session and the request answers 401 as for any missing session, active also sets last_confirmed_at, and unknown leaves last_confirmed_at as it is, keeping the session until 2*T after its last confirmation and ending it then (fail closed after a bounded grace) (SHU457_BOUND);",
+  "(6) The upstream adapter is built behind the port from the issuer's discovery document with no stored token and no secret in a URL: sign-out uses the issuer's end-session endpoint with the client's identifier and the session reference, the liveness check uses the issuer's introspection or back-channel facility if the discovery document offers one; if it offers neither, the card says so in its final message and the port's default adapter answers unknown, which item 5 then bounds at 2*T; the adapter is proved against an in-process fake issuer, never a real one (SHU457_ADAPTER);",
+  "(7) S1: the Signed out page and the 401 after an upstream end are what a person sees; the log line for an unreachable upstream carries a count and the reason class, never the reference or the person; packages/login-contract's conformance suite is the home of the port scenarios, apps/gateway/test/login-application.test.ts proves items 3 and 5 with a fake clock and a fake upstream, and a mutation script is not required for this card (the conformance scenarios carry the mutants of the existing contract); every existing login, session and web test passes; nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU457_BRIEF = `Card SHU-457: signing out ends the session everywhere, and a session revoked upstream stops working within a fixed time (slice A5 of contracts/access.md, identity inventory I2, rows ID-08 and ID-09; lane 4, card 5; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head. ${ACCESS_CONTEXT}
+
+Why. Today POST /logout deletes the local session and clears the cookie, but Universe's own session stays alive, so the next Sign in with Universe logs the person straight back in without a prompt, and a session ended or revoked at Universe (a stolen device, a staff offboarding) keeps working here until the local session expires. Legacy token tables are migration evidence only and are not reproduced (docs identity inventory sections 3.2 and 5).
+
+Read first:
+- packages/login-contract/src/types.ts, conformance.ts and index.ts: the dependencies, the session store and the conformance scenarios; LOGIN_CONTRACT_VERSION is 1.0.0.
+- apps/gateway/src/login-application.ts (callback, profile, logout) and apps/gateway/src/login-runtime.ts (HttpOidcTransport, the JWKS cache, how the session store and the configuration are built), and the logout route in apps/gateway/src/index.ts.
+- packages/db/src/postgres-login-store.ts and packages/db/migrations/0003_create_login_tables.sql (login_sessions, the stored token hash form, the expiry in the same statement).
+- apps/gateway/test/login-application.test.ts and login-http.test.ts: the fake OIDC transport and the HTTP harness to copy.
+- apps/gateway/src/web-ui.ts and its test for the page shell.
+
+Outcome:
+- The UpstreamSessions port and its conformance scenarios in packages/login-contract; the optional dependency is read by the login application at callback (record the reference), logout (end it) and the session read (confirm it).
+- Migration 0404 and the store change: record the reference, last_confirmed_at and last_checked_at, and expose the confirm step so the check, its once-per-T throttle and the delete are atomic enough that two concurrent requests make one upstream call at most (a conditional UPDATE of last_checked_at that returns whether this request won the right to check; only an active result then sets last_confirmed_at, so an unknown result still ends the session 2*T after its last confirmation).
+- The adapter and its configuration in login-runtime.ts, and the Signed out page in web-ui.ts and index.ts.
+
+Guards:
+- Local sign-out never depends on the upstream: delete the session, clear the cookie, then try the upstream.
+- The session reference is a lookup value, not a secret, but it is still never logged, never put in a URL we build, and never shown.
+- The check fails closed after the bounded grace and never fails open indefinitely.
+- No new network behaviour in tests: every upstream call goes to a fake.
+
+Acceptance. Tests are named with their token first and a space after it.
+${SHU457_ACCEPTANCE}
+
+${LANE_STANDING}
+
+Your paths: the login contract's types, conformance and index; the login application and its two tests; the migration, the login store change and its Postgres test; login-runtime.ts, index.ts and web-ui.ts with its test. Nothing else changes.
+
+Out of scope: single sign-out pushed to every open tab, refresh tokens, session lists and remote revocation by an admin (act-as and deactivation come with the next access queue), changing who can sign in, and any network call, credential, staging or production access.
+
+${LANE_FINISH}`;
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
@@ -5737,6 +6094,55 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: Object.freeze(["apps/gateway/src/civil-id-suggestion-http.ts", "apps/gateway/test/civil-id-suggestion-http.test.ts", "apps/gateway/test/civil-id-suggestion-mutations.mjs", "apps/gateway/src/web-ui.ts", "apps/gateway/src/routes/index.ts", "apps/gateway/src/routes/context.ts", "apps/gateway/src/wiring/context.ts", "apps/gateway/src/contributions/index.ts", "apps/gateway/src/wiring/profile.ts", "apps/gateway/src/contributions/profile.ts", "packages/db/src/profile/index.ts"]),
     acceptance: "(1) With a read suggestion (country KW, last four 1234, expiry 2027-03-01, not expired in Asia/Kuwait) the rendered My profile shows the line 'We read a number ending 1234, expiring 2027-03-01. Is this right?' directly under the Civil ID row with exactly the two forms, their actions and the hidden fields asserted; an expired date shows the passed-date line with only the dismiss form; pending and running show the reading line; unreadable and failed show the same type-it-yourself line; no suggestion, an answered one and the feature off render nothing and leave the 19 rows and 19 unavailable markers; the full number appears nowhere in the HTML (OCRP_LINE); (2) Accept saves through CIV's service: after 'Yes, use these' the person's civil ID holds the suggestion's number and expiry, needs_review is set, the page says 'Waiting for StudentHub to check', the suggestion is marked accepted and the line is gone; a number held by another person, an expiry before today in Asia/Kuwait and the Bahrain/Kuwait length rules are each refused with CIV's plain message, nothing saved, the suggestion still open (OCRP_ACCEPT); (3) A double click or browser retry of the same accept form saves once (same derived submission id); a suggestion id that is not the person's current one, one for a replaced photo version, one already answered and another person's id are each refused without saving, and a person cannot answer another person's suggestion whatever the form says (OCRP_STALE); (4) Dismiss marks the suggestion dismissed, changes nothing in the civil ID, answers 303 to /profile/civil-id, and the line does not return for the same photo version but does for a later one (OCRP_DISMISS); (5) Same-origin cookie posts only: no session is the sign-in page 401 with no store call, a cross-site or wrong Origin is 403 before the body is read, a Bearer header alone is refused, an extra or missing field is 400, and every response is no-store (OCRP_ORIGIN); (6) Secrecy: the plain number is absent from every form field, redirect, response body, header and captured log in the accept, refuse, stale and dismiss paths, and the sealed value is opened only in the accept handler (a test greps the gateway sources for the open call) (OCRP_SECRECY); (7) S1: a worker-read suggestion in a test (fake reader, in-memory stores) shows on the rendered My profile as the line above and, after accept, as the masked number with the expiry and the waiting state in CIV's row; S2: My profile makes exactly one suggestion read whatever the number of earlier jobs, proved with a counting fake (OCRP_SHOWN); apps/gateway/test/civil-id-suggestion-mutations.mjs rewrites the compiled civil-id-suggestion-http.js and web-ui.js (needles taken from dist, each binding exactly once, the gateway suite run against the mutated file) with one mutant per item that dies by assertion in its named test: item 1 render the full number, item 1 show the accept form for an expired date, item 2 save without CIV's service, item 3 skip the current-suggestion check, item 3 use a random submission id, item 4 clear needs_review or write the civil ID on dismiss, item 5 skip the Origin check, item 6 put the number in a hidden field, item 7 read the suggestion twice; npm test passes to the end with every existing test and mutation script unchanged; nothing outside the card's paths changes.",
     brief: "Card SHU-468: a person sees what was read from their civil ID photo on My profile and either confirms it or enters their own values, and a confirm goes through the same rules as typing them (Q15-1 part two, S5, PD-24; risk R3).\n\nYou are working in the StudentHub platform monorepo at the bound head, which includes SHU-467, SHU-480 of the cards this one waits for. Dependencies are installed and there is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.\n\nThis card runs in lane 1 of the box (organizations and profile/people), beside other lanes that change other packages at the same time, and beside other lane 1 cards that edit the same shared files. Rules that keep them apart:\n- Migrations: this card adds none. Do not edit package.json, the lockfile or any list of test files; a new test under a package's test/ folder runs by itself.\n- Shared files (apps/gateway/src/index.ts, apps/gateway/src/login-runtime.ts, apps/gateway/src/web-ui.ts, packages/db/src/index.ts, packages/profile/src/index.ts, packages/profile/src/types.ts, packages/profile/src/profile.ts): add your lines as one contiguous block next to the most similar existing block and change no other line, so another card merges beside yours without a conflict.\n- Earlier cards of this queue may have landed before you: re-read any line or file this brief names, and where it names a file created by another card, read it at the bound head and say so in your final message if its name or shape differs.\n\nHow this brief is written. It states what must be true and what must never happen. It does not prescribe the code: choose the shape, the queries and the helpers yourself, following the patterns of the files it names. When a guard and the code you would naturally write disagree, the guard wins; when the brief and the code at the bound head disagree, say so in your final message rather than forcing either.\n\nWhy. This is the person-facing half of Q15-1, split from SHU-467 so each card converges. The contract: 'the result is stored as a suggestion on the person's civil ID (We read ... is this right?) that the person confirms or corrects on My profile; either way the civil ID is marked needs review'. Legacy had no such step: Candidate::validateCivilID wrote the OCR values straight into candidate_civil_id and candidate_civil_expiry_date and rejected an expired date as a validation error, so a misread digit silently became the person's civil ID. Decisions taken here (legacy prod is the benchmark, nothing left to Khalid): (a) 'Yes, use these' saves the suggestion through CIV's own service, so the civil ID rules (Kuwait 12 digits, Bahrain 9, unique per country, expiry not before today in Asia/Kuwait with today accepted) apply exactly as when the person types it, and the save sets needs_review as every manual change does; this card adds no rule of its own. (b) The browser never carries the number: the forms hold only the suggestion's id and a server-made submission id, the server opens the sealed number itself. (c) 'Expired' is shown as it was in legacy (an expired card cannot be used): the line says the date read is in the past and offers only 'Enter my own values' and a link to upload a current photo, with no accept button. (d) 'Unreadable' and 'failed' look the same to the person ('We could not read the photo; please type the number and expiry'), because the person cannot act on the difference; pending and running show 'We are reading your photo'. (e) Accepting a suggestion that has only an expiry or only a number saves only what was read and keeps the other value on file (CIV treats a blank number as keep). (f) Dismiss records the answer so the line goes away and the next photo version starts again; it does not change the civil ID. Nothing here re-runs OCR.\n\nRead first:\n- apps/gateway/src/civil-id-http.ts - created by SHU-462: GET/POST /profile/civil-id, the Civil ID row renderer for My profile, the closed reason-to-message table, session cookie and origin handling; re-read it at the bound head and extend its row through its own parameters, do not copy it\n- packages/profile/src/civil-id.ts - created by SHU-462: createCivilId({store, vault, clock}) with readOwn and save, CivilIdVault.open, validateCivilId, validateCivilExpiry; the save's inputs (country, number, expiry, expected revision, submission id) and its refusals\n- packages/profile/src/civil-id-ocr.ts and packages/db/src/postgres-civil-id-ocr-store.ts - created by SHU-467: the current-suggestion read, the explicit open-for-accept method and resolve(suggestionId, principalId, how); re-read their exact names and the suggestion states\n- apps/gateway/src/web-ui.ts - profileDocument (row(), section(), the Civil ID row CIV added, how login.* optional services are read with the session's person id), writeHtml, pageDocument\n- apps/gateway/src/profile-browser-edit-http.ts - how a page reads the session, checks Origin and Sec-Fetch-Site, reads a urlencoded body with a cap and answers 303; mirror it\n- apps/gateway/src/login-runtime.ts - where optional services are built and added to the returned application (the preferences merge); apps/gateway/src/index.ts - the route block order\n- apps/gateway/src/ui/profile-kit.ts and apps/gateway/src/ui/profile-copy.ts - existing classes and the notice helper to reuse; no new CSS rule\n- apps/gateway/test/profile-journey.test.ts and apps/gateway/test/web-ui.test.ts - the 19-row unconfigured page and how My profile is rendered in tests\n\nOutcome:\n- My profile, directly under the Civil ID row, shows one of: 'We read a number ending 1234, expiring 2027-03-01. Is this right?' with two plain forms, 'Yes, use these' (POST /profile/civil-id/suggestion/accept) and 'No, I will enter them myself' (POST /profile/civil-id/suggestion/dismiss); 'The date we read (2020-01-05) has passed. Please upload a current photo or enter your own values.' with only the dismiss form and a link to /profile/documents; 'We are reading your photo' while the job is pending or running; 'We could not read your photo. Please type your civil ID number and expiry.' with a link to /profile/civil-id when the job is unreadable or failed; nothing when there is no suggestion, it was answered, or the feature is not configured. Only the last four digits of a number ever appear. Copy in English and Arabic inside the new module so ui/profile-copy.ts does not change.\n- apps/gateway/src/civil-id-suggestion-http.ts serves the two POST routes (session cookie only, exact Origin, Sec-Fetch-Site not cross-site, urlencoded body under a small cap, only the fields the forms carry) and exports the suggestion line renderer used by web-ui.ts. Accept: reads the person's current suggestion, requires the posted suggestion id to equal it (else 409 page with a link back), opens the sealed number server-side, and calls CIV's save with the suggestion's country, number and expiry, the person's current revision read server-side and a submission id derived from the suggestion id, so a double click saves once. A refusal from CIV is shown in CIV's own plain words (duplicate number: the legacy 'already in use' wording that never names a holder; expired: 'This civil ID has expired'); nothing is saved and the suggestion stays open. Success marks the suggestion accepted and answers 303 to /profile#field-civilId, where the row now says 'Waiting for StudentHub to check'. Dismiss marks it dismissed and answers 303 to /profile/civil-id.\n- The projection stays untouched: the suggestion is read by web-ui.ts through the OCR store's current-suggestion read once per My profile render (one read, passed to the renderer), kept out of the 19 definition rows, and not part of the JSON /profile body.\n\nGuards:\n- The plain number is never in a form field, URL, redirect, response body, log, error or receipt; only the last four digits appear, only on the person's own page. The sealed number is opened only inside the accept handler.\n- A suggestion belongs to the session's person: another person's suggestion id, a suggestion for a superseded photo version, or one already answered is 409 or 404 and changes nothing; the forms name no person.\n- This card adds no civil ID rule, no OCR re-run, no write to the OCR jobs other than resolve, and does not clear needs_review.\n- Same-origin cookie posts only; a Bearer header alone does not authenticate a form post; every refusal page is no-store and shows no number.\n- The unconfigured My profile keeps exactly 19 definition rows and 19 unavailable markers and is byte-identical when the feature is off or there is no suggestion.\n- Shared files (apps/gateway/src/index.ts, login-runtime.ts, web-ui.ts): add one contiguous block next to the most similar existing block and change no other line.\n\nAcceptance. Tests are named with their token first and a space after it; every mutation named below makes its named test fail in the card's mutations script and passes unmutated.\n(1) With a read suggestion (country KW, last four 1234, expiry 2027-03-01, not expired in Asia/Kuwait) the rendered My profile shows the line 'We read a number ending 1234, expiring 2027-03-01. Is this right?' directly under the Civil ID row with exactly the two forms, their actions and the hidden fields asserted; an expired date shows the passed-date line with only the dismiss form; pending and running show the reading line; unreadable and failed show the same type-it-yourself line; no suggestion, an answered one and the feature off render nothing and leave the 19 rows and 19 unavailable markers; the full number appears nowhere in the HTML (OCRP_LINE); (2) Accept saves through CIV's service: after 'Yes, use these' the person's civil ID holds the suggestion's number and expiry, needs_review is set, the page says 'Waiting for StudentHub to check', the suggestion is marked accepted and the line is gone; a number held by another person, an expiry before today in Asia/Kuwait and the Bahrain/Kuwait length rules are each refused with CIV's plain message, nothing saved, the suggestion still open (OCRP_ACCEPT); (3) A double click or browser retry of the same accept form saves once (same derived submission id); a suggestion id that is not the person's current one, one for a replaced photo version, one already answered and another person's id are each refused without saving, and a person cannot answer another person's suggestion whatever the form says (OCRP_STALE); (4) Dismiss marks the suggestion dismissed, changes nothing in the civil ID, answers 303 to /profile/civil-id, and the line does not return for the same photo version but does for a later one (OCRP_DISMISS); (5) Same-origin cookie posts only: no session is the sign-in page 401 with no store call, a cross-site or wrong Origin is 403 before the body is read, a Bearer header alone is refused, an extra or missing field is 400, and every response is no-store (OCRP_ORIGIN); (6) Secrecy: the plain number is absent from every form field, redirect, response body, header and captured log in the accept, refuse, stale and dismiss paths, and the sealed value is opened only in the accept handler (a test greps the gateway sources for the open call) (OCRP_SECRECY); (7) S1: a worker-read suggestion in a test (fake reader, in-memory stores) shows on the rendered My profile as the line above and, after accept, as the masked number with the expiry and the waiting state in CIV's row; S2: My profile makes exactly one suggestion read whatever the number of earlier jobs, proved with a counting fake (OCRP_SHOWN); apps/gateway/test/civil-id-suggestion-mutations.mjs rewrites the compiled civil-id-suggestion-http.js and web-ui.js (needles taken from dist, each binding exactly once, the gateway suite run against the mutated file) with one mutant per item that dies by assertion in its named test: item 1 render the full number, item 1 show the accept form for an expired date, item 2 save without CIV's service, item 3 skip the current-suggestion check, item 3 use a random submission id, item 4 clear needs_review or write the civil ID on dismiss, item 5 skip the Origin check, item 6 put the number in a hidden field, item 7 read the suggestion twice; npm test passes to the end with every existing test and mutation script unchanged; nothing outside the card's paths changes.\n\nStanding lines, held by every lane card: (S1) for every value this card writes or records, say in your final message where it is read and shown to a person, and a test proves it shows there; (S2) no request makes one query or port call per row: a page over many runs, exports or messages costs a fixed number of reads whatever their count, and every new lookup column is indexed.\n\nPrep cards of this lane landed before this card (the gateway route list, the per-domain wiring files and contributions, and the per-domain database index files). Where this brief says apps/gateway/src/index.ts, apps/gateway/src/login-runtime.ts or packages/db/src/index.ts, read: the ROUTES list in apps/gateway/src/routes/index.ts (and routes/context.ts for the shared context type), the wiring file of your domain in apps/gateway/src/wiring/, the contributions in apps/gateway/src/contributions/, and the domain index in packages/db/src/<domain>/index.ts. Put your lines there as one contiguous block, keep the route order of existing entries, and read those files at the bound head: their exact shape was set by the prep cards.\n\nYour paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):\n- apps/gateway/src/civil-id-suggestion-http.ts\n- apps/gateway/test/civil-id-suggestion-http.test.ts\n- apps/gateway/test/civil-id-suggestion-mutations.mjs\n- apps/gateway/src/web-ui.ts\n- apps/gateway/src/routes/index.ts\n- apps/gateway/src/routes/context.ts\n- apps/gateway/src/wiring/context.ts\n- apps/gateway/src/contributions/index.ts\n- apps/gateway/src/wiring/profile.ts\n- apps/gateway/src/contributions/profile.ts\n- packages/db/src/profile/index.ts\n\nOut of scope: Re-running the reader, editing the suggestion before accepting it (the person uses the Civil ID form), staff seeing the suggestion (the staff review card SHU-469 does), the document upload page, expiry gates for work, and any network call, credential, staging or production access.\n\nFinish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox (for example because it opens a network listener), say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed, how each acceptance item is pinned, and answer S1 for each value you write or record.",
+  }),
+  "SHU-458": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance450("SHU-450", "after its pull request failed CI on a Postgres test that processed a message before it was due", recutAcceptance447("SHU-447", "after its build was refused for touching a path outside the card", recutAcceptance444("SHU-444", "after its pull request failed CI on an untyped SQL parameter", recutAcceptance440("SHU-440", "after its pull request failed CI on the db test's migrations import", recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE))))))),
+    brief: SHU458_BRIEF,
+  }),
+  "SHU-459": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance450("SHU-451", "because its lane waited on SHU-450", recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))))))),
+    brief: SHU459_BRIEF,
+  }),
+  "SHU-453": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU453_PATHS,
+    revision_paths: SHU453_PATHS,
+    acceptance: SHU453_ACCEPTANCE,
+    brief: SHU453_BRIEF,
+  }),
+  "SHU-454": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU454_PATHS,
+    revision_paths: SHU454_PATHS,
+    acceptance: SHU454_ACCEPTANCE,
+    brief: SHU454_BRIEF,
+  }),
+  "SHU-455": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU455_PATHS,
+    revision_paths: SHU455_PATHS,
+    acceptance: SHU455_ACCEPTANCE,
+    brief: SHU455_BRIEF,
+  }),
+  "SHU-456": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU456_PATHS,
+    revision_paths: SHU456_PATHS,
+    acceptance: SHU456_ACCEPTANCE,
+    brief: SHU456_BRIEF,
+  }),
+  "SHU-457": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU457_PATHS,
+    revision_paths: SHU457_PATHS,
+    acceptance: SHU457_ACCEPTANCE,
+    brief: SHU457_BRIEF,
   }),
 });
 
