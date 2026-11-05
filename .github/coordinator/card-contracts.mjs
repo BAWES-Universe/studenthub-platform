@@ -4869,6 +4869,17 @@ const SHU448_BRIEF = recut444(SHU445_BRIEF);
 for (const [brief, id] of [[SHU447_BRIEF, "SHU-447"], [SHU448_BRIEF, "SHU-448"]]) {
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
+const RECUT_447 = Object.freeze({ "SHU-447": "SHU-450", "SHU-448": "SHU-451" });
+const recut447 = (text) => text.replace(/\bSHU-(447|448)\b/g, (id) => RECUT_447[id]);
+const recutAcceptance447 = (from, reason, text) => `${recut447(text)} ${RECUT_447[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+const SHU450_GUARD_FROM = SHU447_GUARD_TO.split("\n").at(-1);
+const SHU450_GUARD_TO = `${SHU450_GUARD_FROM}
+- The result changes only the paths this card lists, as regular files. Leave every other file as it is on main: package manifests and lockfiles, other packages' tests, shared test helpers, other migrations and any list of migration names. Add no symlinks. When a listed change seems to need another file, find a way inside the listed paths, because a result that touches anything else is refused before review.`;
+const SHU450_BRIEF = replaceOnce(recut447(SHU447_BRIEF), SHU450_GUARD_FROM, SHU450_GUARD_TO, "SHU450_BRIEF guard");
+const SHU451_BRIEF = recut447(SHU448_BRIEF);
+for (const [brief, id] of [[SHU450_BRIEF, "SHU-450"], [SHU451_BRIEF, "SHU-451"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
 
 export const CARD_CONTRACTS = Object.freeze({
   "SHU-197": Object.freeze({
@@ -5621,6 +5632,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))))),
     brief: SHU448_BRIEF,
+  }),
+  "SHU-450": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU189_PATHS,
+    revision_paths: SHU189_PATHS,
+    acceptance: recutAcceptance447("SHU-447", "after its build was refused for touching a path outside the card", recutAcceptance444("SHU-444", "after its pull request failed CI on an untyped SQL parameter", recutAcceptance440("SHU-440", "after its pull request failed CI on the db test's migrations import", recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE)))))),
+    brief: SHU450_BRIEF,
+  }),
+  "SHU-451": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)))))),
+    brief: SHU451_BRIEF,
   }),
 });
 
