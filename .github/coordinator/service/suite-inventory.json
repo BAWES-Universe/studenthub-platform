@@ -2232,6 +2232,9 @@
     "M15 W2: a card worker arms, ticks and reverts through its own supervisor and coordinator; worker 1's units are unchanged",
     "M15 W2: with more than one worker max_dispatch counts only the receipts of the worker's own card; one worker counts them all",
     "M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start",
+    "Velocity A: with two workers a start selects and claims under the selection lock, waits for a live holder, takes over a dead one's, and one worker never takes it",
+    "Velocity A: another worker's live repair intent counts as running until its round exists",
+    "Velocity A: a start whose installed revision moved after it claimed its card gives the card back and runs nothing",
     "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
     "SHU-312 Q6: a new install resumes the queue after the cards that already landed",
     "SHU-312 Q7: a queue is never run by hand, and plan shows the next card and every queued card's dry run",
@@ -4441,6 +4444,7 @@
     "SHU-71 hold cause: a run that ended without a result carries a code, never free text",
     "SHU-71 hold cause: the supervisor reports its own hold code in status",
     "Velocity B: a worker that exits without a result names why, as a fixed code only",
+    "Velocity B: the deadline is off once the worker exits, so the drain keeps its code",
     "Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else",
     "Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised",
     "Velocity: a board read answered with a 5xx is asked again twice at most, and a write never",
@@ -4724,6 +4728,10 @@
     "SHU-86 mutation M311 wait for ever on a card queued after a stopped card",
     "SHU-86 mutation M312 start a due repair beside a running card that shares its files",
     "SHU-86 mutation M313 leave a live repair out of the running cards",
+    "SHU-86 mutation M314 select and claim without the selection lock",
+    "SHU-86 mutation M315 take over the selection lock of a live holder",
+    "SHU-86 mutation M316 leave another worker's live repair intent out of the running cards",
+    "SHU-86 mutation M317 run a card claimed at a revision that has since moved",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -4775,6 +4783,8 @@
     "SHU-322 mutation M56 install without the host-wide install lock",
     "SHU-322 mutation M57 keep the install lock once the install ended",
     "SHU-322 mutation M58 tell an install lock whose holder died from a live one",
+    "SHU-322 mutation M59 carry a claim with no outcome",
+    "SHU-322 mutation M60 ask a carried card to prepare",
     "Disk D1: a finished run clone older than two days goes; a recent one stays",
     "Disk D2: a clone whose git directory changed recently stays, however old the directory itself",
     "Disk D3: a clone whose preparation lock is held stays, in any worker's state folder",
@@ -19086,6 +19096,18 @@
       "capabilities": []
     },
     {
+      "name": "Velocity A: with two workers a start selects and claims under the selection lock, waits for a live holder, takes over a dead one's, and one worker never takes it",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity A: another worker's live repair intent counts as running until its round exists",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity A: a start whose installed revision moved after it claimed its card gives the card back and runs nothing",
+      "capabilities": []
+    },
+    {
       "name": "SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land",
       "capabilities": []
     },
@@ -32703,6 +32725,10 @@
       "capabilities": []
     },
     {
+      "name": "Velocity B: the deadline is off once the worker exits, so the drain keeps its code",
+      "capabilities": []
+    },
+    {
       "name": "Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else",
       "capabilities": []
     },
@@ -34175,6 +34201,22 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M314 select and claim without the selection lock",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M315 take over the selection lock of a live holder",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M316 leave another worker's live repair intent out of the running cards",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M317 run a card claimed at a revision that has since moved",
+      "capabilities": []
+    },
+    {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
       "capabilities": [
         {
@@ -34400,6 +34442,14 @@
     },
     {
       "name": "SHU-322 mutation M58 tell an install lock whose holder died from a live one",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M59 carry a claim with no outcome",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-322 mutation M60 ask a carried card to prepare",
       "capabilities": []
     },
     {

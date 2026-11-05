@@ -208,6 +208,21 @@ test("Velocity B: a worker that exits without a result names why, as a fixed cod
   assert.match(worker, /process\.stderr\.write\(`\$\{childFailureCode\(error\)\}\\n`, \(\) => process\.exit\(1\)\);/);
 });
 
+test("Velocity B: the deadline is off once the worker exits, so the drain keeps its code", async t => {
+  const f = setup(t, { deadlineMs: 40 });
+  let order = null;
+  await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
+  await f.drain();
+  f.children[0].stderr.readable = true;
+  f.children[0].emit("exit", 1);
+  // The deadline would have fired here, inside the drain window.
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  f.children[0].stderr.emit("data", "CHILD_ADAPTER_LAUNCH_THREW\n");
+  f.children[0].stderr.emit("end");
+  const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
+  assert.equal(status.detail_code, "WORKER_EXIT_CHILD_ADAPTER_LAUNCH_THREW");
+});
+
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
   const f = setup(t); await f.tick(); await f.drain();
   // Also exercise a review transport directly: input head matches but a forged

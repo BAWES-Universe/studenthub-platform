@@ -673,6 +673,9 @@ export class DurableSupervisor {
     // exit can be seen before that line is read, so the tail is read once
     // stderr has ended, for at most WORKER_EXIT_DRAIN_MS.
     child.once?.("exit", (code, signal) => {
+      // The worker has exited, so its deadline no longer applies: a deadline
+      // firing inside the drain window would drop the code it is waiting for.
+      if (deadline !== null) { clearTimeout(deadline); deadline = null; }
       const done = () => finish(code === 0 ? "completed" : "failed", {
         exit_code: code,
         signal: signal ?? null,

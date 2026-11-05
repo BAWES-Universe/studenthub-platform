@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   planRun, onBase, nextCard, tickOutcome, TICK_HOLD_MAX_SLEEP_MS, tick, publishClaim, replaceClaim, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
-  autoRun, autoClaim, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
+  autoRun, autoClaim, selectLock, repairIntent, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   autoServiceName, autoTimerName,
   reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
@@ -3510,6 +3510,76 @@ test("M15 W1: a worker that loses the claim race for a card selects again and ru
   const alone = await attempt(() => autoRun({ io: one.io, paths: PATHS }));
   assert.equal(alone.skipped, "ALREADY_RAN");
   assert.equal(one.files.has(autoClaim(PATHS, REV, "SHU-305")), false, "one worker never selects again");
+});
+
+test("Velocity A: with two workers a start selects and claims under the selection lock, waits for a live holder, takes over a dead one's, and one worker never takes it", async () => {
+  const two = apart({ ...queueConfig(), workers: { max: 2 } });
+  const quick = { ...CARD_RUN_LIMITS, selectWaitMs: 3, selectPollMs: 1 };
+  // The lock is held while the claim is published, and released after.
+  const held = fakeHost({ config: two, branchHead: "", onTick: passFor("SHU-301") });
+  const write = held.fs.writeFileSync;
+  let lockedAtClaim = null;
+  held.io = { ...held.io, fs: { ...held.fs, writeFileSync: (file, text, options = {}) => {
+    if (file === autoClaim(PATHS, REV, "SHU-301") && lockedAtClaim === null) lockedAtClaim = held.files.has(selectLock(PATHS));
+    return write(file, text, options);
+  } } };
+  const ran = await attempt(() => autoRun({ io: held.io, paths: PATHS }));
+  assert.equal(ran.card, "SHU-301", JSON.stringify(ran));
+  assert.equal(lockedAtClaim, true, "the claim is published under the selection lock");
+  assert.equal(held.files.has(selectLock(PATHS)), false, "and the lock is released");
+  // Another worker that is still selecting: this start waits, then gives up its start without a claim.
+  const busy = fakeHost({ config: two, branchHead: "" });
+  busy.files.set(selectLock(PATHS), { text: `${JSON.stringify({ worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  busy.files.set("/proc/4343", { text: "", mode: 0o555, uid: 0, gid: 0 });
+  const waited = await attempt(() => autoRun({ io: busy.io, paths: PATHS, limits: quick }));
+  assert.equal(waited.skipped, "QUEUE_BUSY", JSON.stringify(waited));
+  assert.equal(busy.files.has(autoClaim(PATHS, REV, "SHU-301")), false, "nothing was claimed");
+  assert.equal(JSON.parse(busy.files.get(selectLock(PATHS)).text).pid, 4343, "the live holder's lock is untouched");
+  // A holder that is gone: its lock is taken over.
+  busy.files.delete("/proc/4343");
+  const over = await attempt(() => autoRun({ io: busy.io, paths: PATHS, limits: quick }));
+  assert.equal(over.skipped, undefined, JSON.stringify(over));
+  assert.equal(busy.files.has(selectLock(PATHS)), false);
+  // One worker never takes the lock.
+  const one = fakeHost({ config: queueConfig(), branchHead: "", onTick: passFor("SHU-301") });
+  one.files.set(selectLock(PATHS), { text: `${JSON.stringify({ worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  one.files.set("/proc/4343", { text: "", mode: 0o555, uid: 0, gid: 0 });
+  assert.equal((await attempt(() => autoRun({ io: one.io, paths: PATHS, limits: quick }))).card, "SHU-301");
+});
+
+test("Velocity A: another worker's live repair intent counts as running until its round exists", async () => {
+  const two = { ...queueConfig(), workers: { max: 2 } };
+  const host = fakeHost({ config: two, branchHead: "" });
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  host.files.set(repairIntent(PATHS, REV, "SHU-301"), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, intent: "repair", worker: 1, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  host.files.set("/proc/4343", { text: "", mode: 0o555, uid: 0, gid: 0 });
+  assert.equal((await nextCard(host.io, w2, two, REV)).skipped, "QUEUE_BUSY", "a card sharing its files waits");
+  assert.deepEqual(await nextCard(host.io, w2, apart(two), REV), { id: "SHU-305" }, "no shared file: it runs beside it");
+  host.files.delete("/proc/4343");
+  assert.deepEqual(await nextCard(host.io, w2, two, REV), { id: "SHU-301" }, "an intent whose process is gone holds nothing");
+});
+
+test("Velocity A: a start whose installed revision moved after it claimed its card gives the card back and runs nothing", async () => {
+  const two = apart({ ...queueConfig(), workers: { max: 2 } });
+  const host = fakeHost({ config: two, branchHead: "", onTick: passFor("SHU-301") });
+  const write = host.fs.writeFileSync;
+  let moved = false;
+  host.io = { ...host.io, fs: { ...host.fs, writeFileSync: (file, text, options = {}) => {
+    const out = write(file, text, options);
+    // Another worker installs main between this start's claim and its run.
+    if (!moved && file.startsWith(autoClaim(PATHS, REV, "SHU-301"))) {
+      moved = true;
+      host.head = HEAD; host.main = HEAD;
+      host.files.get(PATHS.receipt).text = JSON.stringify({ version: 1, revision: HEAD, state: "VERIFIED", effects: [] });
+    }
+    return out;
+  } } };
+  const result = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.equal(result.skipped, "HOST_BUSY", JSON.stringify(result));
+  assert.match(result.reason, new RegExp(`moved from ${REV} to ${HEAD}`));
+  assert.equal(host.files.has(autoClaim(PATHS, REV, "SHU-301")), false, "the old revision's claim is given back");
+  assert.equal(host.ticks ?? 0, 0, "nothing ran");
 });
 
 test("SHU-312 Q5: the timer runs the queue in order, one card per start, and stops at a card that did not land", async () => {

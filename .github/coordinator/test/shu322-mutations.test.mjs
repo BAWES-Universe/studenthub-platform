@@ -141,7 +141,7 @@ const CASES = [
   },
   {
     name: "M22 skip the plan check",
-    from: '      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope)));',
+    from: '      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope, carried)));',
     to: "      // SHU322-M22",
     pattern: "SHU-322 B14:",
   },
@@ -236,7 +236,7 @@ const CASES = [
   },
   {
     name: "M37 run the code plan check as a queue plan check",
-    from: '      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope)));',
+    from: '      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope, carried)));',
     to: '      run("plan", () => planCheck(io, paths, queue ?? scope)); // M11-M37',
     pattern: "M11 C4:",
   },
@@ -366,6 +366,18 @@ const CASES = [
     from: "  if (/^[1-9]\\d*$/.test(holder) && !io.fs.existsSync(`/proc/${holder}`)) {",
     to: "  if (false) { // M15-W5-M58",
     pattern: "M15 W5: an install lock whose holder died is never taken over",
+  },
+  {
+    name: "M59 carry a claim with no outcome",
+    from: '    if (!Object.hasOwn(claim, "outcome")) continue;',
+    to: "    // Velocity-M59",
+    pattern: "Velocity A3: an install main has ready",
+  },
+  {
+    name: "M60 ask a carried card to prepare",
+    from: "  const refused = queued.find((entry) => !carried.includes(entry?.id) && (",
+    to: "  const refused = queued.find((entry) => (",
+    pattern: "Velocity A3: an install main has ready",
   },
 ];
 

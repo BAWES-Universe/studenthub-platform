@@ -883,8 +883,14 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   assert.match(held.reason, /card run lock held/);
   assert.equal(host.files.has(autoClaim(PATHS, R, PRIOR[0])), false, "no card was claimed");
   assert.equal(host.files.has(installClaim(PATHS, N)), false, "the install is given back for a later start");
-  // Idle: the start installs main and ends there.
+  // Idle: the start installs main and ends there. The stopped card's
+  // preparation is refused at N (its branch moved), and it does not run
+  // again, so the plan check does not ask it to pass.
   host.files.delete(other);
+  const queue = [...PRIOR, ...NEW_IDS];
+  const prepare = { branch: { action: "create" }, card: { action: "move-to-todo" } };
+  host.plan = { id: PRIOR[0], queue, next: { id: PRIOR[0] }, busy: [], prepare,
+    queued: queue.map((id) => ({ id, prepare: id === stopped ? { refused: "CARD_RUN_BRANCH_DIVERGED", reason: "moved" } : prepare })) };
   const out = await autoRun({ io: host.io, paths: PATHS });
   assert.equal(out.outcome, "INSTALLED", JSON.stringify(out));
   assert.deepEqual(out.steps, ["claim", "idle", "merge", "rollback", "install", "verify", "precondition", "carry", "plan"]);
@@ -897,6 +903,10 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   assert.deepEqual(carryClaims(host.io, PATHS, R, N, PRIOR), []);
   assert.equal(host.files.get(autoClaim(PATHS, N, PRIOR[0])).text, "{\"card\":\"kept\"}");
   assert.equal(revisionClaim(PATHS, R, "SHU-1"), autoClaim(PATHS, R, "SHU-1"), "the install names claims as card-run does");
+  // A claim with no outcome is a start that never ran: it is not carried.
+  host.put(autoClaim(PATHS, R, PRIOR[1]), JSON.stringify({ card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 4242 }), { mode: 0o600 });
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [PRIOR[1]]), []);
+  assert.equal(host.files.has(autoClaim(PATHS, N, PRIOR[1])), false);
 });
 
 test("M11 C7: every module the root install tools import, at any depth, is owner-only or installable", () => {

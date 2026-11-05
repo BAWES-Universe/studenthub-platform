@@ -570,6 +570,10 @@ export function carryClaims(io, paths, revision, main, queue) {
     const text = String(io.fs.readFileSync(from, "utf8"));
     const claim = parse(text);
     if (!plainObject(claim)) throw new Error(`the claim of ${id} at ${revision} cannot be read`);
+    // A claim with no outcome is a start that never ran (the host was idle
+    // for this install, so no run holds it): it is not carried, and the card
+    // runs at N as a first run.
+    if (!Object.hasOwn(claim, "outcome")) continue;
     io.fs.writeFileSync(to, `${JSON.stringify({ ...claim, carried_from: revision })}\n`, { flag: "wx", mode: 0o600 });
     carried.push(id);
   }
@@ -578,14 +582,17 @@ export function carryClaims(io, paths, revision, main, queue) {
 
 // M11: a code install leaves the queue as it was. N's own card-run.mjs must
 // still plan: exit 0, read the same queue, and refuse no queued preparation.
-function codePlanCheck(io, paths, scope) {
+// Velocity A3: an appended install's carried cards ran at R and do not run
+// again at N, so their preparation (a stopped card's moved branch or state)
+// is not asked to pass.
+function codePlanCheck(io, paths, scope, carried = []) {
   const node = io.nodePath?.() ?? process.execPath;
   const result = io.exec(node, [path.join(paths.checkout, CARD_RUN), "plan"]);
   const plan = parse(String(result.stdout ?? ""));
   if (result.status !== 0 || !plainObject(plan)) throw new Error(`the plan check exited ${result.status}`);
   if (!isDeepStrictEqual(plan.queue, scope)) throw new Error(`the plan check reads queue ${JSON.stringify(plan.queue ?? null)}, not ${scope.join(", ")}`);
   const queued = Array.isArray(plan.queued) ? plan.queued : [];
-  const refused = queued.find((entry) => !plainObject(entry?.prepare) || entry.prepare.refused);
+  const refused = queued.find((entry) => !carried.includes(entry?.id) && (!plainObject(entry?.prepare) || entry.prepare.refused));
   if (refused) throw new Error(`a dry-run preparation is refused: ${plainReason(refused.prepare?.reason ?? refused.prepare?.refused ?? "no preparation")}`);
 }
 
@@ -792,8 +799,9 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
       }
       // Velocity A3: an appended queue's cards that ran at R and did not land
       // are as they were at N, and its next card is whichever runs first.
-      if (append) run("carry", () => carryClaims(io, paths, revision, main, queue));
-      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope)));
+      let carried = [];
+      if (append) run("carry", () => { carried = carryClaims(io, paths, revision, main, queue); });
+      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope, carried)));
       result = { ...base, ok: true, outcome: "INSTALLED", queue, ...(code ? { code, approval } : {}), steps: [...steps],
         reason: queue ? `the next timer start runs ${queue[0]}` : "the next timer start runs the installed code" };
     } catch (error) {
