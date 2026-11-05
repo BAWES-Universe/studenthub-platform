@@ -57,7 +57,7 @@ const CASES = [
   },
   {
     name: "M8 drop the landed check",
-    from: "  for (const id of ids) if (landed.has(id)) return no(",
+    from: "  for (const id of ids) if (landed.has(id) && !(append && prior.includes(id))) return no(",
     to: "  for (const id of ids) if (false) /* SHU322-M8 */ return no(",
     pattern: "SHU-322 B4:",
   },
@@ -141,7 +141,7 @@ const CASES = [
   },
   {
     name: "M22 skip the plan check",
-    from: '      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));',
+    from: '      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope)));',
     to: "      // SHU322-M22",
     pattern: "SHU-322 B14:",
   },
@@ -236,13 +236,13 @@ const CASES = [
   },
   {
     name: "M37 run the code plan check as a queue plan check",
-    from: '      run("plan", () => (queue ? planCheck(io, paths, queue) : codePlanCheck(io, paths, scope)));',
+    from: '      run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope)));',
     to: '      run("plan", () => planCheck(io, paths, queue ?? scope)); // M11-M37',
     pattern: "M11 C4:",
   },
   {
     name: "M38 accept a re-cut queue whose first card is an installed lane",
-    from: "  if (!added.includes(ids[0])) return no(",
+    from: "  if (!append && !added.includes(ids[0])) return no(",
     to: "  if (false) /* M16-M38 */ return no(",
     pattern: "M16 Q1:",
   },

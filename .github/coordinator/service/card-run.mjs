@@ -1575,8 +1575,9 @@ async function drainForInstall({ io, paths, limits, config, revision, skip }) {
   } catch {
     return null;
   }
-  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });
-  if (install.result) return install.result;
+  const ended = install.result;
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(ended?.outcome)) installRefusedStatus({ io, paths, config, result: ended });
+  if (ended) return ended;
   if (install.paused) return skip("PAUSED", install.reason);
   if (install.skipped === "INSTALL_HOST_BUSY") return skip("INSTALL_PENDING", `main's install waits for the host to be idle: ${install.reason}`);
   return null;
