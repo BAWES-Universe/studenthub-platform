@@ -4891,6 +4891,28 @@ const SHU459_BRIEF = recut450(SHU451_BRIEF);
 for (const [brief, id] of [[SHU458_BRIEF, "SHU-458"], [SHU459_BRIEF, "SHU-459"]]) {
   if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
 }
+// SHU-458's build was refused for a path outside the card: registering the
+// email_delivery job name touches the other places main types job names (the
+// job runs store, the telemetry journeys and the job tests). The re-cut lists
+// those files; its contract and the due-time guard are unchanged.
+const RECUT_458 = Object.freeze({ "SHU-458": "SHU-489", "SHU-459": "SHU-490" });
+const recut458 = (text) => text.replace(/\bSHU-(458|459)\b/g, (id) => RECUT_458[id]);
+const recutAcceptance458 = (from, reason, text) => `${recut458(text)} ${RECUT_458[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+export const SHU489_PATHS = Object.freeze([
+  ...SHU189_PATHS,
+  "packages/db/src/postgres-job-runs-store.ts",
+  "packages/observability/src/schema.ts",
+  "packages/observability/test/jobs.test.ts",
+  "apps/gateway/test/admin-jobs.test.ts",
+]);
+const SHU489_GUARD_FROM = SHU458_GUARD_TO.split("\n").at(-1);
+const SHU489_GUARD_TO = `${SHU489_GUARD_FROM}
+- The new job name is typed in more places than jobs.ts: the JobName type in packages/db/src/postgres-job-runs-store.ts, the JOURNEYS list in packages/observability/src/schema.ts, and the job tests in packages/observability/test/jobs.test.ts and apps/gateway/test/admin-jobs.test.ts. These four files are in your paths, so keep them consistent with email_delivery there rather than working around them; change nothing else in them.`;
+const SHU489_BRIEF = replaceOnce(recut458(SHU458_BRIEF), SHU489_GUARD_FROM, SHU489_GUARD_TO, "SHU489_BRIEF guard");
+const SHU490_BRIEF = recut458(SHU459_BRIEF);
+for (const [brief, id] of [[SHU489_BRIEF, "SHU-489"], [SHU490_BRIEF, "SHU-490"]]) {
+  if (!brief.startsWith(`Card ${id}:`)) throw new Error(`the re-cut brief for ${id} must name its own card`);
+}
 
 // Lane 4, Access (contracts/access.md, queue 17: A1 to A5). The access lane owns
 // migrations 0400 to 0449 and the new package packages/access. It changes who
@@ -6108,6 +6130,20 @@ export const CARD_CONTRACTS = Object.freeze({
     revision_paths: SHU188_PATHS,
     acceptance: recutAcceptance450("SHU-451", "because its lane waited on SHU-450", recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE))))))),
     brief: SHU459_BRIEF,
+  }),
+  "SHU-489": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU489_PATHS,
+    revision_paths: SHU489_PATHS,
+    acceptance: recutAcceptance458("SHU-458", "after its build was refused for touching the job-name files outside the card", recutAcceptance450("SHU-450", "after its pull request failed CI on a Postgres test that processed a message before it was due", recutAcceptance447("SHU-447", "after its build was refused for touching a path outside the card", recutAcceptance444("SHU-444", "after its pull request failed CI on an untyped SQL parameter", recutAcceptance440("SHU-440", "after its pull request failed CI on the db test's migrations import", recutAcceptance432("SHU-432", "after SHU-196, which its lane waited on, landed", recutAcceptance425("SHU-426", recutAcceptance("SHU-189", SHU189_ACCEPTANCE)))))))),
+    brief: SHU489_BRIEF,
+  }),
+  "SHU-490": Object.freeze({
+    workspace_mode: "repo",
+    initial_build_paths: SHU188_PATHS,
+    revision_paths: SHU188_PATHS,
+    acceptance: recutAcceptance458("SHU-459", "because its lane waited on SHU-458", recutAcceptance450("SHU-451", "because its lane waited on SHU-450", recutAcceptance447("SHU-448", "because its lane waited on SHU-447", recutAcceptance444("SHU-445", "because its lane waited on SHU-444", recutAcceptance440("SHU-441", "because its lane waited on SHU-440", recutAcceptance432("SHU-434", "because its lane waited on SHU-432", recutAcceptance425("SHU-428", recutAcceptance("SHU-188", SHU188_ACCEPTANCE)))))))),
+    brief: SHU490_BRIEF,
   }),
   "SHU-453": Object.freeze({
     workspace_mode: "repo",
