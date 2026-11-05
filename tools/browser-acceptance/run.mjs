@@ -22,7 +22,7 @@ const names = [
   'documents-session-missing', 'documents-session-revocation', 'documents-session-expiry',
   'documents-unavailable-en', 'documents-unavailable-ar', 'documents-person-isolation',
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `language-review-confirm-reload-${language}-${width}`)),
-  ...['en','ar'].flatMap(language => ['cancel-history','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
+  ...['en','ar'].flatMap(language => ['cancel-history-resubmission-known-gap','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
   ...['en','ar'].flatMap(language => ['missing-preview','revoked-confirm','expired-confirm'].map(state => `language-session-${state}-${language}`)),
 ];
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
@@ -279,8 +279,15 @@ async function run(name, action) {
 }
 async function report() {
   await mkdir(output,{recursive:true});
+  const languageCases=evidence.cases.filter(c=>c.name.startsWith('language-'));
+  evidence.languageAcceptance={status:languageCases.every(c=>c.status==='PASS')?'ACCEPTED_EXCEPT_HISTORY_SAFE_REVIEW':'NOT_ESTABLISHED',
+    historySafeReview:'NOT_ACCEPTED',knownGap:'Native Cancel → Back can show Chromium Confirm Form Resubmission / ERR_CACHE_MISS. The two named known-gap cases characterize this defect, not history-safe Review acceptance.'};
   await writeFile(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
   const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.disclosureScreenshot ? ` ([expanded disclosure](${c.disclosureScreenshot}))` : ''}${c.notes ? ` — ${c.notes}` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
+  lines.push('',evidence.languageAcceptance.status==='ACCEPTED_EXCEPT_HISTORY_SAFE_REVIEW'
+    ? 'Language flow accepted except history-safe Review. This is not full language acceptance.'
+    : 'Language acceptance has not been established. Even a passing run accepts only the language flow except history-safe Review, never full language acceptance.',
+    `Known gap: ${evidence.languageAcceptance.knownGap}`);
   if(evidence.blocker) lines.push('',`Blocker: ${evidence.blocker}`);
   await writeFile(path.join(output,'evidence.md'),lines.join('\n')+'\n');
 }
@@ -653,26 +660,35 @@ try {
     });
   }
   for(const language of ['en','ar']) {
-    await run(`language-cancel-history-${language}`,async()=>{
+    await run(`language-cancel-history-resubmission-known-gap-${language}`,async()=>{
+      const name=`language-cancel-history-resubmission-known-gap-${language}`;
+      const record=evidence.cases.find(c=>c.name===name);
       const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
       await languagePreview(page,language);
       await submit(page,page.getByRole('link',{name:languageCopy[language].cancel,exact:true}));
       await visible(page.locator('#profile-heading')); await languageLocale(page,language);
       assert.deepEqual(await fixture.inspectLanguage(actor),before,'Cancel does not persist preference');
-      // Native POST history can expose a Chromium resubmission interstitial.
-      // Report that as a state-specific failure, never replace it with a GET.
+      // Characterize the agreed known gap, never count a generic navigation
+      // failure as success or replace native history with a fabricated GET.
+      let cacheMiss=false;
       try { await page.goBack({waitUntil:'load'}); }
-      catch {
-        evidence.cases.find(c=>c.name===`language-cancel-history-${language}`).screenshot=await screenshot(page,`language-cancel-history-${language}-back-state`).catch(()=>undefined);
-        assert.fail('Cancel Back encountered native POST-history navigation failure or resubmission interstitial');
-      }
-      evidence.cases.find(c=>c.name===`language-cancel-history-${language}`).screenshot=await screenshot(page,`language-cancel-history-${language}-back-state`);
-      check(await page.locator(languageConfirm).isVisible(),'Cancel Back did not restore Review; possible native POST-history interstitial');
-      await languageReview(page,language);
-      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Back does not persist preference');
-      await page.goForward(); await visible(page.locator('#profile-heading'));
-      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Forward does not persist preference');
-      return {notes:'Native Cancel, Back and Forward exercised without navigation substitution or confirmation submission.'};
+      catch(error) { cacheMiss=/\bnet::ERR_CACHE_MISS\b/.test(String(error?.message)); }
+      record.screenshot=await screenshot(page,`${name}-back-state`);
+      check(cacheMiss,'Known history gap requires exact native ERR_CACHE_MISS, not another navigation failure');
+      await page.waitForFunction(()=>document.body?.innerText.includes('ERR_CACHE_MISS') && document.body.innerText.includes('Confirm Form Resubmission'),{},{timeout:5000});
+      const resubmissionVisible=await page.evaluate(()=>document.body?.innerText.includes('ERR_CACHE_MISS') && document.body.innerText.includes('Confirm Form Resubmission'));
+      record.screenshot=await screenshot(page,`${name}-back-state`);
+      check(resubmissionVisible,'Native error page must show Confirm Form Resubmission and ERR_CACHE_MISS');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Back interstitial does not persist preference');
+      const forward=await page.goForward({waitUntil:'load'});
+      check(forward===null || forward.status()===200,'Native Forward returns profile successfully');
+      await visible(page.locator('#profile-heading')); await languageLocale(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Forward does not persist preference');
+      assert.equal((await page.reload()).status(),200,'Profile reload after native Forward succeeds');
+      await languageProfile(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Profile reload after history gap does not persist preference');
+      return {knownGap:'history-safe-review',nativeError:'ERR_CACHE_MISS',interstitialDom:'verified',durableWrites:0,durableReceipts:0,
+        notes:'KNOWN GAP: native Cancel → Back shows Chromium Confirm Form Resubmission / ERR_CACHE_MISS. Actual Forward and profile reload recover without writes. This characterizes the defect; history-safe Review remains unaccepted.'};
     });
     await run(`language-stale-two-tabs-${language}`,async()=>{
       const {actor,context,page}=await subject({language});
