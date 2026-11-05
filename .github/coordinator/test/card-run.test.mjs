@@ -3704,6 +3704,18 @@ test("SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pu
   }
 });
 
+test("Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one", async () => {
+  const NEW_HEAD = "9".repeat(40);
+  const host = reviewHost([queuePull(241, { head: NEW_HEAD }), queuePull(245)]);
+  // #241 had a head reviewed at this revision already; #245 had none.
+  host.files.set(reviewClaim(PATHS, 241, "7".repeat(40)), { text: "{}", mode: 0o600, uid: 0, gid: 0 });
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.deepEqual(run.review, { pr: 245, head: PR_HEAD, base: PR_BASE }, JSON.stringify(run));
+  // Then #241's new head, as both have one review now: the lower number goes first.
+  const next = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.deepEqual(next.review, { pr: 241, head: NEW_HEAD, base: PR_BASE }, JSON.stringify(next));
+});
+
 test("SHU-321 R2: a fork, a draft, a non-main base, a contracts file not edited in place or an extra path is never reviewed", async () => {
   const files = (edit) => { const list = queueFiles(); edit(list); return list; };
   for (const [label, pull] of [
@@ -6230,6 +6242,42 @@ test("M15 W5: timer-install puts each card worker's timer on the host with its s
   assert.deepEqual(await attempt(() => removeTimer(host.io, PATHS)), { removed: true });
   for (const name of [AUTO_SERVICE, AUTO_TIMER, "shu-card-run-w2.service", "shu-card-run-w2.timer"]) assert.equal(host.files.has(unit(name)), false, name);
   assert.ok(host.calls.includes("systemctl disable --now shu-card-run-w2.timer"));
+});
+
+test("Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised", async () => {
+  const MODULE = "/srv/shu/studenthub-platform/.github/coordinator/service/card-run.mjs";
+  const unit = (name) => `${PATHS.unitDir}/${name}`;
+  assert.deepEqual(parseArgs(["timer-install", "--workers", "4"]), { command: "timer-install", review: null, provision: 4 });
+  for (const bad of [["timer-install", "--workers"], ["timer-install", "--workers", "0"], ["timer-install", "--workers", "9"], ["timer-install", "--workers", "04"],
+    ["timer-install", "--workers", "2", "--workers", "3"], ["timer-install", "--worker", "2"]]) {
+    assert.throws(() => parseArgs(bad), { code: "CARD_RUN_USAGE" }, bad.join(" "));
+  }
+  for (const provision of [0, 9, 2.5]) {
+    const host = await workersHost();
+    assert.equal((await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE, provision }))).thrown, "CARD_RUN_USAGE", String(provision));
+  }
+  // workers.max 2 on the host, four workers provisioned.
+  const host = await workersHost();
+  const installed = await attempt(() => installTimer(host.io, PATHS, { node: "/usr/bin/node", module: MODULE, provision: 4 }));
+  assert.equal(installed.installed, true, JSON.stringify(installed));
+  assert.equal(installed.workers, 4);
+  for (const worker of [2, 3, 4]) {
+    assert.match(host.files.get(unit(`shu-card-run-w${worker}.service`)).text, new RegExp(`^ExecStart=/usr/bin/node \\S+card-run\\.mjs auto --worker ${worker}$`, "m"));
+    assert.ok(host.calls.includes(`systemctl enable --now shu-card-run-w${worker}.timer`), String(worker));
+  }
+  assert.equal(host.files.has(unit("shu-card-run-w5.timer")), false);
+  // Worker 3 is on the host but off by config: it skips and touches nothing.
+  host.calls.length = 0;
+  const off = await main(["auto", "--worker", "3"], host.io, PATHS);
+  assert.equal(off.output.skipped, "NOT_READY");
+  assert.match(off.output.reason, /card worker 3 is off: workers\.max is 2/);
+  assert.equal(host.calls.length, 0);
+  // A provision below workers.max never takes workers off.
+  const low = await workersHost();
+  assert.equal((await attempt(() => installTimer(low.io, PATHS, { node: "/usr/bin/node", module: MODULE, provision: 1 }))).workers, 2);
+  // timer-remove takes every provisioned worker off.
+  assert.deepEqual(await attempt(() => removeTimer(host.io, PATHS)), { removed: true });
+  for (const worker of [2, 3, 4]) assert.equal(host.files.has(unit(`shu-card-run-w${worker}.timer`)), false, String(worker));
 });
 
 test("M15 W5: auto --worker N runs as card worker N, and a worker the config turns off skips", async () => {

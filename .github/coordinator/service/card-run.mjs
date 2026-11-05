@@ -1246,6 +1246,14 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
     }
     if (done) return afterQueueDone({ io, paths, limits, config, revision, done, skip });
     if (interrupted) return repairInterrupted({ io, paths, limits, config, revision, next: interrupted, skip });
+    // Velocity A3: an install main has ready goes before a new run: no worker
+    // starts one while it waits, and the first start that finds the host idle
+    // installs it. So a merged queue or code change never waits for the whole
+    // installed queue to finish.
+    if (selection === 1 && cardQueue(config).queue) {
+      const drained = await drainForInstall({ io, paths, limits, config, revision, skip });
+      if (drained) return drained;
+    }
     if (repairNext) return autoRepair({ io, paths, limits, config, revision, next: repairNext, skip });
     claim = autoClaim(paths, revision, plan.id);
     claimedAt = io.now().toISOString();
@@ -1497,11 +1505,15 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
   const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : [])];
-  const listed = open.filter((pull) => listedCandidate(pull, repo, labels)).sort((a, b) => a.number - b.number);
-  for (const pull of listed) {
+  // Velocity A: the pull request reviewed least at this revision goes first,
+  // then the oldest. By number alone, every new head on an older pull request
+  // (each merge of main gives one) went ahead of a newer one for ever.
+  const listed = open.filter((pull) => listedCandidate(pull, repo, labels))
+    .map((pull) => ({ pull, claims: reviewClaims(io, paths, pull.number, revision) }))
+    .sort((a, b) => a.claims.atRevision - b.claims.atRevision || a.pull.number - b.pull.number);
+  for (const { pull, claims } of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
-    const claims = reviewClaims(io, paths, pr, revision);
     if (claims.heads.has(head)) continue;
     if (claims.atRevision >= policy.maxHeadsPerPr) {
       capped.push(pr);
@@ -1548,6 +1560,26 @@ async function afterQueueDone({ io, paths, limits, config, revision, done, skip 
   if (install.paused) return skip("PAUSED", install.reason);
   const review = await autoReview({ io, paths, limits, config, revision, done, skip });
   return install.skipped ? { ...review, install: { skipped: install.skipped, reason: install.reason } } : review;
+}
+
+// Velocity A3: Card B before a card start. An install main has ready that
+// finds the host busy holds this start (INSTALL_PENDING), so the host drains;
+// an idle host installs it and this start ends there, as a done queue's would.
+// Anything else (nothing to install, a read that failed, a refusal already
+// claimed) lets the card start as before.
+async function drainForInstall({ io, paths, limits, config, revision, skip }) {
+  let install;
+  try {
+    install = await selfInstall({ io, paths, limits, config, revision, deps: { busyReasons: hostBusyReasons,
+      cardLanded: async (hostIo, hostPaths, id) => (await cardLanded(hostIo, hostPaths, id, { ...landingReader(hostIo, hostPaths, config, limits), record: true })).landed } });
+  } catch {
+    return null;
+  }
+  if (["NEEDS_OWNER", "INSTALL_RESTORED"].includes(install.result?.outcome)) installRefusedStatus({ io, paths, config, result: install.result });
+  if (install.result) return install.result;
+  if (install.paused) return skip("PAUSED", install.reason);
+  if (install.skipped === "INSTALL_HOST_BUSY") return skip("INSTALL_PENDING", `main's install waits for the host to be idle: ${install.reason}`);
+  return null;
 }
 
 // A refused self-install's finished status: no card, nothing armed, and the
@@ -1658,10 +1690,18 @@ async function notStarted({ io, paths, limits, error, config, result }) {
 // drop-in of each of N's units (worker 1's bytes). Nothing is typed in by a
 // person, and a code self-install, which never touches units, leaves them as
 // they are. Worker 1's units are as before.
-export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE } = {}) {
+//
+// Velocity A2: `timer-install --workers N` puts N workers on the host even when
+// workers.max is lower. A worker past workers.max skips every start
+// (NOT_READY), so raising workers.max later is a config change the box can
+// install itself, with no person at the host.
+export function installTimer(io, paths = CARD_RUN_PATHS, { node, module = CARD_RUN_MODULE, provision = null } = {}) {
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   if (!path.isAbsolute(node ?? "") || !path.isAbsolute(module ?? "")) refuse("CARD_RUN_TIMER", "the node binary and the module need absolute paths");
-  const workers = cardWorkers(readConfig(io, paths));
+  if (provision !== null && (!Number.isInteger(provision) || provision < 1 || provision > MAX_CARD_WORKERS)) {
+    refuse("CARD_RUN_USAGE", `--workers takes N from 1 to ${MAX_CARD_WORKERS}`);
+  }
+  const workers = Math.max(cardWorkers(readConfig(io, paths)), provision ?? 1);
   const all = Array.from({ length: workers }, (_, i) => i + 1);
   const units = all.flatMap((worker) => [[autoServiceName(worker), autoServiceUnit({ node, module, worker })], [autoTimerName(worker), autoTimerUnit(worker)]]);
   for (const [name, text] of units) {
@@ -1834,7 +1874,7 @@ export const defaultIO = Object.freeze({
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!["plan", "run", "auto", "timer-install", "timer-remove"].includes(command)) {
-    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto [--worker N] | timer-install | timer-remove");
+    refuse("CARD_RUN_USAGE", "usage: card-run.mjs plan|run [--review-pr N --review-head SHA --review-base SHA --author-family codex|claude|hermes] | auto [--worker N] | timer-install [--workers N] | timer-remove");
   }
   // M15 W5: a card worker's timer starts `auto --worker N`, N from 2.
   if (command === "auto" && rest.length) {
@@ -1843,6 +1883,14 @@ export function parseArgs(argv) {
       refuse("CARD_RUN_USAGE", `auto takes only --worker N, N from 2 to ${MAX_CARD_WORKERS}`);
     }
     return { command, review: null, worker };
+  }
+  // Velocity A2: timer-install --workers N provisions N workers' units.
+  if (command === "timer-install" && rest.length) {
+    const provision = Number(rest[1]);
+    if (rest.length !== 2 || rest[0] !== "--workers" || !/^[1-9][0-9]*$/.test(rest[1] ?? "") || provision > MAX_CARD_WORKERS) {
+      refuse("CARD_RUN_USAGE", `timer-install takes only --workers N, N from 1 to ${MAX_CARD_WORKERS}`);
+    }
+    return { command, review: null, provision };
   }
   if (!["plan", "run"].includes(command) && rest.length) refuse("CARD_RUN_USAGE", `${command} takes no flags`);
   const flags = {};
@@ -1858,7 +1906,7 @@ export function parseArgs(argv) {
 
 export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
   try {
-    const { command, review, worker = 1 } = parseArgs(argv);
+    const { command, review, worker = 1, provision = null } = parseArgs(argv);
     if (command === "plan") {
       const revision = installedRevision(io, paths);
       const config = readConfig(io, paths);
@@ -1893,7 +1941,7 @@ export async function main(argv, io = defaultIO, paths = CARD_RUN_PATHS) {
       return { code: 0, output: { ...nextPlan, queue: queue.ids, next, busy: busyReasons(io, paths),
         ...(next.id ? { prepare: queued.find((entry) => entry.id === next.id).prepare } : {}), queued } };
     }
-    if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath }) };
+    if (command === "timer-install") return { code: 0, output: installTimer(io, paths, { node: io.nodePath?.() ?? process.execPath, provision }) };
     if (command === "timer-remove") return { code: 0, output: removeTimer(io, paths) };
     if (command === "auto") {
       const result = await autoRun({ io, paths: cardRunPaths(worker, paths) });
