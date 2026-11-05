@@ -29,6 +29,36 @@ import { dirname, join } from "node:path";
 import { validWorkOrder } from "./review-routing.mjs";
 
 export const SUPERVISOR_PROTOCOL_VERSION = "2.0.0";
+// Velocity B: the fixed codes a worker prints as its last stderr line when it
+// exits without a result (supervisor-worker.mjs). Only these are carried, as
+// WORKER_EXIT_<code>; anything else on stderr stays plain WORKER_EXIT, so no
+// text the adapter printed can reach a receipt.
+export const CHILD_FAILURE_CODES = Object.freeze(["CHILD_AUTH_REFUSED", "CHILD_RUNTIME_UNSUPPORTED",
+  "CHILD_COMPLETION_UNRECORDED", "CHILD_ADAPTER_LAUNCH_THREW", "CHILD_ADAPTER_MONITOR_THREW",
+  "SHU251_ENV_CUSTODY", "SHU251_ENV_CROSSED", "SHU71_SUPERVISOR_ENV_REQUIRED", "SHU251_CHILD_FAILED"]);
+// A refused order also names the host policy's clause, CHILD_AUTH_<clause>,
+// when the clause is one of these: the policy's own denials
+// (supervisor-authorization.mjs) and the activation refusals it passes on
+// (activationRefusalCode). Any other clause is plain CHILD_AUTH_REFUSED.
+export const CHILD_AUTH_CLAUSES = Object.freeze(["DISPATCH_SCOPE", "ADAPTER_PAUSED", "EVIDENCE_UNAVAILABLE",
+  "DISPATCH_DISABLED", "TARGET_NOT_ALLOWED", "LANE_REF", "REVIEW_BINDING", "ATTEMPT_SCOPE", "CHECK_FAILED",
+  "ACTIVATION_SPENT", "ACTIVATION_EXPIRED", "ACTIVATION_REFUSED",
+  "ACT_ACTIVATION_REPLAY", "ACT_ENVELOPE_MISMATCH", "ACT_EVIDENCE_UNAVAILABLE", "ACT_FORGED_ENVELOPE",
+  "ACT_ID_OR_EXPIRY_INVALID", "ACT_LANE_CROSS", "ACT_MALFORMED", "ACT_MANUAL_GATE_BYPASS", "ACT_PACKAGE_MALFORMED",
+  "ACT_PARTIAL_ARMING", "ACT_PRIOR_STATE_DRIFT", "ACT_STALE_SEED", "ACT_STALE_SEED_HEAD",
+  "ACT_TRUST_ANCHOR_INVALID", "ACT_TRUST_ANCHOR_MISMATCH", "ACT_WRONG_FIXTURE"]);
+export function childFailureCodeAllowed(code) {
+  if (typeof code !== "string") return false;
+  if (CHILD_FAILURE_CODES.includes(code)) return true;
+  return code.startsWith("CHILD_AUTH_") && CHILD_AUTH_CLAUSES.includes(code.slice("CHILD_AUTH_".length));
+}
+// Velocity B: how long a failed worker's stderr may take to end after its exit.
+export const WORKER_EXIT_DRAIN_MS = 500;
+const WORKER_EXIT_TAIL_BYTES = 256;
+export function workerExitCode(stderrTail) {
+  const last = String(stderrTail ?? "").split("\n").map((line) => line.trim()).filter(Boolean).pop() ?? "";
+  return childFailureCodeAllowed(last) ? `WORKER_EXIT_${last}` : "WORKER_EXIT";
+}
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const DEFAULT_DEADLINE_MS = 60 * 60 * 1000;
 export const MAX_REQUEST_BYTES = 64 * 1024;
@@ -622,6 +652,7 @@ export class DurableSupervisor {
         ...(recorded?.ok ? { completion_durable: true } : {}),
       });
     };
+    let stderrTail = "";
     const output = (chunk) => {
       if (terminal) return;
       outputBytes += Buffer.byteLength(chunk);
@@ -645,15 +676,31 @@ export class DurableSupervisor {
       }
     });
     child.stdout?.on?.("data", output);
-    child.stderr?.on?.("data", output);
+    child.stderr?.on?.("data", (chunk) => { stderrTail = `${stderrTail}${chunk}`.slice(-WORKER_EXIT_TAIL_BYTES); output(chunk); });
     child.stdout?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stdout failed" }));
     child.stderr?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stderr failed" }));
     child.once?.("error", (error) => finish("failed", { error_code: "WORKER_ERROR", reason: String(error?.message ?? error) }));
-    child.once?.("exit", (code, signal) => finish(code === 0 ? "completed" : "failed", {
-      exit_code: code,
-      signal: signal ?? null,
-      ...(code === 0 ? {} : { error_code: "WORKER_EXIT" }),
-    }));
+    // Velocity B: a failed worker's last stderr line names its cause, and the
+    // exit can be seen before that line is read, so the tail is read once
+    // stderr has ended, for at most WORKER_EXIT_DRAIN_MS.
+    child.once?.("exit", (code, signal) => {
+      // The worker has exited, so its deadline no longer applies: a deadline
+      // firing inside the drain window would drop the code it is waiting for.
+      if (deadline !== null) { clearTimeout(deadline); deadline = null; }
+      const done = () => finish(code === 0 ? "completed" : "failed", {
+        exit_code: code,
+        signal: signal ?? null,
+        ...(code === 0 ? {} : { error_code: workerExitCode(stderrTail) }),
+      });
+      const stderr = child.stderr;
+      if (code === 0 || stderr?.readable !== true || typeof stderr.once !== "function") return done();
+      let settled = false;
+      const drained = setTimeout(() => settle(), WORKER_EXIT_DRAIN_MS);
+      const settle = () => { if (settled) return; settled = true; clearTimeout(drained); done(); };
+      drained.unref?.();
+      stderr.once("end", settle);
+      stderr.once("close", settle);
+    });
     if (!terminal) {
       deadline = setTimeout(() => {
         if (terminal) return;
