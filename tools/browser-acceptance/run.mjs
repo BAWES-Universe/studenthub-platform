@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
+const phoneRecoveryStates=['conflict-reentry','status-read-only','same-phone-retry','changed-phone-rejected'];
 const names = [
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `layout-${language}-${width}`)),
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `editor-error-${language}-${width}`)),
@@ -21,6 +22,10 @@ const names = [
   'documents-keyboard-history-en', 'documents-keyboard-history-ar',
   'documents-session-missing', 'documents-session-revocation', 'documents-session-expiry',
   'documents-unavailable-en', 'documents-unavailable-ar', 'documents-person-isolation',
+  ...['en','ar'].flatMap(language => [320,390,1280].map(width => `language-review-confirm-reload-${language}-${width}`)),
+  ...['en','ar'].flatMap(language => ['cancel-history-resubmission-known-gap','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
+  ...['en','ar'].flatMap(language => ['missing-preview','revoked-confirm','expired-confirm'].map(state => `language-session-${state}-${language}`)),
+  ...['en','ar'].flatMap(language => phoneRecoveryStates.map(state => `phone-recovery-${state}-${language}`)),
 ];
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
   chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:names.map(name=>({name,status:'NOT_RUN'})),
@@ -169,6 +174,135 @@ async function nativeReplay(source,{expectLoss=false,holdRedirect=false}={}) {
   else {assert.equal(result.status,303,'Native save emits real HTTP303'); check(outcome.response?.status()===200,'Native save reaches rendered profile');}
   return {...result,page:target};
 }
+// Language acceptance uses native forms, real database state and closed evidence.
+const languageForm='form[action="/profile/language/preview"]';
+const languageConfirm='form[action="/profile/language/confirm"]';
+const otherLanguage=language=>language==='en'?'ar':'en';
+const languageCopy={
+  en:{review:'Review language change',confirm:'Confirm change',cancel:'Cancel',label:'Language',en:'English',ar:'Arabic',notChanged:'Your language wasn’t changed.',conflict:'Your profile changed while you were reviewing. Open it again and retry.',unavailable:'The profile service is unavailable. Please try again in a moment.',invalid:'This change is no longer available.',unknownHeading:'Your language change wasn’t confirmed.',unknown:'We couldn’t confirm whether your language was changed. Open your profile to check before trying again.',updated:'Updated by you on '},
+  ar:{review:'مراجعة تغيير اللغة',confirm:'تأكيد التغيير',cancel:'إلغاء',label:'اللغة',en:'الإنجليزية',ar:'العربية',notChanged:'لم يتم تغيير لغتك.',conflict:'تغيّر ملفك الشخصي أثناء المراجعة. افتحه مجددًا وأعد المحاولة.',unavailable:'خدمة الملف الشخصي غير متاحة. يرجى المحاولة مجددًا بعد قليل.',invalid:'لم يعد هذا التغيير متاحًا.',unknownHeading:'لم يتم تأكيد تغيير اللغة.',unknown:'تعذّر التأكد مما إذا كانت لغتك قد تغيّرت. افتح ملفك الشخصي للتحقق قبل المحاولة مجددًا.',updated:'آخر تحديث منك في '},
+};
+async function languageLocale(page,language) {
+  assert.equal(await page.locator('html').getAttribute('lang'),language,'Language flow uses trusted current locale');
+  assert.equal(await page.locator('html').getAttribute('dir'),language==='ar'?'rtl':'ltr','Language flow direction follows trusted locale');
+}
+async function languagePost(page,selector,{target=page,expectedStatus}={}) {
+  const route=selector===languageForm?'/profile/language/preview':'/profile/language/confirm';
+  const responseReady=target.waitForResponse(response=>response.request().method()==='POST' && new URL(response.url()).pathname===route,{timeout:15000});
+  const navigation=target.waitForNavigation({waitUntil:'load',timeout:30000});
+  // Keep both rejection handlers attached even if clicking fails. Never persist errors.
+  responseReady.catch(()=>{}); navigation.catch(()=>{});
+  await page.locator(`${selector} button[type=submit]`).click({noWaitAfter:true});
+  const response=await responseReady;
+  assert.equal(response.status(),expectedStatus,'Language native POST status');
+  const destination=await navigation;
+  assert.equal(destination?.status(),expectedStatus===303?200:expectedStatus,'Language native navigation status');
+  assert.equal(response.headers()['cache-control'],'no-store','Language POST response must not be cached');
+  if(expectedStatus===303) {
+    assert.equal(response.headers().location,'/profile','Language confirmation redirects to profile');
+    assert.equal(new URL(target.url()).pathname,'/profile','Language redirect reaches real profile');
+  }
+  return response.status();
+}
+async function languagePreview(page,language) {
+  await page.locator('#profile-language').selectOption(otherLanguage(language));
+  await languagePost(page,languageForm,{expectedStatus:200});
+  await languageReview(page,language);
+}
+async function languageReview(page,language) {
+  const copy=languageCopy[language];
+  await languageLocale(page,language);
+  await textIncludes(page,copy.review);
+  assert.deepEqual(await page.locator('main p strong').allTextContents(),[copy[language],copy[otherLanguage(language)]],'Review displays localized current and proposed languages');
+  await visible(page.locator(languageConfirm));
+  await visible(page.getByRole('button',{name:copy.confirm,exact:true}));
+  await visible(page.getByRole('link',{name:copy.cancel,exact:true}));
+  await noOverflow(page);
+}
+async function languageState(actor,language,writes) {
+  const state=await fixture.inspectLanguage(actor);
+  assert.equal(state.language,language,'Durable language preference');
+  assert.equal(state.writeCount,writes,'Language preference write count');
+  assert.equal(state.receiptCount,writes,'Language-specific receipt count');
+  if(writes) {
+    assert.deepEqual(state.lastReceipt.fields,['language'],'Receipt is scoped only to language');
+    check(Number.isFinite(Date.parse(state.updatedAt)),'Language update has a real durable timestamp');
+  }
+  return state;
+}
+async function languageProfile(page,language,{updatedAt}={}) {
+  await visible(page.locator('#profile-heading')); await languageLocale(page,language);
+  assert.equal(await page.locator('#profile-language').inputValue(),language,'Reloaded picker reflects durable language');
+  await page.locator('#section-details > summary').click();
+  assert.equal(await page.locator('#field-language .p-value').innerText(),languageCopy[language][language],'Reloaded language row reflects durable preference');
+  if(updatedAt) {
+    await page.locator('.p-provenance > summary').click();
+    const row=page.locator('.p-provenance dl > div').filter({has:page.getByText(languageCopy[language].label,{exact:true})});
+    assert.equal(await row.count(),1,'Exactly one language provenance row');
+    const date=new Intl.DateTimeFormat(language==='ar'?'ar-KW':'en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(updatedAt.slice(0,10)));
+    assert.equal(await row.locator('dd').innerText(),languageCopy[language].updated+date,'Language provenance uses actual durable write date');
+  }
+  await noOverflow(page);
+}
+async function languageError(page,language,key,{unknown=false}={}) {
+  await languageLocale(page,language);
+  await textIncludes(page,languageCopy[language][key]);
+  await textIncludes(page,languageCopy[language][unknown?'unknownHeading':'notChanged']);
+  if(unknown) check(!(await page.locator('body').innerText()).includes(languageCopy[language].notChanged),'Unknown commit outcome must not claim no change');
+  assert.equal(await page.locator(languageConfirm).count(),0,'Error page must not expose protected confirmation form');
+  const body=await page.locator('body').innerText();
+  check(!['Synthetic language preference read failure','Synthetic language COMMIT dependency failure','Synthetic lost language COMMIT acknowledgement'].some(detail=>body.includes(detail)),'Language failure must not expose dependency details');
+  await noOverflow(page);
+}
+async function languageReplayTarget(source) {
+  const name=`acceptance-language-${++replayTargetSequence}`;
+  const ready=source.waitForEvent('popup');
+  await source.evaluate(name=>{window.open('about:blank',name);},name);
+  const target=await ready; await target.waitForLoadState('load');
+  // Only the native form target changes; all signed fields remain untouched.
+  await source.locator(languageConfirm).evaluate((form,name)=>{form.target=name;},name);
+  return target;
+}
+// Phone recovery checks never persist numbers, tokens, serialized HTML or receipt IDs.
+const phoneRecoveryCopy={
+  en:{label:'Phone number',conflict:'This value changed since you opened the form. Review the current value and your draft before saving.',reentry:'Enter your phone number again. Your previous entry is not shown.',unknownHeading:'Save not confirmed',unknown:'We could not confirm whether your change was saved. Check its status before trying another change.',retryHelp:'Enter the same phone number again to retry this save. Your previous entry is not shown.',check:'Check save status',retry:'Try again',different:'This is a different change. Review your current profile and open a new form before saving it.',saved:'Save confirmed'},
+  ar:{label:'رقم الهاتف',conflict:'تغيّرت هذه القيمة منذ فتح النموذج. راجع القيمة الحالية ومسودتك قبل الحفظ.',reentry:'أدخل رقم هاتفك مجددًا. لن يظهر إدخالك السابق.',unknownHeading:'لم يتم تأكيد الحفظ',unknown:'تعذّر التأكد من حفظ تغييرك. تحقق من حالته قبل محاولة إجراء تغيير آخر.',retryHelp:'أدخل رقم الهاتف نفسه مجدداً لإعادة محاولة الحفظ. لن يظهر إدخالك السابق.',check:'التحقق من حالة الحفظ',retry:'المحاولة مرة أخرى',different:'هذا تغيير مختلف. راجع ملفك الشخصي الحالي وافتح نموذجاً جديداً قبل حفظه.',saved:'تم تأكيد الحفظ'},
+};
+async function phoneRecoveryLocale(page,language) {
+  assert.equal(await page.locator('html').getAttribute('lang'),language,'Phone recovery trusted locale');
+  assert.equal(await page.locator('html').getAttribute('dir'),language==='ar'?'rtl':'ltr','Phone recovery trusted direction');
+}
+async function phonePayloadAbsent(page,numbers) {
+  // Include local-number digits to catch formatted/escaped country-code variants.
+  const needles=[...new Set(numbers.filter(Boolean).flatMap(number=>[number,number.replace(/\D/g,'').slice(-8)]))];
+  check(needles.length>0,'Phone non-echo requires nonempty payload witnesses');
+  check(!needles.some(value=>(value.length<8)),'Phone non-echo witnesses must be meaningful');
+  // Full serialization is inspected only in memory; assertion receives a boolean.
+  const html=await page.content();
+  check(!needles.some(value=>html.includes(value)),'Phone payload absent from full serialized HTML');
+  check(await page.evaluate(values=>{
+    const contains=value=>values.some(needle=>value.includes(needle));
+    return !contains(document.body.innerText)
+      && [...document.querySelectorAll('*')].every(node=>[...node.attributes].every(attr=>!contains(attr.value)))
+      && [...document.querySelectorAll('input,textarea,select')].every(node=>!contains(node.value));
+  },needles),'Phone payload absent from visible text, all attributes, hidden controls and live values');
+}
+async function phoneRecoveryPost(page,button,route,expectedStatus) {
+  const responseReady=page.waitForResponse(response=>response.request().method()==='POST' && new URL(response.url()).pathname===route,{timeout:15000});
+  responseReady.catch(()=>{});
+  const destination=await submit(page,button), response=await responseReady;
+  assert.equal(response.status(),expectedStatus,'Phone native POST status');
+  assert.equal(destination?.status(),expectedStatus===303?200:expectedStatus,'Phone native navigation status');
+  assert.equal(response.headers()['cache-control'],'no-store','Phone recovery response is not cached');
+  if(expectedStatus===303) {
+    assert.equal(response.headers().location,'/profile#field-phone','Phone recovery redirects to actual phone field');
+    assert.equal(new URL(page.url()).pathname,'/profile','Phone recovery reaches actual profile');
+  }
+}
+async function phoneRecoverySaved(page,language) {
+  await saved(page); await phoneRecoveryLocale(page,language);
+  assert.equal(await page.locator('#profile-notice-heading').innerText(),phoneRecoveryCopy[language].saved,'Localized verified save notice');
+}
 async function run(name, action) {
   const record=evidence.cases.find(c=>c.name===name), start=Date.now();
   try { const result=await action(); Object.assign(record,{status:'PASS',...result}); }
@@ -187,8 +321,15 @@ async function run(name, action) {
 }
 async function report() {
   await mkdir(output,{recursive:true});
+  const languageCases=evidence.cases.filter(c=>c.name.startsWith('language-'));
+  evidence.languageAcceptance={status:languageCases.every(c=>c.status==='PASS')?'ACCEPTED_EXCEPT_HISTORY_SAFE_REVIEW':'NOT_ESTABLISHED',
+    historySafeReview:'NOT_ACCEPTED',knownGap:'Native Cancel → Back can show Chromium Confirm Form Resubmission / ERR_CACHE_MISS. The two named known-gap cases characterize this defect, not history-safe Review acceptance.'};
   await writeFile(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
   const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.disclosureScreenshot ? ` ([expanded disclosure](${c.disclosureScreenshot}))` : ''}${c.notes ? ` — ${c.notes}` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
+  lines.push('',evidence.languageAcceptance.status==='ACCEPTED_EXCEPT_HISTORY_SAFE_REVIEW'
+    ? 'Language flow accepted except history-safe Review. This is not full language acceptance.'
+    : 'Language acceptance has not been established. Even a passing run accepts only the language flow except history-safe Review, never full language acceptance.',
+    `Known gap: ${evidence.languageAcceptance.knownGap}`);
   if(evidence.blocker) lines.push('',`Blocker: ${evidence.blocker}`);
   await writeFile(path.join(output,'evidence.md'),lines.join('\n')+'\n');
 }
@@ -543,6 +684,220 @@ try {
     await alice.page.goto(`${fixture.baseURL}/profile/documents`); await documentPage(alice.page,'en',metadata);
     await counts(alice.actor,0,0); await counts(bob.actor,0,0);
   });
+  // Additive language acceptance. All preceding 54 case bodies remain unchanged.
+  for(const language of ['en','ar']) for(const width of [320,390,1280]) {
+    const name=`language-review-confirm-reload-${language}-${width}`;
+    await run(name,async()=>{
+      const {actor,page}=await subject({language,width}), before=await languageState(actor,language,0);
+      await languagePreview(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Review must not write language or receipts');
+      const reviewScreenshot=await screenshot(page,name);
+      await languagePost(page,languageConfirm,{expectedStatus:303});
+      const state=await languageState(actor,otherLanguage(language),1);
+      check(state.updatedAt!==before.updatedAt,'Confirmed language updates durable timestamp');
+      assert.equal((await page.reload()).status(),200,'Changed profile reload succeeds');
+      await languageProfile(page,otherLanguage(language),state);
+      assert.deepEqual(await fixture.inspectLanguage(actor),state,'Reload must not add writes or receipts');
+      return {screenshot:reviewScreenshot,disclosureScreenshot:await screenshot(page,`${name}-persisted`),notes:'Native Review 200, Confirm 303 and real profile reload; language-specific durable write and receipt count 1. Provenance checked against database timestamp.'};
+    });
+  }
+  for(const language of ['en','ar']) {
+    await run(`language-cancel-history-resubmission-known-gap-${language}`,async()=>{
+      const name=`language-cancel-history-resubmission-known-gap-${language}`;
+      const record=evidence.cases.find(c=>c.name===name);
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      await languagePreview(page,language);
+      await submit(page,page.getByRole('link',{name:languageCopy[language].cancel,exact:true}));
+      await visible(page.locator('#profile-heading')); await languageLocale(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Cancel does not persist preference');
+      // Characterize the agreed known gap, never count a generic navigation
+      // failure as success or replace native history with a fabricated GET.
+      let cacheMiss=false;
+      try { await page.goBack({waitUntil:'load'}); }
+      catch(error) { cacheMiss=/\bnet::ERR_CACHE_MISS\b/.test(String(error?.message)); }
+      record.screenshot=await screenshot(page,`${name}-back-state`);
+      check(cacheMiss,'Known history gap requires exact native ERR_CACHE_MISS, not another navigation failure');
+      await page.waitForFunction(()=>document.body?.innerText.includes('ERR_CACHE_MISS') && document.body.innerText.includes('Confirm Form Resubmission'),{},{timeout:5000});
+      const resubmissionVisible=await page.evaluate(()=>document.body?.innerText.includes('ERR_CACHE_MISS') && document.body.innerText.includes('Confirm Form Resubmission'));
+      record.screenshot=await screenshot(page,`${name}-back-state`);
+      check(resubmissionVisible,'Native error page must show Confirm Form Resubmission and ERR_CACHE_MISS');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Back interstitial does not persist preference');
+      const forward=await page.goForward({waitUntil:'load'});
+      check(forward===null || forward.status()===200,'Native Forward returns profile successfully');
+      await visible(page.locator('#profile-heading')); await languageLocale(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Forward does not persist preference');
+      assert.equal((await page.reload()).status(),200,'Profile reload after native Forward succeeds');
+      await languageProfile(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Profile reload after history gap does not persist preference');
+      return {knownGap:'history-safe-review',nativeError:'ERR_CACHE_MISS',interstitialDom:'verified',durableWrites:0,durableReceipts:0,
+        notes:'KNOWN GAP: native Cancel → Back shows Chromium Confirm Form Resubmission / ERR_CACHE_MISS. Actual Forward and profile reload recover without writes. This characterizes the defect; history-safe Review remains unaccepted.'};
+    });
+    await run(`language-stale-two-tabs-${language}`,async()=>{
+      const {actor,context,page}=await subject({language});
+      const second=await context.newPage(); await second.goto(`${fixture.baseURL}/profile`);
+      await languagePreview(page,language); await languagePreview(second,language);
+      await languagePost(second,languageConfirm,{expectedStatus:303});
+      const committed=await languageState(actor,otherLanguage(language),1);
+      await languagePost(page,languageConfirm,{expectedStatus:409});
+      await languageError(page,otherLanguage(language),'conflict');
+      assert.deepEqual(await fixture.inspectLanguage(actor),committed,'Stale tab cannot write a second change');
+      return {screenshot:await screenshot(page,`language-stale-two-tabs-${language}`)};
+    });
+    await run(`language-single-use-confirm-${language}`,async()=>{
+      const {actor,page}=await subject({language}); await languagePreview(page,language);
+      const first=await languageReplayTarget(page);
+      await languagePost(page,languageConfirm,{target:first,expectedStatus:303});
+      await languageState(actor,otherLanguage(language),1);
+      // Restore the original value through a fresh genuine browser transaction.
+      // The untouched first token now matches state again, isolating its spent guard.
+      await languagePreview(first,otherLanguage(language));
+      await languagePost(first,languageConfirm,{expectedStatus:303});
+      const committed=await languageState(actor,language,2);
+      const repeated=await languageReplayTarget(page);
+      await languagePost(page,languageConfirm,{target:repeated,expectedStatus:409});
+      await languageError(repeated,language,'conflict');
+      assert.deepEqual(await fixture.inspectLanguage(actor),committed,'Spent token cannot write again after original language is restored');
+      return {screenshot:await screenshot(repeated,`language-single-use-confirm-${language}`)};
+    });
+    for(const mode of ['missing-preview','revoked-confirm','expired-confirm']) await run(`language-session-${mode}-${language}`,async()=>{
+      const {actor,context,page}=await subject({language}), before=await languageState(actor,language,0);
+      if(mode==='missing-preview') {
+        await page.locator('#profile-language').selectOption(otherLanguage(language)); await context.clearCookies();
+      } else {
+        await languagePreview(page,language); await fixture[mode==='revoked-confirm'?'revoke':'expire'](actor);
+      }
+      await languagePost(page,mode==='missing-preview'?languageForm:languageConfirm,{expectedStatus:401});
+      assert.equal(await page.locator(languageConfirm).count(),0,'Lost session never exposes protected confirmation');
+      assert.equal(await page.locator('input[name^="token."]').count(),0,'Lost session never exposes signed fields');
+      await textIncludes(page,'Sign in');
+      // The existing signed-out shell has lang=en and implicit LTR, not a dir attribute.
+      assert.equal(await page.locator('html').getAttribute('lang'),'en','Session loss uses English fallback metadata');
+      assert.equal(await page.locator('html').evaluate(node=>getComputedStyle(node).direction),'ltr','Signed-out fallback renders left to right');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Session loss cannot change preference or receipts');
+      return {screenshot:await screenshot(page,`language-session-${mode}-${language}`)};
+    });
+    await run(`language-invalid-value-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      // Deliberately invalid browser input, not a mocked response or hidden token edit.
+      await page.locator('#profile-language').evaluate(select=>{const option=new Option('synthetic-invalid-language','synthetic-invalid-language');select.add(option);select.value=option.value;});
+      await languagePost(page,languageForm,{expectedStatus:400});
+      await languageError(page,language,'invalid');
+      check(!(await page.locator('body').innerText()).includes('synthetic-invalid-language'),'Invalid language input must not be echoed');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Invalid preview cannot write preference');
+      return {screenshot:await screenshot(page,`language-invalid-value-${language}`)};
+    });
+    for(const [stateName,mode] of [['preview-unavailable','preview-read'],['confirm-rollback','confirm-before-commit'],['confirm-acknowledgement-loss','confirm-after-commit']]) await run(`language-${stateName}-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      if(mode==='preview-read') await page.locator('#profile-language').selectOption(otherLanguage(language));
+      else await languagePreview(page,language);
+      const fault=fixture.useLanguageFault(mode); restorers.push(()=>fault.restore());
+      await languagePost(page,mode==='preview-read'?languageForm:languageConfirm,{expectedStatus:503});
+      await languageError(page,language,mode==='preview-read'?'unavailable':'unknown',{unknown:mode!=='preview-read'});
+      const counter=mode==='preview-read'?'previewReadThrows':mode==='confirm-before-commit'?'beforeCommitThrows':'afterCommitThrows';
+      assert.equal(fault.evidence[counter],1,'Requested real language dependency boundary exercised once');
+      const writes=mode==='confirm-after-commit'?1:0;
+      if(mode!=='preview-read') {
+        assert.equal(fault.evidence.preferenceWriteStatements,1,'Real preference write statement exercised');
+        assert.equal(fault.evidence.receiptInsertStatements,1,'Real language receipt insert exercised');
+        assert.equal(fault.evidence.commits,writes,'Fault durable commit count');
+        if(mode==='confirm-before-commit') assert.equal(fault.evidence.rollbacks,1,'Failed transaction actually rolled back');
+      }
+      const durable=await languageState(actor,writes?otherLanguage(language):language,writes);
+      if(!writes) assert.deepEqual(durable,before,'Uncommitted failure leaves language timestamp and receipts unchanged');
+      const errorScreenshot=await screenshot(page,`language-${stateName}-${language}`);
+      fault.restore();
+      await submit(page,page.locator('main a[href="/profile"]'));
+      assert.equal((await page.reload()).status(),200,'Profile reload resolves uncertain outcome');
+      await languageProfile(page,writes?otherLanguage(language):language,writes?durable:{});
+      assert.deepEqual(await fixture.inspectLanguage(actor),durable,'Recovery read never writes');
+      return {screenshot:errorScreenshot,boundaryCounters:{...fault.evidence},durableWrites:durable.writeCount,durableReceipts:durable.receiptCount,notes:`Real dependency boundary exercised; durable language writes and receipts ${writes}; recovery profile reload verified.`};
+    });
+    await run(`language-token-expiry-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      const expiry=fixture.useLanguageExpiredTokens(); restorers.push(()=>expiry.restore());
+      await languagePreview(page,language);
+      const expired=await page.locator(languageConfirm).evaluate(form=>{
+        const expiresAt=Date.parse(form.elements.namedItem('token.expiresAt').value);
+        const issuedAt=Date.parse(form.elements.namedItem('token.issuedAt').value);
+        return Number.isFinite(expiresAt) && expiresAt<=Date.now() && expiresAt-issuedAt===300000;
+      });
+      assert.equal(expiry.evidence.issuances,1,'Actual production signer issued language review token');
+      check(expired,'Production-signed language review token must be expired with unchanged five-minute lifetime');
+      await languagePost(page,languageConfirm,{expectedStatus:409}); await languageError(page,language,'conflict');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Expired language token cannot write');
+      return {screenshot:await screenshot(page,`language-token-expiry-${language}`),notes:'Production signer with backdated issuance only; unmodified lifetime and real verification clock.'};
+    });
+  }
+  // Eight additive cases: conflict and each independent unknown-outcome action,
+  // in both trusted locales. The original 82 case bodies remain unchanged above.
+  for(const language of ['en','ar']) for(const [index,stateName] of phoneRecoveryStates.entries()) {
+    const name=`phone-recovery-${stateName}-${language}`;
+    await run(name,async()=>{
+      const copy=phoneRecoveryCopy[language], {actor,context,page}=await subject({language});
+      // Distinct valid synthetic contacts prevent cross-case uniqueness collisions.
+      const suffix=String((language==='ar'?20:10)+index).padStart(4,'0');
+      const draft=`+9655000${suffix}`, current=`+9656000${suffix}`, changed=`+9659000${suffix}`;
+      await edit(page,'phone');
+      const initial=await page.locator('#field-phone').inputValue();
+      await page.locator('#field-phone').fill(draft);
+      if(stateName==='conflict-reentry') {
+        const other=await context.newPage(); await edit(other,'phone');
+        await other.locator('#field-phone').fill(current); await save(other); await phoneRecoverySaved(other,language);
+        const before=await counts(actor,1,1); check(before.values.phone===current,'Concurrent phone persisted');
+        await phoneRecoveryPost(page,page.locator('#profile-edit-form button[type=submit]'),'/profile/edit/phone/save',409);
+        await phoneRecoveryLocale(page,language);
+        await visible(page.getByText(copy.conflict,{exact:true})); await visible(page.getByText(copy.reentry,{exact:true}));
+        await visible(page.getByRole('textbox',{name:copy.label,exact:true}));
+        check(await page.locator('#field-phone').inputValue()==='','Conflict requires deliberate phone re-entry');
+        assert.equal(await page.locator('#field-phone').getAttribute('dir'),'ltr','Conflict phone input stays LTR');
+        await phonePayloadAbsent(page,[initial,current,draft]); await noOverflow(page);
+        const screenshotName=await screenshot(page,name);
+        check((await counts(actor,1,1)).values.phone===current,'Stale phone submission does not overwrite concurrent value');
+        await page.locator('#field-phone').fill(draft);
+        await phoneRecoveryPost(page,page.locator('#profile-edit-form button[type=submit]'),'/profile/edit/phone/save',303);
+        await phoneRecoverySaved(page,language);
+        check((await counts(actor,2,2)).values.phone===draft,'Deliberate conflict re-entry persists intended phone');
+        return {screenshot:screenshotName};
+      }
+      const faultBefore=fixture.evidence.commitBoundaryThrows;
+      const restore=await fixture.useCommitBoundaryFault(); restorers.push(restore);
+      await phoneRecoveryPost(page,page.locator('#profile-edit-form button[type=submit]'),'/profile/edit/phone/save',503);
+      assert.equal(fixture.evidence.commitBoundaryThrows,faultBefore+1,'Phone save exercises actual lost COMMIT acknowledgement');
+      await phoneRecoveryLocale(page,language);
+      await visible(page.getByRole('heading',{level:1,name:copy.unknownHeading,exact:true}));
+      await visible(page.getByText(copy.unknown,{exact:true})); await visible(page.getByText(copy.retryHelp,{exact:true}));
+      await visible(page.getByRole('textbox',{name:copy.label,exact:true}));
+      await visible(page.getByRole('button',{name:copy.check,exact:true})); await visible(page.getByRole('button',{name:copy.retry,exact:true}));
+      check(await page.locator('#field-phone').inputValue()==='','Unknown phone save requires deliberate retry re-entry');
+      assert.equal(await page.locator('#field-phone').getAttribute('dir'),'ltr','Unknown phone input stays LTR');
+      assert.equal(await page.locator('form[action="/profile/edit/phone/status"] [name=value]').count(),0,'Read-only phone status carries no phone payload');
+      await phonePayloadAbsent(page,[initial,draft]); await noOverflow(page);
+      const screenshotName=await screenshot(page,name), before=await counts(actor,1,1);
+      check(before.values.phone===draft,'Unknown acknowledgement follows a durable phone commit');
+      const receiptUnchanged=await fixture.capturePhoneReceipt(actor);
+      let errorScreenshot;
+      await restore();
+      if(stateName==='status-read-only') {
+        // Leave the retry input empty. Native status must not demand phone re-entry.
+        await phoneRecoveryPost(page,page.getByRole('button',{name:copy.check,exact:true}),'/profile/edit/phone/status',303);
+        await phoneRecoverySaved(page,language);
+      } else {
+        await page.locator('#field-phone').fill(stateName==='same-phone-retry'?draft:changed);
+        await phoneRecoveryPost(page,page.getByRole('button',{name:copy.retry,exact:true}),'/profile/edit/phone/save',stateName==='same-phone-retry'?303:409);
+        if(stateName==='same-phone-retry') await phoneRecoverySaved(page,language);
+        else {
+          await phoneRecoveryLocale(page,language); await visible(page.getByText(copy.different,{exact:true}));
+          assert.equal(await page.locator('#profile-edit-form').count(),0,'Changed phone retry has no resubmission form');
+          await phonePayloadAbsent(page,[initial,draft,changed]); await noOverflow(page);
+          errorScreenshot=await screenshot(page,`${name}-refused`);
+        }
+      }
+      const after=await counts(actor,1,1);
+      check(JSON.stringify(after.values)===JSON.stringify(before.values),'Recovery leaves all durable profile values unchanged');
+      check(await receiptUnchanged(),'Recovery retains the exact original durable receipt');
+      return {screenshot:screenshotName,...(errorScreenshot?{errorScreenshot}:{}),notes:'Real lost COMMIT acknowledgement; one durable phone write and the unchanged original receipt. No phone payload or receipt identifiers recorded.'};
+    });
+  }
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';
