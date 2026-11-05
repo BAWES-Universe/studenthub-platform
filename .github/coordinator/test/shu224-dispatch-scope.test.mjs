@@ -245,8 +245,9 @@ test("SHU-224: invalid trusted scope prevents dispatch before any mutation", asy
   }
 });
 
-// After SHU-71 stage 5 the committed scope is one real card at a time, one
-// slot, and that card must have a committed card lane. The id is pinned so a
+// The committed scope is a card queue, one slot, and every card in it must have
+// a committed card lane. The box narrows the queue to the one armed card before
+// reconcile reads it (see the narrowing test below). The ids are pinned so a
 // regression cannot quietly point the scope back at an earlier, Done card.
 // Dispatch stays disabled; only a signed single-run activation arms it.
 test("SHU-224: committed scope is pinned to the current card lanes while dispatch stays disabled", () => {
@@ -266,6 +267,23 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
   }
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
+});
+
+test("SHU-224: every step of the committed queue narrows to one armed card that resolveDispatchScope accepts", async () => {
+  const { planRun } = await import("../service/card-run.mjs");
+  const { narrowQueueScope } = await import("../single-run-activation.mjs");
+  const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
+  const queue = config.dispatch_scope.issue_ids;
+  assert.ok(queue.length > 1);
+  assert.equal(resolveDispatchScope(config).valid, false, "SHU-224: the queue as committed, with no armed card, scopes nothing");
+  const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
+  for (const id of queue) {
+    const record = planRun({ config, revision: "a".repeat(40), now: new Date("2026-11-05T13:30:00.000Z"), cardId: id }).record;
+    const narrowed = narrowQueueScope(config, "/isolated/activation", file(JSON.stringify(record)));
+    const scope = resolveDispatchScope(narrowed);
+    assert.equal(scope.valid, true, `SHU-224: ${id} narrows to a valid scope`);
+    assert.deepEqual([...scope.issueIds], [id], `SHU-224: ${id} narrows to itself alone`);
+  }
 });
 
 test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed", () => {
