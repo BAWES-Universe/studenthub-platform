@@ -1479,13 +1479,19 @@ export function linearRateLimitSeconds(res, body, now = Date.now()) {
 
 // sendLinear — single injectable GraphQL seam for ALL Linear reads/writes. Tests
 // substitute fetchImpl; production uses global fetch. Token name only, no value.
-export async function sendLinear(query, variables, token, fetchImpl = fetch) {
+// Velocity: the tick's board reads (retryServerErrors), when Linear answers
+// with a 5xx, are asked again, twice at most, before they fail the tick
+// (11-05 12:05Z: one HTTP 503 ended a card run). A write is never repeated:
+// a 5xx may still have applied it.
+export const LINEAR_READ_RETRY_DELAYS_MS = Object.freeze([2_000, 5_000]);
+const linearRead = (query) => typeof query === "string" && /^\s*query\b/.test(query);
+export async function sendLinear(query, variables, token, fetchImpl = fetch, { retryServerErrors = false, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   if (!token) {
     const err = new Error("LINEAR_API_TOKEN is required for Linear I/O");
     err.code = "NO_LINEAR_TOKEN";
     throw err;
   }
-  const res = await fetchImpl("https://api.linear.app/graphql", {
+  const request = () => fetchImpl("https://api.linear.app/graphql", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1493,6 +1499,16 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
     },
     body: JSON.stringify({ query, variables }),
   });
+  let res = await request();
+  if (retryServerErrors && linearRead(query)) {
+    for (const delay of LINEAR_READ_RETRY_DELAYS_MS) {
+      if (!(res.status >= 500 && res.status <= 599)) break;
+      // The failed answer's body is let go, so its connection is free again.
+      await res.body?.cancel?.().catch(() => undefined);
+      await sleep(delay);
+      res = await request();
+    }
+  }
   const body = await res.json().catch(() => null);
   // A rate limit is NOT a read failure to be retried card by card: the whole
   // workspace budget is spent, so it is raised as its own condition and the tick
@@ -1524,11 +1540,19 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
 // the batched query stays CHEAPER than the unbatched one that runs today — one
 // extra issues page per tick is nothing against one request per card per tick.
 export const LINEAR_ISSUE_PAGE = 50;
+// Velocity A2: the board read leaves out Done cards as well as canceled ones.
+// About a third of the board is Done, and every tick of every card worker
+// paid for their comment threads: two workers already came near the
+// workspace's 3,000,000 points an hour, so more workers would sit in rate-
+// limit holds. A Done card is never dispatched; the box moves a card to Done
+// only after its run has ended and landed, so no live receipt is left behind.
+// As with a canceled card, moving a card to Done by hand takes its thread
+// (receipts and pause markers) out of what the tick reads.
 export const LINEAR_ISSUE_COMMENT_PAGE = 50;
 
 export const LINEAR_ISSUES_QUERY = `
   query CoordinatorIssues($team: String!, $after: String) {
-    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: ${LINEAR_ISSUE_PAGE}, after: $after) {
+    issues(filter: { team: { key: { eq: $team } }, state: { type: { nin: ["canceled", "completed"] } } }, first: ${LINEAR_ISSUE_PAGE}, after: $after) {
       nodes {
         id
         identifier
@@ -1652,7 +1676,7 @@ export async function readBatchedComments(node, { issueId, token, fetchImpl = fe
     seenCursors.add(after);
     let next;
     try {
-      const data = await sendLinear(LINEAR_ISSUE_COMMENTS_PAGE_QUERY, { issueId, after }, token, fetchImpl);
+      const data = await sendLinear(LINEAR_ISSUE_COMMENTS_PAGE_QUERY, { issueId, after }, token, fetchImpl, { retryServerErrors: true });
       next = data?.issue?.comments;
     } catch (err) {
       if (err?.code === "LINEAR_RATE_LIMITED") throw err; // the whole tick HOLDs, not this card
@@ -1676,7 +1700,7 @@ export async function fetchLinearBoard({
   let after = null;
   const seenCursors = new Set();
   for (;;) {
-    const data = await sendLinear(LINEAR_ISSUES_QUERY, { team, after }, token, fetchImpl);
+    const data = await sendLinear(LINEAR_ISSUES_QUERY, { team, after }, token, fetchImpl, { retryServerErrors: true });
     const page = data?.issues;
     nodes.push(...(page?.nodes ?? []));
     if (!page?.pageInfo?.hasNextPage) break;
@@ -1717,7 +1741,7 @@ export async function fetchIssueComments({ issueId, token, fetchImpl = fetch }) 
   const seenCursors = new Set();
   let after = null;
   for (;;) {
-    const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId, after }, token, fetchImpl);
+    const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId, after }, token, fetchImpl, { retryServerErrors: true });
     const page = data?.issue?.comments;
     comments.push(...(page?.nodes ?? []));
     if (page?.pageInfo?.hasNextPage !== true) return comments;

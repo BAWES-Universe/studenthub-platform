@@ -69,6 +69,72 @@ test("U3A_PROVENANCE: never-imported fields disclose no invented import date in 
     assert.ok(!html.includes(PROFILE_COPY[language]["meta.imported"].replace("{date}","")+"<"),"U3A_PROVENANCE no empty imported date");
   }
 });
+function undatedImportProfile(language: ProfileLanguage, observedAt?: string): OwnProfileProjection {
+  const profile=fixture(language,true);
+  const freshness={kind:"imported_snapshot",...(observedAt === undefined ? {} : {observedAt})};
+  // Exercise missing metadata defensively, beyond the current required-string contract.
+  return {...profile,fields:{...profile.fields,objective:{...profile.fields.objective,freshness}}} as OwnProfileProjection;
+}
+function ownedOverlayProfile(language: ProfileLanguage): OwnProfileProjection {
+  const profile=fixture(language,true);
+  // Match applyPreferences in packages/profile/src/profile.ts: owned overlays
+  // invalidate these imported derived fields without inventing an observedAt.
+  const fields={...profile.fields};
+  for(const key of ["isProfileCompleted","pendingFields"] as const){
+    fields[key]={state:"unavailable",reason:"not_recorded",provenance:profile.fields[key].provenance,freshness:{kind:"imported_snapshot",observedAt:""}};
+  }
+  return {...profile,fields};
+}
+function undatedImport(html: string, language: ProfileLanguage, field: "objective" | "isProfileCompleted" | "pendingFields" = "objective") {
+  assert.ok(html.includes(`<dt>${PROFILE_COPY[language][`field.${field}`]}</dt><dd>${PROFILE_COPY[language]["meta.importedUndated"]}</dd>`),`U3A_PROVENANCE imported without date is explicit: ${field}`);
+  assert.ok(!html.includes(PROFILE_COPY[language]["meta.imported"].replace("{date}","")+"<"),"U3A_PROVENANCE no empty imported date");
+}
+test("U3A_PROVENANCE: imported fields with missing or empty dates disclose an unrecorded date in either language",async()=>{
+  for(const language of ["en","ar"] as const)for(const observedAt of [undefined,""]){
+    const {html}=await profileDocument({status:200,body:undatedImportProfile(language,observedAt)},login);
+    undatedImport(html,language);
+  }
+});
+test("U3A_PROVENANCE: owned overlays leave isProfileCompleted and pendingFields explicitly undated in either language",async()=>{
+  for(const language of ["en","ar"] as const){
+    const {html}=await profileDocument({status:200,body:ownedOverlayProfile(language)},login);
+    for(const field of ["isProfileCompleted","pendingFields"] as const)undatedImport(html,language,field);
+  }
+});
+test("U3A_PROVENANCE: dated imported and person-owned sources preserve localized wording and dates",async()=>{
+  for(const language of ["en","ar"] as const){
+    const {html}=await render(language,true);
+    const date=new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date("2026-11-04T00:00:00.000Z"));
+    for(const [field,copy] of [["objective","meta.imported"],["preferredTime","meta.updated"]] as const){
+      assert.ok(html.includes(`<dt>${PROFILE_COPY[language][`field.${field}`]}</dt><dd>${PROFILE_COPY[language][copy].replace("{date}",date)}</dd>`),`U3A_PROVENANCE dated ${copy} is unchanged`);
+    }
+    assert.ok(!html.includes(PROFILE_COPY[language]["meta.importedUndated"]),"U3A_PROVENANCE dated sources are not undated");
+  }
+});
+test("U3A_PROVENANCE mutant: bare imported fallback dies at the named undated assertion",async()=>{
+  const sourceUrl=new URL("../src/web-ui.js",import.meta.url),source=readFileSync(sourceUrl,"utf8");
+  const from='"meta.importedUndated"';
+  assert.equal(source.split(from).length,2,"U3A_PROVENANCE one undated mutation point");
+  const url=new URL(`./u3a-provenance-mutant-${randomUUID()}.mjs`,sourceUrl);
+  try{
+    writeFileSync(url,source.replace(from,'"meta.imported"'));
+    const mod=await import(url.href) as {profileDocument:typeof profileDocument};
+    for(const language of ["en","ar"] as const)for(const observedAt of [undefined,""]){
+      const body=undatedImportProfile(language,observedAt);
+      undatedImport((await profileDocument({status:200,body},login)).html,language);
+      const changed=await mod.profileDocument({status:200,body},login);
+      assert.throws(()=>undatedImport(changed.html,language),{name:"AssertionError",message:/U3A_PROVENANCE imported without date is explicit/});
+    }
+    for(const language of ["en","ar"] as const){
+      const body=ownedOverlayProfile(language);
+      const original=await profileDocument({status:200,body},login),changed=await mod.profileDocument({status:200,body},login);
+      for(const field of ["isProfileCompleted","pendingFields"] as const){
+        undatedImport(original.html,language,field);
+        assert.throws(()=>undatedImport(changed.html,language,field),{name:"AssertionError",message:new RegExp(`U3A_PROVENANCE imported without date is explicit: ${field}`)});
+      }
+    }
+  }finally{unlinkSync(url);}
+});
 test("U3A_JOURNEY: person markup is escaped, supplementary characters and long text survive",async()=>{
   const p=fixture("ar");const attack='<script>alert("x")</script>😀';const fields={...p.fields,displayName:{...p.fields.displayName,state:"available",value:attack}};
   const {html}=await profileDocument({status:200,body:{...p,fields}},login);assert.doesNotMatch(html,/<script>/);assert.match(html,/&lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;😀/);assert.ok(html.includes("A long readable introduction ".repeat(80)));

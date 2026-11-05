@@ -309,8 +309,8 @@ const CASES = [
   },
   {
     name: "M15W1-R1 a worker that loses the claim race gives up its start",
-    from: "      if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) continue;",
-    to: "      // M15W1-R1",
+    from: "        if (cardWorkers(config) > 1 && selection < MAX_CARD_QUEUE) again = true;",
+    to: "        if (false) again = true; // M15W1-R1",
     pattern: "M15 W1: a worker that loses the claim race",
   },
   {
@@ -765,8 +765,8 @@ const CASES = [
   },
   {
     name: "M113 run past a queued card that did not land",
-    from: "    if (!io.fs.existsSync(claim)) return { id };",
-    to: "    return { id }; // SHU312-M113",
+    from: "    if (!io.fs.existsSync(claim)) {",
+    to: "    if (true) { // SHU312-M113",
     pattern: "SHU-312 Q5:",
   },
   {
@@ -785,8 +785,8 @@ const CASES = [
   },
   {
     name: "M116 select the card again inside the run",
-    from: '    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt });',
-    to: '    result = await runCard({ io, paths, limits, trigger: "timer", claimedAt }); // SHU312-M116',
+    from: '    result = await runCard({ io, paths, limits, trigger: "timer", cardId: plan.id, claimedAt, expectRevision: revision });',
+    to: '    result = await runCard({ io, paths, limits, trigger: "timer", claimedAt, expectRevision: revision }); // SHU312-M116',
     pattern: "SHU-312 Q5:",
   },
   {
@@ -1798,6 +1798,78 @@ const CASES = [
     from: "  try { io.fs.linkSync(temp, file); }",
     to: "  try { io.fs.writeFileSync(file, text, { flag: \"wx\", mode: 0o600 }); } // SHU86-M260",
     pattern: "M15 W9:",
+  },
+  {
+    name: "M308 let a stopped card stop every worker again",
+    from: "    if (!parallel) return stop;",
+    to: "    return stop; // SHU86-M308",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M309 run a card beside a running card that may write the same file",
+    from: "      if (parallel && running.some((files) => pathsOverlap(files, lanePaths(config, id)))) { waiting += 1; continue; }",
+    to: "      // SHU86-M309",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M310 treat a whole-tree card as overlapping no other card",
+    from: "  if (a === null || b === null) return true;",
+    to: "  if (a === null || b === null) return false; // SHU86-M310",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M311 wait for ever on a card queued after a stopped card",
+    from: "    if (parallel && needs.some((need) => stoppedIds.has(need))) { stoppedIds.add(id); continue; }",
+    to: "    // SHU86-M311",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M312 start a due repair beside a running card that shares its files",
+    from: "      if (parallel && running.some((files) => pathsOverlap(lanePaths(config, id), files))) { waiting += 1; continue; }\n      return repair.next;",
+    to: "      return repair.next; // SHU86-M312",
+    pattern: "M15: with two workers a landing repair runs at the head a landing updated",
+  },
+  {
+    name: "M313 leave a live repair out of the running cards",
+    from: "    if (round?.state !== \"finished\" && claimLive(io, paths, round)) live.push(id);",
+    to: "    // SHU86-M313",
+    pattern: "M15: with two workers a landing repair runs at the head a landing updated",
+  },
+  {
+    name: "M314 select and claim without the selection lock",
+    from: "    const release = parallel ? await takeSelectLock(io, paths, limits) : () => {};",
+    to: "    const release = () => {}; // SHU86-M314",
+    pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
+  },
+  {
+    name: "M315 take over the selection lock of a live holder",
+    from: "  if (holder && holderAlive(io, holder)) return;",
+    to: "  if (false /* SHU86-M315 */) return;",
+    pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
+  },
+  {
+    name: "M316 leave another worker's live repair intent out of the running cards",
+    from: "    if (intentLive(io, paths, revision, id)) { live.push(id); continue; }",
+    to: "    // SHU86-M316",
+    pattern: "Velocity A: another worker's live repair intent counts as running",
+  },
+  {
+    name: "M317 run a card claimed at a revision that has since moved",
+    from: "    if (expectRevision !== null && revision !== expectRevision) {",
+    to: "    if (false /* SHU86-M317 */) {",
+    pattern: "Velocity A: a start whose installed revision moved after it claimed its card",
+  },
+  {
+    name: "M318 remove a selection lock another worker took during the takeover",
+    from: "    if (again === text) {",
+    to: "    if (true /* SHU86-M318 */) {",
+    pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
+  },
+  {
+    name: "M319 never take over a selection lock that holds no holder",
+    from: "  try { holder = JSON.parse(text); } catch { /* not a holder: stale */ }",
+    to: "  try { holder = JSON.parse(text); } catch { return; } // SHU86-M319",
+    pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
   },
 ];
 

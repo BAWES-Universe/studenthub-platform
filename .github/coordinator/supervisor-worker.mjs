@@ -5,7 +5,7 @@ import { supervisorChildEnvironment } from "./service/credential-delivery.mjs";
 import { fork } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { recordSupervisorCompletion, SUPERVISOR_PROTOCOL_VERSION } from "./supervisor.mjs";
+import { recordSupervisorCompletion, SUPERVISOR_PROTOCOL_VERSION, childFailureCodeAllowed } from "./supervisor.mjs";
 
 // Authorization is host policy, not a claim in the work order. The service must
 // supply a child-side module that rechecks the activation before launch and each
@@ -26,6 +26,26 @@ export function createSupervisorSpawner({ stateDir, authorizationModule = fileUR
   };
 }
 
+// Velocity B: why a worker exited without a result, as a fixed code only (never
+// error text, which may carry credentials). The supervisor carries the code
+// into the run's error_code, so the receipt names the cause.
+// The policy's named clause (HOST_AUTH_<clause>) becomes CHILD_AUTH_<clause>.
+// Only a listed clause (CHILD_AUTH_CLAUSES) is named; any other is plain.
+function authCode(code) {
+  const clause = /^HOST_AUTH_([A-Z][A-Z0-9_]{1,23})$/.exec(String(code ?? ""))?.[1];
+  return clause && childFailureCodeAllowed(`CHILD_AUTH_${clause}`) ? `CHILD_AUTH_${clause}` : "CHILD_AUTH_REFUSED";
+}
+function childFailure(error, code) {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  if (!failure.childCode) failure.childCode = code;
+  return failure;
+}
+export function childFailureCode(error) {
+  const custody = /SHU251_ENV_CUSTODY|SHU251_ENV_CROSSED|SHU71_SUPERVISOR_ENV_REQUIRED/.exec(String(error?.message ?? ""))?.[0];
+  if (custody) return custody;
+  return childFailureCodeAllowed(error?.childCode) ? error.childCode : "SHU251_CHILD_FAILED";
+}
+
 export async function executeSupervisedOrder({ order, contract, stateDir, authorizationModule }, { env = process.env, send = () => {}, loadAdapter = name => import(`./adapters/${name}.mjs`) } = {}) {
   const policy = await import(authorizationModule);
   // A policy that names its denial (supervisor-authorization.mjs) hands the name
@@ -37,10 +57,10 @@ export async function executeSupervisedOrder({ order, contract, stateDir, author
     return verdict?.ok === true ? true : { code: verdict?.code ?? null };
   };
   const launch = authorized();
-  if (launch !== true) throw new Error(`host authorization refused supervised order${launch?.code ? ` (${launch.code})` : ""}`);
+  if (launch !== true) throw Object.assign(new Error(`host authorization refused supervised order${launch?.code ? ` (${launch.code})` : ""}`), { childCode: authCode(launch?.code) });
   const adapters = { "codex-cli": "codex-cli", "claude-code": "claude-code", "hermes-pool": "hermes-pool", "workspace-agents": "workspace-agents" };
   const name = adapters[order.runtime];
-  if (!name) throw new Error("unsupported supervised runtime");
+  if (!name) throw Object.assign(new Error("unsupported supervised runtime"), { childCode: "CHILD_RUNTIME_UNSUPPORTED" });
   const adapter = await loadAdapter(name);
   const options = { ...order, env, oauth_token: env.CLAUDE_CODE_OAUTH_TOKEN ?? "",
     token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "", api_trigger_id: env.WORKSPACE_AGENT_TRIGGER_ID ?? "",
@@ -50,11 +70,12 @@ export async function executeSupervisedOrder({ order, contract, stateDir, author
   beat();
   const timer = setInterval(beat, 10_000);
   try {
-    let result = await adapter.launchBuilder(options);
+    let result;
+    try { result = await adapter.launchBuilder(options); } catch (error) { throw childFailure(error, "CHILD_ADAPTER_LAUNCH_THREW"); }
     const runId = result.external_run_id;
     while (["RUNNING", "UNCHANGED"].includes(result.stage)) {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      result = await adapter.monitorRun({ ...options, run_id: runId });
+      try { result = await adapter.monitorRun({ ...options, run_id: runId }); } catch (error) { throw childFailure(error, "CHILD_ADAPTER_MONITOR_THREW"); }
     }
     // Copy the adapter's own callback verbatim; never reconstruct evidence from
     // an exit code, work order, session id or a supervisor heartbeat.
@@ -63,7 +84,7 @@ export async function executeSupervisedOrder({ order, contract, stateDir, author
       exit_code: result.stage === "COMPLETED" ? 0 : 1, signal: null,
       finished_at: new Date().toISOString(),
     } });
-    if (!recorded.ok) throw new Error(recorded.reason);
+    if (!recorded.ok) throw Object.assign(new Error(recorded.reason), { childCode: "CHILD_COMPLETION_UNRECORDED" });
     return result;
   } finally { clearInterval(timer); }
 }
@@ -76,8 +97,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.send) {
       }
       await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
     catch (error) {
-      const code = /SHU251_ENV_CUSTODY|SHU251_ENV_CROSSED|SHU71_SUPERVISOR_ENV_REQUIRED/.exec(error.message)?.[0] ?? 'SHU251_CHILD_FAILED';
-      process.stderr.write(`${code}\n`); process.exit(1);
+      // Velocity B: exit only once the code is written, so it is never lost.
+      process.stderr.write(`${childFailureCode(error)}\n`, () => process.exit(1));
     }
   });
 }

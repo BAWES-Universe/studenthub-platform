@@ -162,6 +162,79 @@ test("SHU-71 hold cause: the supervisor reports its own hold code in status", as
   assert.equal(outcome.reason_code, "SUPERVISOR_WORKER_EXIT");
 });
 
+test("Velocity B: a worker that exits without a result names why, as a fixed code only", async t => {
+  const { workerExitCode, CHILD_FAILURE_CODES } = await import("../supervisor.mjs");
+  const { childFailureCode } = await import("../supervisor-worker.mjs");
+  for (const code of CHILD_FAILURE_CODES) assert.equal(workerExitCode(`codex said hello\n${code}\n`), `WORKER_EXIT_${code}`, code);
+  for (const tail of ["", "\n", "AKIAABCDEFGHIJKLMNOP\n", "CHILD_AUTH_REFUSED please\n", "CHILD_AUTH_REFUSED\nother text\n", null])
+    assert.equal(workerExitCode(tail), "WORKER_EXIT", JSON.stringify(tail));
+  assert.equal(childFailureCode(Object.assign(new Error("x"), { childCode: "CHILD_AUTH_REFUSED" })), "CHILD_AUTH_REFUSED");
+  assert.equal(childFailureCode(Object.assign(new Error("x"), { childCode: "MADE_UP" })), "SHU251_CHILD_FAILED");
+  assert.equal(childFailureCode(new Error("SHU251_ENV_CROSSED: token")), "SHU251_ENV_CROSSED");
+  assert.equal(childFailureCode("plain"), "SHU251_CHILD_FAILED");
+  // A refused order is reported as such, with no error text.
+  const { executeSupervisedOrder } = await import("../supervisor-worker.mjs");
+  const dir = fs.mkdtempSync(join(tmpdir(), "velocity-b-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const policy = join(dir, "policy.mjs");
+  fs.writeFileSync(policy, "export const authorizeWorkOrder = () => false;\n");
+  const refused = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: policy }).catch((error) => error);
+  assert.equal(childFailureCode(refused), "CHILD_AUTH_REFUSED", "a plain false names no clause");
+  fs.writeFileSync(join(dir, "named.mjs"), "export const workOrderAuthorization = () => ({ ok: false, code: \"HOST_AUTH_ATTEMPT_SCOPE\" });\n");
+  const named = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: join(dir, "named.mjs") }).catch((error) => error);
+  assert.equal(childFailureCode(named), "CHILD_AUTH_ATTEMPT_SCOPE", "the policy's clause is named");
+  assert.equal(workerExitCode("CHILD_AUTH_ATTEMPT_SCOPE\n"), "WORKER_EXIT_CHILD_AUTH_ATTEMPT_SCOPE");
+  fs.writeFileSync(join(dir, "odd.mjs"), "export const workOrderAuthorization = () => ({ ok: false, code: \"HOST_AUTH_CUSTOMER_ALICE\" });\n");
+  const odd = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: join(dir, "odd.mjs") }).catch((error) => error);
+  assert.equal(childFailureCode(odd), "CHILD_AUTH_REFUSED", "an unlisted clause is not named");
+  // Every clause the policy itself denies with is listed.
+  const policySource = fs.readFileSync(new URL("../supervisor-authorization.mjs", import.meta.url), "utf8");
+  const { CHILD_AUTH_CLAUSES: listed } = await import("../supervisor.mjs");
+  for (const [, clause] of policySource.matchAll(/denied\("([A-Z][A-Z0-9_]+)"\)/g)) assert.ok(listed.includes(clause), clause);
+  for (const odd of ["CHILD_AUTH_lower", "CHILD_AUTH_" + "X".repeat(30), "CHILD_AUTH_A B", "CHILD_AUTH_CUSTOMER_ALICE"]) assert.equal(workerExitCode(`${odd}\n`), "WORKER_EXIT", odd);
+  // Only listed clauses are carried: an unlisted one, from the adapter or the
+  // policy, is never named.
+  const { CHILD_AUTH_CLAUSES } = await import("../supervisor.mjs");
+  for (const clause of CHILD_AUTH_CLAUSES) assert.equal(workerExitCode(`CHILD_AUTH_${clause}\n`), `WORKER_EXIT_CHILD_AUTH_${clause}`, clause);
+  assert.equal(childFailureCode(Object.assign(new Error("x"), { childCode: "CHILD_AUTH_CUSTOMER_ALICE" })), "SHU251_CHILD_FAILED");
+  // End to end through the supervisor: the code reaches the receipt.
+  const f = setup(t);
+  let order = null;
+  await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
+  await f.drain();
+  // The exit is seen before the code is read: the run ends only once stderr,
+  // still open, has ended.
+  f.children[0].stderr.readable = true;
+  f.children[0].emit("exit", 1);
+  assert.equal((await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"))).detail_code ?? null, null, "not finished before stderr ends");
+  f.children[0].stderr.emit("data", "some adapter output\nCHILD_ADAPTER_MONITOR_THREW\n");
+  f.children[0].stderr.emit("end");
+  const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
+  assert.equal(status.detail_code, "WORKER_EXIT_CHILD_ADAPTER_MONITOR_THREW");
+  assert.equal(carriedSupervisorOutcome(status, f.h.receipts()[0]).reason_code, "SUPERVISOR_WORKER_EXIT_CHILD_ADAPTER_MONITOR_THREW");
+  // A stderr that never ends holds the run back for a bounded time only.
+  const { WORKER_EXIT_DRAIN_MS } = await import("../supervisor.mjs");
+  assert.ok(WORKER_EXIT_DRAIN_MS > 0 && WORKER_EXIT_DRAIN_MS <= 1000);
+  // The worker writes its code before it exits (a pipe write is asynchronous).
+  const worker = fs.readFileSync(new URL("../supervisor-worker.mjs", import.meta.url), "utf8");
+  assert.match(worker, /process\.stderr\.write\(`\$\{childFailureCode\(error\)\}\\n`, \(\) => process\.exit\(1\)\);/);
+});
+
+test("Velocity B: the deadline is off once the worker exits, so the drain keeps its code", async t => {
+  const f = setup(t, { deadlineMs: 40 });
+  let order = null;
+  await f.tick({ supervisorTransport: ({ request }) => { order = request.order; return f.supervisor.submit(request); } });
+  await f.drain();
+  f.children[0].stderr.readable = true;
+  f.children[0].emit("exit", 1);
+  // The deadline would have fired here, inside the drain window.
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  f.children[0].stderr.emit("data", "CHILD_ADAPTER_LAUNCH_THREW\n");
+  f.children[0].stderr.emit("end");
+  const status = await f.supervisor.submit(signedSupervisorRequest(order, SECRET, "status"));
+  assert.equal(status.detail_code, "WORKER_EXIT_CHILD_ADAPTER_LAUNCH_THREW");
+});
+
 test("SHU-250: carried result SHA disagrees with verified head and HOLDs", async t => {
   const f = setup(t); await f.tick(); await f.drain();
   // Also exercise a review transport directly: input head matches but a forged

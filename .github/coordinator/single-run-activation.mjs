@@ -555,7 +555,7 @@ export function parseActivationArgs(argv = []) {
 // order the card-run timer runs them. Only the timer reads the order; the
 // coordinator still runs one card per episode, the armed activation's own.
 // M15: with more than one card worker a longer queue keeps every worker fed.
-export const MAX_CARD_QUEUE = 20;
+export const MAX_CARD_QUEUE = 60;
 const FIXTURE_PAIR = Object.freeze(["SHU-140", "SHU-254"]);
 
 // The committed queue, or why the scope is not one. A single id is not a
