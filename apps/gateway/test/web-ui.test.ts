@@ -18,6 +18,7 @@ import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
 import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
+import type { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
 
@@ -29,6 +30,7 @@ const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESS
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];
   readonly nationalityId?: string | null;
+  readonly documents?: CandidateDocuments;
 } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
@@ -74,7 +76,7 @@ async function fixture(t: TestContext, options: {
     origin: ORIGIN, returnTo: rig.config.allowedReturnUrls[1],
     profiles,
   } };
-  const server = createGatewayServer(undefined, undefined, undefined, login);
+  const server = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, options.documents);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address();
@@ -509,4 +511,27 @@ test("U2B_MOTHER_LINK: unconditional edit-link mutant dies at named assertion", 
     const mutant = await import(mutantUrl.href) as { profileDocument: typeof profileDocument };
     await assert.rejects(probe(mutant.profileDocument), { name: "AssertionError", message: /U2B_MOTHER_LINK mutant/ });
   } finally { unlinkSync(mutantUrl); }
+});
+
+
+test("SHU366_PAGE_NAV: profile and workspace document links require configured service", async (t) => {
+  // Only configuration presence is under test here; the real document lifecycle
+  // and its one-list page rendering are covered by documents-page.test.ts.
+  const configured = await fixture(t, { documents: {} as CandidateDocuments });
+  for (const language of ["en", "ar"] as const) {
+    configured.rows.set("candidate-1", { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_language_pref: language });
+    const response = await fetch(`${configured.url}/profile`, { headers: BROWSER });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, new RegExp(`href="/profile/documents">${language === "ar" ? "مستنداتي" : "My documents"}</a>`));
+    assert.match(html, new RegExp(`lang="${language}" dir="${language === "ar" ? "rtl" : "ltr"}"`));
+  }
+  const unconfigured = await fixture(t);
+  const response = await fetch(`${unconfigured.url}/profile`, { headers: BROWSER });
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(await response.text(), /href="\/profile\/documents"/);
+  const navigation = { status: 200, body: { contexts: [], active: null } } as Parameters<typeof renderWorkspace>[0];
+  assert.match(renderWorkspace(navigation, configured.login, true), /href="\/profile\/documents">My documents<\/a>/);
+  assert.doesNotMatch(renderWorkspace(navigation, configured.login, false), /href="\/profile\/documents"/);
+  assert.doesNotMatch(renderWorkspace(navigation, configured.login), /href="\/profile\/documents"/);
 });

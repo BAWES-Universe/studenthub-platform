@@ -3,7 +3,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
 import { mkdir, open, rename, unlink, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { resolveActiveContext, type AuthzStore, type RequestIdentity } from '../../contracts/src/index.js';
+import { resolveActiveContext, resolvePrincipalId, type AuthzStore, type RequestIdentity } from '../../contracts/src/index.js';
 import { validateLifecycleState, type LifecycleState } from './lifecycle-state.js';
 export type DocumentType = 'personal-photo' | 'resume' | 'civil-id-front' | 'civil-id-back' | 'video' | 'video-thumbnail' | 'company-logo' | 'commercial-licence';
 export interface Scope {
@@ -184,6 +184,9 @@ export interface PrivateDocumentOptions {
     origin: string;
     /** Reports whether an organization has been soft-deleted. */
     organizationDeleted?: (orgId: string) => Promise<boolean>;
+    /** Trusted server-only own-document namespace, set by CandidateDocuments from orgId.
+     * Never accept this option from request input. Other namespaces retain grant checks. */
+    ownDocumentOrgId?: string;
     now?: () => number;
     /** Absolute route used for signed delivery capabilities. */
     deliveryPath?: string;
@@ -207,6 +210,8 @@ export class PrivateDocuments {
         this.clock = options.now ?? Date.now;
         if (options.deliveryPath !== undefined && !/^\/[A-Za-z0-9/_-]+$/.test(options.deliveryPath))
             throw new TypeError('invalid private-document configuration');
+        if (options.ownDocumentOrgId !== undefined && !/^[\w-]{1,128}$/.test(options.ownDocumentOrgId))
+            throw new TypeError('invalid private-document configuration');
         this.deliveryPath = options.deliveryPath ?? '/private-documents/delivery';
     }
     private now(): number { const n = this.clock(); if (!Number.isSafeInteger(n) || n < 0)
@@ -219,8 +224,16 @@ export class PrivateDocuments {
             const identity = await this.options.authenticate(credential as string);
             if (!identity)
                 return fail('denied');
+            const principalId = this.options.ownDocumentOrgId === undefined ? undefined : await resolvePrincipalId(identity, this.options.authz);
+            if (principalId === null) return fail('denied');
             const result = await this.options.store.transaction(async (state) => {
                 validateState(state);
+                if (this.options.ownDocumentOrgId !== undefined) {
+                    const currentIdentity = await this.options.authenticate(credential as string);
+                    if (!currentIdentity || await resolvePrincipalId(currentIdentity, this.options.authz) !== principalId)
+                        return fail('denied');
+                    return fn(currentIdentity, state);
+                }
                 return fn(identity, state);
             });
             this.log(operation, 'ok');
@@ -237,6 +250,12 @@ export class PrivateDocuments {
     }
     catch { /* logging cannot expose dependency errors or change a committed result */ } }
     private async authorize(identity: RequestIdentity, scope: Scope): Promise<string> {
+        if (scope.personId !== undefined && scope.orgId === this.options.ownDocumentOrgId) {
+            const principalId = await resolvePrincipalId(identity, this.options.authz);
+            if (principalId === null || principalId !== scope.personId || !await this.options.authz.getOrganization(scope.orgId))
+                return fail('denied');
+            return principalId;
+        }
         const role = scope.personId === undefined ? 'org-owner' : 'candidate';
         const result = await resolveActiveContext(identity, { orgId: scope.orgId, role }, this.options.authz);
         if (result.kind !== 'authorized')

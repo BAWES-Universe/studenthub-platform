@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { BrowserLoginApplication } from './web-ui.js';
+import { handleDocumentsPage } from './documents-page.js';
 import { CandidateDocuments, LifecycleError } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 
 function credential(request: IncomingMessage): string {
@@ -25,7 +27,8 @@ async function read(request: IncomingMessage, limit: number): Promise<Buffer> {
 }
 /** Mounted by createGatewayServer. Only verified session credentials reach the service.
  * The route never accepts principal, organization, role or arbitrary final object keys. */
-export async function handleCandidateDocuments(request: IncomingMessage, response: ServerResponse, service?: CandidateDocuments): Promise<boolean> {
+export async function handleCandidateDocuments(request: IncomingMessage, response: ServerResponse, service?: CandidateDocuments, login?: BrowserLoginApplication): Promise<boolean> {
+  if (await handleDocumentsPage(request, response, service, login)) return true;
   const raw = request.url ?? '';
   if (!raw.startsWith('/candidate-documents') && !raw.startsWith('/private-documents/')) return false;
   response.setHeader('Cache-Control','private, no-store');

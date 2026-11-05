@@ -202,3 +202,40 @@ test('AC-HTTP real delivery handler enforces authenticated GET, expiry and safe 
  f.advance(1000);r=await fetch(endpoint,{headers:{Authorization:'Bearer alice'}});assert.equal(r.status,403);assert.deepEqual(await r.json(),{error:'denied'});
  r=await fetch(base+'/'+d.id,{headers:{Authorization:'Bearer alice'}});assert.equal(r.status,404);
 });
+
+test('SHU366_PRIMITIVE_OWNS trusted own namespace preserves default grants and org deletion guards',async t=>{
+ const f=await fixture(t);await f.authz.clearGrantsForPrincipal('alice');
+ const s=new PrivateDocuments({...f.options,ownDocumentOrgId:'org-a',organizationDeleted:async id=>id==='org-a'});
+ const d=await s.upload('alice',input());assert.deepEqual(await s.metadata('alice',d.id),d);
+ const link=await s.issueDelivery('alice',d.id);assert.deepEqual((await s.deliver('alice',link.url)).bytes,pdf);
+ const copy=await s.copy('alice',d.id,person);await s.replace('alice',copy.id,input());await s.remove('alice',copy.id);
+ await rejects(f.service.upload('alice',input())); // Unconfigured primitive still requires candidate grant.
+ await rejects(s.upload('alice',input({scope:{orgId:'org-b',personId:'alice'}})));
+ await rejects(s.upload('alice',input({scope:{orgId:'org-a',personId:'bob'}})));
+ await rejects(s.copy('alice',d.id,{orgId:'org-b',personId:'alice'}));
+ await rejects(s.upload('alice',input({scope:{orgId:'org-a'},type:'commercial-licence'})));
+ await rejects(s.upload('owner',input({scope:{orgId:'org-a'},type:'commercial-licence'})),'denied');
+ const liveOrg=new PrivateDocuments({...f.options,ownDocumentOrgId:'org-a',organizationDeleted:async()=>false});
+ const org=await liveOrg.upload('owner',input({scope:{orgId:'org-a'},type:'commercial-licence'}));
+ await rejects(liveOrg.metadata('recruiter',org.id));await rejects(liveOrg.remove('alice',org.id));
+ await f.authz.clearGrantsForPrincipal('owner');await rejects(liveOrg.metadata('owner',org.id));await rejects(liveOrg.remove('owner',org.id));
+ const getOrg=f.authz.getOrganization.bind(f.authz);f.authz.getOrganization=async id=>id==='org-a'?undefined:getOrg(id);
+ await rejects(s.metadata('alice',d.id));await rejects(s.upload('alice',input()));
+});
+
+test('SHU366_PRIMITIVE_LIVE configured primitive rechecks identity inside every transaction',async t=>{
+ for(const failure of ['session','principal','subject']){
+  const f=await fixture(t);await f.authz.clearGrantsForPrincipal('alice');
+  const own=new PrivateDocuments({...f.options,ownDocumentOrgId:'org-a'});
+  const d=await own.upload('alice',input()),link=await own.issueDelivery('alice',d.id);
+  let invalid=false;const getPrincipal=f.authz.getPrincipal.bind(f.authz);
+  f.authz.getPrincipal=async id=>invalid&&failure==='principal'&&id==='alice'?undefined:getPrincipal(id);
+  const s=new PrivateDocuments({...f.options,ownDocumentOrgId:'org-a',
+   authenticate:async credential=>invalid&&failure==='session'?null:invalid&&failure==='subject'?{kind:'principal',principalId:'bob'}:f.options.authenticate(credential),
+   store:{transaction:fn=>f.store.transaction(async state=>{invalid=true;return fn(state);})}});
+  for(const operation of [()=>s.upload('alice',input()),()=>s.metadata('alice',d.id),()=>s.issueDelivery('alice',d.id),()=>s.deliver('alice',link.url),()=>s.replace('alice',d.id,input()),()=>s.remove('alice',d.id),()=>s.copy('alice',d.id,person)]){
+   invalid=false;const before=await f.store.transaction(async state=>structuredClone(state));
+   await rejects(operation());assert.deepEqual(await f.store.transaction(async state=>state),before);
+  }
+ }
+});
