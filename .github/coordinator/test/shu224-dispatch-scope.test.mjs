@@ -263,6 +263,9 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-455").after, ["SHU-454"], "SHU-224: SHU-455 waits on SHU-454");
   assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-456").after, ["SHU-455"], "SHU-224: SHU-456 waits on SHU-455");
   assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-461").after, undefined, "SHU-224: SHU-461 waits on nothing");
+  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-478").after, undefined, "SHU-224: SHU-478 waits on nothing");
+  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-479").after, ["SHU-478"], "SHU-224: SHU-479 waits on SHU-478");
+  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-480").after, ["SHU-479"], "SHU-224: SHU-480 waits on SHU-479");
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
   }
