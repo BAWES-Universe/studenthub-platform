@@ -21,6 +21,9 @@ const names = [
   'documents-keyboard-history-en', 'documents-keyboard-history-ar',
   'documents-session-missing', 'documents-session-revocation', 'documents-session-expiry',
   'documents-unavailable-en', 'documents-unavailable-ar', 'documents-person-isolation',
+  ...['en','ar'].flatMap(language => [320,390,1280].map(width => `language-review-confirm-reload-${language}-${width}`)),
+  ...['en','ar'].flatMap(language => ['cancel-history','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
+  ...['en','ar'].flatMap(language => ['missing-preview','revoked-confirm','expired-confirm'].map(state => `language-session-${state}-${language}`)),
 ];
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
   chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:names.map(name=>({name,status:'NOT_RUN'})),
@@ -168,6 +171,95 @@ async function nativeReplay(source,{expectLoss=false,holdRedirect=false}={}) {
   }
   else {assert.equal(result.status,303,'Native save emits real HTTP303'); check(outcome.response?.status()===200,'Native save reaches rendered profile');}
   return {...result,page:target};
+}
+// Language acceptance uses native forms, real database state and closed evidence.
+const languageForm='form[action="/profile/language/preview"]';
+const languageConfirm='form[action="/profile/language/confirm"]';
+const otherLanguage=language=>language==='en'?'ar':'en';
+const languageCopy={
+  en:{review:'Review language change',confirm:'Confirm change',cancel:'Cancel',label:'Language',en:'English',ar:'Arabic',notChanged:'Your language wasn’t changed.',conflict:'Your profile changed while you were reviewing. Open it again and retry.',unavailable:'The profile service is unavailable. Please try again in a moment.',invalid:'This change is no longer available.',unknownHeading:'Your language change wasn’t confirmed.',unknown:'We couldn’t confirm whether your language was changed. Open your profile to check before trying again.',updated:'Updated by you on '},
+  ar:{review:'مراجعة تغيير اللغة',confirm:'تأكيد التغيير',cancel:'إلغاء',label:'اللغة',en:'الإنجليزية',ar:'العربية',notChanged:'لم يتم تغيير لغتك.',conflict:'تغيّر ملفك الشخصي أثناء المراجعة. افتحه مجددًا وأعد المحاولة.',unavailable:'خدمة الملف الشخصي غير متاحة. يرجى المحاولة مجددًا بعد قليل.',invalid:'لم يعد هذا التغيير متاحًا.',unknownHeading:'لم يتم تأكيد تغيير اللغة.',unknown:'تعذّر التأكد مما إذا كانت لغتك قد تغيّرت. افتح ملفك الشخصي للتحقق قبل المحاولة مجددًا.',updated:'آخر تحديث منك في '},
+};
+async function languageLocale(page,language) {
+  assert.equal(await page.locator('html').getAttribute('lang'),language,'Language flow uses trusted current locale');
+  assert.equal(await page.locator('html').getAttribute('dir'),language==='ar'?'rtl':'ltr','Language flow direction follows trusted locale');
+}
+async function languagePost(page,selector,{target=page,expectedStatus}={}) {
+  const route=selector===languageForm?'/profile/language/preview':'/profile/language/confirm';
+  const responseReady=target.waitForResponse(response=>response.request().method()==='POST' && new URL(response.url()).pathname===route,{timeout:15000});
+  const navigation=target.waitForNavigation({waitUntil:'load',timeout:30000});
+  // Keep both rejection handlers attached even if clicking fails. Never persist errors.
+  responseReady.catch(()=>{}); navigation.catch(()=>{});
+  await page.locator(`${selector} button[type=submit]`).click({noWaitAfter:true});
+  const response=await responseReady;
+  assert.equal(response.status(),expectedStatus,'Language native POST status');
+  const destination=await navigation;
+  assert.equal(destination?.status(),expectedStatus===303?200:expectedStatus,'Language native navigation status');
+  assert.equal(response.headers()['cache-control'],'no-store','Language POST response must not be cached');
+  if(expectedStatus===303) {
+    assert.equal(response.headers().location,'/profile','Language confirmation redirects to profile');
+    assert.equal(new URL(target.url()).pathname,'/profile','Language redirect reaches real profile');
+  }
+  return response.status();
+}
+async function languagePreview(page,language) {
+  await page.locator('#profile-language').selectOption(otherLanguage(language));
+  await languagePost(page,languageForm,{expectedStatus:200});
+  await languageReview(page,language);
+}
+async function languageReview(page,language) {
+  const copy=languageCopy[language];
+  await languageLocale(page,language);
+  await textIncludes(page,copy.review);
+  assert.deepEqual(await page.locator('main p strong').allTextContents(),[copy[language],copy[otherLanguage(language)]],'Review displays localized current and proposed languages');
+  await visible(page.locator(languageConfirm));
+  await visible(page.getByRole('button',{name:copy.confirm,exact:true}));
+  await visible(page.getByRole('link',{name:copy.cancel,exact:true}));
+  await noOverflow(page);
+}
+async function languageState(actor,language,writes) {
+  const state=await fixture.inspectLanguage(actor);
+  assert.equal(state.language,language,'Durable language preference');
+  assert.equal(state.writeCount,writes,'Language preference write count');
+  assert.equal(state.receiptCount,writes,'Language-specific receipt count');
+  if(writes) {
+    assert.deepEqual(state.lastReceipt.fields,['language'],'Receipt is scoped only to language');
+    check(Number.isFinite(Date.parse(state.updatedAt)),'Language update has a real durable timestamp');
+  }
+  return state;
+}
+async function languageProfile(page,language,{updatedAt}={}) {
+  await visible(page.locator('#profile-heading')); await languageLocale(page,language);
+  assert.equal(await page.locator('#profile-language').inputValue(),language,'Reloaded picker reflects durable language');
+  await page.locator('#section-details > summary').click();
+  assert.equal(await page.locator('#field-language .p-value').innerText(),languageCopy[language][language],'Reloaded language row reflects durable preference');
+  if(updatedAt) {
+    await page.locator('.p-provenance > summary').click();
+    const row=page.locator('.p-provenance dl > div').filter({has:page.getByText(languageCopy[language].label,{exact:true})});
+    assert.equal(await row.count(),1,'Exactly one language provenance row');
+    const date=new Intl.DateTimeFormat(language==='ar'?'ar-KW':'en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(updatedAt.slice(0,10)));
+    assert.equal(await row.locator('dd').innerText(),languageCopy[language].updated+date,'Language provenance uses actual durable write date');
+  }
+  await noOverflow(page);
+}
+async function languageError(page,language,key,{unknown=false}={}) {
+  await languageLocale(page,language);
+  await textIncludes(page,languageCopy[language][key]);
+  await textIncludes(page,languageCopy[language][unknown?'unknownHeading':'notChanged']);
+  if(unknown) check(!(await page.locator('body').innerText()).includes(languageCopy[language].notChanged),'Unknown commit outcome must not claim no change');
+  assert.equal(await page.locator(languageConfirm).count(),0,'Error page must not expose protected confirmation form');
+  const body=await page.locator('body').innerText();
+  check(!['Synthetic language preference read failure','Synthetic language COMMIT dependency failure','Synthetic lost language COMMIT acknowledgement'].some(detail=>body.includes(detail)),'Language failure must not expose dependency details');
+  await noOverflow(page);
+}
+async function languageReplayTarget(source) {
+  const name=`acceptance-language-${++replayTargetSequence}`;
+  const ready=source.waitForEvent('popup');
+  await source.evaluate(name=>{window.open('about:blank',name);},name);
+  const target=await ready; await target.waitForLoadState('load');
+  // Only the native form target changes; all signed fields remain untouched.
+  await source.locator(languageConfirm).evaluate((form,name)=>{form.target=name;},name);
+  return target;
 }
 async function run(name, action) {
   const record=evidence.cases.find(c=>c.name===name), start=Date.now();
@@ -543,6 +635,141 @@ try {
     await alice.page.goto(`${fixture.baseURL}/profile/documents`); await documentPage(alice.page,'en',metadata);
     await counts(alice.actor,0,0); await counts(bob.actor,0,0);
   });
+  // Additive language acceptance. All preceding 54 case bodies remain unchanged.
+  for(const language of ['en','ar']) for(const width of [320,390,1280]) {
+    const name=`language-review-confirm-reload-${language}-${width}`;
+    await run(name,async()=>{
+      const {actor,page}=await subject({language,width}), before=await languageState(actor,language,0);
+      await languagePreview(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Review must not write language or receipts');
+      const reviewScreenshot=await screenshot(page,name);
+      await languagePost(page,languageConfirm,{expectedStatus:303});
+      const state=await languageState(actor,otherLanguage(language),1);
+      check(state.updatedAt!==before.updatedAt,'Confirmed language updates durable timestamp');
+      assert.equal((await page.reload()).status(),200,'Changed profile reload succeeds');
+      await languageProfile(page,otherLanguage(language),state);
+      assert.deepEqual(await fixture.inspectLanguage(actor),state,'Reload must not add writes or receipts');
+      return {screenshot:reviewScreenshot,disclosureScreenshot:await screenshot(page,`${name}-persisted`),notes:'Native Review 200, Confirm 303 and real profile reload; language-specific durable write and receipt count 1. Provenance checked against database timestamp.'};
+    });
+  }
+  for(const language of ['en','ar']) {
+    await run(`language-cancel-history-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      await languagePreview(page,language);
+      await submit(page,page.getByRole('link',{name:languageCopy[language].cancel,exact:true}));
+      await visible(page.locator('#profile-heading')); await languageLocale(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Cancel does not persist preference');
+      // Native POST history can expose a Chromium resubmission interstitial.
+      // Report that as a state-specific failure, never replace it with a GET.
+      try { await page.goBack({waitUntil:'load'}); }
+      catch {
+        evidence.cases.find(c=>c.name===`language-cancel-history-${language}`).screenshot=await screenshot(page,`language-cancel-history-${language}-back-state`).catch(()=>undefined);
+        assert.fail('Cancel Back encountered native POST-history navigation failure or resubmission interstitial');
+      }
+      evidence.cases.find(c=>c.name===`language-cancel-history-${language}`).screenshot=await screenshot(page,`language-cancel-history-${language}-back-state`);
+      check(await page.locator(languageConfirm).isVisible(),'Cancel Back did not restore Review; possible native POST-history interstitial');
+      await languageReview(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Back does not persist preference');
+      await page.goForward(); await visible(page.locator('#profile-heading'));
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Forward does not persist preference');
+      return {notes:'Native Cancel, Back and Forward exercised without navigation substitution or confirmation submission.'};
+    });
+    await run(`language-stale-two-tabs-${language}`,async()=>{
+      const {actor,context,page}=await subject({language});
+      const second=await context.newPage(); await second.goto(`${fixture.baseURL}/profile`);
+      await languagePreview(page,language); await languagePreview(second,language);
+      await languagePost(second,languageConfirm,{expectedStatus:303});
+      const committed=await languageState(actor,otherLanguage(language),1);
+      await languagePost(page,languageConfirm,{expectedStatus:409});
+      await languageError(page,otherLanguage(language),'conflict');
+      assert.deepEqual(await fixture.inspectLanguage(actor),committed,'Stale tab cannot write a second change');
+      return {screenshot:await screenshot(page,`language-stale-two-tabs-${language}`)};
+    });
+    await run(`language-single-use-confirm-${language}`,async()=>{
+      const {actor,page}=await subject({language}); await languagePreview(page,language);
+      const first=await languageReplayTarget(page);
+      await languagePost(page,languageConfirm,{target:first,expectedStatus:303});
+      await languageState(actor,otherLanguage(language),1);
+      // Restore the original value through a fresh genuine browser transaction.
+      // The untouched first token now matches state again, isolating its spent guard.
+      await languagePreview(first,otherLanguage(language));
+      await languagePost(first,languageConfirm,{expectedStatus:303});
+      const committed=await languageState(actor,language,2);
+      const repeated=await languageReplayTarget(page);
+      await languagePost(page,languageConfirm,{target:repeated,expectedStatus:409});
+      await languageError(repeated,language,'conflict');
+      assert.deepEqual(await fixture.inspectLanguage(actor),committed,'Spent token cannot write again after original language is restored');
+      return {screenshot:await screenshot(repeated,`language-single-use-confirm-${language}`)};
+    });
+    for(const mode of ['missing-preview','revoked-confirm','expired-confirm']) await run(`language-session-${mode}-${language}`,async()=>{
+      const {actor,context,page}=await subject({language}), before=await languageState(actor,language,0);
+      if(mode==='missing-preview') {
+        await page.locator('#profile-language').selectOption(otherLanguage(language)); await context.clearCookies();
+      } else {
+        await languagePreview(page,language); await fixture[mode==='revoked-confirm'?'revoke':'expire'](actor);
+      }
+      await languagePost(page,mode==='missing-preview'?languageForm:languageConfirm,{expectedStatus:401});
+      assert.equal(await page.locator(languageConfirm).count(),0,'Lost session never exposes protected confirmation');
+      assert.equal(await page.locator('input[name^="token."]').count(),0,'Lost session never exposes signed fields');
+      await textIncludes(page,'Sign in');
+      // The existing signed-out shell has lang=en and implicit LTR, not a dir attribute.
+      assert.equal(await page.locator('html').getAttribute('lang'),'en','Session loss uses English fallback metadata');
+      assert.equal(await page.locator('html').evaluate(node=>getComputedStyle(node).direction),'ltr','Signed-out fallback renders left to right');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Session loss cannot change preference or receipts');
+      return {screenshot:await screenshot(page,`language-session-${mode}-${language}`)};
+    });
+    await run(`language-invalid-value-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      // Deliberately invalid browser input, not a mocked response or hidden token edit.
+      await page.locator('#profile-language').evaluate(select=>{const option=new Option('synthetic-invalid-language','synthetic-invalid-language');select.add(option);select.value=option.value;});
+      await languagePost(page,languageForm,{expectedStatus:400});
+      await languageError(page,language,'invalid');
+      check(!(await page.locator('body').innerText()).includes('synthetic-invalid-language'),'Invalid language input must not be echoed');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Invalid preview cannot write preference');
+      return {screenshot:await screenshot(page,`language-invalid-value-${language}`)};
+    });
+    for(const [stateName,mode] of [['preview-unavailable','preview-read'],['confirm-rollback','confirm-before-commit'],['confirm-acknowledgement-loss','confirm-after-commit']]) await run(`language-${stateName}-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      if(mode==='preview-read') await page.locator('#profile-language').selectOption(otherLanguage(language));
+      else await languagePreview(page,language);
+      const fault=fixture.useLanguageFault(mode); restorers.push(()=>fault.restore());
+      await languagePost(page,mode==='preview-read'?languageForm:languageConfirm,{expectedStatus:503});
+      await languageError(page,language,mode==='preview-read'?'unavailable':'unknown',{unknown:mode!=='preview-read'});
+      const counter=mode==='preview-read'?'previewReadThrows':mode==='confirm-before-commit'?'beforeCommitThrows':'afterCommitThrows';
+      assert.equal(fault.evidence[counter],1,'Requested real language dependency boundary exercised once');
+      const writes=mode==='confirm-after-commit'?1:0;
+      if(mode!=='preview-read') {
+        assert.equal(fault.evidence.preferenceWriteStatements,1,'Real preference write statement exercised');
+        assert.equal(fault.evidence.receiptInsertStatements,1,'Real language receipt insert exercised');
+        assert.equal(fault.evidence.commits,writes,'Fault durable commit count');
+        if(mode==='confirm-before-commit') assert.equal(fault.evidence.rollbacks,1,'Failed transaction actually rolled back');
+      }
+      const durable=await languageState(actor,writes?otherLanguage(language):language,writes);
+      if(!writes) assert.deepEqual(durable,before,'Uncommitted failure leaves language timestamp and receipts unchanged');
+      const errorScreenshot=await screenshot(page,`language-${stateName}-${language}`);
+      fault.restore();
+      await submit(page,page.locator('main a[href="/profile"]'));
+      assert.equal((await page.reload()).status(),200,'Profile reload resolves uncertain outcome');
+      await languageProfile(page,writes?otherLanguage(language):language,writes?durable:{});
+      assert.deepEqual(await fixture.inspectLanguage(actor),durable,'Recovery read never writes');
+      return {screenshot:errorScreenshot,boundaryCounters:{...fault.evidence},durableWrites:durable.writeCount,durableReceipts:durable.receiptCount,notes:`Real dependency boundary exercised; durable language writes and receipts ${writes}; recovery profile reload verified.`};
+    });
+    await run(`language-token-expiry-${language}`,async()=>{
+      const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      const expiry=fixture.useLanguageExpiredTokens(); restorers.push(()=>expiry.restore());
+      await languagePreview(page,language);
+      const expired=await page.locator(languageConfirm).evaluate(form=>{
+        const expiresAt=Date.parse(form.elements.namedItem('token.expiresAt').value);
+        const issuedAt=Date.parse(form.elements.namedItem('token.issuedAt').value);
+        return Number.isFinite(expiresAt) && expiresAt<=Date.now() && expiresAt-issuedAt===300000;
+      });
+      assert.equal(expiry.evidence.issuances,1,'Actual production signer issued language review token');
+      check(expired,'Production-signed language review token must be expired with unchanged five-minute lifetime');
+      await languagePost(page,languageConfirm,{expectedStatus:409}); await languageError(page,language,'conflict');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Expired language token cannot write');
+      return {screenshot:await screenshot(page,`language-token-expiry-${language}`),notes:'Production signer with backdated issuance only; unmodified lifetime and real verification clock.'};
+    });
+  }
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';
