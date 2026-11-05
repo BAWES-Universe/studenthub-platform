@@ -18,10 +18,12 @@ async function fixture(t){
  const disk=await FileDocumentStore.create(join(root,'private'));
  let failure=false,removeFailure=false,uncertain=false,now=1800000000000;
  const store={transaction:fn=>disk.transaction(async s=>{const versions=s.documents.map(d=>d.version).join();const count=s.documents.length;const value=await fn(s);if(removeFailure&&s.documents.length<count){removeFailure=false;throw new Error('synthetic failed removal commit');}if(failure&&s.documents.some(d=>!versions.split(',').includes(d.version))){failure=false;throw new Error('object-key signed-url storage sentinel');}return value;}).then(r=>{if(uncertain){uncertain=false;throw new Error('commit outcome unknown');}return r;})};
- const authz=new InMemoryAuthzStore({organizations:[{id:'org-a',name:'Synthetic A'},{id:'org-b',name:'Synthetic B'}],principals:['alice','bob','employer'].map(id=>({id,pbuuids:[]}))});
+ const authz=new InMemoryAuthzStore({organizations:[{id:'org-a',name:'Synthetic A'},{id:'org-b',name:'Synthetic B'}],principals:['alice','bob','employer','recruiter','staff','admin'].map(id=>({id,pbuuids:[]}))});
  for(const id of ['alice','bob'])await authz.grantMany(id,[{orgId:'org-a',role:'candidate',scope:'self'}]);
  await authz.grantMany('employer',[{orgId:'org-a',role:'org-owner',scope:'self'}]);
+ for(const [id,role] of [['recruiter','recruiter'],['staff','staff'],['admin','admin']])await authz.grantMany(id,[{orgId:'org-a',role,scope:'self'}]);
  const tokens={alice:randomBytes(32).toString('base64url'),bob:randomBytes(32).toString('base64url'),employer:randomBytes(32).toString('base64url')};
+ for(const id of ['recruiter','staff','admin'])tokens[id]=randomBytes(32).toString('base64url');
  const sessions=new Map(Object.entries(tokens).map(([personId,id])=>[id,{id,personId}]));
  const ports={store,authz,sessions:{get:async id=>sessions.get(id),put:async s=>sessions.set(s.id,s),delete:async id=>sessions.delete(id)},origin,orgId:'org-a',signingKey:randomBytes(32),now:()=>now};
  const service=createCandidateDocuments(ports);const events=[];service.options.audit=e=>events.push(e);
@@ -96,10 +98,10 @@ test('SHU-145/AC-05 replacement and removal queue idempotent held cleanup',async
  assert.ok(s.lifecycle.cleanup.every(c=>c.status==='held')); // Includes unresolved policy and every possible legal hold: no purge authority.
 });
 
-test('SHU-145/NC-AUTH anonymous, forged principal, employer and cross-person are refused',async t=>{
+test('SHU-145/NC-AUTH anonymous, forged principal and cross-person are refused',async t=>{
  const f=await fixture(t),ticket=await f.upload();
  for(const actor of ['anonymous','employer']){
-  assert.equal((await f.authorize('personal-photo',png(),null,{actor})).status,403);
+  if(actor==='anonymous')assert.equal((await f.authorize('personal-photo',png(),null,{actor})).status,403);
   assert.equal((await f.put(ticket,png(),{actor})).status,403);
   assert.equal((await f.finalize(ticket,{actor})).status,403);
  }
@@ -188,14 +190,14 @@ test('SHU-145/NC-HTTP rejects CSRF, unsigned delivery, arbitrary route and uncon
 });
 
 
-test('SHU-145/NC-REVOKED revoked grants deny receipt replay and delivery',async t=>{
+test('SHU-145/NC-REVOKED candidate grant removal preserves personal receipt replay and delivery',async t=>{
  const f=await fixture(t),key=f.key(),ticket=await f.upload();
  const first=await f.finalize(ticket,{idempotency:key});assert.equal(first.status,200);
  const link=(await f.request('/candidate-documents/delivery',{body:{documentId:first.body.metadata.id}})).body;
  await f.authz.revokeMany('alice',[{orgId:'org-a',role:'candidate'}]);
- assert.equal((await f.finalize(ticket,{idempotency:key})).status,403);
- assert.equal((await f.request(link.url.slice(origin.length),{method:'GET'})).status,403);
- assert.equal((await f.request('/candidate-documents',{method:'GET'})).status,403);
+ assert.equal((await f.finalize(ticket,{idempotency:key})).status,200);
+ assert.equal((await f.request(link.url.slice(origin.length),{method:'GET'})).status,200);
+ assert.equal((await f.request('/candidate-documents',{method:'GET'})).status,200);
 });
 
 test('SHU-145/NC-UPLOAD-REPLAY credential expiration also applies to transport retries',async t=>{
@@ -340,4 +342,98 @@ test('SHU-145/NC-MULTIBYTE wrong upload credential is a denial',async t=>{
   assert.equal((await f.state()).lifecycle.uploads[0].data,undefined);
  }
  assert.equal((await f.put(ticket)).status,204);
+});
+
+
+test('SHU366_PERSON_OWNS registered people own all lifecycle operations without candidate grants',async t=>{
+ const f=await fixture(t);
+ await f.authz.clearGrantsForPrincipal('alice');
+ for(const actor of ['alice','employer','recruiter','staff','admin']){
+  assert.equal((await f.request('/candidate-documents',{actor,method:'GET'})).status,200,'SHU366_PERSON_OWNS: own empty list requires no candidate grant');
+  const authorized=await f.authorize('personal-photo',png(),null,{actor});
+  assert.equal(authorized.status,201,'SHU366_PERSON_OWNS: own upload requires no candidate grant');
+  assert.equal((await f.put(authorized.body,png(),{actor})).status,204);
+  const finalized=await f.finalize(authorized.body,{actor});assert.equal(finalized.status,200);
+  const d=finalized.body.metadata;
+  assert.deepEqual((await f.request('/candidate-documents',{actor,method:'GET'})).body.documents,[d]);
+  const link=await f.request('/candidate-documents/delivery',{actor,body:{documentId:d.id}});assert.equal(link.status,200);
+  assert.deepEqual((await f.request(link.body.url.slice(origin.length),{actor,method:'GET'})).bytes,png());
+  assert.equal((await f.request('/candidate-documents/remove',{actor,body:{type:'personal-photo',expectedVersion:d.version}})).status,200);
+ }
+ const state=await f.state();assert.equal(state.documents.length,0);assert.equal(state.retired.length,5);
+ assert.deepEqual(state.retired.map(d=>d.scope),['alice','employer','recruiter','staff','admin'].map(personId=>({orgId:'org-a',personId})));
+});
+
+test('SHU366_NO_WIDENING own authority preserves cross-person and configured namespace boundaries',async t=>{
+ const f=await fixture(t),ticket=await f.upload(),d=(await f.finalize(ticket)).body.metadata;
+ const staged=await f.upload('resume',pdf());
+ const link=(await f.request('/candidate-documents/delivery',{body:{documentId:d.id}})).body;
+ for(const actor of ['bob','employer','recruiter','staff','admin']){
+  const before=await f.state();
+  assert.equal((await f.put(staged,pdf(),{actor})).status,403);
+  assert.equal((await f.finalize(staged,{actor})).status,403);
+  assert.equal((await f.request('/candidate-documents/delivery',{actor,body:{documentId:d.id}})).status,403);
+  assert.equal((await f.request(link.url.slice(origin.length),{actor,method:'GET'})).status,403);
+  assert.equal((await f.request('/candidate-documents/remove',{actor,body:{type:'personal-photo',expectedVersion:d.version}})).status,409);
+  assert.deepEqual(await f.state(),before);
+  assert.deepEqual((await f.request('/candidate-documents',{actor,method:'GET'})).body,{documents:[]});
+ }
+ await f.authz.clearGrantsForPrincipal('alice');
+ const before=await f.state();
+ await assert.rejects(f.service.primitive.upload(f.tokens.alice,{scope:{orgId:'org-b',personId:'alice'},type:'personal-photo',mime:'image/png',bytes:png()}),e=>e.code==='denied','SHU366_NO_WIDENING: own namespace option must not authorize another organization');
+ await assert.rejects(f.service.primitive.upload(f.tokens.alice,{scope:{orgId:'missing-org',personId:'alice'},type:'personal-photo',mime:'image/png',bytes:png()}),e=>e.code==='denied');
+ await assert.rejects(f.service.primitive.upload(f.tokens.alice,{scope:{orgId:'org-a',personId:'bob'},type:'personal-photo',mime:'image/png',bytes:png()}),e=>e.code==='denied');
+ assert.deepEqual(await f.state(),before);
+});
+
+// SessionStore.get owns expiry/revocation (LoginSession has no synthetic deleted flag).
+// Exercise loss both before authentication and exactly on entry to the real transaction.
+test('SHU366_PERSON_LIVE every operation and receipt replay rechecks live session and principal atomically',async t=>{
+ for(const reason of ['missing-session','expired-session','revoked-session','missing-principal','changed-principal']){
+  for(const race of [false,true]){
+   const f=await fixture(t),credential=f.tokens.alice;
+   const authInput={type:'personal-photo',mime:'image/png',size:png().length,expectedVersion:null};
+   const authKey=f.key(),ticket=(await f.service.authorizeUpload(credential,authKey,authInput)).body;
+   const bytesKey=f.key();await f.service.put(credential,bytesKey,ticket.uploadId,ticket.objectKey,ticket.credential,png());
+   const finalKey=f.key(),d=(await f.service.finalize(credential,finalKey,{uploadId:ticket.uploadId})).body.metadata;
+   const link=await f.service.issueDelivery(credential,d.id);
+   const staged=await f.upload('resume',pdf());
+   const removed=(await f.finalize(await f.upload('civil-id-front'))).body.metadata;
+   const removeKey=f.key(),removeInput={type:'civil-id-front',expectedVersion:removed.version};
+   await f.service.remove(credential,removeKey,removeInput);
+   const getSession=f.ports.sessions.get,getPrincipal=f.authz.getPrincipal.bind(f.authz),store=f.service.options.store;
+   let invalid=false;
+   f.ports.sessions.get=async id=>invalid&&id===credential&&reason!=='missing-principal' ? reason==='changed-principal'?{id,personId:'bob'}:undefined : getSession(id);
+   f.authz.getPrincipal=async id=>invalid&&reason==='missing-principal'&&id==='alice'?undefined:getPrincipal(id);
+   const operations={
+    list:()=>f.service.list(credential),
+    authorizeUpload:()=>f.service.authorizeUpload(credential,f.key(),{...authInput,type:'civil-id-back'}),
+    put:()=>f.service.put(credential,f.key(),staged.uploadId,staged.objectKey,staged.credential,pdf()),
+    finalize:()=>f.service.finalize(credential,f.key(),{uploadId:staged.uploadId}),
+    remove:()=>f.service.remove(credential,f.key(),{type:'personal-photo',expectedVersion:d.version}),
+    issueDelivery:()=>f.service.issueDelivery(credential,d.id),deliver:()=>f.service.deliver(credential,link.url),
+    authorizeReplay:()=>f.service.authorizeUpload(credential,authKey,authInput),
+    bytesReplay:()=>f.service.put(credential,bytesKey,ticket.uploadId,ticket.objectKey,ticket.credential,png()),
+    finalizeReplay:()=>f.service.finalize(credential,finalKey,{uploadId:ticket.uploadId}),
+    removeReplay:()=>f.service.remove(credential,removeKey,removeInput),
+   };
+   for(const [name,operation] of Object.entries(operations)){
+    // A changed principal before entry is a new legitimate owner for list/authorize;
+    // only the race is a violation of the transaction's authenticated subject.
+    if(reason==='changed-principal'&&!race)continue;
+    invalid=false;const before=await f.state();invalid=!race;
+    f.service.options.store={transaction:fn=>store.transaction(async s=>{invalid=true;return fn(s);})};
+    await assert.rejects(operation(),e=>e.status===403||e.code==='denied'||e.status===503,`${reason}/${race?'entry-race':'preflight'}/${name}: must refuse`);
+    assert.deepEqual(await f.state(),before,`${reason}/${name}: no state, receipt or audit may commit`);
+   }
+   invalid=false;f.service.options.store=store;
+   // Empty list must also authenticate again even though no primitive read runs.
+   await f.disk.transaction(async s=>{s.documents=[];});const before=await f.state();invalid=!race;
+   f.service.options.store={transaction:fn=>store.transaction(async s=>{invalid=true;return fn(s);})};
+   if(reason!=='changed-principal'||race){
+    await assert.rejects(f.service.list(credential),e=>e.status===403||e.code==='denied');
+    assert.deepEqual(await f.state(),before);
+   }
+  }
+ }
 });

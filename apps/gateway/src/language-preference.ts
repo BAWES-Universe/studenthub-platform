@@ -15,6 +15,7 @@ import {
 import {
   LANGUAGE_FIELD, LANGUAGES, personRecordRef, safeWritePrincipalRef,
 } from "@studenthub/db";
+import type { ProfileLanguage } from "./ui/profile-copy.js";
 
 /**
  * SHU-84: the platform's first write. A signed-in person changes their own
@@ -239,7 +240,52 @@ export async function handleLanguagePreference(
 
 const FORM_PREVIEW = "/profile/language/preview";
 const FORM_CONFIRM = "/profile/language/confirm";
-export type LanguagePreferencePageWriter = (status: number, title: string, body: string) => void;
+export type LanguagePreferencePageWriter = (status: number, title: string, body: string, language: ProfileLanguage) => void;
+
+const ENGLISH_PAGE_COPY = {
+  title: "Language preference",
+  reviewTitle: "Review language",
+  reviewHeading: "Review language change",
+  language: "Language",
+  english: "English",
+  arabic: "Arabic",
+  unavailable: "Unavailable",
+  confirm: "Confirm change",
+  cancel: "Cancel",
+  back: "Back to My profile",
+  notChanged: "Your language wasn’t changed.",
+  conflict: "Your profile changed while you were reviewing. Open it again and retry.",
+  serviceUnavailable: "The profile service is unavailable. Please try again in a moment.",
+  noLongerAvailable: "This change is no longer available.",
+  signIn: "Sign in again to continue safely.",
+  sessionEnded: "Your session may have ended. Open your profile to sign in again.",
+  unknownHeading: "Your language change wasn’t confirmed.",
+  unknownOutcome: "We couldn’t confirm whether your language was changed. Open your profile to check before trying again.",
+} as const;
+
+const LANGUAGE_PAGE_COPY: Readonly<Record<ProfileLanguage, Readonly<Record<keyof typeof ENGLISH_PAGE_COPY, string>>>> = {
+  en: ENGLISH_PAGE_COPY,
+  ar: {
+    title: "تفضيل اللغة",
+    reviewTitle: "مراجعة اللغة",
+    reviewHeading: "مراجعة تغيير اللغة",
+    language: "اللغة",
+    english: "الإنجليزية",
+    arabic: "العربية",
+    unavailable: "غير متاح",
+    confirm: "تأكيد التغيير",
+    cancel: "إلغاء",
+    back: "العودة إلى ملفي الشخصي",
+    notChanged: "لم يتم تغيير لغتك.",
+    conflict: "تغيّر ملفك الشخصي أثناء المراجعة. افتحه مجددًا وأعد المحاولة.",
+    serviceUnavailable: "خدمة الملف الشخصي غير متاحة. يرجى المحاولة مجددًا بعد قليل.",
+    noLongerAvailable: "لم يعد هذا التغيير متاحًا.",
+    signIn: "سجّل الدخول مجددًا للمتابعة بأمان.",
+    sessionEnded: "ربما انتهت جلستك. افتح ملفك الشخصي لتسجيل الدخول مجددًا.",
+    unknownHeading: "لم يتم تأكيد تغيير اللغة.",
+    unknownOutcome: "تعذّر التأكد مما إذا كانت لغتك قد تغيّرت. افتح ملفك الشخصي للتحقق قبل المحاولة مجددًا.",
+  },
+};
 
 function html(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -262,8 +308,13 @@ async function readForm(request: IncomingMessage, allowed: readonly string[]): P
   return Object.keys(result).length === allowed.length ? result : undefined;
 }
 
-function pageError(write: LanguagePreferencePageWriter, status: number): void {
-  write(status, "Language preference", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your language wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`);
+function pageError(write: LanguagePreferencePageWriter, status: number, locale: ProfileLanguage = "en", unknownOutcome = false): void {
+  const copy = LANGUAGE_PAGE_COPY[locale];
+  const heading = unknownOutcome ? copy.unknownHeading : status === 401 ? copy.signIn : copy.notChanged;
+  const message = unknownOutcome ? copy.unknownOutcome : status === 401 ? copy.sessionEnded
+    : status === 409 ? copy.conflict : status === 503 ? copy.serviceUnavailable : copy.noLongerAvailable;
+  // The gateway retains its existing sign-in page for the initial English 401.
+  write(status, copy.title, status === 401 && locale === "en" ? "" : `<main id="main" class="error-page"><h1>${html(heading)}</h1><p>${html(message)}</p><a class="button primary" href="/profile">${html(copy.back)}</a></main>`, locale);
 }
 
 /** Native browser flow; all preview and commit decisions remain in the JSON service. */
@@ -278,26 +329,45 @@ export async function handleLanguagePreferencePage(
   // belong to this adapter; JSON continues to the existing route unchanged.
   if (!request.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) return false;
   if (request.method !== "POST") { pageError(write, 404); return true; }
-  if (!service || !origin) { pageError(write, 503); return true; }
-  if (request.headers.origin !== origin || request.headers["sec-fetch-site"] === "cross-site") { request.resume(); pageError(write, 403); return true; }
   const sessionId = sessionCookie(request.headers.cookie);
+  let before: ProfileLanguage | undefined;
+  let shownLanguageFailed = false;
+  // Only the session-authorized own-profile projection selects interface copy.
+  // Neither the proposed new language nor browser preferences are authority.
+  // A failed read still makes a successful preview unavailable, as before. It
+  // must not mask earlier service errors or change a confirm result or redirect.
+  if (sessionId && origin && request.headers.origin === origin && request.headers["sec-fetch-site"] !== "cross-site") {
+    try {
+      const shown = await shownLanguage?.(sessionId);
+      if (shown === "en" || shown === "ar") before = shown;
+    } catch { shownLanguageFailed = true; }
+  }
+  const locale: ProfileLanguage = before ?? "en";
+  const fail = (status: number, unknownOutcome = false) => pageError(write, status, locale, unknownOutcome);
+  if (!service || !origin) { fail(503); return true; }
+  if (request.headers.origin !== origin || request.headers["sec-fetch-site"] === "cross-site") { request.resume(); fail(403); return true; }
+  let confirming = false;
   try {
     if (path === FORM_PREVIEW) {
-      const values = await readForm(request, ["language"]); if (!values) { pageError(write, 400); return true; }
+      const values = await readForm(request, ["language"]); if (!values) { fail(400); return true; }
       const result = await service.preview(sessionId, { language: values.language });
-      if (result.status !== 200) { pageError(write, result.status); return true; }
+      if (result.status !== 200) { fail(result.status); return true; }
       const body = result.body as { token: ActionToken };
       const hidden = TOKEN_KEYS.map((key) => `<input type="hidden" name="token.${key}" value="${html(body.token[key as keyof ActionToken])}">`).join("");
-      const before = await shownLanguage?.(sessionId);
-      const label = (value: string | undefined) => value === "en" ? "English" : value === "ar" ? "العربية" : "Unavailable";
-      write(200, "Review language", `<main id="main" class="profile-main"><h1>Review language change<span class="accent">.</span></h1><p>Language: <strong>${label(before)}</strong> → <strong>${label(values.language)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(values.language!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+      if (shownLanguageFailed) { fail(503); return true; }
+      const copy = LANGUAGE_PAGE_COPY[locale];
+      // Language codes are a closed enum, not person-supplied display text.
+      // Unknown values never become interface copy, HTML, or document metadata.
+      const label = (value: string | undefined) => html(value === "en" ? copy.english : value === "ar" ? copy.arabic : copy.unavailable);
+      write(200, copy.reviewTitle, `<main id="main" class="profile-main"><h1>${html(copy.reviewHeading)}<span class="accent">.</span></h1><p>${html(copy.language)}: <strong>${label(before)}</strong> ${locale === "ar" ? "←" : "→"} <strong>${label(values.language)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(values.language!)}">${hidden}<button class="button primary" type="submit">${html(copy.confirm)}</button></form><a class="text-link" href="/profile">${html(copy.cancel)}</a></main>`, locale);
       return true;
     }
     const names = ["language", ...TOKEN_KEYS.map((key) => `token.${key}`)];
-    const values = await readForm(request, names); if (!values) { pageError(write, 400); return true; }
+    const values = await readForm(request, names); if (!values) { fail(400); return true; }
     const actionToken = Object.fromEntries(TOKEN_KEYS.map((key) => [key, values[`token.${key}`]]));
+    confirming = true;
     const result = await service.confirm(sessionId, { language: values.language, token: actionToken });
-    if (result.status !== 200) { pageError(write, result.status); return true; }
+    if (result.status !== 200) { fail(result.status, result.status === 503); return true; }
     response.writeHead(303, { location: "/profile", "cache-control": "no-store" }); response.end(); return true;
-  } catch { if (!response.headersSent) pageError(write, 503); else response.destroy(); return true; }
+  } catch { if (!response.headersSent) fail(503, confirming); else response.destroy(); return true; }
 }

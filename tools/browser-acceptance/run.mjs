@@ -16,6 +16,11 @@ const names = [
   'two-tab-notice-overwrite-clear', 'session-revocation', 'session-expiry',
   'committed-response-loss', 'uncertain-commit-status-read-only', 'uncertain-commit-exact-retry',
   'uncertain-commit-changed-draft-rejected', 'actual-token-expiry',
+  ...['empty','finalized'].flatMap(state => ['en','ar'].flatMap(language => [320,390,1280].map(width => `documents-${state}-${language}-${width}`))),
+  'documents-navigation-enabled', 'documents-navigation-disabled',
+  'documents-keyboard-history-en', 'documents-keyboard-history-ar',
+  'documents-session-missing', 'documents-session-revocation', 'documents-session-expiry',
+  'documents-unavailable-en', 'documents-unavailable-ar', 'documents-person-isolation',
 ];
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
   chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:names.map(name=>({name,status:'NOT_RUN'})),
@@ -44,6 +49,38 @@ async function subject(options={}) {
   await page.goto(`${fixture.baseURL}/profile`);
   await visible(page.locator('#profile-heading'));
   return {actor,context,page};
+}
+const documentSlots=['personal-photo','resume','civil-id-front','civil-id-back'];
+const documentCopy={
+  en:{title:'My documents',onFile:'On file',missing:'Not uploaded',accepted:'Accepted formats',maximum:'Maximum size',bytes:'bytes',unavailable:'Documents are temporarily unavailable. Please try again.',labels:['Personal photo','CV','Civil ID front','Civil ID back']},
+  ar:{title:'مستنداتي',onFile:'محفوظ',missing:'لم يتم الرفع',accepted:'الصيغ المقبولة',maximum:'الحجم الأقصى',bytes:'بايت',unavailable:'المستندات غير متاحة مؤقتًا. يرجى المحاولة مرة أخرى.',labels:['الصورة الشخصية','السيرة الذاتية','البطاقة المدنية (الوجه الأمامي)','البطاقة المدنية (الوجه الخلفي)']},
+};
+async function documentPage(page,language,metadata) {
+  const copy=documentCopy[language];
+  await visible(page.getByRole('heading',{level:1,name:copy.title,exact:true}));
+  assert.equal(await page.locator('html').getAttribute('lang'),language,'Documents trusted language');
+  assert.equal(await page.locator('html').getAttribute('dir'),language==='ar'?'rtl':'ltr','Documents direction');
+  assert.equal(await page.locator('main dl > div').count(),4,'Exactly four document slots');
+  for(const [index,type] of documentSlots.entries()) {
+    const slot=page.locator(`#document-${type}`), uploaded=metadata && type==='personal-photo';
+    await visible(slot);
+    assert.equal(await slot.locator('dt').innerText(),copy.labels[index],'Localized document label');
+    assert.equal(await slot.locator('strong').innerText(),uploaded?copy.onFile:copy.missing,'Truthful finalized slot state');
+    const detail=await slot.locator('.p-meta').innerText();
+    if(uploaded) assert.equal(detail,`PNG · ${metadata.size} ${copy.bytes}`,'Finalized format and exact byte size');
+    else {
+      check(detail.includes(copy.accepted) && detail.includes(copy.maximum),'Missing slot explains accepted format and maximum');
+      check(detail.includes(type==='resume'?'PDF':'PNG, JPEG') && detail.includes('10 MiB'),'Guidance matches current admission');
+    }
+  }
+  assert.equal(await page.locator('main form, main input, main button, main time, main a[href*="candidate-documents"], main a[href*="private-documents"]').count(),0,'Read-only page has no mutation controls, delivery links or dates');
+  const shown=await page.locator('main').innerText();
+  check(!/Date unavailable|https?:\/\/|uploads\//.test(shown),'No document dates or storage URLs displayed');
+  if(metadata) {
+    check(!shown.includes(metadata.id) && !shown.includes(metadata.version),'No document IDs or versions displayed');
+    check(await page.locator('main').evaluate((node,values)=>!values.some(value=>node.outerHTML.includes(value)),[metadata.id,metadata.version]),'No document identifiers leaked into DOM attributes');
+  }
+  await noOverflow(page);
 }
 async function edit(page, field) {
   await page.goto(`${fixture.baseURL}/profile/edit/${field}`);
@@ -430,6 +467,81 @@ try {
     check(waitMs>0 && waitMs<15000,'Fixture must issue genuinely near-expired signed token');
     await new Promise(resolve=>setTimeout(resolve,waitMs)); await save(page);
     await textIncludes(page,'This form expired.'); assert.equal(await page.locator('[name=value]').inputValue(),'Synthetic expired draft','Expired draft preserved'); await counts(actor,0,0);
+  });
+  // Additive Documents acceptance. All original profile cases above stay intact.
+  for(const state of ['empty','finalized']) for(const language of ['en','ar']) for(const width of [320,390,1280]) {
+    const name=`documents-${state}-${language}-${width}`;
+    await run(name,async()=>{
+      restorers.push(fixture.useDocuments());
+      const {actor,page}=await subject({language,width});
+      const metadata=state==='finalized'?await fixture.finalizeSyntheticPhoto(actor):undefined;
+      // Browser input cannot override the language from the trusted profile.
+      const response=await page.goto(`${fixture.baseURL}/profile/documents?language=${language==='en'?'ar':'en'}`);
+      assert.equal(response.status(),200,'Documents page status');
+      await documentPage(page,language,metadata); await counts(actor,0,0);
+      return {screenshot:await screenshot(page,name),notes:state==='finalized'?'Photo authorized, bytes validated and finalized through real CandidateDocuments into a new private synthetic FileDocumentStore. No list response mocked.':'Registered person with no candidate grant; four empty slots from real synthetic FileDocumentStore.'};
+    });
+  }
+  for(const configured of [true,false]) await run(`documents-navigation-${configured?'enabled':'disabled'}`,async()=>{
+    restorers.push(fixture.useDocuments({configured}));
+    const {page}=await subject();
+    for(const route of ['/profile','/workspace']) {
+      const response=await page.goto(`${fixture.baseURL}${route}`);
+      assert.equal(response.status(),200,'Navigation source renders');
+      const links=page.locator('a[href="/profile/documents"]');
+      if(configured) { assert.equal(await links.count(),1,'One configured Documents navigation link'); await visible(links); }
+      else assert.equal(await links.count(),0,'Unconfigured Documents navigation omitted');
+    }
+    const response=await page.goto(`${fixture.baseURL}/profile/documents`);
+    assert.equal(response.status(),configured?200:503,'Direct document route respects configuration');
+  });
+  for(const language of ['en','ar']) await run(`documents-keyboard-history-${language}`,async()=>{
+    restorers.push(fixture.useDocuments());
+    const {actor,page}=await subject({language});
+    const link=page.locator('a[href="/profile/documents"]'); await visible(link); await link.focus();
+    check(await link.evaluate(node=>node===document.activeElement),'Documents navigation can receive keyboard focus');
+    await page.keyboard.press('Enter'); await page.waitForURL('**/profile/documents'); await documentPage(page,language);
+    const back=page.locator('main a[href="/profile"]'); await back.focus();
+    check(await back.evaluate(node=>node===document.activeElement),'Profile return can receive keyboard focus');
+    await page.keyboard.press('Enter'); await page.waitForURL('**/profile'); await visible(page.locator('#profile-heading'));
+    await page.goBack(); await documentPage(page,language);
+    await page.goForward(); await visible(page.locator('#profile-heading')); await counts(actor,0,0);
+  });
+  for(const mode of ['missing','revocation','expiry']) await run(`documents-session-${mode}`,async()=>{
+    restorers.push(fixture.useDocuments());
+    const {actor,context,page}=await subject();
+    await fixture.finalizeSyntheticPhoto(actor);
+    await page.goto(`${fixture.baseURL}/profile/documents`);
+    if(mode==='missing') await context.clearCookies(); else await fixture[mode==='revocation'?'revoke':'expire'](actor);
+    const calls=fixture.documentStoreCalls();
+    const response=await page.reload();
+    assert.equal(response.status(),401,'Missing, expired or revoked session gets sign-in 401');
+    assert.equal(fixture.documentStoreCalls(),calls,'Rejected session never accesses document store');
+    await textIncludes(page,'Sign in to view your documents');
+    await visible(page.getByRole('link',{name:'Continue with Universe',exact:true}));
+    assert.equal(await page.locator('main dl').count(),0,'No protected document slots after session loss');
+    check(!(await page.locator('main').innerText()).includes('On file'),'No protected document state after session loss');
+    return {screenshot:await screenshot(page,`documents-session-${mode}`)};
+  });
+  for(const language of ['en','ar']) await run(`documents-unavailable-${language}`,async()=>{
+    restorers.push(fixture.useDocuments({failStore:true}));
+    const {page}=await subject({language}), before=fixture.documentStoreCalls();
+    const response=await page.goto(`${fixture.baseURL}/profile/documents`);
+    assert.equal(response.status(),503,'Store failure returns generic 503');
+    check(fixture.documentStoreCalls()>before,'Real document-store boundary fault exercised');
+    await textIncludes(page,documentCopy[language].unavailable);
+    assert.equal(await page.locator('html').getAttribute('lang'),language,'Unavailable copy retains trusted locale');
+    check(!(await page.locator('body').innerText()).includes('synthetic-document-store-private-sentinel'),'Dependency details never displayed');
+    assert.equal(await page.locator('main dl').count(),0,'Failure does not fabricate empty slots');
+    await noOverflow(page); return {screenshot:await screenshot(page,`documents-unavailable-${language}`)};
+  });
+  await run('documents-person-isolation',async()=>{
+    restorers.push(fixture.useDocuments());
+    const alice=await subject(), metadata=await fixture.finalizeSyntheticPhoto(alice.actor);
+    const bob=await subject();
+    await bob.page.goto(`${fixture.baseURL}/profile/documents`); await documentPage(bob.page,'en');
+    await alice.page.goto(`${fixture.baseURL}/profile/documents`); await documentPage(alice.page,'en',metadata);
+    await counts(alice.actor,0,0); await counts(bob.actor,0,0);
   });
 } catch {
   evidence.blockedStage=setupStage;
