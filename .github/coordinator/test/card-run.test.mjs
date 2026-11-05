@@ -3704,6 +3704,18 @@ test("SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pu
   }
 });
 
+test("Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one", async () => {
+  const NEW_HEAD = "9".repeat(40);
+  const host = reviewHost([queuePull(241, { head: NEW_HEAD }), queuePull(245)]);
+  // #241 had a head reviewed at this revision already; #245 had none.
+  host.files.set(reviewClaim(PATHS, 241, "7".repeat(40)), { text: "{}", mode: 0o600, uid: 0, gid: 0 });
+  const run = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.deepEqual(run.review, { pr: 245, head: PR_HEAD, base: PR_BASE }, JSON.stringify(run));
+  // Then #241's new head, as both have one review now: the lower number goes first.
+  const next = await attempt(() => autoRun({ io: host.io, paths: PATHS }));
+  assert.deepEqual(next.review, { pr: 241, head: NEW_HEAD, base: PR_BASE }, JSON.stringify(next));
+});
+
 test("SHU-321 R2: a fork, a draft, a non-main base, a contracts file not edited in place or an extra path is never reviewed", async () => {
   const files = (edit) => { const list = queueFiles(); edit(list); return list; };
   for (const [label, pull] of [

@@ -1493,11 +1493,15 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   if (!Array.isArray(open) || open.length >= GITHUB_PAGE) refuse("CARD_RUN_REVIEW_UNREADABLE", "the open pull requests are not one readable page");
   const capped = [];
   const labels = [policy.label, ...(policy.codeLabel ? [policy.codeLabel] : [])];
-  const listed = open.filter((pull) => listedCandidate(pull, repo, labels)).sort((a, b) => a.number - b.number);
-  for (const pull of listed) {
+  // Velocity A: the pull request reviewed least at this revision goes first,
+  // then the oldest. By number alone, every new head on an older pull request
+  // (each merge of main gives one) went ahead of a newer one for ever.
+  const listed = open.filter((pull) => listedCandidate(pull, repo, labels))
+    .map((pull) => ({ pull, claims: reviewClaims(io, paths, pull.number, revision) }))
+    .sort((a, b) => a.claims.atRevision - b.claims.atRevision || a.pull.number - b.pull.number);
+  for (const { pull, claims } of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
-    const claims = reviewClaims(io, paths, pr, revision);
     if (claims.heads.has(head)) continue;
     if (claims.atRevision >= policy.maxHeadsPerPr) {
       capped.push(pr);

@@ -4443,6 +4443,7 @@
     "Velocity B: a worker that exits without a result names why, as a fixed code only",
     "Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else",
     "Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised",
+    "Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one",
     "Velocity A3: a queue that keeps the installed dispatch_scope and appends cards installs even when installed cards landed",
     "Velocity A3: an install main has ready holds new card starts until the host is idle, then installs and carries the installed claims over",
     "SHU71_SNAPSHOT_GIT_CAUSE: a failed snapshot step is held by its code with git's own last line",
@@ -32704,6 +32705,10 @@
     },
     {
       "name": "Velocity A2: timer-install --workers N puts N workers on the host while workers.max is lower; the extra workers skip until it is raised",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity A: the pull request reviewed least at this revision is reviewed first, so a new head on an older one never starves a newer one",
       "capabilities": []
     },
     {
