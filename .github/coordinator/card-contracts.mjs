@@ -5260,7 +5260,7 @@ Out of scope: single sign-out pushed to every open tab, refresh tokens, session 
 
 ${LANE_FINISH}`;
 
-export const CARD_CONTRACTS = Object.freeze({
+const CARD_CONTRACTS_BASE = {
   "SHU-197": Object.freeze({
     initial_build_paths: SHU197_PATHS,
     revision_paths: SHU197_PATHS,
@@ -6180,7 +6180,50 @@ export const CARD_CONTRACTS = Object.freeze({
     acceptance: SHU457_ACCEPTANCE,
     brief: SHU457_BRIEF,
   }),
+};
+
+// SHU-489 stopped on a second RESULT_SCOPE_REFUSED, and every other card of
+// its queue waited on it through a chain of after edges that only kept two
+// workers off shared files. The box now keeps cards that share files apart by
+// itself (Velocity A), so the queue is re-cut under fresh ids with only the
+// real waits. SHU-494 also lists the files a builder most plausibly reaches for
+// when it registers the job and creates packages/notifications, and says how
+// the 0300 job-name CHECK constraints admit email_delivery.
+const RECUT_489 = Object.freeze({
+  "SHU-489": "SHU-494", "SHU-490": "SHU-495", "SHU-461": "SHU-496", "SHU-478": "SHU-497", "SHU-479": "SHU-498",
+  "SHU-480": "SHU-499", "SHU-462": "SHU-500", "SHU-460": "SHU-501", "SHU-463": "SHU-502", "SHU-464": "SHU-503",
+  "SHU-465": "SHU-504", "SHU-466": "SHU-505", "SHU-467": "SHU-506", "SHU-469": "SHU-507", "SHU-468": "SHU-508",
 });
+const recut489 = (text) => text.replace(/\bSHU-(489|490|461|478|479|480|462|460|463|464|465|466|467|469|468)\b/g, (id) => RECUT_489[id]);
+const recutAcceptance489 = (from, reason, text) => `${recut489(text)} ${RECUT_489[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`;
+export const SHU494_PATHS = Object.freeze([
+  ...SHU489_PATHS,
+  "packages/notifications/src/index.ts",
+  "packages/observability/src/index.ts",
+  "packages/observability/test/jobs-mutations.mjs",
+  "apps/gateway/src/admin-jobs.ts",
+]);
+const SHU494_GUARD_FROM = SHU489_GUARD_TO.split("\n").at(-1);
+const SHU494_GUARD_TO = `${SHU494_GUARD_FROM}
+- Migration 0300 admits job names through two CHECK constraints, job_runs_job_name_check and job_leases_job_name_check (job_name IN ('heartbeat','missed_run_check')). Migration 0351 drops and re-adds both so they also admit email_delivery; 0300 itself never changes. Your paths also include packages/notifications/src/index.ts, packages/observability/src/index.ts, packages/observability/test/jobs-mutations.mjs (keep every mutation binding once if jobs.ts changes) and apps/gateway/src/admin-jobs.ts. Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.`;
+const SHU494_BRIEF = replaceOnce(recut489(CARD_CONTRACTS_BASE["SHU-489"].brief), SHU494_GUARD_FROM, SHU494_GUARD_TO, "SHU494_BRIEF guard");
+const RECUT_489_CONTRACTS = Object.fromEntries(Object.entries(RECUT_489).map(([from, to]) => {
+  const base = CARD_CONTRACTS_BASE[from];
+  const paths = from === "SHU-489" ? SHU494_PATHS : base.initial_build_paths;
+  const reason = from === "SHU-489"
+    ? "after its build was refused a second time for touching a path outside the card"
+    : "because its installed lane waited, through a chain of after edges, on SHU-489, which stopped";
+  const brief = from === "SHU-489" ? SHU494_BRIEF : recut489(base.brief);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: from === "SHU-489" ? SHU494_PATHS : base.revision_paths,
+    acceptance: recutAcceptance489(from, reason, base.acceptance),
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_BASE, ...RECUT_489_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
