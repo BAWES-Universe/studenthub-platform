@@ -5,6 +5,7 @@ import {
   createSafeWrite,
   type ActionToken,
   type FieldPolicy,
+  type FieldChange,
   type Receipt,
   type RejectionReason,
   type SafeWriteClock,
@@ -55,6 +56,7 @@ export type LanguagePreferenceResult =
   | { readonly status: 400 | 401 | 403 | 404 | 409 | 503; readonly body: { readonly error: string } };
 
 export interface LanguagePreference {
+  validatePreview(sessionId: string | undefined, body: unknown): Promise<LanguagePreferenceResult>;
   preview(sessionId: string | undefined, body: unknown): Promise<LanguagePreferenceResult>;
   confirm(sessionId: string | undefined, body: unknown): Promise<LanguagePreferenceResult>;
   receipt(sessionId: string | undefined, receiptRef: string): Promise<LanguagePreferenceResult>;
@@ -86,6 +88,14 @@ function language(value: unknown): string | undefined {
   return typeof value === "string" && (LANGUAGES as readonly string[]).includes(value) ? value : undefined;
 }
 
+// Keep both preview entry points on one strict parser so native validation
+// and JSON preview cannot drift on unknown keys or invalid language values.
+function previewLanguage(body: unknown): string | LanguagePreferenceResult {
+  if (!exactKeys(body, ["language"])) return { status: 400, body: { error: "invalid_request" } };
+  const value = language(body.language);
+  return value ?? refusal("invalid_value");
+}
+
 function token(value: unknown): ActionToken | undefined {
   if (!exactKeys(value, TOKEN_KEYS)) return undefined;
   return TOKEN_KEYS.every((key) => typeof value[key] === "string") ? value as unknown as ActionToken : undefined;
@@ -114,12 +124,21 @@ export function createLanguagePreference(ports: {
   }
 
   return {
+    // Native POST validates the request before redirecting, without issuing a
+    // throwaway token. The GET review reauthenticates and previews current state.
+    async validatePreview(sessionId, body) {
+      const principalId = await principal(sessionId);
+      if (!principalId) return { status: 401, body: { error: "unauthorized" } };
+      const value = previewLanguage(body);
+      if (typeof value !== "string") return value;
+      return { status: 200, body: { language: value } };
+    },
+
     async preview(sessionId, body) {
       const principalId = await principal(sessionId);
       if (!principalId) return { status: 401, body: { error: "unauthorized" } };
-      if (!exactKeys(body, ["language"])) return { status: 400, body: { error: "invalid_request" } };
-      const value = language(body.language);
-      if (!value) return refusal("invalid_value");
+      const value = previewLanguage(body);
+      if (typeof value !== "string") return value;
       const result = await writer(principalId).preview({
         principalRef: safeWritePrincipalRef(principalId),
         change: { personRef: personRecordRef(principalId), field: LANGUAGE_FIELD, value },
@@ -240,6 +259,7 @@ export async function handleLanguagePreference(
 
 const FORM_PREVIEW = "/profile/language/preview";
 const FORM_CONFIRM = "/profile/language/confirm";
+const FORM_REVIEW = "/profile/language/review";
 export type LanguagePreferencePageWriter = (status: number, title: string, body: string, language: ProfileLanguage) => void;
 
 const ENGLISH_PAGE_COPY = {
@@ -323,7 +343,48 @@ export async function handleLanguagePreferencePage(
   origin: string | undefined, write: LanguagePreferencePageWriter,
   shownLanguage?: (sessionId: string | undefined) => Promise<string | undefined>,
 ): Promise<boolean> {
-  const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
+  const url = new URL(request.url ?? "/", "http://gateway.invalid");
+  const path = url.pathname;
+  if (path === FORM_REVIEW) {
+    // A replayable GET navigation carries only the closed target value, never
+    // an action token. Every visit revalidates the session and current profile.
+    response.setHeader("cache-control", "no-store");
+    if (request.method !== "GET") { request.resume(); pageError(write, 404); return true; }
+    const parameters = [...url.searchParams];
+    const target = parameters.length === 1 && parameters[0]?.[0] === "language"
+      ? language(parameters[0][1]) : undefined;
+    const sessionId = sessionCookie(request.headers.cookie);
+    let before: ProfileLanguage | undefined;
+    let shownLanguageFailed = false;
+    try {
+      if (sessionId) {
+        try {
+          const shown = await shownLanguage?.(sessionId);
+          if (shown === "en" || shown === "ar") before = shown;
+        } catch { shownLanguageFailed = true; }
+      }
+      const locale: ProfileLanguage = before ?? "en";
+      // Trusted locale applies to refusals too; lookup failures must not hide
+      // malformed input, unavailable configuration, or service authorization.
+      if (!target) { pageError(write, 400, locale); return true; }
+      if (!service || !origin) { pageError(write, 503, locale); return true; }
+      const result = await service.preview(sessionId, { language: target });
+      if (result.status !== 200) { pageError(write, result.status, locale); return true; }
+      if (shownLanguageFailed) { pageError(write, 503, locale); return true; }
+      const body = result.body as { changes: readonly FieldChange[]; token: ActionToken };
+      const copy = LANGUAGE_PAGE_COPY[locale];
+      if (before === target || body.changes.some((change) => change.field === LANGUAGE_FIELD && change.before === target)) {
+        write(200, copy.title, `<main id="main" class="profile-main"><h1>${html(copy.notChanged)}</h1><a class="button primary" href="/profile">${html(copy.back)}</a></main>`, locale);
+        return true;
+      }
+      const hidden = TOKEN_KEYS.map((key) => `<input type="hidden" name="token.${key}" value="${html(body.token[key as keyof ActionToken])}">`).join("");
+      // Language codes are a closed enum, not person-supplied display text.
+      // Unknown values never become interface copy, HTML, or document metadata.
+      const label = (value: string | undefined) => html(value === "en" ? copy.english : value === "ar" ? copy.arabic : copy.unavailable);
+      write(200, copy.reviewTitle, `<main id="main" class="profile-main"><h1>${html(copy.reviewHeading)}<span class="accent">.</span></h1><p>${html(copy.language)}: <strong>${label(before)}</strong> ${locale === "ar" ? "←" : "→"} <strong>${label(target)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(target)}">${hidden}<button class="button primary" type="submit">${html(copy.confirm)}</button></form><a class="text-link" href="/profile">${html(copy.cancel)}</a></main>`, locale);
+    } catch { if (!response.headersSent) pageError(write, 503, before ?? "en"); else response.destroy(); }
+    return true;
+  }
   if (path !== FORM_PREVIEW && path !== FORM_CONFIRM) return false;
   // These URLs are shared with the JSON API. Only native browser form posts
   // belong to this adapter; JSON continues to the existing route unchanged.
@@ -331,16 +392,15 @@ export async function handleLanguagePreferencePage(
   if (request.method !== "POST") { pageError(write, 404); return true; }
   const sessionId = sessionCookie(request.headers.cookie);
   let before: ProfileLanguage | undefined;
-  let shownLanguageFailed = false;
   // Only the session-authorized own-profile projection selects interface copy.
   // Neither the proposed new language nor browser preferences are authority.
-  // A failed read still makes a successful preview unavailable, as before. It
-  // must not mask earlier service errors or change a confirm result or redirect.
+  // A failed lookup must not mask service errors or change a redirect.
+  // Review GET checks its own fresh lookup before rendering a successful preview.
   if (sessionId && origin && request.headers.origin === origin && request.headers["sec-fetch-site"] !== "cross-site") {
     try {
       const shown = await shownLanguage?.(sessionId);
       if (shown === "en" || shown === "ar") before = shown;
-    } catch { shownLanguageFailed = true; }
+    } catch { /* The authorized service result remains authoritative. */ }
   }
   const locale: ProfileLanguage = before ?? "en";
   const fail = (status: number, unknownOutcome = false) => pageError(write, status, locale, unknownOutcome);
@@ -350,16 +410,13 @@ export async function handleLanguagePreferencePage(
   try {
     if (path === FORM_PREVIEW) {
       const values = await readForm(request, ["language"]); if (!values) { fail(400); return true; }
-      const result = await service.preview(sessionId, { language: values.language });
+      const result = await service.validatePreview(sessionId, { language: values.language });
       if (result.status !== 200) { fail(result.status); return true; }
-      const body = result.body as { token: ActionToken };
-      const hidden = TOKEN_KEYS.map((key) => `<input type="hidden" name="token.${key}" value="${html(body.token[key as keyof ActionToken])}">`).join("");
-      if (shownLanguageFailed) { fail(503); return true; }
-      const copy = LANGUAGE_PAGE_COPY[locale];
-      // Language codes are a closed enum, not person-supplied display text.
-      // Unknown values never become interface copy, HTML, or document metadata.
-      const label = (value: string | undefined) => html(value === "en" ? copy.english : value === "ar" ? copy.arabic : copy.unavailable);
-      write(200, copy.reviewTitle, `<main id="main" class="profile-main"><h1>${html(copy.reviewHeading)}<span class="accent">.</span></h1><p>${html(copy.language)}: <strong>${label(before)}</strong> ${locale === "ar" ? "←" : "→"} <strong>${label(values.language)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(values.language!)}">${hidden}<button class="button primary" type="submit">${html(copy.confirm)}</button></form><a class="text-link" href="/profile">${html(copy.cancel)}</a></main>`, locale);
+      // Even an injected service cannot turn the redirect into an open target.
+      const target = language(values.language);
+      if (!target) { fail(400); return true; }
+      response.writeHead(303, { location: `${FORM_REVIEW}?language=${target}`, "cache-control": "no-store" });
+      response.end();
       return true;
     }
     const names = ["language", ...TOKEN_KEYS.map((key) => `token.${key}`)];
