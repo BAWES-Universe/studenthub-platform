@@ -1,10 +1,21 @@
 import type { DirectUploadPort } from './r2-storage.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createIdempotency, type JsonValue, type StoredResponse } from '../../idempotency-contract/src/index.js';
-import { resolveActiveContext } from '../../contracts/src/index.js';
+import { resolvePrincipalId } from '../../contracts/src/index.js';
 import { PrivateDocuments, type DocumentState, type PrivateDocumentOptions, type Metadata } from './index.js';
 import { CANDIDATE_DOCUMENT_TYPES, emptyLifecycleState, type CandidateDocumentType, type UploadTicket } from './lifecycle-state.js';
 import { validateCandidateContent } from './candidate-content.js';
+
+/** Shared upload admission and display guidance. Content validation remains independent. */
+export const CANDIDATE_DOCUMENT_ADMISSION: Readonly<Record<CandidateDocumentType, {
+  readonly mimeTypes: readonly string[];
+  readonly maxBytes: number;
+}>> = Object.freeze({
+  'personal-photo': Object.freeze({ mimeTypes: Object.freeze(['image/png', 'image/jpeg']), maxBytes: 10 * 1024 * 1024 }),
+  resume: Object.freeze({ mimeTypes: Object.freeze(['application/pdf']), maxBytes: 10 * 1024 * 1024 }),
+  'civil-id-front': Object.freeze({ mimeTypes: Object.freeze(['image/png', 'image/jpeg']), maxBytes: 10 * 1024 * 1024 }),
+  'civil-id-back': Object.freeze({ mimeTypes: Object.freeze(['image/png', 'image/jpeg']), maxBytes: 10 * 1024 * 1024 }),
+});
 
 export class LifecycleError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
@@ -36,7 +47,7 @@ export class CandidateDocuments {
   readonly primitive: PrivateDocuments;
   constructor(readonly options: CandidateDocumentOptions) {
     if (!/^[\w-]{1,128}$/.test(options.orgId)) throw new TypeError('invalid candidate-document configuration');
-    this.primitive = new PrivateDocuments(options);
+    this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: options.orgId });
   }
   private now(): number {
     const now = (this.options.now ?? Date.now)();
@@ -47,9 +58,9 @@ export class CandidateDocuments {
     if (typeof credential !== 'string' || !credential.length || credential.length > 8192) return deny();
     const identity = await this.options.authenticate(credential);
     if (!identity) return deny();
-    const result = await resolveActiveContext(identity, { orgId: this.options.orgId, role: 'candidate' }, this.options.authz);
-    if (result.kind !== 'authorized') return deny();
-    return result.context.principalId;
+    const principalId = await resolvePrincipalId(identity, this.options.authz);
+    if (principalId === null || !await this.options.authz.getOrganization(this.options.orgId)) return deny();
+    return principalId;
   }
   private token(t: UploadTicket): string {
     return createHmac('sha256', this.options.signingKey).update(JSON.stringify(['upload-v1',t.id,t.objectKey,t.principalId,t.orgId,t.issuedAt,t.expiresAt])).digest('base64url');
@@ -71,7 +82,7 @@ export class CandidateDocuments {
   private bound(s: DocumentState): PrivateDocuments {
     // The lifecycle owns durable success auditing, including reads; suppress only
     // the primitive operational callback to avoid duplicate mutation telemetry.
-    return new PrivateDocuments({ ...this.options, audit: undefined, store: { transaction: fn => fn(s) } });
+    return new PrivateDocuments({ ...this.options, ownDocumentOrgId: this.options.orgId, audit: undefined, store: { transaction: fn => fn(s) } });
   }
   private enqueue(s: DocumentState, d: Metadata): void {
     const id = `${d.id}:${d.version}`;
@@ -90,7 +101,7 @@ export class CandidateDocuments {
           s.lifecycle ??= emptyLifecycleState();
           // Transaction-clock check must precede receipt lookup, including retries.
           if (this.now() >= input.expiresAt.getTime()) return { kind: 'expired' };
-          // Re-read grants inside the transaction; a cached success never revives a revoked grant.
+          // Reauthenticate and re-read principal liveness before any cached success.
           if (await this.principal(credential) !== principalId) return deny();
           try { preflight?.(s, principalId); } catch (error) { operationError = error; throw error; }
           const old = s.lifecycle.receipts.find(r => r.key === input.key && r.principalRef === input.principalRef);
@@ -125,8 +136,9 @@ export class CandidateDocuments {
     const b = body(input,['type','mime','size','expectedVersion','sha256','contentMd5']);
     const type = kind(b.type), expectedVersion = version(b.expectedVersion);
     if (this.options.directUploads && (typeof b.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(b.sha256) || typeof b.contentMd5 !== 'string' || !/^[A-Za-z0-9+/]{22}==$/.test(b.contentMd5))) return invalid();
-    if (typeof b.mime !== 'string' || !(type === 'resume' ? b.mime === 'application/pdf' : ['image/png','image/jpeg'].includes(b.mime))
-      || !Number.isSafeInteger(b.size) || Number(b.size) <= 0 || Number(b.size) > 10*1024*1024) return invalid();
+    const admission = CANDIDATE_DOCUMENT_ADMISSION[type];
+    if (typeof b.mime !== 'string' || !admission.mimeTypes.includes(b.mime)
+      || !Number.isSafeInteger(b.size) || Number(b.size) <= 0 || Number(b.size) > admission.maxBytes) return invalid();
     return this.mutation(credential,key,'authorize',b as JsonValue,async (s,principalId) => {
       if ((this.current(s,principalId,type)?.version ?? null) !== expectedVersion) return conflict();
       const id = randomUUID(), now = this.now();
@@ -205,6 +217,7 @@ export class CandidateDocuments {
   async issueDelivery(credential: unknown, id: unknown): Promise<{url:string;expiresAt:number}> {
     const principalId = await this.principal(credential);
     return this.options.store.transaction(async s => {
+      if (await this.principal(credential) !== principalId) return deny();
       this.own(s, principalId, id);
       const result = await this.bound(s).issueDelivery(credential, id);
       this.auditRead(s, principalId, 'issueDelivery');
@@ -214,6 +227,7 @@ export class CandidateDocuments {
   async deliver(credential: unknown, link: string): Promise<{bytes:Buffer;headers:Record<string,string>}> {
     const principalId = await this.principal(credential);
     return this.options.store.transaction(async s => {
+      if (await this.principal(credential) !== principalId) return deny();
       const result = await this.bound(s).deliver(credential, link);
       // Parse only AFTER the primitive verified signature, exact URL shape and expiry.
       const payload = new URL(link).searchParams.get('t')!.split('.')[0]!;
@@ -226,6 +240,7 @@ export class CandidateDocuments {
   async list(credential: unknown): Promise<Metadata[]> {
     const principalId = await this.principal(credential);
     return this.options.store.transaction(async s => {
+      if (await this.principal(credential) !== principalId) return deny();
       const result: Metadata[] = [];
       for (const type of CANDIDATE_DOCUMENT_TYPES) {
         const d = this.current(s,principalId,type);

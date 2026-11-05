@@ -182,7 +182,7 @@ export function createGatewayServer(
     void inSpan(webSpan ?? span, async () => {
     try {
     if (await handleCatalogue(request, response, catalogue, authz)) return;
-    if (await handleCandidateDocuments(request, response, documents)) return;
+    if (await handleCandidateDocuments(request, response, documents, login)) return;
     if (await handleOrganizationDocuments(request, response, organizationDocuments)) return;
     if (await handleProfileEditPage(request, response, login?.profileEdit, login?.web?.origin,
       (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
@@ -199,7 +199,8 @@ export function createGatewayServer(
     if (await handleProfileBrowserEdit(request, response, login?.browserEdit, login?.web?.origin,
       (status, title, body, language) => writeHtml(response, status, pageDocument(title, body, language)))) return;
     if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
-      (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
+      (status, title, body, language) => writeHtml(response, status,
+        status === 401 && language === "en" ? renderError(401, login) : pageDocument(title, body, language)),
       async (sessionId) => {
         if (!sessionId || !login?.web) return undefined;
         const authorized = await login.profile({ sessionId });
@@ -331,7 +332,7 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, login ? renderWorkspace(result, login) : renderError(503), {}, true);
+        writeHtml(response, result.status, login ? renderWorkspace(result, login, documents !== undefined) : renderError(503), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -419,7 +420,7 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
