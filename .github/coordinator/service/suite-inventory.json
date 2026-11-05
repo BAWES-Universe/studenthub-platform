@@ -4716,6 +4716,8 @@
     "SHU-86 mutation M309 run a card beside a running card that may write the same file",
     "SHU-86 mutation M310 treat a whole-tree card as overlapping no other card",
     "SHU-86 mutation M311 wait for ever on a card queued after a stopped card",
+    "SHU-86 mutation M312 start a due repair beside a running card that shares its files",
+    "SHU-86 mutation M313 leave a live repair out of the running cards",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -34132,6 +34134,14 @@
     },
     {
       "name": "SHU-86 mutation M311 wait for ever on a card queued after a stopped card",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M312 start a due repair beside a running card that shares its files",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M313 leave a live repair out of the running cards",
       "capabilities": []
     },
     {

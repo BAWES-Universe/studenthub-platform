@@ -1823,6 +1823,18 @@ const CASES = [
     to: "    // SHU86-M311",
     pattern: "M15 W1: with two workers a card another worker is running is passed over",
   },
+  {
+    name: "M312 start a due repair beside a running card that shares its files",
+    from: "      if (parallel && running.some((files) => pathsOverlap(lanePaths(config, id), files))) { waiting += 1; continue; }\n      return repair.next;",
+    to: "      return repair.next; // SHU86-M312",
+    pattern: "M15: with two workers a landing repair runs at the head a landing updated",
+  },
+  {
+    name: "M313 leave a live repair out of the running cards",
+    from: "    if (round?.state !== \"finished\" && claimLive(io, paths, round)) live.push(id);",
+    to: "    // SHU86-M313",
+    pattern: "M15: with two workers a landing repair runs at the head a landing updated",
+  },
 ];
 
 for (const mutation of CASES) {

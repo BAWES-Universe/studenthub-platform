@@ -461,7 +461,8 @@ function pathsOverlap(a, b) {
   for (const file of a) if (b.has(file)) return true;
   return false;
 }
-// The queued cards another worker is running now (their claim is live).
+// The queued cards another worker is running now: their claim is live, or a
+// landing repair of theirs is still going (it revises the same lane files).
 function liveCards(io, paths, ids, revision) {
   const live = [];
   for (const id of ids) {
@@ -469,7 +470,11 @@ function liveCards(io, paths, ids, revision) {
     if (!io.fs.existsSync(claim)) continue;
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { continue; }
-    if (claimLive(io, paths, ran)) live.push(id);
+    if (claimLive(io, paths, ran)) { live.push(id); continue; }
+    const record = repairRecordPath(paths, revision, id);
+    if (!io.fs.existsSync(record)) continue;
+    const round = readRound(io, record);
+    if (round?.state !== "finished" && claimLive(io, paths, round)) live.push(id);
   }
   return live;
 }
@@ -503,14 +508,21 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
     }
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
-    if (parallel && claimLive(io, paths, ran)) { waiting += 1; continue; }
+    // A card found running here that the first look missed is running all the
+    // same: no later card that shares its files starts beside it.
+    if (parallel && claimLive(io, paths, ran)) { running.push(lanePaths(config, id)); waiting += 1; continue; }
     // Self-repair B2: only with landing_repair on, and only for a passed run
     // that stopped on red checks; otherwise nothing below differs from today.
     const repair = landingRepairOn(config) && repairCandidate(ran, { id, revision, repo: config.pilot_repo ?? null })
       ? repairStep(io, paths, revision, id, ran, parallel) : null;
     // M15: another worker's repair of this card that is still going.
-    if (repair?.live) { waiting += 1; continue; }
-    if (repair?.next && (!parallel || repair.next.id)) return repair.next;
+    if (repair?.live) { running.push(lanePaths(config, id)); waiting += 1; continue; }
+    if (repair?.next && (!parallel || repair.next.id)) {
+      // A repair revises its card's files, so it waits like a first build for
+      // a running card that shares them.
+      if (parallel && running.some((files) => pathsOverlap(lanePaths(config, id), files))) { waiting += 1; continue; }
+      return repair.next;
+    }
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
     const stop = repair?.next ?? { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };

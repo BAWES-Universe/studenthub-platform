@@ -5321,12 +5321,17 @@ test("M15: with two workers a landing repair runs at the head a landing updated 
   const config = JSON.parse(left.files.get(B2_CONFIG_FILE).text);
   assert.deepEqual(await nextCard(left.io, LAND_PATHS, config, REV), { id: "SHU-305" }, "velocity A: an interrupted round stops only its own card");
   left.files.set("/proc/4343", { text: "", mode: 0o555, uid: 0, gid: 0 });
-  assert.deepEqual(await nextCard(left.io, LAND_PATHS, config, REV), { id: "SHU-305" }, "a live claimer's round is passed over");
+  assert.deepEqual(await nextCard(left.io, LAND_PATHS, apart(config), REV), { id: "SHU-305" }, "a live claimer's round is passed over");
+  // Velocity A: a live repair revises its card's files, so a card sharing them waits.
+  assert.equal((await nextCard(left.io, LAND_PATHS, config, REV)).skipped, "QUEUE_BUSY", "SHU-305 shares files with SHU-301's live repair");
   // Worker 1's round as worker 2 sees it while worker 1's run lock is held.
   left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 1, pid: 99999 })}\n`, mode: 0o600, uid: 0, gid: 0 });
   assert.deepEqual(await nextCard(left.io, w2, config, REV), { id: "SHU-305" }, "no lock, no live pid: interrupted, and only that card stops");
   left.files.set(LAND_PATHS.lock, { text: "1", mode: 0o600, uid: 0, gid: 0 });
-  assert.deepEqual(await nextCard(left.io, w2, config, REV), { id: "SHU-305" }, "worker 1's held run lock keeps its round live");
+  assert.deepEqual(await nextCard(left.io, w2, apart(config), REV), { id: "SHU-305" }, "worker 1's held run lock keeps its round live");
+  assert.equal((await nextCard(left.io, w2, config, REV)).skipped, "QUEUE_BUSY", "and a card sharing its files waits for it");
+  const reversed = { ...config, dispatch_scope: { ...config.dispatch_scope, issue_ids: [...config.dispatch_scope.issue_ids].reverse() } };
+  assert.equal((await nextCard(left.io, w2, reversed, REV)).skipped, "QUEUE_BUSY", "so does one queued before it");
   left.files.delete(LAND_PATHS.lock);
   left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
   // A worker's own unfinished round is never passed over, and one worker is as before.
@@ -5340,6 +5345,13 @@ test("M15: with two workers a landing repair runs at the head a landing updated 
   assert.match(last.reason, /also stopped, or queued after a stopped card: SHU-305/);
   // Another worker's round whose process is alive is running, not interrupted.
   assert.equal((await nextCard(left.io, LAND_PATHS, config, REV)).skipped, "QUEUE_BUSY", "another worker's live round keeps its card busy");
+  // Velocity A: a repair that is due waits, like a first build, for a running card that shares its files.
+  const due = b2Host({ on: true, parallel: true });
+  claimFor(due, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 2 });
+  due.files.set(w2.lock, { text: "4343", mode: 0o600, uid: 0, gid: 0 });
+  const dueConfig = JSON.parse(due.files.get(B2_CONFIG_FILE).text);
+  assert.equal((await nextCard(due.io, LAND_PATHS, dueConfig, REV)).skipped, "QUEUE_BUSY", "SHU-301's repair waits for SHU-305");
+  assert.equal((await nextCard(due.io, LAND_PATHS, apart(dueConfig), REV)).id, "SHU-301", "no shared file: the repair runs beside it");
   // An updated head that changed the passed blobs is never repaired.
   const changed = b2Host({ on: true, parallel: true, mainSeq: [REV], updated: UPDATED_AT, prHead: UPDATED_AT, claim: { updated_head: UPDATED_AT }, updatedBlobs: "f".repeat(40) });
   const refused = await autoRun({ io: changed.io, paths: LAND_PATHS });
