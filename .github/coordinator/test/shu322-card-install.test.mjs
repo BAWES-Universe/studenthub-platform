@@ -894,6 +894,7 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   const out = await autoRun({ io: host.io, paths: PATHS });
   assert.equal(out.outcome, "INSTALLED", JSON.stringify(out));
   assert.deepEqual(out.steps, ["claim", "idle", "merge", "rollback", "install", "verify", "precondition", "carry", "plan"]);
+  assert.match(out.reason, /the first card of .* that has not landed/, "an appended queue does not name a card that may have landed");
   const carried = JSON.parse(host.files.get(autoClaim(PATHS, N, stopped)).text);
   assert.deepEqual(carried, { card: stopped, revision: R, outcome: "STOPPED", ok: false, land: null, carried_from: R });
   assert.equal(host.files.has(autoClaim(PATHS, N, PRIOR[0])), false, "a card that never ran has nothing to carry");

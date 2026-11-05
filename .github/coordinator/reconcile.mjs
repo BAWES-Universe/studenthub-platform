@@ -1503,6 +1503,8 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch, { r
   if (retryServerErrors && linearRead(query)) {
     for (const delay of LINEAR_READ_RETRY_DELAYS_MS) {
       if (!(res.status >= 500 && res.status <= 599)) break;
+      // The failed answer's body is let go, so its connection is free again.
+      await res.body?.cancel?.().catch(() => undefined);
       await sleep(delay);
       res = await request();
     }

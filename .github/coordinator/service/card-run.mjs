@@ -501,19 +501,43 @@ function holderAlive(io, holder) {
     return holder.pid_start === undefined || processStart(io, holder.pid) === holder.pid_start;
   } catch { return false; }
 }
+// The lock is published whole (publishClaim), so a reader never sees it
+// half-written. A lock whose holder is gone, or whose text cannot be read as
+// a holder, is taken over by one worker at a time, as the landing lock is
+// (card-land.mjs, clearStaleLock): the taker creates `${lock}.takeover`
+// exclusively, reads the lock again, and removes it only when it is
+// byte-for-byte the stale lock it judged. A lock a live worker took in the
+// meantime is never removed. A marker left by a takeover that died is never
+// removed but by a person; until then every start waits and skips QUEUE_BUSY.
+function clearStaleSelectLock(io, lock) {
+  let text;
+  try { text = String(io.fs.readFileSync(lock, "utf8")); } catch { return; }
+  let holder = null;
+  try { holder = JSON.parse(text); } catch { /* not a holder: stale */ }
+  if (holder && holderAlive(io, holder)) return;
+  const marker = `${lock}.takeover`;
+  try { io.fs.writeFileSync(marker, `${process.pid}\n`, { flag: "wx", mode: 0o600 }); } catch { return; }
+  try {
+    let again = null;
+    try { again = String(io.fs.readFileSync(lock, "utf8")); } catch { /* gone: another takeover finished */ }
+    if (again === text) { try { io.fs.unlinkSync(lock); } catch { /* gone already */ } }
+  } finally {
+    try { io.fs.unlinkSync(marker); } catch { /* gone already */ }
+  }
+}
 async function takeSelectLock(io, paths, limits) {
   const lock = selectLock(paths);
   const tries = Math.max(1, Math.ceil((limits.selectWaitMs ?? CARD_RUN_LIMITS.selectWaitMs) / (limits.selectPollMs ?? CARD_RUN_LIMITS.selectPollMs)));
   for (let attempt = 0; attempt <= tries; attempt += 1) {
     try {
-      io.fs.writeFileSync(lock, `${JSON.stringify(claimant(io, paths))}\n`, { flag: "wx", mode: 0o600 });
+      publishClaim(io, lock, `${JSON.stringify(claimant(io, paths))}\n`);
       return () => { try { io.fs.unlinkSync(lock); } catch { /* gone already */ } };
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
-    let holder = null;
-    try { holder = JSON.parse(io.fs.readFileSync(lock, "utf8")); } catch { /* half-written or gone: look again */ }
-    if (holder && !holderAlive(io, holder)) { try { io.fs.unlinkSync(lock); } catch { /* taken over already */ } continue; }
+    const before = io.fs.existsSync(lock);
+    clearStaleSelectLock(io, lock);
+    if (before && !io.fs.existsSync(lock)) continue;
     if (attempt < tries) await io.sleep(limits.selectPollMs ?? CARD_RUN_LIMITS.selectPollMs);
   }
   return null;
@@ -1712,7 +1736,7 @@ async function autoReview({ io, paths, limits, config, revision, done, skip }) {
   }
   let result;
   try {
-    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: policy.lane });
+    result = await runCard({ io, paths, limits, review, trigger: "timer", cardId: policy.lane, expectRevision: revision });
   } catch (error) {
     if (NOT_NOW.has(error.code)) {
       // Not now, so the head is given back for a later start.

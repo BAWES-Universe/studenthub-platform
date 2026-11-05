@@ -3540,6 +3540,26 @@ test("Velocity A: with two workers a start selects and claims under the selectio
   const over = await attempt(() => autoRun({ io: busy.io, paths: PATHS, limits: quick }));
   assert.equal(over.skipped, undefined, JSON.stringify(over));
   assert.equal(busy.files.has(selectLock(PATHS)), false);
+  // A lock whose text is not a holder is taken over too.
+  const garbled = fakeHost({ config: two, branchHead: "", onTick: passFor("SHU-301") });
+  garbled.files.set(selectLock(PATHS), { text: "{\"wor", mode: 0o600, uid: 0, gid: 0 });
+  assert.equal((await attempt(() => autoRun({ io: garbled.io, paths: PATHS, limits: quick }))).card, "SHU-301");
+  // A live worker that took the lock while this start was taking a dead one over keeps it.
+  const raced = fakeHost({ config: two, branchHead: "" });
+  raced.files.set(selectLock(PATHS), { text: `${JSON.stringify({ worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+  const rwrite = raced.fs.writeFileSync;
+  raced.io = { ...raced.io, fs: { ...raced.fs, writeFileSync: (file, text, options = {}) => {
+    const out = rwrite(file, text, options);
+    if (file === `${selectLock(PATHS)}.takeover`) {
+      raced.files.set(selectLock(PATHS), { text: `${JSON.stringify({ worker: 2, pid: 4344 })}\n`, mode: 0o600, uid: 0, gid: 0 });
+      raced.files.set("/proc/4344", { text: "", mode: 0o555, uid: 0, gid: 0 });
+    }
+    return out;
+  } } };
+  const kept = await attempt(() => autoRun({ io: raced.io, paths: PATHS, limits: quick }));
+  assert.equal(kept.skipped, "QUEUE_BUSY", JSON.stringify(kept));
+  assert.equal(JSON.parse(raced.files.get(selectLock(PATHS)).text).pid, 4344, "the new holder's lock is never removed");
+  assert.equal(raced.files.has(`${selectLock(PATHS)}.takeover`), false, "the takeover marker is gone");
   // One worker never takes the lock.
   const one = fakeHost({ config: queueConfig(), branchHead: "", onTick: passFor("SHU-301") });
   one.files.set(selectLock(PATHS), { text: `${JSON.stringify({ worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });

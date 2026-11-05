@@ -384,12 +384,14 @@ test("LINEAR READ: a repeated or missing comment cursor fails closed instead of 
 test("Velocity: a board read answered with a 5xx is asked again twice at most, and a write never", async () => {
   const answers = (statuses) => {
     const calls = [];
+    const cancelled = [];
     const fetchImpl = async (_url, options) => {
       calls.push(JSON.parse(options.body).query);
       const status = statuses.shift() ?? 200;
-      return { ok: status < 300, status, headers: { get: () => null }, json: async () => (status < 300 ? { data: { ok: true } } : null) };
+      return { ok: status < 300, status, headers: { get: () => null }, body: { cancel: async () => { cancelled.push(status); } },
+        json: async () => (status < 300 ? { data: { ok: true } } : null) };
     };
-    return { calls, fetchImpl };
+    return { calls, cancelled, fetchImpl };
   };
   const slept = [];
   const sleep = async (ms) => { slept.push(ms); };
@@ -397,6 +399,7 @@ test("Velocity: a board read answered with a 5xx is asked again twice at most, a
   const once = answers([503]);
   assert.deepEqual(await sendLinear(read, {}, "key", once.fetchImpl, { retryServerErrors: true, sleep }), { ok: true }, "one 503 is retried");
   assert.equal(once.calls.length, 2);
+  assert.deepEqual(once.cancelled, [503], "the failed answer's body is let go before asking again");
   assert.deepEqual(slept, [LINEAR_READ_RETRY_DELAYS_MS[0]]);
   const down = answers([503, 502, 500]);
   await assert.rejects(() => sendLinear(read, {}, "key", down.fetchImpl, { retryServerErrors: true, sleep }), /Linear HTTP 500/);

@@ -803,7 +803,8 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
       if (append) run("carry", () => { carried = carryClaims(io, paths, revision, main, queue); });
       run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope, carried)));
       result = { ...base, ok: true, outcome: "INSTALLED", queue, ...(code ? { code, approval } : {}), steps: [...steps],
-        reason: queue ? `the next timer start runs ${queue[0]}` : "the next timer start runs the installed code" };
+        reason: queue && append ? `the next timer start runs the first card of ${queue.join(", ")} that has not landed and is not running`
+          : queue ? `the next timer start runs ${queue[0]}` : "the next timer start runs the installed code" };
     } catch (error) {
       const reason = `${failedStep ?? "a step"}: ${error.message}`;
       // M11: a code install that failed after the merge puts R back, so the

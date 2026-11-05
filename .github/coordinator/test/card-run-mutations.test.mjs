@@ -1843,8 +1843,8 @@ const CASES = [
   },
   {
     name: "M315 take over the selection lock of a live holder",
-    from: "    if (holder && !holderAlive(io, holder)) {",
-    to: "    if (holder /* SHU86-M315 */) {",
+    from: "  if (holder && holderAlive(io, holder)) return;",
+    to: "  if (false /* SHU86-M315 */) return;",
     pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
   },
   {
@@ -1858,6 +1858,18 @@ const CASES = [
     from: "    if (expectRevision !== null && revision !== expectRevision) {",
     to: "    if (false /* SHU86-M317 */) {",
     pattern: "Velocity A: a start whose installed revision moved after it claimed its card",
+  },
+  {
+    name: "M318 remove a selection lock another worker took during the takeover",
+    from: "    if (again === text) {",
+    to: "    if (true /* SHU86-M318 */) {",
+    pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
+  },
+  {
+    name: "M319 never take over a selection lock that holds no holder",
+    from: "  try { holder = JSON.parse(text); } catch { /* not a holder: stale */ }",
+    to: "  try { holder = JSON.parse(text); } catch { return; } // SHU86-M319",
+    pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
   },
 ];
 
