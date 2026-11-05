@@ -1,6 +1,7 @@
 /** Isolated acceptance fixture. No control is reachable over HTTP.
- * Normal profile traffic uses the exact runtime composition. Explicit profile
- * faults use the exported editor/store. Documents use the actual lifecycle and
+ * Normal profile and language traffic use the exact runtime composition. Explicit
+ * faults use the exported editor/language service and real PostgreSQL stores.
+ * Documents use the actual lifecycle and
  * a new private synthetic FileDocumentStore; only its failure boundary is injected.
  */
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:https';
 import pg from 'pg';
 import { createOrganization, createPrincipal } from '@studenthub/contracts';
-import { PostgresAuthzStore, PostgresLoginStore, PostgresPersonProfileStore, runMigrations, readLiveLoginSessionPerson, safeWritePrincipalRef } from '@studenthub/db';
+import { PostgresAuthzStore, PostgresLoginStore, PostgresPersonProfileStore, PostgresSafeWriteStore, runMigrations, readLiveLoginSessionPerson, safeWritePrincipalRef } from '@studenthub/db';
 import { InMemoryApprovedProfileAdapter, SYNTHETIC_PROFILE_FIXTURES, createPersonImportedFallbackReader } from '@studenthub/profile';
 import { createBrowserWriteTokens, BROWSER_WRITE_LIFETIME_MS } from '@studenthub/safe-write-contract';
 import { createRuntimeLoginFromEnv } from '../../dist/apps/gateway/src/login-runtime.js';
@@ -21,6 +22,7 @@ import { FileDocumentStore } from '../../dist/packages/private-documents/src/ind
 import { createIdempotencyKey } from '../../dist/packages/idempotency-contract/src/index.js';
 import { png } from '../../packages/private-documents/test/candidate-fixtures.mjs';
 import { createProfileBrowserEdit } from '../../dist/apps/gateway/src/profile-browser-edit-http.js';
+import { createLanguagePreference } from '../../dist/apps/gateway/src/language-preference.js';
 
 export async function createFixture({
   databaseUrl = process.env.BROWSER_ACCEPTANCE_DATABASE_URL,
@@ -57,6 +59,13 @@ export async function createFixture({
     BEGIN INSERT INTO acceptance_profile_writes(principal_id) VALUES(NEW.principal_id); RETURN NEW; END $$;
     CREATE TRIGGER acceptance_count_profile_write AFTER INSERT OR UPDATE ON person_profiles
     FOR EACH ROW EXECUTE FUNCTION acceptance_count_write()`);
+  // Separate trigger-backed counts: preference writes are not profile writes.
+  // These records participate in the real transaction, including its rollback.
+  await pool.query(`CREATE TABLE acceptance_language_writes (principal_id text NOT NULL);
+    CREATE FUNCTION acceptance_count_language_write() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN INSERT INTO acceptance_language_writes(principal_id) VALUES(NEW.principal_id); RETURN NEW; END $$;
+    CREATE TRIGGER acceptance_count_language_write AFTER INSERT OR UPDATE ON person_preferences
+    FOR EACH ROW EXECUTE FUNCTION acceptance_count_language_write()`);
   const authz = new PostgresAuthzStore(pool), sessions = new PostgresLoginStore(pool);
   const actorAdapters = new Map(), actors = new Map();
   // A new private throwaway store only. Never discover or open configured data.
@@ -127,6 +136,8 @@ export async function createFixture({
   assert(runtime, 'Complete runtime must be constructed');
   cleanups.push(() => runtime.close());
   const application = runtime.application, normalEditor = application.browserEdit;
+  const normalPreferences = application.preferences;
+  let languageOverride = false;
   gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null);
   const tokens = createBrowserWriteTokens({ activeKeyVersion: 'profile-browser-key-v1', keys: { 'profile-browser-key-v1': secret } });
   const fallback = createPersonImportedFallbackReader({ source: approvedProfiles });
@@ -186,8 +197,93 @@ export async function createFixture({
       },
     });
   }
+  function overrideLanguagePreferences(preferences) {
+    assert(!languageOverride, 'Restore the previous language hook first');
+    languageOverride = true;
+    application.preferences = preferences;
+    let restored = false;
+    return () => {
+      if (restored) return;
+      restored = true;
+      application.preferences = normalPreferences;
+      languageOverride = false;
+    };
+  }
   return {
     baseURL, countries, evidence,
+    useLanguageFault(mode) {
+      assert(['preview-read', 'confirm-before-commit', 'confirm-after-commit'].includes(mode), 'Unknown language fault mode');
+      const faultEvidence = { previewReadThrows: 0, beforeCommitThrows: 0, afterCommitThrows: 0,
+        rollbacks: 0, commits: 0, preferenceWriteStatements: 0, receiptInsertStatements: 0 };
+      let armed = true;
+      const languageFaultPool = new Proxy(pool, { get(target, key) {
+        if (key === 'query') return async (...args) => {
+          const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+          // Only this store's language read fails. Session/profile reads use
+          // their unchanged production pools, so the intended boundary is hit.
+          if (armed && mode === 'preview-read' && /^SELECT language FROM person_preferences WHERE principal_id = \$1$/.test(sql ?? '')) {
+            armed = false; faultEvidence.previewReadThrows++;
+            throw new Error('Synthetic language preference read failure');
+          }
+          return target.query(...args);
+        };
+        if (key === 'connect') return async () => {
+          const client = await target.connect();
+          let wroteReceipt = false;
+          return new Proxy(client, { get(c, k) {
+            if (k === 'query') return async (...args) => {
+              const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+              if (sql === 'COMMIT' && wroteReceipt && armed && mode === 'confirm-before-commit') {
+                armed = false; faultEvidence.beforeCommitThrows++;
+                // Both real writes ran, but COMMIT did not: the production
+                // store's catch must roll back preference, receipt and counter.
+                throw new Error('Synthetic language COMMIT dependency failure');
+              }
+              const result = await c.query(...args);
+              if (/^(?:INSERT INTO|UPDATE) person_preferences\b/.test(sql ?? '')) faultEvidence.preferenceWriteStatements++;
+              if (/INSERT INTO authorization_mutation_audit/.test(sql ?? '')) {
+                wroteReceipt = true; faultEvidence.receiptInsertStatements++;
+              }
+              if (sql === 'ROLLBACK') faultEvidence.rollbacks++;
+              if (sql === 'COMMIT') faultEvidence.commits++;
+              if (sql === 'COMMIT' && wroteReceipt && armed && mode === 'confirm-after-commit') {
+                armed = false; faultEvidence.afterCommitThrows++;
+                // COMMIT really succeeded. The application receives an actual
+                // dependency exception and must report its honest unknown outcome.
+                throw new Error('Synthetic lost language COMMIT acknowledgement');
+              }
+              return result;
+            };
+            const value = Reflect.get(c, k); return typeof value === 'function' ? value.bind(c) : value;
+          } });
+        };
+        const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      const restorePreferences = overrideLanguagePreferences(createLanguagePreference({
+        sessions: sessions.sessions, store: new PostgresSafeWriteStore({ pool: languageFaultPool }), secret,
+      }));
+      return { evidence: faultEvidence, restore() { armed = false; restorePreferences(); } };
+    },
+    useLanguageExpiredTokens() {
+      // Language safe-write's unchanged production default is five minutes.
+      // This fixture backdates just the first issuance clock read so the authentic
+      // token is already expired. Verification immediately returns to real time;
+      // no waiting, changed lifetime, fabricated token or signature is involved.
+      const languageLifetimeMs = 5 * 60 * 1000;
+      const expiryEvidence = { issuances: 0 };
+      const clock = { now() {
+        const now = new Date();
+        if (expiryEvidence.issuances === 0) {
+          expiryEvidence.issuances++;
+          return new Date(now.getTime() - languageLifetimeMs - 1000);
+        }
+        return now;
+      } };
+      const restore = overrideLanguagePreferences(createLanguagePreference({
+        sessions: sessions.sessions, store: new PostgresSafeWriteStore({ pool }), secret, clock,
+      }));
+      return { evidence: expiryEvidence, restore };
+    },
     useDocuments({ configured = true, failStore = false } = {}) {
       documentStoreFailure = failStore;
       gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null, undefined, configured ? documents : undefined);
@@ -224,7 +320,8 @@ export async function createFixture({
       await sessions.sessions.put({ id: session, personId: id });
       const baselineWrites = Number((await pool.query('SELECT count(*) AS n FROM acceptance_profile_writes WHERE principal_id=$1', [id])).rows[0].n);
       const actor = { id, language, cookie: { name: '__Host-studenthub_session', value: session, domain: 'localhost', path: '/', secure: true, httpOnly: true, sameSite: 'Lax' } };
-      actors.set(id, { session, baselineWrites }); return actor;
+      const baselineLanguageWrites = Number((await pool.query('SELECT count(*) AS n FROM acceptance_language_writes WHERE principal_id=$1', [id])).rows[0].n);
+      actors.set(id, { session, baselineWrites, baselineLanguageWrites }); return actor;
     },
     async inspect(actor) {
       assert(actors.has(actor.id), 'Unknown synthetic actor');
@@ -235,6 +332,21 @@ export async function createFixture({
         intro: row.introduction ?? null, preferredTime: row.preferred_time ?? null, gender: row.gender ?? null, birthDate: row.birth_date ?? null,
         drivingLicence: row.driving_licence ?? null, jobSearchStatus: row.job_search_status ?? null, phone: row.phone ?? null,
         handle: row.profile_handle ?? null, nationality: row.nationality_id ?? null, university: row.university_id ?? null, kuwaitiMother: row.kuwaiti_mother ?? null } };
+    },
+    async inspectLanguage(actor) {
+      assert(actors.has(actor.id), 'Unknown synthetic actor');
+      const row = (await pool.query('SELECT language, updated_at FROM person_preferences WHERE principal_id=$1', [actor.id])).rows[0];
+      const receipts = (await pool.query(`SELECT after_summary->'fields' AS fields,
+        after_summary->>'contractVersion' AS contract_version, after_summary->>'committedAt' AS committed_at
+        FROM authorization_mutation_audit WHERE operation='profile.safe_write' AND target_principal_ref=$1
+        AND after_summary->'fields'='["language"]'::jsonb ORDER BY after_summary->>'committedAt' DESC`,
+      [safeWritePrincipalRef(actor.id)])).rows;
+      const writeCount = Number((await pool.query('SELECT count(*) AS n FROM acceptance_language_writes WHERE principal_id=$1', [actor.id])).rows[0].n) - actors.get(actor.id).baselineLanguageWrites;
+      const latest = receipts[0];
+      // Deliberately omit all principal, token, record and receipt references.
+      return { language: row?.language ?? null, updatedAt: row?.updated_at?.toISOString() ?? null,
+        writeCount, receiptCount: receipts.length,
+        lastReceipt: latest ? { fields: latest.fields, contractVersion: latest.contract_version, committedAt: latest.committed_at } : null };
     },
     async revoke(actor) {
       assert(actors.has(actor.id), 'Unknown synthetic actor');
