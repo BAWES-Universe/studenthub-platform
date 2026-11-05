@@ -333,6 +333,22 @@ export async function createFixture({
         drivingLicence: row.driving_licence ?? null, jobSearchStatus: row.job_search_status ?? null, phone: row.phone ?? null,
         handle: row.profile_handle ?? null, nationality: row.nationality_id ?? null, university: row.university_id ?? null, kuwaitiMother: row.kuwaiti_mother ?? null } };
     },
+    async capturePhoneReceipt(actor) {
+      assert(actors.has(actor.id), 'Unknown synthetic actor');
+      const principalRef = safeWritePrincipalRef(actor.id);
+      const readReceipts = async () => (await pool.query(`SELECT request_ref, after_summary
+        FROM authorization_mutation_audit WHERE operation='profile.safe_write' AND target_principal_ref=$1
+        AND after_summary->'fields'='["phone"]'::jsonb`, [principalRef])).rows;
+      const original = await readReceipts();
+      assert.equal(original.length, 1, 'Exactly one original phone receipt is required');
+      // Identity and content stay inside this closure. Only equality may enter
+      // evidence; no receipt references, tokens or payload digests are exposed.
+      const snapshot = JSON.stringify(original[0]);
+      return async () => {
+        const current = await readReceipts();
+        return current.length === 1 && JSON.stringify(current[0]) === snapshot;
+      };
+    },
     async inspectLanguage(actor) {
       assert(actors.has(actor.id), 'Unknown synthetic actor');
       const row = (await pool.query('SELECT language, updated_at FROM person_preferences WHERE principal_id=$1', [actor.id])).rows[0];
