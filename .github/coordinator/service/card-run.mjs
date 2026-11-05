@@ -447,6 +447,33 @@ export function landingReader(io, paths, config, limits = CARD_RUN_LIMITS) {
 // first card a timer run has not landed, unless that card already ran at this
 // revision: it did not land, so the queue stops there until a new install.
 // A hand landing is proven from GitHub and, with `record`, written down.
+// Velocity A: the files a queued card may write, or null when its lane names
+// none (a whole-tree card), which overlaps every other card.
+function lanePaths(config, id) {
+  const lane = (config.card_lanes ?? []).find((card) => card?.id === id);
+  const listed = [...(lane?.initial_build_paths ?? []), ...(lane?.revision_paths ?? [])].filter((file) => typeof file === "string");
+  return listed.length ? new Set(listed) : null;
+}
+// Two cards that may write the same file never run at once: the second would
+// build on a main the first is about to change, and land conflicted.
+function pathsOverlap(a, b) {
+  if (a === null || b === null) return true;
+  for (const file of a) if (b.has(file)) return true;
+  return false;
+}
+// The queued cards another worker is running now (their claim is live).
+function liveCards(io, paths, ids, revision) {
+  const live = [];
+  for (const id of ids) {
+    const claim = autoClaim(paths, revision, id);
+    if (!io.fs.existsSync(claim)) continue;
+    let ran = null;
+    try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { continue; }
+    if (claimLive(io, paths, ran)) live.push(id);
+  }
+  return live;
+}
+
 export async function nextCard(io, paths, config, revision, { landing = null, record = false } = {}) {
   const queue = cardQueue(config);
   if (!queue.queue) return { id: null };
@@ -456,13 +483,24 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
   // stopping the queue. One worker walks the queue exactly as before.
   const parallel = cardWorkers(config) > 1;
   const landedIds = new Set();
+  // Velocity A: with more than one worker, a card that ran and did not land
+  // stops only itself (and the cards queued after it), never the other
+  // workers. The first such stop is reported once no card is left to run.
+  const stoppedIds = new Set();
+  let stopped = null;
   let waiting = 0;
+  const running = parallel ? liveCards(io, paths, queue.ids, revision).map((id) => lanePaths(config, id)) : [];
   for (const id of queue.ids) {
     const landed = await cardLanded(io, paths, id, { ...(landing ?? {}), record });
     if (landed.landed) { landedIds.add(id); continue; }
-    if (parallel && (queue.after?.[id] ?? []).some((need) => !landedIds.has(need))) { waiting += 1; continue; }
+    const needs = queue.after?.[id] ?? [];
+    if (parallel && needs.some((need) => stoppedIds.has(need))) { stoppedIds.add(id); continue; }
+    if (parallel && needs.some((need) => !landedIds.has(need))) { waiting += 1; continue; }
     const claim = autoClaim(paths, revision, id);
-    if (!io.fs.existsSync(claim)) return { id };
+    if (!io.fs.existsSync(claim)) {
+      if (parallel && running.some((files) => pathsOverlap(files, lanePaths(config, id)))) { waiting += 1; continue; }
+      return { id };
+    }
     let ran = null;
     try { ran = JSON.parse(io.fs.readFileSync(claim, "utf8")); } catch { /* reported as unreadable */ }
     if (parallel && claimLive(io, paths, ran)) { waiting += 1; continue; }
@@ -472,12 +510,19 @@ export async function nextCard(io, paths, config, revision, { landing = null, re
       ? repairStep(io, paths, revision, id, ran, parallel) : null;
     // M15: another worker's repair of this card that is still going.
     if (repair?.live) { waiting += 1; continue; }
-    if (repair?.next) return repair.next;
+    if (repair?.next && (!parallel || repair.next.id)) return repair.next;
     const how = ran ? `${ran.outcome ?? "no outcome"}${ran.land ? `, landing ${ran.land}` : ""}` : "an unreadable claim";
     const why = landed.reason ? `; hand landing not proven: ${landed.reason}` : "";
-    return { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
+    const stop = repair?.next ?? { id: null, skipped: "QUEUE_STOPPED", reason: `${id} ran at ${revision} and did not land (${how}): ${claim}${why}${repair?.note ?? ""}` };
+    if (!parallel) return stop;
+    if (!stopped) stopped = { id, stop };
+    stoppedIds.add(id);
   }
-  if (waiting) return { id: null, skipped: "QUEUE_BUSY", reason: `every queued card that has not landed is running on another worker or waits on one` };
+  if (waiting) return { id: null, skipped: "QUEUE_BUSY", reason: `every queued card that has not landed is running on another worker or waits on one${stopped ? `; stopped: ${[...stoppedIds].join(", ")}` : ""}` };
+  if (stopped) {
+    const others = [...stoppedIds].filter((id) => id !== stopped.id);
+    return others.length ? { ...stopped.stop, reason: `${stopped.stop.reason}; also stopped, or queued after a stopped card: ${others.join(", ")}` } : stopped.stop;
+  }
   return { id: null, skipped: "QUEUE_DONE", reason: `every queued card landed: ${queue.ids.join(", ")}` };
 }
 

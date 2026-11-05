@@ -3160,18 +3160,28 @@ test("SHU-310 L27: a thread an earlier landing settled is checked again by every
 // start, each from main as it is when its run starts.
 const QUEUE = Object.freeze(["SHU-301", "SHU-305"]);
 const queueConfig = (ids = QUEUE) => ({ ...structuredClone(BASELINE), dispatch_scope: { issue_ids: [...ids] } });
+// Velocity A: two cards that may write the same file never run at once. The
+// committed SHU-301 and SHU-305 lanes share two files, so the tests that run
+// them side by side take those files out of SHU-305's lane.
+const apart = (config) => {
+  const first = config.card_lanes.find((lane) => lane.id === "SHU-301");
+  const shared = new Set([...first.initial_build_paths, ...first.revision_paths]);
+  const keep = (list) => list.filter((file) => !shared.has(file));
+  return { ...config, card_lanes: config.card_lanes.map((lane) => (lane.id === "SHU-305"
+    ? { ...lane, initial_build_paths: keep(lane.initial_build_paths), revision_paths: keep(lane.revision_paths) } : lane)) };
+};
 const passFor = (id) => (h) => tickText(spent(id, "review PASS — the episode is complete"));
 const claimFor = (host, revision, id, fields) => host.files.set(autoClaim(PATHS, revision, id),
   { text: `${JSON.stringify({ card: id, revision, ...fields })}\n`, mode: 0o600, uid: 0, gid: 0 });
 
 test("SHU-312 Q1: a card queue is two to five distinct committed card lanes; anything else scopes nothing", async () => {
   const { cardQueue, MAX_CARD_QUEUE } = await import("../single-run-activation.mjs");
-  assert.equal(MAX_CARD_QUEUE, 20);
+  assert.equal(MAX_CARD_QUEUE, 60);
   assert.deepEqual(cardQueue(queueConfig()), { queue: true, ok: true, ids: [...QUEUE], after: {}, reason: null });
   assert.equal(cardQueue(queueConfig(["SHU-301"])).queue, false, "one card is not a queue");
   assert.equal(cardQueue(queueConfig(["SHU-140", "SHU-254"])).queue, false, "the fixture pair keeps its own handling");
   for (const [label, ids] of [
-    ["twenty-one cards", Array.from({ length: 21 }, (_, i) => `SHU-${1000 + i}`)],
+    ["sixty-one cards", Array.from({ length: 61 }, (_, i) => `SHU-${1000 + i}`)],
     ["a repeated card", ["SHU-301", "SHU-301"]],
     ["a review-only lane", ["SHU-301", "SHU-304"]],
     ["no lane", ["SHU-301", "SHU-999"]],
@@ -3180,7 +3190,7 @@ test("SHU-312 Q1: a card queue is two to five distinct committed card lanes; any
   ]) {
     const queue = cardQueue(queueConfig(ids));
     assert.equal(queue.queue && queue.ok === false, true, label);
-    if (ids.length > MAX_CARD_QUEUE) assert.match(queue.reason, /at most 20 cards/, label);
+    if (ids.length > MAX_CARD_QUEUE) assert.match(queue.reason, /at most 60 cards/, label);
     assert.throws(() => planRun({ config: queueConfig(ids), revision: REV, now: START, cardId: ids[0] }), { code: "CARD_RUN_SCOPE" }, label);
   }
   // planRun takes the card it is given, only from the queue, never a review.
@@ -3367,7 +3377,7 @@ test("M15 W1: with two workers a card another worker is running is passed over, 
   assert.equal(cardWorkers({}), 1);
   assert.equal(cardWorkers({ workers: { max: 2 } }), 2);
   assert.equal(cardWorkers({ workers: { max: 99 } }), 1, "an invalid count is one worker");
-  const two = (ids = QUEUE) => ({ ...queueConfig(ids), workers: { max: 2 } });
+  const two = (ids = QUEUE) => apart({ ...queueConfig(ids), workers: { max: 2 } });
   // Worker 1 is running SHU-301: its claim has no outcome and its lock is held.
   const host = fakeHost({ config: two(), branchHead: "" });
   claimFor(host, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1 });
@@ -3377,14 +3387,21 @@ test("M15 W1: with two workers a card another worker is running is passed over, 
   assert.equal((await nextCard(host.io, w2, queueConfig(), REV)).skipped, "QUEUE_STOPPED");
   // A claim whose worker's lock is gone is a run that ended without landing.
   host.files.delete(CARD_RUN_PATHS.lock);
-  assert.equal((await nextCard(host.io, w2, two(), REV)).skipped, "QUEUE_STOPPED");
+  // Velocity A: it stops only itself; the other worker goes on to the next card.
+  assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" }, "a stopped card stops only itself");
+  // With nothing else left to run, the queue reports that stop.
+  claimFor(host, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 1, outcome: "STOPPED" });
+  const both = await nextCard(host.io, w2, two(), REV);
+  assert.equal(both.skipped, "QUEUE_STOPPED");
+  assert.match(both.reason, /^SHU-301 ran at .*; also stopped, or queued after a stopped card: SHU-305$/);
+  host.files.delete(autoClaim(PATHS, REV, "SHU-305"));
   // Between the lock's release and the outcome's write, the claiming process
   // is still alive: the card is still running, not stopped.
   claimFor(host, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1, pid: 4242 });
   host.files.set("/proc/4242", { text: "", mode: 0o555, uid: 0, gid: 0 });
   assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" }, "a live claimer still holds its card");
   host.files.delete("/proc/4242");
-  assert.equal((await nextCard(host.io, w2, two(), REV)).skipped, "QUEUE_STOPPED", "a dead claimer without the lock stopped");
+  assert.deepEqual(await nextCard(host.io, w2, two(), REV), { id: "SHU-305" }, "a dead claimer without the lock stopped, and only its card");
   // Every card running or waiting: QUEUE_BUSY, not done and not stopped.
   host.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
   claimFor(host, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 1 });
@@ -3397,16 +3414,39 @@ test("M15 W1: with two workers a card another worker is running is passed over, 
   claimFor(waits, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1 });
   waits.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
   assert.equal((await nextCard(waits.io, w2, chained, REV)).skipped, "QUEUE_BUSY");
+  // Velocity A: a card queued after a stopped card stops with it, so the queue
+  // reports the stop instead of waiting for ever.
+  waits.files.delete(CARD_RUN_PATHS.lock);
+  const blocked = await nextCard(waits.io, w2, chained, REV);
+  assert.equal(blocked.skipped, "QUEUE_STOPPED", JSON.stringify(blocked));
+  assert.match(blocked.reason, /also stopped, or queued after a stopped card: SHU-305$/);
   // after must name an earlier card of the same queue.
   const backwards = two();
   backwards.card_lanes = backwards.card_lanes.map((lane) => (lane.id === "SHU-301" ? { ...lane, after: ["SHU-305"] } : lane));
   assert.equal(cardQueue(backwards).ok, false);
+  // Velocity A: a card that may write a file the running card may write
+  // waits for it, so the two never land on top of each other.
+  const sharing = { ...queueConfig(), workers: { max: 2 } };
+  const overlap = fakeHost({ config: sharing, branchHead: "" });
+  claimFor(overlap, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1 });
+  overlap.files.set(CARD_RUN_PATHS.lock, { text: "1\n", mode: 0o600, uid: 0, gid: 0 });
+  const held = await nextCard(overlap.io, w2, sharing, REV);
+  assert.equal(held.skipped, "QUEUE_BUSY", "SHU-305 shares files with the running SHU-301");
+  assert.deepEqual(await nextCard(overlap.io, w2, apart(sharing), REV), { id: "SHU-305" }, "no shared file: it runs beside it");
+  // A lane that names no files is a whole-tree card and overlaps every card.
+  const whole = apart(sharing);
+  whole.card_lanes = whole.card_lanes.map((lane) => (lane.id === "SHU-305" ? { ...lane, initial_build_paths: [], revision_paths: [] } : lane));
+  assert.equal((await nextCard(overlap.io, w2, whole, REV)).skipped, "QUEUE_BUSY", "a whole-tree card waits");
+  // Once the running card's run is over, the waiting card goes.
+  overlap.files.delete(CARD_RUN_PATHS.lock);
+  claimFor(overlap, REV, "SHU-301", { claimed_at: START.toISOString(), worker: 1, outcome: "PASS" });
+  assert.deepEqual(await nextCard(overlap.io, w2, sharing, REV), { id: "SHU-305" }, "after SHU-301's run, SHU-305 runs");
 });
 
 test("M15 W1: a claim records its process's start time, and a later process that reused the pid does not keep the card live", async () => {
   const { cardRunPaths, processStart } = await import("../service/card-run.mjs");
   const w2 = cardRunPaths(2);
-  const two = { ...queueConfig(), workers: { max: 2 } };
+  const two = apart({ ...queueConfig(), workers: { max: 2 } });
   // /proc/PID/stat: field 22 is the start time; the command name may hold ") ".
   const stat = (pid, start) => `${pid} (node (card) run) S 1 ${pid} ${pid} 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 11 0 ${start} 1000 100\n`;
   const proc = (host, pid, start) => {
@@ -3421,9 +3461,13 @@ test("M15 W1: a claim records its process's start time, and a later process that
   assert.deepEqual(await nextCard(host.io, w2, two, REV), { id: "SHU-305" }, "the claimant itself is still alive");
   // The claimant died and another process now has its pid: the card stopped.
   proc(host, 4242, "999999");
-  assert.equal((await nextCard(host.io, w2, two, REV)).skipped, "QUEUE_STOPPED", "a reused pid is not the claimant");
+  assert.deepEqual(await nextCard(host.io, w2, two, REV), { id: "SHU-305" }, "a reused pid is not the claimant: SHU-301 stopped, the next card runs");
+  // With SHU-305 stopped too, the reused pid leaves nothing running: the queue stops.
+  claimFor(host, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 1, outcome: "STOPPED" });
+  assert.equal((await nextCard(host.io, w2, two, REV)).skipped, "QUEUE_STOPPED", "a reused pid is not a running card");
+  host.files.delete(autoClaim(PATHS, REV, "SHU-305"));
   host.files.delete("/proc/4242/stat");
-  assert.equal((await nextCard(host.io, w2, two, REV)).skipped, "QUEUE_STOPPED", "a start time that cannot be read proves nothing");
+  assert.deepEqual(await nextCard(host.io, w2, two, REV), { id: "SHU-305" }, "a start time that cannot be read proves nothing");
   // The claim a timer start writes carries its own start time.
   const run = fakeHost({ onTick: passOnFirstTick });
   proc(run, process.pid, "424242");
@@ -3440,7 +3484,7 @@ test("M15 W1: a claim records its process's start time, and a later process that
 });
 
 test("M15 W1: a worker that loses the claim race for a card selects again and runs the next one; one worker still gives up its start", async () => {
-  const two = { ...queueConfig(), workers: { max: 2 } };
+  const two = apart({ ...queueConfig(), workers: { max: 2 } });
   const race = (config) => {
     const host = fakeHost({ config, branchHead: "", onTick: passFor("SHU-305") });
     const write = host.fs.writeFileSync;
@@ -5275,20 +5319,27 @@ test("M15: with two workers a landing repair runs at the head a landing updated 
   const left = b2Host({ on: true, parallel: true });
   left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
   const config = JSON.parse(left.files.get(B2_CONFIG_FILE).text);
-  assert.equal((await nextCard(left.io, LAND_PATHS, config, REV)).skipped, "REPAIR_INTERRUPTED");
+  assert.deepEqual(await nextCard(left.io, LAND_PATHS, config, REV), { id: "SHU-305" }, "velocity A: an interrupted round stops only its own card");
   left.files.set("/proc/4343", { text: "", mode: 0o555, uid: 0, gid: 0 });
   assert.deepEqual(await nextCard(left.io, LAND_PATHS, config, REV), { id: "SHU-305" }, "a live claimer's round is passed over");
   // Worker 1's round as worker 2 sees it while worker 1's run lock is held.
   left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 1, pid: 99999 })}\n`, mode: 0o600, uid: 0, gid: 0 });
-  assert.equal((await nextCard(left.io, w2, config, REV)).skipped, "REPAIR_INTERRUPTED", "no lock, no live pid: interrupted");
+  assert.deepEqual(await nextCard(left.io, w2, config, REV), { id: "SHU-305" }, "no lock, no live pid: interrupted, and only that card stops");
   left.files.set(LAND_PATHS.lock, { text: "1", mode: 0o600, uid: 0, gid: 0 });
   assert.deepEqual(await nextCard(left.io, w2, config, REV), { id: "SHU-305" }, "worker 1's held run lock keeps its round live");
   left.files.delete(LAND_PATHS.lock);
   left.files.set(b2RoundFile(), { text: `${JSON.stringify({ card: "SHU-301", revision: REV, activation_id: B2_REPAIR_ID, state: "armed", worker: 2, pid: 4343 })}\n`, mode: 0o600, uid: 0, gid: 0 });
   // A worker's own unfinished round is never passed over, and one worker is as before.
-  assert.equal((await nextCard(left.io, w2, config, REV)).skipped, "REPAIR_INTERRUPTED");
+  assert.deepEqual(await nextCard(left.io, w2, config, REV), { id: "SHU-305" }, "its own card stops, the next one runs");
   const { workers: _workers, ...oneWorker } = config;
   assert.equal((await nextCard(left.io, LAND_PATHS, oneWorker, REV)).skipped, "REPAIR_INTERRUPTED");
+  // Velocity A: once no other card can run, the interrupted round is the stop the queue reports.
+  claimFor(left, REV, "SHU-305", { claimed_at: START.toISOString(), worker: 1, outcome: "STOPPED" });
+  const last = await nextCard(left.io, w2, config, REV);
+  assert.equal(last.skipped, "REPAIR_INTERRUPTED", JSON.stringify(last));
+  assert.match(last.reason, /also stopped, or queued after a stopped card: SHU-305/);
+  // Another worker's round whose process is alive is running, not interrupted.
+  assert.equal((await nextCard(left.io, LAND_PATHS, config, REV)).skipped, "QUEUE_BUSY", "another worker's live round keeps its card busy");
   // An updated head that changed the passed blobs is never repaired.
   const changed = b2Host({ on: true, parallel: true, mainSeq: [REV], updated: UPDATED_AT, prHead: UPDATED_AT, claim: { updated_head: UPDATED_AT }, updatedBlobs: "f".repeat(40) });
   const refused = await autoRun({ io: changed.io, paths: LAND_PATHS });
@@ -6249,7 +6300,7 @@ test("M15 W5: a card run never takes over an install lock whose holder died, and
 // host: each arms, ticks and reverts through its own supervisor and
 // coordinator units, drop-ins and activation record, while the other is armed.
 function twoWorkerHost({ w1Tick, w2Tick }) {
-  const two = { ...queueConfig(), workers: { max: 2 } };
+  const two = apart({ ...queueConfig(), workers: { max: 2 } });
   const host = fakeHost({ config: two, branchHead: "", onTick: (h) => w1Tick(h) });
   const W2_SUPERVISOR = "shu-supervisor-w2.service";
   const W2_COORDINATOR = "shu-coordinator-w2.service";

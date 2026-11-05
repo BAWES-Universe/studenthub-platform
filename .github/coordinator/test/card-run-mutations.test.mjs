@@ -765,8 +765,8 @@ const CASES = [
   },
   {
     name: "M113 run past a queued card that did not land",
-    from: "    if (!io.fs.existsSync(claim)) return { id };",
-    to: "    return { id }; // SHU312-M113",
+    from: "    if (!io.fs.existsSync(claim)) {",
+    to: "    if (true) { // SHU312-M113",
     pattern: "SHU-312 Q5:",
   },
   {
@@ -1798,6 +1798,30 @@ const CASES = [
     from: "  try { io.fs.linkSync(temp, file); }",
     to: "  try { io.fs.writeFileSync(file, text, { flag: \"wx\", mode: 0o600 }); } // SHU86-M260",
     pattern: "M15 W9:",
+  },
+  {
+    name: "M308 let a stopped card stop every worker again",
+    from: "    if (!parallel) return stop;",
+    to: "    return stop; // SHU86-M308",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M309 run a card beside a running card that may write the same file",
+    from: "      if (parallel && running.some((files) => pathsOverlap(files, lanePaths(config, id)))) { waiting += 1; continue; }",
+    to: "      // SHU86-M309",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M310 treat a whole-tree card as overlapping no other card",
+    from: "  if (a === null || b === null) return true;",
+    to: "  if (a === null || b === null) return false; // SHU86-M310",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
+  },
+  {
+    name: "M311 wait for ever on a card queued after a stopped card",
+    from: "    if (parallel && needs.some((need) => stoppedIds.has(need))) { stoppedIds.add(id); continue; }",
+    to: "    // SHU86-M311",
+    pattern: "M15 W1: with two workers a card another worker is running is passed over",
   },
 ];
 
