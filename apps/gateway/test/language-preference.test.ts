@@ -722,3 +722,57 @@ test("LANGUAGE_HISTORY_LOOKUP_PRECEDENCE failed display lookup cannot mask malfo
   assert.doesNotMatch(document, /SYNTHETIC-PRIVATE|name="token\./);
   assert.equal(x.controls.commits, 0);
 });
+
+test("LANGUAGE_HISTORY_SHARED_VALIDATION both preview entry points preserve exact-body and authentication precedence", async () => {
+  const session = "v".repeat(43), personId = "synthetic-validation-person";
+  let writerCalls = 0, clockCalls = 0, commits = 0;
+  const service = createLanguagePreference({
+    sessions: { get: async (id) => id === session ? { id, personId } : undefined },
+    store: {
+      forPrincipal: (principalId) => {
+        writerCalls++;
+        assert.equal(principalId, personId);
+        return {
+          ownedRecord: (ref) => ref === safeWritePrincipalRef(personId) ? personRecordRef(personId) : null,
+          readField: () => null,
+          commit: () => { commits++; return { ok: false, reason: "not_own_record" }; },
+        };
+      },
+      readReceipt: async () => null,
+    },
+    clock: { now: () => { clockCalls++; return new Date("2026-11-05T08:00:00Z"); } },
+    secret: "synthetic-preview-validation-secret-at-least-32-bytes",
+  });
+  const malformedBodies: unknown[] = [
+    undefined, null, "language=en", [], ["en"], {}, { locale: "en" },
+    { language: "en", locale: "ar" }, { language: "en", token: {} },
+    { language: "xx", extra: true },
+  ];
+  const invalidValues: unknown[] = [undefined, null, "", "xx", "EN", "ar-KW", " en", "en ", 1, true, [], {}];
+  for (const method of ["validatePreview", "preview"] as const) {
+    for (const body of malformedBodies) {
+      assert.deepEqual(await service[method](session, body), { status: 400, body: { error: "invalid_request" } }, method);
+    }
+    for (const value of invalidValues) {
+      assert.deepEqual(await service[method](session, { language: value }), { status: 400, body: { error: "invalid_value" } }, method);
+    }
+    for (const sessionId of [undefined, "missing-session"]) {
+      for (const body of [...malformedBodies, ...invalidValues.map((language) => ({ language })), { language: "en" }]) {
+        assert.deepEqual(await service[method](sessionId, body), { status: 401, body: { error: "unauthorized" } }, `${method} authenticates before reporting body errors`);
+      }
+    }
+  }
+  assert.equal(writerCalls, 0, "invalid and unauthorized requests never enter safe-write");
+  assert.equal(clockCalls, 0);
+  for (const language of ["en", "ar"]) {
+    assert.deepEqual(await service.validatePreview(session, { language }), { status: 200, body: { language } });
+  }
+  assert.equal(writerCalls, 0, "native POST validation never builds a writer or issues a discarded token");
+  assert.equal(clockCalls, 0, "native POST validation never reads the token issuance clock");
+  const preview = await service.preview(session, { language: "en" });
+  assert.equal(preview.status, 200);
+  assert.deepEqual(Object.keys(preview.body as object).sort(), ["changes", "token"]);
+  assert.equal(writerCalls, 1, "the shared validator still permits JSON and GET preview to issue a token");
+  assert.ok(clockCalls > 0);
+  assert.equal(commits, 0);
+});

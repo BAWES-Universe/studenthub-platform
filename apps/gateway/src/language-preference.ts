@@ -88,6 +88,14 @@ function language(value: unknown): string | undefined {
   return typeof value === "string" && (LANGUAGES as readonly string[]).includes(value) ? value : undefined;
 }
 
+// Keep both preview entry points on one strict parser so native validation
+// and JSON preview cannot drift on unknown keys or invalid language values.
+function previewLanguage(body: unknown): string | LanguagePreferenceResult {
+  if (!exactKeys(body, ["language"])) return { status: 400, body: { error: "invalid_request" } };
+  const value = language(body.language);
+  return value ?? refusal("invalid_value");
+}
+
 function token(value: unknown): ActionToken | undefined {
   if (!exactKeys(value, TOKEN_KEYS)) return undefined;
   return TOKEN_KEYS.every((key) => typeof value[key] === "string") ? value as unknown as ActionToken : undefined;
@@ -121,18 +129,16 @@ export function createLanguagePreference(ports: {
     async validatePreview(sessionId, body) {
       const principalId = await principal(sessionId);
       if (!principalId) return { status: 401, body: { error: "unauthorized" } };
-      if (!exactKeys(body, ["language"])) return { status: 400, body: { error: "invalid_request" } };
-      const value = language(body.language);
-      if (!value) return refusal("invalid_value");
+      const value = previewLanguage(body);
+      if (typeof value !== "string") return value;
       return { status: 200, body: { language: value } };
     },
 
     async preview(sessionId, body) {
       const principalId = await principal(sessionId);
       if (!principalId) return { status: 401, body: { error: "unauthorized" } };
-      if (!exactKeys(body, ["language"])) return { status: 400, body: { error: "invalid_request" } };
-      const value = language(body.language);
-      if (!value) return refusal("invalid_value");
+      const value = previewLanguage(body);
+      if (typeof value !== "string") return value;
       const result = await writer(principalId).preview({
         principalRef: safeWritePrincipalRef(principalId),
         change: { personRef: personRecordRef(principalId), field: LANGUAGE_FIELD, value },
