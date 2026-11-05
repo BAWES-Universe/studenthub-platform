@@ -746,7 +746,29 @@ export function hostBusyReasons(io, paths = CARD_RUN_PATHS) {
     if (io.fs.existsSync(runLock)) reasons.push(`card run lock held: ${runLock} (card worker ${worker}, past workers.max ${workers})`);
     reasons.push(...busyReasons(io, { ...paths, worker, activation, lock: runLock }, { processes: false }));
   }
+  reasons.push(...reportingRuns(io, paths));
   return [...new Set(reasons)];
+}
+
+// Velocity A3: a card run releases its run lock before it posts its report,
+// and writes its claim's outcome only after that. A claim with no outcome
+// whose writer is still alive is such a run: the host waits for it, so an
+// appended install never carries a claim whose outcome is still to come. A
+// claim whose writer is gone stays as it is, and is carried as it is.
+const RUN_CLAIM = /^card-run-auto-[0-9a-f]{40}-[A-Z]+-[1-9]\d*\.json$/;
+export function reportingRuns(io, paths = CARD_RUN_PATHS) {
+  let names = [];
+  try { names = io.fs.readdirSync(paths.stateDir); } catch { return []; }
+  const reasons = [];
+  for (const name of names) {
+    if (!RUN_CLAIM.test(name)) continue;
+    let ran = null;
+    try { ran = JSON.parse(io.fs.readFileSync(path.join(paths.stateDir, name), "utf8")); } catch { continue; }
+    if (!ran || typeof ran !== "object" || Object.hasOwn(ran, "outcome")) continue;
+    if (ran.pid === process.pid || !holderAlive(io, ran)) continue;
+    reasons.push(`card run still reporting: ${path.join(paths.stateDir, name)}`);
+  }
+  return reasons;
 }
 
 // M15 W3: which shu-worker processes are this worker's. With one worker

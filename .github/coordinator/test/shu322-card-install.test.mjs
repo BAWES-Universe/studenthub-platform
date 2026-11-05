@@ -883,6 +883,19 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   assert.match(held.reason, /card run lock held/);
   assert.equal(host.files.has(autoClaim(PATHS, R, PRIOR[0])), false, "no card was claimed");
   assert.equal(host.files.has(installClaim(PATHS, N)), false, "the install is given back for a later start");
+  // A run that released its run lock but is still posting its report (its
+  // claim has no outcome yet, its writer is alive) holds the install too, so
+  // the carry never copies a claim whose outcome is still to come.
+  host.files.delete(other);
+  const reporting = autoClaim(PATHS, R, PRIOR[1]);
+  host.put(reporting, JSON.stringify({ card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 5151 }), { mode: 0o600 });
+  host.put("/proc/5151", "");
+  const waits = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(waits.skipped, "INSTALL_PENDING", JSON.stringify(waits));
+  assert.match(waits.reason, /card run still reporting: .*card-run-auto-/);
+  assert.equal(host.files.has(installClaim(PATHS, N)), false, "the install is given back for a later start");
+  host.files.delete("/proc/5151");
+  host.files.delete(reporting);
   // Idle: the start installs main and ends there. The stopped card's
   // preparation is refused at N (its branch moved), and it does not run
   // again, so the plan check does not ask it to pass.
@@ -904,10 +917,13 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   assert.deepEqual(carryClaims(host.io, PATHS, R, N, PRIOR), []);
   assert.equal(host.files.get(autoClaim(PATHS, N, PRIOR[0])).text, "{\"card\":\"kept\"}");
   assert.equal(revisionClaim(PATHS, R, "SHU-1"), autoClaim(PATHS, R, "SHU-1"), "the install names claims as card-run does");
-  // A claim with no outcome is a start that never ran: it is not carried.
-  host.put(autoClaim(PATHS, R, PRIOR[1]), JSON.stringify({ card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 4242 }), { mode: 0o600 });
-  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [PRIOR[1]]), []);
-  assert.equal(host.files.has(autoClaim(PATHS, N, PRIOR[1])), false);
+  // A claim with no outcome whose writer is gone (a run that died before its
+  // outcome was written) is carried as it is: the card stays stopped at N as
+  // it was at R, never run again.
+  const died = { card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 4242 };
+  host.put(autoClaim(PATHS, R, PRIOR[1]), JSON.stringify(died), { mode: 0o600 });
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [PRIOR[1]]), [PRIOR[1]]);
+  assert.deepEqual(JSON.parse(host.files.get(autoClaim(PATHS, N, PRIOR[1])).text), { ...died, carried_from: R });
 });
 
 test("M11 C7: every module the root install tools import, at any depth, is owner-only or installable", () => {

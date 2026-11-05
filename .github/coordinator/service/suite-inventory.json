@@ -4785,7 +4785,7 @@
     "SHU-322 mutation M56 install without the host-wide install lock",
     "SHU-322 mutation M57 keep the install lock once the install ended",
     "SHU-322 mutation M58 tell an install lock whose holder died from a live one",
-    "SHU-322 mutation M59 carry a claim with no outcome",
+    "SHU-322 mutation M59 install while a run is still reporting",
     "SHU-322 mutation M60 ask a carried card to prepare",
     "Disk D1: a finished run clone older than two days goes; a recent one stays",
     "Disk D2: a clone whose git directory changed recently stays, however old the directory itself",
@@ -34455,7 +34455,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-322 mutation M59 carry a claim with no outcome",
+      "name": "SHU-322 mutation M59 install while a run is still reporting",
       "capabilities": []
     },
     {

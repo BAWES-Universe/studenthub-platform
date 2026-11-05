@@ -570,10 +570,9 @@ export function carryClaims(io, paths, revision, main, queue) {
     const text = String(io.fs.readFileSync(from, "utf8"));
     const claim = parse(text);
     if (!plainObject(claim)) throw new Error(`the claim of ${id} at ${revision} cannot be read`);
-    // A claim with no outcome is a start that never ran (the host was idle
-    // for this install, so no run holds it): it is not carried, and the card
-    // runs at N as a first run.
-    if (!Object.hasOwn(claim, "outcome")) continue;
+    // A claim with no outcome is carried too: the host was idle for this
+    // install, which waits for a run still reporting (hostBusyReasons), so
+    // its run is gone, and the card stays stopped at N as it was at R.
     io.fs.writeFileSync(to, `${JSON.stringify({ ...claim, carried_from: revision })}\n`, { flag: "wx", mode: 0o600 });
     carried.push(id);
   }

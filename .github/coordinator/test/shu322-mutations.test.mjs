@@ -368,9 +368,10 @@ const CASES = [
     pattern: "M15 W5: an install lock whose holder died is never taken over",
   },
   {
-    name: "M59 carry a claim with no outcome",
-    from: '    if (!Object.hasOwn(claim, "outcome")) continue;',
-    to: "    // Velocity-M59",
+    name: "M59 install while a run is still reporting",
+    file: "service/card-run.mjs",
+    from: "  reasons.push(...reportingRuns(io, paths));",
+    to: "  // Velocity-M59",
     pattern: "Velocity A3: an install main has ready",
   },
   {
