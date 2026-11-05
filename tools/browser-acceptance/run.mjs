@@ -23,7 +23,7 @@ const names = [
   'documents-session-missing', 'documents-session-revocation', 'documents-session-expiry',
   'documents-unavailable-en', 'documents-unavailable-ar', 'documents-person-isolation',
   ...['en','ar'].flatMap(language => [320,390,1280].map(width => `language-review-confirm-reload-${language}-${width}`)),
-  ...['en','ar'].flatMap(language => ['cancel-history-resubmission-known-gap','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
+  ...['en','ar'].flatMap(language => ['cancel-history-safe-review','stale-two-tabs','single-use-confirm','invalid-value','preview-unavailable','confirm-rollback','confirm-acknowledgement-loss','token-expiry'].map(state => `language-${state}-${language}`)),
   ...['en','ar'].flatMap(language => ['missing-preview','revoked-confirm','expired-confirm'].map(state => `language-session-${state}-${language}`)),
   ...['en','ar'].flatMap(language => phoneRecoveryStates.map(state => `phone-recovery-${state}-${language}`)),
 ];
@@ -187,22 +187,44 @@ async function languageLocale(page,language) {
   assert.equal(await page.locator('html').getAttribute('dir'),language==='ar'?'rtl':'ltr','Language flow direction follows trusted locale');
 }
 async function languagePost(page,selector,{target=page,expectedStatus}={}) {
-  const route=selector===languageForm?'/profile/language/preview':'/profile/language/confirm';
+  const preview=selector===languageForm;
+  const route=preview?'/profile/language/preview':'/profile/language/confirm';
+  // Existing case expectations name the rendered error. A valid Preview now
+  // redirects before the fresh Review GET can encounter a read failure.
+  const redirectsToReview=preview && (expectedStatus===200 || expectedStatus===503);
+  const postStatus=redirectsToReview?303:expectedStatus;
+  const proposed=redirectsToReview?await page.locator('#profile-language').inputValue():null;
   const responseReady=target.waitForResponse(response=>response.request().method()==='POST' && new URL(response.url()).pathname===route,{timeout:15000});
   const navigation=target.waitForNavigation({waitUntil:'load',timeout:30000});
   // Keep both rejection handlers attached even if clicking fails. Never persist errors.
   responseReady.catch(()=>{}); navigation.catch(()=>{});
   await page.locator(`${selector} button[type=submit]`).click({noWaitAfter:true});
   const response=await responseReady;
-  assert.equal(response.status(),expectedStatus,'Language native POST status');
+  assert.equal(response.status(),postStatus,'Language native POST status');
   const destination=await navigation;
   assert.equal(destination?.status(),expectedStatus===303?200:expectedStatus,'Language native navigation status');
   assert.equal(response.headers()['cache-control'],'no-store','Language POST response must not be cached');
-  if(expectedStatus===303) {
+  if(redirectsToReview) {
+    assert.equal(response.headers().location,`/profile/language/review?language=${proposed}`,'Preview redirects with only the proposed language');
+    assert.equal(destination.request().method(),'GET','Review follows native POST303 with GET');
+    assert.equal(destination.request().redirectedFrom(),response.request(),'Review GET follows the actual Preview POST');
+    assert.equal(destination.headers()['cache-control'],'no-store','Review GET response must not be cached');
+    languageReviewURL(target,proposed);
+  } else if(expectedStatus===303) {
     assert.equal(response.headers().location,'/profile','Language confirmation redirects to profile');
+    assert.equal(destination.request().method(),'GET','Confirmation redirects with a real GET');
     assert.equal(new URL(target.url()).pathname,'/profile','Language redirect reaches real profile');
+  } else {
+    assert.equal(destination.request().method(),'POST','Invalid or unauthenticated submission remains a direct POST failure');
   }
   return response.status();
+}
+function languageReviewURL(page,proposed) {
+  const url=new URL(page.url());
+  assert.equal(url.origin,fixture.baseURL,'Review stays on the fixture origin');
+  assert.equal(url.pathname,'/profile/language/review','Review uses its authenticated GET route');
+  assert.deepEqual([...url.searchParams],[['language',proposed]],'Review URL contains only the proposed language, never signed fields');
+  assert.equal(url.hash,'','Review URL has no fragment payload');
 }
 async function languagePreview(page,language) {
   await page.locator('#profile-language').selectOption(otherLanguage(language));
@@ -322,14 +344,20 @@ async function run(name, action) {
 async function report() {
   await mkdir(output,{recursive:true});
   const languageCases=evidence.cases.filter(c=>c.name.startsWith('language-'));
-  evidence.languageAcceptance={status:languageCases.every(c=>c.status==='PASS')?'ACCEPTED_EXCEPT_HISTORY_SAFE_REVIEW':'NOT_ESTABLISHED',
-    historySafeReview:'NOT_ACCEPTED',knownGap:'Native Cancel → Back can show Chromium Confirm Form Resubmission / ERR_CACHE_MISS. The two named known-gap cases characterize this defect, not history-safe Review acceptance.'};
+  const historyCases=['en','ar'].map(language=>evidence.cases.find(c=>c.name===`language-cancel-history-safe-review-${language}`));
+  const historyAccepted=historyCases.every(c=>c?.status==='PASS');
+  evidence.languageAcceptance={status:historyAccepted && languageCases.every(c=>c.status==='PASS')?'ACCEPTED':'NOT_ESTABLISHED',
+    historySafeReview:historyAccepted?'ACCEPTED':'NOT_ESTABLISHED',
+    historyScope:'Pinned Playwright Chromium runner with BFCache disabled.',
+    limitation:'BFCache-enabled restoration is not tested. A restored Review may show stale content until reload; Confirm still validates live state.'};
   await writeFile(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
-  const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.disclosureScreenshot ? ` ([expanded disclosure](${c.disclosureScreenshot}))` : ''}${c.notes ? ` — ${c.notes}` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
-  lines.push('',evidence.languageAcceptance.status==='ACCEPTED_EXCEPT_HISTORY_SAFE_REVIEW'
-    ? 'Language flow accepted except history-safe Review. This is not full language acceptance.'
-    : 'Language acceptance has not been established. Even a passing run accepts only the language flow except history-safe Review, never full language acceptance.',
-    `Known gap: ${evidence.languageAcceptance.knownGap}`);
+  const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.noChangeScreenshot ? ` ([confirmed no-change Review](${c.noChangeScreenshot}))` : ''}${c.disclosureScreenshot ? ` ([expanded disclosure](${c.disclosureScreenshot}))` : ''}${c.notes ? ` — ${c.notes}` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
+  lines.push('',evidence.languageAcceptance.status==='ACCEPTED'
+    ? 'Language flow accepted in the pinned Playwright Chromium runner with BFCache disabled, including native history-safe Review in English and Arabic.'
+    : 'Language acceptance has not been established.',
+    `History-safe Review: ${evidence.languageAcceptance.historySafeReview}. Both native history cases must pass to establish it within the pinned runner.`,
+    `History scope: ${evidence.languageAcceptance.historyScope}`,
+    `Limitation: ${evidence.languageAcceptance.limitation}`);
   if(evidence.blocker) lines.push('',`Blocker: ${evidence.blocker}`);
   await writeFile(path.join(output,'evidence.md'),lines.join('\n')+'\n');
 }
@@ -702,35 +730,81 @@ try {
     });
   }
   for(const language of ['en','ar']) {
-    await run(`language-cancel-history-resubmission-known-gap-${language}`,async()=>{
-      const name=`language-cancel-history-resubmission-known-gap-${language}`;
-      const record=evidence.cases.find(c=>c.name===name);
+    await run(`language-cancel-history-safe-review-${language}`,async()=>{
+      const name=`language-cancel-history-safe-review-${language}`;
       const {actor,page}=await subject({language}), before=await languageState(actor,language,0);
+      let nativePosts=0;
+      page.on('request',request=>{if(request.isNavigationRequest() && request.method()==='POST') nativePosts++;});
       await languagePreview(page,language);
-      await submit(page,page.getByRole('link',{name:languageCopy[language].cancel,exact:true}));
+      assert.equal(nativePosts,1,'Preview uses exactly one native POST');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Initial Review does not persist preference');
+      const cancel=await submit(page,page.getByRole('link',{name:languageCopy[language].cancel,exact:true}));
+      assert.equal(cancel?.status(),200,'Native Cancel reaches profile');
+      assert.equal(cancel.request().method(),'GET','Cancel is read-only native navigation');
       await visible(page.locator('#profile-heading')); await languageLocale(page,language);
       assert.deepEqual(await fixture.inspectLanguage(actor),before,'Cancel does not persist preference');
-      // Characterize the agreed known gap, never count a generic navigation
-      // failure as success or replace native history with a fabricated GET.
-      let cacheMiss=false;
-      try { await page.goBack({waitUntil:'load'}); }
-      catch(error) { cacheMiss=/\bnet::ERR_CACHE_MISS\b/.test(String(error?.message)); }
-      record.screenshot=await screenshot(page,`${name}-back-state`);
-      check(cacheMiss,'Known history gap requires exact native ERR_CACHE_MISS, not another navigation failure');
-      await page.waitForFunction(()=>document.body?.innerText.includes('ERR_CACHE_MISS') && document.body.innerText.includes('Confirm Form Resubmission'),{},{timeout:5000});
-      const resubmissionVisible=await page.evaluate(()=>document.body?.innerText.includes('ERR_CACHE_MISS') && document.body.innerText.includes('Confirm Form Resubmission'));
-      record.screenshot=await screenshot(page,`${name}-back-state`);
-      check(resubmissionVisible,'Native error page must show Confirm Form Resubmission and ERR_CACHE_MISS');
-      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Back interstitial does not persist preference');
+      // Exercise real session history. Never replace Back with goto or accept a
+      // Chromium interstitial, a missing response, or a resubmitted POST.
+      const back=await page.goBack({waitUntil:'load'});
+      assert.equal(back?.status(),200,'Native Back revalidates Review successfully');
+      assert.equal(back.request().method(),'GET','Native Back revalidates with GET, never POST');
+      assert.equal(back.headers()['cache-control'],'no-store','Revisited Review is not cached');
+      languageReviewURL(page,otherLanguage(language)); await languageReview(page,language);
+      check(!/ERR_CACHE_MISS|Confirm Form Resubmission/.test(await page.locator('body').innerText()),'Native Back has no resubmission interstitial');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Back Review does not persist preference');
+      const reviewReload=await page.reload({waitUntil:'load'});
+      assert.equal(reviewReload?.status(),200,'Native Review reload succeeds');
+      assert.equal(reviewReload.request().method(),'GET','Review reload does not resubmit Preview');
+      assert.equal(reviewReload.headers()['cache-control'],'no-store','Reloaded Review is not cached');
+      languageReviewURL(page,otherLanguage(language)); await languageReview(page,language);
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Review reload does not persist preference');
+      const reviewScreenshot=await screenshot(page,`${name}-review`);
       const forward=await page.goForward({waitUntil:'load'});
-      check(forward===null || forward.status()===200,'Native Forward returns profile successfully');
+      check(forward===null || (forward.status()===200 && forward.request().method()==='GET'),'Native Forward returns profile successfully');
+      assert.equal(new URL(page.url()).pathname,'/profile','Native Forward reaches profile history entry');
       await visible(page.locator('#profile-heading')); await languageLocale(page,language);
       assert.deepEqual(await fixture.inspectLanguage(actor),before,'Native Forward does not persist preference');
       assert.equal((await page.reload()).status(),200,'Profile reload after native Forward succeeds');
       await languageProfile(page,language);
-      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Profile reload after history gap does not persist preference');
-      return {knownGap:'history-safe-review',nativeError:'ERR_CACHE_MISS',interstitialDom:'verified',durableWrites:0,durableReceipts:0,
-        notes:'KNOWN GAP: native Cancel → Back shows Chromium Confirm Form Resubmission / ERR_CACHE_MISS. Actual Forward and profile reload recover without writes. This characterizes the defect; history-safe Review remains unaccepted.'};
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Profile reload after native history does not persist preference');
+      assert.equal(nativePosts,1,'Cancel, Back, Review reload, Forward and profile reload never resubmit POST');
+      const profileScreenshot=await screenshot(page,`${name}-profile`);
+      // A separate actor deliberately commits once, so the cancel actor above
+      // remains a strict zero-write/zero-receipt history acceptance scenario.
+      const confirmed=await subject({language});
+      let confirmedPosts=0;
+      confirmed.page.on('request',request=>{if(request.isNavigationRequest() && request.method()==='POST') confirmedPosts++;});
+      await languageState(confirmed.actor,language,0);
+      await languagePreview(confirmed.page,language);
+      await languagePost(confirmed.page,languageConfirm,{expectedStatus:303});
+      const changed=otherLanguage(language), committed=await languageState(confirmed.actor,changed,1);
+      await visible(confirmed.page.locator('#profile-heading')); await languageLocale(confirmed.page,changed);
+      assert.equal(confirmedPosts,2,'Separate actor submits exactly Preview and Confirm');
+      const confirmedBack=await confirmed.page.goBack({waitUntil:'load'});
+      assert.equal(confirmedBack?.status(),200,'Native Back after Confirm revalidates Review');
+      assert.equal(confirmedBack.request().method(),'GET','Back after Confirm never resubmits a POST');
+      assert.equal(confirmedBack.headers()['cache-control'],'no-store','No-change Review is not cached');
+      const noChangeReview=async()=>{
+        languageReviewURL(confirmed.page,changed); await languageLocale(confirmed.page,changed);
+        await visible(confirmed.page.getByRole('heading',{level:1,name:languageCopy[changed].notChanged,exact:true}));
+        assert.equal(await confirmed.page.locator(languageConfirm).count(),0,'No-change Review has no Confirm form');
+        assert.equal(await confirmed.page.getByRole('button',{name:languageCopy[changed].confirm,exact:true}).count(),0,'No-change Review has no Confirm button');
+        assert.equal(await confirmed.page.locator('input[name^="token."]').count(),0,'No-change Review exposes no signed fields');
+        check(!/ERR_CACHE_MISS|Confirm Form Resubmission/.test(await confirmed.page.locator('body').innerText()),'No-change Review has no resubmission interstitial');
+        await noOverflow(confirmed.page);
+        assert.deepEqual(await fixture.inspectLanguage(confirmed.actor),committed,'No-change Review retains exactly the one confirmed write and receipt');
+      };
+      await noChangeReview();
+      const confirmedReload=await confirmed.page.reload({waitUntil:'load'});
+      assert.equal(confirmedReload?.status(),200,'No-change Review reload succeeds');
+      assert.equal(confirmedReload.request().method(),'GET','No-change Review reload never resubmits a POST');
+      assert.equal(confirmedReload.headers()['cache-control'],'no-store','Reloaded no-change Review is not cached');
+      await noChangeReview();
+      assert.equal(confirmedPosts,2,'Back and no-change reload add no POST after the deliberate confirmation');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Separate confirmation leaves cancel actor at zero writes and receipts');
+      return {screenshot:reviewScreenshot,disclosureScreenshot:profileScreenshot,noChangeScreenshot:await screenshot(confirmed.page,`${name}-confirmed-no-change`),
+        cancelActor:{durableWrites:0,durableReceipts:0},confirmedActor:{durableWrites:1,durableReceipts:1},
+        notes:'Cancel actor: native Preview POST303 → Review GET200; Cancel → Back → Review reload → Forward → profile reload, with zero writes/receipts and no additional POST. Separate confirmation actor: one deliberate Confirm, then native Back → no-change Review GET200 → reload, with changed locale, no Confirm or signed fields, one unchanged write/receipt and no resubmission.'};
     });
     await run(`language-stale-two-tabs-${language}`,async()=>{
       const {actor,context,page}=await subject({language});
