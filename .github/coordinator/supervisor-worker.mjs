@@ -30,9 +30,10 @@ export function createSupervisorSpawner({ stateDir, authorizationModule = fileUR
 // error text, which may carry credentials). The supervisor carries the code
 // into the run's error_code, so the receipt names the cause.
 // The policy's named clause (HOST_AUTH_<clause>) becomes CHILD_AUTH_<clause>.
+// Only a listed clause (CHILD_AUTH_CLAUSES) is named; any other is plain.
 function authCode(code) {
   const clause = /^HOST_AUTH_([A-Z][A-Z0-9_]{1,23})$/.exec(String(code ?? ""))?.[1];
-  return clause ? `CHILD_AUTH_${clause}` : "CHILD_AUTH_REFUSED";
+  return clause && childFailureCodeAllowed(`CHILD_AUTH_${clause}`) ? `CHILD_AUTH_${clause}` : "CHILD_AUTH_REFUSED";
 }
 function childFailure(error, code) {
   const failure = error instanceof Error ? error : new Error(String(error));

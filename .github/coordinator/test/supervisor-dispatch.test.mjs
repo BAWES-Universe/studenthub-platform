@@ -184,7 +184,19 @@ test("Velocity B: a worker that exits without a result names why, as a fixed cod
   const named = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: join(dir, "named.mjs") }).catch((error) => error);
   assert.equal(childFailureCode(named), "CHILD_AUTH_ATTEMPT_SCOPE", "the policy's clause is named");
   assert.equal(workerExitCode("CHILD_AUTH_ATTEMPT_SCOPE\n"), "WORKER_EXIT_CHILD_AUTH_ATTEMPT_SCOPE");
-  for (const odd of ["CHILD_AUTH_lower", "CHILD_AUTH_" + "X".repeat(30), "CHILD_AUTH_A B"]) assert.equal(workerExitCode(`${odd}\n`), "WORKER_EXIT", odd);
+  fs.writeFileSync(join(dir, "odd.mjs"), "export const workOrderAuthorization = () => ({ ok: false, code: \"HOST_AUTH_CUSTOMER_ALICE\" });\n");
+  const odd = await executeSupervisedOrder({ order: { runtime: "codex-cli" }, contract: {}, stateDir: dir, authorizationModule: join(dir, "odd.mjs") }).catch((error) => error);
+  assert.equal(childFailureCode(odd), "CHILD_AUTH_REFUSED", "an unlisted clause is not named");
+  // Every clause the policy itself denies with is listed.
+  const policySource = fs.readFileSync(new URL("../supervisor-authorization.mjs", import.meta.url), "utf8");
+  const { CHILD_AUTH_CLAUSES: listed } = await import("../supervisor.mjs");
+  for (const [, clause] of policySource.matchAll(/denied\("([A-Z][A-Z0-9_]+)"\)/g)) assert.ok(listed.includes(clause), clause);
+  for (const odd of ["CHILD_AUTH_lower", "CHILD_AUTH_" + "X".repeat(30), "CHILD_AUTH_A B", "CHILD_AUTH_CUSTOMER_ALICE"]) assert.equal(workerExitCode(`${odd}\n`), "WORKER_EXIT", odd);
+  // Only listed clauses are carried: an unlisted one, from the adapter or the
+  // policy, is never named.
+  const { CHILD_AUTH_CLAUSES } = await import("../supervisor.mjs");
+  for (const clause of CHILD_AUTH_CLAUSES) assert.equal(workerExitCode(`CHILD_AUTH_${clause}\n`), `WORKER_EXIT_CHILD_AUTH_${clause}`, clause);
+  assert.equal(childFailureCode(Object.assign(new Error("x"), { childCode: "CHILD_AUTH_CUSTOMER_ALICE" })), "SHU251_CHILD_FAILED");
   // End to end through the supervisor: the code reaches the receipt.
   const f = setup(t);
   let order = null;

@@ -36,10 +36,21 @@ export const SUPERVISOR_PROTOCOL_VERSION = "2.0.0";
 export const CHILD_FAILURE_CODES = Object.freeze(["CHILD_AUTH_REFUSED", "CHILD_RUNTIME_UNSUPPORTED",
   "CHILD_COMPLETION_UNRECORDED", "CHILD_ADAPTER_LAUNCH_THREW", "CHILD_ADAPTER_MONITOR_THREW",
   "SHU251_ENV_CUSTODY", "SHU251_ENV_CROSSED", "SHU71_SUPERVISOR_ENV_REQUIRED", "SHU251_CHILD_FAILED"]);
-// A refused order also names the host policy's clause: CHILD_AUTH_<clause>.
-const CHILD_AUTH_RE = /^CHILD_AUTH_[A-Z][A-Z0-9_]{1,23}$/;
+// A refused order also names the host policy's clause, CHILD_AUTH_<clause>,
+// when the clause is one of these: the policy's own denials
+// (supervisor-authorization.mjs) and the activation refusals it passes on
+// (activationRefusalCode). Any other clause is plain CHILD_AUTH_REFUSED.
+export const CHILD_AUTH_CLAUSES = Object.freeze(["DISPATCH_SCOPE", "ADAPTER_PAUSED", "EVIDENCE_UNAVAILABLE",
+  "DISPATCH_DISABLED", "TARGET_NOT_ALLOWED", "LANE_REF", "REVIEW_BINDING", "ATTEMPT_SCOPE", "CHECK_FAILED",
+  "ACTIVATION_SPENT", "ACTIVATION_EXPIRED", "ACTIVATION_REFUSED",
+  "ACT_ACTIVATION_REPLAY", "ACT_ENVELOPE_MISMATCH", "ACT_EVIDENCE_UNAVAILABLE", "ACT_FORGED_ENVELOPE",
+  "ACT_ID_OR_EXPIRY_INVALID", "ACT_LANE_CROSS", "ACT_MALFORMED", "ACT_MANUAL_GATE_BYPASS", "ACT_PACKAGE_MALFORMED",
+  "ACT_PARTIAL_ARMING", "ACT_PRIOR_STATE_DRIFT", "ACT_STALE_SEED", "ACT_STALE_SEED_HEAD",
+  "ACT_TRUST_ANCHOR_INVALID", "ACT_TRUST_ANCHOR_MISMATCH", "ACT_WRONG_FIXTURE"]);
 export function childFailureCodeAllowed(code) {
-  return typeof code === "string" && (CHILD_FAILURE_CODES.includes(code) || CHILD_AUTH_RE.test(code));
+  if (typeof code !== "string") return false;
+  if (CHILD_FAILURE_CODES.includes(code)) return true;
+  return code.startsWith("CHILD_AUTH_") && CHILD_AUTH_CLAUSES.includes(code.slice("CHILD_AUTH_".length));
 }
 // Velocity B: how long a failed worker's stderr may take to end after its exit.
 export const WORKER_EXIT_DRAIN_MS = 500;
