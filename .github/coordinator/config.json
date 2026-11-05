@@ -49,6 +49,13 @@
   },
   "dispatch_scope": {
     "issue_ids": [
+      "SHU-169",
+      "SHU-170",
+      "SHU-172",
+      "SHU-171",
+      "SHU-175",
+      "SHU-173",
+      "SHU-174",
       "SHU-450",
       "SHU-451"
     ]
@@ -4037,6 +4044,255 @@
       ],
       "after": [
         "SHU-450"
+      ]
+    },
+    {
+      "id": "SHU-169",
+      "authorization_ref": "SHU-169",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 1: a person is placed at a store for a period with the contract's rates recorded; contracts/work-hours.md W-1, migration 0500; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0500_assignments.sql",
+        "packages/db/src/postgres-work-assignments-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-assignments.test.ts",
+        "packages/work/src/assignments.ts",
+        "packages/work/test/assignments.test.ts",
+        "packages/work/test/assignments-mutations.mjs",
+        "apps/gateway/src/work-assignments-http.ts",
+        "apps/gateway/test/work-assignments-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0500_assignments.sql",
+        "packages/db/src/postgres-work-assignments-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-assignments.test.ts",
+        "packages/work/src/assignments.ts",
+        "packages/work/test/assignments.test.ts",
+        "packages/work/test/assignments-mutations.mjs",
+        "apps/gateway/src/work-assignments-http.ts",
+        "apps/gateway/test/work-assignments-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ]
+    },
+    {
+      "id": "SHU-170",
+      "authorization_ref": "SHU-170",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 2: clock in and out with both locations kept; contracts/work-hours.md W-3, migration 0501; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0501_sessions.sql",
+        "packages/db/src/postgres-work-sessions-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-sessions.test.ts",
+        "packages/work/src/sessions.ts",
+        "packages/work/test/sessions.test.ts",
+        "packages/work/test/sessions-mutations.mjs",
+        "apps/gateway/src/work-sessions-http.ts",
+        "apps/gateway/test/work-sessions-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0501_sessions.sql",
+        "packages/db/src/postgres-work-sessions-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-sessions.test.ts",
+        "packages/work/src/sessions.ts",
+        "packages/work/test/sessions.test.ts",
+        "packages/work/test/sessions-mutations.mjs",
+        "apps/gateway/src/work-sessions-http.ts",
+        "apps/gateway/test/work-sessions-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-169"
+      ]
+    },
+    {
+      "id": "SHU-172",
+      "authorization_ref": "SHU-172",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 3: the employer approves, rejects and undoes hours, verify-first money-path card; contracts/work-hours.md W-4, migration 0502; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0502_decisions.sql",
+        "packages/db/src/postgres-work-decisions-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-decisions.test.ts",
+        "packages/work/src/decisions.ts",
+        "packages/work/test/decisions.test.ts",
+        "packages/work/test/decisions-mutations.mjs",
+        "apps/gateway/src/work-decisions-http.ts",
+        "apps/gateway/test/work-decisions-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0502_decisions.sql",
+        "packages/db/src/postgres-work-decisions-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-decisions.test.ts",
+        "packages/work/src/decisions.ts",
+        "packages/work/test/decisions.test.ts",
+        "packages/work/test/decisions-mutations.mjs",
+        "apps/gateway/src/work-decisions-http.ts",
+        "apps/gateway/test/work-decisions-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-170"
+      ]
+    },
+    {
+      "id": "SHU-171",
+      "authorization_ref": "SHU-171",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 4: hours views per grant; contracts/work-hours.md W-5, no migration; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/src/postgres-work-hours-reads.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-hours-reads.test.ts",
+        "packages/work/src/hours-views.ts",
+        "packages/work/test/hours-views.test.ts",
+        "packages/work/test/hours-views-mutations.mjs",
+        "apps/gateway/src/work-hours-http.ts",
+        "apps/gateway/test/work-hours-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/src/postgres-work-hours-reads.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-hours-reads.test.ts",
+        "packages/work/src/hours-views.ts",
+        "packages/work/test/hours-views.test.ts",
+        "packages/work/test/hours-views-mutations.mjs",
+        "apps/gateway/src/work-hours-http.ts",
+        "apps/gateway/test/work-hours-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-172"
+      ]
+    },
+    {
+      "id": "SHU-175",
+      "authorization_ref": "SHU-175",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 5: approved hours become payable inputs and the employer confirms the month, verify-first money-path card; contracts/work-hours.md W-2, migration 0503; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0503_payable.sql",
+        "packages/db/src/postgres-work-payable-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-payable.test.ts",
+        "packages/work/src/payable.ts",
+        "packages/work/test/payable.test.ts",
+        "packages/work/test/payable-mutations.mjs",
+        "apps/gateway/src/work-payable-http.ts",
+        "apps/gateway/test/work-payable-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0503_payable.sql",
+        "packages/db/src/postgres-work-payable-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-payable.test.ts",
+        "packages/work/src/payable.ts",
+        "packages/work/test/payable.test.ts",
+        "packages/work/test/payable-mutations.mjs",
+        "apps/gateway/src/work-payable-http.ts",
+        "apps/gateway/test/work-payable-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-172"
+      ]
+    },
+    {
+      "id": "SHU-173",
+      "authorization_ref": "SHU-173",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 6: appeals and staff corrections that supersede the original; contracts/work-hours.md W-6, migration 0504; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0504_appeals.sql",
+        "packages/db/src/postgres-work-appeals-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-appeals.test.ts",
+        "packages/work/src/appeals.ts",
+        "packages/work/test/appeals.test.ts",
+        "packages/work/test/appeals-mutations.mjs",
+        "apps/gateway/src/work-appeals-http.ts",
+        "apps/gateway/test/work-appeals-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0504_appeals.sql",
+        "packages/db/src/postgres-work-appeals-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-appeals.test.ts",
+        "packages/work/src/appeals.ts",
+        "packages/work/test/appeals.test.ts",
+        "packages/work/test/appeals-mutations.mjs",
+        "apps/gateway/src/work-appeals-http.ts",
+        "apps/gateway/test/work-appeals-http.test.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-175"
+      ]
+    },
+    {
+      "id": "SHU-174",
+      "authorization_ref": "SHU-174",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 5 (work and hours), card 7: derived day totals, reversible deletion and a reconciliation report; contracts/work-hours.md W-7, migration 0505; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs",
+      "initial_build_paths": [
+        "packages/db/migrations/0505_integrity.sql",
+        "packages/db/src/postgres-work-integrity-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-integrity.test.ts",
+        "packages/work/src/integrity.ts",
+        "packages/work/test/integrity.test.ts",
+        "packages/work/test/integrity-mutations.mjs",
+        "apps/gateway/src/work-integrity-http.ts",
+        "apps/gateway/test/work-integrity-http.test.ts",
+        "packages/observability/src/jobs.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0505_integrity.sql",
+        "packages/db/src/postgres-work-integrity-store.ts",
+        "packages/db/src/index.ts",
+        "packages/db/test/postgres-work-integrity.test.ts",
+        "packages/work/src/integrity.ts",
+        "packages/work/test/integrity.test.ts",
+        "packages/work/test/integrity-mutations.mjs",
+        "apps/gateway/src/work-integrity-http.ts",
+        "apps/gateway/test/work-integrity-http.test.ts",
+        "packages/observability/src/jobs.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-173"
       ]
     }
   ],
