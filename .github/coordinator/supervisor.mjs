@@ -302,7 +302,18 @@ export class SupervisorStore {
         if (owner === order.attempt_id) break;
         try {
           const run = this.readRun(owner);
-          if (!["completed", "failed"].includes(run.status) || !this.validatedCompletion(owner).ok) {
+          // The worker wrapper writes its bound completion itself, so it can
+          // land while this daemon never sees the child exit (a restart that
+          // adopted the child by probe only). Such a run record still reads
+          // "running" although the attempt has finished. Its validated
+          // completion is the proof it finished, so it no longer holds the
+          // branch. Only "running" is released this way: a held run stays
+          // held, and any other or unknown status fails closed. Admission
+          // only reads: the run record is left to finish() or recover(), so
+          // no write here can replace a state the daemon set.
+          const finished = ["completed", "failed"].includes(run.status)
+            || (run.status === "running" && this.hasCompletion(owner));
+          if (!finished || !this.validatedCompletion(owner).ok) {
             this.holdIntent(order, 'BRANCH_OCCUPIED');
             return { ok: false, stage: "HOLD", hold_code: 'BRANCH_OCCUPIED', reason: "branch already owned by an unfinished attempt" };
           }

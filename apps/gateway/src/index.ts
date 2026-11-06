@@ -1,10 +1,8 @@
-import { handleCandidateDocuments } from './candidate-documents-http.js';
-import { handleCatalogue } from './catalogue-http.js';
 import { createRuntimeCatalogueFromEnv } from './catalogue-runtime.js';
-import { handleProfileRecords, PROFILE_RECORDS_CSS, type ProfileRecordsRuntime } from './profile-records-http.js';
+import { PROFILE_RECORDS_CSS, type ProfileRecordsRuntime } from './profile-records-http.js';
 import { createRuntimeProfileRecordsFromEnv } from './profile-records-runtime.js';
 import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-runtime.js';
-import { handleOrganizationDocuments, type OrganizationDocumentsRuntime } from './organization-documents-http.js';
+import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
@@ -28,26 +26,14 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
+import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
-import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
-import { handleProfileBrowserEdit } from "./profile-browser-edit-http.js";
-import { handleProfileEdit, handleProfileEditPage, shownProfileValue } from "./profile-edit-http.js";
-import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
-import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
-import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
-import {handleOrganizationApprovedToHire,type OrganizationApprovedToHire} from "./organization-approved-to-hire.js";
-import {handleOrganizationNotes,type OrganizationNotes} from "./organization-notes.js";
-import {handlePayContracts,type PayContractsCreate} from "./pay-contracts-http.js";
-import {handleOrganizationBrands,type OrganizationBrands} from "./organization-brands.js";
-import {handleOrganizationStores,type OrganizationStores} from "./organization-stores.js";
-import {handleOrganizationDeletion,type OrganizationDeletion} from "./organization-deletion.js";
-import {handleOrganizationCreation,type OrganizationCreation} from "./organization-creation.js";
-import {handleOrganizationAccountManager,handleOrganizationAccountManagerPage,type OrganizationAccountManager} from "./organization-account-manager.js";
-import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,
 } from "./web-ui.js";
+import { ROUTES, runRoutes } from "./routes/index.js";
+import type { GatewayRouteLogin } from "./routes/context.js";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -181,55 +167,9 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
-    if (await handleCatalogue(request, response, catalogue, authz)) return;
-    if (await handleCandidateDocuments(request, response, documents, login)) return;
-    if (await handleOrganizationDocuments(request, response, organizationDocuments)) return;
-    if (await handleProfileEditPage(request, response, login?.profileEdit, login?.web?.origin,
-      (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
-      async (sessionId, fieldName) => {
-        if (!sessionId || !login?.web) return undefined;
-        const authorized = await login.profile({ sessionId });
-        const personId = authorized.status === 200 ? authorized.body?.personId : undefined;
-        if (typeof personId !== "string") return undefined;
-        const result = await login.web.profiles.readOwn({ requesterPrincipalId: personId, targetPersonId: personId });
-        const shown = result.kind === "found" ? result.profile.fields[fieldName] : undefined;
-        return shown ? shownProfileValue(shown) : undefined;
-      })) return;
-    if (await handleProfileEdit(request, response, login?.profileEdit, login?.web?.origin)) return;
-    if (await handleProfileBrowserEdit(request, response, login?.browserEdit, login?.web?.origin,
-      (status, title, body, language) => writeHtml(response, status, pageDocument(title, body, language)))) return;
-    if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
-      (status, title, body, language, historyGuard) => writeHtml(response, status,
-        status === 401 && language === "en" ? renderError(401, login) : pageDocument(title, body, language, historyGuard), {}, historyGuard),
-      async (sessionId) => {
-        if (!sessionId || !login?.web) return undefined;
-        const authorized = await login.profile({ sessionId });
-        const personId = authorized.status === 200 ? authorized.body?.personId : undefined;
-        if (typeof personId !== "string") return undefined;
-        const result = await login.web.profiles.readOwn({ requesterPrincipalId: personId, targetPersonId: personId });
-        const field = result.kind === "found" ? result.profile.fields.language : undefined;
-        return field?.state === "available" ? field.value : undefined;
-      })) return;
-    if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
-    if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
-    if (await handleOrganizationProfile(request, response,
-      (login as BrowserLoginApplication & { organizationProfile?: OrganizationProfile } | undefined)?.organizationProfile,
-      login?.web?.origin)) return;
-    if (await handleOrganizationStatus(request,response,
-      (login as BrowserLoginApplication & {organizationStatus?:OrganizationStatus}|undefined)?.organizationStatus,
-      login?.web?.origin)) return;
-    if(await handleOrganizationCommercialTerms(request,response,(login as BrowserLoginApplication&{organizationCommercialTerms?:OrganizationCommercialTerms}|undefined)?.organizationCommercialTerms,login?.web?.origin))return;
-    if(await handleOrganizationApprovedToHire(request,response,(login as BrowserLoginApplication&{organizationApprovedToHire?:OrganizationApprovedToHire}|undefined)?.organizationApprovedToHire,login?.web?.origin))return;
-    if(await handleOrganizationNotes(request,response,(login as BrowserLoginApplication&{organizationNotes?:OrganizationNotes}|undefined)?.organizationNotes,login?.web?.origin))return;
-    if(await handlePayContracts(request,response,(login as BrowserLoginApplication&{payContracts?:PayContractsCreate}|undefined)?.payContracts,login?.web?.origin))return;
-    if(await handleOrganizationBrands(request,response,(login as BrowserLoginApplication&{organizationBrands?:OrganizationBrands}|undefined)?.organizationBrands,login?.web?.origin))return;
-    if(await handleOrganizationStores(request,response,(login as BrowserLoginApplication&{organizationStores?:OrganizationStores}|undefined)?.organizationStores,login?.web?.origin))return;
-    if(await handleOrganizationDeletion(request,response,(login as BrowserLoginApplication&{organizationDeletion?:OrganizationDeletion}|undefined)?.organizationDeletion,login?.web?.origin))return;
-    if(await handleOrganizationCreation(request,response,(login as BrowserLoginApplication&{organizationCreation?:OrganizationCreation}|undefined)?.organizationCreation,login?.web?.origin))return;
-    if(await handleOrganizationAccountManagerPage(request,response,(login as BrowserLoginApplication&{organizationAccountManager?:OrganizationAccountManager}|undefined)?.organizationAccountManager,login?.web?.origin,(status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body)),async(session,orgId)=>{const result=await login?.navigation?.open(session,new URLSearchParams({org_id:orgId,role:"admin"}));return result?.status===200&&result.body.active?.orgId===orgId?result.body.active.organizationName:undefined}))return;
-    if(await handleOrganizationAccountManager(request,response,(login as BrowserLoginApplication&{organizationAccountManager?:OrganizationAccountManager}|undefined)?.organizationAccountManager,login?.web?.origin))return;
-    if (await handleProfileRecords(request, response, profileRecords,
-      (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
+    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, catalogue,
+      profileRecords, organizationDocuments, writeHtml, pageDocument, renderError };
+    if (await runRoutes(ROUTES, ctx)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;
@@ -262,6 +202,7 @@ export function createGatewayServer(
       const result=await (login as BrowserLoginApplication&{adminJobs?:AdminJobsPage}|undefined)?.adminJobs?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"))??{status:404 as const,body:{error:"not_found" as const}};
       if(result.status===200){if(html)writeHtml(response,result.status,renderAdminJobs(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}
     }
+    if(request.method==="GET"&&request.url&&requestPath(request.url)==="/admin/outbox"){const page=Number(new URL(request.url,"http://gateway.invalid").searchParams.get("page")??"1");const result=await(login as BrowserLoginApplication&{adminOutbox?:AdminOutboxPage}|undefined)?.adminOutbox?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"),page)??{status:404 as const,body:{error:"not_found" as const}};if(result.status===200){if(html)writeHtml(response,200,renderAdminOutbox(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}}
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
       const selected = new URL(request.url, "http://gateway.invalid").searchParams;

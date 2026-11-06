@@ -216,6 +216,75 @@ test("worker-owned completion survives daemon failure before its exit event is c
   assert.equal(restarted.children.length, 0);
 });
 
+test("a finished attempt whose exit was never seen does not hold its branch from the next attempt", async () => {
+  const stateDir = tempState();
+  let contract;
+  const first = supervisor({ stateDir, spawnWorker: (_order, value) => { contract = value; return fakeChild(); } });
+  await first.instance.submit(signedSupervisorRequest(order(), SECRET));
+  await drain(first.schedules);
+  const next = order({ attempt_id: "33333333-2222-4333-8444-555555555555", role: "revise" });
+
+  // Still running, nothing recorded: the branch stays occupied.
+  const held = await first.instance.submit(signedSupervisorRequest(next, SECRET));
+  assert.equal(held.stage, "HOLD");
+  assert.equal(held.hold_code, "BRANCH_OCCUPIED");
+
+  // The worker records its own failed completion; the daemon never sees the exit.
+  assert.equal(recordSupervisorCompletion({ stateDir, completion: {
+    attempt_id: contract.attempt_id, completion_token: contract.completion_token,
+    target_sha: contract.target_sha, exit_code: 1, signal: null, output_bytes: 7,
+    finished_at: "2026-09-08T12:01:00.000Z",
+  } }).ok, true);
+  const before = first.instance.store.readRun(ATTEMPT);
+  assert.equal(before.status, "running");
+
+  const third = order({ attempt_id: "44444444-2222-4333-8444-555555555555", role: "revise" });
+  const { instance, schedules, children } = supervisor({ stateDir });
+  const accepted = await instance.submit(signedSupervisorRequest(third, SECRET));
+  assert.equal(accepted.stage, "ACCEPTED");
+  assert.deepEqual(instance.store.readRun(ATTEMPT), before, "admission never writes the owner's run record");
+  await drain(schedules);
+  assert.equal(children.length, 1, "the next attempt launches");
+});
+
+test("an attempt with an unknown run status and a completion still holds its branch", async () => {
+  for (const status of ["accepted", "paused", "", undefined]) {
+    const stateDir = tempState();
+    let contract;
+    const first = supervisor({ stateDir, spawnWorker: (_order, value) => { contract = value; return fakeChild(); } });
+    await first.instance.submit(signedSupervisorRequest(order(), SECRET));
+    await drain(first.schedules);
+    assert.equal(recordSupervisorCompletion({ stateDir, completion: {
+      attempt_id: contract.attempt_id, completion_token: contract.completion_token,
+      target_sha: contract.target_sha, exit_code: 0, signal: null, output_bytes: 0,
+      finished_at: "2026-09-08T12:01:00.000Z",
+    } }).ok, true);
+    first.instance.store.writeRun(ATTEMPT, { ...first.instance.store.readRun(ATTEMPT), status });
+    const next = order({ attempt_id: "33333333-2222-4333-8444-555555555555", role: "revise" });
+    const held = await supervisor({ stateDir }).instance.submit(signedSupervisorRequest(next, SECRET));
+    assert.equal(held.hold_code, "BRANCH_OCCUPIED", `status ${JSON.stringify(status)} must not release the branch`);
+  }
+});
+
+test("a held attempt with a completion still holds its branch", async () => {
+  const stateDir = tempState();
+  let contract;
+  const first = supervisor({ stateDir, spawnWorker: (_order, value) => { contract = value; return fakeChild(); } });
+  await first.instance.submit(signedSupervisorRequest(order(), SECRET));
+  await drain(first.schedules);
+  assert.equal(recordSupervisorCompletion({ stateDir, completion: {
+    attempt_id: contract.attempt_id, completion_token: contract.completion_token,
+    target_sha: contract.target_sha, exit_code: 0, signal: null, output_bytes: 0,
+    finished_at: "2026-09-08T12:01:00.000Z",
+  } }).ok, true);
+  assert.equal(first.instance.store.validatedCompletion(ATTEMPT).ok, true);
+  first.instance.store.writeRun(ATTEMPT, { ...first.instance.store.readRun(ATTEMPT), status: "hold", error_code: "DEADLINE" });
+  const next = order({ attempt_id: "33333333-2222-4333-8444-555555555555", role: "revise" });
+  const held = await supervisor({ stateDir }).instance.submit(signedSupervisorRequest(next, SECRET));
+  assert.equal(held.hold_code, "BRANCH_OCCUPIED");
+  assert.equal(first.instance.store.readRun(ATTEMPT).status, "hold");
+});
+
 test("unknown liveness HOLD retains scheduler capacity", async () => {
   const stateDir = tempState();
   const first = supervisor({ stateDir });
