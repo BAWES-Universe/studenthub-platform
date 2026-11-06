@@ -108,6 +108,19 @@ test("role stage: an adapter's own refusal code reaches the receipt note through
   assert.ok(held.notes.some(n => n.includes("HOLD (CALLBACK_ROLE_MISMATCH)")), "the HOLD note names the refusal, not missing evidence");
 });
 
+test("a busy reviewer sandbox reaches the receipt as a retryable FAILED, never a HOLD", async t => {
+  const f = setup(t); await f.tick(); await f.drain();
+  f.complete({ stage: "FAILED", error_code: "REVIEW_SANDBOX_BUSY", reason: "REVIEW_SANDBOX_BUSY — another review held the reviewer sandbox; no reviewer launched" }, 1);
+  await f.tick();
+  const failed = f.h.receipts()[0];
+  assert.equal(failed.stage, "FAILED", "the same review is routed again");
+  assert.ok(failed.notes.some(n => n.includes("REVIEW_SANDBOX_BUSY")), failed.notes.join("\n"));
+  const receipt = { attempt_id: "a", target_sha: SHA_INPUT, requested_worker: "claude-verifier", receipt_version: "1.1.0", role: "review", runtime: "claude-code" };
+  const other = carriedSupervisorOutcome({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, attempt_id: "a", target_sha: SHA_INPUT, durable: true,
+    stage: "FAILED", result: { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH" } }, receipt);
+  assert.equal(other.stage, "HOLD", "any other failure without a callback still holds");
+});
+
 test("role stage: a carried result can never supply the coordinator's live-head codes", () => {
   const receipt = { attempt_id: "a", target_sha: SHA_INPUT, requested_worker: "codex-builder", receipt_version: "1.1.0", role: "build", runtime: "codex-cli" };
   const response = (reason_code) => ({ version: SUPERVISOR_PROTOCOL_VERSION, ok: true, attempt_id: "a", target_sha: SHA_INPUT, durable: true,

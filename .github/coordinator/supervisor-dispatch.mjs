@@ -29,6 +29,9 @@ export function supervisorOrder(receipt, options = {}) {
 
 // Reserved codes are the coordinator's own live-head findings; they set the stop
 // reason, so a carried adapter result can never supply them.
+// Adapter results that ran nothing and may simply be launched again.
+const RETRYABLE_RESULT_CODES = new Set(["REVIEW_SANDBOX_BUSY"]);
+
 function carriedReasonCode(result) {
   const code = result?.reason_code;
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,63}$/.test(code) && !code.startsWith("LIVE_HEAD_") ? code : null;
@@ -68,6 +71,12 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
     return { ...identity, stage: "HOLD", ...(held ? { reason_code: held } : {}) };
   }
   const result = response.result;
+  // A review that found the reviewer sandbox held by another review ran
+  // nothing. It stays a retryable FAILED, so the episode routes the same
+  // review again, instead of a HOLD that stops the card.
+  if (result?.stage === "FAILED" && RETRYABLE_RESULT_CODES.has(result.error_code)) {
+    return { ...identity, stage: "FAILED", error_code: result.error_code };
+  }
   // An adapter that refused on its own carries why. Without its code every such
   // HOLD read as missing evidence in the receipt note.
   if (carriedReasonCode(result)) identity.reason_code = carriedReasonCode(result);
