@@ -29,10 +29,12 @@ const names = [
   ...['en','ar'].flatMap(language => phoneRecoveryStates.map(state => `phone-recovery-${state}-${language}`)),
   ...backgroundRecoveryNames,
 ];
+const bfcacheScenarios=['cancel','revoked-session','intervening-language'];
+const bfcacheNames=['en','ar'].flatMap(language=>bfcacheScenarios.map(scenario=>`bfcache-language-${scenario}-${language}`));
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
-  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:names.map(name=>({name,status:'NOT_RUN'})),
+  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames].map(name=>({name,status:'NOT_RUN'})),
   policy:'Synthetic data only. No cookies, hidden tokens, credentials, HTML dumps, traces or HAR recorded. TLS verification enabled.' };
-let browser, fixture;
+let browser, fixture, bfcacheBrowser;
 const contexts = new Set();
 const restorers = [];
 let setupStage='candidate-check';
@@ -327,6 +329,138 @@ async function phoneRecoverySaved(page,language) {
   await saved(page); await phoneRecoveryLocale(page,language);
   assert.equal(await page.locator('#profile-notice-heading').innerText(),phoneRecoveryCopy[language].saved,'Localized verified save notice');
 }
+// BFCache acceptance is isolated from the original default-launch matrix. Only
+// fixed lifecycle flags and request facts leave the browser, never DOM/fields.
+const bfcacheConsolePrefix='studenthub-bfcache-lifecycle:';
+async function bfcacheObserver(page) {
+  const events=[], documents=new Map();
+  const record=entry=>events.push({sequence:events.length+1,...entry});
+  page.on('console',message=>{
+    const text=message.text();
+    if(!text.startsWith(bfcacheConsolePrefix)) return;
+    let entry;
+    try { entry=JSON.parse(text.slice(bfcacheConsolePrefix.length)); } catch { return; }
+    if(!['pagehide','pageshow'].includes(entry.event) || !['before-guard','after-guard'].includes(entry.phase)
+      || !Number.isFinite(entry.documentStamp) || !['navigate','reload','back_forward','unknown'].includes(entry.navigationType)
+      || !['trusted','persisted','hidden','displayNone','actionable'].every(key=>typeof entry[key]==='boolean')) return;
+    if(!documents.has(entry.documentStamp)) documents.set(entry.documentStamp,documents.size+1);
+    record({kind:'lifecycle',document:documents.get(entry.documentStamp),event:entry.event,phase:entry.phase,
+      trusted:entry.trusted,persisted:entry.persisted,hidden:entry.hidden,displayNone:entry.displayNone,
+      actionable:entry.actionable,navigationType:entry.navigationType});
+  });
+  const isReview=request=>request.isNavigationRequest() && request.frame()===page.mainFrame()
+    && new URL(request.url()).origin===fixture.baseURL && new URL(request.url()).pathname==='/profile/language/review';
+  let nativePosts=0;
+  page.on('request',request=>{
+    if(request.isNavigationRequest() && request.method()==='POST') nativePosts++;
+    if(isReview(request)) record({kind:'request',method:request.method()==='GET'?'GET':'OTHER'});
+  });
+  page.on('response',response=>{
+    if(isReview(response.request())) record({kind:'response',method:response.request().method()==='GET'?'GET':'OTHER',
+      status:response.status(),noStore:response.headers()['cache-control']==='no-store',fromServiceWorker:response.fromServiceWorker()});
+  });
+  await page.addInitScript(({prefix})=>{
+    if(window!==window.top) return;
+    const emit=(event,phase)=>{
+      if(location.pathname!=='/profile/language/review') return;
+      const root=document.documentElement, type=performance.getEntriesByType('navigation')[0]?.type;
+      console.info(prefix+JSON.stringify({event:event.type,phase,documentStamp:performance.timeOrigin,
+        trusted:event.isTrusted,persisted:event.persisted,hidden:root.hidden,
+        displayNone:getComputedStyle(root).display==='none',actionable:!!document.querySelector('form[action="/profile/language/confirm"]'),
+        navigationType:['navigate','reload','back_forward'].includes(type)?type:'unknown'}));
+    };
+    // This listener predates the production deferred script and observes the
+    // snapshot before its pageshow handler can initiate the reload.
+    addEventListener('pageshow',event=>emit(event,'before-guard'));
+    addEventListener('DOMContentLoaded',()=>{
+      // Deferred production scripts have registered their handlers by now.
+      // No synthetic dispatch, mutation, binding, unload hook or interception.
+      addEventListener('pagehide',event=>emit(event,'after-guard'));
+      addEventListener('pageshow',event=>emit(event,'after-guard'));
+    },{once:true});
+  },{prefix:bfcacheConsolePrefix});
+  return {events,get nativePosts(){return nativePosts;}};
+}
+async function waitForBfcacheObservation(predicate,timeout=15000) {
+  const deadline=Date.now()+timeout;
+  while(!predicate() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
+  return predicate();
+}
+async function bfcacheSubject(language) {
+  const actor=await fixture.seedActor({language});
+  const context=await bfcacheBrowser.newContext({viewport:{width:390,height:900},serviceWorkers:'block'});
+  contexts.add(context); await context.addCookies([actor.cookie]);
+  const page=await context.newPage(), observer=await bfcacheObserver(page);
+  await page.goto(`${fixture.baseURL}/profile`); await visible(page.locator('#profile-heading'));
+  return {actor,context,page,observer};
+}
+async function bfcacheBack(page,observer,originalDocument) {
+  const start=observer.events.length;
+  // A guard-triggered reload can supersede Playwright's Back navigation wait.
+  // Its return value is never BFCache proof; browser lifecycle evidence is.
+  const navigation=await page.goBack({waitUntil:'commit',timeout:15000}).then(()=> 'completed',()=> 'interrupted-or-timed-out');
+  const observed=()=>observer.events.slice(start);
+  const freshShow=()=>observed().find(event=>event.kind==='lifecycle' && event.event==='pageshow'
+    && event.phase==='after-guard' && event.trusted && !event.persisted && event.document!==originalDocument);
+  await waitForBfcacheObservation(()=>!!freshShow() && observed().some(event=>event.kind==='response'));
+  const restored=observed().filter(event=>event.kind==='lifecycle' && event.event==='pageshow' && event.persisted && event.trusted);
+  const fresh=freshShow(), requests=observed().filter(event=>event.kind==='request'), responses=observed().filter(event=>event.kind==='response');
+  if(restored.length) {
+    const hidden=observer.events.find(event=>event.kind==='lifecycle' && event.document===originalDocument
+      && event.event==='pagehide' && event.phase==='after-guard' && event.trusted && event.persisted);
+    check(hidden?.hidden && hidden.displayNone && hidden.actionable,'Cached actionable Review is concealed at pagehide');
+    for(const phase of ['before-guard','after-guard']) {
+      const show=restored.find(event=>event.phase===phase && event.document===originalDocument);
+      check(show?.hidden && show.displayNone && show.actionable,'Trusted persisted Review stays hidden before and after its restore handler');
+      check(show.sequence>hidden.sequence,'Persisted pageshow restores the previously hidden document');
+    }
+    check(fresh?.navigationType==='reload','Persisted restore must produce a fresh reload document');
+    check(requests.length===1 && requests[0].sequence>restored[0].sequence,'Exactly one fresh GET follows persisted restoration');
+  }
+  const network=responses.at(-1);
+  check(fresh && !fresh.hidden && !fresh.displayNone,'Fresh Review response becomes visible in a new document');
+  check(requests.length===1 && requests[0].method==='GET','Back performs one fresh Review GET, never POST');
+  check(responses.length===1 && network.method==='GET' && network.noStore && !network.fromServiceWorker,'Fresh Review GET retains no-store and bypasses service workers');
+  const notRestored=restored.length?null:await page.evaluate(()=>{
+    const navigation=performance.getEntriesByType('navigation')[0], reasons=[];
+    const visit=node=>{
+      if(!node) return;
+      for(const item of node.reasons ?? []) {
+        // Browser reason codes only; never serialize URL/src/id/name details.
+        if(typeof item.reason==='string' && /^[a-z][a-z0-9-]{0,79}$/.test(item.reason)) reasons.push(item.reason);
+      }
+      for(const child of node.children ?? []) visit(child);
+    };
+    visit(navigation?.notRestoredReasons);
+    return {supported:!!navigation && 'notRestoredReasons' in navigation,
+      reported:!!navigation?.notRestoredReasons,reasons:[...new Set(reasons)].sort()};
+  });
+  return {established:restored.length>0,status:network.status,
+    evidence:{nativeBack:navigation,trustedPersistedRestore:restored.length>0,
+      hiddenRestoredReview:restored.length>0,freshReviewGet:true,freshDocumentVisible:true,
+      finalHttpStatus:network.status,...(notRestored?{notRestored}:{}),lifecycleAndNetwork:observer.events}};
+}
+async function verifyBfcacheLaunch(chromium,expected) {
+  const commandLine=async launched=>{
+    const session=await launched.newBrowserCDPSession();
+    try { return (await session.send('Browser.getBrowserCommandLine')).arguments; }
+    finally { await session.detach(); }
+  };
+  const baseline=await commandLine(browser);
+  check(baseline.includes('--disable-back-forward-cache'),'Original Chromium launch explicitly disables BFCache');
+  bfcacheBrowser=await chromium.launch({headless:true,channel:'chromium',ignoreDefaultArgs:['--disable-back-forward-cache']});
+  evidence.bfcacheChromiumVersion=bfcacheBrowser.version();
+  assert.equal(evidence.bfcacheChromiumVersion,expected.browserVersion,'BFCache Chromium matches the unchanged pinned manifest');
+  const actual=await commandLine(bfcacheBrowser);
+  // The unchanged baseline already selects channel:'chromium', not the default
+  // headless-shell. Keep argv[0] in the comparison to verify the same executable.
+  const normalize=args=>args.filter(arg=>!arg.startsWith('--user-data-dir='));
+  check(!actual.includes('--disable-back-forward-cache'),'Isolated Chromium launch removes the BFCache-disabling argument');
+  check(JSON.stringify(normalize(actual))===JSON.stringify(normalize(baseline.filter(arg=>arg!=='--disable-back-forward-cache'))),
+    'Only the BFCache-disabling default argument changes, apart from the disposable profile directory');
+  evidence.bfcacheLaunch={verified:true,headless:true,channel:'chromium',removedDefaultArguments:['--disable-back-forward-cache'],
+    samePinnedExecutable:true,otherArgumentsUnchanged:true,comparisonExcludes:'Disposable user-data-dir only. No command lines or local paths recorded.'};
+}
 async function run(name, action) {
   const record=evidence.cases.find(c=>c.name===name), start=Date.now();
   try { const result=await action(); Object.assign(record,{status:'PASS',...result}); }
@@ -351,7 +485,12 @@ async function report() {
   evidence.languageAcceptance={status:historyAccepted && languageCases.every(c=>c.status==='PASS')?'ACCEPTED':'NOT_ESTABLISHED',
     historySafeReview:historyAccepted?'ACCEPTED':'NOT_ESTABLISHED',
     historyScope:'Pinned Playwright Chromium runner with BFCache disabled.',
-    limitation:'BFCache-enabled restoration is not tested. A restored Review may show stale content until reload; Confirm still validates live state.'};
+    limitation:'This baseline does not establish BFCache-enabled restoration. See the separate BFCache acceptance result below; Confirm still validates live state.'};
+  const bfcacheCases=evidence.cases.filter(c=>bfcacheNames.includes(c.name));
+  evidence.bfcacheAcceptance={status:bfcacheCases.every(c=>c.status==='PASS')?'ACCEPTED':'NOT_ESTABLISHED',
+    scope:'Separate pinned Chromium process; only --disable-back-forward-cache removed from Playwright defaults.',
+    required:'All six EN/AR cases require trusted persisted restoration, a hidden cached Review and a subsequent fresh no-store GET.',
+    limitation:'A network-only Back or an unobserved restore is NOT_ESTABLISHED, not BFCache acceptance. Browser policy may decline to cache no-store pages.'};
   await writeFile(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');
   const lines=['# StudentHub browser acceptance','',`Candidate SHA: ${evidence.candidateSha || 'NOT_RUN'}`,`Playwright: ${evidence.playwrightVersion || 'NOT_RUN'}`,`Chromium: ${evidence.chromiumVersion || 'NOT_RUN'}`,'',evidence.policy,'',...evidence.cases.map(c=>`- ${c.status}: ${c.name}${c.screenshot ? ` ([screenshot](${c.screenshot}))` : ''}${c.stressScreenshot ? ` ([long-value stress](${c.stressScreenshot}))` : ''}${c.editorScreenshot ? ` ([editor](${c.editorScreenshot}))` : ''}${c.errorScreenshot ? ` ([validation](${c.errorScreenshot}))` : ''}${c.noChangeScreenshot ? ` ([confirmed no-change Review](${c.noChangeScreenshot}))` : ''}${c.disclosureScreenshot ? ` ([expanded disclosure](${c.disclosureScreenshot}))` : ''}${c.notes ? ` — ${c.notes}` : ''}${c.reason ? ` — ${c.reason}` : ''}`)];
   lines.push('',evidence.languageAcceptance.status==='ACCEPTED'
@@ -360,6 +499,10 @@ async function report() {
     `History-safe Review: ${evidence.languageAcceptance.historySafeReview}. Both native history cases must pass to establish it within the pinned runner.`,
     `History scope: ${evidence.languageAcceptance.historyScope}`,
     `Limitation: ${evidence.languageAcceptance.limitation}`);
+  lines.push('',`BFCache-enabled Review acceptance: ${evidence.bfcacheAcceptance.status}.`,
+    `BFCache Chromium: ${evidence.bfcacheChromiumVersion || 'NOT_RUN'}`,
+    `Scope: ${evidence.bfcacheAcceptance.scope}`,`Required evidence: ${evidence.bfcacheAcceptance.required}`,
+    `Limitation: ${evidence.bfcacheAcceptance.limitation}`);
   for(const entry of evidence.cases.filter(c=>c.screenshots)) lines.push('',`${entry.name}:`,...entry.screenshots.map(file=>`- [${file}](${file})`));
   if(evidence.blocker) lines.push('',`Blocker: ${evidence.blocker}`);
   await writeFile(path.join(output,'evidence.md'),lines.join('\n')+'\n');
@@ -1081,12 +1224,90 @@ try {
         notes:`${enteredLanguage==='ar'?'Arabic':'English'} entered text; English UI. Exact raw draft survives native ${kind==='skill'?'409 duplicate refusal against one seeded skill/audit':'400 validation refusal'}. Only offending control corrected; native 303 to GET; normalized durable fields verified in real PostgreSQL. Invalid and corrected screenshots at 320/390.`};
     });
   }
+  // Six isolated BFCache-enabled cases. All original 98 case bodies and their
+  // default launch remain unchanged. A network-only Back cannot pass these.
+  setupStage='launch-isolated-bfcache-chromium';
+  await verifyBfcacheLaunch(chromium,expected);
+  for(const language of ['en','ar']) for(const scenario of bfcacheScenarios) {
+    const name=`bfcache-language-${scenario}-${language}`;
+    await run(name,async()=>{
+      const {actor,context,page,observer}=await bfcacheSubject(language);
+      evidence.cases.find(entry=>entry.name===name).bfcache={lifecycleAndNetwork:observer.events};
+      const before=await languageState(actor,language,0), profileBefore=await counts(actor,0,0);
+      await languagePreview(page,language);
+      check(await waitForBfcacheObservation(()=>observer.events.some(event=>event.kind==='lifecycle'
+        && event.event==='pageshow' && event.phase==='after-guard' && event.trusted && !event.persisted)),
+        'Initial Review has a trusted fresh pageshow');
+      const original=observer.events.find(event=>event.kind==='lifecycle' && event.event==='pageshow' && event.phase==='after-guard');
+      check(original.actionable && !original.hidden && !original.displayNone,'Initial Review is visible and actionable');
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Initial BFCache Review has no language writes or receipts');
+      const cancel=await submit(page,page.getByRole('link',{name:languageCopy[language].cancel,exact:true}));
+      check(cancel?.status()===200 && cancel.request().method()==='GET','Cancel navigates to profile with a real GET');
+      await visible(page.locator('#profile-heading'));
+      assert.deepEqual(await fixture.inspectLanguage(actor),before,'Cancel leaves language writes and receipts at zero');
+      let committed=before, cookiesUnchanged;
+      if(scenario==='revoked-session') {
+        // Revoke only in PostgreSQL, never clear/change browser cookies. Cookie
+        // values remain local to this equality check and never enter evidence.
+        const cookies=JSON.stringify(await context.cookies());
+        await fixture.revoke(actor);
+        cookiesUnchanged=JSON.stringify(await context.cookies())===cookies;
+        check(cookiesUnchanged,'Server-side revocation leaves browser cookies unchanged');
+      } else if(scenario==='intervening-language') {
+        // Separate tab, same actor. Exactly one deliberate unrelated Confirm
+        // while the first tab's actionable Review is in browser history.
+        const second=await context.newPage(); await second.goto(`${fixture.baseURL}/profile`);
+        await languagePreview(second,language); await languagePost(second,languageConfirm,{expectedStatus:303});
+        committed=await languageState(actor,otherLanguage(language),1);
+        await second.close();
+      }
+      const result=await bfcacheBack(page,observer,original.document);
+      languageReviewURL(page,otherLanguage(language));
+      if(scenario==='revoked-session') {
+        assert.equal(result.status,401,'Fresh Review GET rejects the server-revoked session');
+        await textIncludes(page,'Sign in');
+        await visible(page.getByRole('link',{name:'Continue with Universe',exact:true}));
+        assert.equal(await page.locator('html').getAttribute('lang'),'en','Revoked session uses the existing signed-out shell, not the cached locale');
+      } else if(scenario==='intervening-language') {
+        assert.equal(result.status,200,'Fresh Review GET resolves intervening language change');
+        const current=otherLanguage(language); await languageLocale(page,current);
+        await visible(page.getByRole('heading',{level:1,name:languageCopy[current].notChanged,exact:true}));
+      } else {
+        assert.equal(result.status,200,'Cancel Back refresh resolves current actionable Review');
+        await languageReview(page,language);
+      }
+      if(scenario!=='cancel') {
+        assert.equal(await page.locator(languageConfirm).count(),0,'Fresh refusal/no-change Review has no stale Confirm form');
+        assert.equal(await page.locator('button[type="submit"]').count(),0,'Fresh refusal/no-change Review has no stale Confirm button');
+        assert.equal(await page.locator('input[name^="token."]').count(),0,'Fresh refusal/no-change Review has no signed fields');
+      }
+      await noOverflow(page);
+      assert.equal(observer.nativePosts,1,'Original tab submits Preview once and never replays or confirms during history recovery');
+      assert.deepEqual(await fixture.inspectLanguage(actor),committed,'History recovery leaves language state and exact receipt summary unchanged');
+      const writes=scenario==='intervening-language'?1:0;
+      const profile=await counts(actor,writes,0);
+      check(JSON.stringify(profile.values)===JSON.stringify(profileBefore.values),'History recovery does not mutate any other profile field');
+      check(await page.evaluate(()=>!document.documentElement.hidden && getComputedStyle(document.documentElement).display!=='none'),
+        'Final screenshot captures the visible fresh document');
+      const screenshotName=await screenshot(page,name);
+      if(!result.established) process.exitCode=1;
+      return {status:result.established?'PASS':'NOT_ESTABLISHED',screenshot:screenshotName,
+        ...(!result.established?{reason:'No trusted pageshow.persisted restore occurred. Ordinary network Back passed, but BFCache acceptance is not established; see notRestored reason codes.'}:{}),
+        bfcache:result.evidence,durableLanguageWrites:writes,durableLanguageReceipts:writes,
+        durableProfileWrites:0,totalActorReceipts:writes,originalTabNativePosts:observer.nativePosts,
+        ...(scenario==='revoked-session'?{browserCookiesUnchanged:cookiesUnchanged}:{}),
+        notes:scenario==='intervening-language'?'One deliberate language change in a separate tab; returning Review resolves no-change with no Confirm or signed fields.':
+          scenario==='revoked-session'?'Session revoked in PostgreSQL while away, without touching browser cookies; fresh GET returns signed-out 401 with no Confirm or signed fields.':
+            'Cancel and native Back refresh Review without confirming, replaying POST, or writing any preference/receipt.'};
+    });
+  }
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';
   process.exitCode=1;
 } finally {
   for(const context of contexts) await context.close().catch(()=>{});
+  if(bfcacheBrowser) await bfcacheBrowser.close().catch(()=>{});
   if(browser) await browser.close().catch(()=>{});
   if(fixture) await fixture.close().catch(()=>{});
   evidence.finishedAt=new Date().toISOString(); await report();

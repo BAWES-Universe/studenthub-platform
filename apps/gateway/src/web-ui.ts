@@ -89,8 +89,8 @@ export function writeHtml(response: ServerResponse, status: number, html: string
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 
-export function pageDocument(title: string, content: string, language?: ProfileLanguage): string {
-  return document(title, content, false, language);
+export function pageDocument(title: string, content: string, language?: ProfileLanguage, historyGuard = false): string {
+  return document(title, content, historyGuard, language);
 }
 
 function document(title: string, content: string, workspaceHistory = false, language?: ProfileLanguage): string {
