@@ -1,6 +1,6 @@
 import pg from "pg";
 import { databaseUrl } from "./connection.js";
-type JobName="heartbeat"|"missed_run_check";type JobOutcome="succeeded"|"failed"|"refused_overlap";interface JobRun{readonly runId:string;readonly jobName:JobName;readonly startedAt:Date;readonly finishedAt:Date;readonly durationMs:number;readonly outcome:JobOutcome}
+type JobName="heartbeat"|"missed_run_check"|"email_delivery";type JobOutcome="succeeded"|"failed"|"refused_overlap";interface JobRun{readonly runId:string;readonly jobName:JobName;readonly startedAt:Date;readonly finishedAt:Date;readonly durationMs:number;readonly outcome:JobOutcome}
 type Row={run_id:string;job_name:JobName;started_at:Date;finished_at:Date;duration_ms:number;outcome:JobRun["outcome"]};
 const mapped=(row:Row):JobRun=>({runId:row.run_id,jobName:row.job_name,startedAt:row.started_at,finishedAt:row.finished_at,durationMs:row.duration_ms,outcome:row.outcome});
 export class PostgresJobRunsStore {

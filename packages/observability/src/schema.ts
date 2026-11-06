@@ -1,5 +1,5 @@
 /** Only closed vocabularies and server-minted random IDs cross the telemetry boundary. */
-export const JOURNEYS = ['landing', 'login_start', 'login_callback', 'profile_read', 'logout', 'mcp_call', 'health', 'asset', 'unknown', 'heartbeat', 'missed_run_check', 'job'] as const;
+export const JOURNEYS = ['landing', 'login_start', 'login_callback', 'profile_read', 'logout', 'mcp_call', 'health', 'asset', 'unknown', 'heartbeat', 'missed_run_check', 'email_delivery', 'job'] as const;
 export const COMPONENTS = ['gateway', 'web', 'worker'] as const;
 export const OUTCOMES = ['success', 'refused', 'failure', 'aborted'] as const;
 export const FAULTS = ['none', 'dependency_unavailable', 'render_failure', 'adapter_failure', 'unhandled_failure', 'job_failure', 'response_aborted'] as const;
