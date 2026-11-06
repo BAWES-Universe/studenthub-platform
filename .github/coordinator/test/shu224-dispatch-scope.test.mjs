@@ -254,28 +254,41 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-489", "SHU-490", "SHU-461", "SHU-478", "SHU-479", "SHU-480", "SHU-462", "SHU-460", "SHU-463", "SHU-464", "SHU-465", "SHU-466", "SHU-467", "SHU-469", "SHU-468"], "SHU-224: the scope names the current card queue (SHU-312)");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-489").after, undefined, "SHU-224: SHU-489 waits on nothing");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-490").after, ["SHU-489"], "SHU-224: SHU-490 waits on SHU-489");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-453").after, undefined, "SHU-224: SHU-453 waits on nothing");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-457").after, undefined, "SHU-224: SHU-457 waits on nothing");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-454").after, ["SHU-453"], "SHU-224: SHU-454 waits on SHU-453");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-455").after, ["SHU-454"], "SHU-224: SHU-455 waits on SHU-454");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-456").after, ["SHU-455"], "SHU-224: SHU-456 waits on SHU-455");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-461").after, ["SHU-490"], "SHU-224: SHU-461 waits on SHU-490");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-478").after, ["SHU-461"], "SHU-224: SHU-478 waits on SHU-461");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-479").after, ["SHU-478"], "SHU-224: SHU-479 waits on SHU-478");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-480").after, ["SHU-479"], "SHU-224: SHU-480 waits on SHU-479");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-494", "SHU-495", "SHU-496", "SHU-497", "SHU-498", "SHU-499", "SHU-500", "SHU-501", "SHU-502", "SHU-503", "SHU-504", "SHU-505", "SHU-506", "SHU-507", "SHU-508"], "SHU-224: the scope names the current card queue (SHU-312)");
+  const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
+  // Only the real waits: the box keeps cards that share files apart by itself
+  // (Velocity A), so no card waits on another just to stay off its files.
+  assert.equal(after("SHU-494"), undefined, "SHU-224: SHU-494 waits on nothing");
+  assert.deepEqual(after("SHU-495"), ["SHU-494"], "SHU-224: SHU-495 waits on SHU-494");
+  assert.equal(after("SHU-496"), undefined, "SHU-224: SHU-496 waits on nothing");
+  assert.equal(after("SHU-497"), undefined, "SHU-224: SHU-497 waits on nothing");
+  assert.deepEqual(after("SHU-498"), ["SHU-497"], "SHU-224: SHU-498 waits on SHU-497");
+  assert.deepEqual(after("SHU-499"), ["SHU-498", "SHU-495"], "SHU-224: SHU-499 waits on SHU-498 and on SHU-495, so the email stores are on the root barrel before the prep records it");
+  assert.deepEqual(after("SHU-500"), ["SHU-499"], "SHU-224: SHU-500 waits on SHU-499");
+  assert.deepEqual(after("SHU-501"), ["SHU-499"], "SHU-224: SHU-501 waits on SHU-499");
+  assert.deepEqual(after("SHU-502"), ["SHU-500", "SHU-499"], "SHU-224: SHU-502 waits on SHU-500 and SHU-499");
+  assert.deepEqual(after("SHU-503"), ["SHU-499"], "SHU-224: SHU-503 waits on SHU-499");
+  assert.deepEqual(after("SHU-504"), ["SHU-503", "SHU-499"], "SHU-224: SHU-504 waits on SHU-503 and SHU-499");
+  assert.deepEqual(after("SHU-505"), ["SHU-500", "SHU-504", "SHU-499"], "SHU-224: SHU-505 waits on SHU-500, SHU-504 and SHU-499");
+  assert.deepEqual(after("SHU-506"), ["SHU-503", "SHU-500", "SHU-499"], "SHU-224: SHU-506 waits on SHU-503, SHU-500 and SHU-499");
+  assert.deepEqual(after("SHU-507"), ["SHU-500", "SHU-503", "SHU-506", "SHU-499"], "SHU-224: SHU-507 waits on SHU-500, SHU-503, SHU-506 and SHU-499");
+  assert.deepEqual(after("SHU-508"), ["SHU-506", "SHU-499"], "SHU-224: SHU-508 waits on SHU-506 and SHU-499");
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
   }
-  // Two workers take cards from one queue and nothing yet stops them building
-  // cards that change the same files, so each card waits on the one before it.
-  const scoped = config.dispatch_scope.issue_ids;
-  for (let i = 1; i < scoped.length; i += 1) {
-    const lane = config.card_lanes.find((entry) => entry.id === scoped[i]);
-    assert.ok(Array.isArray(lane.after) && lane.after.includes(scoped[i - 1]), `SHU-224: ${scoped[i]} waits on ${scoped[i - 1]}`);
+  // SHU-494 re-cuts SHU-489 with the job-registration files added to its paths.
+  const lane494 = config.card_lanes.find((lane) => lane.id === "SHU-494");
+  for (const file of ["packages/notifications/src/index.ts", "packages/observability/src/index.ts", "packages/observability/test/jobs-mutations.mjs", "apps/gateway/src/admin-jobs.ts"]) {
+    assert.ok(lane494.initial_build_paths.includes(file), `SHU-224: SHU-494 may change ${file}`);
   }
+  // SHU-499 runs after the email cards, so its notifications area re-exports their stores.
+  const lane499 = config.card_lanes.find((lane) => lane.id === "SHU-499");
+  const contract499 = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "card-contracts.json"), "utf8")).cards["SHU-499"] ?? {};
+  for (const file of ["apps/gateway/src/admin-outbox.ts", "apps/gateway/test/admin-outbox.test.ts", "apps/gateway/src/notifications-http.ts", "apps/gateway/test/notifications-http.test.ts"]) {
+    assert.ok(lane499.initial_build_paths.includes(file), `SHU-224: SHU-499 may change ${file}`);
+  }
+  assert.match(contract499.brief ?? "", /move every export line those two cards added, names unchanged, into notifications\/index\.ts/, "SHU-224: SHU-499 moves the email store exports into notifications");
+  assert.match(contract499.acceptance ?? "", /notifications exposes exactly the names SHU-494 and SHU-495 export from the root/, "SHU-224: SHU-499 acceptance keeps the email store exports");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
