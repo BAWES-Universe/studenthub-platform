@@ -298,6 +298,47 @@ test("SHU-232 B7: no confined execution evidence fails closed and can never PASS
   assert.equal(cli.calls.length, 0, "Claude is not launched when exact-head execution cannot be proved");
 });
 
+test("a busy reviewer sandbox is a retryable failure, never a HOLD that pauses the adapter", async (t) => {
+  const root = privateTemp("review-busy-");
+  const workspace = path.join(root, ATTEMPT);
+  const evidence = path.join(root, "evidence");
+  fs.mkdirSync(workspace, { mode: 0o755 });
+  fs.mkdirSync(evidence, { mode: 0o700 });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const run = (code) => runReviewEvidence({
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    cwd: workspace,
+    env: {
+      PATH: process.env.PATH,
+      SHU_REVIEW_EXEC_UID: String((process.getuid?.() ?? 1000) + 1000),
+      SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
+      SHU_REVIEW_EVIDENCE_DIR: evidence,
+    },
+    execFileImpl: (_file, _args, _options, callback) => queueMicrotask(() => callback(Object.assign(new Error("wrapper exited"), { code }), "", "reviewer sandbox refuses concurrent same-identity execution\n")),
+    validateWrapperImpl: (wrapper) => wrapper,
+    startProcessCanaryImpl,
+    listenProbeImpl,
+  });
+  const busy = await run(75);
+  assert.equal(busy.reason_code, "REVIEW_SANDBOX_BUSY", "exit 75 is the sandbox lock held by another review");
+  assert.equal(busy.executed, false);
+  const other = await run(64);
+  assert.equal(other.reason_code, "REVIEW_EXECUTION_UNAVAILABLE", "any other wrapper failure still fails closed");
+
+  const cli = executor(output());
+  const out = await launchBuilder(launchArgs("/tmp", output(), {
+    execFileImpl: cli,
+    reviewEvidenceImpl: reviewProof({ executed: false, evidence_link: null, reason_code: "REVIEW_SANDBOX_BUSY" }),
+  }));
+  assert.equal(out.stage, "FAILED");
+  assert.equal(out.error_code, "REVIEW_SANDBOX_BUSY");
+  assert.equal(out.pause_adapter, undefined, "another review's lock never pauses the adapter");
+  assert.equal(cli.calls.length, 0, "Claude is not launched when the tests did not run");
+});
+
 test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests", async (t) => {
   const root = privateTemp("shu232-b7-live-");
   const attemptId = "72727272-7272-4272-8272-727272727272";

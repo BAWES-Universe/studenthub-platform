@@ -223,6 +223,17 @@ test("SHU-225 I8: exhaustion and capped failures still end the episode (terminat
   assert.equal(activation.episodeVerdict({ receipts: capped, targetIssueId: TARGET, config: { max_failed_attempts: 3 } }).ended, true, "at the cap the episode ends");
 });
 
+test("a review that failed before running (busy reviewer sandbox) routes the same review again", () => {
+  const receipts = [
+    receipt({ stage: "COMPLETED", verdict: "BUILD_READY", result: SHA_WRITE }),
+    receipt({ attempt: ATTEMPT("review"), worker: "claude-verifier", identity: "claude-code:s1", stage: "FAILED", verdict: null, target: SHA_WRITE, at: "2026-09-10T13:00:00.000Z" }),
+  ];
+  const verdict = activation.episodeVerdict({ receipts, targetIssueId: TARGET, config: {} });
+  assert.equal(verdict.ended, false, "a retryable review failure does not end the card");
+  assert.equal(verdict.successor?.role, "review", "the next step is the same review");
+  assert.equal(verdict.successor?.target_sha, SHA_WRITE, "at the same built head");
+});
+
 test("SHU-225 I4: the successor is the same issue as the activation target and the committed scope", () => {
   const selection = reconcile.selectNextReservation({
     ready: [readyIssue()],
