@@ -50,4 +50,4 @@ export {PostgresOrganizationAccountManagerReads} from "./postgres-organization-a
 export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_PROFILE_FIELDS, type PersonProfileField, type PersonProfileBrowserOptions, type PersonProfileBrowserPrepared, type PersonProfileShownFallback, type PersonProfileSessionLiveness, type PersonProfileImportedFallback } from "./person-profile-store.js";
 export { PostgresJobRunsStore } from "./postgres-job-runs-store.js";
 export { PostgresExportsStore } from "./postgres-exports-store.js";
-export {PostgresEmailOutboxStore,type EmailOutboxAdminRow} from "./postgres-email-outbox-store.js";
+export {EMAIL_CLAIM_LEASE_SECONDS,PostgresEmailOutboxStore,type EmailOutboxAdminRow} from "./postgres-email-outbox-store.js";
