@@ -263,9 +263,15 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.equal(after("SHU-496"), undefined, "SHU-224: SHU-496 waits on nothing");
   assert.equal(after("SHU-497"), undefined, "SHU-224: SHU-497 waits on nothing");
   assert.deepEqual(after("SHU-498"), ["SHU-497"], "SHU-224: SHU-498 waits on SHU-497");
-  assert.deepEqual(after("SHU-499"), ["SHU-498"], "SHU-224: SHU-499 waits on SHU-498");
+  assert.deepEqual(after("SHU-499"), ["SHU-498", "SHU-495"], "SHU-224: SHU-499 waits on SHU-498 and on SHU-495, so the email stores are on the root barrel before the prep records it");
   assert.deepEqual(after("SHU-500"), ["SHU-499"], "SHU-224: SHU-500 waits on SHU-499");
   assert.deepEqual(after("SHU-501"), ["SHU-499"], "SHU-224: SHU-501 waits on SHU-499");
+  assert.deepEqual(after("SHU-502"), ["SHU-500", "SHU-499"], "SHU-224: SHU-502 waits on SHU-500 and SHU-499");
+  assert.deepEqual(after("SHU-503"), ["SHU-499"], "SHU-224: SHU-503 waits on SHU-499");
+  assert.deepEqual(after("SHU-504"), ["SHU-503", "SHU-499"], "SHU-224: SHU-504 waits on SHU-503 and SHU-499");
+  assert.deepEqual(after("SHU-505"), ["SHU-500", "SHU-504", "SHU-499"], "SHU-224: SHU-505 waits on SHU-500, SHU-504 and SHU-499");
+  assert.deepEqual(after("SHU-506"), ["SHU-503", "SHU-500", "SHU-499"], "SHU-224: SHU-506 waits on SHU-503, SHU-500 and SHU-499");
+  assert.deepEqual(after("SHU-507"), ["SHU-500", "SHU-503", "SHU-506", "SHU-499"], "SHU-224: SHU-507 waits on SHU-500, SHU-503, SHU-506 and SHU-499");
   assert.deepEqual(after("SHU-508"), ["SHU-506", "SHU-499"], "SHU-224: SHU-508 waits on SHU-506 and SHU-499");
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
