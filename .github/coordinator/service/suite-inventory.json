@@ -3229,6 +3229,7 @@
     "SHU-322 B6: a main that does not descend from the installed revision is refused for the owner",
     "SHU-322 B7: main at the installed revision, or with the installed queue, is a silent skip",
     "SHU-322 B8: a read that fails or checks not yet green skip with no claim; red checks are refused",
+    "SHU-442: the coordinator's reconcile job on main never holds back or refuses an install; the commit's own checks still do",
     "SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated",
     "SHU-322 B10: a held lock or a busy host skips and gives the claim back",
     "SHU-322 B11: the pause file is read again before every step and stops the install there",
@@ -25749,6 +25750,10 @@
     },
     {
       "name": "SHU-322 B8: a read that fails or checks not yet green skip with no claim; red checks are refused",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-442: the coordinator's reconcile job on main never holds back or refuses an install; the commit's own checks still do",
       "capabilities": []
     },
     {

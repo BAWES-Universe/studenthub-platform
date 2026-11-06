@@ -243,7 +243,18 @@ function fakeHost({ config = QUEUE_ONLY, main = N, mainConfig = nextConfig(), ch
     const api = `https://api.github.com/repos/${REPO}`;
     host.github.push(url.slice(api.length + 1));
     if (host.githubFails) return respond(502, null);
-    if (url === `${api}/commits/${host.main}/check-runs?filter=latest&per_page=100`) return respond(200, { total_count: host.checks.runs.length, check_runs: host.checks.runs });
+    const boardRuns = new RegExp(`^${api.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/actions/workflows/coordinator\\.yml/runs\\?head_sha=${host.main}&per_page=100(?:&page=(\\d+))?$`).exec(url);
+    if (boardRuns) {
+      if (host.checks.boardDenied) return respond(403, { message: "Resource not accessible by integration" });
+      const all = host.checks.boardSuites ?? [77];
+      const page = Number(boardRuns[1] ?? 1);
+      return respond(200, { total_count: all.length, workflow_runs: all.slice((page - 1) * 100, page * 100).map((id) => ({ check_suite_id: id })) });
+    }
+    const runsPage = new RegExp(`^${api.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/commits/${host.main}/check-runs\\?filter=latest&per_page=100(?:&page=(\\d+))?$`).exec(url);
+    if (runsPage) {
+      const page = Number(runsPage[1] ?? 1);
+      return respond(200, { total_count: host.checks.runs.length, check_runs: host.checks.runs.slice((page - 1) * 100, page * 100) });
+    }
     if (url === `${api}/commits/${host.main}/status?per_page=100`) return respond(200, { statuses: host.checks.statuses });
     if (url === `${api}/pulls?state=open&base=main&per_page=100`) return respond(200, []);
     const pull = /^pulls\/(\d+)(\/reviews\?per_page=100)?$/.exec(url.slice(api.length + 1));
@@ -457,6 +468,72 @@ test("SHU-322 B8: a read that fails or checks not yet green skip with no claim; 
   assert.equal(out.result?.outcome, "NEEDS_OWNER");
   assert.match(out.result?.reason, /red: ci: failure/);
   untouched(red);
+});
+
+test("SHU-442: the coordinator's reconcile job on main never holds back or refuses an install; the commit's own checks still do", async () => {
+  const reconcile = (status, conclusion, suite = 77) => ({ name: "reconcile", status, conclusion, app: { slug: "github-actions" }, check_suite: { id: suite } });
+  const ci = (conclusion) => ({ name: "ci", status: "completed", conclusion, app: { slug: "github-actions" } });
+  for (const run of [reconcile("queued", null), reconcile("in_progress", null), reconcile("completed", "cancelled"), reconcile("completed", "failure")]) {
+    const host = fakeHost();
+    host.checks.runs = [ci("success"), run];
+    const result = await install(host);
+    assert.equal(result.result?.outcome, "INSTALLED", `${run.status}/${run.conclusion}: ${JSON.stringify(result)}`);
+  }
+  const pending = fakeHost();
+  pending.checks.runs = [{ ...ci(null), status: "in_progress" }, reconcile("completed", "success")];
+  assert.equal((await install(pending)).skipped, "INSTALL_NOT_READY", "the commit's own pending CI still holds it back");
+  const red = fakeHost();
+  red.checks.runs = [ci("failure"), reconcile("queued", null)];
+  const refused = await install(red);
+  assert.equal(refused.result?.outcome, "NEEDS_OWNER", "a red push CI run is still refused");
+  assert.match(refused.result?.reason, /red: ci: failure/);
+  assert.doesNotMatch(refused.result?.reason, /reconcile/);
+  const only = fakeHost();
+  only.checks.runs = [reconcile("queued", null)];
+  assert.equal((await install(only)).skipped, "INSTALL_NOT_READY", "a reconcile run alone is not a green commit");
+  const named = fakeHost();
+  named.checks.runs = [ci("success"), { name: "reconcile", status: "completed", conclusion: "failure", app: { slug: "some-other-app" } }];
+  const other = await install(named);
+  assert.equal(other.result?.outcome, "NEEDS_OWNER", "only the Actions job named reconcile is set aside");
+  assert.match(other.result?.reason, /red: reconcile: failure/);
+  // Comment traffic can push main's tip past one page of check runs: every
+  // page is read, reconcile is set aside, and the commit's own runs decide.
+  const crowded = fakeHost();
+  crowded.checks.runs = [...Array.from({ length: 150 }, () => reconcile("completed", "cancelled")), ci("success")];
+  assert.equal((await install(crowded)).result?.outcome, "INSTALLED", "more than 100 reconcile runs beside green CI still install");
+  const crowdedRed = fakeHost();
+  crowdedRed.checks.runs = [...Array.from({ length: 150 }, () => reconcile("queued", null)), ci("failure")];
+  assert.equal((await install(crowdedRed)).result?.outcome, "NEEDS_OWNER", "a red run on a later page is still read and refused");
+  const unbounded = fakeHost();
+  unbounded.checks.runs = [...Array.from({ length: 1001 }, () => reconcile("queued", null)), ci("success")];
+  assert.equal((await install(unbounded)).skipped, "INSTALL_NOT_READY", "runs past the page bound are never assumed green");
+  // A check name is not unique to a workflow: an Actions job named reconcile
+  // from any workflow other than the coordinator's still decides.
+  const otherRed = fakeHost();
+  otherRed.checks.runs = [ci("success"), reconcile("completed", "failure", 88)];
+  const otherRefused = await install(otherRed);
+  assert.equal(otherRefused.result?.outcome, "NEEDS_OWNER", "another workflow's failed reconcile job refuses the install");
+  assert.match(otherRefused.result?.reason, /red: reconcile: failure/);
+  const otherPending = fakeHost();
+  otherPending.checks.runs = [ci("success"), reconcile("in_progress", null, 88)];
+  assert.equal((await install(otherPending)).skipped, "INSTALL_NOT_READY", "another workflow's running reconcile job holds the install back");
+  const noSuite = fakeHost();
+  noSuite.checks.runs = [ci("success"), { name: "reconcile", status: "queued", conclusion: null, app: { slug: "github-actions" } }];
+  assert.equal((await install(noSuite)).skipped, "INSTALL_NOT_READY", "a reconcile run with no check suite is never set aside");
+  const boardUnread = fakeHost();
+  boardUnread.checks.runs = [ci("success"), reconcile("queued", null)];
+  boardUnread.checks.boardSuites = [77, ...Array.from({ length: 1000 }, (_, i) => i + 1000)];
+  assert.equal((await install(boardUnread)).skipped, "INSTALL_NOT_READY", "unread coordinator runs never let reconcile be set aside");
+  // A token without Actions read: reconcile is judged like any other check,
+  // so a pending one holds the install and a green one lets it through.
+  const deniedPending = fakeHost();
+  deniedPending.checks.runs = [ci("success"), reconcile("queued", null)];
+  deniedPending.checks.boardDenied = true;
+  assert.equal((await install(deniedPending)).skipped, "INSTALL_NOT_READY", "an unreadable workflow listing never sets a pending reconcile aside");
+  const deniedGreen = fakeHost();
+  deniedGreen.checks.runs = [ci("success"), reconcile("completed", "success")];
+  deniedGreen.checks.boardDenied = true;
+  assert.equal((await install(deniedGreen)).result?.outcome, "INSTALLED", "an unreadable workflow listing does not hold back a green commit");
 });
 
 test("SHU-322 B9: a refusal is claimed exclusively, reported once on SHU-71 and never repeated", async () => {

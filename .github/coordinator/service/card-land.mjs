@@ -536,15 +536,67 @@ export function judgeChecks(runsResponse, runs, statusResponse, status, external
   return { green: true, ...(advisory ? { advisory } : {}) };
 }
 
+// SHU-442: the coordinator workflow's reconcile job is a dry-run read of the
+// board, not a test of the commit. Every issue comment on any pull request
+// starts one against main's tip, where it queues and is often cancelled by the
+// next, so it would hold an install back (pending) or refuse it (cancelled)
+// for as long as a pull request has comment traffic. It never decides whether
+// main's tip is green; every other check run and status still does. A check
+// name is not unique to a workflow, so a run is set aside only when it is the
+// Actions job named reconcile AND its check suite belongs to a run of the
+// coordinator workflow on that commit; a reconcile job from any other
+// workflow still decides.
+export const BOARD_ONLY_CHECKS = Object.freeze(["reconcile"]);
+export const BOARD_ONLY_WORKFLOW = "coordinator.yml";
+export function boardOnlyCheck(run, boardSuites = new Set()) {
+  return BOARD_ONLY_CHECKS.includes(run?.name) && run?.app?.slug === "github-actions"
+    && Number.isInteger(run?.check_suite?.id) && boardSuites.has(run.check_suite.id);
+}
+
 // SHU-322: the same judgement of any commit, such as main's tip, read with
 // whatever token the caller's client carries.
+// Board-only runs are set aside only once every check run has been read: the
+// comment traffic that starts them can push a commit past one page, so the
+// pages are read up to COMMIT_CHECK_PAGES and the judgement then sees exactly
+// the commit's own runs, counted after the filter. Anything left unread is
+// still "could not be read in full".
+export const COMMIT_CHECK_PAGES = 10;
+async function readAllPages(gh, url, key) {
+  const first = await gh("GET", url);
+  const body = first?.ok ? await first.json() : null;
+  if (!Array.isArray(body?.[key]) || !Number.isInteger(body?.total_count)) return { response: first, body, items: null };
+  const items = [...body[key]];
+  for (let page = 2; items.length < body.total_count && page <= COMMIT_CHECK_PAGES; page += 1) {
+    const response = await gh("GET", `${url}&page=${page}`);
+    const more = response?.ok ? await response.json() : null;
+    if (!Array.isArray(more?.[key]) || more[key].length === 0) return { response: first, body, items: null };
+    items.push(...more[key]);
+  }
+  return { response: first, body, items: items.length < body.total_count ? null : items };
+}
 export async function readCommitChecks(gh, repo, sha) {
-  const [runsResponse, statusResponse] = await Promise.all([
-    gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100`),
-    gh("GET", `https://api.github.com/repos/${repo}/commits/${sha}/status?per_page=100`),
+  const api = `https://api.github.com/repos/${repo}`;
+  const [runsRead, statusResponse] = await Promise.all([
+    readAllPages(gh, `${api}/commits/${sha}/check-runs?filter=latest&per_page=100`, "check_runs"),
+    gh("GET", `${api}/commits/${sha}/status?per_page=100`),
   ]);
-  const [runs, status] = await Promise.all([runsResponse.json(), statusResponse.json()]);
-  return judgeChecks(runsResponse, runs, statusResponse, status);
+  const status = await statusResponse.json();
+  const { response: runsResponse, body: runs, items: listed } = runsRead;
+  if (!listed) {
+    if (runsResponse?.ok && Array.isArray(runs?.check_runs)) return { green: false, note: "the checks could not be read in full" };
+    return judgeChecks(runsResponse, runs, statusResponse, status);
+  }
+  let boardSuites = new Set();
+  if (listed.some((run) => BOARD_ONLY_CHECKS.includes(run?.name) && run?.app?.slug === "github-actions")) {
+    // When the coordinator's runs cannot be read in full (a token without
+    // Actions read, a failed page), nothing is set aside: every reconcile run
+    // is judged like any other check, which is how commits were judged before.
+    const workflowRuns = await readAllPages(gh, `${api}/actions/workflows/${BOARD_ONLY_WORKFLOW}/runs?head_sha=${sha}&per_page=100`, "workflow_runs");
+    if (workflowRuns.items) boardSuites = new Set(workflowRuns.items.map((run) => run?.check_suite_id).filter(Number.isInteger));
+  }
+  const own = listed.filter((run) => !boardOnlyCheck(run, boardSuites));
+  if (own.length > 100) return { green: false, note: "the checks could not be read in full" };
+  return judgeChecks(runsResponse, { ...runs, total_count: own.length, check_runs: own }, statusResponse, status);
 }
 
 // One read of the head's checks and the pull request's own state.
