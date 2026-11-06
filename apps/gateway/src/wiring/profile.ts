@@ -1,0 +1,99 @@
+import pg from "pg";
+import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
+import { PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPersonProfileStore, PostgresSafeWriteStore, readLiveLoginSessionPerson, safeWritePrincipalRef } from "@studenthub/db";
+import { OwnProfileRepository, createPersonImportedFallbackReader, type ApprovedProfileAdapter } from "@studenthub/profile";
+import { createBankDetails } from "../bank-details.js";
+import { createLanguagePreference } from "../language-preference.js";
+import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
+import { createProfileEdit } from "../profile-edit-http.js";
+import type { Wired, WiringSettings } from "./context.js";
+import type { wireAccess } from "./access.js";
+
+type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
+
+export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter): Wired<{
+  readonly application: Record<string, unknown>;
+  readonly web: { readonly profiles: OwnProfileRepository };
+  readonly browserSessionPool: pg.Pool | undefined;
+  readonly sessions: typeof access.loginStore.sessions;
+}> {
+  const { databaseUrl, safeWriteKey } = settings;
+  // Freeze both protocol versions once, never derive them from a request.
+  const browserKeyVersion = "profile-browser-key-v1";
+  const browserNormalizationVersion = "profile-browser-normalization-v1";
+  const browserTokens = safeWriteKey ? createBrowserWriteTokens({ activeKeyVersion: browserKeyVersion,
+    keys: { [browserKeyVersion]: safeWriteKey } }) : undefined;
+  const browserSessionPool = browserTokens ? new pg.Pool({ connectionString: databaseUrl }) : undefined;
+  const importedFallback = createPersonImportedFallbackReader({ source: approvedProfiles });
+  const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
+  const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
+  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: approvedProfiles,
+    ...(safeWrites && personProfiles ? { preferences: { async readOwnPreferences(id: string) {
+      const [language, person] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id)]);
+      const merged = { ...(language ?? {}), ...(person ?? {}) };
+      return Object.keys(merged).length > 0 ? merged as never : null;
+    } } } : {}) });
+  // SHU-182: a candidate's own bank details, behind the same signing key.
+  const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: databaseUrl }) : undefined;
+  const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: databaseUrl }) : undefined;
+  const sessions = browserSessionPool ? {
+    put: access.loginStore.sessions.put,
+    delete: access.loginStore.sessions.delete,
+    async get(id: string) {
+      const personId = await readLiveLoginSessionPerson(browserSessionPool, id);
+      return personId ? { id, personId } : undefined;
+    },
+  } : access.loginStore.sessions;
+  return {
+    services: { application: {
+      ...(safeWrites && safeWriteKey
+        ? { preferences: createLanguagePreference({ sessions: access.loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
+        : {}),
+      ...(personProfiles && safeWriteKey && browserTokens && browserSessionPool ? {
+        browserEdit: createProfileBrowserEdit({
+          secret: safeWriteKey,
+          secure: true,
+          choices: () => personProfiles.readOriginChoices(),
+          async authorize(session) {
+            if (!session) return null;
+            const principalId = await readLiveLoginSessionPerson(browserSessionPool, session);
+            if (!principalId || !await access.authzStore.getPrincipal(principalId)) return null;
+            const canEdit = async (field: string): Promise<boolean> => {
+              if (field !== "kuwaitiMother") return true;
+              const own = await profiles.readOwn({ requesterPrincipalId: principalId, targetPersonId: principalId });
+              if (own.kind !== "found" || own.profile.fields.nationality.state !== "available") return false;
+              const nationalityId = own.profile.fields.nationality.editValue;
+              const { countries } = await personProfiles.readOriginChoices();
+              return countries.some(country => country.id === nationalityId && country.code !== "KW") &&
+                !countries.some(country => country.id === nationalityId && country.code === "KW") &&
+                await personProfiles.originValueAvailable(principalId, "kuwaitiMother", "true");
+            };
+            const ownProfile = await profiles.readOwn({ requesterPrincipalId: principalId, targetPersonId: principalId });
+            const language = ownProfile.kind === "found" && ownProfile.profile.fields.language.state === "available"
+              && ownProfile.profile.fields.language.value === "ar" ? "ar" : "en";
+            return { actorRef: safeWritePrincipalRef(principalId), language, store: { ...personProfiles.forBrowserSession({
+              principalId, sessionToken: session, tokens: browserTokens,
+              normalizationVersion: browserNormalizationVersion,
+              sessionLiveness: { read: readLiveLoginSessionPerson }, importedFallback,
+            }),
+              canEdit,
+              async validate(field, canonicalValue) {
+                if (field === "kuwaitiMother" && !await canEdit(field)) return "choice";
+                if (field === "phone" || field === "handle") return canonicalValue !== "" &&
+                  !await personProfiles.contactValueAvailable(principalId, field, canonicalValue) ? "contact_unavailable" : null;
+                if (field === "nationality" || field === "university" || field === "kuwaitiMother") return await personProfiles.originValueAvailable(principalId, field, canonicalValue) ? null : "choice";
+                return null;
+              },
+            } };
+          },
+        }),
+      } : {}),
+      ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: access.loginStore.sessions, store: personProfiles, secret: safeWriteKey }) } : {}),
+      ...(bankDetailsStore && banks && safeWriteKey
+        ? { bankDetails: createBankDetails({ sessions: access.loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
+        : {}),
+      }, web: { profiles }, browserSessionPool, sessions,
+    },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close()]); },
+  };
+}
