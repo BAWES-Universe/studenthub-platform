@@ -281,6 +281,14 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   for (const file of ["packages/notifications/src/index.ts", "packages/observability/src/index.ts", "packages/observability/test/jobs-mutations.mjs", "apps/gateway/src/admin-jobs.ts"]) {
     assert.ok(lane494.initial_build_paths.includes(file), `SHU-224: SHU-494 may change ${file}`);
   }
+  // SHU-499 runs after the email cards, so its notifications area re-exports their stores.
+  const lane499 = config.card_lanes.find((lane) => lane.id === "SHU-499");
+  const contract499 = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "card-contracts.json"), "utf8")).cards["SHU-499"] ?? {};
+  for (const file of ["apps/gateway/src/admin-outbox.ts", "apps/gateway/test/admin-outbox.test.ts", "apps/gateway/src/notifications-http.ts", "apps/gateway/test/notifications-http.test.ts"]) {
+    assert.ok(lane499.initial_build_paths.includes(file), `SHU-224: SHU-499 may change ${file}`);
+  }
+  assert.match(contract499.brief ?? "", /move every export line those two cards added, names unchanged, into notifications\/index\.ts/, "SHU-224: SHU-499 moves the email store exports into notifications");
+  assert.match(contract499.acceptance ?? "", /notifications exposes exactly the names SHU-494 and SHU-495 export from the root/, "SHU-224: SHU-499 acceptance keeps the email store exports");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 

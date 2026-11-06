@@ -6207,19 +6207,32 @@ const SHU494_GUARD_FROM = SHU489_GUARD_TO.split("\n").at(-1);
 const SHU494_GUARD_TO = `${SHU494_GUARD_FROM}
 - Migration 0300 admits job names through two CHECK constraints, job_runs_job_name_check and job_leases_job_name_check (job_name IN ('heartbeat','missed_run_check')). Migration 0351 drops and re-adds both so they also admit email_delivery; 0300 itself never changes. Your paths also include packages/notifications/src/index.ts, packages/observability/src/index.ts, packages/observability/test/jobs-mutations.mjs (keep every mutation binding once if jobs.ts changes) and apps/gateway/src/admin-jobs.ts. Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.`;
 const SHU494_BRIEF = replaceOnce(recut489(CARD_CONTRACTS_BASE["SHU-489"].brief), SHU494_GUARD_FROM, SHU494_GUARD_TO, "SHU494_BRIEF guard");
+// SHU-499 now runs after SHU-494 and SHU-495, whose email outbox and
+// notifications stores are already exported from the root index.ts when it
+// starts, so its notifications area re-exports them instead of staying empty.
+const SHU499_EXTRA_PATHS = Object.freeze(["apps/gateway/src/admin-outbox.ts", "apps/gateway/test/admin-outbox.test.ts", "apps/gateway/src/notifications-http.ts", "apps/gateway/test/notifications-http.test.ts"]);
+const shu499Text = (text) => [
+  ["documents and notifications: no stores exist yet; each index.ts is `export {};` so the later email and document cards add their store under packages/db/src/<area>/ without touching package.json.",
+    "documents: no store exists yet; its index.ts is `export {};` so the later document card adds its store under packages/db/src/documents/ without touching package.json. notifications: SHU-494 (the email outbox) and SHU-495 (in-app notifications) land before this card and export their stores from the root index.ts; re-grep packages/db/src/index.ts at the bound head and move every export line those two cards added, names unchanged, into notifications/index.ts (re-exporting from ../<file>.js; the store files stay where they are), so the root still exports them through `export *`."],
+  ["documents and notifications contain only `export {};`.", "documents contains only `export {};`; notifications re-exports the SHU-494 and SHU-495 stores as above."],
+  ["(documents and notifications expose none)", "(documents exposes none; notifications exposes exactly the names SHU-494 and SHU-495 export from the root before this card)"],
+  ["only import-specifier changes in the five edited apps/gateway tests", "only import-specifier changes in the edited apps/gateway tests"],
+  ["- apps/gateway/test/db-subpaths-mutations.mjs\n", `- apps/gateway/test/db-subpaths-mutations.mjs\n${SHU499_EXTRA_PATHS.map((file) => `- ${file}\n`).join("")}`],
+  ["new stores for documents or notifications", "new stores for documents or notifications, and any change to the four SHU-494 and SHU-495 gateway files above other than switching their `@studenthub/db` import lines to the area subpath"],
+].reduce((out, [from, to]) => (out.includes(from) ? replaceOnce(out, from, to, "SHU-499 notifications") : out), text);
 const RECUT_489_CONTRACTS = Object.fromEntries(Object.entries(RECUT_489).map(([from, to]) => {
   const base = CARD_CONTRACTS_BASE[from];
-  const paths = from === "SHU-489" ? SHU494_PATHS : base.initial_build_paths;
+  const paths = from === "SHU-489" ? SHU494_PATHS : from === "SHU-480" ? Object.freeze([...base.initial_build_paths, ...SHU499_EXTRA_PATHS]) : base.initial_build_paths;
   const reason = from === "SHU-489"
     ? "after its build was refused a second time for touching a path outside the card"
     : "because its installed lane waited, through a chain of after edges, on SHU-489, which stopped";
-  const brief = from === "SHU-489" ? SHU494_BRIEF : recut489(base.brief);
+  const brief = from === "SHU-489" ? SHU494_BRIEF : from === "SHU-480" ? shu499Text(recut489(base.brief)) : recut489(base.brief);
   if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
   return [to, Object.freeze({
     workspace_mode: base.workspace_mode,
     initial_build_paths: paths,
-    revision_paths: from === "SHU-489" ? SHU494_PATHS : base.revision_paths,
-    acceptance: recutAcceptance489(from, reason, base.acceptance),
+    revision_paths: from === "SHU-489" ? SHU494_PATHS : from === "SHU-480" ? Object.freeze([...base.revision_paths, ...SHU499_EXTRA_PATHS]) : base.revision_paths,
+    acceptance: from === "SHU-480" ? shu499Text(recutAcceptance489(from, reason, base.acceptance)) : recutAcceptance489(from, reason, base.acceptance),
     brief,
   })];
 }));

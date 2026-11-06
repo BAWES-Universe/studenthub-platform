@@ -5351,7 +5351,11 @@
         "apps/gateway/test/profile-edit-http.test.ts",
         "packages/db/test/postgres-bank-details.test.ts",
         "apps/gateway/test/db-subpaths.test.ts",
-        "apps/gateway/test/db-subpaths-mutations.mjs"
+        "apps/gateway/test/db-subpaths-mutations.mjs",
+        "apps/gateway/src/admin-outbox.ts",
+        "apps/gateway/test/admin-outbox.test.ts",
+        "apps/gateway/src/notifications-http.ts",
+        "apps/gateway/test/notifications-http.test.ts"
       ],
       "revision_paths": [
         "packages/db/package.json",
@@ -5386,7 +5390,11 @@
         "apps/gateway/test/profile-edit-http.test.ts",
         "packages/db/test/postgres-bank-details.test.ts",
         "apps/gateway/test/db-subpaths.test.ts",
-        "apps/gateway/test/db-subpaths-mutations.mjs"
+        "apps/gateway/test/db-subpaths-mutations.mjs",
+        "apps/gateway/src/admin-outbox.ts",
+        "apps/gateway/test/admin-outbox.test.ts",
+        "apps/gateway/src/notifications-http.ts",
+        "apps/gateway/test/notifications-http.test.ts"
       ],
       "after": [
         "SHU-498",
