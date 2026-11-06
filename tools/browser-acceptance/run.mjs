@@ -441,17 +441,48 @@ async function bfcacheBack(page,observer,originalDocument) {
       finalHttpStatus:network.status,...(notRestored?{notRestored}:{}),lifecycleAndNetwork:observer.events}};
 }
 async function verifyBfcacheLaunch(chromium,expected) {
-  const commandLine=async launched=>{
+  const commandLine=async (launched,stages)=>{
+    setupStage=stages.discover;
+    check(process.platform==='linux','Exact launch verification requires the hosted Linux process filesystem');
     const session=await launched.newBrowserCDPSession();
-    try { return (await session.send('Browser.getBrowserCommandLine')).arguments; }
-    finally { await session.detach(); }
+    try {
+      const browserPid=async()=>{
+        const {processInfo}=await session.send('SystemInfo.getProcessInfo');
+        check(Array.isArray(processInfo),'Browser process discovery returns a process list');
+        const matches=processInfo.filter(info=>info?.type==='browser');
+        check(matches.length===1 && Number.isSafeInteger(matches[0].id) && matches[0].id>0,
+          'Browser-target discovery identifies exactly one positive integer browser PID');
+        return matches[0].id;
+      };
+      // Browser.getBrowserCommandLine requires --enable-automation, which the
+      // pinned defaults omit. Read only the PID identified by this launched
+      // browser's own CDP target, then confirm it is still the same live browser.
+      const pid=await browserPid();
+      setupStage=stages.read;
+      const bytes=await readFile(`/proc/${pid}/cmdline`);
+      setupStage=stages.parse;
+      check(bytes.length>1 && bytes.at(-1)===0,'Browser process argv is nonempty and NUL-terminated');
+      const content=bytes.subarray(0,-1), decoded=content.toString('utf8');
+      check(Buffer.from(decoded,'utf8').equals(content),'Browser process argv is valid UTF-8');
+      const args=decoded.split('\0');
+      check(args.every(arg=>arg.length>0),'Browser process argv contains an executable and no empty arguments');
+      setupStage=stages.recheck;
+      check(await browserPid()===pid,'Browser-target process identity remains unchanged during argv read');
+      return args;
+    } finally { await session.detach(); }
   };
-  const baseline=await commandLine(browser);
+  const baseline=await commandLine(browser,{discover:'discover-default-browser-process',read:'read-default-browser-argv',
+    parse:'parse-default-browser-argv',recheck:'recheck-default-browser-process'});
+  setupStage='check-default-bfcache-flag';
   check(baseline.includes('--disable-back-forward-cache'),'Original Chromium launch explicitly disables BFCache');
+  setupStage='launch-isolated-bfcache-chromium';
   bfcacheBrowser=await chromium.launch({headless:true,channel:'chromium',ignoreDefaultArgs:['--disable-back-forward-cache']});
+  setupStage='verify-isolated-bfcache-version';
   evidence.bfcacheChromiumVersion=bfcacheBrowser.version();
   assert.equal(evidence.bfcacheChromiumVersion,expected.browserVersion,'BFCache Chromium matches the unchanged pinned manifest');
-  const actual=await commandLine(bfcacheBrowser);
+  const actual=await commandLine(bfcacheBrowser,{discover:'discover-isolated-browser-process',read:'read-isolated-browser-argv',
+    parse:'parse-isolated-browser-argv',recheck:'recheck-isolated-browser-process'});
+  setupStage='compare-isolated-bfcache-launch';
   // The unchanged baseline already selects channel:'chromium', not the default
   // headless-shell. Keep argv[0] in the comparison to verify the same executable.
   const normalize=args=>args.filter(arg=>!arg.startsWith('--user-data-dir='));
@@ -1228,6 +1259,7 @@ try {
   // default launch remain unchanged. A network-only Back cannot pass these.
   setupStage='launch-isolated-bfcache-chromium';
   await verifyBfcacheLaunch(chromium,expected);
+  setupStage='run-isolated-bfcache-cases';
   for(const language of ['en','ar']) for(const scenario of bfcacheScenarios) {
     const name=`bfcache-language-${scenario}-${language}`;
     await run(name,async()=>{
