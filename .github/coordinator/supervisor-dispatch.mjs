@@ -27,11 +27,11 @@ export function supervisorOrder(receipt, options = {}) {
   };
 }
 
-// Reserved codes are the coordinator's own live-head findings; they set the stop
-// reason, so a carried adapter result can never supply them.
 // Adapter results that ran nothing and may simply be launched again.
 const RETRYABLE_RESULT_CODES = new Set(["REVIEW_SANDBOX_BUSY"]);
 
+// Reserved codes are the coordinator's own live-head findings; they set the stop
+// reason, so a carried adapter result can never supply them.
 function carriedReasonCode(result) {
   const code = result?.reason_code;
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,63}$/.test(code) && !code.startsWith("LIVE_HEAD_") ? code : null;

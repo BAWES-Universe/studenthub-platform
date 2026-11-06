@@ -181,6 +181,63 @@ test("SHU-303 E1: a review-only verdict is final: PASS and BLOCKED both end the 
   assert.equal(fresh.ended, false, "an unstarted review is not spent");
 });
 
+test("review-only: a busy reviewer sandbox ran nothing, so the run stays open for the same review until the failure cap", () => {
+  const scope = { episode_id: "shu303-review-run-0001", supersedes: new Set() };
+  const busy = (n) => ({ ...reviewReceipt({ stage: "FAILED", verdict: null, attempt: `33333333-3333-4333-8333-33333333331${n}` }),
+    error_code: "REVIEW_SANDBOX_BUSY", adapter_status: "failed" });
+  const once = episodeVerdict({ receipts: [busy(1)], targetIssueId: DESK, config: SCOPED, episodeScope: scope, bootstrapReviewer: { lane: "codex-verifier" } });
+  assert.equal(once.ended, false, once.reason);
+  assert.equal(once.successor, undefined, "the relaunch is the run's own first step again, not a routed successor");
+  assert.equal(statusOf(record(), { receipts: [busy(1)] }).state, "armed", "the activation stays armed for the relaunch");
+
+  const capped = episodeVerdict({ receipts: [busy(1), busy(2), busy(3)], targetIssueId: DESK, config: SCOPED, episodeScope: scope });
+  assert.equal(capped.ended, true);
+  assert.match(capped.reason, /^retryable failures exhausted \(3\/3\)$/);
+
+  // A review that ran and answered FAILED is still final.
+  const answered = episodeVerdict({ receipts: [busy(1), reviewReceipt({ verdict: "FAILED" })], targetIssueId: DESK, config: SCOPED, episodeScope: scope });
+  assert.equal(answered.ended, true);
+  assert.match(answered.reason, /^review-only run ended FAILED at a{40} without a review verdict$/);
+});
+
+test("review-only: a busy reviewer sandbox relaunches the same review at the same head, and its receipt names why", async () => {
+  const { createEpisodeHarness } = await import("./fixture/episode-harness.mjs");
+  const h = createEpisodeHarness({ issueId: DESK, authorizationRef: DESK, reviewerLane: "codex-verifier", githubToken: "tok",
+    activationId: "shu303-review-run-0007", reviewOnly: { pr: 240, baseSha: BASE, authorFamily: "claude" },
+    configOverrides: { fixture_lane: undefined, review_lanes: CONFIG.review_lanes } });
+  h.adapters["codex-cli"].monitorRun = async () => ({ stage: "FAILED", error_code: "REVIEW_SANDBOX_BUSY", worker_identity: "codex-cli:session-busy" });
+  try {
+    const first = await h.runTick();
+    assert.equal(h.launched.length, 1, first.text);
+    const folded = await h.runTick();
+    const failed = h.receiptFor(h.launched[0].attempt_id);
+    assert.equal(failed.stage, "FAILED", folded.text);
+    assert.equal(failed.error_code, "REVIEW_SANDBOX_BUSY", "the receipt carries the code, not only a note");
+    assert.equal(failed.verdict_stage, undefined, "a run that never started records no verdict");
+
+    const again = await h.runTick();
+    assert.equal(again.code, 0, again.text);
+    assert.equal(h.launched.length, 2, again.text);
+    const [busy, retry] = h.launched;
+    assert.notEqual(retry.attempt_id, busy.attempt_id, "a new attempt");
+    for (const key of ["lane", "target_sha", "branch", "review_base_sha", "workspace_scope", "scope_phase"]) {
+      assert.equal(retry[key], busy[key], `the relaunch keeps ${key}`);
+    }
+    assert.equal(retry.target_sha, h.record.initial_target_sha);
+    assert.equal(h.incidentIssues.size, 0, "a busy sandbox files no incident card");
+
+    // Bounded: the third busy failure spends the run and nothing launches after it.
+    await h.runTick(); await h.runTick(); await h.runTick();
+    assert.equal(h.launched.length, 3);
+    assert.equal(h.receipts().filter((r) => r.stage === "FAILED").length, 3);
+    const spent = await h.runTick();
+    assert.equal(spent.code, 2, spent.text);
+    assert.match(spent.text, /activation is spent: the episode for SHU-304 ended — retryable failures exhausted \(3\/3\)/);
+    assert.equal(h.launched.length, 3, "no fourth review");
+    assert.equal(h.receipts().filter((r) => r.requested_worker !== "codex-verifier").length, 0, "no writer receipt is ever written");
+  } finally { h.cleanup(); }
+});
+
 test("SHU-303 E3: a malformed review_lanes is a named stop: in the episode, the activation and a whole tick", async () => {
   const broken = { ...SCOPED, review_lanes: "SHU-304" };
   const scope = { episode_id: "shu303-review-run-0001", supersedes: new Set() };
