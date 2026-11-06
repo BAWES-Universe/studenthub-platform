@@ -301,7 +301,25 @@ export class SupervisorStore {
         const owner = readJson(claim).attempt_id;
         if (owner === order.attempt_id) break;
         try {
-          const run = this.readRun(owner);
+          let run = this.readRun(owner);
+          // The worker wrapper writes its bound completion itself, so it can
+          // land while this daemon never sees the child exit (a restart that
+          // adopted the child by probe only). Such a run record still reads
+          // "running" although the attempt has finished; settle it from the
+          // validated completion exactly as recover() would, instead of holding
+          // the branch for good. A held run stays held.
+          if (!["completed", "failed", "hold"].includes(run.status) && this.hasCompletion(owner)) {
+            const validated = this.validatedCompletion(owner);
+            if (validated.ok) {
+              run = this.writeRun(owner, {
+                ...run,
+                ...validated.completion,
+                output_bytes: Math.max(run.output_bytes ?? 0, validated.completion.output_bytes ?? 0),
+                completion_durable: true,
+                recovered_at: now,
+              });
+            }
+          }
           if (!["completed", "failed"].includes(run.status) || !this.validatedCompletion(owner).ok) {
             this.holdIntent(order, 'BRANCH_OCCUPIED');
             return { ok: false, stage: "HOLD", hold_code: 'BRANCH_OCCUPIED', reason: "branch already owned by an unfinished attempt" };
