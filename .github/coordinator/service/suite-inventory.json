@@ -3492,6 +3492,7 @@
     "child completion is durable and remains terminal after restart",
     "worker-owned completion survives daemon failure before its exit event is captured",
     "a finished attempt whose exit was never seen does not hold its branch from the next attempt",
+    "an attempt with an unknown run status and a completion still holds its branch",
     "a held attempt with a completion still holds its branch",
     "unknown liveness HOLD retains scheduler capacity",
     "forged or stale-head worker completion cannot become terminal",
@@ -27116,6 +27117,14 @@
     },
     {
       "name": "a finished attempt whose exit was never seen does not hold its branch from the next attempt",
+      "capabilities": [
+        {
+          "name": "unix_socket"
+        }
+      ]
+    },
+    {
+      "name": "an attempt with an unknown run status and a completion still holds its branch",
       "capabilities": [
         {
           "name": "unix_socket"

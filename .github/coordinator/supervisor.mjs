@@ -307,11 +307,12 @@ export class SupervisorStore {
           // adopted the child by probe only). Such a run record still reads
           // "running" although the attempt has finished. Its validated
           // completion is the proof it finished, so it no longer holds the
-          // branch. Admission only reads: the run record is left to finish()
-          // or recover(), so no write here can replace a state the daemon
-          // set. A held run stays held.
+          // branch. Only "running" is released this way: a held run stays
+          // held, and any other or unknown status fails closed. Admission
+          // only reads: the run record is left to finish() or recover(), so
+          // no write here can replace a state the daemon set.
           const finished = ["completed", "failed"].includes(run.status)
-            || (run.status !== "hold" && this.hasCompletion(owner));
+            || (run.status === "running" && this.hasCompletion(owner));
           if (!finished || !this.validatedCompletion(owner).ok) {
             this.holdIntent(order, 'BRANCH_OCCUPIED');
             return { ok: false, stage: "HOLD", hold_code: 'BRANCH_OCCUPIED', reason: "branch already owned by an unfinished attempt" };
