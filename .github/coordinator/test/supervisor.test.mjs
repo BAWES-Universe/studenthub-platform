@@ -235,14 +235,14 @@ test("a finished attempt whose exit was never seen does not hold its branch from
     target_sha: contract.target_sha, exit_code: 1, signal: null, output_bytes: 7,
     finished_at: "2026-09-08T12:01:00.000Z",
   } }).ok, true);
-  assert.equal(first.instance.store.readRun(ATTEMPT).status, "running");
+  const before = first.instance.store.readRun(ATTEMPT);
+  assert.equal(before.status, "running");
 
   const third = order({ attempt_id: "44444444-2222-4333-8444-555555555555", role: "revise" });
   const { instance, schedules, children } = supervisor({ stateDir });
   const accepted = await instance.submit(signedSupervisorRequest(third, SECRET));
   assert.equal(accepted.stage, "ACCEPTED");
-  assert.equal(instance.store.readRun(ATTEMPT).status, "failed");
-  assert.equal(instance.store.readRun(ATTEMPT).completion_durable, true);
+  assert.deepEqual(instance.store.readRun(ATTEMPT), before, "admission never writes the owner's run record");
   await drain(schedules);
   assert.equal(children.length, 1, "the next attempt launches");
 });
@@ -253,11 +253,12 @@ test("a held attempt with a completion still holds its branch", async () => {
   const first = supervisor({ stateDir, spawnWorker: (_order, value) => { contract = value; return fakeChild(); } });
   await first.instance.submit(signedSupervisorRequest(order(), SECRET));
   await drain(first.schedules);
-  recordSupervisorCompletion({ stateDir, completion: {
+  assert.equal(recordSupervisorCompletion({ stateDir, completion: {
     attempt_id: contract.attempt_id, completion_token: contract.completion_token,
     target_sha: contract.target_sha, exit_code: 0, signal: null, output_bytes: 0,
     finished_at: "2026-09-08T12:01:00.000Z",
-  } });
+  } }).ok, true);
+  assert.equal(first.instance.store.validatedCompletion(ATTEMPT).ok, true);
   first.instance.store.writeRun(ATTEMPT, { ...first.instance.store.readRun(ATTEMPT), status: "hold", error_code: "DEADLINE" });
   const next = order({ attempt_id: "33333333-2222-4333-8444-555555555555", role: "revise" });
   const held = await supervisor({ stateDir }).instance.submit(signedSupervisorRequest(next, SECRET));
