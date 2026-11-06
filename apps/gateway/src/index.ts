@@ -199,8 +199,8 @@ export function createGatewayServer(
     if (await handleProfileBrowserEdit(request, response, login?.browserEdit, login?.web?.origin,
       (status, title, body, language) => writeHtml(response, status, pageDocument(title, body, language)))) return;
     if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
-      (status, title, body, language) => writeHtml(response, status,
-        status === 401 && language === "en" ? renderError(401, login) : pageDocument(title, body, language)),
+      (status, title, body, language, historyGuard) => writeHtml(response, status,
+        status === 401 && language === "en" ? renderError(401, login) : pageDocument(title, body, language, historyGuard), {}, historyGuard),
       async (sessionId) => {
         if (!sessionId || !login?.web) return undefined;
         const authorized = await login.profile({ sessionId });

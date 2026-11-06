@@ -16,7 +16,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml, pageDocument, WORKSPACE_HISTORY_JS } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
@@ -94,6 +94,64 @@ test("HTML negotiation is opt-in and preserves JSON defaults and preferences", (
   }
 });
 
+test("PAGE_DOCUMENT_HISTORY_OPT_IN keeps default documents script-free and pairs the explicit guard with CSP", () => {
+  for (const language of [undefined, "en", "ar"] as const) {
+    for (const historyGuard of [undefined, false, true]) {
+      const html = pageDocument("Review language", '<main id="main">Review</main>', language, historyGuard);
+      assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) ?? [],
+        historyGuard ? ['<script src="/assets/workspace-history.js" defer></script>'] : []);
+      assert.match(html, language === "ar" ? /<html lang="ar" dir="rtl">/
+        : language === "en" ? /<html lang="en" dir="ltr">/ : /<html lang="en">/);
+      let headers: Record<string, string> = {}, written = "";
+      const response = {
+        writeHead(status: number, value: Record<string, string>) { assert.equal(status, 200); headers = value; },
+        end(body: string) { written = body; },
+      } as unknown as ServerResponse;
+      writeHtml(response, 200, html, {}, historyGuard);
+      assert.equal(written, html);
+      assert.equal(headers["cache-control"], "no-store");
+      assert.equal(headers["content-security-policy"],
+        "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+          + (historyGuard ? "; script-src 'self'" : ""));
+    }
+  }
+});
+
+test("WORKSPACE_HISTORY_UNIT hides outgoing snapshots and reloads only persisted pageshow", () => {
+  // Synthetic callbacks test the unchanged script, not real browser BFCache use.
+  const listeners = new Map<string, (event: { persisted: boolean }) => void>();
+  const document = { documentElement: { hidden: false } };
+  const hiddenAtReload: boolean[] = [];
+  new Function("addEventListener", "document", "location", WORKSPACE_HISTORY_JS)(
+    (name: string, listener: (event: { persisted: boolean }) => void) => { listeners.set(name, listener); },
+    document, { reload() { hiddenAtReload.push(document.documentElement.hidden); } },
+  );
+  assert.deepEqual([...listeners.keys()], ["pagehide", "pageshow"]);
+  listeners.get("pageshow")!({ persisted: false });
+  assert.equal(document.documentElement.hidden, false); assert.deepEqual(hiddenAtReload, []);
+  for (const persisted of [false, true]) {
+    listeners.get("pagehide")!({ persisted });
+    assert.equal(document.documentElement.hidden, true, "every outgoing snapshot is concealed");
+    assert.deepEqual(hiddenAtReload, []);
+    listeners.get("pageshow")!({ persisted: false });
+    assert.equal(document.documentElement.hidden, false, "ordinary pageshow reveals without reloading");
+  }
+  listeners.get("pagehide")!({ persisted: true });
+  listeners.get("pageshow")!({ persisted: true });
+  assert.deepEqual(hiddenAtReload, [true], "restored snapshot stays hidden while a fresh request reloads");
+  assert.equal(document.documentElement.hidden, true);
+});
+
+test("WORKSPACE_HISTORY_ASSET gateway serves the same unchanged script checked by the unit test", async (t) => {
+  const f = await fixture(t);
+  const response = await fetch(`${f.url}/assets/workspace-history.js`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/javascript; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(await response.text(), WORKSPACE_HISTORY_JS);
+});
+
 test("landing is public HTML with an exact configured login link and no profile reads", async (t) => {
   const f = await fixture(t);
   const response = await fetch(`${f.url}/?return_to=https://attacker.invalid`, {
@@ -148,7 +206,10 @@ test("private HTML is non-cacheable, has a restrictive CSP and loads no remote a
   assert.match(response.headers.get("content-security-policy")!, /default-src 'none'/);
   assert.match(response.headers.get("content-security-policy")!, /form-action 'self'/);
   assert.match(response.headers.get("content-security-policy")!, /frame-ancestors 'none'/);
-  assert.doesNotMatch(await response.text(), /(?:src|href)="https?:\/\//);
+  assert.doesNotMatch(response.headers.get("content-security-policy")!, /script-src/);
+  const document = await response.text();
+  assert.doesNotMatch(document, /(?:src|href)="https?:\/\//);
+  assert.doesNotMatch(document, /<script\b/i);
 });
 
 test("foreign person query, missing session and expired session never read private fields", async (t) => {

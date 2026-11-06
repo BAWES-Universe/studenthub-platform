@@ -260,7 +260,7 @@ export async function handleLanguagePreference(
 const FORM_PREVIEW = "/profile/language/preview";
 const FORM_CONFIRM = "/profile/language/confirm";
 const FORM_REVIEW = "/profile/language/review";
-export type LanguagePreferencePageWriter = (status: number, title: string, body: string, language: ProfileLanguage) => void;
+export type LanguagePreferencePageWriter = (status: number, title: string, body: string, language: ProfileLanguage, historyGuard?: boolean) => void;
 
 const ENGLISH_PAGE_COPY = {
   title: "Language preference",
@@ -381,7 +381,7 @@ export async function handleLanguagePreferencePage(
       // Language codes are a closed enum, not person-supplied display text.
       // Unknown values never become interface copy, HTML, or document metadata.
       const label = (value: string | undefined) => html(value === "en" ? copy.english : value === "ar" ? copy.arabic : copy.unavailable);
-      write(200, copy.reviewTitle, `<main id="main" class="profile-main"><h1>${html(copy.reviewHeading)}<span class="accent">.</span></h1><p>${html(copy.language)}: <strong>${label(before)}</strong> ${locale === "ar" ? "←" : "→"} <strong>${label(target)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(target)}">${hidden}<button class="button primary" type="submit">${html(copy.confirm)}</button></form><a class="text-link" href="/profile">${html(copy.cancel)}</a></main>`, locale);
+      write(200, copy.reviewTitle, `<main id="main" class="profile-main"><h1>${html(copy.reviewHeading)}<span class="accent">.</span></h1><p>${html(copy.language)}: <strong>${label(before)}</strong> ${locale === "ar" ? "←" : "→"} <strong>${label(target)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(target)}">${hidden}<button class="button primary" type="submit">${html(copy.confirm)}</button></form><a class="text-link" href="/profile">${html(copy.cancel)}</a></main>`, locale, true);
     } catch { if (!response.headersSent) pageError(write, 503, before ?? "en"); else response.destroy(); }
     return true;
   }

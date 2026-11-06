@@ -241,6 +241,18 @@ function assertArabicPage(document: string): void {
   assert.doesNotMatch(document, /SYNTHETIC-PRIVATE/);
 }
 
+function assertReviewHistoryGuard(response: Response, document: string, enabled: boolean): void {
+  const script = '<script src="/assets/workspace-history.js" defer></script>';
+  assert.deepEqual(document.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) ?? [], enabled ? [script] : [],
+    "LANGUAGE_REVIEW_HISTORY_GUARD only the approved external history script is allowed");
+  assert.equal((document.match(/<script\b/gi) ?? []).length, enabled ? 1 : 0);
+  assert.equal(response.headers.get("content-security-policy"),
+    "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+      + (enabled ? "; script-src 'self'" : ""),
+    "LANGUAGE_REVIEW_HISTORY_GUARD script and CSP opt in together without widening the global policy");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+}
+
 test("LANGUAGE_LOCALE_REVIEW gateway uses current authorized language, not target, query or headers", async (t) => {
   const x = await localizedGateway(t);
   for (const [account, target] of [["en", "ar"], ["ar", "en"]] as const) {
@@ -250,6 +262,7 @@ test("LANGUAGE_LOCALE_REVIEW gateway uses current authorized language, not targe
     });
     const document = await response.text();
     assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    assertReviewHistoryGuard(response, document, true);
     assert.match(response.headers.get("content-type")!, /text\/html/);
     assert.equal(localizedConfirmForm(document).get("language"), target);
     assert.match(document, /<form method="post" action="\/profile\/language\/confirm">/);
@@ -284,6 +297,7 @@ test("LANGUAGE_LOCALE_ERRORS malformed forms, invalid values and ownership refus
     const response = await x.post("ar", body!, { path });
     const document = await response.text();
     assert.equal(response.status, 400); assertArabicPage(document);
+    assertReviewHistoryGuard(response, document, false);
     assert.match(document, /لم يتم تغيير لغتك\./); assert.match(document, /لم يعد هذا التغيير متاحًا\./);
     assert.match(document, /href="\/profile">العودة إلى ملفي الشخصي<\/a>/);
     assert.doesNotMatch(document, /<form|name="token\./);
@@ -302,6 +316,7 @@ test("LANGUAGE_LOCALE_CONFLICT real stale token stays Arabic and a successful co
   const stale = await x.post("ar", form, { path: "/profile/language/confirm" });
   const document = await stale.text();
   assert.equal(stale.status, 409); assertArabicPage(document);
+  assertReviewHistoryGuard(stale, document, false);
   assert.match(document, /تغيّر ملفك الشخصي أثناء المراجعة\. افتحه مجددًا وأعد المحاولة\./);
   assert.equal(x.values.get(LOCALIZED_ACCOUNTS.ar.personId), "ar");
   const current = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
@@ -317,6 +332,7 @@ test("LANGUAGE_LOCALE_UNAVAILABLE trusted Arabic covers missing service, depende
   const missing = await x.post("ar", "language=en");
   const missingDocument = await missing.text();
   assert.equal(missing.status, 503); assertArabicPage(missingDocument);
+  assertReviewHistoryGuard(missing, missingDocument, false);
   assert.match(missingDocument, /خدمة الملف الشخصي غير متاحة\. يرجى المحاولة مجددًا بعد قليل\./);
   x.app.preferences = { ...x.service, preview: async () => { throw Error("SYNTHETIC-PRIVATE-SERVICE-FAILURE"); } };
   const failed = await x.getReview("ar");
@@ -327,6 +343,7 @@ test("LANGUAGE_LOCALE_UNAVAILABLE trusted Arabic covers missing service, depende
   const unconfirmed = await x.post("ar", form, { path: "/profile/language/confirm" });
   const document = await unconfirmed.text();
   assert.equal(unconfirmed.status, 503); assertArabicPage(document);
+  assertReviewHistoryGuard(unconfirmed, document, false);
   assert.match(document, /لم يتم تأكيد تغيير اللغة\./);
   assert.match(document, /تعذّر التأكد مما إذا كانت لغتك قد تغيّرت\. افتح ملفك الشخصي للتحقق قبل المحاولة مجددًا\./);
   assert.doesNotMatch(document, /لم يتم تغيير لغتك/);
@@ -385,6 +402,7 @@ test("LANGUAGE_LOCALE_FALLBACK unknown locale uses English while a failed succes
   const unknown = await x.review("unknown", "language=ar", { headers: { "accept-language": "ar" } });
   const unknownDocument = await unknown.text();
   assert.equal(unknown.status, 200); assert.match(unknownDocument, /<html lang="en" dir="ltr">/);
+  assertReviewHistoryGuard(unknown, unknownDocument, true);
   assert.match(unknownDocument, /Language: <strong>Unavailable<\/strong> → <strong>Arabic<\/strong>/);
   assert.doesNotMatch(unknownDocument, /unsupported-locale/);
   const form = localizedConfirmForm(await (await x.review("ar", "language=en")).text());
@@ -445,6 +463,7 @@ test("LANGUAGE_LOCALE_ESCAPE hidden token and form values remain escaped without
   const response = await x.getReview("ar");
   const document = await response.text();
   assert.equal(response.status, 200); assertArabicPage(document);
+  assertReviewHistoryGuard(response, document, true);
   assert.match(document, /اللغة: <strong>العربية<\/strong> ← <strong>الإنجليزية<\/strong>/);
   assert.doesNotMatch(document, /<script>|<img|value="">/);
   assert.match(document, /&quot;&gt;&lt;script&gt;syntheticToken\(\)&lt;\/script&gt;&amp;&#39;/);
@@ -582,10 +601,11 @@ test("LANGUAGE_HISTORY_POST_REDIRECT native Preview has no inline token and fres
   const displayed = localizedConfirmForm(freshDocument);
   assert.notEqual(displayed.get("token.tokenId"), original.get("token.tokenId"), "GET revalidates rather than restoring the original token");
   assert.equal(previews, 2); assert.equal(x.controls.commits, 0);
-  for (const document of [firstDocument, freshDocument]) {
+  for (const [response, document] of [[first, firstDocument], [fresh, freshDocument]] as const) {
     assertArabicPage(document);
     assert.doesNotMatch(document, /(?:href|action)="[^"]*(?:token|mac|principalRef|changeSetDigest)/i);
-    assert.doesNotMatch(document, /localStorage|sessionStorage|indexedDB|serviceWorker|<script/i);
+    assert.doesNotMatch(document, /localStorage|sessionStorage|indexedDB|serviceWorker/i);
+    assertReviewHistoryGuard(response, document, true);
   }
   for (const response of [redirect, first, fresh]) {
     assert.equal(response.headers.get("set-cookie"), null);
@@ -602,6 +622,7 @@ test("LANGUAGE_HISTORY_QUERY invalid Review URLs refuse generically without echo
     const response = await x.getReview("ar", query);
     const document = await response.text();
     assert.equal(response.status, 400, query); assert.equal(response.headers.get("cache-control"), "no-store");
+    assertReviewHistoryGuard(response, document, false);
     assertArabicPage(document); assert.match(document, /لم يتم تغيير لغتك\./);
     assert.doesNotMatch(document, /<form|name="token\.|<script>|SYNTHETIC-PRIVATE|language=|token\.mac/);
     assert.equal(response.headers.get("location"), null);
@@ -616,6 +637,7 @@ test("LANGUAGE_HISTORY_SESSION restored Review reauthenticates and never reuses 
   for (const account of [undefined, "ar"] as const) {
     const response = await x.getReview(account), document = await response.text();
     assert.equal(response.status, 401); assert.match(document, /Sign in/);
+    assertReviewHistoryGuard(response, document, false);
     assert.doesNotMatch(document, /name="token\.|SYNTHETIC-PRIVATE|العربية/);
   }
   const crossSession = await x.post("en", old, { path: "/profile/language/confirm" });
@@ -628,6 +650,7 @@ test("LANGUAGE_HISTORY_NO_CHANGE current target has existing not-changed copy wi
   for (const account of ["ar", "en"] as const) {
     const response = await x.getReview(account, `language=${account}`), document = await response.text();
     assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    assertReviewHistoryGuard(response, document, false);
     assert.match(document, account === "ar" ? /لم يتم تغيير لغتك\./ : /Your language wasn’t changed/);
     assert.doesNotMatch(document, /<form|name="token\.|Confirm change|تأكيد التغيير/);
   }
@@ -658,14 +681,18 @@ test("LANGUAGE_HISTORY_OLD_TOKEN fresh GET does not revoke earlier valid tokens 
 test("LANGUAGE_HISTORY_GET_BOUNDARY review works without form Content-Type or Origin and preserves dependency refusals", async (t) => {
   const x = await localizedGateway(t);
   const response = await x.getReview("ar", "language=en", { "accept-language": "en", "x-locale": "en", "content-type": "application/json" });
-  assert.equal(response.status, 200); assertArabicPage(await response.text());
+  const document = await response.text();
+  assert.equal(response.status, 200); assertArabicPage(document); assertReviewHistoryGuard(response, document, true);
   x.controls.denyWrite = true;
-  assert.equal((await x.getReview("ar")).status, 403);
+  const denied = await x.getReview("ar"); assert.equal(denied.status, 403);
+  assertReviewHistoryGuard(denied, await denied.text(), false);
   x.controls.denyWrite = false; x.controls.failRead = true;
   const failed = await x.getReview("ar"); assert.equal(failed.status, 503);
-  assert.doesNotMatch(await failed.text(), /SYNTHETIC-PRIVATE|name="token\./);
+  const failedDocument = await failed.text();
+  assert.doesNotMatch(failedDocument, /SYNTHETIC-PRIVATE|name="token\./); assertReviewHistoryGuard(failed, failedDocument, false);
   x.controls.failRead = false; x.app.preferences = undefined;
-  const missing = await x.getReview("ar"); assert.equal(missing.status, 503); assertArabicPage(await missing.text());
+  const missing = await x.getReview("ar"), missingDocument = await missing.text();
+  assert.equal(missing.status, 503); assertArabicPage(missingDocument); assertReviewHistoryGuard(missing, missingDocument, false);
   assert.equal(x.controls.commits, 0);
 });
 
@@ -699,6 +726,48 @@ test("LANGUAGE_HISTORY_INLINE_200_MUTANT dies at the native Preview redirect ass
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("LANGUAGE_REVIEW_HISTORY_GUARD_MUTANT removing the actionable Review opt-in is caught", () => {
+  const sourcePath = new URL("../src/language-preference.js", import.meta.url);
+  const original = readFileSync(sourcePath, "utf8");
+  const from = "`, locale, true);", to = "`, locale);";
+  assert.equal(original.split(from).length, 2, "exactly one actionable Review history guard mutation site");
+  const dir = mkdtempSync(join(dirname(fileURLToPath(sourcePath)), "language-review-history-mutant-"));
+  try {
+    const modulePath = join(dir, "language-preference.mjs");
+    const script = `import assert from 'node:assert/strict';
+      import { Readable } from 'node:stream';
+      import { createLanguagePreference, handleLanguagePreferencePage } from ${JSON.stringify(pathToFileURL(modulePath).href)};
+      import { pageDocument, writeHtml } from ${JSON.stringify(new URL("../src/web-ui.js", import.meta.url).href)};
+      import { personRecordRef } from '@studenthub/db';
+      const session='a'.repeat(43), personId='synthetic-review-history-person';
+      const service=createLanguagePreference({
+        sessions:{get:async(id)=>id===session?{id,personId}:undefined},
+        store:{forPrincipal:()=>({ownedRecord:()=>personRecordRef(personId),readField:()=>null,commit:()=>{throw Error('unexpected write');}}),readReceipt:async()=>null},
+        secret:'synthetic-review-history-secret-at-least-32-bytes',
+      });
+      const request=Readable.from([]);
+      request.url='/profile/language/review?language=en'; request.method='GET';
+      request.headers={cookie:'__Host-studenthub_session='+session};
+      let status=0, headers={}, document='';
+      const response={writeHead(code,value){status=code;headers=value;},end(value){document=value;},setHeader(){}};
+      assert.equal(await handleLanguagePreferencePage(request,response,service,'https://studenthub.invalid',
+        (code,title,body,language,historyGuard)=>writeHtml(response,code,pageDocument(title,body,language,historyGuard),{},historyGuard),async()=> 'ar'),true);
+      assert.equal(status,200); assert.match(document,/<form method="post" action="\\/profile\\/language\\/confirm">/);
+      assert.equal(headers['cache-control'],'no-store');
+      assert.ok(document.includes('<script src="/assets/workspace-history.js" defer></script>'),
+        'LANGUAGE_REVIEW_HISTORY_GUARD_MUTANT actionable Review must load the external guard');
+      assert.match(headers['content-security-policy'],/; script-src 'self'$/);`;
+    const run = () => spawnSync(process.execPath, ["--input-type=module", "--eval", script], { encoding: "utf8", timeout: 10_000 });
+    writeFileSync(modulePath, original);
+    const baseline = run(); assert.equal(baseline.error, undefined); assert.equal(baseline.status, 0, baseline.stderr);
+    writeFileSync(modulePath, original.replace(from, to));
+    const mutant = run(); assert.equal(mutant.error, undefined); assert.equal(mutant.status, 1, mutant.stderr);
+    assert.match(mutant.stderr, /AssertionError/);
+    assert.match(mutant.stderr, /LANGUAGE_REVIEW_HISTORY_GUARD_MUTANT actionable Review must load the external guard/);
+    assert.doesNotMatch(mutant.stderr, /SyntaxError|ERR_MODULE_NOT_FOUND/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 
 test("LANGUAGE_HISTORY_LOOKUP_PRECEDENCE failed display lookup cannot mask malformed query or service refusal", async (t) => {
   const x = await localizedGateway(t);
@@ -713,6 +782,7 @@ test("LANGUAGE_HISTORY_LOOKUP_PRECEDENCE failed display lookup cannot mask malfo
     x.app.preferences = { ...x.service, preview: async () => ({ status, body: { error: "SYNTHETIC-PRIVATE-ERROR" } }) };
     const response = await x.getReview("ar"), document = await response.text();
     assert.equal(response.status, status, "fresh GET preserves the authoritative service refusal");
+    assertReviewHistoryGuard(response, document, false);
     assert.match(document, /<html lang="en"(?: dir="ltr")?>/);
     assert.doesNotMatch(document, /SYNTHETIC-PRIVATE|name="token\./);
   }

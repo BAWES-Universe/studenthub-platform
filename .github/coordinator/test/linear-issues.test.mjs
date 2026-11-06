@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
 import {
   bindClaimingPullRequests,
@@ -16,6 +17,8 @@ import {
   normalizeLinearIssue,
   pullRequestClaimsIssue,
   resolveRepositoryOwnership,
+  sendLinear,
+  LINEAR_READ_RETRY_DELAYS_MS,
 } from "../reconcile.mjs";
 
 function issue(number) {
@@ -47,6 +50,8 @@ test("SHU-63: the live Linear query uses the supported team filter and requests 
   assert.equal(LINEAR_ISSUE_COMMENT_PAGE, 50);
   assert.ok(LINEAR_ISSUE_PAGE * LINEAR_ISSUE_COMMENT_PAGE <= 100 * 50, "a board read that Linear refuses reads nothing at all");
   assert.match(LINEAR_ISSUES_QUERY, /pageInfo \{ hasNextPage endCursor \}/);
+  // Velocity A2: Done cards, like canceled ones, cost the tick nothing.
+  assert.match(LINEAR_ISSUES_QUERY, /state: \{ type: \{ nin: \["canceled", "completed"\] \} \}/);
 });
 
 test("SHU-63: fetchLinearIssues follows every Linear page and preserves order", async () => {
@@ -373,5 +378,44 @@ test("LINEAR READ: a repeated or missing comment cursor fails closed instead of 
     }) });
     await assert.rejects(fetchIssueComments({ issueId: "SHU-140", token: "t", fetchImpl }),
       (error) => error.code === "LINEAR_PAGINATION_INVALID");
+  }
+});
+
+test("Velocity: a board read answered with a 5xx is asked again twice at most, and a write never", async () => {
+  const answers = (statuses) => {
+    const calls = [];
+    const cancelled = [];
+    const fetchImpl = async (_url, options) => {
+      calls.push(JSON.parse(options.body).query);
+      const status = statuses.shift() ?? 200;
+      return { ok: status < 300, status, headers: { get: () => null }, body: { cancel: async () => { cancelled.push(status); } },
+        json: async () => (status < 300 ? { data: { ok: true } } : null) };
+    };
+    return { calls, cancelled, fetchImpl };
+  };
+  const slept = [];
+  const sleep = async (ms) => { slept.push(ms); };
+  const read = "query Board { viewer { id } }";
+  const once = answers([503]);
+  assert.deepEqual(await sendLinear(read, {}, "key", once.fetchImpl, { retryServerErrors: true, sleep }), { ok: true }, "one 503 is retried");
+  assert.equal(once.calls.length, 2);
+  assert.deepEqual(once.cancelled, [503], "the failed answer's body is let go before asking again");
+  assert.deepEqual(slept, [LINEAR_READ_RETRY_DELAYS_MS[0]]);
+  const down = answers([503, 502, 500]);
+  await assert.rejects(() => sendLinear(read, {}, "key", down.fetchImpl, { retryServerErrors: true, sleep }), /Linear HTTP 500/);
+  assert.equal(down.calls.length, 3, "three tries, then the read fails");
+  const client = answers([400]);
+  await assert.rejects(() => sendLinear(read, {}, "key", client.fetchImpl, { retryServerErrors: true, sleep }), /Linear HTTP 400/);
+  assert.equal(client.calls.length, 1, "a 4xx is not retried");
+  const write = answers([503]);
+  await assert.rejects(() => sendLinear("mutation Post { commentCreate(input: {}) { success } }", {}, "key", write.fetchImpl, { retryServerErrors: true, sleep }), /Linear HTTP 503/);
+  assert.equal(write.calls.length, 1, "a write is never repeated");
+  const plain = answers([503]);
+  await assert.rejects(() => sendLinear(read, {}, "key", plain.fetchImpl, { sleep }), /Linear HTTP 503/);
+  assert.equal(plain.calls.length, 1, "other reads keep their own retry rules");
+  // The board reads ask for it.
+  const source = fs.readFileSync(new URL("../reconcile.mjs", import.meta.url), "utf8");
+  for (const name of ["LINEAR_ISSUES_QUERY", "LINEAR_ISSUE_COMMENTS_QUERY", "LINEAR_ISSUE_COMMENTS_PAGE_QUERY"]) {
+    assert.match(source, new RegExp(`sendLinear\\(${name}, [^\\n]*\\{ retryServerErrors: true \\}\\)`), name);
   }
 });

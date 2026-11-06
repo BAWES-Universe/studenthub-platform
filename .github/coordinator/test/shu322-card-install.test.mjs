@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   selfInstallGate, selfInstall, installablePath, contractEntries, reviewPasses, installClaim, renderInstallReport,
   CONFIG_PATH, CONTRACTS_PATH, CONTRACTS_SOURCE_PATH, INVENTORY_PATH, PROVISIONER, CARD_RUN,
-  readApproval, ownerOnlyPath, codeInstallPolicy, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
+  readApproval, ownerOnlyPath, codeInstallPolicy, workersSetting, carryClaims, revisionClaim, OWNER_ONLY_PATHS, ROOT_INSTALL_TOOLS, contractChangeRefusal, RUNTIME_TEST_MODULES,
   INSTALL_LOCK,
   INSTALL_LOCK_KEPT,
 } from "../service/card-install.mjs";
@@ -912,6 +912,95 @@ test("M11 C2: the paths that install or check everything else as root, and the p
   const deleted = selfInstallGate(codeFacts(REVIEW_POLICY, (f) => ({ ...f, changes: [{ status: "D", path: CODE_PATH }] })));
   assert.ok(refused(deleted));
   assert.match(deleted.reason, /deleted/);
+});
+
+test("Velocity A2: with code self-install on, a reviewed config may raise workers.max, as a plain { max: N } up to the ceiling, and nothing else", () => {
+  const raise = (workers, policy = { approval: "none" }) => selfInstallGate(codeFacts(policy, (f) => ({ ...f,
+    configs: { ...f.configs, main: JSON.stringify({ ...withPolicy(policy), workers }) }, changes: [{ status: "M", path: CONFIG_PATH }],
+    blobs: { [CONFIG_PATH]: "9".repeat(40) }, passes: [{ ...f.passes[0], files: { [CONFIG_PATH]: { sha: "9".repeat(40) } } }] })));
+  const four = raise({ max: 4 });
+  assert.equal(four.ok, true, JSON.stringify(four));
+  assert.equal(raise({ max: 8 }).ok, true);
+  for (const workers of [{ max: 9 }, { max: 0 }, { max: 2.5 }, { max: "4" }, { max: 4, extra: true }, [4], null]) {
+    const gate = raise(workers);
+    assert.ok(refused(gate), JSON.stringify(workers));
+    assert.match(gate.reason, /config\.json changes workers/, JSON.stringify(workers));
+  }
+  assert.equal(raise({ max: 4 }, null).quiet, true, "with the policy off, a workers change is nothing to self-install");
+  assert.equal(workersSetting({ max: 1 }), true);
+  assert.equal(workersSetting({ max: 9 }), false);
+  assert.equal(workersSetting({}), false);
+});
+
+// Velocity A3: main appends cards to the installed queue, in order.
+const PRIOR = QUEUE_ONLY.dispatch_scope.issue_ids;
+const appended = () => nextConfig((config) => ({ ...config, dispatch_scope: { issue_ids: [...PRIOR, ...NEW_IDS] } }));
+test("Velocity A3: a queue that keeps the installed dispatch_scope and appends cards installs even when installed cards landed", () => {
+  const append = (edit = (f) => f) => selfInstallGate(facts((f) => edit({ ...f, configs: { ...f.configs, main: JSON.stringify(appended()) } })));
+  assert.deepEqual(append(), { ok: true, queue: [...PRIOR, ...NEW_IDS], lanes: NEW_IDS, append: true });
+  assert.equal(append((f) => ({ ...f, landed: [PRIOR[0]] })).ok, true, "an installed card that landed stays in the appended queue");
+  assert.ok(refused(append((f) => ({ ...f, landed: [NEW_IDS[0]] }))), "an appended card that landed does not");
+  // Out of order, or missing an installed card, it is a re-cut as before: the first card is new.
+  const reordered = selfInstallGate(facts((f) => ({ ...f, configs: { ...f.configs,
+    main: JSON.stringify(nextConfig((c) => ({ ...c, dispatch_scope: { issue_ids: [...PRIOR].reverse().concat(NEW_IDS) } }))) } })));
+  assert.ok(refused(reordered));
+  assert.match(reordered.reason, /first in the new dispatch_scope, is not a newly appended card lane/);
+  assert.equal(selfInstallGate(facts()).append, undefined, "a new queue is not an appended one");
+});
+
+test("Velocity A3: an install main has ready holds new card starts until the host is idle, then installs and carries the installed claims over", async () => {
+  const host = fakeHost({ landedQueue: false, mainConfig: appended() });
+  const stopped = PRIOR.at(-1);
+  host.put(autoClaim(PATHS, R, stopped), JSON.stringify({ card: stopped, revision: R, outcome: "STOPPED", ok: false, land: null }), { mode: 0o600 });
+  // Another worker's run holds the host: no card starts, nothing installs.
+  const other = "/run/lock/shu-card-run-w2.lock";
+  host.put(other, "4343\n", { mode: 0o600 });
+  const held = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(held.skipped, "INSTALL_PENDING", JSON.stringify(held));
+  assert.match(held.reason, /card run lock held/);
+  assert.equal(host.files.has(autoClaim(PATHS, R, PRIOR[0])), false, "no card was claimed");
+  assert.equal(host.files.has(installClaim(PATHS, N)), false, "the install is given back for a later start");
+  // A run that released its run lock but is still posting its report (its
+  // claim has no outcome yet, its writer is alive) holds the install too, so
+  // the carry never copies a claim whose outcome is still to come.
+  host.files.delete(other);
+  const reporting = autoClaim(PATHS, R, PRIOR[1]);
+  host.put(reporting, JSON.stringify({ card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 5151 }), { mode: 0o600 });
+  host.put("/proc/5151", "");
+  const waits = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(waits.skipped, "INSTALL_PENDING", JSON.stringify(waits));
+  assert.match(waits.reason, /card run still reporting: .*card-run-auto-/);
+  assert.equal(host.files.has(installClaim(PATHS, N)), false, "the install is given back for a later start");
+  host.files.delete("/proc/5151");
+  host.files.delete(reporting);
+  // Idle: the start installs main and ends there. The stopped card's
+  // preparation is refused at N (its branch moved), and it does not run
+  // again, so the plan check does not ask it to pass.
+  host.files.delete(other);
+  const queue = [...PRIOR, ...NEW_IDS];
+  const prepare = { branch: { action: "create" }, card: { action: "move-to-todo" } };
+  host.plan = { id: PRIOR[0], queue, next: { id: PRIOR[0] }, busy: [], prepare,
+    queued: queue.map((id) => ({ id, prepare: id === stopped ? { refused: "CARD_RUN_BRANCH_DIVERGED", reason: "moved" } : prepare })) };
+  const out = await autoRun({ io: host.io, paths: PATHS });
+  assert.equal(out.outcome, "INSTALLED", JSON.stringify(out));
+  assert.deepEqual(out.steps, ["claim", "idle", "merge", "rollback", "install", "verify", "precondition", "carry", "plan"]);
+  assert.match(out.reason, /the first card of .* that has not landed/, "an appended queue does not name a card that may have landed");
+  const carried = JSON.parse(host.files.get(autoClaim(PATHS, N, stopped)).text);
+  assert.deepEqual(carried, { card: stopped, revision: R, outcome: "STOPPED", ok: false, land: null, carried_from: R });
+  assert.equal(host.files.has(autoClaim(PATHS, N, PRIOR[0])), false, "a card that never ran has nothing to carry");
+  // A claim already at N is left as it is.
+  host.put(autoClaim(PATHS, N, PRIOR[0]), "{\"card\":\"kept\"}", { mode: 0o600 });
+  host.put(autoClaim(PATHS, R, PRIOR[0]), "{\"card\":\"old\"}", { mode: 0o600 });
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, PRIOR), []);
+  assert.equal(host.files.get(autoClaim(PATHS, N, PRIOR[0])).text, "{\"card\":\"kept\"}");
+  assert.equal(revisionClaim(PATHS, R, "SHU-1"), autoClaim(PATHS, R, "SHU-1"), "the install names claims as card-run does");
+  // A claim with no outcome whose writer is gone (a run that died before its
+  // outcome was written) is carried as it is: the card stays stopped at N as
+  // it was at R, never run again.
+  const died = { card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 4242 };
+  host.put(autoClaim(PATHS, R, PRIOR[1]), JSON.stringify(died), { mode: 0o600 });
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [PRIOR[1]]), [PRIOR[1]]);
+  assert.deepEqual(JSON.parse(host.files.get(autoClaim(PATHS, N, PRIOR[1])).text), { ...died, carried_from: R });
 });
 
 test("M11 C7: every module the root install tools import, at any depth, is owner-only or installable", () => {

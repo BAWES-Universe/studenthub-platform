@@ -12,8 +12,10 @@ import { join } from 'node:path';
 import { createServer } from 'node:https';
 import pg from 'pg';
 import { createOrganization, createPrincipal } from '@studenthub/contracts';
-import { PostgresAuthzStore, PostgresLoginStore, PostgresPersonProfileStore, PostgresSafeWriteStore, runMigrations, readLiveLoginSessionPerson, safeWritePrincipalRef } from '@studenthub/db';
+import { PostgresCatalogueStore, PostgresProfileRecordStore, PostgresReferenceResolver, principalAuditRef, PostgresAuthzStore, PostgresLoginStore, PostgresPersonProfileStore, PostgresSafeWriteStore, runMigrations, readLiveLoginSessionPerson, safeWritePrincipalRef } from '@studenthub/db';
 import { InMemoryApprovedProfileAdapter, SYNTHETIC_PROFILE_FIXTURES, createPersonImportedFallbackReader } from '@studenthub/profile';
+import { ProfileRecords } from '@studenthub/profile-records';
+import { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import { createBrowserWriteTokens, BROWSER_WRITE_LIFETIME_MS } from '@studenthub/safe-write-contract';
 import { createRuntimeLoginFromEnv } from '../../dist/apps/gateway/src/login-runtime.js';
 import { createGatewayServer } from '../../dist/apps/gateway/src/index.js';
@@ -137,6 +139,12 @@ export async function createFixture({
   cleanups.push(() => runtime.close());
   const application = runtime.application, normalEditor = application.browserEdit;
   const normalPreferences = application.preferences;
+  const recordsService = new ProfileRecords(new PostgresProfileRecordStore(pool), new PostgresReferenceResolver(pool));
+  const recordsCatalogue = new ReferenceCatalogue(new PostgresCatalogueStore(pool));
+  const recordsRuntime = { service: recordsService, sessions: sessions.sessions, origin: baseURL,
+    options: async type => (await recordsCatalogue.list(type, { pageSize: 100 })).items.map(({ id, name }) => ({ id, name })),
+  };
+  let recordsOverride = false;
   let languageOverride = false;
   gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null);
   const tokens = createBrowserWriteTokens({ activeKeyVersion: 'profile-browser-key-v1', keys: { 'profile-browser-key-v1': secret } });
@@ -211,6 +219,34 @@ export async function createFixture({
   }
   return {
     baseURL, countries, evidence,
+    useBackgroundRecords() {
+      assert(!recordsOverride, 'Restore the previous records hook first');
+      recordsOverride = true;
+      gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null, undefined, undefined, undefined, recordsRuntime);
+      let restored = false;
+      return () => {
+        if (restored) return;
+        restored = true; recordsOverride = false;
+        gateway = createGatewayServer(undefined, undefined, undefined, application, sourceRevision ?? null);
+      };
+    },
+    async seedBackgroundSkill(actor, name) {
+      assert(actors.has(actor.id), 'Unknown synthetic actor');
+      assert(recordsOverride, 'Records fixture must be explicitly enabled');
+      assert.equal((await recordsService.background(actor.id)).skill.length, 0, 'Seed only one initial synthetic skill');
+      await recordsService.create(actor.id, 'skill', { name });
+    },
+    async inspectBackground(actor, kind) {
+      assert(actors.has(actor.id), 'Unknown synthetic actor');
+      assert(['education', 'experience', 'skill', 'link'].includes(kind));
+      const rows = (await pool.query(`SELECT fields FROM candidate_profile_records
+        WHERE owner_principal_id=$1 AND kind=$2 AND status='active' ORDER BY created_at,id`, [actor.id, kind])).rows;
+      const auditCount = Number((await pool.query(`SELECT count(*) AS n FROM authorization_mutation_audit
+        WHERE actor_principal_ref=$1 AND target_principal_ref=$1 AND operation LIKE 'profile_record.%'
+        AND after_summary->>'kind'=$2`, [principalAuditRef(actor.id), kind])).rows[0].n);
+      // Synthetic field values are assertion-only. Do not return or persist identifiers.
+      return { activeCount: rows.length, auditCount, fields: rows.map(row => row.fields) };
+    },
     useLanguageFault(mode) {
       assert(['preview-read', 'confirm-before-commit', 'confirm-after-commit'].includes(mode), 'Unknown language fault mode');
       const faultEvidence = { previewReadThrows: 0, beforeCommitThrows: 0, afterCommitThrows: 0,

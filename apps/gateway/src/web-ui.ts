@@ -89,8 +89,8 @@ export function writeHtml(response: ServerResponse, status: number, html: string
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 
-export function pageDocument(title: string, content: string, language?: ProfileLanguage): string {
-  return document(title, content, false, language);
+export function pageDocument(title: string, content: string, language?: ProfileLanguage, historyGuard = false): string {
+  return document(title, content, historyGuard, language);
 }
 
 function document(title: string, content: string, workspaceHistory = false, language?: ProfileLanguage): string {
@@ -371,7 +371,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? "S";
   const languageForm = login.preferences ? `<form class="p-language" method="post" action="/profile/language/preview"><label for="profile-language">${copy("profile.changeLanguage")}</label><select id="profile-language" name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select><button class="p-button" type="submit">${copy("action.review")}</button></form>` : "";
   const provenanceKeys: Key[] = [...OWN_PROFILE_FIELD_NAMES,...(["phone","handle","kuwaitiMother"] as const).filter(key => profile.fields[key])];
-  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(label(key))}</dt><dd>${copy(field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "not_imported" ? "meta.notImported" : "meta.imported",{date:date(field.freshness.observedAt)})}</dd></div>`; }).join("")}</dl></details>`;
+  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(label(key))}</dt><dd>${copy(field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "not_imported" ? "meta.notImported" : field.freshness.observedAt ? "meta.imported" : "meta.importedUndated",{date:date(field.freshness.observedAt ?? "")})}</dd></div>`; }).join("")}</dl></details>`;
   const summary = `<section id="profile-summary" class="p-card p-identity" aria-labelledby="profile-name"><div class="p-monogram" aria-hidden="true">${escapeHtml(initial)}</div><div class="p-identity-text"><p class="p-kicker">${copy("profile.account")}</p><h2 id="profile-name"><bdi dir="auto">${escapeHtml(name)}</bdi></h2>${profile.fields.arabicName.state === "available" ? `<p lang="ar"><bdi dir="auto">${escapeHtml(profile.fields.arabicName.value)}</bdi></p>` : ""}${profile.fields.objective.state === "available" ? `<p class="p-lead"><bdi dir="auto">${escapeHtml(profile.fields.objective.value)}</bdi></p>` : ""}</div><dl class="p-status">${row("jobSearchStatus")}</dl></section>`;
   const navigation = `<nav class="p-nav" aria-label="${copy("nav.main")}"><a href="/profile" aria-current="page">${copy("nav.profile")}</a>${documentsAvailable ? `<a href="/profile/documents">${language === "ar" ? "مستنداتي" : "My documents"}</a>` : ""}<a href="/profile/background">${copy("nav.background")}</a>${login.navigation ? `<a href="/workspace">${copy("nav.workspaces")}</a>` : ""}</nav>`;
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;

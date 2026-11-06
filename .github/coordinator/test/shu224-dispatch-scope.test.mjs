@@ -245,26 +245,68 @@ test("SHU-224: invalid trusted scope prevents dispatch before any mutation", asy
   }
 });
 
-// After SHU-71 stage 5 the committed scope is one real card at a time, one
-// slot, and that card must have a committed card lane. The id is pinned so a
+// The committed scope is a card queue, one slot, and every card in it must have
+// a committed card lane. The box narrows the queue to the one armed card before
+// reconcile reads it (see the narrowing test below). The ids are pinned so a
 // regression cannot quietly point the scope back at an earlier, Done card.
 // Dispatch stays disabled; only a signed single-run activation arms it.
 test("SHU-224: committed scope is pinned to the current card lanes while dispatch stays disabled", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-458", "SHU-459", "SHU-453", "SHU-457", "SHU-454", "SHU-455", "SHU-456"], "SHU-224: the scope names the current card queue (SHU-312)");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-458").after, undefined, "SHU-224: SHU-458 waits on nothing");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-459").after, ["SHU-458"], "SHU-224: SHU-459 waits on SHU-458");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-453").after, undefined, "SHU-224: SHU-453 waits on nothing");
-  assert.equal(config.card_lanes.find((lane) => lane.id === "SHU-457").after, undefined, "SHU-224: SHU-457 waits on nothing");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-454").after, ["SHU-453"], "SHU-224: SHU-454 waits on SHU-453");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-455").after, ["SHU-454"], "SHU-224: SHU-455 waits on SHU-454");
-  assert.deepEqual(config.card_lanes.find((lane) => lane.id === "SHU-456").after, ["SHU-455"], "SHU-224: SHU-456 waits on SHU-455");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-494", "SHU-495", "SHU-496", "SHU-497", "SHU-498", "SHU-499", "SHU-500", "SHU-501", "SHU-502", "SHU-503", "SHU-504", "SHU-505", "SHU-506", "SHU-507", "SHU-508"], "SHU-224: the scope names the current card queue (SHU-312)");
+  const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
+  // Only the real waits: the box keeps cards that share files apart by itself
+  // (Velocity A), so no card waits on another just to stay off its files.
+  assert.equal(after("SHU-494"), undefined, "SHU-224: SHU-494 waits on nothing");
+  assert.deepEqual(after("SHU-495"), ["SHU-494"], "SHU-224: SHU-495 waits on SHU-494");
+  assert.equal(after("SHU-496"), undefined, "SHU-224: SHU-496 waits on nothing");
+  assert.equal(after("SHU-497"), undefined, "SHU-224: SHU-497 waits on nothing");
+  assert.deepEqual(after("SHU-498"), ["SHU-497"], "SHU-224: SHU-498 waits on SHU-497");
+  assert.deepEqual(after("SHU-499"), ["SHU-498", "SHU-495"], "SHU-224: SHU-499 waits on SHU-498 and on SHU-495, so the email stores are on the root barrel before the prep records it");
+  assert.deepEqual(after("SHU-500"), ["SHU-499"], "SHU-224: SHU-500 waits on SHU-499");
+  assert.deepEqual(after("SHU-501"), ["SHU-499"], "SHU-224: SHU-501 waits on SHU-499");
+  assert.deepEqual(after("SHU-502"), ["SHU-500", "SHU-499"], "SHU-224: SHU-502 waits on SHU-500 and SHU-499");
+  assert.deepEqual(after("SHU-503"), ["SHU-499"], "SHU-224: SHU-503 waits on SHU-499");
+  assert.deepEqual(after("SHU-504"), ["SHU-503", "SHU-499"], "SHU-224: SHU-504 waits on SHU-503 and SHU-499");
+  assert.deepEqual(after("SHU-505"), ["SHU-500", "SHU-504", "SHU-499"], "SHU-224: SHU-505 waits on SHU-500, SHU-504 and SHU-499");
+  assert.deepEqual(after("SHU-506"), ["SHU-503", "SHU-500", "SHU-499"], "SHU-224: SHU-506 waits on SHU-503, SHU-500 and SHU-499");
+  assert.deepEqual(after("SHU-507"), ["SHU-500", "SHU-503", "SHU-506", "SHU-499"], "SHU-224: SHU-507 waits on SHU-500, SHU-503, SHU-506 and SHU-499");
+  assert.deepEqual(after("SHU-508"), ["SHU-506", "SHU-499"], "SHU-224: SHU-508 waits on SHU-506 and SHU-499");
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
   }
+  // SHU-494 re-cuts SHU-489 with the job-registration files added to its paths.
+  const lane494 = config.card_lanes.find((lane) => lane.id === "SHU-494");
+  for (const file of ["packages/notifications/src/index.ts", "packages/observability/src/index.ts", "packages/observability/test/jobs-mutations.mjs", "apps/gateway/src/admin-jobs.ts"]) {
+    assert.ok(lane494.initial_build_paths.includes(file), `SHU-224: SHU-494 may change ${file}`);
+  }
+  // SHU-499 runs after the email cards, so its notifications area re-exports their stores.
+  const lane499 = config.card_lanes.find((lane) => lane.id === "SHU-499");
+  const contract499 = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "card-contracts.json"), "utf8")).cards["SHU-499"] ?? {};
+  for (const file of ["apps/gateway/src/admin-outbox.ts", "apps/gateway/test/admin-outbox.test.ts", "apps/gateway/src/notifications-http.ts", "apps/gateway/test/notifications-http.test.ts"]) {
+    assert.ok(lane499.initial_build_paths.includes(file), `SHU-224: SHU-499 may change ${file}`);
+  }
+  assert.match(contract499.brief ?? "", /move every export line those two cards added, names unchanged, into notifications\/index\.ts/, "SHU-224: SHU-499 moves the email store exports into notifications");
+  assert.match(contract499.acceptance ?? "", /notifications exposes exactly the names SHU-494 and SHU-495 export from the root/, "SHU-224: SHU-499 acceptance keeps the email store exports");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
+});
+
+test("SHU-224: every step of the committed queue narrows to one armed card that resolveDispatchScope accepts", async () => {
+  const { planRun } = await import("../service/card-run.mjs");
+  const { narrowQueueScope } = await import("../single-run-activation.mjs");
+  const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
+  const queue = config.dispatch_scope.issue_ids;
+  assert.ok(queue.length > 1);
+  assert.equal(resolveDispatchScope(config).valid, false, "SHU-224: the queue as committed, with no armed card, scopes nothing");
+  const file = (text) => ({ lstat: () => ({ isSymbolicLink: () => false, isFile: () => true, mode: 0o600 }), readFile: () => text });
+  for (const id of queue) {
+    const record = planRun({ config, revision: "a".repeat(40), now: new Date("2026-11-05T13:30:00.000Z"), cardId: id }).record;
+    const narrowed = narrowQueueScope(config, "/isolated/activation", file(JSON.stringify(record)));
+    const scope = resolveDispatchScope(narrowed);
+    assert.equal(scope.valid, true, `SHU-224: ${id} narrows to a valid scope`);
+    assert.deepEqual([...scope.issueIds], [id], `SHU-224: ${id} narrows to itself alone`);
+  }
 });
 
 test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed", () => {
