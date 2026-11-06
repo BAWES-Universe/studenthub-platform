@@ -317,7 +317,7 @@ test("a busy reviewer sandbox is a retryable failure, never a HOLD that pauses t
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
-    execFileImpl: (_file, _args, _options, callback) => queueMicrotask(() => callback(Object.assign(new Error("wrapper exited"), { code }), "", "reviewer sandbox refuses concurrent same-identity execution\n")),
+    execFileImpl: (_file, _args, _options, callback) => queueMicrotask(() => callback(Object.assign(new Error("wrapper exited"), { code }), JSON.stringify({ executed: true, passed: true, attempt_id: ATTEMPT, target_sha: SHA }), "reviewer sandbox refuses concurrent same-identity execution\n")),
     validateWrapperImpl: (wrapper) => wrapper,
     startProcessCanaryImpl,
     listenProbeImpl,
@@ -325,6 +325,8 @@ test("a busy reviewer sandbox is a retryable failure, never a HOLD that pauses t
   const busy = await run(75);
   assert.equal(busy.reason_code, "REVIEW_SANDBOX_BUSY", "exit 75 is the sandbox lock held by another review");
   assert.equal(busy.executed, false);
+  assert.equal(busy.evidence_link, null, "a report printed by a busy wrapper is never trusted");
+  assert.deepEqual(fs.readdirSync(evidence), [], "nothing is persisted for a review that never ran");
   const other = await run(64);
   assert.equal(other.reason_code, "REVIEW_EXECUTION_UNAVAILABLE", "any other wrapper failure still fails closed");
 

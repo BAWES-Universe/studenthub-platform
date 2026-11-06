@@ -2414,6 +2414,7 @@
     "SHU-225 I2 (M2): the episode's exception covers only its own bound issue",
     "SHU-225 I8 (M7): a spent episode is never re-selectable",
     "SHU-225 I8: exhaustion and capped failures still end the episode (termination unchanged)",
+    "a review that failed before running (busy reviewer sandbox) routes the same review again",
     "SHU-225 I4: the successor is the same issue as the activation target and the committed scope",
     "SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review",
     "SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)",
@@ -2787,6 +2788,7 @@
     "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
     "SHU-232 B6: worst-case escaped stdout and stderr stay inside the 1 MiB evidence budget",
     "SHU-232 B7: no confined execution evidence fails closed and can never PASS",
+    "a busy reviewer sandbox is a retryable failure, never a HOLD that pauses the adapter",
     "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
     "SHU-232 B8: the canonical re-seed is a checker-visible CI-green trap",
     "SHU-232 B9: production-shaped harness reaches build -> BLOCKED -> revision -> re-review -> PASS with no seeded successors",
@@ -3458,6 +3460,7 @@
     "SHU-250: completion with no worker evidence HOLDs",
     "SHU-250: carried result SHA disagrees with verified head and HOLDs",
     "role stage: an adapter's own refusal code reaches the receipt note through the supervisor",
+    "a busy reviewer sandbox reaches the receipt as a retryable FAILED, never a HOLD",
     "role stage: a carried result can never supply the coordinator's live-head codes",
     "SHU-250: bound callback and observed identity survive completion and restart",
     "SHU-250: stopped heartbeat never declares a live worker dead",
@@ -4384,6 +4387,7 @@
     "SHU-71 Codex review PASS: launched as shu-reviewer through the model profile, never the writer wrapper or broker",
     "SHU-71 Codex review BLOCKED: HOLD carries the callback, so findings route to the writer",
     "SHU-71 Codex review refuses to launch without confined test evidence or its model wrapper",
+    "SHU-71 Codex review: a busy reviewer sandbox is a retryable failure that relaunches the review",
     "SHU-71 Codex role authority: scope, role and runtime mismatches fail closed before any launch",
     "SHU-71 Codex review callback binding: another head, unsafe or missing evidence is never a verdict",
     "SHU-71 Codex review stays at the exact head, even on resume",
@@ -20308,6 +20312,14 @@
       ]
     },
     {
+      "name": "a review that failed before running (busy reviewer sandbox) routes the same review again",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "SHU-225 I4: the successor is the same issue as the activation target and the committed scope",
       "capabilities": [
         {
@@ -22339,6 +22351,17 @@
     },
     {
       "name": "SHU-232 B7: no confined execution evidence fails closed and can never PASS",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "a busy reviewer sandbox is a retryable failure, never a HOLD that pauses the adapter",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -26942,6 +26965,10 @@
     },
     {
       "name": "role stage: an adapter's own refusal code reaches the receipt note through the supervisor",
+      "capabilities": []
+    },
+    {
+      "name": "a busy reviewer sandbox reaches the receipt as a retryable FAILED, never a HOLD",
       "capabilities": []
     },
     {
@@ -32353,6 +32380,17 @@
     },
     {
       "name": "SHU-71 Codex review refuses to launch without confined test evidence or its model wrapper",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review: a busy reviewer sandbox is a retryable failure that relaunches the review",
       "capabilities": [
         {
           "name": "bash"
