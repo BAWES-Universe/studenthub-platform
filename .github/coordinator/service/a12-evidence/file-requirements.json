@@ -1178,6 +1178,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/shu71-launch-never-admitted.test.mjs",
+    "capabilities": [],
+    "justification": "Pure in-process assertions: the real coordinator tick is driven through the episode harness with a fake Linear fetch and stubbed adapters, and an in-process DurableSupervisor over a temporary state directory; no external command, privileged operation or host facility is required",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/test/shu71-public-key.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

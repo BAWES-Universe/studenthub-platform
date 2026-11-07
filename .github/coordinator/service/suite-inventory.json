@@ -32598,6 +32598,26 @@
       "capabilities": []
     },
     {
+      "name": "SHU71_NEVER_ADMITTED_PREDICATE: only an earlier episode's unacknowledged launch qualifies",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_NEVER_ADMITTED_RELEASE: a new episode releases the launch an earlier one could not get admitted",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_NEVER_ADMITTED_OWN_EPISODE: inside its own episode the launch is still re-sent, never released",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_NEVER_ADMITTED_SUPERVISOR_KNOWS_IT: any answer but a provable absence keeps the receipt held",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS only for an attempt it refused and never admitted",
+      "capabilities": []
+    },
+    {
       "name": "SHU71_CLAUDE_WRITER_GATE_FAILS_CLOSED: only an explicit review role lifts the Claude gate",
       "capabilities": []
     },
