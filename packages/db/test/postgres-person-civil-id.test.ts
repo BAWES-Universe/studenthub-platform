@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { PostgresPersonCivilIdStore } from "../src/postgres-person-civil-id-store.js";
-import { runMigrations } from "../src/migrate.js";
+import { runMigrations } from "@studenthub/db";
 import { CivilIdVault, createCivilId } from "../../profile/src/civil-id.js";
 
 const DB_URL=process.env.DATABASE_URL??"", P="civil-person-p", Q="civil-person-q";let pool:pg.Pool;
@@ -13,7 +14,7 @@ after(async()=>pool.end());
 const vault=new CivilIdVault(Buffer.alloc(32,8));
 const service=()=>createCivilId({store:new PostgresPersonCivilIdStore({pool}),vault,clock:{now:()=>new Date("2026-01-01T00:00:00Z")}});
 
-test("Q14_3_POSTGRES migration pins secrecy uniqueness and checks",async()=>{const sql=await readFile(new URL("../migrations/0216_person_civil_id.sql",import.meta.url),"utf8");assert.match(sql,/octet_length\(number_hash\)=32/);assert.match(sql,/UNIQUE INDEX person_civil_ids_active_number/);assert.match(sql,/released_at IS NULL/);assert.doesNotMatch(sql,/authorization_audit_summary_valid/);const events=sql.slice(sql.indexOf("CREATE TABLE person_civil_id_events"));assert.doesNotMatch(events,/ciphertext|number_hash/);});
+test("Q14_3_POSTGRES migration pins secrecy uniqueness and checks",async()=>{const sql=await readFile(join(process.cwd(),"packages/db/migrations/0216_person_civil_id.sql"),"utf8");assert.match(sql,/octet_length\(number_hash\)=32/);assert.match(sql,/UNIQUE INDEX person_civil_ids_active_number/);assert.match(sql,/released_at IS NULL/);assert.doesNotMatch(sql,/authorization_audit_summary_valid/);const events=sql.slice(sql.indexOf("CREATE TABLE person_civil_id_events"));assert.doesNotMatch(events,/ciphertext|number_hash/);});
 
 test("Q14_3_UNIQUE Postgres refuses duplicate at commit, permits release and re-recording, and scopes hashes by country",async()=>{const a=service(),b=service();const results=await Promise.all([a.save({principalId:P,submissionId:"00000000-0000-4000-8000-000000000101",revision:0,country:"KW",number:"290010100000",expiry:""}),b.save({principalId:Q,submissionId:"00000000-0000-4000-8000-000000000102",revision:0,country:"KW",number:"290010100000",expiry:""})]);assert.equal(results.filter(x=>x.ok).length,1);const owner=results[0]!.ok?P:Q,other=owner===P?Q:P;await service().release(owner);assert.equal((await service().save({principalId:other,submissionId:"00000000-0000-4000-8000-000000000103",revision:0,country:"KW",number:"290010100000",expiry:""})).ok,true);await service().release(other);assert.equal((await service().save({principalId:other,submissionId:"00000000-0000-4000-8000-000000000106",revision:0,country:"BH",number:"123456789",expiry:""})).ok,true);assert.equal((await service().readOwn(other))?.maskedNumber,"••••• 6789");});
 
