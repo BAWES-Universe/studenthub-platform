@@ -4,6 +4,7 @@ import type {CommitInput,CommitOutcome,Receipt,SafeWriteStore} from "@studenthub
 import {databaseUrl} from "./connection.js";
 import {organizationAuditRef} from "./authorization-audit.js";
 import {organizationLive} from "./organization-liveness.js";
+import {recordOrganizationStatusChanged} from "./postgres-notifications-store.js";
 
 export const ORGANIZATION_STATUS_OPERATION="organization.status.safe_write";
 type Grant={readonly org_id:string;readonly role:string;readonly scope:string};
@@ -40,5 +41,6 @@ const grants=await this.#grants(client,id,true),ancestors=await this.#ancestors(
 if(!this.#o.decision(grants,org,ancestors))throw new Refusal("not_own_record");const used=await client.query("SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2",[ORGANIZATION_STATUS_OPERATION,tokenRef(input.tokenId)]);if(used.rows.length)throw new Refusal("token_already_used");const current=await this.#value(client,org);if(!this.#o.stateDecision(current,input.expectedBefore))throw new Refusal("state_changed");const value=input.value==="none"?null:input.value;
 await client.query(`INSERT INTO organization_status_overrides(org_id,status) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET status=EXCLUDED.status,updated_at=clock_timestamp()`,[org,value]);const event=this.#o.event(current,input.value);if(event)await client.query(`INSERT INTO organization_status_events(org_id,receipt_ref,from_status,to_status) VALUES($1,$2,$3,$4)`,[org,input.receipt.receiptRef,event.from,event.to]);
 await client.query(`INSERT INTO authorization_mutation_audit(request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary) VALUES($1,$2,$3,$2,$4::text[],$5::jsonb,$6::jsonb)`,[input.receipt.receiptRef,input.principalRef,ORGANIZATION_STATUS_OPERATION,[organizationAuditRef(org)],JSON.stringify({valuePresent:current!==null}),JSON.stringify({contractVersion:input.receipt.contractVersion,personRef:input.receipt.personRef,changeSetDigest:input.changeSetDigest,fields:["status"],committedAt:input.receipt.committedAt,tokenRef:tokenRef(input.tokenId)})]);
+if(event)await recordOrganizationStatusChanged(client,org,input.value as "active"|"under_review"|"inactive"|"none",input.receipt.receiptRef);
 await client.query("COMMIT");return {ok:true}}catch(e){try{await client.query("ROLLBACK")}catch{destroy=true}if(e instanceof Refusal)return {ok:false,reason:e.reason};if((e as {code?:string}).code==="23505")return {ok:false,reason:"token_already_used"};throw e}finally{client.release(destroy)}}
 }

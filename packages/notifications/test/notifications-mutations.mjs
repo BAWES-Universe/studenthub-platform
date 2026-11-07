@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {cp,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+
+const mutations=[
+ ['dedupe',"WHERE org_id=$1 AND role='org-owner'\n ON CONFLICT(recipient_principal_id,dedupe_key) DO NOTHING","WHERE org_id=$1 AND role='org-owner'",'SHU188_EVENT','packages/db/src/postgres-notifications-store.js'],
+ ['read-time name','`${org.name} status changed','`${id} status changed','SHU188_RENDER','packages/notifications/src/notifications.js'],
+ ['recipient check','this.events.markRead(recipient, id)','this.events.markRead("owner", id)','SHU188_FEED','packages/notifications/src/notifications.js'],
+];
+const root=new URL('../../../',import.meta.url),suite='packages/notifications/test/notifications.test.js';
+for(const[name,from,to,token,file]of mutations){
+ const dir=await mkdtemp(new URL('./node_modules/.notifications-mutation-',root).pathname);
+ try{
+  await cp(new URL('./dist/',root),dir,{recursive:true});
+  await writeFile(join(dir,'package.json'),'{"type":"module"}');
+  const copiedSuite=join(dir,suite),suiteSource=await readFile(copiedSuite,'utf8');
+  await writeFile(copiedSuite,suiteSource.replace('from "@studenthub/db"','from "../../db/src/index.js"'));
+  const target=join(dir,file),source=await readFile(target,'utf8');
+  assert.equal(source.split(from).length-1,1,`${name} binds once`);
+  await writeFile(target,source.replace(from,to));
+  const run=spawnSync(process.execPath,['--test',suite],{cwd:dir,encoding:'utf8',timeout:20000});
+  assert.equal(run.error,undefined,`${name}: ${run.error}`);
+  assert.notEqual(run.status,0,`${name} survived`);
+  assert.match(run.stdout+run.stderr,new RegExp(`not ok \\d+ - ${token}`));
+ }finally{await rm(dir,{recursive:true,force:true})}
+}
+process.stdout.write('3/3 SHU-495 mutations killed\n');

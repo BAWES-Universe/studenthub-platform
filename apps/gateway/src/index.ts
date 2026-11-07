@@ -6,6 +6,7 @@ import { type OrganizationDocumentsRuntime } from './organization-documents-http
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
+import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
 import { Telemetry, disabledTelemetry, telemetryMode, newSpan, inSpan, classifyJourney, type Fault } from '../../../packages/observability/src/index.js';
 import { randomBytes } from "node:crypto";
@@ -30,8 +31,9 @@ import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
 } from "./web-ui.js";
+import {addNotificationBell} from "./web-ui.js";
 import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
 
@@ -44,6 +46,8 @@ const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
 const DEFAULT_GATEWAY_HOST = "127.0.0.1";
 const IMAGE_SOURCE_REVISION_PATH = "/image-source-revision";
+
+async function signedInHtml(login:BrowserLoginApplication|undefined,sessionId:string|undefined,html:string):Promise<string>{try{return addNotificationBell(html,await login?.notifications?.count(sessionId)??0)}catch{return addNotificationBell(html,0)}}
 
 export function readImageSourceRevision(path = IMAGE_SOURCE_REVISION_PATH): string | null {
   let revision: string;
@@ -204,6 +208,10 @@ export function createGatewayServer(
     }
     if(request.method==="GET"&&request.url&&requestPath(request.url)==="/admin/outbox"){const page=Number(new URL(request.url,"http://gateway.invalid").searchParams.get("page")??"1");const result=await(login as BrowserLoginApplication&{adminOutbox?:AdminOutboxPage}|undefined)?.adminOutbox?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"),page)??{status:404 as const,body:{error:"not_found" as const}};if(result.status===200){if(html)writeHtml(response,200,renderAdminOutbox(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}}
 
+    if(request.url&&requestPath(request.url)==="/notifications"&&request.method==="GET"){const requestedPage=Number(new URL(request.url,"http://gateway.invalid").searchParams.get("page")??"1"),page=Number.isInteger(requestedPage)&&requestedPage>0?requestedPage:1;const result=await login?.notifications?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"),page)??{status:404 as const,body:{error:"not_found" as const}};if(html)writeHtml(response,result.status,result.status===200?renderNotifications(result.body):renderError(result.status,login),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}} as unknown as BrowserResponse);return}
+    if(request.url&&request.method==="POST"&&requestPath(request.url)==="/notifications/read-all"){if(request.headers["sec-fetch-site"]==="cross-site"||request.headers.origin!==login?.web?.origin){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return}const result=await login?.notifications?.readAll(cookieValue(request.headers.cookie,"__Host-studenthub_session"))??{status:404 as const};response.writeHead(result.status===204?303:result.status,result.status===204?{location:"/notifications"}:{});response.end();return}
+    if(request.url&&request.method==="POST"&&/^\/notifications\/[^/]+\/read$/.test(requestPath(request.url))){if(request.headers["sec-fetch-site"]==="cross-site"||request.headers.origin!==login?.web?.origin){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return}const id=requestPath(request.url).split("/")[2]!;const result=await login?.notifications?.read(cookieValue(request.headers.cookie,"__Host-studenthub_session"),id)??{status:404 as const};if(result.status===204){response.writeHead(303,{location:"/notifications"});response.end()}else writeBrowserResponseSafely(response,{status:result.status,body:{error:"not_found"}});return}
+
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
       const selected = new URL(request.url, "http://gateway.invalid").searchParams;
       const orgId = selected.get("org_id"), role = selected.get("role");
@@ -219,7 +227,7 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "unavailable" } };
       }
-      if (html) writeHtml(response, active ? result.status : 403, login && active ? renderAssignedCompanies(result, login, active) : renderError(login ? 403 : 503, login), {}, true);
+      if (html) writeHtml(response, active ? result.status : 403, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login && active ? renderAssignedCompanies(result, login, active) : renderError(login ? 403 : 503, login)), {}, true);
       else writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       return;
     }
@@ -237,7 +245,7 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "directory_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, login ? renderCompanyDirectory(result, login) : renderError(503), {}, true);
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderCompanyDirectory(result, login) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -273,7 +281,7 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, login ? renderWorkspace(result, login, documents !== undefined) : renderError(503), {}, true);
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -361,7 +369,7 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

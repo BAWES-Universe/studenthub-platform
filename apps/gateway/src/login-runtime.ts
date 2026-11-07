@@ -20,6 +20,9 @@ import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
 import { wireOps } from "./wiring/ops.js";
+import {PostgresNotificationsStore} from "@studenthub/db";
+import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
+import {createNotificationsHttp} from "./notifications-http.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -228,8 +231,9 @@ export function createRuntimeLoginFromEnv(
     clockSkewSeconds: 60,
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
   });
-  return {
-    application: {
+  const notificationStore=PostgresNotificationsStore.connect({connectionString:value("DATABASE_URL")});
+  const notifications=createNotificationsHttp(application,new NotificationsService(notificationStore,notificationStore,access.services.authzStore));
+  const runtimeApplication={
       ...application,
       ...organizationArea.services.application,
       ...ops.services,
@@ -237,17 +241,16 @@ export function createRuntimeLoginFromEnv(
       ...payContractArea.services,
       web: {
         origin: new URL(callbackUrl).origin,
-        // Keep the existing exact return allowlist. No Host-derived redirect,
-        // new IdP configuration, or implicit expansion of approved targets.
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
           ? new URL("/profile", callbackUrl).href : undefined,
-        // Called only after application.profile establishes session ownership;
-        // the repository independently re-enforces the same owner boundary.
         profiles: profile.services.web.profiles,
       },
-    } as BrowserLoginApplication,
+    } as BrowserLoginApplication;
+  Object.defineProperty(runtimeApplication,"notifications",{value:notifications,enumerable:false});
+  return {
+    application: runtimeApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),notificationStore.close()]);
     },
   };
 }
