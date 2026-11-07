@@ -31,6 +31,13 @@ interface IdentityRow {
   person_id: string;
 }
 
+export interface LockedExternalIdentity {
+  readonly issuer: string;
+  readonly subjectHash: string;
+  readonly personId: string;
+  readonly lockedAt: Date;
+}
+
 /** PostgreSQL-backed login stores sharing one bounded connection pool. */
 export class PostgresLoginStore {
   readonly #pool: PgPool;
@@ -63,6 +70,8 @@ export class PostgresLoginStore {
     this.identities = {
       findBySubject: (issuer, subject) => this.#findIdentity(issuer, subject),
       createForSubject: (issuer, subject, claims) => this.#createIdentity(issuer, subject, claims),
+      bindStableId: (issuer, subject, stableUserId) =>
+        this.#bindStableId(issuer, subject, stableUserId),
       // Deliberately unavailable: mutable donor/profile fields are never an
       // authentication binding mechanism.
       findLegacyMatch: async () => undefined,
@@ -177,6 +186,92 @@ export class PostgresLoginStore {
     } finally {
       client.release();
     }
+  }
+
+  async #bindStableId(
+    issuer: string,
+    subject: string,
+    stableUserId: string,
+  ): Promise<"bound" | "matched" | "mismatch" | "locked"> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query<{ outcome: "bound" | "matched" | "mismatch" | "locked"; person_id: string }>(
+        `WITH current_identity AS MATERIALIZED (
+           SELECT issuer, subject, person_id, stable_user_id, locked_at
+             FROM external_identities
+            WHERE issuer = $1::text AND subject = $2::text
+            FOR UPDATE
+         )
+         UPDATE external_identities AS identity
+            SET stable_user_id = COALESCE(identity.stable_user_id, $3::text),
+                locked_at = CASE
+                  WHEN current_identity.locked_at IS NULL
+                   AND current_identity.stable_user_id IS NOT NULL
+                   AND current_identity.stable_user_id <> $3::text
+                  THEN clock_timestamp()
+                  ELSE identity.locked_at
+                END,
+                locked_reason = CASE
+                  WHEN current_identity.locked_at IS NULL
+                   AND current_identity.stable_user_id IS NOT NULL
+                   AND current_identity.stable_user_id <> $3::text
+                  THEN 'stable_id_mismatch'::text
+                  ELSE identity.locked_reason
+                END
+           FROM current_identity
+          WHERE identity.issuer = current_identity.issuer
+            AND identity.subject = current_identity.subject
+        RETURNING current_identity.person_id,
+          CASE
+            WHEN current_identity.locked_at IS NOT NULL THEN 'locked'
+            WHEN current_identity.stable_user_id IS NULL THEN 'bound'
+            WHEN current_identity.stable_user_id = $3::text THEN 'matched'
+            ELSE 'mismatch'
+          END AS outcome`,
+        [issuer, subject, stableUserId],
+      );
+      const result = rows[0];
+      if (!result) throw new Error("external identity not found");
+      if (result.outcome === "mismatch") {
+        await client.query("DELETE FROM login_sessions WHERE person_id = $1::text", [result.person_id]);
+      }
+      await client.query("COMMIT");
+      return result.outcome;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* preserve original */ }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listLockedIdentities(): Promise<readonly LockedExternalIdentity[]> {
+    const { rows } = await this.#pool.query<{
+      issuer: string; subject_hash: string; person_id: string; locked_at: Date;
+    }>(
+      `SELECT issuer, encode(sha256(convert_to(subject, 'UTF8')), 'hex') AS subject_hash,
+              person_id, locked_at
+         FROM external_identities
+        WHERE locked_at IS NOT NULL
+        ORDER BY locked_at, issuer, subject`,
+    );
+    return rows.map((row) => ({
+      issuer: row.issuer,
+      subjectHash: row.subject_hash,
+      personId: row.person_id,
+      lockedAt: row.locked_at,
+    }));
+  }
+
+  async unlockIdentity(identity: { readonly issuer: string; readonly subject: string }): Promise<boolean> {
+    const result = await this.#pool.query(
+      `UPDATE external_identities
+          SET locked_at = NULL, locked_reason = NULL
+        WHERE issuer = $1::text AND subject = $2::text AND locked_at IS NOT NULL`,
+      [identity.issuer, identity.subject],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 }
 

@@ -90,15 +90,22 @@ shape.)*
    reference"; it matched neither live mode and would have denied every real
    subject on first contact. A regression test now asserts that.
 
-   > **Open decision — email as subject is not a stable identity.**
+   > **Universe reassignment guard — active when a stable-id claim is present.**
+   > StudentHub records a valid `hashed_user_id` (or, when absent, `uid`) on
+   > first sign-in. A different stable id for the same email subject locks the
+   > identity, revokes its login sessions, and rejects all later sign-ins until
+   > staff clear the lock. Staff reporting receives only a hash of the subject,
+   > never the stable id.
+   >
+   > **Residual risk — email as subject is not a stable identity.**
    > Under `user_email` the subject IS a mutable, reassignable attribute:
    > changing a user's email in Authentik changes their `sub`, and reassigning
    > an address to another person hands them the prior holder's grants. That is
    > the same failure the legacy system has, where payments resolve by email
-   > lookup. The verifier matches what Universe emits today; moving Universe
-   > providers to `hashed_user_id` (or another opaque, immutable subject) before
-   > grants bind to money or personal records is a platform decision, not a
-   > code change in this PR.
+   > lookup. If Universe supplies no stable-id claim, or an address was already
+   > reassigned before the first stable id is recorded, the new holder can still
+   > inherit the earlier principal. The recommended complete fix is the
+   > Universe-side change to emit Authentik's immutable UUID as the OIDC subject.
 3. **Issuer-key registry contract** — every issuer has keys with
    `active | retired` status. Unknown `kid` and retired keys are hard denies;
    rotation never falls back to accepting anything. An assertion carries an
