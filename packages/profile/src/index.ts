@@ -3,3 +3,4 @@ export * from "./profile.js";
 export * from "./adapter.js";
 export * from "./fixtures.js";
 export * from "./self-edit.js";
+export * from "./civil-id.js";
