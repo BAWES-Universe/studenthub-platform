@@ -307,7 +307,7 @@ test("stop cause S7: review desk stops on different reviewed heads are not a loo
   assert.ok(buildLinear.labelNames(buildLinear.creates[0]).includes(STOP_LOOPING_LABEL));
 });
 
-test("stop cause S8: a missing route or looping label still files with repo:platform and says so", async () => {
+test("stop cause S8: a missing route or looping label still files and names only the missing label", async () => {
   const event = holdEvent({ activationId: "stopcause0003", notes: adapterNote("RESULT_SCOPE_REFUSED") });
   const priors = [priorDescription({ activationId: "stopcause0001" }), priorDescription({ activationId: "stopcause0002" })];
   const linear = fakeLinear({ labels: [], priors });
@@ -319,6 +319,13 @@ test("stop cause S8: a missing route or looping label still files with repo:plat
   assert.match(linear.creates[0].description, /`stop:looping`/);
   assert.match(linear.creates[0].description, /could not be found in Linear/);
   assert.equal(linear.creates[0].assigneeId, null);
+
+  // Only the looping label missing: the route label still applies, and the note names only what is missing.
+  const partial = fakeLinear({ labels: Object.values(STOP_ROUTE_LABEL), priors });
+  assert.equal((await file(event, partial)).status, "confirmed");
+  assert.deepEqual(partial.labelNames(partial.creates[0]).sort(), [INCIDENT_LABEL_NAME, "stop:card-fix"].sort());
+  assert.match(partial.creates[0].description, /The label `stop:looping` could not be found in Linear, so this card is filed without it\./);
+  assert.doesNotMatch(partial.creates[0].description, /`stop:card-fix` could not be found/);
 
   // An unreadable prior-stop read also never blocks filing; it only skips the loop check.
   const unreadable = fakeLinear({ priorsFail: true });

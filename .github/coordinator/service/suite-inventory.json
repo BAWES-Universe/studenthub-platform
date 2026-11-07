@@ -3464,7 +3464,7 @@
     "stop cause S5: the incident identity and reason code stay exactly as before",
     "stop cause S6: the third stop with the same card, cause and contract is looping; the second is not",
     "stop cause S7: review desk stops on different reviewed heads are not a loop",
-    "stop cause S8: a missing route or looping label still files with repo:platform and says so",
+    "stop cause S8: a missing route or looping label still files and names only the missing label",
     "stop cause S9: the card contract key follows the card's committed contract",
     "stop cause mutation: remove the adapter code mapping",
     "stop cause mutation: route every HOLD to needs-person",
@@ -27004,7 +27004,7 @@
       "capabilities": []
     },
     {
-      "name": "stop cause S8: a missing route or looping label still files with repo:platform and says so",
+      "name": "stop cause S8: a missing route or looping label still files and names only the missing label",
       "capabilities": []
     },
     {

@@ -436,7 +436,7 @@ export function renderIncidentDescription(event, config = {}, { missingLabels = 
     ...attempts.map((attempt) => `- \`${attempt.attempt_id}\` — lane \`${attempt.lane}\`, head \`${attempt.target_sha}\`${attempt.result_sha ? ` → \`${attempt.result_sha}\`` : ""}, stage \`${attempt.stage}\`, verdict \`${attempt.verdict ?? "none"}\`, at \`${attempt.at}\``),
     "",
     "Reporting only. The coordinator did not repair, re-arm, launch, clear a pause, or edit its activation.",
-    ...(missingLabels.length ? ["", `The label${missingLabels.length > 1 ? "s" : ""} ${missingLabels.map((name) => `\`${name}\``).join(", ")} could not be found in Linear, so this card is filed with \`${INCIDENT_LABEL_NAME}\` only.`] : []),
+    ...(missingLabels.length ? ["", `The label${missingLabels.length > 1 ? "s" : ""} ${missingLabels.map((name) => `\`${name}\``).join(", ")} could not be found in Linear, so this card is filed without ${missingLabels.length > 1 ? "them" : "it"}.`] : []),
     ...(event.fixture ? ["", "This is a rehearsal fixture's stop, so the coordinator closes it itself once it is filed. Nothing needs a person."] : []),
   ];
   const body = lines.join("\n");
