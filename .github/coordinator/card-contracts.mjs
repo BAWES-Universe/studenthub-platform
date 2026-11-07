@@ -6288,7 +6288,52 @@ const RECUT_500_CONTRACTS = Object.fromEntries(Object.entries(RECUT_500).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_489, ...RECUT_500_CONTRACTS });
+const CARD_CONTRACTS_500 = { ...CARD_CONTRACTS_489, ...RECUT_500_CONTRACTS };
+
+// SHU-503 stopped with its revision attempts used up: its review found
+// apps/gateway/test/routes-order.test.ts outside the card, and a test that
+// expected a sequential re-post of the same submission to answer 303 when it
+// answers the conflict page. SHU-504 waits on SHU-503, and SHU-516, SHU-517,
+// SHU-518 and SHU-519 wait on one of them, so all six are re-cut under fresh
+// ids and appended after the installed queue. SHU-503 and SHU-504 get the
+// route-order test in their paths and the same guard as the SHU-500 re-cut
+// (SHU-521 also says how a repeated submission is answered); the other four
+// keep their contracts with only the ids remapped.
+const RECUT_503 = Object.freeze({
+  "SHU-503": "SHU-521", "SHU-504": "SHU-522", "SHU-516": "SHU-523", "SHU-517": "SHU-524", "SHU-518": "SHU-525", "SHU-519": "SHU-526",
+});
+const recut503 = (text) => text.replace(/\bSHU-(503|504|516|517|518|519)\b/g, (id) => RECUT_503[id]);
+const RECUT_503_GUARDED = Object.freeze(["SHU-503", "SHU-504"]);
+const recutAcceptance503 = (from, reason, text) => `${recut503(text)} ${RECUT_503[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.${RECUT_503_GUARDED.includes(from) ? " Appending route names and bumping the length in apps/gateway/test/routes-order.test.ts, and bumping the U1_COPY key count in apps/gateway/test/profile-kit.test.ts, exactly as the brief says counts as no change to an existing test." : ""}`;
+const SHU521_REPEAT = `
+- A repeat of the same form submission stores at most one version, but only a concurrent repeat (a double click, both posts reading the slot before either commits) replays to the same 303. A sequential repeat (a browser retry after the first post committed) reads the new slot version, so the lifecycle refuses it as a conflict and the page answers 409 with the conflict message and a link back. The test of a sequential repeat asserts exactly that answer and exactly one stored version; it never expects 303 for the second post.`;
+const RECUT_503_CONTRACTS = Object.fromEntries(Object.entries(RECUT_503).map(([from, to]) => {
+  const base = CARD_CONTRACTS_500[from];
+  const guarded = RECUT_503_GUARDED.includes(from);
+  const extra = [ROUTE_ORDER_TEST, ...PROFILE_COPY_PAIR];
+  const widen = (paths) => (guarded ? Object.freeze([...paths, ...extra.filter((file) => !paths.includes(file))]) : paths);
+  const paths = widen(base.initial_build_paths);
+  const listed = (list) => list.map((file) => `- ${file}`).join("\n");
+  let brief = recut503(base.brief);
+  if (guarded) {
+    brief = replaceOnce(brief, `${RECUT_500_PATHS_FROM}${listed(base.initial_build_paths)}\n\n`, `${RECUT_500_PATHS_FROM}${listed(paths)}\n\n`, `${to} paths`);
+    const guard = from === "SHU-503" ? replaceOnce(recut500Guard(true), "\n- Before you finish,", `${SHU521_REPEAT}\n- Before you finish,`, `${to} repeat`) : recut500Guard(true);
+    brief = replaceOnce(brief, RECUT_500_GUARD_FROM, guard, `${to} guard`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-503"
+    ? "after its revision attempts ran out, with the route-order test in its paths and the answer to a repeated submission spelled out"
+    : from === "SHU-504" ? "because its installed lane waited on SHU-503, which stopped"
+      : `because its installed lane waited on ${from === "SHU-516" ? "SHU-504, which waits on " : from === "SHU-519" ? "SHU-517, which waits on " : ""}SHU-503, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: widen(base.revision_paths),
+    acceptance: recutAcceptance503(from, reason, base.acceptance),
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_500, ...RECUT_503_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
