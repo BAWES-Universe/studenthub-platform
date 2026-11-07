@@ -135,7 +135,7 @@ test("SHU71_NEVER_ADMITTED_SUPERVISOR_KNOWS_IT: any answer but a provable absenc
   }
 });
 
-test("SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS only when every record of the attempt is absent", async (t) => {
+test("SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS only for an attempt it refused and never admitted", async (t) => {
   const { mkdtempSync, rmSync, writeFileSync: write, mkdirSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -147,18 +147,35 @@ test("SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS onl
     target_sha: "a".repeat(40), repo: "example/repo", branch: "coordinator/SHU-495", task_context: "revise" };
   const dir = mkdtempSync(join(tmpdir(), "shu71-never-admitted-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const spawned = [];
   const supervisor = new DurableSupervisor({ stateDir: dir, secret, schedule: () => {}, probeProcess: () => true,
-    spawnWorker: () => Object.assign(new EventEmitter(), { pid: 7001, processStartToken: "fixture" }) });
-  const ask = () => supervisor.status(signedSupervisorRequest(order, secret, "status"));
+    spawnWorker: () => { const child = Object.assign(new EventEmitter(), { pid: 7001, processStartToken: "fixture" }); spawned.push(child); return child; } });
+  t.after(() => spawned.forEach((c) => c.emit("exit", 1)));
+  // The status order carries no cwd; the submitted one did.
+  const ask = (o = order) => supervisor.status(signedSupervisorRequest(o, secret, "status"));
 
-  // The 06:47Z shape: a durable intent held BRANCH_OCCUPIED, no order, no run.
-  supervisor.store.intend(order, new Date().toISOString(), "AWAITING_LAUNCH");
-  supervisor.store.holdIntent(order, "BRANCH_OCCUPIED");
-  const absent = ask();
-  assert.equal(absent.ok, false);
-  assert.equal(absent.hold_code, "MISSING_CLAIM");
-  assert.equal(absent.detail_code, "NO_RECORDS");
-  assert.equal(supervisorDisownsLaunch(absent), true);
+  // Lost or never-written state: no intent at all is not proof of anything.
+  const lost = ask();
+  assert.equal(lost.hold_code, "MISSING_CLAIM");
+  assert.equal(lost.detail_code, undefined, "an empty store may be lost state");
+
+  // An intent still waiting to launch is one recover() would admit: not refused.
+  supervisor.store.intend({ ...order, cwd: "/srv/shu/worktrees/x" }, new Date().toISOString(), "AWAITING_LAUNCH");
+  assert.equal(ask().detail_code, undefined, "AWAITING_LAUNCH is not a refusal");
+
+  // The 06:47Z shape: the intent held BRANCH_OCCUPIED, no order, no run.
+  supervisor.store.holdIntent({ ...order, cwd: "/srv/shu/worktrees/x" }, "BRANCH_OCCUPIED");
+  const refused = ask();
+  assert.equal(refused.ok, false);
+  assert.equal(refused.hold_code, "MISSING_CLAIM");
+  assert.equal(refused.detail_code, "NO_RECORDS");
+  assert.equal(supervisorDisownsLaunch(refused), true);
+  assert.equal(supervisorDisownsLaunch(ask({ ...order, target_sha: "b".repeat(40) })), false, "a different binding is not this attempt");
+
+  // Fenced from supervisor recovery: a held intent is never admitted by recover().
+  supervisor.recover();
+  assert.equal(supervisorDisownsLaunch(ask()), true, "recover() admitted nothing");
+  assert.equal(spawned.length, 0);
 
   // A record that exists but cannot be read is the catch-all, never NO_RECORDS.
   const paths = supervisor.store.paths(order.attempt_id);
@@ -166,16 +183,16 @@ test("SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS onl
   const unreadable = ask();
   assert.equal(unreadable.hold_code, "MISSING_CLAIM");
   assert.equal(unreadable.detail_code, undefined);
-  assert.equal(supervisorDisownsLaunch(unreadable), false);
   rmSync(paths.run, { recursive: true });
-
-  // An admitted attempt answers with its stage.
   write(paths.order, "{");
   assert.equal(supervisorDisownsLaunch(ask()), false, "a corrupt order is not an absent one");
   rmSync(paths.order);
-  const admitted = await supervisor.submit(signedSupervisorRequest({ ...order, attempt_id: "9c9ee8af-247a-4806-8e07-3806e07e0004" }, secret));
+
+  // An admitted attempt answers with its stage.
+  const other = { ...order, attempt_id: "9c9ee8af-247a-4806-8e07-3806e07e0004", branch: "coordinator/SHU-496" };
+  const admitted = await supervisor.submit(signedSupervisorRequest(other, secret));
   assert.notEqual(admitted.ok, false, JSON.stringify(admitted));
-  const known = supervisor.status(signedSupervisorRequest({ ...order, attempt_id: "9c9ee8af-247a-4806-8e07-3806e07e0004" }, secret, "status"));
+  const known = ask(other);
   assert.equal(known.ok, true, JSON.stringify(known));
   assert.equal(supervisorDisownsLaunch(known), false);
 });
