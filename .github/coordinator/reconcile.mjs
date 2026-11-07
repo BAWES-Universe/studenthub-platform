@@ -81,6 +81,27 @@ export function strandedReservationAction(receipt, { now = new Date(), episodeId
   return ownEpisode && age < RESERVATION_RESUME_WINDOW_MS ? "resume" : "release";
 }
 
+// A LAUNCH_UNKNOWN receipt left by an episode that has ended, with no run the
+// adapter ever acknowledged. Only such a receipt may be released on the
+// supervisor's word that it never admitted the launch.
+export const LAUNCH_NEVER_ADMITTED = "LAUNCH_NEVER_ADMITTED";
+
+export function otherEpisodeUnacknowledgedLaunch(receipt, armedEpisodeId) {
+  if (!receipt || receipt.stage !== "LAUNCH_UNKNOWN") return false;
+  if (typeof receipt.external_run_id === "string" && receipt.external_run_id.length) return false;
+  // A review-only recovery has its own status-only path (SHU-304) below.
+  if (receipt.review_base_sha) return false;
+  if (typeof armedEpisodeId !== "string" || !armedEpisodeId.length) return false;
+  return typeof receipt.episode_id === "string" && receipt.episode_id.length > 0 && receipt.episode_id !== armedEpisodeId;
+}
+
+// The supervisor's status answer for an attempt it holds no durable order for.
+// Anything else (an admitted stage, another hold code, a transport fault with
+// no hold code) leaves the receipt held.
+export function supervisorDisownsLaunch(answer) {
+  return !!answer && typeof answer === "object" && answer.ok === false && answer.hold_code === "MISSING_CLAIM";
+}
+
 // Free text is never an acceptable authorization: only real Linear issue refs or
 // seeded FIXTURE refs (fixture lane contract is defined separately by the Opus
 // acceptance contract — see config.json fixture_lane).
@@ -2722,6 +2743,31 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       }
       const linearIssueId = resolveLinearIssueId(receipt, "launch reconciliation");
       if (!linearIssueId) continue;
+
+      // A launch an EARLIER episode sent and the supervisor never admitted. The
+      // supervisor holds no durable order for it (MISSING_CLAIM), so no worker,
+      // branch claim or launch exists, and that episode's approval is spent.
+      // Resuming it would start an old episode's step on a branch the new
+      // episode owns; leaving it held keeps the issue's slot forever (SHU-495,
+      // 06:47Z: refused BRANCH_OCCUPIED, then held every later episode). It is
+      // released to HOLD instead, asked over status only, never submitted.
+      if (otherEpisodeUnacknowledgedLaunch(receipt, armedEpisodeId) && typeof adapterModule.status === "function") {
+        let answer = null;
+        try { answer = await adapterModule.status(); } catch { answer = null; }
+        if (supervisorDisownsLaunch(answer)) {
+          const released = nextReceiptState(receipt, { type: "hold",
+            reason: `${LAUNCH_NEVER_ADMITTED}: launched in episode ${receipt.episode_id}, which has ended; the supervisor holds no order for it (MISSING_CLAIM), so nothing ran` }, { now: io.now });
+          if (released.accepted) {
+            await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
+            lifecyclePersisted = true;
+            lifecycleSlotReleased = true;
+            const idx = receipts.indexOf(receipt);
+            if (idx >= 0) receipts[idx] = released.receipt;
+            if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> HOLD (${LAUNCH_NEVER_ADMITTED}, attempt ${receipt.attempt_id}) — earlier episode's launch the supervisor never admitted; slot released`);
+            continue;
+          }
+        }
+      }
 
       // SHU-303: a recovered review is still the one review its activation
       // approved; the pull request is read again before any worker starts.
