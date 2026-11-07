@@ -6236,7 +6236,104 @@ const RECUT_489_CONTRACTS = Object.fromEntries(Object.entries(RECUT_489).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_BASE, ...RECUT_489_CONTRACTS });
+const CARD_CONTRACTS_489 = { ...CARD_CONTRACTS_BASE, ...RECUT_489_CONTRACTS };
+
+// SHU-500 and SHU-501 stopped on RESULT_SCOPE_REFUSED. A card that adds a
+// gateway route must edit apps/gateway/test/routes-order.test.ts, which pins
+// the ROUTES name list and its length, and a card that adds profile copy must
+// edit the U1_COPY key count in apps/gateway/test/profile-kit.test.ts; neither
+// test was in a lane-1 card's paths. SHU-502, SHU-505, SHU-506, SHU-507 and
+// SHU-508 wait on SHU-500, directly or through SHU-506, so they can never run.
+// All seven are re-cut under fresh ids with those files in their paths and a
+// guard that says how to change them. The installed queue stays as it is and
+// the re-cut is appended after it (Velocity A3), so SHU-503 and SHU-504 run on
+// untouched.
+const RECUT_500 = Object.freeze({
+  "SHU-500": "SHU-513", "SHU-501": "SHU-514", "SHU-502": "SHU-515", "SHU-505": "SHU-516",
+  "SHU-506": "SHU-517", "SHU-507": "SHU-518", "SHU-508": "SHU-519",
+});
+const recut500 = (text) => text.replace(/\bSHU-(500|501|502|505|506|507|508)\b/g, (id) => RECUT_500[id]);
+const recutAcceptance500 = (from, reason, text) => `${recut500(text)} ${RECUT_500[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands. Appending route names and bumping the length in apps/gateway/test/routes-order.test.ts${RECUT_500_COPY.includes(from) ? ", and bumping the U1_COPY key count in apps/gateway/test/profile-kit.test.ts," : ""} exactly as the brief says counts as no change to an existing test.`;
+const ROUTE_ORDER_TEST = "apps/gateway/test/routes-order.test.ts";
+const PROFILE_COPY_PAIR = Object.freeze(["apps/gateway/test/profile-kit.test.ts", "apps/gateway/src/ui/profile-copy.ts"]);
+// The cards whose brief shows a person new words (a page, a form, a row or a
+// sidebar link) also get the profile copy and its key-count test; SHU-506 is a
+// background reader and gets the route-order test only.
+const RECUT_500_COPY = Object.freeze(["SHU-500", "SHU-501", "SHU-502", "SHU-505", "SHU-507", "SHU-508"]);
+const RECUT_500_PATHS_FROM = "\n\nYour paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):\n";
+const RECUT_500_GUARD_FROM = "Put your lines there as one contiguous block, keep the route order of existing entries, and read those files at the bound head: their exact shape was set by the prep cards.";
+const recut500Guard = (copy) => `${RECUT_500_GUARD_FROM}
+- apps/gateway/test/routes-order.test.ts pins the exact ROUTES name list (PREP_ORDER) and ROUTES.length. Adding a route means appending its name to that list in the same place you add it to ROUTES and bumping the length assertion by one per route, keeping every existing name in its order; another card may have added routes first, so read the test at the bound head. Change nothing else in that test.${copy ? `
+- Every key you add to apps/gateway/src/ui/profile-copy.ts goes into both en and ar, and the U1_COPY key count (assert.equal(keys.length, N)) in apps/gateway/test/profile-kit.test.ts goes up by the number of keys added. Change nothing else in that test.` : ""}
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.`;
+const RECUT_500_CONTRACTS = Object.fromEntries(Object.entries(RECUT_500).map(([from, to]) => {
+  const base = CARD_CONTRACTS_489[from];
+  const copy = RECUT_500_COPY.includes(from);
+  const extra = [ROUTE_ORDER_TEST, ...(copy ? PROFILE_COPY_PAIR : [])];
+  const widen = (paths) => Object.freeze([...paths, ...extra.filter((file) => !paths.includes(file))]);
+  const paths = widen(base.initial_build_paths);
+  const listed = (list) => list.map((file) => `- ${file}`).join("\n");
+  let brief = recut500(base.brief);
+  brief = replaceOnce(brief, `${RECUT_500_PATHS_FROM}${listed(base.initial_build_paths)}\n\n`, `${RECUT_500_PATHS_FROM}${listed(paths)}\n\n`, `${to} paths`);
+  brief = replaceOnce(brief, RECUT_500_GUARD_FROM, recut500Guard(copy), `${to} guard`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = ["SHU-500", "SHU-501"].includes(from)
+    ? "after its build was refused for touching a path outside the card, with the route-order test (and, where it adds copy, the profile copy and its key-count test) in its paths"
+    : `because its installed lane waited on ${from === "SHU-508" ? "SHU-506, which waits on " : ""}SHU-500, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: widen(base.revision_paths),
+    acceptance: recutAcceptance500(from, reason, base.acceptance),
+    brief,
+  })];
+}));
+const CARD_CONTRACTS_500 = { ...CARD_CONTRACTS_489, ...RECUT_500_CONTRACTS };
+
+// SHU-503 stopped with its revision attempts used up: its review found
+// apps/gateway/test/routes-order.test.ts outside the card, and a test that
+// expected a sequential re-post of the same submission to answer 303 when it
+// answers the conflict page. SHU-504 waits on SHU-503, and SHU-516, SHU-517,
+// SHU-518 and SHU-519 wait on one of them, so all six are re-cut under fresh
+// ids and appended after the installed queue. SHU-503 and SHU-504 get the
+// route-order test in their paths and the same guard as the SHU-500 re-cut
+// (SHU-521 also says how a repeated submission is answered); the other four
+// keep their contracts with only the ids remapped.
+const RECUT_503 = Object.freeze({
+  "SHU-503": "SHU-521", "SHU-504": "SHU-522", "SHU-516": "SHU-523", "SHU-517": "SHU-524", "SHU-518": "SHU-525", "SHU-519": "SHU-526",
+});
+const recut503 = (text) => text.replace(/\bSHU-(503|504|516|517|518|519)\b/g, (id) => RECUT_503[id]);
+const RECUT_503_GUARDED = Object.freeze(["SHU-503", "SHU-504"]);
+const recutAcceptance503 = (from, reason, text) => `${recut503(text)} ${RECUT_503[from]} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.${RECUT_503_GUARDED.includes(from) ? " Appending route names and bumping the length in apps/gateway/test/routes-order.test.ts, and bumping the U1_COPY key count in apps/gateway/test/profile-kit.test.ts, exactly as the brief says counts as no change to an existing test." : ""}`;
+const SHU521_REPEAT = `
+- A repeat of the same form submission stores at most one version, but only a concurrent repeat (a double click, both posts reading the slot before either commits) replays to the same 303. A sequential repeat (a browser retry after the first post committed) reads the new slot version, so the lifecycle refuses it as a conflict and the page answers 409 with the conflict message and a link back. The test of a sequential repeat asserts exactly that answer and exactly one stored version; it never expects 303 for the second post.`;
+const RECUT_503_CONTRACTS = Object.fromEntries(Object.entries(RECUT_503).map(([from, to]) => {
+  const base = CARD_CONTRACTS_500[from];
+  const guarded = RECUT_503_GUARDED.includes(from);
+  const extra = [ROUTE_ORDER_TEST, ...PROFILE_COPY_PAIR];
+  const widen = (paths) => (guarded ? Object.freeze([...paths, ...extra.filter((file) => !paths.includes(file))]) : paths);
+  const paths = widen(base.initial_build_paths);
+  const listed = (list) => list.map((file) => `- ${file}`).join("\n");
+  let brief = recut503(base.brief);
+  if (guarded) {
+    brief = replaceOnce(brief, `${RECUT_500_PATHS_FROM}${listed(base.initial_build_paths)}\n\n`, `${RECUT_500_PATHS_FROM}${listed(paths)}\n\n`, `${to} paths`);
+    const guard = from === "SHU-503" ? replaceOnce(recut500Guard(true), "\n- Before you finish,", `${SHU521_REPEAT}\n- Before you finish,`, `${to} repeat`) : recut500Guard(true);
+    brief = replaceOnce(brief, RECUT_500_GUARD_FROM, guard, `${to} guard`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-503"
+    ? "after its revision attempts ran out, with the route-order test in its paths and the answer to a repeated submission spelled out"
+    : from === "SHU-504" ? "because its installed lane waited on SHU-503, which stopped"
+      : `because its installed lane waited on ${from === "SHU-516" ? "SHU-504, which waits on " : from === "SHU-519" ? "SHU-517, which waits on " : ""}SHU-503, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: widen(base.revision_paths),
+    acceptance: recutAcceptance503(from, reason, base.acceptance),
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_500, ...RECUT_503_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
