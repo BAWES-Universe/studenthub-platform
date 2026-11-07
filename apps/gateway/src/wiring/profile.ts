@@ -1,6 +1,8 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPersonProfileStore, PostgresSafeWriteStore, readLiveLoginSessionPerson, safeWritePrincipalRef } from "@studenthub/db";
+import { PostgresBankDetailsStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { readLiveLoginSessionPerson } from "@studenthub/db/access";
+import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { OwnProfileRepository, createPersonImportedFallbackReader, type ApprovedProfileAdapter } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";

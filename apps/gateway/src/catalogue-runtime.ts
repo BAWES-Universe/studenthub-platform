@@ -1,4 +1,4 @@
-import { PostgresCatalogueStore } from "@studenthub/db";
+import { PostgresCatalogueStore } from "@studenthub/db/catalogue";
 import { ReferenceCatalogue } from "@studenthub/reference-catalogue";
 
 export function createRuntimeCatalogueFromEnv(env: NodeJS.ProcessEnv = process.env): { service: ReferenceCatalogue; close(): Promise<void> } | undefined {

@@ -1,4 +1,4 @@
-import { PostgresFinanceReferenceResolver, PostgresPayContractSafeWriteStore, PostgresPayContractStore } from "@studenthub/db";
+import { PostgresFinanceReferenceResolver, PostgresPayContractSafeWriteStore, PostgresPayContractStore } from "@studenthub/db/pay-contracts";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import { payContractChangeCheck, payContractChanger, payContractCompanyRecordRef, payContractCreateCheck, payContractCreator, payContractEditableValue, payContractPrincipalRef, payContractReadAccess, payContractRecordRef, payContractStateDecision, payContractWriteDecision } from "@studenthub/pay-contracts";
 import { createPayContracts } from "../pay-contracts-http.js";

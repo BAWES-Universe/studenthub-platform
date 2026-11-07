@@ -1,5 +1,6 @@
 import { Telemetry, telemetryMode, observedJob, createJobRegistry, runJob, JOB_NAMES, writeJobAlert, type JobAlert } from '../../../packages/observability/src/index.js';
-import { PostgresJobRunsStore,PostgresEmailOutboxStore } from '../../../packages/db/src/index.js';
+import { PostgresJobRunsStore } from '../../../packages/db/src/ops/index.js';
+import { PostgresEmailOutboxStore } from '../../../packages/db/src/notifications/index.js';
 import {EmailOutboxService,UnconfiguredEmailPort}from'../../../packages/notifications/src/index.js';
 export { observedJob } from '../../../packages/observability/src/index.js';
 import { pathToFileURL } from "node:url";

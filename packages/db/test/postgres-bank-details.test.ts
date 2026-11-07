@@ -366,8 +366,8 @@ test("SHU182_BANK_NOT_PROJECTED only the bank-details path can reach the table o
   assert.deepEqual(await namers(/\b(PostgresBankDetailsStore|parseBankDetailsValue|maskBankDetails|createBankDetails|BankDetailsStore)\b/), [
     "apps/gateway/src/bank-details.ts",
     "apps/gateway/src/wiring/profile.ts",
-    "packages/db/src/index.ts",
     "packages/db/src/postgres-bank-details-store.ts",
+    "packages/db/src/profile/index.ts",
     "packages/pay-contracts/src/bank-write.ts",
   ]);
 });

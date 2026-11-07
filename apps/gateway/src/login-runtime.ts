@@ -20,7 +20,7 @@ import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
 import { wireOps } from "./wiring/ops.js";
-import {PostgresNotificationsStore} from "@studenthub/db";
+import {PostgresNotificationsStore} from "@studenthub/db/notifications";
 import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
 import {createNotificationsHttp} from "./notifications-http.js";
 

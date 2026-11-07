@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
 import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, normalizePersonSelfEditValue, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
-import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
+import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db/profile";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
 export interface PersonProfileEditStore {

@@ -1,4 +1,4 @@
-import { PostgresAuthzStore, PostgresLoginStore } from "@studenthub/db";
+import { PostgresAuthzStore, PostgresLoginStore } from "@studenthub/db/access";
 import type { Wired, WiringSettings } from "./context.js";
 
 export function wireAccess(settings: WiringSettings): Wired<{

@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { PERSON_SELF_EDIT_FIELDS, kuwaitDate, validatePersonSelfEditValue, type PersonSelfEditField } from "@studenthub/profile";
-import { PersonProfileBrowserRetryableError } from "@studenthub/db";
+import { PersonProfileBrowserRetryableError } from "@studenthub/db/profile";
 import { browserChangeSetDigest, type BrowserBaseline, type BrowserWriteToken, type BrowserWriteOutcome, type BrowserReceiptStatus, type Receipt, type SafeWriteSecret } from "@studenthub/safe-write-contract";
 import type { OriginChoices } from "./profile-edit-http.js";
 import { profileControl, profileErrorSummary, type ProfileFieldKey } from "./ui/profile-kit.js";

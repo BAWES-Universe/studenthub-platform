@@ -15,7 +15,7 @@ import {
 } from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
-import { PostgresAuthzStore } from "@studenthub/db";
+import { PostgresAuthzStore } from "@studenthub/db/access";
 import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml, pageDocument, WORKSPACE_HISTORY_JS } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
