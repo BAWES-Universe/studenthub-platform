@@ -21,13 +21,20 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports), [".", ...areas.map(area => `./${area}`)]);
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
     const entry = await moduleFor(`@studenthub/db/${area}`);
     assert.deepEqual(Object.keys(entry).sort(), [...expected[area]].sort(), `PREP_EXPORTS ${area} owns exactly its assigned runtime exports`);
   }
+  // Assertions is subpath-only: keep the original root-export golden unchanged.
+  assert.deepEqual(manifest.exports["./assertions"], {
+    types: "./dist/assertions/index.d.ts", import: "./dist/assertions/index.js",
+  });
+  const assertions = await moduleFor("@studenthub/db/assertions");
+  assert.deepEqual(Object.keys(assertions), ["PostgresReplayStore"]);
+  assert.equal(typeof assertions.PostgresReplayStore, "function");
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {

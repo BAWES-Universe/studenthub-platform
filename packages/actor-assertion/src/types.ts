@@ -66,6 +66,8 @@ export const HASHED_USER_ID_SUBJECT_POLICY: SubjectPolicy = Object.freeze({
 export const UNIVERSE_SUBJECT_POLICY: SubjectPolicy = USER_EMAIL_SUBJECT_POLICY;
 
 export enum AssertionErrorCode {
+  CONFIG = "CONFIG",
+  LIFETIME = "LIFETIME",
   MALFORMED = "MALFORMED",
   BAD_SIGNATURE = "BAD_SIGNATURE",
   UNKNOWN_ISSUER = "UNKNOWN_ISSUER",
@@ -129,10 +131,16 @@ export interface VerifyOptions {
   subjectPolicy: SubjectPolicy;
   /** optional; when set, sub must equal this */
   expectedSubject?: string;
-  /** injectable clock (epoch seconds), defaults to Date.now()/1000 */
+  /** Legacy fixed time (epoch seconds). Ignored in strict mode; use wallClock. */
   now?: number;
   /** max clock skew allowance for iat (seconds) */
   maxIatSkewSeconds?: number;
+  /** Opt in to strict freshness: integer 1..3600 seconds. */
+  maxLifetimeSeconds?: number;
+  /** Fresh epoch seconds on EVERY call, strict mode only. Defaults to Date.now()/1000. */
+  wallClock?: () => number;
+  /** Monotonically increasing seconds, strict mode only. Defaults to performance.now()/1000. */
+  monotonicClock?: () => number;
 }
 
 /**
@@ -149,11 +157,26 @@ export type VerifyResult =
   | { ok: true; claims: ActorAssertionClaims }
   | { ok: false; code: AssertionErrorCode; reason: string };
 
+/** Explicit outcomes avoid interpreting an expired result as a truthy replay. */
+export type ReplayOutcome = "consumed" | "replayed" | "expired" | "future_iat";
+
+/** Validated strict temporal constraints; shared stores must use their own fresh clock. */
+export interface ReplayConstraints {
+  issuedAt: number;
+  maxIatSkewSeconds: number;
+}
+
 export interface ReplayStore {
   /**
    * Records (issuer, jti) with its expiry; returns true if the pair was already
    * seen (replay), false if it is new and now recorded. Entries past expiry are
-   * treated as absent and may be pruned.
+   * treated as absent and may be pruned by legacy stores. New shared stores can
+   * return explicit outcomes instead: consumed, replayed, expired, future_iat.
+   * When constraints are supplied, authoritative stores validate expiry and iat
+   * using fresh store time, not application `now`. Keep tombstones at least 600
+   * seconds past expiry and never accept an expired assertion after cleanup.
+   * Existing four-argument boolean stores remain compatible; strict verifiers
+   * additionally check their own fresh clocks before accepting consumption.
    *
    * Replay state is scoped BY ISSUER. `jti` is only unique within the issuer
    * that minted it, so keying on `jti` alone lets one issuer burn another
@@ -166,5 +189,6 @@ export interface ReplayStore {
     jti: string,
     expiresAt: number,
     now: number,
-  ): boolean | Promise<boolean>;
+    constraints?: ReplayConstraints,
+  ): boolean | ReplayOutcome | Promise<boolean | ReplayOutcome>;
 }

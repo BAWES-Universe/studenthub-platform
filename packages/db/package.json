@@ -38,6 +38,10 @@
       "types": "./dist/documents/index.d.ts",
       "import": "./dist/documents/index.js"
     },
+    "./assertions": {
+      "types": "./dist/assertions/index.d.ts",
+      "import": "./dist/assertions/index.js"
+    },
     "./notifications": {
       "types": "./dist/notifications/index.d.ts",
       "import": "./dist/notifications/index.js"
