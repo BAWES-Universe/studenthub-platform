@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-494", "SHU-495", "SHU-496", "SHU-497", "SHU-498", "SHU-499", "SHU-500", "SHU-501", "SHU-502", "SHU-503", "SHU-504", "SHU-505", "SHU-506", "SHU-507", "SHU-508"], "SHU-224: the scope names the current card queue (SHU-312)");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-494", "SHU-495", "SHU-496", "SHU-497", "SHU-498", "SHU-499", "SHU-500", "SHU-501", "SHU-502", "SHU-503", "SHU-504", "SHU-505", "SHU-506", "SHU-507", "SHU-508", "SHU-513", "SHU-514", "SHU-515", "SHU-516", "SHU-517", "SHU-518", "SHU-519"], "SHU-224: the scope names the current card queue (SHU-312), with the re-cut of the stopped civil ID chain appended after it");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -273,6 +273,20 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.deepEqual(after("SHU-506"), ["SHU-503", "SHU-500", "SHU-499"], "SHU-224: SHU-506 waits on SHU-503, SHU-500 and SHU-499");
   assert.deepEqual(after("SHU-507"), ["SHU-500", "SHU-503", "SHU-506", "SHU-499"], "SHU-224: SHU-507 waits on SHU-500, SHU-503, SHU-506 and SHU-499");
   assert.deepEqual(after("SHU-508"), ["SHU-506", "SHU-499"], "SHU-224: SHU-508 waits on SHU-506 and SHU-499");
+  // The re-cut of SHU-500's chain, appended: each waits on the re-cut ids of
+  // the cards it built on, and on SHU-503, SHU-504 and SHU-499 as before.
+  assert.deepEqual(after("SHU-513"), ["SHU-499"], "SHU-224: SHU-513 waits on SHU-499");
+  assert.deepEqual(after("SHU-514"), ["SHU-499"], "SHU-224: SHU-514 waits on SHU-499");
+  assert.deepEqual(after("SHU-515"), ["SHU-513", "SHU-499"], "SHU-224: SHU-515 waits on SHU-513 and SHU-499");
+  assert.deepEqual(after("SHU-516"), ["SHU-513", "SHU-504", "SHU-499"], "SHU-224: SHU-516 waits on SHU-513, SHU-504 and SHU-499");
+  assert.deepEqual(after("SHU-517"), ["SHU-503", "SHU-513", "SHU-499"], "SHU-224: SHU-517 waits on SHU-503, SHU-513 and SHU-499");
+  assert.deepEqual(after("SHU-518"), ["SHU-513", "SHU-503", "SHU-517", "SHU-499"], "SHU-224: SHU-518 waits on SHU-513, SHU-503, SHU-517 and SHU-499");
+  assert.deepEqual(after("SHU-519"), ["SHU-517", "SHU-499"], "SHU-224: SHU-519 waits on SHU-517 and SHU-499");
+  const RECUT_500 = ["SHU-513", "SHU-514", "SHU-515", "SHU-516", "SHU-517", "SHU-518", "SHU-519"];
+  const STOPPED_500 = ["SHU-500", "SHU-501", "SHU-502", "SHU-505", "SHU-506", "SHU-507", "SHU-508"];
+  for (const id of RECUT_500) {
+    assert.ok(!(after(id) ?? []).some((need) => STOPPED_500.includes(need)), `SHU-224: ${id} waits on no stopped card`);
+  }
   for (const id of config.dispatch_scope.issue_ids) {
     assert.ok(config.card_lanes.some((lane) => lane.id === id), "SHU-224: each scoped card has a card lane");
   }
@@ -289,6 +303,24 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   }
   assert.match(contract499.brief ?? "", /move every export line those two cards added, names unchanged, into notifications\/index\.ts/, "SHU-224: SHU-499 moves the email store exports into notifications");
   assert.match(contract499.acceptance ?? "", /notifications exposes exactly the names SHU-494 and SHU-495 export from the root/, "SHU-224: SHU-499 acceptance keeps the email store exports");
+  // The re-cut cards list the route-order test, and the cards that add copy
+  // the profile copy and its key-count test; their briefs say how to change them.
+  const contracts = JSON.parse(fs.readFileSync(join(COORDINATOR_DIR, "card-contracts.json"), "utf8")).cards;
+  for (const id of RECUT_500) {
+    const lane = config.card_lanes.find((entry) => entry.id === id);
+    const copy = id !== "SHU-517";
+    const files = ["apps/gateway/test/routes-order.test.ts", ...(copy ? ["apps/gateway/test/profile-kit.test.ts", "apps/gateway/src/ui/profile-copy.ts"] : [])];
+    for (const file of files) {
+      assert.ok(lane.initial_build_paths.includes(file) && lane.revision_paths.includes(file), `SHU-224: ${id} may change ${file}`);
+      assert.ok(contracts[id].brief.includes(`- ${file}\n`), `SHU-224: ${id}'s brief lists ${file}`);
+    }
+    assert.deepEqual(lane.initial_build_paths, contracts[id].initial_build_paths, `SHU-224: ${id}'s lane and contract list the same paths`);
+    assert.deepEqual(lane.revision_paths, contracts[id].revision_paths, `SHU-224: ${id}'s lane and contract list the same revision paths`);
+    assert.match(contracts[id].brief, /appending its name to that list .* bumping the length assertion by one per route, keeping every existing name in its order/, `SHU-224: ${id} says how to change the route-order test`);
+    assert.equal(/U1_COPY key count/.test(contracts[id].brief), copy, `SHU-224: ${id} says how to change the U1_COPY count only where it adds copy`);
+    assert.match(contracts[id].brief, /Before you finish, run git status and compare every changed or added file with your paths/, `SHU-224: ${id} checks its own paths`);
+    assert.match(contracts[id].acceptance, /re-queued under a fresh id .*; SHU-50[0-8] never lands\./, `SHU-224: ${id} names the card it replaces`);
+  }
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
