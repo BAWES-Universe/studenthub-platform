@@ -327,6 +327,13 @@ test("stop cause S8: a missing route or looping label still files and names only
   assert.match(partial.creates[0].description, /The label `stop:looping` could not be found in Linear, so this card is filed without it\./);
   assert.doesNotMatch(partial.creates[0].description, /`stop:card-fix` could not be found/);
 
+  // Only the route label missing: the looping label still applies, and the note names only the route label.
+  const routeless = fakeLinear({ labels: [STOP_LOOPING_LABEL], priors });
+  assert.equal((await file(event, routeless)).status, "confirmed");
+  assert.deepEqual(routeless.labelNames(routeless.creates[0]).sort(), [INCIDENT_LABEL_NAME, STOP_LOOPING_LABEL].sort());
+  assert.match(routeless.creates[0].description, /The label `stop:card-fix` could not be found in Linear, so this card is filed without it\./);
+  assert.doesNotMatch(routeless.creates[0].description, /`stop:looping` could not be found/);
+
   // An unreadable prior-stop read also never blocks filing; it only skips the loop check.
   const unreadable = fakeLinear({ priorsFail: true });
   assert.equal((await file(event, unreadable)).status, "confirmed");
