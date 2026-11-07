@@ -382,6 +382,17 @@ export class SupervisorStore {
     return existsSync(this.paths(attemptId).completion);
   }
 
+  // True only when the store provably holds nothing for this attempt: every
+  // per-attempt record is absent (ENOENT). Any other answer, an unreadable
+  // directory included, is not proof of absence.
+  holdsNoRecord(attemptId) {
+    const paths = this.paths(attemptId);
+    for (const file of [paths.order, paths.run, paths.launch, paths.completion]) {
+      try { lstatSync(file); return false; } catch (error) { if (error?.code !== 'ENOENT') return false; }
+    }
+    return true;
+  }
+
   readCompletion(attemptId) {
     return readJson(this.paths(attemptId).completion);
   }
@@ -514,7 +525,13 @@ export class DurableSupervisor {
   status(request) {
     const verified = verifySupervisorRequest(request, this.secret);
     if (!verified.ok) return { ok: false, stage: "HOLD", reason: verified.reason };
+    // An attempt this supervisor never admitted, told apart from one whose
+    // records cannot be read (the catch-all below): NO_RECORDS is stated only
+    // when every record is provably absent.
     try {
+      if (this.store.holdsNoRecord(request.order.attempt_id)) {
+        return { ok: false, stage: "HOLD", hold_code: requireHoldCode('MISSING_CLAIM'), detail_code: 'NO_RECORDS', reason: "supervisor holds no record of this attempt" };
+      }
       const order = this.store.readOrder(request.order.attempt_id);
       for (const key of ["attempt_id", "target_sha", "repo", "branch", "role", "runtime", "issue_id", "authorization_ref"]) {
         if (order[key] !== request.order[key]) return { ok: false, stage: "HOLD", reason: "status binding mismatch" };

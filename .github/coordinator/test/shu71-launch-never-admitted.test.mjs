@@ -23,7 +23,9 @@ import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 
 const T0 = new Date("2026-09-10T12:00:00.000Z");
 const at = (ms) => new Date(T0.getTime() + ms);
-const MISSING_CLAIM = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" };
+const MISSING_CLAIM = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", detail_code: "NO_RECORDS", reason: "supervisor holds no record of this attempt" };
+// The supervisor's catch-all: records it cannot read. Not proof of absence.
+const UNREADABLE = { ok: false, stage: "HOLD", hold_code: "MISSING_CLAIM", reason: "supervisor attempt unavailable" };
 
 // The 06:47Z shape: the supervisor refuses the launch before admitting it, so
 // the adapter answers LAUNCH_UNKNOWN with no run id.
@@ -65,6 +67,7 @@ test("SHU71_NEVER_ADMITTED_PREDICATE: only an earlier episode's unacknowledged l
   assert.equal(otherEpisodeUnacknowledgedLaunch({ ...base, stage: "RUNNING" }, "episode-b"), false);
   assert.equal(otherEpisodeUnacknowledgedLaunch({ ...base, review_base_sha: "b".repeat(40) }, "episode-b"), false, "a review-only recovery keeps its own path");
   assert.equal(supervisorDisownsLaunch(MISSING_CLAIM), true);
+  assert.equal(supervisorDisownsLaunch(UNREADABLE), false, "a bare MISSING_CLAIM may be records the supervisor cannot read");
   assert.equal(supervisorDisownsLaunch({ ok: false, stage: "HOLD", reason: "supervisor configuration unavailable: ECONNREFUSED" }), false, "a transport fault is not an answer");
   assert.equal(supervisorDisownsLaunch({ ok: false, stage: "HOLD", hold_code: "BRANCH_OCCUPIED" }), false);
   assert.equal(supervisorDisownsLaunch({ ok: true, durable: true, stage: "ACCEPTED", hold_code: "MISSING_CLAIM" }), false, "an admitted order is never disowned");
@@ -113,10 +116,11 @@ test("SHU71_NEVER_ADMITTED_OWN_EPISODE: inside its own episode the launch is sti
   } finally { h.cleanup(); }
 });
 
-test("SHU71_NEVER_ADMITTED_SUPERVISOR_KNOWS_IT: any answer but MISSING_CLAIM keeps the receipt held", async () => {
+test("SHU71_NEVER_ADMITTED_SUPERVISOR_KNOWS_IT: any answer but a provable absence keeps the receipt held", async () => {
   for (const answer of [
     { ok: true, version: "2.0.0", durable: true, stage: "ACCEPTED", hold_code: "AWAITING_LAUNCH" },
     { ok: false, stage: "HOLD", reason: "supervisor configuration unavailable: ECONNREFUSED" },
+    UNREADABLE,
     "throw",
   ]) {
     const { h, receipt } = await heldLaunch();
@@ -129,4 +133,49 @@ test("SHU71_NEVER_ADMITTED_SUPERVISOR_KNOWS_IT: any answer but MISSING_CLAIM kee
       assert.equal(h.receiptFor(receipt.attempt_id).stage, "LAUNCH_UNKNOWN", JSON.stringify(answer));
     } finally { h.cleanup(); }
   }
+});
+
+test("SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS only when every record of the attempt is absent", async (t) => {
+  const { mkdtempSync, rmSync, writeFileSync: write, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { EventEmitter } = await import("node:events");
+  const { DurableSupervisor, signedSupervisorRequest } = await import("../supervisor.mjs");
+  const secret = "shu71-never-admitted-secret-at-least-32-bytes";
+  const order = { version: "1.0.0", role: "build", runtime: "hermes-pool", issue_id: "SHU-495",
+    authorization_ref: "SHU-495", attempt_id: "8c9ee8af-247a-4806-8e07-3806e07e0003",
+    target_sha: "a".repeat(40), repo: "example/repo", branch: "coordinator/SHU-495", task_context: "revise" };
+  const dir = mkdtempSync(join(tmpdir(), "shu71-never-admitted-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const supervisor = new DurableSupervisor({ stateDir: dir, secret, schedule: () => {}, probeProcess: () => true,
+    spawnWorker: () => Object.assign(new EventEmitter(), { pid: 7001, processStartToken: "fixture" }) });
+  const ask = () => supervisor.status(signedSupervisorRequest(order, secret, "status"));
+
+  // The 06:47Z shape: a durable intent held BRANCH_OCCUPIED, no order, no run.
+  supervisor.store.intend(order, new Date().toISOString(), "AWAITING_LAUNCH");
+  supervisor.store.holdIntent(order, "BRANCH_OCCUPIED");
+  const absent = ask();
+  assert.equal(absent.ok, false);
+  assert.equal(absent.hold_code, "MISSING_CLAIM");
+  assert.equal(absent.detail_code, "NO_RECORDS");
+  assert.equal(supervisorDisownsLaunch(absent), true);
+
+  // A record that exists but cannot be read is the catch-all, never NO_RECORDS.
+  const paths = supervisor.store.paths(order.attempt_id);
+  mkdirSync(paths.run);
+  const unreadable = ask();
+  assert.equal(unreadable.hold_code, "MISSING_CLAIM");
+  assert.equal(unreadable.detail_code, undefined);
+  assert.equal(supervisorDisownsLaunch(unreadable), false);
+  rmSync(paths.run, { recursive: true });
+
+  // An admitted attempt answers with its stage.
+  write(paths.order, "{");
+  assert.equal(supervisorDisownsLaunch(ask()), false, "a corrupt order is not an absent one");
+  rmSync(paths.order);
+  const admitted = await supervisor.submit(signedSupervisorRequest({ ...order, attempt_id: "9c9ee8af-247a-4806-8e07-3806e07e0004" }, secret));
+  assert.notEqual(admitted.ok, false, JSON.stringify(admitted));
+  const known = supervisor.status(signedSupervisorRequest({ ...order, attempt_id: "9c9ee8af-247a-4806-8e07-3806e07e0004" }, secret, "status"));
+  assert.equal(known.ok, true, JSON.stringify(known));
+  assert.equal(supervisorDisownsLaunch(known), false);
 });

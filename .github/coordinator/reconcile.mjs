@@ -95,11 +95,15 @@ export function otherEpisodeUnacknowledgedLaunch(receipt, armedEpisodeId) {
   return typeof receipt.episode_id === "string" && receipt.episode_id.length > 0 && receipt.episode_id !== armedEpisodeId;
 }
 
-// The supervisor's status answer for an attempt it holds no durable order for.
-// Anything else (an admitted stage, another hold code, a transport fault with
-// no hold code) leaves the receipt held.
+// The supervisor's status answer for an attempt it provably holds no record of:
+// MISSING_CLAIM with detail NO_RECORDS, which the supervisor states only when
+// its order, run, launch and completion records are all absent. A bare
+// MISSING_CLAIM is also its catch-all for records it cannot read, so it is not
+// enough. Anything else (an admitted stage, another hold code, a transport
+// fault) leaves the receipt held.
 export function supervisorDisownsLaunch(answer) {
-  return !!answer && typeof answer === "object" && answer.ok === false && answer.hold_code === "MISSING_CLAIM";
+  return !!answer && typeof answer === "object" && answer.ok === false
+    && answer.hold_code === "MISSING_CLAIM" && answer.detail_code === "NO_RECORDS";
 }
 
 // Free text is never an acceptable authorization: only real Linear issue refs or
@@ -2745,8 +2749,9 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
       if (!linearIssueId) continue;
 
       // A launch an EARLIER episode sent and the supervisor never admitted. The
-      // supervisor holds no durable order for it (MISSING_CLAIM), so no worker,
-      // branch claim or launch exists, and that episode's approval is spent.
+      // supervisor provably holds no record of it (MISSING_CLAIM, NO_RECORDS),
+      // so no worker, branch claim or launch exists, and that episode's approval
+      // is spent. Released, it is never sent again, so it cannot be admitted later.
       // Resuming it would start an old episode's step on a branch the new
       // episode owns; leaving it held keeps the issue's slot forever (SHU-495,
       // 06:47Z: refused BRANCH_OCCUPIED, then held every later episode). It is
@@ -2756,7 +2761,7 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
         try { answer = await adapterModule.status(); } catch { answer = null; }
         if (supervisorDisownsLaunch(answer)) {
           const released = nextReceiptState(receipt, { type: "hold",
-            reason: `${LAUNCH_NEVER_ADMITTED}: launched in episode ${receipt.episode_id}, which has ended; the supervisor holds no order for it (MISSING_CLAIM), so nothing ran` }, { now: io.now });
+            reason: `${LAUNCH_NEVER_ADMITTED}: launched in episode ${receipt.episode_id}, which has ended; the supervisor holds no record of it (MISSING_CLAIM, NO_RECORDS), so nothing ran` }, { now: io.now });
           if (released.accepted) {
             await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(released.receipt) }, linearToken, fetchImpl);
             lifecyclePersisted = true;
