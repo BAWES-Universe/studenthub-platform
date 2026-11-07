@@ -201,6 +201,10 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+// The hold codes accept() writes on an intent before any order, run or branch
+// claim exists for it: the refusals that prove nothing was admitted.
+export const PRE_ADMISSION_REFUSALS = Object.freeze(['BRANCH_OCCUPIED', 'MISSING_AUTHORITY']);
+
 export class SupervisorStore {
   constructor(root) {
     this.root = root;
@@ -383,9 +387,10 @@ export class SupervisorStore {
   }
 
   // True only when this supervisor refused the order and provably admitted
-  // nothing for it: its durable intent exists, is bound to this attempt,
-  // and is held with a refusal code (never AWAITING_LAUNCH, the only code
-  // recover() admits), and every per-attempt record is absent (ENOENT). A lost
+  // nothing for it: its durable intent exists, is bound to this attempt, and
+  // is held with a code accept() sets before any order exists (never
+  // AWAITING_LAUNCH, which recover() admits, nor AMBIGUOUS_LAUNCH, set after a
+  // spawn was attempted), and every per-attempt record is absent (ENOENT). A lost
   // or unreadable state directory has no such intent, so it is never read as
   // absence; any other error is not proof either.
   refusedWithoutRecord(order) {
@@ -396,7 +401,7 @@ export class SupervisorStore {
       for (const key of ["attempt_id", "target_sha", "repo", "branch", "role", "runtime", "issue_id", "authorization_ref"]) {
         if (intent.order?.[key] !== order[key]) return false;
       }
-      if (requireHoldCode(intent.hold_code) === 'AWAITING_LAUNCH') return false;
+      if (!PRE_ADMISSION_REFUSALS.includes(requireHoldCode(intent.hold_code))) return false;
     } catch { return false; }
     const paths = this.paths(order.attempt_id);
     for (const file of [paths.order, paths.run, paths.launch, paths.completion]) {

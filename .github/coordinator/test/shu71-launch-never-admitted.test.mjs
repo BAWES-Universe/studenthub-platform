@@ -172,6 +172,11 @@ test("SHU71_NEVER_ADMITTED_SUPERVISOR_STATUS: the supervisor says NO_RECORDS onl
   assert.equal(supervisorDisownsLaunch(refused), true);
   assert.equal(supervisorDisownsLaunch(ask({ ...order, target_sha: "b".repeat(40) })), false, "a different binding is not this attempt");
 
+  // AMBIGUOUS_LAUNCH is set after a spawn was attempted: its records may be lost, not absent.
+  supervisor.store.holdIntent({ ...order, cwd: "/srv/shu/worktrees/x" }, "AMBIGUOUS_LAUNCH");
+  assert.equal(ask().detail_code, undefined, "partial state loss after a spawn attempt is not absence");
+  supervisor.store.holdIntent({ ...order, cwd: "/srv/shu/worktrees/x" }, "BRANCH_OCCUPIED");
+
   // Fenced from supervisor recovery: a held intent is never admitted by recover().
   supervisor.recover();
   assert.equal(supervisorDisownsLaunch(ask()), true, "recover() admitted nothing");
