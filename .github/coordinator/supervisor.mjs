@@ -201,6 +201,10 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+// The hold codes accept() writes on an intent before any order, run or branch
+// claim exists for it: the refusals that prove nothing was admitted.
+export const PRE_ADMISSION_REFUSALS = Object.freeze(['BRANCH_OCCUPIED', 'MISSING_AUTHORITY']);
+
 export class SupervisorStore {
   constructor(root) {
     this.root = root;
@@ -382,6 +386,30 @@ export class SupervisorStore {
     return existsSync(this.paths(attemptId).completion);
   }
 
+  // True only when this supervisor refused the order and provably admitted
+  // nothing for it: its durable intent exists, is bound to this attempt, and
+  // is held with a code accept() sets before any order exists (never
+  // AWAITING_LAUNCH, which recover() admits, nor AMBIGUOUS_LAUNCH, set after a
+  // spawn was attempted), and every per-attempt record is absent (ENOENT). A lost
+  // or unreadable state directory has no such intent, so it is never read as
+  // absence; any other error is not proof either.
+  refusedWithoutRecord(order) {
+    try {
+      const intent = readJson(this.intentPath(order));
+      // The same binding status() checks: a status order carries no cwd, so
+      // the whole order is never compared.
+      for (const key of ["attempt_id", "target_sha", "repo", "branch", "role", "runtime", "issue_id", "authorization_ref"]) {
+        if (intent.order?.[key] !== order[key]) return false;
+      }
+      if (!PRE_ADMISSION_REFUSALS.includes(requireHoldCode(intent.hold_code))) return false;
+    } catch { return false; }
+    const paths = this.paths(order.attempt_id);
+    for (const file of [paths.order, paths.run, paths.launch, paths.completion]) {
+      try { lstatSync(file); return false; } catch (error) { if (error?.code !== 'ENOENT') return false; }
+    }
+    return true;
+  }
+
   readCompletion(attemptId) {
     return readJson(this.paths(attemptId).completion);
   }
@@ -514,7 +542,13 @@ export class DurableSupervisor {
   status(request) {
     const verified = verifySupervisorRequest(request, this.secret);
     if (!verified.ok) return { ok: false, stage: "HOLD", reason: verified.reason };
+    // An attempt this supervisor refused and never admitted, told apart from
+    // one whose records cannot be read (the catch-all below) and from lost
+    // state: NO_RECORDS is stated only on its held intent plus provable absence.
     try {
+      if (this.store.refusedWithoutRecord(request.order)) {
+        return { ok: false, stage: "HOLD", hold_code: requireHoldCode('MISSING_CLAIM'), detail_code: 'NO_RECORDS', reason: "supervisor refused this attempt and holds no record of it" };
+      }
       const order = this.store.readOrder(request.order.attempt_id);
       for (const key of ["attempt_id", "target_sha", "repo", "branch", "role", "runtime", "issue_id", "authorization_ref"]) {
         if (order[key] !== request.order[key]) return { ok: false, stage: "HOLD", reason: "status binding mismatch" };
