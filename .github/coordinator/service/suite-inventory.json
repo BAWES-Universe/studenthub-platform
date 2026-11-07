@@ -2415,6 +2415,7 @@
     "SHU-225 I2 (M2): the episode's exception covers only its own bound issue",
     "SHU-225 I8 (M7): a spent episode is never re-selectable",
     "SHU-225 I8: exhaustion and capped failures still end the episode (termination unchanged)",
+    "a review that failed before running (busy reviewer sandbox) routes the same review again",
     "SHU-225 I4: the successor is the same issue as the activation target and the committed scope",
     "SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review",
     "SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)",
@@ -2733,6 +2734,8 @@
     "SHU-303 R2: only the review lane runs a review-only record, with a reviewer its lane lists",
     "SHU-303 R3: the committed review lane is the reviewed card, once, with its own ref and reviewer lanes only",
     "SHU-303 E1: a review-only verdict is final: PASS and BLOCKED both end the episode with no successor",
+    "review-only: a busy reviewer sandbox ran nothing, so the run stays open for the same review until the failure cap",
+    "review-only: a busy reviewer sandbox relaunches the same review at the same head, and its receipt names why",
     "SHU-303 E2: a BLOCK is a finished review, not an incident; a run that could not review is one",
     "SHU-303 P1: the pull request must still be open, of this repository, at the approved head and base",
     "SHU-303 P2: an armed tick reviews the PR's own branch at the approved head, diffed from the approved base",
@@ -2788,6 +2791,7 @@
     "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
     "SHU-232 B6: worst-case escaped stdout and stderr stay inside the 1 MiB evidence budget",
     "SHU-232 B7: no confined execution evidence fails closed and can never PASS",
+    "a busy reviewer sandbox is a retryable failure, never a HOLD that pauses the adapter",
     "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
     "SHU-232 B8: the canonical re-seed is a checker-visible CI-green trap",
     "SHU-232 B9: production-shaped harness reaches build -> BLOCKED -> revision -> re-review -> PASS with no seeded successors",
@@ -3460,6 +3464,7 @@
     "SHU-250: completion with no worker evidence HOLDs",
     "SHU-250: carried result SHA disagrees with verified head and HOLDs",
     "role stage: an adapter's own refusal code reaches the receipt note through the supervisor",
+    "a busy reviewer sandbox reaches the receipt as a retryable FAILED, never a HOLD",
     "role stage: a carried result can never supply the coordinator's live-head codes",
     "SHU-250: bound callback and observed identity survive completion and restart",
     "SHU-250: stopped heartbeat never declares a live worker dead",
@@ -4389,6 +4394,7 @@
     "SHU-71 Codex review PASS: launched as shu-reviewer through the model profile, never the writer wrapper or broker",
     "SHU-71 Codex review BLOCKED: HOLD carries the callback, so findings route to the writer",
     "SHU-71 Codex review refuses to launch without confined test evidence or its model wrapper",
+    "SHU-71 Codex review: a busy reviewer sandbox is a retryable failure that relaunches the review",
     "SHU-71 Codex role authority: scope, role and runtime mismatches fail closed before any launch",
     "SHU-71 Codex review callback binding: another head, unsafe or missing evidence is never a verdict",
     "SHU-71 Codex review stays at the exact head, even on resume",
@@ -20318,6 +20324,14 @@
       ]
     },
     {
+      "name": "a review that failed before running (busy reviewer sandbox) routes the same review again",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "SHU-225 I4: the successor is the same issue as the activation target and the committed scope",
       "capabilities": [
         {
@@ -22083,6 +22097,14 @@
       "capabilities": []
     },
     {
+      "name": "review-only: a busy reviewer sandbox ran nothing, so the run stays open for the same review until the failure cap",
+      "capabilities": []
+    },
+    {
+      "name": "review-only: a busy reviewer sandbox relaunches the same review at the same head, and its receipt names why",
+      "capabilities": []
+    },
+    {
       "name": "SHU-303 E2: a BLOCK is a finished review, not an incident; a run that could not review is one",
       "capabilities": []
     },
@@ -22349,6 +22371,17 @@
     },
     {
       "name": "SHU-232 B7: no confined execution evidence fails closed and can never PASS",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        },
+        {
+          "name": "linux_proc"
+        }
+      ]
+    },
+    {
+      "name": "a busy reviewer sandbox is a retryable failure, never a HOLD that pauses the adapter",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -26956,6 +26989,10 @@
     },
     {
       "name": "role stage: an adapter's own refusal code reaches the receipt note through the supervisor",
+      "capabilities": []
+    },
+    {
+      "name": "a busy reviewer sandbox reaches the receipt as a retryable FAILED, never a HOLD",
       "capabilities": []
     },
     {
@@ -32391,6 +32428,17 @@
     },
     {
       "name": "SHU-71 Codex review refuses to launch without confined test evidence or its model wrapper",
+      "capabilities": [
+        {
+          "name": "bash"
+        },
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU-71 Codex review: a busy reviewer sandbox is a retryable failure that relaunches the review",
       "capabilities": [
         {
           "name": "bash"

@@ -538,6 +538,12 @@ async function launchClaude({
   let inlineEvidence;
   try { inlineEvidence = inlineEvidencePayload(reviewEvidence); } catch { inlineEvidence = null; }
   if (role === "review") {
+  // Another review held the host's reviewer sandbox, so nothing ran: a
+  // retryable failure that relaunches the review, not a HOLD that pauses
+  // the adapter and stops the card.
+  if (reviewEvidence?.reason_code === "REVIEW_SANDBOX_BUSY") {
+    return { stage: "FAILED", error_code: "REVIEW_SANDBOX_BUSY", reason: "REVIEW_SANDBOX_BUSY — another review held the reviewer sandbox; no reviewer launched", ok: false };
+  }
   if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link || !inlineEvidence) {
     return {
       stage: "HOLD",

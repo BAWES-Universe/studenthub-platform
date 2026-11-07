@@ -177,6 +177,15 @@ test("SHU-71 Codex review refuses to launch without confined test evidence or it
   }
 });
 
+test("SHU-71 Codex review: a busy reviewer sandbox is a retryable failure that relaunches the review", async () => {
+  const execFileImpl = execDouble(codexOutput(verdict("PASS")));
+  const out = await launchBuilder(reviewInput({ execFileImpl, reviewEvidenceImpl: evidence({ executed: false, evidence_link: null, report: null, reason_code: "REVIEW_SANDBOX_BUSY" }) }));
+  assert.equal(out.stage, "FAILED");
+  assert.equal(out.error_code, "REVIEW_SANDBOX_BUSY");
+  assert.equal(out.pause_adapter, undefined);
+  assert.equal(execFileImpl.calls.length, 0, "no reviewer model runs when the tests did not run");
+});
+
 test("SHU-71 Codex role authority: scope, role and runtime mismatches fail closed before any launch", async () => {
   const cases = [
     [{ workspace_scope: "scoped" }, /complete and unscoped/],

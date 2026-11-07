@@ -19,6 +19,9 @@ const SENSITIVE_KEY = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|SSH|GITHUB|LINEA
 const TOKEN_SHAPE = /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-(?:ant-)?[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._-]{16,})/;
 const MAX_EVIDENCE_BYTES = 1024 * 1024;
 
+// reviewer-sandbox.sh exits 75 when another review already holds its lock.
+export const REVIEW_SANDBOX_BUSY_EXIT = 75;
+
 function runExecFile(execFileImpl, file, args, options) {
   return new Promise((resolve) => {
     execFileImpl(file, args, options, (error, stdout = "", stderr = "") => {
@@ -312,6 +315,12 @@ export async function runReviewEvidence({
       maxBuffer: MAX_EVIDENCE_BYTES,
       windowsHide: true,
     });
+    // The wrapper runs one review at a time on a host and exits 75 (EX_TEMPFAIL)
+    // when another review holds its lock. Nothing ran, so this is not a failed
+    // proof of confinement: the review is retried once the other one ends.
+    if (result.error?.code === REVIEW_SANDBOX_BUSY_EXIT) {
+      return { ok: false, executed: false, passed: false, reason_code: "REVIEW_SANDBOX_BUSY", evidence_link: null };
+    }
     let report = null;
     try { report = JSON.parse(result.stdout); } catch { /* classified below */ }
     if (report && typeof report === "object") {

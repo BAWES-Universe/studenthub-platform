@@ -1122,6 +1122,10 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           `run failed${preAcceptance ? " (rejected before run acceptance)" : ""}${error_code ? ` (error code ${error_code})` : ""}${quotaOrAccess ? " — QUOTA/ACCESS failure, adapter will be paused" : ""}`,
         ));
         next.stage = "FAILED";
+        // The failure's code, as a field and not only as note text, so a reader
+        // can tell a run that never started (REVIEW_SANDBOX_BUSY) from one that
+        // failed. Only a code-shaped value is kept; free text never is.
+        if (typeof error_code === "string" && /^[A-Z][A-Z0-9_]{2,47}$/.test(error_code)) next.error_code = error_code;
         if (!preAcceptance) {
           next.adapter_status = "failed"; // granular upstream status; stays null when no run existed
           if (typeof event.worker_identity === "string" && event.worker_identity.length) {
