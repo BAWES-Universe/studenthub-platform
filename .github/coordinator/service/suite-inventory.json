@@ -141,6 +141,7 @@
     ".github/coordinator/test/shu73-enforcement.test.mjs",
     ".github/coordinator/test/shu86-durable-intent.test.mjs",
     ".github/coordinator/test/single-run-activation.test.mjs",
+    ".github/coordinator/test/stop-cause-subcodes.test.mjs",
     ".github/coordinator/test/supervisor-dispatch.test.mjs",
     ".github/coordinator/test/supervisor.test.mjs",
     ".github/coordinator/test/two-fixture-activation.test.mjs",
@@ -3456,6 +3457,21 @@
     "Self-repair B1: E5 the re-review's PASS ends the repair complete",
     "Self-repair B1: E7 a spent or expired repair reports its stop with the repair's own cap",
     "Self-repair B1: E6 a later repair of the same PASS mints an attempt of its own",
+    "stop cause S1: each adapter reason code on the HOLD receipt maps to its subcode, title and route label",
+    "stop cause S2: the coordinator's own fixed HOLD notes name provenance and an unapplied verdict",
+    "stop cause S3: non-HOLD stops route by their reason code",
+    "stop cause S4: an unknown adapter code or free text becomes UNCLASSIFIED and needs a person",
+    "stop cause S5: the incident identity and reason code stay exactly as before",
+    "stop cause S6: the third stop with the same card, cause and contract is looping; the second is not",
+    "stop cause S7: review desk stops on different reviewed heads are not a loop",
+    "stop cause S8: a missing route or looping label still files with repo:platform and says so",
+    "stop cause S9: the card contract key follows the card's committed contract",
+    "stop cause mutation: remove the adapter code mapping",
+    "stop cause mutation: route every HOLD to needs-person",
+    "stop cause mutation: remove the looping check",
+    "stop cause mutation: loop at the second stop",
+    "stop cause mutation: ignore the reviewed head",
+    "stop cause mutation: refuse to file when a route label is missing",
     "SHU-250: real tick returns while a long-running supervised child executes",
     "SHU-250: concurrent ticks recover the same durable attempt with one launch",
     "SHU-250: crash after submission recovers once and ambiguous restart HOLDs",
@@ -26958,6 +26974,66 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "stop cause S1: each adapter reason code on the HOLD receipt maps to its subcode, title and route label",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S2: the coordinator's own fixed HOLD notes name provenance and an unapplied verdict",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S3: non-HOLD stops route by their reason code",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S4: an unknown adapter code or free text becomes UNCLASSIFIED and needs a person",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S5: the incident identity and reason code stay exactly as before",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S6: the third stop with the same card, cause and contract is looping; the second is not",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S7: review desk stops on different reviewed heads are not a loop",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S8: a missing route or looping label still files with repo:platform and says so",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause S9: the card contract key follows the card's committed contract",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: remove the adapter code mapping",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: route every HOLD to needs-person",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: remove the looping check",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: loop at the second stop",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: ignore the reviewed head",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: refuse to file when a route label is missing",
+      "capabilities": []
     },
     {
       "name": "SHU-250: real tick returns while a long-running supervised child executes",
