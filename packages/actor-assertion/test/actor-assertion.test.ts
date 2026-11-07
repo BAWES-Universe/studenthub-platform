@@ -353,3 +353,117 @@ describe("dependency failures and replay scoping (PR #13 review)", () => {
     if (!replay.ok) expect(replay.code).toBe(AssertionErrorCode.REPLAYED);
   });
 });
+
+describe("strict lifetime and fresh-clock verification", () => {
+  const options = () => ({
+    expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+    maxLifetimeSeconds: 60, maxIatSkewSeconds: 5,
+    wallClock: () => 1000, monotonicClock: () => 0,
+  });
+  const token = (over: Partial<ActorAssertionClaims> = {}) =>
+    signAssertion(claims({ iat: 1000, exp: 1060, ...over }), keyPair.privateKeyPem);
+  const check = async (over = {}, opts = {}, store = new MemoryReplayStore()) =>
+    verifyAssertion(await token(over), resolver, store, { ...options(), ...opts });
+
+  it("accepts exact lifetime and future-iat boundaries", async () => {
+    expect((await check()).ok).toBe(true);
+    expect((await check({ iat: 1005, exp: 1065 })).ok).toBe(true);
+    expect((await check({ iat: 1006, exp: 1066 })).code).toBe(AssertionErrorCode.FUTURE_IAT);
+    expect((await check({ iat: 940, exp: 1000 })).code).toBe(AssertionErrorCode.EXPIRED);
+    expect((await check({ iat: 999, exp: 1000.1 })).ok).toBe(true);
+  });
+
+  it.each([0, -1, 3601, 1.5, NaN, Infinity, -Infinity, null, "60"])(
+    "invalid strict lifetime %s denies before key lookup", async (maxLifetimeSeconds) => {
+      let lookups = 0;
+      const res = await verifyAssertion(await token(), async () => { lookups++; return keyPair.publicKeyPem; },
+        new MemoryReplayStore(), { ...options(), maxLifetimeSeconds } as never);
+      expect(res.code).toBe(AssertionErrorCode.CONFIG);
+      expect(lookups).toBe(0);
+    });
+  it.each([-1, 301, 0.5, NaN, Infinity, null, "5"])("invalid strict skew %s", async (maxIatSkewSeconds) => {
+    let lookups = 0;
+    const res = await verifyAssertion(await token(), async () => { lookups++; return keyPair.publicKeyPem; },
+      new MemoryReplayStore(), { ...options(), maxIatSkewSeconds } as never);
+    expect(res.code).toBe(AssertionErrorCode.CONFIG);
+    expect(lookups).toBe(0);
+  });
+  it("accepts minimum/maximum policy bounds", async () => {
+    expect((await check({ exp: 1001 }, { maxLifetimeSeconds: 1, maxIatSkewSeconds: 0 })).ok).toBe(true);
+    expect((await check({ exp: 4600 }, { maxLifetimeSeconds: 3600, maxIatSkewSeconds: 300 })).ok).toBe(true);
+  });
+  it.each([{ exp: 1000 }, { exp: 999 }, { exp: 1061 }])("rejects invalid lifetime %j", async (over) => {
+    expect((await check(over)).code).toBe(AssertionErrorCode.LIFETIME);
+  });
+  it("keeps legacy numeric now and boolean replay stores", async () => {
+    const t = await token({ exp: 9999 });
+    const legacy = { expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY, now: 1000 };
+    expect((await verifyAssertion(t, resolver, { consume: () => false }, legacy)).ok).toBe(true);
+    expect((await verifyAssertion(t, resolver, { consume: async () => true }, legacy)).code).toBe(AssertionErrorCode.REPLAYED);
+    expect((await verifyAssertion(t, resolver, { consume: () => false }, { ...legacy, now: 9999 })).code).toBe(AssertionErrorCode.EXPIRED);
+  });
+  it("never treats fixed numeric now as a fresh strict clock", async () => {
+    expect((await check({}, { now: 0 })).ok).toBe(true);
+    expect((await check({}, { now: 1000, wallClock: () => 1060 })).code).toBe(AssertionErrorCode.EXPIRED);
+  });
+  it("rechecks expiration after an asynchronous key resolver", async () => {
+    let wall = 1000;
+    let consumes = 0;
+    const res = await verifyAssertion(await token(), async () => {
+      await Promise.resolve(); wall = 1060; return keyPair.publicKeyPem;
+    }, { consume: () => { consumes++; return false; } }, { ...options(), wallClock: () => wall });
+    expect(res.code).toBe(AssertionErrorCode.EXPIRED);
+    expect(consumes).toBe(0);
+  });
+  it.each([10, 10.001])("monotonic deadline boundary %s", async (elapsed) => {
+    let mono = 0;
+    const res = await verifyAssertion(await token(), async () => { mono = elapsed; return keyPair.publicKeyPem; },
+      new MemoryReplayStore(), { ...options(), monotonicClock: () => mono });
+    expect(res.ok).toBe(elapsed === 10);
+    if (elapsed > 10) expect(res.code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+  it("checks expiry and deadline again after replay consumption", async () => {
+    for (const deadline of [false, true]) {
+      let wall = 1000, mono = 0;
+      const res = await verifyAssertion(await token(), resolver, { consume: async () => {
+        if (deadline) mono = 11; else wall = 1060;
+        return false;
+      } }, { ...options(), wallClock: () => wall, monotonicClock: () => mono });
+      expect(res.code).toBe(deadline ? AssertionErrorCode.UNAVAILABLE : AssertionErrorCode.EXPIRED);
+    }
+  });
+  it.each([NaN, Infinity, -Infinity])("fails closed on invalid clocks %s", async (value) => {
+    expect((await check({}, { wallClock: () => value })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    expect((await check({}, { monotonicClock: () => value })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+  it("fails closed on throwing or regressing clocks", async () => {
+    expect((await check({}, { wallClock: () => { throw Error("clock"); } })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    for (const clock of ["wallClock", "monotonicClock"]) {
+      let n = 0;
+      expect((await check({}, { [clock]: () => clock === "wallClock" ? 1000 - n++ : -n++ })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    }
+  });
+  it.each([
+    ["consumed", undefined], ["replayed", AssertionErrorCode.REPLAYED],
+    ["expired", AssertionErrorCode.EXPIRED], ["future_iat", AssertionErrorCode.FUTURE_IAT],
+    [undefined, AssertionErrorCode.UNAVAILABLE], ["unexpected", AssertionErrorCode.UNAVAILABLE],
+  ])("maps explicit replay outcome %s", async (outcome, code) => {
+    const res = await verifyAssertion(await token(), resolver, { consume: (...args: unknown[]) => {
+      expect(args[4]).toEqual({ issuedAt: 1000, maxIatSkewSeconds: 5 });
+      return outcome;
+    } } as never, options());
+    expect(res.ok).toBe(code === undefined);
+    if (code) expect(res.code).toBe(code);
+  });
+  it("preserves explicit expired denial even when the store exceeds the deadline", async () => {
+    let mono = 0;
+    const res = await verifyAssertion(await token(), resolver, { consume: async () => {
+      mono = 11; return "expired" as const;
+    } }, { ...options(), monotonicClock: () => mono });
+    expect(res.code).toBe(AssertionErrorCode.EXPIRED);
+  });
+  it("denies database exceptions", async () => {
+    const res = await verifyAssertion(await token(), resolver, { consume: async () => { throw Error("db offline"); } }, options());
+    expect(res.code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+});
