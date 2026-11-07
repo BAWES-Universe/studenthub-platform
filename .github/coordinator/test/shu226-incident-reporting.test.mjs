@@ -122,7 +122,7 @@ test("SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlist
     assert.deepEqual(h.triggers, before, "incident reporting never launches");
     assert.equal(h.incidentIssues.size, 1, "one incident card is delivered");
     const incident = [...h.incidentIssues.values()][0];
-    assert.equal(incident.title, `coordinator stop: ${TARGET} — ambiguous_hold`);
+    assert.equal(incident.title, `coordinator stop: ${TARGET} — ambiguous_hold (UNCLASSIFIED)`, "a HOLD names its cause; with no adapter code it is UNCLASSIFIED");
     assert.equal(incident.state.name, "Done", "an incident card is filed in Backlog or Done, never pickable; a fixture's stop is filed closed");
     assert.equal(incident.assignee, null);
     assert.match(incident.description, new RegExp(held.attempt_id));
@@ -317,7 +317,7 @@ test("SHU-226 A10 (M9): reporting a spent or expired proven episode can never la
       assert.equal(reportingExceptionAllowsLaunch(activation({ state: "refused", reporting_exception: label })), false, "reporting a spent episode can never launch");
       const incident = [...h.incidentIssues.values()][0];
       assert.ok(incident, `${label} incident exists`);
-      assert.match(incident.title, new RegExp(`${expected}$`));
+      assert.match(incident.title, new RegExp(`${expected}(?: \\(UNCLASSIFIED\\))?$`));
     } finally { h.cleanup(); }
   }
 });

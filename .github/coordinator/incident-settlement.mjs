@@ -9,6 +9,7 @@
 // conditional update, so a state write could overwrite a person's move), and it
 // never repairs, re-arms, relaunches, clears a pause or edits an activation: a
 // retry is still a fresh activation.
+import { incidentTitleMatches } from "./incident-reporting.mjs";
 
 export const SETTLE_CALL_TIMEOUT_MS = 1_500;
 export const STOP_SUMMARY_ISSUE = "SHU-71";
@@ -88,7 +89,7 @@ async function boundedCall(call, timeoutMs, timeoutImpl) {
 
 function incidentIsThisEvent(issue, event) {
   return issue?.id === event.issue_uuid
-    && issue.title === `coordinator stop: ${event.issue_id} — ${event.reason_code}`
+    && incidentTitleMatches(issue.title, event)
     && String(issue.description ?? "").includes(`<!-- coordinator-incident-event ${event.event_id} -->`);
 }
 
