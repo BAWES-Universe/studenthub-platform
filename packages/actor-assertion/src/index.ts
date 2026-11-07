@@ -15,6 +15,8 @@ export type {
   SubjectPolicy,
   KeyResolver,
   ReplayStore,
+  ReplayConstraints,
+  ReplayOutcome,
   VerifyOptions,
   VerifyResult,
 } from "./types.js";
