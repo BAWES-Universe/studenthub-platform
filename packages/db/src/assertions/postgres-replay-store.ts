@@ -18,6 +18,12 @@ export class PostgresReplayStore {
   constructor(options: { pool?: pg.Pool; connectionString?: string } = {}) {
     this.#ownsPool = !options.pool;
     this.#pool = options.pool ?? new pg.Pool({ connectionString: options.connectionString ?? databaseUrl() });
+    if (this.#ownsPool) {
+      // pg removes failed idle clients itself. Handle its error event so an idle
+      // disconnect cannot crash the process; query failures still reject consume.
+      // Do not log connection details or errors that may contain credentials.
+      this.#pool.on("error", () => {});
+    }
   }
 
   async close(): Promise<void> {

@@ -177,3 +177,52 @@ test("unexpected database result cannot be interpreted as consumed", async () =>
     await assert.rejects(invalidStore.consume(issuer, randomUUID(), 100, 0), /invalid replay database result/);
   }
 });
+
+test("owned pools handle idle errors without masking later query failures", async () => {
+  // Capture the actual internally constructed pool without exposing it in the API.
+  const OriginalPool = pg.Pool;
+  const descriptor = Object.getOwnPropertyDescriptor(pg, "Pool")!;
+  let owned!: pg.Pool;
+  class ObservedPool extends OriginalPool {
+    constructor(config?: pg.PoolConfig) {
+      super(config);
+      owned = this;
+    }
+  }
+  let ownedStore!: PostgresReplayStore;
+  try {
+    Object.defineProperty(pg, "Pool", { configurable: true, writable: true, value: ObservedPool });
+    ownedStore = new PostgresReplayStore({ connectionString: process.env.DATABASE_URL });
+  } finally {
+    Object.defineProperty(pg, "Pool", descriptor);
+  }
+  let closed = false;
+  try {
+    assert.equal(owned.listenerCount("error"), 1);
+    assert.doesNotThrow(() => owned.emit("error", new Error("synthetic idle disconnect")));
+    await ownedStore.close();
+    closed = true;
+    await assert.rejects(ownedStore.consume(issuer, randomUUID(), 100, 0));
+  } finally {
+    if (!closed) await ownedStore.close();
+  }
+});
+
+test("injected pool error listeners and lifecycle remain the owner's responsibility", async () => {
+  const injected = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  let errors = 0;
+  const onError = () => { errors++; };
+  injected.on("error", onError);
+  try {
+    const listeners = injected.listeners("error");
+    const injectedStore = new PostgresReplayStore({ pool: injected });
+    assert.deepEqual(injected.listeners("error"), listeners);
+    injected.emit("error", new Error("synthetic owner-handled disconnect"));
+    assert.equal(errors, 1);
+    await injectedStore.close();
+    assert.equal((await injected.query("SELECT 1 AS ok")).rows[0].ok, 1);
+    assert.deepEqual(injected.listeners("error"), listeners);
+  } finally {
+    await injected.end();
+  }
+});

@@ -66,6 +66,36 @@ export async function verifyAssertion(
   replayStore: ReplayStore,
   options: VerifyOptions,
 ): Promise<VerifyResult> {
+  if (options.maxLifetimeSeconds === undefined)
+    return verifyWithinDeadline(token, resolvePublicKey, replayStore, options);
+
+  // One real deadline for the entire verification, not a new budget per await.
+  // Promise.race observes late rejections; timing out never undoes consumption.
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<VerifyResult>((resolve) => {
+    timer = setTimeout(() => {
+      expired = true;
+      resolve(fail(AssertionErrorCode.UNAVAILABLE, "verification deadline exceeded"));
+    }, 10_000);
+  });
+  try {
+    return await Promise.race([
+      verifyWithinDeadline(token, resolvePublicKey, replayStore, options, () => expired),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function verifyWithinDeadline(
+  token: string,
+  resolvePublicKey: KeyResolver,
+  replayStore: ReplayStore,
+  options: VerifyOptions,
+  deadlineExpired: () => boolean = () => false,
+): Promise<VerifyResult> {
   const strict = options.maxLifetimeSeconds !== undefined;
   const skew = strict && options.maxIatSkewSeconds !== undefined
     ? options.maxIatSkewSeconds : options.maxIatSkewSeconds ?? DEFAULT_MAX_IAT_SKEW_SECONDS;
@@ -96,6 +126,8 @@ export async function verifyAssertion(
   // A refused authentic assertion may remain consumed: this is deliberately fail-closed.
   function fresh(claims: ActorAssertionClaims): VerifyResult | undefined {
     if (!strict) return undefined;
+    // A resolver settling after the timeout must not start replay consumption.
+    if (deadlineExpired()) return fail(AssertionErrorCode.UNAVAILABLE, "verification deadline exceeded");
     try {
       const current = wallClock();
       const elapsed = monotonicClock() - started;
