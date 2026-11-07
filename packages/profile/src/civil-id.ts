@@ -71,7 +71,7 @@ export class InMemoryCivilIdStore implements CivilIdStore {
   async read(id: string) { return this.rows.get(id) ?? null; }
   async submissionRecorded(id:string, submissionId:string){return this.submissions.has(`${id}:${submissionId}`);}
   async numberAvailable(id: string, country: CivilIdCountry, hash: Buffer) { return ![...this.rows.values()].some(r => r.principalId !== id && !r.releasedAt && r.country === country && this.sealed.get(r.principalId)?.hash.equals(hash)); }
-  async numberMatchesOwn(id: string, country: CivilIdCountry, hash: Buffer) { const row=this.rows.get(id); return row?.country===country && !!this.sealed.get(id)?.hash.equals(hash); }
+  async numberMatchesOwn(id: string, country: CivilIdCountry, hash: Buffer) { const row=this.rows.get(id); return !!row && !row.releasedAt && row.country===country && !!this.sealed.get(id)?.hash.equals(hash); }
   async save(w: CivilIdWrite): Promise<CivilIdStoreResult> {
     const key = `${w.principalId}:${w.submissionId}`; if (this.submissions.has(key)) return { ok: false, reason: "submission_reused" };
     const stored = this.rows.get(w.principalId); const old = stored?.releasedAt ? undefined : stored; if ((old?.revision ?? 0) !== w.revision) return { ok: false, reason: "stale_revision" };
@@ -84,7 +84,7 @@ export class InMemoryCivilIdStore implements CivilIdStore {
     this.rows.set(w.principalId, record); this.events.push(w); return { ok: true, record };
   }
   async release(id: string, at: string) { const row = this.rows.get(id); if (row) this.rows.set(id, { ...row, releasedAt: at, updatedAt: at, revision: row.revision + 1 }); }
-  async decryptNumber(id: string, vault: CivilIdVault) { const r = this.rows.get(id), sealed=this.sealed.get(id); return sealed && r?.country ? vault.open(id, r.country, sealed.ciphertext) : null; }
+  async decryptNumber(id: string, vault: CivilIdVault) { const r = this.rows.get(id), sealed=this.sealed.get(id); return sealed && r?.country && !r.releasedAt ? vault.open(id, r.country, sealed.ciphertext) : null; }
 }
 
 export function createCivilId(options: { readonly store: CivilIdStore; readonly vault: CivilIdVault; readonly clock?: { now(): Date } }) {

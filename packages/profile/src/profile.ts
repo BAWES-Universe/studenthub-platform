@@ -255,7 +255,8 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
   if (civil) {
     const spec = fieldSpec("person_civil_ids", "Civil ID", "Platform-owned civil ID summary for this person only.", text());
     fields.civilId = written(spec, Object.freeze({ country:civil.country, maskedNumber:civil.maskedNumber, expiry:civil.expiry, needsReview:civil.needsReview }), civil.updatedAt);
-    if (civil.expiry !== null) fields.civilExpired = written(PROFILE_FIELD_SPECS.civilExpired, civil.expiry < profile.asOfDate, civil.updatedAt);
+    fields.civilExpired = civil.expiry !== null ? written(PROFILE_FIELD_SPECS.civilExpired, civil.expiry < profile.asOfDate, civil.updatedAt)
+      : Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS.civilExpired.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: civil.updatedAt }) });
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
