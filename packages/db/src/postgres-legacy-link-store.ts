@@ -38,7 +38,8 @@ export class PostgresLegacyLinkStore {
     if (await this.#snapshot.readCandidate(ref) === undefined) return { kind: "unconfigured" };
     return { kind: "linked", candidateRef: ref };
   }
-  readCandidate(candidateRef: string): Promise<unknown | undefined> { return this.#snapshot.readCandidate(candidateId(candidateRef)); }
+  // References come from the link table (already digits) or from the approved source's own resolveLink, whose shape it owns.
+  readCandidate(candidateRef: string): Promise<unknown | undefined> { return this.#snapshot.readCandidate(candidateRef); }
   async status(principalId: string): Promise<LegacyLinkStatus> {
     const { rows } = await this.#pool.query<{legacy_candidate_id:string}>(
       "SELECT legacy_candidate_id::text FROM legacy_account_links WHERE principal_id = $1::text", [principal(principalId)]);
