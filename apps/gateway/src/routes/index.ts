@@ -9,6 +9,13 @@ import { handleLegacyLink } from "../legacy-link-http.js";
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
     (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
+import { handleCivilId } from "../civil-id-http.js";
+
+const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCivilId(ctx.request, ctx.response,
+  ctx.login?.civilId, ctx.login?.web?.origin, async (session) => { if (!ctx.login) return undefined;
+    const result = await ctx.login.profile({ sessionId: session });
+    return result.status === 200 && typeof result.body?.personId === "string" ? result.body.personId : undefined; },
+  (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 
 export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
@@ -34,6 +41,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   organizationAccountManagerRoute,
   profileRecordsRoute,
   legacyLinkRoute,
+  civilIdRoute,
 ];
 
 export { runRoutes } from "./context.js";
