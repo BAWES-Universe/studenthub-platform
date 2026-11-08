@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import {
   signAssertion,
   verifyAssertion,
@@ -351,5 +351,229 @@ describe("dependency failures and replay scoping (PR #13 review)", () => {
     const replay = await verifyAssertion(a, multiResolver, store, opts);
     expect(replay.ok).toBe(false);
     if (!replay.ok) expect(replay.code).toBe(AssertionErrorCode.REPLAYED);
+  });
+});
+
+describe("strict lifetime and fresh-clock verification", () => {
+  const options = () => ({
+    expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+    maxLifetimeSeconds: 60, maxIatSkewSeconds: 5,
+    wallClock: () => 1000, monotonicClock: () => 0,
+  });
+  const token = (over: Partial<ActorAssertionClaims> = {}) =>
+    signAssertion(claims({ iat: 1000, exp: 1060, ...over }), keyPair.privateKeyPem);
+  const check = async (over = {}, opts = {}, store = new MemoryReplayStore()) =>
+    verifyAssertion(await token(over), resolver, store, { ...options(), ...opts });
+
+  it("accepts exact lifetime and future-iat boundaries", async () => {
+    expect((await check()).ok).toBe(true);
+    expect((await check({ iat: 1005, exp: 1065 })).ok).toBe(true);
+    expect((await check({ iat: 1006, exp: 1066 })).code).toBe(AssertionErrorCode.FUTURE_IAT);
+    expect((await check({ iat: 940, exp: 1000 })).code).toBe(AssertionErrorCode.EXPIRED);
+    expect((await check({ iat: 999, exp: 1000.1 })).ok).toBe(true);
+  });
+
+  it.each([0, -1, 3601, 1.5, NaN, Infinity, -Infinity, null, "60"])(
+    "invalid strict lifetime %s denies before key lookup", async (maxLifetimeSeconds) => {
+      let lookups = 0;
+      const res = await verifyAssertion(await token(), async () => { lookups++; return keyPair.publicKeyPem; },
+        new MemoryReplayStore(), { ...options(), maxLifetimeSeconds } as never);
+      expect(res.code).toBe(AssertionErrorCode.CONFIG);
+      expect(lookups).toBe(0);
+    });
+  it.each([-1, 301, 0.5, NaN, Infinity, null, "5"])("invalid strict skew %s", async (maxIatSkewSeconds) => {
+    let lookups = 0;
+    const res = await verifyAssertion(await token(), async () => { lookups++; return keyPair.publicKeyPem; },
+      new MemoryReplayStore(), { ...options(), maxIatSkewSeconds } as never);
+    expect(res.code).toBe(AssertionErrorCode.CONFIG);
+    expect(lookups).toBe(0);
+  });
+  it("accepts minimum/maximum policy bounds", async () => {
+    expect((await check({ exp: 1001 }, { maxLifetimeSeconds: 1, maxIatSkewSeconds: 0 })).ok).toBe(true);
+    expect((await check({ exp: 4600 }, { maxLifetimeSeconds: 3600, maxIatSkewSeconds: 300 })).ok).toBe(true);
+  });
+  it.each([{ exp: 1000 }, { exp: 999 }, { exp: 1061 }])("rejects invalid lifetime %j", async (over) => {
+    expect((await check(over)).code).toBe(AssertionErrorCode.LIFETIME);
+  });
+  it("keeps legacy numeric now and boolean replay stores", async () => {
+    const t = await token({ exp: 9999 });
+    const legacy = { expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY, now: 1000 };
+    expect((await verifyAssertion(t, resolver, { consume: () => false }, legacy)).ok).toBe(true);
+    expect((await verifyAssertion(t, resolver, { consume: async () => true }, legacy)).code).toBe(AssertionErrorCode.REPLAYED);
+    expect((await verifyAssertion(t, resolver, { consume: () => false }, { ...legacy, now: 9999 })).code).toBe(AssertionErrorCode.EXPIRED);
+  });
+  it("never treats fixed numeric now as a fresh strict clock", async () => {
+    expect((await check({}, { now: 0 })).ok).toBe(true);
+    expect((await check({}, { now: 1000, wallClock: () => 1060 })).code).toBe(AssertionErrorCode.EXPIRED);
+  });
+  it("rechecks expiration after an asynchronous key resolver", async () => {
+    let wall = 1000;
+    let consumes = 0;
+    const res = await verifyAssertion(await token(), async () => {
+      await Promise.resolve(); wall = 1060; return keyPair.publicKeyPem;
+    }, { consume: () => { consumes++; return false; } }, { ...options(), wallClock: () => wall });
+    expect(res.code).toBe(AssertionErrorCode.EXPIRED);
+    expect(consumes).toBe(0);
+  });
+  it.each([10, 10.001])("monotonic deadline boundary %s", async (elapsed) => {
+    let mono = 0;
+    const res = await verifyAssertion(await token(), async () => { mono = elapsed; return keyPair.publicKeyPem; },
+      new MemoryReplayStore(), { ...options(), monotonicClock: () => mono });
+    expect(res.ok).toBe(elapsed === 10);
+    if (elapsed > 10) expect(res.code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+  it("checks expiry and deadline again after replay consumption", async () => {
+    for (const deadline of [false, true]) {
+      let wall = 1000, mono = 0;
+      const res = await verifyAssertion(await token(), resolver, { consume: async () => {
+        if (deadline) mono = 11; else wall = 1060;
+        return false;
+      } }, { ...options(), wallClock: () => wall, monotonicClock: () => mono });
+      expect(res.code).toBe(deadline ? AssertionErrorCode.UNAVAILABLE : AssertionErrorCode.EXPIRED);
+    }
+  });
+  it.each([NaN, Infinity, -Infinity])("fails closed on invalid clocks %s", async (value) => {
+    expect((await check({}, { wallClock: () => value })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    expect((await check({}, { monotonicClock: () => value })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+  it("fails closed on throwing or regressing clocks", async () => {
+    expect((await check({}, { wallClock: () => { throw Error("clock"); } })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    for (const clock of ["wallClock", "monotonicClock"]) {
+      let n = 0;
+      expect((await check({}, { [clock]: () => clock === "wallClock" ? 1000 - n++ : -n++ })).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    }
+  });
+  it.each([
+    ["consumed", undefined], ["replayed", AssertionErrorCode.REPLAYED],
+    ["expired", AssertionErrorCode.EXPIRED], ["future_iat", AssertionErrorCode.FUTURE_IAT],
+    [undefined, AssertionErrorCode.UNAVAILABLE], ["unexpected", AssertionErrorCode.UNAVAILABLE],
+  ])("maps explicit replay outcome %s", async (outcome, code) => {
+    const res = await verifyAssertion(await token(), resolver, { consume: (...args: unknown[]) => {
+      expect(args[4]).toEqual({ issuedAt: 1000, maxIatSkewSeconds: 5 });
+      return outcome;
+    } } as never, options());
+    expect(res.ok).toBe(code === undefined);
+    if (code) expect(res.code).toBe(code);
+  });
+  it("preserves explicit expired denial even when the store exceeds the deadline", async () => {
+    let mono = 0;
+    const res = await verifyAssertion(await token(), resolver, { consume: async () => {
+      mono = 11; return "expired" as const;
+    } }, { ...options(), monotonicClock: () => mono });
+    expect(res.code).toBe(AssertionErrorCode.EXPIRED);
+  });
+  it("denies database exceptions", async () => {
+    const res = await verifyAssertion(await token(), resolver, { consume: async () => { throw Error("db offline"); } }, options());
+    expect(res.code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+});
+
+describe("strict real deadline", () => {
+  const options = () => ({
+    expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+    maxLifetimeSeconds: 60, maxIatSkewSeconds: 5,
+    // Frozen injected clocks must not prevent the real timer from denying.
+    wallClock: () => 1000, monotonicClock: () => 0,
+  });
+  const token = () => signAssertion(claims({ iat: 1000, exp: 1060 }), keyPair.privateKeyPem);
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+
+  beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+  afterEach(() => vi.useRealTimers());
+
+  it("denies a never-settling resolver at 10 seconds and never consumes after a late key", async () => {
+    const key = deferred<string>();
+    const consume = vi.fn(() => false);
+    const settled = vi.fn();
+    const pending = verifyAssertion(await token(), () => key.promise, { consume }, options());
+    void pending.then(settled);
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await pending).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    expect(vi.getTimerCount()).toBe(0);
+    key.resolve(keyPair.publicKeyPem);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(consume).not.toHaveBeenCalled();
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses one total budget when an 8-second resolver is followed by a never-settling store", async () => {
+    const key = deferred<string>();
+    const replay = deferred<boolean>();
+    const consume = vi.fn(() => replay.promise);
+    const settled = vi.fn();
+    const pending = verifyAssertion(await token(), () => key.promise, { consume }, options());
+    void pending.then(settled);
+    await vi.advanceTimersByTimeAsync(8000);
+    key.resolve(keyPair.publicKeyPem);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(consume).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await pending).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    expect(vi.getTimerCount()).toBe(0);
+    // The store may commit after timeout. Never undo it or change the denial.
+    replay.resolve(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await pending).code).toBe(AssertionErrorCode.UNAVAILABLE);
+    expect(consume).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["resolver", "store"])("observes late %s rejection after timeout", async (stage) => {
+    const dependency = deferred<never>();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      const pending = verifyAssertion(await token(),
+        stage === "resolver" ? () => dependency.promise : resolver,
+        { consume: stage === "store" ? () => dependency.promise : () => false }, options());
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect((await pending).code).toBe(AssertionErrorCode.UNAVAILABLE);
+      dependency.reject(new Error("late dependency failure"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      process.removeListener("unhandledRejection", unhandled);
+    }
+  });
+
+  it("clears the timer for successful verification and early denials", async () => {
+    const t = await token();
+    const cases = [
+      () => verifyAssertion(t, resolver, { consume: () => false }, options()),
+      () => verifyAssertion("malformed", resolver, { consume: () => false }, options()),
+      () => verifyAssertion(t, resolver, { consume: () => false }, { ...options(), maxLifetimeSeconds: 0 }),
+      () => verifyAssertion(t, async () => { throw Error("key unavailable"); }, { consume: () => false }, options()),
+      () => verifyAssertion(t, resolver, { consume: () => { throw Error("store unavailable"); } }, options()),
+      () => verifyAssertion(t, resolver, { consume: () => "expired" as const }, options()),
+    ];
+    for (const run of cases) {
+      await run();
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  });
+
+  it("does not impose a timer or change numeric now for legacy verification", async () => {
+    const key = deferred<string>();
+    const settled = vi.fn();
+    const pending = verifyAssertion(await token(), () => key.promise, { consume: () => false }, {
+      expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY, now: 1000,
+    });
+    void pending.then(settled);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(settled).not.toHaveBeenCalled();
+    key.resolve(keyPair.publicKeyPem);
+    expect((await pending).ok).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -200,7 +200,7 @@ export function createRuntimeLoginFromEnv(
   // SHU-84: the first safe write is off unless its own signing key is set. The
   // deployment does not pass this variable, so no deployed gateway writes.
   const safeWriteKey = safeWriteSigningKey(env.SAFE_WRITE_SIGNING_KEY);
-  const settings = { databaseUrl: value("DATABASE_URL"), safeWriteKey };
+  const settings = { databaseUrl: value("DATABASE_URL"), safeWriteKey, callbackUrl };
   const access = wireAccess(settings);
   const profile = wireProfile(settings, access.services, approvedProfiles);
   const organizationArea = wireOrganizations(settings, access.services);

@@ -81,6 +81,7 @@ export interface OwnProfileContactFields {
   readonly phone?: ProfileField<string>;
   readonly handle?: ProfileField<string>;
   readonly kuwaitiMother?: ProfileField<boolean>;
+  readonly civilId?: ProfileField<Readonly<{ country: "KW" | "BH" | null; maskedNumber: string | null; expiry: string | null; needsReview: boolean }>>;
 }
 
 export type OwnProfileFieldName = keyof OwnProfileFields;

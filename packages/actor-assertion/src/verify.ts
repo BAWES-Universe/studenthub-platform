@@ -6,6 +6,7 @@ import {
   ENVELOPE_PREFIX,
   KeyResolver,
   ReplayStore,
+  ReplayOutcome,
   VerifyOptions,
   VerifyResult,
 } from "./types.js";
@@ -65,6 +66,84 @@ export async function verifyAssertion(
   replayStore: ReplayStore,
   options: VerifyOptions,
 ): Promise<VerifyResult> {
+  if (options.maxLifetimeSeconds === undefined)
+    return verifyWithinDeadline(token, resolvePublicKey, replayStore, options);
+
+  // One real deadline for the entire verification, not a new budget per await.
+  // Promise.race observes late rejections; timing out never undoes consumption.
+  let expired = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<VerifyResult>((resolve) => {
+    timer = setTimeout(() => {
+      expired = true;
+      resolve(fail(AssertionErrorCode.UNAVAILABLE, "verification deadline exceeded"));
+    }, 10_000);
+  });
+  try {
+    return await Promise.race([
+      verifyWithinDeadline(token, resolvePublicKey, replayStore, options, () => expired),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function verifyWithinDeadline(
+  token: string,
+  resolvePublicKey: KeyResolver,
+  replayStore: ReplayStore,
+  options: VerifyOptions,
+  deadlineExpired: () => boolean = () => false,
+): Promise<VerifyResult> {
+  const strict = options.maxLifetimeSeconds !== undefined;
+  const skew = strict && options.maxIatSkewSeconds !== undefined
+    ? options.maxIatSkewSeconds : options.maxIatSkewSeconds ?? DEFAULT_MAX_IAT_SKEW_SECONDS;
+  if (strict && (
+    !Number.isInteger(options.maxLifetimeSeconds) || options.maxLifetimeSeconds! < 1 ||
+    options.maxLifetimeSeconds! > 3600 || !Number.isInteger(skew) || skew < 0 || skew > 300 ||
+    (options.wallClock !== undefined && typeof options.wallClock !== "function") ||
+    (options.monotonicClock !== undefined && typeof options.monotonicClock !== "function")
+  )) return fail(AssertionErrorCode.CONFIG, "invalid strict freshness configuration");
+
+  const wallClock = options.wallClock ?? (() => Date.now() / 1000);
+  const monotonicClock = options.monotonicClock ?? (() => performance.now() / 1000);
+  let started = 0;
+  let previousElapsed = 0;
+  let previousWall = -Infinity;
+  let now: number;
+  try {
+    now = strict ? wallClock() : Math.floor(options.now ?? Date.now() / 1000);
+    if (strict) {
+      started = monotonicClock();
+      if (!Number.isFinite(now) || !Number.isFinite(started)) throw new Error("invalid clock");
+      previousWall = now;
+    }
+  } catch {
+    return fail(AssertionErrorCode.UNAVAILABLE, "freshness clock unavailable");
+  }
+  // Recheck both clocks after asynchronous dependencies, including replay consumption.
+  // A refused authentic assertion may remain consumed: this is deliberately fail-closed.
+  function fresh(claims: ActorAssertionClaims): VerifyResult | undefined {
+    if (!strict) return undefined;
+    // A resolver settling after the timeout must not start replay consumption.
+    if (deadlineExpired()) return fail(AssertionErrorCode.UNAVAILABLE, "verification deadline exceeded");
+    try {
+      const current = wallClock();
+      const elapsed = monotonicClock() - started;
+      if (!Number.isFinite(current) || !Number.isFinite(elapsed) || current < previousWall ||
+          elapsed < previousElapsed || elapsed > 10) throw new Error("invalid or stale clock");
+      previousWall = current;
+      previousElapsed = elapsed;
+      now = current;
+      if (claims.exp <= now) return fail(AssertionErrorCode.EXPIRED, `expired at ${claims.exp}`);
+      if (claims.iat > now + skew) return fail(AssertionErrorCode.FUTURE_IAT, "iat in the future");
+    } catch {
+      return fail(AssertionErrorCode.UNAVAILABLE, "verification freshness unavailable or deadline exceeded");
+    }
+    return undefined;
+  }
+
   if (typeof token !== "string") return fail(AssertionErrorCode.MALFORMED, "token is not a string");
 
   const parts = token.split(".");
@@ -76,10 +155,10 @@ export async function verifyAssertion(
   const claims = decodeClaims(payloadB64!);
   if (!claims) return fail(AssertionErrorCode.MALFORMED, "claims failed schema validation");
 
-  const now = Math.floor(options.now ?? Date.now() / 1000);
+  if (strict && (claims.exp <= claims.iat || claims.exp - claims.iat > options.maxLifetimeSeconds!))
+    return fail(AssertionErrorCode.LIFETIME, "assertion lifetime exceeds strict policy");
 
   if (claims.exp <= now) return fail(AssertionErrorCode.EXPIRED, `expired at ${claims.exp}`);
-  const skew = options.maxIatSkewSeconds ?? DEFAULT_MAX_IAT_SKEW_SECONDS;
   if (claims.iat > now + skew) return fail(AssertionErrorCode.FUTURE_IAT, `iat ${claims.iat} in the future`);
 
   // A rejecting dependency must become a typed denial, never an exception: this
@@ -91,6 +170,8 @@ export async function verifyAssertion(
   } catch {
     return fail(AssertionErrorCode.UNAVAILABLE, "issuer key resolution failed");
   }
+  const afterKey = fresh(claims);
+  if (afterKey) return afterKey;
   if (!publicKeyPem) return fail(AssertionErrorCode.UNKNOWN_ISSUER, `no key for issuer ${claims.iss}`);
 
   const signingInput = `${ENVELOPE_PREFIX}.${payloadB64}`;
@@ -102,6 +183,9 @@ export async function verifyAssertion(
     return fail(AssertionErrorCode.BAD_SIGNATURE, "signature verification failed");
   }
   if (!valid) return fail(AssertionErrorCode.BAD_SIGNATURE, "signature did not verify");
+
+  const afterSignature = fresh(claims);
+  if (afterSignature) return afterSignature;
 
   if (claims.aud !== options.expectedAudience)
     return fail(
@@ -128,14 +212,28 @@ export async function verifyAssertion(
 
   // Replay state is scoped by issuer; see ReplayStore. A store failure denies —
   // accepting an unrecorded jti would silently disable replay protection.
-  let replayed: boolean;
+  let replayed: boolean | ReplayOutcome;
   try {
-    replayed = await replayStore.consume(claims.iss, claims.jti, claims.exp, now);
+    replayed = await replayStore.consume(claims.iss, claims.jti, claims.exp, now,
+      ...(strict ? [{ issuedAt: claims.iat, maxIatSkewSeconds: skew }] : []));
   } catch {
     return fail(AssertionErrorCode.UNAVAILABLE, "replay store unavailable");
   }
-  if (replayed) return fail(AssertionErrorCode.REPLAYED, `jti ${claims.jti} already used`);
+  // Preserve explicit authoritative denials. Only successful consumption needs
+  // the final acceptance freshness gate; a slow store must never turn expired
+  // into a generic dependency error.
+  switch (replayed) {
+    case true:
+    case "replayed": return fail(AssertionErrorCode.REPLAYED, `jti ${claims.jti} already used`);
+    case "expired": return fail(AssertionErrorCode.EXPIRED, `expired at ${claims.exp}`);
+    case "future_iat": return fail(AssertionErrorCode.FUTURE_IAT, "iat in the future");
+    case false:
+    case "consumed": break;
+    default: return fail(AssertionErrorCode.UNAVAILABLE, "invalid replay store outcome");
+  }
 
+  const afterReplay = fresh(claims);
+  if (afterReplay) return afterReplay;
   return { ok: true, claims };
 }
 
