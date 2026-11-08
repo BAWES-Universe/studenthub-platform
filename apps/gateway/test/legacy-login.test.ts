@@ -29,6 +29,12 @@ test("Q14_L_LEGACY_READONLY pins fixed shapes, missing and non-numeric ids, time
   assert.equal(calls.length,8);assert.ok(calls.every(call=>!call.url.includes("secret")&&!call.url.includes("timeout")));
 });
 
+test("Q14_L_LEGACY_READONLY two-step status without a pending token never links on the bare id", async () => {
+  const bodies=[{operation:"success",id:42,token_status:0},{operation:"success",id:42,token_status:0,token:""},{operation:"success",id:42,token_status:0,token:7}];
+  const login=new HttpLegacyLogin({baseUrl:"https://legacy.test",allowedHost:"legacy.test"},async()=>new Response(JSON.stringify(bodies.shift()),{status:200}));
+  for (let i=0;i<3;i++) assert.deepEqual(await login.login({email:"x",password:"y"}),{kind:"unavailable"});
+});
+
 test("Q14_L_LEGACY_READONLY refuses unsafe configuration", () => {
   assert.throws(()=>new HttpLegacyLogin({baseUrl:"http://legacy.test",allowedHost:"legacy.test"}),/https/);
   assert.throws(()=>new HttpLegacyLogin({baseUrl:"https://production.test",allowedHost:"staging.test"}),/host/);

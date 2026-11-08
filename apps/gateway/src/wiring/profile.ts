@@ -67,7 +67,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   } : access.loginStore.sessions;
   const legacyLink = legacyConfig && safeWriteKey && legacyStore ? createLegacyLinkService({
     legacy: new HttpLegacyLogin({baseUrl:legacyConfig.baseUrl,allowedHost:legacyConfig.allowedHost}), store:legacyStore,
-    sessions, authz:access.authzStore, origin: process.env.OIDC_CALLBACK_URL ? new URL(process.env.OIDC_CALLBACK_URL).origin : "",
+    sessions, authz:access.authzStore, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "",
     resetUrl:legacyConfig.resetUrl, secret:safeWriteKey,
   }) : undefined;
   const webProfiles: OwnProfileReader = legacyStore ? { async readOwn(request) {

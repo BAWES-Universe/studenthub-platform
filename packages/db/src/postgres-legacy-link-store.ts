@@ -3,8 +3,9 @@ import type { Pool, PoolClient, PoolConfig } from "pg";
 import { principalAuditRef } from "./authorization-audit.js";
 
 export type LegacyLinkMethod = "legacy_login" | "staff";
-export interface LegacySnapshotPort { readCandidate(candidateRef: string): Promise<unknown | undefined> }
-export type LegacyApprovedProfileLink = {readonly kind:"linked";readonly candidateRef:string}|{readonly kind:"unconfigured"};
+export type LegacyApprovedProfileLink = {readonly kind:"linked";readonly candidateRef:string}|{readonly kind:"unconfigured"}|{readonly kind:"missing"}|{readonly kind:"conflict"};
+/** The approved profile source. Its own resolveLink, when present, still answers for people without a legacy link row. */
+export interface LegacySnapshotPort { readCandidate(candidateRef: string): Promise<unknown | undefined>; resolveLink?(principalId: string): Promise<LegacyApprovedProfileLink> }
 export interface LegacyLinkStatus { readonly linked: boolean; readonly candidateId?: string }
 export class LegacyCandidateAlreadyLinkedError extends Error { constructor() { super("legacy candidate is already linked"); this.name = "LegacyCandidateAlreadyLinkedError"; } }
 export class PrincipalAlreadyLinkedError extends Error { constructor() { super("principal is already linked"); this.name = "PrincipalAlreadyLinkedError"; } }
@@ -32,7 +33,9 @@ export class PostgresLegacyLinkStore {
     const { rows } = await this.#pool.query<{legacy_candidate_id:string}>(
       "SELECT legacy_candidate_id::text FROM legacy_account_links WHERE principal_id = $1::text", [principal(principalId)]);
     const ref = rows[0]?.legacy_candidate_id;
-    if (!ref || await this.#snapshot.readCandidate(ref) === undefined) return { kind: "unconfigured" };
+    if (!ref) return this.#snapshot.resolveLink ? this.#snapshot.resolveLink(principalId) : { kind: "unconfigured" };
+    // A linked candidate whose snapshot is not imported yet reads as not imported, not as a broken profile.
+    if (await this.#snapshot.readCandidate(ref) === undefined) return { kind: "unconfigured" };
     return { kind: "linked", candidateRef: ref };
   }
   readCandidate(candidateRef: string): Promise<unknown | undefined> { return this.#snapshot.readCandidate(candidateId(candidateRef)); }
@@ -52,6 +55,8 @@ export class PostgresLegacyLinkStore {
       await client.query(`INSERT INTO legacy_account_link_events
         (principal_id, legacy_candidate_id, kind, actor_ref, method)
         VALUES ($1::text, $2::text, 'linked', $3::text, $4::text)`, [p, c, actor, input.method]);
+      // Attempt state clears with the link itself, so a linked person never sees a failed request.
+      await client.query("DELETE FROM legacy_link_attempts WHERE principal_id = $1::text", [p]);
     });
   }
   async unlink(input: {principalId:string;actor:string}): Promise<void> {

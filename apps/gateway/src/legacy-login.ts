@@ -40,7 +40,8 @@ function mapPayload(value: unknown): LegacyLoginResult {
   const row = value as Record<string, unknown>;
   if (row.operation === "error" && row.errorType === "email-not-verified") return { kind: "email_not_verified", message: message(row.message) };
   if (row.operation !== "success") return { kind: "unavailable" };
-  if (row.token_status === 0 && typeof row.token === "string" && row.token.length > 0) return { kind: "two_step", pendingToken: row.token };
+  // token_status 0 means legacy still wants a two-step code: without a pending token, never link on the bare id.
+  if (row.token_status === 0) return typeof row.token === "string" && row.token.length > 0 ? { kind: "two_step", pendingToken: row.token } : { kind: "unavailable" };
   if (!validCandidateId(row.id)) return { kind: "unavailable" };
   return { kind: "ok", candidateId: String(row.id) };
 }
