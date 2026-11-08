@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { familyForLane, isWriterRole, roleForReceipt } from "./launch-vocabulary.mjs";
-import { INCIDENT_OWNED_STATE_NAMES } from "./incident-reporting.mjs";
+import { INCIDENT_OWNED_STATE_NAMES, incidentTitleMatches } from "./incident-reporting.mjs";
 
 export const TRIAGE_VERSION = "1.0.0";
 export const TRIAGE_RESUME_AUTHORITY = false;
@@ -256,7 +256,7 @@ function hasRelation(issue, type, identifier) {
 }
 
 function incidentConfirmed(issue, event) {
-  if (!issue || issue.id !== event.issue_uuid || issue.title !== `coordinator stop: ${event.issue_id} — ${event.reason_code}`) return false;
+  if (!issue || issue.id !== event.issue_uuid || !incidentTitleMatches(issue.title, event)) return false;
   if (!String(issue.description ?? "").includes(`<!-- coordinator-incident-event ${event.event_id} -->`)) return false;
   if (issue.team?.key !== REPAIR_TEAM_KEY || !INCIDENT_OWNED_STATE_NAMES.includes(issue.state?.name) || issue.assignee !== null || issue.delegate !== null) return false;
   if (!hasLabels(issue, ["repo:platform"]) || !hasRelation(issue, "related", event.issue_id)) return false;

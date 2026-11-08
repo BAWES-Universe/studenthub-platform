@@ -1276,6 +1276,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/test/stop-cause-subcodes.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "call_sites": [
+      ".github/coordinator/test/stop-cause-subcodes.test.mjs:474"
+    ]
+  },
+  {
     "file": ".github/coordinator/test/supervisor-dispatch.test.mjs",
     "capabilities": [],
     "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { adapterNameForLane, isWriterRole, LANE_NAMES, roleForReceipt } from "./launch-vocabulary.mjs";
 import { isFixtureIssue } from "./workspace-scope.mjs";
+import { cardContract, reviewOnlyCard } from "./card-contracts-reader.mjs";
 
 export const INCIDENT_VERSION = "1.0.0";
 export const INCIDENT_TEAM_KEY = "SHU";
@@ -44,6 +45,17 @@ export const INCIDENT_REASON = Object.freeze({
   UNKNOWN: "unknown_breaker",
 });
 
+const REASON_ROUTE = Object.freeze({
+  [INCIDENT_REASON.REVISION_EXHAUSTED]: "stop:card-fix",
+  [INCIDENT_REASON.BUILDER_FAILED]: "stop:card-fix",
+  [INCIDENT_REASON.STALE_HEAD]: "stop:box-retry",
+  [INCIDENT_REASON.UNREADABLE_HEAD]: "stop:box-retry",
+  [INCIDENT_REASON.FAILURE_EXHAUSTED]: "stop:box-retry",
+  [INCIDENT_REASON.EXPIRED]: "stop:box-retry",
+  [INCIDENT_REASON.ADAPTER_PAUSED]: "stop:needs-person",
+  [INCIDENT_REASON.UNKNOWN]: "stop:needs-person",
+});
+
 const REASON_EXPLANATIONS = Object.freeze({
   [INCIDENT_REASON.AMBIGUOUS_HOLD]: "The episode ended on HOLD without a coherent, bound verdict.",
   [INCIDENT_REASON.REVISION_EXHAUSTED]: "The bounded revision-attempt budget was exhausted.",
@@ -54,6 +66,55 @@ const REASON_EXPLANATIONS = Object.freeze({
   [INCIDENT_REASON.EXPIRED]: "A previously accepted episode expired while it was still in progress.",
   [INCIDENT_REASON.BUILDER_FAILED]: "The writer reported FAILED: it could not finish the card's brief. A retry is a fresh activation.",
   [INCIDENT_REASON.UNKNOWN]: "The episode ended on an unclassified fail-closed breaker; inspect the bound attempt.",
+});
+
+// A stop card names its cause: a closed subcode read from the latest attempt's
+// receipt, never free text. The adapter reason code the HOLD receipt carries
+// (the "adapter reason code: <CODE>" note appendAdapterAudit writes) decides;
+// two causes that carry no adapter code are read from the coordinator's own
+// fixed HOLD notes. Anything else is UNCLASSIFIED. The cause never changes
+// reason_code or the incident identity, so no stop already filed is filed twice.
+export const STOP_CAUSE = Object.freeze({
+  SUPERVISOR_WORKER_EXIT: "SUPERVISOR_WORKER_EXIT",
+  REVIEW_EXECUTION_UNAVAILABLE: "REVIEW_EXECUTION_UNAVAILABLE",
+  RESULT_SCOPE_REFUSED: "RESULT_SCOPE_REFUSED",
+  PROVENANCE_UNREADABLE: "PROVENANCE_UNREADABLE",
+  VERDICT_NOT_APPLIED: "VERDICT_NOT_APPLIED",
+  FILESYSTEM_OR_AUTH_DENIED: "FILESYSTEM_OR_AUTH_DENIED",
+  CLAUDE_1: "CLAUDE_1",
+  UNCLASSIFIED: "UNCLASSIFIED",
+});
+const STOP_CAUSES = new Set(Object.values(STOP_CAUSE));
+// The adapter codes that name a cause, exactly. Any other code is UNCLASSIFIED.
+const ADAPTER_REASON_CAUSES = Object.freeze({
+  SUPERVISOR_WORKER_EXIT: STOP_CAUSE.SUPERVISOR_WORKER_EXIT,
+  REVIEW_EXECUTION_UNAVAILABLE: STOP_CAUSE.REVIEW_EXECUTION_UNAVAILABLE,
+  RESULT_SCOPE_REFUSED: STOP_CAUSE.RESULT_SCOPE_REFUSED,
+  FILESYSTEM_OR_AUTH_DENIED: STOP_CAUSE.FILESYSTEM_OR_AUTH_DENIED,
+  CLAUDE_1: STOP_CAUSE.CLAUDE_1,
+});
+const ADAPTER_REASON_NOTE_RE = /^adapter reason code: ([A-Z][A-Z0-9_]{0,63})$/;
+// reconcile.mjs writes these two HOLD notes itself, with no adapter code.
+const PROVENANCE_HOLD_NOTE_RE = /^run completed but review provenance is not closable — HOLD \(/;
+const VERDICT_NOT_APPLIED_NOTE_RE = /^held: review finished on the supervisor \([A-Z_]+\) after its pull request moved or its review activation ended; verdict not applied$/;
+
+// Who acts on a stop. Every filed stop card carries exactly one, beside repo:platform.
+export const STOP_ROUTE_LABEL = Object.freeze({
+  CARD_FIX: "stop:card-fix",
+  BOX_RETRY: "stop:box-retry",
+  NEEDS_PERSON: "stop:needs-person",
+});
+export const STOP_LOOPING_LABEL = "stop:looping";
+export const STOP_LOOPING_THRESHOLD = 3;
+const CAUSE_ROUTE = Object.freeze({
+  [STOP_CAUSE.RESULT_SCOPE_REFUSED]: STOP_ROUTE_LABEL.CARD_FIX,
+  [STOP_CAUSE.REVIEW_EXECUTION_UNAVAILABLE]: STOP_ROUTE_LABEL.BOX_RETRY,
+  [STOP_CAUSE.SUPERVISOR_WORKER_EXIT]: STOP_ROUTE_LABEL.BOX_RETRY,
+  [STOP_CAUSE.FILESYSTEM_OR_AUTH_DENIED]: STOP_ROUTE_LABEL.NEEDS_PERSON,
+  [STOP_CAUSE.PROVENANCE_UNREADABLE]: STOP_ROUTE_LABEL.NEEDS_PERSON,
+  [STOP_CAUSE.VERDICT_NOT_APPLIED]: STOP_ROUTE_LABEL.NEEDS_PERSON,
+  [STOP_CAUSE.CLAUDE_1]: STOP_ROUTE_LABEL.NEEDS_PERSON,
+  [STOP_CAUSE.UNCLASSIFIED]: STOP_ROUTE_LABEL.NEEDS_PERSON,
 });
 
 export const LINEAR_INCIDENT_COMMENTS_QUERY = `
@@ -80,14 +141,34 @@ export const LINEAR_INCIDENT_LOOKUP_QUERY = `
     }
   }`;
 
+// The stop cards already filed for a card are related to it. Their
+// descriptions, written by renderIncidentDescription, name each earlier stop's
+// activation, cause and card contract. Anyone can relate an issue to a card and
+// write such a description, so a related issue counts only when it is a stop
+// card the coordinator itself filed: its id and event marker are the ones its
+// activation and reason code derive, its title is the one the coordinator
+// writes, and it is a repo:platform card in the team, created by the same
+// Linear user the coordinator reads as.
+// Linear rejects a query whose complexity (each page size times what it
+// selects) is too high, so pages and label lists stay small.
+const PRIOR_STOP_FIELDS = "id title description team { key } labels(first: 10) { nodes { name } } creator { id }";
+export const LINEAR_INCIDENT_PRIOR_STOPS_QUERY = `
+  query CoordinatorIncidentPriorStops($issueId: String!) {
+    viewer { id }
+    issue(id: $issueId) {
+      relations(first: 50) { nodes { type relatedIssue { ${PRIOR_STOP_FIELDS} } } }
+      inverseRelations(first: 50) { nodes { type issue { ${PRIOR_STOP_FIELDS} } } }
+    }
+  }`;
+
 export const LINEAR_INCIDENT_METADATA_QUERY = `
-  query CoordinatorIncidentMetadata($teamKey: String!, $stateName: String!, $labelName: String!) {
+  query CoordinatorIncidentMetadata($teamKey: String!, $stateName: String!, $labelNames: [String!]!) {
     teams(filter: { key: { eq: $teamKey } }, first: 2) {
       nodes {
         id
         key
         states(filter: { name: { eq: $stateName } }, first: 2) { nodes { id name type } }
-        labels(filter: { name: { eq: $labelName } }, first: 2) { nodes { id name } }
+        labels(filter: { name: { in: $labelNames } }, first: 20) { nodes { id name } }
       }
     }
   }`;
@@ -178,6 +259,111 @@ function classifyEndedReason(reason) {
   return INCIDENT_REASON.UNKNOWN;
 }
 
+export function stopCauseFromReceipt(receipt) {
+  const notes = Array.isArray(receipt?.notes) ? receipt.notes.filter((note) => typeof note === "string") : [];
+  for (let index = notes.length - 1; index >= 0; index -= 1) {
+    const match = ADAPTER_REASON_NOTE_RE.exec(notes[index]);
+    if (match) return ADAPTER_REASON_CAUSES[match[1]] ?? STOP_CAUSE.UNCLASSIFIED;
+  }
+  if (notes.some((note) => PROVENANCE_HOLD_NOTE_RE.test(note))) return STOP_CAUSE.PROVENANCE_UNREADABLE;
+  if (notes.some((note) => VERDICT_NOT_APPLIED_NOTE_RE.test(note))) return STOP_CAUSE.VERDICT_NOT_APPLIED;
+  return STOP_CAUSE.UNCLASSIFIED;
+}
+
+// A HOLD routes by its cause; every other stop by its reason code.
+export function stopRouteLabel(reasonCode, cause) {
+  if (reasonCode === INCIDENT_REASON.AMBIGUOUS_HOLD) return CAUSE_ROUTE[cause] ?? STOP_ROUTE_LABEL.NEEDS_PERSON;
+  return REASON_ROUTE[reasonCode] ?? STOP_ROUTE_LABEL.NEEDS_PERSON;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+// The card contract a stop ran under. The activation is bound to the running
+// coordinator revision, so the card's committed contract read here is the one
+// the activation was armed from; an unrelated coordinator change leaves it the
+// same. A card with no committed contract is keyed by the armed revision.
+export function cardContractKey(issueId, coordinatorRevision) {
+  const contract = cardContract(issueId) ?? reviewOnlyCard(issueId);
+  if (contract) return `card:${createHash("sha256").update(canonicalJson(contract)).digest("hex").slice(0, 16)}`;
+  return SHA_RE.test(coordinatorRevision ?? "") ? `revision:${coordinatorRevision}` : null;
+}
+
+const baseIncidentTitle = (event) => `coordinator stop: ${event.issue_id} — ${event.reason_code}`;
+// A HOLD's title names its cause, since the cause decides who acts; every other
+// stop's reason code already does.
+export function incidentTitle(event) {
+  return event?.reason_code === INCIDENT_REASON.AMBIGUOUS_HOLD && STOP_CAUSES.has(event.cause)
+    ? `${baseIncidentTitle(event)} (${event.cause})`
+    : baseIncidentTitle(event);
+}
+// A card filed before causes existed carries the bare title; it is still this
+// event's card. A title naming a cause must name this event's own cause, since
+// the cause says who acts on the card.
+export function incidentTitleMatches(title, event) {
+  if (typeof title !== "string") return false;
+  return title === baseIncidentTitle(event) || title === incidentTitle(event);
+}
+
+// An earlier stop card's facts, from the fixed lines its description carries.
+export function parsePriorStop(description) {
+  const text = typeof description === "string" ? description : "";
+  const marker = /^<!-- coordinator-incident-event (inc_[0-9a-f]{32}) -->\n/.exec(text);
+  if (!marker) return null;
+  const line = (label, pattern) => new RegExp(`^- ${label}: \`(${pattern})\`$`, "m").exec(text)?.[1] ?? null;
+  const card = /^- (?:Card|Fixture): \[(SHU-[0-9]+)\]\(/m.exec(text)?.[1] ?? null;
+  const cause = line("Cause", "[A-Z0-9_]{1,64}");
+  return {
+    event_id: marker[1],
+    activation_id: line("Activation", "[A-Za-z0-9_-]{8,64}"),
+    reason_code: line("Reason code", "[a-z_]{1,64}"),
+    card,
+    cause: STOP_CAUSES.has(cause) ? cause : null,
+    contract: line("Card contract", "(?:card:[0-9a-f]{16}|revision:[0-9a-f]{40})"),
+    reviewed_head: line("Reviewed head", "[0-9a-f]{40}"),
+  };
+}
+
+// A related issue's stop facts, only when it is a stop card the coordinator
+// filed (see LINEAR_INCIDENT_PRIOR_STOPS_QUERY); anything else is null.
+export function coordinatorPriorStop(issue, viewerId) {
+  if (!issue || typeof viewerId !== "string" || !viewerId || issue.creator?.id !== viewerId) return null;
+  if (issue.team?.key !== INCIDENT_TEAM_KEY) return null;
+  if (!(issue.labels?.nodes ?? []).some((label) => label?.name === INCIDENT_LABEL_NAME)) return null;
+  const prior = parsePriorStop(issue.description);
+  const identity = prior ? incidentIdentity(prior.activation_id, prior.reason_code) : null;
+  if (!identity || identity.event_id !== prior.event_id || identity.issue_uuid !== issue.id) return null;
+  if (issue.title !== incidentTitle({ issue_id: prior.card, reason_code: prior.reason_code, cause: prior.cause })) return null;
+  return prior;
+}
+
+// Earlier stops of the same card, cause and card contract, one per activation,
+// counted from the coordinator's own stop cards related to the card.
+// The review desk is keyed by the reviewed pull request head as well.
+export function priorStopCount(event, { issues = [], viewerId = null } = {}) {
+  if (!event?.cause || !event.contract_key) return 0;
+  const reviewed = reviewOnlyCard(event.issue_id) !== null;
+  if (reviewed && !event.reviewed_head) return 0;
+  const activations = new Set();
+  for (const issue of issues) {
+    const prior = coordinatorPriorStop(issue, viewerId);
+    if (!prior?.activation_id || prior.activation_id === event.activation_id) continue;
+    if (prior.card !== event.issue_id || prior.cause !== event.cause || prior.contract !== event.contract_key) continue;
+    if (reviewed && prior.reviewed_head !== event.reviewed_head) continue;
+    activations.add(prior.activation_id);
+  }
+  return activations.size;
+}
+
+export function stopIsLooping(event, priors = {}) {
+  return priorStopCount(event, priors) + 1 >= STOP_LOOPING_THRESHOLD;
+}
+
 function latestAttempt(receipts) {
   return receipts.slice().sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? ""))).pop() ?? null;
 }
@@ -208,6 +394,8 @@ export function deriveIncidentEvent({ activation, receipts = [], config = {}, ep
     reasonCode = INCIDENT_REASON.BUILDER_FAILED;
   }
   const identity = incidentIdentity(activation.activation_id, reasonCode);
+  const cause = stopCauseFromReceipt(latest);
+  const coordinatorRevision = SHA_RE.test(activation.coordinator_revision ?? "") ? activation.coordinator_revision : null;
   return identity ? {
     ...identity,
     activation_id: activation.activation_id,
@@ -217,6 +405,10 @@ export function deriveIncidentEvent({ activation, receipts = [], config = {}, ep
     reason_code: reasonCode,
     explanation: REASON_EXPLANATIONS[reasonCode],
     latest_attempt_id: UUID_RE.test(latest?.attempt_id ?? "") ? latest.attempt_id : null,
+    cause,
+    route_label: stopRouteLabel(reasonCode, cause),
+    contract_key: cardContractKey(activation.target_issue_id, coordinatorRevision),
+    reviewed_head: reviewOnlyCard(activation.target_issue_id) && SHA_RE.test(latest?.target_sha ?? "") ? latest.target_sha : null,
     attempts: episodeReceipts,
   } : null;
 }
@@ -238,7 +430,7 @@ function sanitizedAttempt(receipt) {
   return { attempt_id: receipt.attempt_id, lane: receipt.requested_worker, target_sha: target, result_sha: result, stage: receipt.stage, verdict, at };
 }
 
-export function renderIncidentDescription(event, config = {}) {
+export function renderIncidentDescription(event, config = {}, { missingLabels = [] } = {}) {
   const attempts = event.attempts.map(sanitizedAttempt);
   if (attempts.some((attempt) => attempt === null) || attempts.length === 0 || attempts.length > INCIDENT_MAX_EPISODE_ATTEMPTS) return null;
   const maxRevise = Number.isInteger(config.max_revise) && config.max_revise >= 0 && config.max_revise <= INCIDENT_MAX_EPISODE_ATTEMPTS ? config.max_revise : 3;
@@ -256,6 +448,11 @@ export function renderIncidentDescription(event, config = {}) {
     `- Activation: \`${event.activation_id}\``,
     `- Coordinator revision: \`${event.coordinator_revision ?? "unavailable"}\``,
     `- Reason code: \`${event.reason_code}\``,
+    ...(STOP_CAUSES.has(event.cause) ? [`- Cause: \`${event.cause}\``] : []),
+    ...(Object.values(STOP_ROUTE_LABEL).includes(event.route_label) ? [`- Route: \`${event.route_label}\``] : []),
+    ...(event.contract_key ? [`- Card contract: \`${event.contract_key}\``] : []),
+    ...(SHA_RE.test(event.reviewed_head ?? "") ? [`- Reviewed head: \`${event.reviewed_head}\``] : []),
+    ...(event.looping === true && Number.isInteger(event.prior_stops) ? [`- Looping: stop ${event.prior_stops + 1} of this card with this cause and card contract`] : []),
     `- ${event.fixture ? "Fixture" : "Card"}: [${event.issue_id}](${fixtureUrl.toString()})`,
     `- Budgets: \`max_revise=${maxRevise}\`, \`max_failed_attempts=${maxFailed}\``,
     "",
@@ -264,6 +461,7 @@ export function renderIncidentDescription(event, config = {}) {
     ...attempts.map((attempt) => `- \`${attempt.attempt_id}\` — lane \`${attempt.lane}\`, head \`${attempt.target_sha}\`${attempt.result_sha ? ` → \`${attempt.result_sha}\`` : ""}, stage \`${attempt.stage}\`, verdict \`${attempt.verdict ?? "none"}\`, at \`${attempt.at}\``),
     "",
     "Reporting only. The coordinator did not repair, re-arm, launch, clear a pause, or edit its activation.",
+    ...(missingLabels.length ? ["", `The label${missingLabels.length > 1 ? "s" : ""} ${missingLabels.map((name) => `\`${name}\``).join(", ")} could not be found in Linear, so this card is filed without ${missingLabels.length > 1 ? "them" : "it"}.`] : []),
     ...(event.fixture ? ["", "This is a rehearsal fixture's stop, so the coordinator closes it itself once it is filed. Nothing needs a person."] : []),
   ];
   const body = lines.join("\n");
@@ -298,7 +496,7 @@ async function boundedCall(call, { timeoutMs = INCIDENT_CALL_TIMEOUT_MS, timeout
 }
 
 function incidentDelivered(issue, event) {
-  if (!issue || issue.id !== event.issue_uuid || issue.title !== `coordinator stop: ${event.issue_id} — ${event.reason_code}`) return false;
+  if (!issue || issue.id !== event.issue_uuid || !incidentTitleMatches(issue.title, event)) return false;
   if (!String(issue.description ?? "").includes(`<!-- coordinator-incident-event ${event.event_id} -->`)) return false;
   if (issue.team?.key !== INCIDENT_TEAM_KEY || !INCIDENT_OWNED_STATE_NAMES.includes(issue.state?.name) || issue.assignee !== null) return false;
   if (!(issue.labels?.nodes ?? []).some((label) => label?.name === INCIDENT_LABEL_NAME)) return false;
@@ -341,9 +539,21 @@ export async function reportCoordinatorIncident({
   const frozen = allMarkers[0] ?? null;
   if (frozen && frozen.reason_code !== event.reason_code) {
     const frozenIdentity = incidentIdentity(event.activation_id, frozen.reason_code);
-    event = { ...event, ...frozenIdentity, reason_code: frozen.reason_code, explanation: REASON_EXPLANATIONS[frozen.reason_code] };
+    event = { ...event, ...frozenIdentity, reason_code: frozen.reason_code, explanation: REASON_EXPLANATIONS[frozen.reason_code], route_label: stopRouteLabel(frozen.reason_code, event.cause) };
   }
   const markers = allMarkers.filter((marker) => marker.event_id === event.event_id);
+  const priorStops = async () => {
+    // Fail-open: an unreadable read only skips the looping check.
+    try {
+      const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_PRIOR_STOPS_QUERY, { issueId: targetLinearId }, token, fetchImpl), options);
+      const issue = data?.issue ?? null;
+      const issues = [
+        ...(issue?.relations?.nodes ?? []).map((relation) => relation?.relatedIssue),
+        ...(issue?.inverseRelations?.nodes ?? []).map((relation) => relation?.issue),
+      ].filter((other) => other && other.id !== event.issue_uuid);
+      return { issues, viewerId: data?.viewer?.id ?? null };
+    } catch { return {}; }
+  };
   if (markers.some((marker) => marker.status === "confirmed")) return { status: "confirmed", event_id: event.event_id };
   if (markers.some((marker) => marker.status === "exhausted")) return { status: "exhausted", event_id: event.event_id };
   const latest = markers.at(-1) ?? null;
@@ -372,14 +582,16 @@ export async function reportCoordinatorIncident({
   await safeMarkerWrite({ sendLinear, issueId: targetLinearId, marker: started, token, fetchImpl, options });
 
   try {
-    const description = renderIncidentDescription(event, config);
-    if (!description) throw new Error("unsafe incident evidence");
+    // A card already created keeps its labels; only a new one reads prior stops.
+    const priors = existing ? {} : await priorStops();
+    event = { ...event, prior_stops: priorStopCount(event, priors), looping: stopIsLooping(event, priors) };
+    const wantedLabels = [event.route_label ?? STOP_ROUTE_LABEL.NEEDS_PERSON, ...(event.looping ? [STOP_LOOPING_LABEL] : [])];
     let metadata;
     try {
       metadata = await boundedCall(() => sendLinear(LINEAR_INCIDENT_METADATA_QUERY, {
         teamKey: INCIDENT_TEAM_KEY,
         stateName: incidentFiledState(event).name,
-        labelName: INCIDENT_LABEL_NAME,
+        labelNames: [INCIDENT_LABEL_NAME, ...wantedLabels],
       }, token, fetchImpl), options);
     } catch { metadata = null; }
     const teams = metadata?.teams?.nodes ?? [];
@@ -388,15 +600,24 @@ export async function reportCoordinatorIncident({
     const states = team?.states?.nodes?.filter((state) => state?.name === filed.name && state?.type === filed.type) ?? [];
     const labels = team?.labels?.nodes?.filter((label) => label?.name === INCIDENT_LABEL_NAME) ?? [];
     if (!team || states.length !== 1 || labels.length !== 1) throw new Error("incident metadata unavailable");
+    // Fail-open on the route and looping labels only: a missing one is named
+    // in the body and the card is filed with repo:platform.
+    const labelNamed = (name) => {
+      const found = team.labels.nodes.filter((label) => label?.name === name && typeof label.id === "string");
+      return found.length === 1 ? found[0] : null;
+    };
+    const missingLabels = wantedLabels.filter((name) => !labelNamed(name));
+    const description = renderIncidentDescription(event, config, { missingLabels });
+    if (!description) throw new Error("unsafe incident evidence");
 
     if (!existing) {
       await boundedCall(() => sendLinear(LINEAR_INCIDENT_CREATE_MUTATION, { input: {
         id: event.issue_uuid,
         teamId: team.id,
         stateId: states[0].id,
-        labelIds: [labels[0].id],
+        labelIds: [labels[0].id, ...wantedLabels.map(labelNamed).filter(Boolean).map((label) => label.id)],
         assigneeId: null,
-        title: `coordinator stop: ${event.issue_id} — ${event.reason_code}`,
+        title: incidentTitle(event),
         description,
       } }, token, fetchImpl), options);
     }
