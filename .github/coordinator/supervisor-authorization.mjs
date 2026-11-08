@@ -42,7 +42,9 @@ function evaluate(order, io) {
     // seed, and the pair would refuse as a rewind under the wrong name.
     if (evidence && (evidence.unavailable === true || !Array.isArray(evidence.comments))) return denied("EVIDENCE_UNAVAILABLE");
     const receipts = evidence ? parseReceiptsFromComments(evidence.comments, config.linear_receipt_actor_ids) : [];
-    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts, dir, env,
+    // A card's thread is never read here, so its receipts are unknown, not
+    // empty: a landing repair's spend stays the dispatcher's decision.
+    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts, receiptsRead: evidence !== null, dir, env,
       initialTargetSha: env.DISPATCH_TARGET_SHA, ...io.activation }) : null;
     if (activation?.code === "ACT_EVIDENCE_UNAVAILABLE") return denied("EVIDENCE_UNAVAILABLE");
     if (!dispatchEnabledFor(env, config, activation)) {

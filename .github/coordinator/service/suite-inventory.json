@@ -3449,6 +3449,7 @@
     "Self-repair B1: R2 the bound pull request, passed episode and head are checked",
     "Self-repair B1: R3 the findings are valid CI findings at the head, bound by their canonical digest",
     "Self-repair B1: S1 the status arms only a card lane, exposes the binding and renders it",
+    "Self-repair B1: S2 the host's child gate, which reads no card thread, does not refuse a landing repair as spent",
     "Self-repair B1: E1 the first step is a routed-shape revise on the writer lane within revision_paths",
     "Self-repair B1: E2 only a trusted exact-head PASS of the repaired episode may start the repair",
     "Self-repair B1: E3 a branch that moved off the passed head ends the repair",
@@ -26909,6 +26910,14 @@
     },
     {
       "name": "Self-repair B1: S1 the status arms only a card lane, exposes the binding and renders it",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "Self-repair B1: S2 the host's child gate, which reads no card thread, does not refuse a landing repair as spent",
       "capabilities": [
         {
           "name": "git"

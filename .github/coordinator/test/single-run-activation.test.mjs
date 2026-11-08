@@ -1180,10 +1180,10 @@ function b1Without(rec, ...keys) {
   return copy;
 }
 
-function b1Status(rec, { receipts = [], config = B1_CONFIG, initialTargetSha = B1_HEAD } = {}) {
+function b1Status(rec, { receipts = [], config = B1_CONFIG, initialTargetSha = B1_HEAD, receiptsRead = true } = {}) {
   const { dir, file } = makeFile(rec);
   try {
-    return singleRunActivationStatus({ filePath: file, config, receipts, now: NOW, gitHead: REVISION, initialTargetSha });
+    return singleRunActivationStatus({ filePath: file, config, receipts, receiptsRead, now: NOW, gitHead: REVISION, initialTargetSha });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1322,6 +1322,44 @@ test("Self-repair B1: S1 the status arms only a card lane, exposes the binding a
   assert.equal(plain.episode, "no attempt has been dispatched yet");
   assert.doesNotMatch(renderActivationLine(plain), /landing-repair/);
   assert.equal(repairFromActivation(plain, B1_CONFIG), null);
+});
+
+test("Self-repair B1: S2 the host's child gate, which reads no card thread, does not refuse a landing repair as spent", async () => {
+  // The dispatcher reads the card's receipts and refuses a repair with no trusted PASS.
+  const read = b1Status(b1Record(), { receipts: [] });
+  assert.equal(read.state, "refused");
+  assert.match(read.reason, /activation is spent: .*repair has no trusted PASS/);
+  // A caller that never read them cannot tell, so it does not decide the spend.
+  const unread = b1Status(b1Record(), { receipts: [], receiptsRead: false });
+  assert.equal(unread.state, "armed", unread.reason);
+  assert.equal(unread.landing_repair, true);
+  assert.equal(unread.successor, null, "it routes nothing: the dispatcher minted the revise");
+  // Everything else still refuses with the receipts unread.
+  const expired = b1Status(b1Record({ expires_at: new Date(NOW.getTime() - 1000).toISOString() }), { receipts: [], receiptsRead: false });
+  assert.equal(expired.state, "refused");
+  assert.match(expired.reason, /activation expired/);
+  const moved = b1Status(b1Record(), { receipts: [], receiptsRead: false, initialTargetSha: B1_NEXT });
+  assert.equal(moved.state, "refused");
+  // A plain card episode is unchanged either way.
+  const plain = b1Status(b1Without(b1Record(), ...REPAIR_ACTIVATION_KEYS), { receipts: [], receiptsRead: false });
+  assert.equal(plain.state, "armed", plain.reason);
+  assert.equal(plain.episode, "no attempt has been dispatched yet");
+
+  // The child gate itself: a card scope reads no fixture thread, so it passes
+  // receiptsRead false and the repair's revise order is not refused as spent.
+  const { workOrderAuthorization } = await import("../supervisor-authorization.mjs");
+  const { dir, file } = makeFile(b1Record());
+  try {
+    const verdict = workOrderAuthorization({ issue_id: B1_CARD, runtime: "codex-cli", authorization_ref: B1_CARD, workspace_scope: "repo",
+      scope_phase: "revision", allowed_paths: [...(B1_LANE.revision_paths ?? [])], scoped_base_sha: null }, {
+      config: { ...B1_CONFIG, enable_dispatch: false }, wait: () => {},
+      env: { ENABLE_DISPATCH: "true", SHU_SUPERVISOR_ACTIVATION_FILE: file, DISPATCH_TARGET_SHA: B1_HEAD },
+      activation: { now: NOW, gitHead: REVISION },
+    });
+    assert.deepEqual(verdict, { ok: true, code: null }, "not HOST_AUTH_ACTIVATION_SPENT, as every repair was on the host");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("Self-repair B1: E1 the first step is a routed-shape revise on the writer lane within revision_paths", () => {
