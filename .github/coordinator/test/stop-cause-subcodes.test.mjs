@@ -114,6 +114,10 @@ function fakeLinear({ labels = Object.values(STOP_ROUTE_LABEL).concat(STOP_LOOPI
     if (query.includes("CoordinatorIncidentComments")) return { issue: { comments: { nodes: [] } } };
     if (query.includes("CoordinatorIncidentPriorStops")) {
       if (priorsFail) throw new Error("prior stops unreadable");
+      // The identity checks need the viewer and each card's creator, both ways.
+      assert.match(query, /viewer \{ id \}/, "the prior-stop query reads the viewer");
+      assert.match(query, / relations\([^)]*\) \{ nodes \{ type relatedIssue \{[^\n]*creator \{ id \}/, "related cards carry their creator");
+      assert.match(query, /inverseRelations\([^)]*\) \{ nodes \{ type issue \{[^\n]*creator \{ id \}/, "inverse-related cards carry their creator");
       return { viewer: { id: VIEWER }, issue: {
         relations: { nodes: [] },
         inverseRelations: { nodes: priors.map((prior) => ({ type: "related", issue: typeof prior === "string" ? priorCard(prior) : prior })) },

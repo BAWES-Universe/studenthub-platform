@@ -149,13 +149,15 @@ export const LINEAR_INCIDENT_LOOKUP_QUERY = `
 // activation and reason code derive, its title is the one the coordinator
 // writes, and it is a repo:platform card in the team, created by the same
 // Linear user the coordinator reads as.
-const PRIOR_STOP_FIELDS = "id title description team { key } labels { nodes { name } } creator { id }";
+// Linear rejects a query whose complexity (each page size times what it
+// selects) is too high, so pages and label lists stay small.
+const PRIOR_STOP_FIELDS = "id title description team { key } labels(first: 10) { nodes { name } } creator { id }";
 export const LINEAR_INCIDENT_PRIOR_STOPS_QUERY = `
   query CoordinatorIncidentPriorStops($issueId: String!) {
     viewer { id }
     issue(id: $issueId) {
-      relations(first: 250) { nodes { type relatedIssue { ${PRIOR_STOP_FIELDS} } } }
-      inverseRelations(first: 250) { nodes { type issue { ${PRIOR_STOP_FIELDS} } } }
+      relations(first: 50) { nodes { type relatedIssue { ${PRIOR_STOP_FIELDS} } } }
+      inverseRelations(first: 50) { nodes { type issue { ${PRIOR_STOP_FIELDS} } } }
     }
   }`;
 
