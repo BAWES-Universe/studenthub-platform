@@ -6451,7 +6451,35 @@ const RECUT_531_CONTRACTS = Object.fromEntries(Object.entries(RECUT_531).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_521, ...RECUT_531_CONTRACTS });
+// SHU-537 stopped: its pull request added the area store's export to
+// packages/db/src/profile/index.ts and its wiring to the profile runtime, and
+// fast-checks failed four golden tests outside its paths: PREP_EXPORTS and
+// PREP_ROOT_SAME in apps/gateway/test/db-subpaths.test.ts, which pin every
+// database area's export names, and PREP_WIRING_SHAPE and PREP_WIRING_COUNT in
+// apps/gateway/test/wiring-runtime.test.ts, which pin the runtime's application
+// keys and pool count. It also left commits on its branch, so it cannot stay
+// in a non-append queue. SHU-546 is its contract with both test files added to
+// its paths and a brief line saying which lines of them it may change.
+const AREA_GOLDEN_PATHS = Object.freeze(["apps/gateway/test/db-subpaths.test.ts", "apps/gateway/test/wiring-runtime.test.ts"]);
+const SHU546_GOLDENS = `
+- Two golden tests pin what your export and wiring change, and both are in your paths. apps/gateway/test/db-subpaths.test.ts pins each database area's exported names (PREP_EXPORTS) and the root's export set (PREP_ROOT_SAME): add each name you export from packages/db/src/profile/index.ts to the profile area's expected list, and change nothing else there. apps/gateway/test/wiring-runtime.test.ts pins the runtime's application keys (PREP_WIRING_SHAPE) and how many pools it closes (PREP_WIRING_COUNT): add each application key you wire to both expected key lists, and raise each pool count by exactly the pools you add (reuse the profile wiring's existing pool where you can, so the count stays). Change nothing else in that test. The last run of this card (SHU-537) failed these four tests in CI because the files were outside its paths.`;
+const RECUT_537_CONTRACTS = (() => {
+  const base = CARD_CONTRACTS_521["SHU-537"];
+  for (const path of AREA_GOLDEN_PATHS) if (base.initial_build_paths.includes(path) || base.revision_paths.includes(path)) throw new Error(`SHU-546: ${path} is already in the paths`);
+  let brief = base.brief.replace(/\bSHU-537\b/g, "SHU-546");
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU546_GOLDENS}\n- Before you finish,`, "SHU-546 golden tests");
+  brief = replaceOnce(brief, "\n\nOut of scope:", `${AREA_GOLDEN_PATHS.map((path) => `\n- ${path}`).join("")}\n\nOut of scope:`, "SHU-546 golden test paths");
+  if (!brief.startsWith("Card SHU-546:")) throw new Error("the re-cut brief for SHU-546 must name its own card");
+  const acceptance = `${base.acceptance.replace(/\bSHU-537\b/g, "SHU-546")} apps/gateway/test/db-subpaths.test.ts and apps/gateway/test/wiring-runtime.test.ts change only by the export names, application keys and pool counts the brief names, and PREP_EXPORTS, PREP_ROOT_SAME, PREP_WIRING_SHAPE and PREP_WIRING_COUNT pass. SHU-546 is SHU-537's contract re-queued under a fresh id after fast-checks failed four golden tests outside its paths, with those two test files added; SHU-537 never lands.`;
+  return { "SHU-546": Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: Object.freeze([...base.initial_build_paths, ...AREA_GOLDEN_PATHS]),
+    revision_paths: Object.freeze([...base.revision_paths, ...AREA_GOLDEN_PATHS]),
+    acceptance,
+    brief,
+  }) };
+})();
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_521, ...RECUT_531_CONTRACTS, ...RECUT_537_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

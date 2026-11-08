@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-539", "SHU-537", "SHU-540", "SHU-541", "SHU-542", "SHU-543", "SHU-544"], "SHU-224: the scope names the current card queue (SHU-312): the re-cut of the stopped upload card and the cards that wait on it, with every stopped and landed card left out");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-539", "SHU-546", "SHU-540", "SHU-541", "SHU-542", "SHU-543", "SHU-544"], "SHU-224: the scope names the current card queue (SHU-312): the re-cut of the stopped upload card and the cards that wait on it, with every stopped and landed card left out");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -417,6 +417,17 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-539"].acceptance, /\(UPL_BROWSER\)/, "SHU-224: SHU-539 holds the browser scenarios to pass");
   assert.match(contracts["SHU-540"].brief, /After SHU-539 it expects exactly one upload form in each slot\./, "SHU-224: SHU-540 knows what SHU-539 left in run.mjs");
   assert.match(brief539, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nYour paths/, "SHU-224: SHU-539 keeps the path self-check last");
+  // SHU-537 stopped on four golden tests outside its paths and left commits
+  // on its branch; SHU-546 is its contract with both test files added.
+  assert.equal(after("SHU-546"), undefined, "SHU-224: SHU-546 waits on nothing");
+  const GOLDENS = ["apps/gateway/test/db-subpaths.test.ts", "apps/gateway/test/wiring-runtime.test.ts"];
+  const lane546 = config.card_lanes.find((entry) => entry.id === "SHU-546");
+  assert.deepEqual(lane546.initial_build_paths, [...contracts["SHU-537"].initial_build_paths, ...GOLDENS], "SHU-224: SHU-546 keeps SHU-537's paths and adds the golden tests");
+  assert.deepEqual(lane546.revision_paths, [...contracts["SHU-537"].revision_paths, ...GOLDENS], "SHU-224: SHU-546 keeps SHU-537's revision paths and adds the golden tests");
+  assert.deepEqual(contracts["SHU-546"].initial_build_paths, lane546.initial_build_paths, "SHU-224: SHU-546's contract matches its lane");
+  assert.match(contracts["SHU-546"].brief, /\n- apps\/gateway\/test\/db-subpaths\.test\.ts\n- apps\/gateway\/test\/wiring-runtime\.test\.ts\n\nOut of scope:/, "SHU-224: SHU-546's brief lists the golden tests in its paths");
+  assert.match(contracts["SHU-546"].brief, /raise each pool count by exactly the pools you add/, "SHU-224: SHU-546 says how the pool count moves");
+  assert.ok(contracts["SHU-546"].acceptance.endsWith("; SHU-537 never lands."), "SHU-224: SHU-546 names the card it replaces");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
