@@ -566,7 +566,13 @@ export function carryClaims(io, paths, revision, main, queue) {
   for (const id of queue) {
     const from = revisionClaim(paths, revision, id);
     const to = revisionClaim(paths, main, id);
-    if (!io.fs.existsSync(from) || io.fs.existsSync(to)) continue;
+    if (!io.fs.existsSync(from)) continue;
+    if (io.fs.existsSync(to)) {
+      // A claim an earlier, put-back attempt of this install carried is
+      // still a carried claim: the card did not run at N.
+      if (parse(String(io.fs.readFileSync(to, "utf8")))?.carried_from === revision) carried.push(id);
+      continue;
+    }
     const text = String(io.fs.readFileSync(from, "utf8"));
     const claim = parse(text);
     if (!plainObject(claim)) throw new Error(`the claim of ${id} at ${revision} cannot be read`);
