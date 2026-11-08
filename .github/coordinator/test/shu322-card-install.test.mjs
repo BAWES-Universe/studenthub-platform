@@ -1117,6 +1117,33 @@ test("M11 C5: a code install that fails after the merge puts the installed revis
   assert.equal(verifyFails.steps.filter((entry) => entry === `rollback ${N}`).length, 1, "N is rolled back once");
 });
 
+test("Velocity A3: a code install carries the installed queue's claims over, so a stopped card's moved branch does not refuse the plan", async () => {
+  // 2026-11-08: #440's code install was put back at the plan check because
+  // two stopped cards' branches carried their own commits
+  // (CARD_RUN_BRANCH_NOT_AT_TARGET). Those cards ran at R and do not run
+  // again at N, as with an appended queue.
+  const host = codeHost();
+  const queue = host.plan.queue;
+  const [stopped, fresh] = queue;
+  const ran = { card: stopped, revision: R, outcome: "STOPPED", ok: false, land: null };
+  host.put(autoClaim(PATHS, R, stopped), JSON.stringify(ran), { mode: 0o600 });
+  const prepare = { branch: { action: "create" }, card: { action: "move-to-todo" } };
+  host.plan = { id: fresh ?? null, queue, next: fresh ? { id: fresh } : { id: null, skipped: "QUEUE_STOPPED" }, busy: [], prepare,
+    queued: queue.map((id) => ({ id, prepare: id === stopped ? { refused: "CARD_RUN_BRANCH_NOT_AT_TARGET", reason: "its branch has its own commits" } : prepare })) };
+  const out = (await install(host, withPolicy(REVIEW_POLICY))).result ?? {};
+  assert.equal(out.outcome, "INSTALLED", JSON.stringify(out));
+  assert.deepEqual(out.steps, ["claim", "idle", "merge", "rollback", "install", "verify", "precondition", "carry", "plan"]);
+  assert.deepEqual(JSON.parse(host.files.get(autoClaim(PATHS, N, stopped)).text), { ...ran, carried_from: R }, "the stopped card stays stopped at N");
+  // A card that did not run at R is still asked to pass.
+  const unrun = codeHost();
+  unrun.files.delete(autoClaim(PATHS, R, stopped));
+  unrun.plan = { ...host.plan };
+  const refusedOut = (await install(unrun, withPolicy(REVIEW_POLICY))).result ?? {};
+  assert.equal(refusedOut.outcome, "INSTALL_RESTORED", JSON.stringify(refusedOut));
+  assert.equal(refusedOut.failed_step, "plan");
+  assert.match(refusedOut.reason, /CARD_RUN_BRANCH_NOT_AT_TARGET|its branch has its own commits/);
+});
+
 test("M11 C6: when the installed revision cannot be put back, the host pauses as before", async () => {
   for (const [name, edit] of [["checkout", (h) => { h.restoreFails = true; }], ["install", (h) => { h.provisionFails[`install ${R}`] = true; }]]) {
     const host = codeHost();
