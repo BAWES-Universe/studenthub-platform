@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-494", "SHU-495", "SHU-496", "SHU-497", "SHU-498", "SHU-499", "SHU-500", "SHU-501", "SHU-502", "SHU-503", "SHU-504", "SHU-505", "SHU-506", "SHU-507", "SHU-508", "SHU-513", "SHU-514", "SHU-515", "SHU-516", "SHU-517", "SHU-518", "SHU-519", "SHU-521", "SHU-522", "SHU-523", "SHU-524", "SHU-525", "SHU-526"], "SHU-224: the scope names the current card queue (SHU-312), with the re-cuts of the stopped civil ID and document chains appended after it");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-531", "SHU-537", "SHU-532", "SHU-533", "SHU-534", "SHU-535", "SHU-536"], "SHU-224: the scope names the current card queue (SHU-312): the re-cut of the stopped document chain, first, with every stopped and landed card left out");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -358,6 +358,35 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     }
   }
   assert.match(contracts["SHU-521"].brief, /A sequential repeat .* answers 409 .*it never expects 303 for the second post\./, "SHU-224: SHU-521 says how a sequential repeat is answered");
+  // The re-cut of SHU-521's chain is the whole queue: no lane waits on a
+  // landed or stopped card, and only on cards earlier in the queue.
+  const RECUT_521 = { "SHU-521": "SHU-531", "SHU-515": "SHU-537", "SHU-522": "SHU-532", "SHU-523": "SHU-533", "SHU-524": "SHU-534", "SHU-525": "SHU-535", "SHU-526": "SHU-536" };
+  assert.equal(after("SHU-531"), undefined, "SHU-224: SHU-531 waits on nothing");
+  assert.equal(after("SHU-537"), undefined, "SHU-224: SHU-537 waits on nothing");
+  assert.deepEqual(after("SHU-532"), ["SHU-531"], "SHU-224: SHU-532 waits on SHU-531");
+  assert.deepEqual(after("SHU-533"), ["SHU-532"], "SHU-224: SHU-533 waits on SHU-532");
+  assert.deepEqual(after("SHU-534"), ["SHU-531"], "SHU-224: SHU-534 waits on SHU-531");
+  assert.deepEqual(after("SHU-535"), ["SHU-531", "SHU-534"], "SHU-224: SHU-535 waits on SHU-531 and SHU-534");
+  assert.deepEqual(after("SHU-536"), ["SHU-534"], "SHU-224: SHU-536 waits on SHU-534");
+  const recut521 = (text) => text.replace(/\bSHU-(515|521|522|523|524|525|526)\b/g, (id) => RECUT_521[id]);
+  for (const [from, id] of Object.entries(RECUT_521)) {
+    const lane = config.card_lanes.find((entry) => entry.id === id);
+    const base = contracts[from];
+    assert.deepEqual(lane.initial_build_paths, base.initial_build_paths, `SHU-224: ${id} keeps ${from}'s paths`);
+    assert.deepEqual(lane.revision_paths, base.revision_paths, `SHU-224: ${id} keeps ${from}'s revision paths`);
+    assert.deepEqual(contracts[id].initial_build_paths, base.initial_build_paths, `SHU-224: ${id}'s contract keeps ${from}'s paths`);
+    assert.ok(contracts[id].acceptance.endsWith(`; ${from} never lands.`), `SHU-224: ${id} names the card it replaces`);
+    if (from !== "SHU-521") assert.equal(contracts[id].brief, recut521(base.brief), `SHU-224: ${id} keeps ${from}'s brief but for the ids`);
+  }
+  // SHU-531's brief closes the four findings that stopped SHU-521.
+  const brief531 = contracts["SHU-531"].brief;
+  assert.match(brief531, /reads the built file \.\.\/\.\.\/\.\.\/dist\/apps\/gateway\/src\/documents-upload-http\.js, never \.\.\/src\/documents-upload-http\.js/, "SHU-224: SHU-531 says which file the mutants rewrite");
+  assert.match(brief531, /Every needle is executable code, never a comment/, "SHU-224: SHU-531 keeps needles out of comments");
+  assert.match(brief531, /keeping the old version until the new one commits \(item 4\)/, "SHU-224: SHU-531 has a mutant for item 4");
+  assert.match(brief531, /Tests go through the route\./, "SHU-224: SHU-531 tests through the route");
+  assert.match(brief531, /- No date: My documents shows format and size only/, "SHU-224: SHU-531 settles the date");
+  assert.doesNotMatch(contracts["SHU-531"].acceptance, /UPL_DATE/, "SHU-224: SHU-531 does not ask for a date");
+  assert.match(brief531, /- The last attempt at this card \(SHU-521\)[\s\S]*\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nYour paths/, "SHU-224: SHU-531 keeps the path self-check last");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
