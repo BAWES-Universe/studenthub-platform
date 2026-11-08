@@ -7,4 +7,6 @@ export type { PersonProfileField, PersonProfileBrowserOptions, PersonProfileBrow
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "../postgres-profile-records-store.js";
 export { PostgresBankDetailsStore, BANK_DETAILS_OPERATION } from "../postgres-bank-details-store.js";
 export type { PostgresBankDetailsStoreOptions } from "../postgres-bank-details-store.js";
+export { PostgresLegacyLinkStore, LegacyCandidateAlreadyLinkedError, PrincipalAlreadyLinkedError } from "../postgres-legacy-link-store.js";
+export type { LegacyLinkMethod, LegacyLinkStatus, LegacySnapshotPort } from "../postgres-legacy-link-store.js";
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdStore", { value: PostgresPersonCivilIdStore });
