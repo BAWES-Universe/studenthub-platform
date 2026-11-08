@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-531", "SHU-537", "SHU-532", "SHU-533", "SHU-534", "SHU-535", "SHU-536"], "SHU-224: the scope names the current card queue (SHU-312): the re-cut of the stopped document chain, first, with every stopped and landed card left out");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-539", "SHU-537", "SHU-540", "SHU-541", "SHU-542", "SHU-543", "SHU-544"], "SHU-224: the scope names the current card queue (SHU-312): the re-cut of the stopped upload card and the cards that wait on it, with every stopped and landed card left out");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -387,6 +387,36 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(brief531, /- No date: My documents shows format and size only/, "SHU-224: SHU-531 settles the date");
   assert.doesNotMatch(contracts["SHU-531"].acceptance, /UPL_DATE/, "SHU-224: SHU-531 does not ask for a date");
   assert.match(brief531, /- The last attempt at this card \(SHU-521\)[\s\S]*\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nYour paths/, "SHU-224: SHU-531 keeps the path self-check last");
+  // SHU-531 stopped on browser-acceptance, whose documents scenarios still
+  // expected a read-only page in a file outside its paths. Its re-cut and
+  // the cards that wait on it are the queue now.
+  const RECUT_531 = { "SHU-531": "SHU-539", "SHU-532": "SHU-540", "SHU-533": "SHU-541", "SHU-534": "SHU-542", "SHU-535": "SHU-543", "SHU-536": "SHU-544" };
+  assert.equal(after("SHU-539"), undefined, "SHU-224: SHU-539 waits on nothing");
+  assert.deepEqual(after("SHU-540"), ["SHU-539"], "SHU-224: SHU-540 waits on SHU-539");
+  assert.deepEqual(after("SHU-541"), ["SHU-540"], "SHU-224: SHU-541 waits on SHU-540");
+  assert.deepEqual(after("SHU-542"), ["SHU-539"], "SHU-224: SHU-542 waits on SHU-539");
+  assert.deepEqual(after("SHU-543"), ["SHU-539", "SHU-542"], "SHU-224: SHU-543 waits on SHU-539 and SHU-542");
+  assert.deepEqual(after("SHU-544"), ["SHU-542"], "SHU-224: SHU-544 waits on SHU-542");
+  const recut531 = (text) => text.replace(/\bSHU-(531|532|533|534|535|536)\b/g, (id) => RECUT_531[id]);
+  const BROWSER = "tools/browser-acceptance/run.mjs";
+  for (const [from, id] of Object.entries(RECUT_531)) {
+    const lane = config.card_lanes.find((entry) => entry.id === id);
+    const base = contracts[from];
+    const widened = from === "SHU-531" || from === "SHU-532";
+    const paths = widened ? [...base.initial_build_paths, BROWSER] : base.initial_build_paths;
+    assert.deepEqual(lane.initial_build_paths, paths, `SHU-224: ${id} keeps ${from}'s paths${widened ? " and adds the browser acceptance file" : ""}`);
+    assert.deepEqual(lane.revision_paths, widened ? [...base.revision_paths, BROWSER] : base.revision_paths, `SHU-224: ${id} keeps ${from}'s revision paths`);
+    assert.deepEqual(contracts[id].initial_build_paths, paths, `SHU-224: ${id}'s contract matches its lane`);
+    assert.ok(contracts[id].acceptance.endsWith(`; ${from} never lands.`), `SHU-224: ${id} names the card it replaces`);
+    if (widened) assert.match(contracts[id].brief, /\n- tools\/browser-acceptance\/run\.mjs\n\nOut of scope:/, `SHU-224: ${id}'s brief lists the browser acceptance file in its paths`);
+    else assert.equal(contracts[id].brief, recut531(base.brief), `SHU-224: ${id} keeps ${from}'s brief but for the ids`);
+  }
+  const brief539 = contracts["SHU-539"].brief;
+  assert.match(brief539, /four `main dl > div` slots, each `#document-<slot>` with its `dt` label/, "SHU-224: SHU-539 keeps the slot structure the scenarios read");
+  assert.match(brief539, /In documentPage, change only the read-only assertion\./, "SHU-224: SHU-539 changes only the read-only assertion");
+  assert.match(contracts["SHU-539"].acceptance, /\(UPL_BROWSER\)/, "SHU-224: SHU-539 holds the browser scenarios to pass");
+  assert.match(contracts["SHU-540"].brief, /After SHU-539 it expects exactly one upload form in each slot\./, "SHU-224: SHU-540 knows what SHU-539 left in run.mjs");
+  assert.match(brief539, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nYour paths/, "SHU-224: SHU-539 keeps the path self-check last");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 

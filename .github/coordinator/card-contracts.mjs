@@ -6394,7 +6394,64 @@ const RECUT_521_CONTRACTS = Object.fromEntries(Object.entries(RECUT_521).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_503, ...RECUT_521_CONTRACTS });
+const CARD_CONTRACTS_521 = { ...CARD_CONTRACTS_503, ...RECUT_521_CONTRACTS };
+
+// SHU-531 stopped: its pull request built the upload form, but CI's
+// browser-acceptance failed all fifteen documents-* scenarios, because
+// documentPage in tools/browser-acceptance/run.mjs still holds My documents to
+// be read-only (no form, input or button in main), and that file was outside
+// the card's paths. SHU-539 is SHU-531's contract with run.mjs added to its
+// paths and a brief that keeps the slot structure those scenarios read and
+// turns only the read-only assertion into a check of one upload form per slot.
+// SHU-532 adds Remove and View controls to the same page, so SHU-540 gets
+// run.mjs too and the same instruction for its controls. SHU-532, SHU-534 and
+// SHU-535 wait on SHU-531, and SHU-533 and SHU-536 wait on one of them, so all
+// five are re-cut under fresh ids. This re-cut is not an append: the new queue
+// leaves out every stopped and landed card and starts with SHU-539. SHU-537
+// waits on nothing, has no commits of its own, and keeps its place.
+const RECUT_531 = Object.freeze({
+  "SHU-531": "SHU-539", "SHU-532": "SHU-540", "SHU-533": "SHU-541", "SHU-534": "SHU-542", "SHU-535": "SHU-543", "SHU-536": "SHU-544",
+});
+const recut531 = (text) => text.replace(/\bSHU-(531|532|533|534|535|536)\b/g, (id) => RECUT_531[id]);
+const BROWSER_ACCEPTANCE_PATH = "tools/browser-acceptance/run.mjs";
+const SHU539_BROWSER = `
+- The last run of this card (SHU-531) built the upload form and then stopped in CI: browser-acceptance failed all fifteen documents-* scenarios (documents-empty and documents-finalized in English and Arabic at 320, 390 and 1280 pixels, documents-keyboard-history-en and -ar, and documents-person-isolation). Its documentPage helper in tools/browser-acceptance/run.mjs still asserts that My documents is read-only, with no form, input or button in main, and that file was outside the card's paths. It is in your paths now.
+- Keep the slot structure those scenarios read exactly as it is: four \`main dl > div\` slots, each \`#document-<slot>\` with its \`dt\` label, its \`strong\` On file or Not uploaded, and its \`.p-meta\` text unchanged. Put the form inside the slot after the \`.p-meta\` paragraph. The button label comes from profile-copy.ts in English and Arabic, like the rest of the page.
+- In documentPage, change only the read-only assertion. Instead, each slot holds exactly one form (method post, enctype multipart/form-data, action /profile/documents/<slot>/upload) with exactly one file input named file, exactly one hidden input named submission and exactly one submit button, so main has exactly four forms. Main still has no time element and no link to candidate-documents or private-documents. The existing checks that no document id or version appears in the text or the DOM stay as they are and keep proving that the submission value holds neither. Change nothing else in run.mjs and add no scenario.
+- The browser suite needs Postgres and a browser, so it may not run in your sandbox. CI runs it as browser-acceptance on the pull request. Read every documents-* scenario against your page, and in your final message say which assertions you changed and why each scenario still passes.`;
+const SHU540_BROWSER = `
+- tools/browser-acceptance/run.mjs is in your paths because its documentPage helper checks the controls on My documents. After SHU-539 it expects exactly one upload form in each slot. Your Remove link and View form add controls to on-file slots. Change only that assertion: an on-file slot also has exactly one link to /profile/documents/<slot>/remove and exactly one form posting to /profile/documents/<slot>/view, and a not-uploaded slot has neither. Keep everything else, including no time element and no link to candidate-documents or private-documents in main. If the photo on My profile trips another scenario's expectation (for example one that asserts main has no img), widen only that expectation to the avatar's exact markup and say so in your final message. The browser suite may not run in your sandbox; CI runs it as browser-acceptance on the pull request.`;
+const BROWSER_ACCEPTANCE_DONE = {
+  "SHU-531": "tools/browser-acceptance/run.mjs changes only documentPage's read-only assertion into the per-slot upload form check the brief describes, and every documents-* browser-acceptance scenario passes in CI (UPL_BROWSER).",
+  "SHU-532": "tools/browser-acceptance/run.mjs changes only the documents control expectations the brief names, and every browser-acceptance scenario passes in CI.",
+};
+const RECUT_531_CONTRACTS = Object.fromEntries(Object.entries(RECUT_531).map(([from, to]) => {
+  const base = CARD_CONTRACTS_521[from];
+  let brief = recut531(base.brief);
+  let acceptance = recut531(base.acceptance);
+  let initial = base.initial_build_paths;
+  let revision = base.revision_paths;
+  if (from === "SHU-531" || from === "SHU-532") {
+    if (initial.includes(BROWSER_ACCEPTANCE_PATH) || revision.includes(BROWSER_ACCEPTANCE_PATH)) throw new Error(`${to}: browser acceptance is already in the paths`);
+    initial = Object.freeze([...initial, BROWSER_ACCEPTANCE_PATH]);
+    revision = Object.freeze([...revision, BROWSER_ACCEPTANCE_PATH]);
+    brief = replaceOnce(brief, "\n- Before you finish,", `${from === "SHU-531" ? SHU539_BROWSER : SHU540_BROWSER}\n- Before you finish,`, `${to} browser acceptance`);
+    brief = replaceOnce(brief, "\n\nOut of scope:", `\n- ${BROWSER_ACCEPTANCE_PATH}\n\nOut of scope:`, `${to} browser acceptance path`);
+    acceptance = `${acceptance} ${BROWSER_ACCEPTANCE_DONE[from]}`;
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-531"
+    ? "after CI's browser-acceptance failed every documents scenario on a file outside its paths, with that file added and the page structure the scenarios read spelled out"
+    : `because its installed lane waited on ${from === "SHU-533" ? "SHU-532, which waits on " : from === "SHU-536" ? "SHU-534, which waits on " : ""}SHU-531, which stopped${from === "SHU-532" ? ", with the browser acceptance file added for its Remove and View controls" : ""}`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: initial,
+    revision_paths: revision,
+    acceptance: `${acceptance} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_521, ...RECUT_531_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
