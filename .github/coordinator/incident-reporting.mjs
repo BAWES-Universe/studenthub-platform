@@ -302,13 +302,12 @@ export function incidentTitle(event) {
     ? `${baseIncidentTitle(event)} (${event.cause})`
     : baseIncidentTitle(event);
 }
-// A card filed before causes existed carries the bare title; it is still this event's card.
+// A card filed before causes existed carries the bare title; it is still this
+// event's card. A title naming a cause must name this event's own cause, since
+// the cause says who acts on the card.
 export function incidentTitleMatches(title, event) {
   if (typeof title !== "string") return false;
-  const base = baseIncidentTitle(event);
-  if (title === base) return true;
-  const match = /^ \(([A-Z0-9_]+)\)$/.exec(title.startsWith(base) ? title.slice(base.length) : "");
-  return Boolean(match) && STOP_CAUSES.has(match[1]);
+  return title === baseIncidentTitle(event) || title === incidentTitle(event);
 }
 
 // An earlier stop card's facts, from the fixed lines its description carries.

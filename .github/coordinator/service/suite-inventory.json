@@ -3474,6 +3474,7 @@
     "stop cause mutation: ignore the reviewed head",
     "stop cause mutation: trust any creator",
     "stop cause mutation: trust any issue id",
+    "stop cause mutation: accept any cause in the title",
     "stop cause mutation: refuse to file when a route label is missing",
     "SHU-250: real tick returns while a long-running supervised child executes",
     "SHU-250: concurrent ticks recover the same durable attempt with one launch",
@@ -27044,6 +27045,10 @@
     },
     {
       "name": "stop cause mutation: trust any issue id",
+      "capabilities": []
+    },
+    {
+      "name": "stop cause mutation: accept any cause in the title",
       "capabilities": []
     },
     {

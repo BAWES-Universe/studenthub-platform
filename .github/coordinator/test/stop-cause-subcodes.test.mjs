@@ -279,6 +279,9 @@ test("stop cause S5: the incident identity and reason code stay exactly as befor
   assert.equal(incidentTitleMatches(`coordinator stop: ${CARD} — ambiguous_hold`, event), true);
   assert.equal(incidentTitleMatches(`coordinator stop: ${CARD} — ambiguous_hold (RESULT_SCOPE_REFUSED)`, event), true);
   assert.equal(incidentTitleMatches(`coordinator stop: ${CARD} — ambiguous_hold (whatever)`, event), false);
+  // Another valid cause is not this event's card: the title would send it to the wrong owner.
+  assert.equal(incidentTitleMatches(`coordinator stop: ${CARD} — ambiguous_hold (SUPERVISOR_WORKER_EXIT)`, event), false);
+  assert.equal(incidentTitleMatches(`coordinator stop: ${CARD} — ambiguous_hold (UNCLASSIFIED)`, event), false);
   assert.equal(incidentTitleMatches(`coordinator stop: ${CARD} — stale_head`, event), false);
 });
 
@@ -442,6 +445,12 @@ const MUTATIONS = [
     from: "  if (!identity || identity.event_id !== prior.event_id || identity.issue_uuid !== issue.id) return null;",
     to: "  if (!identity || identity.event_id !== prior.event_id) return null; // MUTANT",
     named: /stop cause S10/,
+  },
+  {
+    name: "accept any cause in the title",
+    from: "  return title === baseIncidentTitle(event) || title === incidentTitle(event);",
+    to: "  return title.startsWith(`${baseIncidentTitle(event)} (`) || title === baseIncidentTitle(event); // MUTANT",
+    named: /stop cause S5/,
   },
   {
     name: "refuse to file when a route label is missing",
