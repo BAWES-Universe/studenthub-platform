@@ -1350,13 +1350,18 @@ test("Self-repair B1: S2 the host's child gate, which reads no card thread, does
   const { workOrderAuthorization } = await import("../supervisor-authorization.mjs");
   const { dir, file } = makeFile(b1Record());
   try {
-    const verdict = workOrderAuthorization({ issue_id: B1_CARD, runtime: "codex-cli", authorization_ref: B1_CARD, workspace_scope: "repo",
-      scope_phase: "revision", allowed_paths: [...(B1_LANE.revision_paths ?? [])], scoped_base_sha: null }, {
+    const check = (fields = {}) => workOrderAuthorization({ issue_id: B1_CARD, runtime: "codex-cli", authorization_ref: B1_CARD, workspace_scope: "repo",
+      scope_phase: "revision", allowed_paths: [...(B1_LANE.revision_paths ?? [])], scoped_base_sha: null, role: "revise", target_sha: B1_HEAD, ...fields }, {
       config: { ...B1_CONFIG, enable_dispatch: false }, wait: () => {},
       env: { ENABLE_DISPATCH: "true", SHU_SUPERVISOR_ACTIVATION_FILE: file, DISPATCH_TARGET_SHA: B1_HEAD },
       activation: { now: NOW, gitHead: REVISION },
     });
-    assert.deepEqual(verdict, { ok: true, code: null }, "not HOST_AUTH_ACTIVATION_SPENT, as every repair was on the host");
+    assert.deepEqual(check(), { ok: true, code: null }, "not HOST_AUTH_ACTIVATION_SPENT, as every repair was on the host");
+    // The order is bound to the repair: its revise at the repaired head, or the re-review.
+    assert.deepEqual(check({ role: "review", target_sha: B1_NEXT }), { ok: true, code: null }, "the re-review of the revise's head");
+    assert.equal(check({ target_sha: B1_NEXT }).code, "HOST_AUTH_REPAIR_BINDING", "a revise of another head");
+    assert.equal(check({ role: "build" }).code, "HOST_AUTH_REPAIR_BINDING", "a repair never builds");
+    assert.equal(check({ role: undefined }).code, "HOST_AUTH_REPAIR_BINDING");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

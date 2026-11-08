@@ -59,6 +59,15 @@ function evaluate(order, io) {
       if (activation?.review_only !== true || order.role !== "review" || order.target_sha !== activation.initial_target_sha
           || order.review_base_sha !== activation.review_base_sha) return denied("REVIEW_BINDING");
     }
+    // Self-repair B1: a landing repair runs its one revise and that revise's
+    // re-review, nothing else. The revise starts at the head its record names
+    // (repair_head, else the passed head), so a signed order cannot revise
+    // another head. The re-review's head is the revise's output, which only the
+    // dispatcher knows.
+    if (activation?.landing_repair === true) {
+      if (!["revise", "review"].includes(order.role)) return denied("REPAIR_BINDING");
+      if (order.role === "revise" && order.target_sha !== (activation.repair_head ?? activation.initial_target_sha)) return denied("REPAIR_BINDING");
+    }
     if (!validateFixtureAttemptScope(order).ok) return denied("ATTEMPT_SCOPE");
     return { ok: true, code: null };
   } catch { return denied("CHECK_FAILED"); }
