@@ -76,6 +76,29 @@ function holdEvent({ issue = CARD, activationId = "stopcause0001", notes = [], t
   return event;
 }
 
+// The Linear user the coordinator reads and files as.
+const VIEWER = "coordinator-user";
+
+// A stop card exactly as the coordinator files it from this description.
+function priorCard(description, overrides = {}) {
+  const event_id = /^<!-- coordinator-incident-event (inc_[0-9a-f]{32}) -->/.exec(description)?.[1];
+  const activation = /^- Activation: `([^`]+)`$/m.exec(description)?.[1];
+  const reasonCode = /^- Reason code: `([^`]+)`$/m.exec(description)?.[1];
+  const card = /^- (?:Card|Fixture): \[(SHU-[0-9]+)\]/m.exec(description)?.[1];
+  const cause = /^- Cause: `([^`]+)`$/m.exec(description)?.[1] ?? null;
+  const identity = incidentIdentity(activation, reasonCode);
+  assert.equal(identity?.event_id, event_id, "the prior description carries its derived event id");
+  return {
+    id: identity.issue_uuid,
+    title: incidentTitle({ issue_id: card, reason_code: reasonCode, cause }),
+    description,
+    team: { key: "SHU" },
+    labels: { nodes: [{ name: INCIDENT_LABEL_NAME }] },
+    creator: { id: VIEWER },
+    ...overrides,
+  };
+}
+
 const adapterNote = (code) => [`held: run ended`, `adapter reason code: ${code}`];
 
 // A fake Linear: the team's labels, the target card's related incident cards
@@ -91,9 +114,9 @@ function fakeLinear({ labels = Object.values(STOP_ROUTE_LABEL).concat(STOP_LOOPI
     if (query.includes("CoordinatorIncidentComments")) return { issue: { comments: { nodes: [] } } };
     if (query.includes("CoordinatorIncidentPriorStops")) {
       if (priorsFail) throw new Error("prior stops unreadable");
-      return { issue: {
+      return { viewer: { id: VIEWER }, issue: {
         relations: { nodes: [] },
-        inverseRelations: { nodes: priors.map((description, index) => ({ type: "related", issue: { id: `prior-${index}`, description } })) },
+        inverseRelations: { nodes: priors.map((prior) => ({ type: "related", issue: typeof prior === "string" ? priorCard(prior) : prior })) },
       } };
     }
     if (query.includes("CoordinatorIncidentLookup")) {
@@ -307,6 +330,31 @@ test("stop cause S7: review desk stops on different reviewed heads are not a loo
   assert.ok(buildLinear.labelNames(buildLinear.creates[0]).includes(STOP_LOOPING_LABEL));
 });
 
+test("stop cause S10: only the coordinator's own stop cards count toward a loop", async () => {
+  const event = holdEvent({ activationId: "stopcause0003", notes: adapterNote("RESULT_SCOPE_REFUSED") });
+  const first = priorDescription({ activationId: "stopcause0001" });
+  const second = priorDescription({ activationId: "stopcause0002" });
+  const genuine = fakeLinear({ priors: [priorCard(first), priorCard(second)] });
+  await file(event, genuine);
+  assert.ok(genuine.labelNames(genuine.creates[0]).includes(STOP_LOOPING_LABEL), "two genuine prior stops make the third a loop");
+
+  // An issue anyone related to the card, with a copied or forged description,
+  // is not a prior stop.
+  for (const [label, forged] of [
+    ["another creator", priorCard(second, { creator: { id: "someone-else" } })],
+    ["no creator", priorCard(second, { creator: null })],
+    ["another id", priorCard(second, { id: "22222222-2222-4222-8222-222222222222" })],
+    ["another title", priorCard(second, { title: `coordinator stop: ${CARD} — ambiguous_hold` })],
+    ["another team", priorCard(second, { team: { key: "ENG" } })],
+    ["no repo label", priorCard(second, { labels: { nodes: [] } })],
+    ["a marker its activation does not derive", priorCard(second, { description: second.replace(/inc_[0-9a-f]{32}/, `inc_${"0".repeat(32)}`) })],
+  ]) {
+    const linear = fakeLinear({ priors: [priorCard(first), forged] });
+    assert.equal((await file(event, linear)).status, "confirmed", label);
+    assert.ok(!linear.labelNames(linear.creates[0]).includes(STOP_LOOPING_LABEL), `${label} is not a prior stop`);
+  }
+});
+
 test("stop cause S8: a missing route or looping label still files and names only the missing label", async () => {
   const event = holdEvent({ activationId: "stopcause0003", notes: adapterNote("RESULT_SCOPE_REFUSED") });
   const priors = [priorDescription({ activationId: "stopcause0001" }), priorDescription({ activationId: "stopcause0002" })];
@@ -363,7 +411,7 @@ const MUTATIONS = [
   },
   {
     name: "remove the looping check",
-    from: "  return priorStopCount(event, descriptions) + 1 >= STOP_LOOPING_THRESHOLD;",
+    from: "  return priorStopCount(event, priors) + 1 >= STOP_LOOPING_THRESHOLD;",
     to: "  return false; // MUTANT",
     named: /stop cause S6/,
   },
@@ -378,6 +426,18 @@ const MUTATIONS = [
     from: "    if (reviewed && prior.reviewed_head !== event.reviewed_head) continue;",
     to: "    // MUTANT",
     named: /stop cause S7/,
+  },
+  {
+    name: "trust any creator",
+    from: "  if (!issue || typeof viewerId !== \"string\" || !viewerId || issue.creator?.id !== viewerId) return null;",
+    to: "  if (!issue) return null; // MUTANT",
+    named: /stop cause S10/,
+  },
+  {
+    name: "trust any issue id",
+    from: "  if (!identity || identity.event_id !== prior.event_id || identity.issue_uuid !== issue.id) return null;",
+    to: "  if (!identity || identity.event_id !== prior.event_id) return null; // MUTANT",
+    named: /stop cause S10/,
   },
   {
     name: "refuse to file when a route label is missing",

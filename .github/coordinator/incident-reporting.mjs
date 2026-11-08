@@ -143,12 +143,19 @@ export const LINEAR_INCIDENT_LOOKUP_QUERY = `
 
 // The stop cards already filed for a card are related to it. Their
 // descriptions, written by renderIncidentDescription, name each earlier stop's
-// activation, cause and card contract: the looping check reads nothing else.
+// activation, cause and card contract. Anyone can relate an issue to a card and
+// write such a description, so a related issue counts only when it is a stop
+// card the coordinator itself filed: its id and event marker are the ones its
+// activation and reason code derive, its title is the one the coordinator
+// writes, and it is a repo:platform card in the team, created by the same
+// Linear user the coordinator reads as.
+const PRIOR_STOP_FIELDS = "id title description team { key } labels { nodes { name } } creator { id }";
 export const LINEAR_INCIDENT_PRIOR_STOPS_QUERY = `
   query CoordinatorIncidentPriorStops($issueId: String!) {
+    viewer { id }
     issue(id: $issueId) {
-      relations(first: 100) { nodes { type relatedIssue { id description } } }
-      inverseRelations(first: 100) { nodes { type issue { id description } } }
+      relations(first: 250) { nodes { type relatedIssue { ${PRIOR_STOP_FIELDS} } } }
+      inverseRelations(first: 250) { nodes { type issue { ${PRIOR_STOP_FIELDS} } } }
     }
   }`;
 
@@ -305,12 +312,15 @@ export function incidentTitleMatches(title, event) {
 // An earlier stop card's facts, from the fixed lines its description carries.
 export function parsePriorStop(description) {
   const text = typeof description === "string" ? description : "";
-  if (!/^<!-- coordinator-incident-event inc_[0-9a-f]{32} -->\n/.test(text)) return null;
+  const marker = /^<!-- coordinator-incident-event (inc_[0-9a-f]{32}) -->\n/.exec(text);
+  if (!marker) return null;
   const line = (label, pattern) => new RegExp(`^- ${label}: \`(${pattern})\`$`, "m").exec(text)?.[1] ?? null;
   const card = /^- (?:Card|Fixture): \[(SHU-[0-9]+)\]\(/m.exec(text)?.[1] ?? null;
   const cause = line("Cause", "[A-Z0-9_]{1,64}");
   return {
+    event_id: marker[1],
     activation_id: line("Activation", "[A-Za-z0-9_-]{8,64}"),
+    reason_code: line("Reason code", "[a-z_]{1,64}"),
     card,
     cause: STOP_CAUSES.has(cause) ? cause : null,
     contract: line("Card contract", "(?:card:[0-9a-f]{16}|revision:[0-9a-f]{40})"),
@@ -318,15 +328,29 @@ export function parsePriorStop(description) {
   };
 }
 
-// Earlier stops of the same card, cause and card contract, one per activation.
+// A related issue's stop facts, only when it is a stop card the coordinator
+// filed (see LINEAR_INCIDENT_PRIOR_STOPS_QUERY); anything else is null.
+export function coordinatorPriorStop(issue, viewerId) {
+  if (!issue || typeof viewerId !== "string" || !viewerId || issue.creator?.id !== viewerId) return null;
+  if (issue.team?.key !== INCIDENT_TEAM_KEY) return null;
+  if (!(issue.labels?.nodes ?? []).some((label) => label?.name === INCIDENT_LABEL_NAME)) return null;
+  const prior = parsePriorStop(issue.description);
+  const identity = prior ? incidentIdentity(prior.activation_id, prior.reason_code) : null;
+  if (!identity || identity.event_id !== prior.event_id || identity.issue_uuid !== issue.id) return null;
+  if (issue.title !== incidentTitle({ issue_id: prior.card, reason_code: prior.reason_code, cause: prior.cause })) return null;
+  return prior;
+}
+
+// Earlier stops of the same card, cause and card contract, one per activation,
+// counted from the coordinator's own stop cards related to the card.
 // The review desk is keyed by the reviewed pull request head as well.
-export function priorStopCount(event, descriptions = []) {
+export function priorStopCount(event, { issues = [], viewerId = null } = {}) {
   if (!event?.cause || !event.contract_key) return 0;
   const reviewed = reviewOnlyCard(event.issue_id) !== null;
   if (reviewed && !event.reviewed_head) return 0;
   const activations = new Set();
-  for (const description of descriptions) {
-    const prior = parsePriorStop(description);
+  for (const issue of issues) {
+    const prior = coordinatorPriorStop(issue, viewerId);
     if (!prior?.activation_id || prior.activation_id === event.activation_id) continue;
     if (prior.card !== event.issue_id || prior.cause !== event.cause || prior.contract !== event.contract_key) continue;
     if (reviewed && prior.reviewed_head !== event.reviewed_head) continue;
@@ -335,8 +359,8 @@ export function priorStopCount(event, descriptions = []) {
   return activations.size;
 }
 
-export function stopIsLooping(event, descriptions = []) {
-  return priorStopCount(event, descriptions) + 1 >= STOP_LOOPING_THRESHOLD;
+export function stopIsLooping(event, priors = {}) {
+  return priorStopCount(event, priors) + 1 >= STOP_LOOPING_THRESHOLD;
 }
 
 function latestAttempt(receipts) {
@@ -520,12 +544,14 @@ export async function reportCoordinatorIncident({
   const priorStops = async () => {
     // Fail-open: an unreadable read only skips the looping check.
     try {
-      const issue = (await boundedCall(() => sendLinear(LINEAR_INCIDENT_PRIOR_STOPS_QUERY, { issueId: targetLinearId }, token, fetchImpl), options))?.issue ?? null;
-      return [
+      const data = await boundedCall(() => sendLinear(LINEAR_INCIDENT_PRIOR_STOPS_QUERY, { issueId: targetLinearId }, token, fetchImpl), options);
+      const issue = data?.issue ?? null;
+      const issues = [
         ...(issue?.relations?.nodes ?? []).map((relation) => relation?.relatedIssue),
         ...(issue?.inverseRelations?.nodes ?? []).map((relation) => relation?.issue),
-      ].filter((other) => other && other.id !== event.issue_uuid).map((other) => other.description);
-    } catch { return []; }
+      ].filter((other) => other && other.id !== event.issue_uuid);
+      return { issues, viewerId: data?.viewer?.id ?? null };
+    } catch { return {}; }
   };
   if (markers.some((marker) => marker.status === "confirmed")) return { status: "confirmed", event_id: event.event_id };
   if (markers.some((marker) => marker.status === "exhausted")) return { status: "exhausted", event_id: event.event_id };
@@ -556,8 +582,8 @@ export async function reportCoordinatorIncident({
 
   try {
     // A card already created keeps its labels; only a new one reads prior stops.
-    const descriptions = existing ? [] : await priorStops();
-    event = { ...event, prior_stops: priorStopCount(event, descriptions), looping: stopIsLooping(event, descriptions) };
+    const priors = existing ? {} : await priorStops();
+    event = { ...event, prior_stops: priorStopCount(event, priors), looping: stopIsLooping(event, priors) };
     const wantedLabels = [event.route_label ?? STOP_ROUTE_LABEL.NEEDS_PERSON, ...(event.looping ? [STOP_LOOPING_LABEL] : [])];
     let metadata;
     try {
