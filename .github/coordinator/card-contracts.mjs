@@ -6333,7 +6333,68 @@ const RECUT_503_CONTRACTS = Object.fromEntries(Object.entries(RECUT_503).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_500, ...RECUT_503_CONTRACTS });
+const CARD_CONTRACTS_503 = { ...CARD_CONTRACTS_500, ...RECUT_503_CONTRACTS };
+
+// SHU-521 stopped: its builder could not answer the reviewer's block. The
+// review found (1) a mutation file that imported ../src/documents-upload-http.js,
+// which does not exist when tests run (the build emits to dist/), (2) mutants
+// that never rewrote the compiled module or ran the suite, (3) most acceptance
+// items with no test, and (4) no upload date with no stated reason. SHU-522,
+// SHU-524 and SHU-525 wait on SHU-521, and SHU-523 and SHU-526 wait on one of
+// them, so all six are re-cut under fresh ids. This re-cut is not an append:
+// the new queue leaves out every stopped and landed card and starts with
+// SHU-531, the upload card, whose brief now says how to write the mutation
+// file, lists every test the acceptance needs, and drops the date (the stored
+// document has no timestamp and the place to keep one is outside its paths).
+// The other five keep their contracts with only the ids remapped. A queue may
+// only wait on cards it lists, and SHU-515's installed lane waits on SHU-513
+// and SHU-499, which have landed and so leave the queue: SHU-515 is re-cut as
+// SHU-537 with its contract unchanged but for the id, and no lane of this
+// re-cut waits on a landed card.
+const RECUT_521 = Object.freeze({
+  "SHU-521": "SHU-531", "SHU-522": "SHU-532", "SHU-523": "SHU-533", "SHU-524": "SHU-534", "SHU-525": "SHU-535", "SHU-526": "SHU-536", "SHU-515": "SHU-537",
+});
+const recut521 = (text) => text.replace(/\bSHU-(515|521|522|523|524|525|526)\b/g, (id) => RECUT_521[id]);
+const SHU531_DATE_ACCEPTANCE_FROM = "with the new format, size and date and never the file name (Q14_1_UPLOAD), and shows the date it was finalized (UPL_DATE);";
+const SHU531_DATE_ACCEPTANCE_TO = "with the new format and size and never the file name (Q14_1_UPLOAD);";
+const SHU531_DATE_OUTCOME_FROM = "where the slot now shows On file with the new format, size and date.";
+const SHU531_DATE_OUTCOME_TO = "where the slot now shows On file with the new format and size.";
+const SHU531_DATE_BULLET_START = "- Each on-file slot on My documents also shows the date the current version was finalized";
+const SHU531_DATE_BULLET_END = "show format and size only and say so in your final message.\n";
+const SHU531_DATE_BULLET_TO = "- No date: My documents shows format and size only, as it does today. The stored document has no timestamp and the place to keep one (packages/private-documents/src/index.ts) is outside this card's paths, so the date is left to a later card. Do not add a date and do not write a UPL_DATE test.\n";
+const SHU531_LESSONS = `
+- The last attempt at this card (SHU-521) was blocked in review for four reasons. Each of the next lines closes one of them.
+- The mutation file apps/gateway/test/documents-upload-mutations.mjs follows apps/gateway/test/documents-page-mutations.mjs. It reads the built file ../../../dist/apps/gateway/src/documents-upload-http.js, never ../src/documents-upload-http.js, which does not exist when tests run. For each mutant it asserts that its needle occurs exactly once in the built file, writes a mutated copy beside it, runs the named test of the built dist/apps/gateway/test/documents-upload-http.test.js against that copy with node --test and --test-name-pattern, asserts that the unmutated control run passes and that the mutant run fails with an AssertionError in the named test, and removes the copy in a finally block, leaving the built file unchanged. Every needle is executable code, never a comment, so replacing it changes what the module does. There is one mutant for each of: the body bound (item 2), the Origin check (item 6), the server-made finalize key and the finalize step (item 5), success on a refused finalize (item 3), and keeping the old version until the new one commits (item 4).
+- Tests go through the route. They post to /profile/documents/<slot>/upload on a gateway server built as apps/gateway/test/organization-documents-http.test.ts builds one, backed by the real CandidateDocuments over the synthetic file store (and the R2 fake for item 5), with a spy that counts its calls. A hand-written fake of the service may stand in only to inject a failure. Each acceptance item has its own tests, named with its token first, covering every case the item lists: item 1 the accept attribute, the hidden submission input, and the format and size shown after an upload; item 2 a Content-Length over the bound, a chunked body read from a counting source, the size limit named on the 413 page, and nothing stored; item 3 each refusal on its own (GIF, PDF in a photo slot, PNG in the CV slot, JPEG bytes declared image/png, non-PDF bytes declared application/pdf, truncated PNG, JPEG and PDF, an empty file, an empty part with an empty file name answered as choose a file first, a second file part, an unknown field), each asserting the reason on the page and that nothing was stored; item 4 a failed replacement leaves the old one On file with its old size on the rendered page, and a successful one shows the new size and exactly one held cleanup entry; item 5 both storage modes, one call of each step per submission, a client Idempotency-Key header ignored, and the same form twice storing one version; item 6 no session (401 and zero store calls), a wrong Origin and a cross-site post (403 before the body is read), a Bearer header alone, an unknown slot (404), and a second person who cannot change the first person's list; item 7 S1 and S2.
+- If node --test cannot start a nested test run in your sandbox (the mutation file stops with a bare ERR_TEST_FAILURE and no assertion), that is the sandbox's limit, not a failure of the card: say so in your final message and keep the mutation file as written. CI runs it.`;
+const RECUT_521_CONTRACTS = Object.fromEntries(Object.entries(RECUT_521).map(([from, to]) => {
+  const base = CARD_CONTRACTS_503[from];
+  let brief = recut521(base.brief);
+  let acceptance = recut521(base.acceptance);
+  if (from === "SHU-521") {
+    acceptance = replaceOnce(acceptance, SHU531_DATE_ACCEPTANCE_FROM, SHU531_DATE_ACCEPTANCE_TO, `${to} date acceptance`);
+    brief = replaceOnce(brief, SHU531_DATE_ACCEPTANCE_FROM, SHU531_DATE_ACCEPTANCE_TO, `${to} date acceptance in brief`);
+    brief = replaceOnce(brief, SHU531_DATE_OUTCOME_FROM, SHU531_DATE_OUTCOME_TO, `${to} date outcome`);
+    const start = brief.indexOf(SHU531_DATE_BULLET_START);
+    const end = brief.indexOf(SHU531_DATE_BULLET_END, start);
+    if (start < 0 || end < 0 || brief.indexOf(SHU531_DATE_BULLET_START, start + 1) >= 0) throw new Error(`${to} date bullet: the anchor must occur exactly once`);
+    brief = `${brief.slice(0, start)}${SHU531_DATE_BULLET_TO}${brief.slice(end + SHU531_DATE_BULLET_END.length)}`;
+    brief = replaceOnce(brief, "\n- Before you finish,", `${SHU531_LESSONS}\n- Before you finish,`, `${to} lessons`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-521"
+    ? "after its builder could not answer the reviewer's block, with the mutation file, every test the acceptance needs and the missing date spelled out"
+    : from === "SHU-515" ? "because its installed lane waits on SHU-513 and SHU-499, which have landed and leave the queue"
+    : `because its installed lane waited on ${from === "SHU-523" ? "SHU-522, which waits on " : from === "SHU-526" ? "SHU-524, which waits on " : ""}SHU-521, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_503, ...RECUT_521_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
