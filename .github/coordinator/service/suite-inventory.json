@@ -4592,6 +4592,7 @@
     "Self-repair B2: R4 crash windows: a round claimed then refused, or one whose end is never written, is never run twice",
     "Self-repair B2: L1 a repaired head that weakens a test is refused REPAIR_TEST_WEAKENED with nothing handed off or merged",
     "Self-repair B2: L2 the repaired pull request moving before the wait, during it, or right before the merge stops the landing",
+    "Self-repair B2: L2b a repaired pull request a person merged before the first landing read keeps its repaired head",
     "Self-repair B2: L3 only check runs at the repaired head count toward landing it",
     "SHU-71 M10: T1 the review lane judges both bot threads not applicable, the landing replies, resolves them and the card lands",
     "SHU-71 M10: T2 a must_fix verdict resolves nothing, is judged once, and the landing ends CI_TIMEOUT naming it",
@@ -4667,6 +4668,7 @@
     "SHU-86 mutation M176 hold the consumer on advisory checks",
     "SHU-86 mutation M177 match a named service's check run by slug only",
     "Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on",
+    "Self-repair A: a repair whose landing found its pull request already merged by a person counts as landed at the repaired head",
     "Self-repair A: no other merge, claim or read counts a card as landed",
     "M15: a card whose landing stopped for another worker's merge step or a moving main, then merged by a person at its updated head, counts as landed and the queue moves on",
     "SHU-86 mutation M178 count a merge at any head",
@@ -4772,6 +4774,8 @@
     "SHU-86 mutation M317 run a card claimed at a revision that has since moved",
     "SHU-86 mutation M318 remove a selection lock another worker took during the takeover",
     "SHU-86 mutation M319 never take over a selection lock that holds no holder",
+    "SHU-86 mutation M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
+    "SHU-86 mutation M321 never record the repaired head of a pull request a person merged before the first landing read",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -33723,6 +33727,10 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair B2: L2b a repaired pull request a person merged before the first landing read keeps its repaired head",
+      "capabilities": []
+    },
+    {
       "name": "Self-repair B2: L3 only check runs at the repaired head count toward landing it",
       "capabilities": []
     },
@@ -34020,6 +34028,10 @@
     },
     {
       "name": "Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on",
+      "capabilities": []
+    },
+    {
+      "name": "Self-repair A: a repair whose landing found its pull request already merged by a person counts as landed at the repaired head",
       "capabilities": []
     },
     {
@@ -34440,6 +34452,14 @@
     },
     {
       "name": "SHU-86 mutation M319 never take over a selection lock that holds no holder",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M321 never record the repaired head of a pull request a person merged before the first landing read",
       "capabilities": []
     },
     {

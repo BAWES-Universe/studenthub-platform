@@ -97,6 +97,18 @@ export function handLandCandidate(claim, repo) {
     && Number.isSafeInteger(claim.pr) && claim.pr > 0 && SHA_RE.test(claim.reviewed_head ?? "");
 }
 
+// A finished repair round counts on the same proof after one more outcome: a
+// repair whose landing ended in LAND_ERROR, as it does when a person merged
+// the repaired pull request before the round came to land it. Its own review
+// passed the repaired head, so GitHub must still show the merge at exactly
+// that head on main. A first run's LAND_ERROR still proves nothing.
+export const REPAIR_HAND_LAND_OUTCOMES = Object.freeze(new Set(["LAND_ERROR"]));
+function repairHandLandCandidate(round, repo) {
+  const claim = roundAsClaim(round);
+  return handLandCandidate(claim, repo) || (REPAIR_HAND_LAND_OUTCOMES.has(claim.land)
+    && handLandCandidate({ ...claim, land: "CI_TIMEOUT" }, repo));
+}
+
 // A proven hand landing, as recorded: it must name this card and its proof.
 function recordedHandLanding(io, paths, id) {
   try {
@@ -162,7 +174,8 @@ export async function cardLanded(io, paths, id, { repo = null, gh = null, record
   const rounds = repairRounds(io, paths, id);
   if (rounds.some(mergedByRepair)) return { landed: true, by: "repair" };
   if (recordedHandLanding(io, paths, id)) return { landed: true, by: "hand" };
-  const candidates = [...claims, ...rounds.map(roundAsClaim)].filter((claim) => handLandCandidate(claim, repo));
+  const candidates = [...claims.filter((claim) => handLandCandidate(claim, repo)),
+    ...rounds.filter((round) => repairHandLandCandidate(round, repo)).map(roundAsClaim)];
   if (!candidates.length || !gh) return { landed: false };
   let reason = null;
   for (const claim of candidates) {

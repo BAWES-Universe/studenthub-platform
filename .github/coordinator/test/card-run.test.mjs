@@ -4046,6 +4046,23 @@ test("Self-repair A: a card a person merged at the reviewed head counts as lande
   }
 });
 
+test("Self-repair A: a repair whose landing found its pull request already merged by a person counts as landed at the repaired head", async () => {
+  const host = handGitHub(fakeHost({ config: queueConfig() }));
+  // The first run passed at an earlier head and stopped with CI red; its repair
+  // passed at PASSED and, coming to land, found #77 already merged (LAND_ERROR).
+  claimFor(host, REV, "SHU-301", handClaim({ land: "PR_OPENED_CI_RED", reviewed_head: "6".repeat(40) }));
+  host.files.set(path.join(PATHS.stateDir, `card-repair-${REV}-SHU-301.json`), { text: `${JSON.stringify({ card: "SHU-301", revision: REV,
+    state: "finished", outcome: "PASS", ok: false, land: "LAND_ERROR", repo: COMMITTED.pilot_repo, pr: HAND_PR, repaired_head: PASSED })}\n`,
+  mode: 0o600, uid: 0, gid: 0 });
+  const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => host.io.fetch(url, { method }) };
+  assert.deepEqual(await cardLanded(host.io, PATHS, "SHU-301", landing), { landed: true, by: "hand", pr: HAND_PR, merge: HAND_MERGE });
+  // The same round, merged at any other head, still proves nothing.
+  const other = handGitHub(fakeHost({ config: queueConfig() }), { head: "7".repeat(40) });
+  other.files.set(path.join(PATHS.stateDir, `card-repair-${REV}-SHU-301.json`), host.files.get(path.join(PATHS.stateDir, `card-repair-${REV}-SHU-301.json`)));
+  const otherLanding = { repo: COMMITTED.pilot_repo, gh: (method, url) => other.io.fetch(url, { method }) };
+  assert.equal((await cardLanded(other.io, PATHS, "SHU-301", otherLanding)).landed, false);
+});
+
 test("Self-repair A: no other merge, claim or read counts a card as landed", async () => {
   const cases = [
     ["a different head", {}, { head: "6".repeat(40) }],
@@ -4977,6 +4994,7 @@ function b2Host(options = {}) {
       if (route === "/pulls/77" && (request.method ?? "GET") === "GET") {
         b2.pullReads += 1;
         if (options.movePullAt !== undefined && b2.pullReads >= options.movePullAt) host.land.pr.head = "9".repeat(40);
+        if (options.mergePullAt !== undefined && b2.pullReads >= options.mergePullAt) host.land.merged = true;
       }
       if (route === `/commits/${PASSED}/check-runs?filter=latest&per_page=100`) {
         const answer = await delegate(url, request);
@@ -5613,6 +5631,22 @@ test("Self-repair B2: L2 the repaired pull request moving before the wait, durin
   assert.equal(closed.land.outcome, "LAND_ERROR", JSON.stringify(closed.land));
   assert.match(closed.land.reason, /changed during the wait/);
   assert.equal(closing.land.merges, 0);
+});
+
+test("Self-repair B2: L2b a repaired pull request a person merged before the first landing read keeps its repaired head", async () => {
+  const host = b2Host({ on: true, mergePullAt: 1 });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.match(result.land.reason, /is merged, not open/);
+  assert.equal(result.land.reviewed_head, PASSED);
+  assert.equal(host.land.merges, 0);
+  assert.equal(b2Round(host).repaired_head, PASSED);
+  // Merged at any other head: no head is recorded.
+  const moved = b2Host({ on: true, mergePullAt: 1, movePullAt: 1 });
+  const other = await autoRun({ io: moved.io, paths: LAND_PATHS });
+  assert.equal(other.land.outcome, "LAND_ERROR", JSON.stringify(other.land));
+  assert.equal(other.land.reviewed_head, undefined);
+  assert.equal(b2Round(moved).repaired_head, null);
 });
 
 test("Self-repair B2: L3 only check runs at the repaired head count toward landing it", async () => {
