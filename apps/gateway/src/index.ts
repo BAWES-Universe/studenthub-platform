@@ -36,6 +36,8 @@ import {
 import {addNotificationBell} from "./web-ui.js";
 import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
+import { createUniverseEmbedConfigFromEnv, type UniverseEmbedConfig } from "./universe/embed-policy.js";
+import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -144,12 +146,14 @@ export function createGatewayServer(
   catalogue?: ReferenceCatalogue,
   profileRecords?: ProfileRecordsRuntime,
   organizationDocuments?: OrganizationDocumentsRuntime,
+  universeEmbed?: UniverseEmbedConfig,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
 
   return createServer((request, response) => {
+    if (gateUniverseEmbedRequest(request, response, universeEmbed)) return;
     const span = newSpan(); // Ignore incoming request/trace IDs: they can contain PII.
     const started = performance.now();
     const journey = classifyJourney(request.url);
@@ -547,6 +551,7 @@ if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
   const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
+  const universeEmbed = createUniverseEmbedConfigFromEnv(process.env, runtimeLogin?.application.web?.origin);
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
   const runtimeOrganizationDocuments = await createRuntimeOrganizationDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
@@ -563,6 +568,7 @@ if (entrypoint === import.meta.url) {
     runtimeCatalogue?.service,
     runtimeProfileRecords,
     runtimeOrganizationDocuments,
+    universeEmbed,
   );
   server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
