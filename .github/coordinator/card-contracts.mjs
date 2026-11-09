@@ -6513,7 +6513,31 @@ const RECUT_539_CONTRACTS = Object.fromEntries(Object.entries(RECUT_539).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_537, ...RECUT_539_CONTRACTS });
+const CARD_CONTRACTS_539 = { ...CARD_CONTRACTS_537, ...RECUT_539_CONTRACTS };
+
+// SHU-546 stopped: its pull request passed browser-acceptance, but fast-checks
+// failed packages/profile/test/area-mutations.mjs. Its script also mutates the
+// PostgreSQL store when DATABASE_URL is set, and the mutant that skips the
+// store's stale-revision check survived: no database test saves with a stale
+// revision. Its landing repair then stopped on a HOLD. SHU-546 has commits on
+// its branch, so it leaves the queue: SHU-555 is its contract with a brief
+// line on that database test and on running the script against a database.
+const SHU555_REVISION = `
+- The last run of this card (SHU-546) passed browser-acceptance but failed fast-checks in packages/profile/test/area-mutations.mjs: with DATABASE_URL set, the mutant that replaces \`(current?.revision ?? 0) !== input.expectedRevision\` with \`false\` in the compiled PostgreSQL store survived, because no test in packages/db/test/postgres-person-location.test.ts saves with a stale revision. Add a test there named with Q14_5_AREA first that saves once, then saves again with the old expected revision, and asserts {ok:false, reason:"stale_revision"}, that the stored row is unchanged, and that only one event row exists. Every mutant the script runs, the database ones included, must die by assertion in its named test; never drop a mutant to make the script pass. Before you finish, run the mutation script with DATABASE_URL pointing at a migrated database, and say in your final message whether you could and what it printed.`;
+const RECUT_546_CONTRACTS = (() => {
+  const base = CARD_CONTRACTS_539["SHU-546"];
+  let brief = base.brief.replace(/\bSHU-546\b/g, "SHU-555");
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU555_REVISION}\n- Before you finish,`, "SHU-555 stale revision test");
+  if (!brief.startsWith("Card SHU-555:")) throw new Error("the re-cut brief for SHU-555 must name its own card");
+  return { "SHU-555": Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${base.acceptance.replace(/\bSHU-546\b/g, "SHU-555")} The PostgreSQL stale-revision mutant dies in a Q14_5_AREA test in postgres-person-location.test.ts. SHU-555 is SHU-546's contract re-queued under a fresh id after fast-checks found that mutant alive, with the missing database test spelled out; SHU-546 never lands.`,
+    brief,
+  }) };
+})();
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_539, ...RECUT_546_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
