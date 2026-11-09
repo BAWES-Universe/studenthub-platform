@@ -4994,6 +4994,7 @@ function b2Host(options = {}) {
       if (route === "/pulls/77" && (request.method ?? "GET") === "GET") {
         b2.pullReads += 1;
         if (options.movePullAt !== undefined && b2.pullReads >= options.movePullAt) host.land.pr.head = "9".repeat(40);
+        if (options.mergePullAt !== undefined && b2.pullReads >= options.mergePullAt) host.land.merged = true;
       }
       if (route === `/commits/${PASSED}/check-runs?filter=latest&per_page=100`) {
         const answer = await delegate(url, request);
@@ -5630,6 +5631,22 @@ test("Self-repair B2: L2 the repaired pull request moving before the wait, durin
   assert.equal(closed.land.outcome, "LAND_ERROR", JSON.stringify(closed.land));
   assert.match(closed.land.reason, /changed during the wait/);
   assert.equal(closing.land.merges, 0);
+});
+
+test("Self-repair B2: L2b a repaired pull request a person merged before the first landing read keeps its repaired head", async () => {
+  const host = b2Host({ on: true, mergePullAt: 1 });
+  const result = await autoRun({ io: host.io, paths: LAND_PATHS });
+  assert.equal(result.land.outcome, "LAND_ERROR", JSON.stringify(result.land));
+  assert.match(result.land.reason, /is merged, not open/);
+  assert.equal(result.land.reviewed_head, PASSED);
+  assert.equal(host.land.merges, 0);
+  assert.equal(b2Round(host).repaired_head, PASSED);
+  // Merged at any other head: no head is recorded.
+  const moved = b2Host({ on: true, mergePullAt: 1, movePullAt: 1 });
+  const other = await autoRun({ io: moved.io, paths: LAND_PATHS });
+  assert.equal(other.land.outcome, "LAND_ERROR", JSON.stringify(other.land));
+  assert.equal(other.land.reviewed_head, undefined);
+  assert.equal(b2Round(moved).repaired_head, null);
 });
 
 test("Self-repair B2: L3 only check runs at the repaired head count toward landing it", async () => {

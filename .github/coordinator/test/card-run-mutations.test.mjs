@@ -1878,6 +1878,13 @@ const CASES = [
     to: "export const REPAIR_HAND_LAND_OUTCOMES = Object.freeze(new Set([])); // SHU86-M320",
     pattern: "Self-repair A: a repair whose landing found its pull request already merged by a person",
   },
+  {
+    name: "M321 never record the repaired head of a pull request a person merged before the first landing read",
+    file: "service/card-land.mjs",
+    from: "    && headMatches(pull, { repo, branch, head })) seen();",
+    to: "    && false) seen(); // SHU86-M321",
+    pattern: "Self-repair B2: L2b a repaired pull request a person merged before the first landing read",
+  },
 ];
 
 for (const mutation of CASES) {

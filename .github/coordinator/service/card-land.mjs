@@ -716,11 +716,15 @@ async function commentedFiles(gh, repo, head, threads) {
 
 // Self-repair B2: the repaired pull request, read by its number; never found
 // by branch and never opened.
-async function repairPull(gh, { repo, branch, number }) {
+// A pull request a person already merged at the passed head is still seen at
+// that head: `seen` records it, so the round can prove the hand landing.
+async function repairPull(gh, { repo, branch, number, head, seen }) {
   const response = await gh("GET", `https://api.github.com/repos/${repo}/pulls/${number}`);
   const pull = await response.json();
   if (!response.ok || !pull) stop("LAND_ERROR", `the repaired pull request #${number} cannot be read (HTTP ${response.status})`);
   const wrong = repairPullIdentity(pull, { repo, number, branch });
+  if (wrong && pull.merged === true && !repairPullIdentity({ ...pull, state: "open", merged: false }, { repo, number, branch })
+    && headMatches(pull, { repo, branch, head })) seen();
   if (wrong) stop("LAND_ERROR", `the repaired pull request is not the one repaired: ${wrong}`);
   return { pr: pull, opened: false };
 }
@@ -969,7 +973,7 @@ export async function landCard({ io, plan, config, credentials, landToken, pause
     const { terminal } = passedTerminal(before, { card, repo, branch, activationId });
     head = terminal.target_sha;
 
-    const opened = repair ? await repairPull(gh, { repo, branch, number: repair.pr })
+    const opened = repair ? await repairPull(gh, { repo, branch, number: repair.pr, head, seen: () => { reviewedHead = head; } })
       : await findOrOpenPull(gh, { repo, branch, card, title: issue.title, activationId, head });
     if (repair) gh.repairBinding = { number: repair.pr };
     pr = opened.pr;
