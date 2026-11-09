@@ -4667,6 +4667,7 @@
     "SHU-86 mutation M176 hold the consumer on advisory checks",
     "SHU-86 mutation M177 match a named service's check run by slug only",
     "Self-repair A: a card a person merged at the reviewed head counts as landed, is recorded once, and the queue moves on",
+    "Self-repair A: a repair whose landing found its pull request already merged by a person counts as landed at the repaired head",
     "Self-repair A: no other merge, claim or read counts a card as landed",
     "M15: a card whose landing stopped for another worker's merge step or a moving main, then merged by a person at its updated head, counts as landed and the queue moves on",
     "SHU-86 mutation M178 count a merge at any head",
@@ -4772,6 +4773,7 @@
     "SHU-86 mutation M317 run a card claimed at a revision that has since moved",
     "SHU-86 mutation M318 remove a selection lock another worker took during the takeover",
     "SHU-86 mutation M319 never take over a selection lock that holds no holder",
+    "SHU-86 mutation M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -34023,6 +34025,10 @@
       "capabilities": []
     },
     {
+      "name": "Self-repair A: a repair whose landing found its pull request already merged by a person counts as landed at the repaired head",
+      "capabilities": []
+    },
+    {
       "name": "Self-repair A: no other merge, claim or read counts a card as landed",
       "capabilities": []
     },
@@ -34440,6 +34446,10 @@
     },
     {
       "name": "SHU-86 mutation M319 never take over a selection lock that holds no holder",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
       "capabilities": []
     },
     {
