@@ -96,6 +96,12 @@ import { execFileSync } from 'node:child_process';
 // same one. It was written out twice, and when the question both copies asked turned out to be the wrong one
 // the same defect had to be corrected in both or the refusal would only have moved. See section 8.
 import { authorityRefusalMessage, decideAuthorityScope, observeAuthorityScope } from './authority-scope.mjs';
+// And admissibility lives in its own module for the same reason, with a sharper edge: the question "may a
+// manifest pin this receipt?" is asked by this emitter, by the workflow's gate and guard, and by the consumer
+// that reads the receipt back. It was written out by hand in each of them, and a receipt with one flag flipped
+// walked past all of them. One implementation, in a protected path, called by every reader. It is called once,
+// on the finished receipt body, just above where that body is written out.
+import { deriveAdmissibility } from './admissibility.mjs';
 
 const env = process.env;
 const GH = env.GH_BIN ?? 'gh';
@@ -2077,57 +2083,34 @@ for (const duplicate of duplicatePoints) {
 // it was right on both counts, so what enforces it now is written here as a list of places rather than as a
 // claim:
 //
-//   * this block, which computes the field and refuses to call a run admissible on any of the grounds below;
-//   * the workflow's gate step, which re-reads the receipt and refuses to publish an `admissible` output that
-//     disagrees with the receipt's own body - a bypass that wrote `admissible=true` beside a receipt saying
-//     false is what the review used;
+//   * ./admissibility.mjs, which OWNS the rule. This emitter no longer carries a copy of it: it calls
+//     `deriveAdmissibility` on the body it has just built and records what the answer says. A rule written
+//     out by hand in each place that asks it is a rule that can be tightened in one place and not the
+//     others, and this one had been;
+//   * the workflow's gate step, which reads the emitted receipt back and calls THAT SAME MODULE, refusing to
+//     publish an `admissible` output that disagrees with the receipt's own body - a bypass that wrote
+//     `admissible=true` beside a receipt saying false is what the review used;
+//   * the workflow's guard step, which calls the module a third time and requires the receipt's flag, its own
+//     derivation and the gate's published output to agree;
 //   * the workflow's separate `attest` job, which is the only job of this authority holding `attestations:
-//     write`, which runs at all only on a workflow_dispatch of the default branch, and which re-reads
-//     `provenance.admissible_as_pin` and `conclusion.verdict` out of the signed subject itself before signing.
+//     write`, which runs at all only on a workflow_dispatch of the default branch, and which re-derives the
+//     six PROVENANCE grounds out of the signed subject itself before signing. That job checks out no code, so
+//     it does not hold the module; its check is a strict SUBSET of the rule, it can only refuse, and it never
+//     sees a receipt the module admitted less than the gate did, because it runs only behind the gate's
+//     module-derived output.
 //
 // AND WHERE IT STOPS, because this file may not overstate it twice. On a `pull_request` event GitHub runs the
 // workflow DEFINITION from the pull request head, so every one of those enforcers is code the candidate's
 // author supplied for that run; no arrangement of this file can bind it. What binds it is outside this
 // repository's files: the repository's Actions settings (whether a pull request run is granted attestations at
-// all, and whether it needs approval), and a CONSUMER that requires `provenance.admissible_as_pin === true`,
-// `conclusion.verdict === 'success'` and an attestation whose workflow REF is the protected branch - not
-// merely the presence of an attestation. That consumer requirement is written out, edit by edit, in
-// /home/bawes/work/consumer-required-changes.md, because the consumer lives on another branch.
+// all, and whether it needs approval), and a CONSUMER that re-derives this field with the same module - having
+// first checked that the module it loaded is the blob `refs/heads/main` holds - requires
+// `conclusion.verdict === 'success'`, and requires an attestation whose workflow REF is the protected branch
+// rather than merely the presence of an attestation. That consumer is `./fetch-receipt.mjs`.
 const trustedOnMain = (() => {
   const compare = apiJson(`/repos/${repo}/compare/${trustedSha}...main`);
   return compare ? ['identical', 'ahead'].includes(compare.status) : false;
 })();
-const inadmissible = [];
-// A receipt that does not record a successful measurement has nothing in it to pin, so it is not merely
-// unattested for want of a dispatch - it is inadmissible on its own contents. Stated here so that the field a
-// consumer reads answers the whole question rather than only the question of where the run happened.
-if (!established) {
-  inadmissible.push(`this receipt's verdict is failure, so there is nothing in it for a manifest to pin`);
-}
-// SECTION 8 CANNOT DISTINGUISH "THE AUTHORITY IS INTACT" FROM "THE AUTHORITY IS NOWHERE", and a review found
-// this repository in exactly the second state: `.github/verifier-receipt` does not exist on the protected
-// branch, so the listing answers null there, answers null at any candidate that does not carry it, and a
-// comparison of two nulls is `change: 'none'`. That is the state the FIRST receipts would be produced in, so
-// it is named here instead of passing quietly. Section 8's merge-base baseline does not answer this: the
-// candidate really does leave the authority alone in that state, and the reason this receipt cannot be pinned
-// is that there was no authority on the protected branch for it to be judged against.
-const authorityAbsent = authorityIdentity.filter(entry => entry.protected_sha === null).map(entry => entry.path);
-if (authorityAbsent.length > 0) {
-  inadmissible.push(`the receipt authority is absent on ${PROTECTED_REF} (${listing(authorityAbsent)}), so this `
-    + 'run compared the candidate against nothing and cannot establish that it leaves the authority alone');
-}
-if (run.event !== 'workflow_dispatch') {
-  inadmissible.push(`this run's event is ${run.event}; only a workflow_dispatch of ${WORKFLOW_PATH} may be pinned`);
-}
-if (run.head_branch !== 'main') {
-  inadmissible.push(`this run was made on ${run.head_branch}, not the protected default branch`);
-}
-if (trustedOrigin !== 'protected-main') {
-  inadmissible.push(`the authority files came from ${trustedOrigin}, not from protected main`);
-}
-if (!trustedOnMain) {
-  inadmissible.push(`the authority commit ${trustedSha.slice(0, 12)} is not contained in main`);
-}
 
 const receipt = {
   schema: 2,
@@ -2242,19 +2225,26 @@ const receipt = {
         + 'through GitHub (`capture.suite_exit` refuses any disagreement). A forger that also appends to '
         + '$GITHUB_OUTPUT - whose path a same-uid process can read out of /proc - defeats that too. Only a '
         + 'different uid for the measured suite, or a container it cannot escape, closes this.',
-      'admissible_as_pin is RE-DERIVED, not re-read, in three places. A review found the previous wording of '
-        + 'this item false: it said "enforced in three places" when one place computed the field and the other '
-        + 'two compared the computed boolean to itself, so a receipt whose body still recorded the authority as '
-        + 'absent on main, with only this flag flipped to true, passed the gate, the guard and the attest '
-        + 'job\'s subject re-read. Each of the three now recomputes the field from the six grounds recorded in '
-        + 'this receipt\'s own body - conclusion.verdict, candidate.authority_identity[].protected_sha, '
-        + 'workflow.event, workflow.head_branch, workflow.trusted_source_origin and '
-        + 'workflow.trusted_source_on_main - and refuses when the recomputation disagrees with the flag. That '
-        + 'enforcement is still in workflow FILES, and on a pull_request event GitHub runs the workflow '
-        + 'definition from the pull request head, so for such a run all three are the candidate author\'s. A '
-        + 'consumer must therefore re-derive this field itself from the same six grounds, require '
-        + 'conclusion.verdict === "success", and require any attestation it trusts to name a workflow ref on '
-        + 'the protected branch rather than merely to exist.',
+      'admissible_as_pin is RE-DERIVED, not re-read, and there is now exactly ONE implementation of what it '
+        + 'means. An earlier wording of this item said "enforced in three places" when one place computed the '
+        + 'field and the other two compared the computed boolean to itself, so a receipt whose body still '
+        + 'recorded the authority as absent on main, with only this flag flipped to true, passed the gate, the '
+        + 'guard and the attest job\'s subject re-read. The correction after that made each of the three '
+        + 'recompute the field - by hand, in its own copy of the rule, which is a rule that can be tightened '
+        + 'in one place and left behind in the others. The rule now lives in '
+        + '.github/verifier-receipt/admissibility.mjs, a file of the protected authority directory, and the '
+        + 'emitter, the gate and the guard all CALL it. It derives from this receipt\'s body alone: '
+        + 'conclusion.verdict; the suite\'s own state, which must be green with no failing, cancelled or '
+        + '`todo` point, no unmodelled exclusion, and no skipped test that is not named in '
+        + '.github/verifier-receipt/tolerated-skips.json; candidate.authority_identity[].protected_sha; '
+        + 'workflow.event; workflow.head_branch; workflow.trusted_source_origin; and '
+        + 'workflow.trusted_source_on_main. A RED SUITE IS NOT PINNABLE under it, however far outside the '
+        + 'claim\'s named set the failures fall. That enforcement is still in files of this repository, and on '
+        + 'a pull_request event GitHub runs the workflow definition - and the checked-out module - from the '
+        + 'pull request head, so for such a run all of it is the candidate author\'s. A consumer must '
+        + 'therefore re-derive this field with that module, having first checked that the module it loaded is '
+        + 'the blob refs/heads/main holds, require conclusion.verdict === "success", and require any '
+        + 'attestation it trusts to name a workflow ref on the protected branch rather than merely to exist.',
     ],
     measure_job: {
       name: measureJob.name,
@@ -2322,8 +2312,11 @@ const receipt = {
       code_revision: { head: claimedHead, tree: manifest.code_revision?.tree ?? null },
       delta_from_code_revision: claimDelta,
     },
-    admissible_as_pin: inadmissible.length === 0,
-    inadmissibility_reasons: inadmissible,
+    // FILLED IN BELOW, FROM ./admissibility.mjs, once this body exists - because the rule is a function of
+    // this body and nothing else, and because this emitter may not hold a second copy of it. The two keys are
+    // declared here so that the field ORDER of a receipt is the field order of this literal.
+    admissible_as_pin: null,
+    inadmissibility_reasons: null,
   },
   // Kept for the pin format a claim verifier reads. No such verifier exists in this repository yet; this block
   // is the shape one would read, not evidence that one does.
@@ -2430,6 +2423,16 @@ const receipt = {
     reasons,
   },
 };
+
+// THE ADMISSION PREDICATE, CALLED RATHER THAN RESTATED. Every ground it applies - the verdict, the suite's own
+// state, the authority's presence on the protected branch, the event, the branch, where the authority files
+// came from and whether that commit is on main - is read out of the body above, so the flag this receipt
+// records and the reasons it records beside it have exactly ONE implementation, which the gate, the guard and
+// the consumer all call as well. The module reaches into nothing: not this file's environment, not the API,
+// not the workflow.
+const { admissible, reasons: inadmissible } = deriveAdmissibility(receipt);
+receipt.provenance.admissible_as_pin = admissible;
+receipt.provenance.inadmissibility_reasons = inadmissible;
 
 fs.rmSync(work, { recursive: true, force: true });
 // The capture first, then the receipt: the gate reads both, and a receipt beside a capture from some earlier

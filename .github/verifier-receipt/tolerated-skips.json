@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "THE AUTHORIZED SKIPS. This file is PERMISSION, not a hint: a test that the measured suite reported with a",
+    "`# SKIP` directive makes the receipt INADMISSIBLE AS A PIN unless its exact name appears below. Nothing",
+    "else tolerates a skip - not a count, not a comment, not the fact that the skipped test sits outside the",
+    "claim's named set - and no other exclusion is tolerable at all: a failing test, a cancelled test, a `todo`",
+    "and every unmodelled exclusion the receipt records (`misplaced`, `unbound`, `unclaimed`, ...) are refusals",
+    "with no allow-list of their own. The rule that reads this file is .github/verifier-receipt/admissibility.mjs.",
+    "",
+    "SHAPE. `authorized` is an array of objects, each of which must carry all three of:",
+    "  test          - the test's name EXACTLY as the runner reports it, matched literally, no patterns",
+    "  reason        - why this skip is ENVIRONMENTAL rather than a result: what the environment lacks, and why",
+    "                  a run without it still measures what the claim describes",
+    "  authorized_by - who decided that, by name. An entry nobody signed authorizes nothing.",
+    "An entry missing any of the three makes the whole list unreadable to the rule, which refuses rather than",
+    "guesses; so does a file that is not valid JSON, or one that carries no `authorized` array.",
+    "",
+    "IT SHIPS EMPTY BECAUSE NOTHING IS AUTHORIZED YET. Adding a name here widens what may be pinned, so an edit",
+    "to this file is an edit to the admission rule itself - it lives in the protected authority directory, and",
+    "the consumer checks its git blob id against refs/heads/main for the same reason it checks the rule's."
+  ],
+  "authorized": []
+}

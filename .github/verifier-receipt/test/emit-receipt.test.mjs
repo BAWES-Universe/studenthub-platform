@@ -14,6 +14,10 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import * as world from './world.mjs';
 
+// The one admission predicate, as the gate and the guard steps load it: by absolute path, out of the authority
+// directory. The workflow points those steps at the TRUSTED checkout of this same file.
+const ADMISSIBILITY_MODULE = path.join(import.meta.dirname, '..', 'admissibility.mjs');
+
 const refusedOn = (result, field) => {
   assert.equal(result.code, 3, `expected a refusal, got exit ${result.code}\n${result.stdout}${result.stderr}`);
   assert.match(result.stderr, new RegExp(`^REFUSING: ${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `, 'm'),
@@ -1304,6 +1308,9 @@ const runGate = (built, run = {}) => {
       TRUSTED_ORIGIN: 'protected-main',
       MEASURE_CAPTURE_SHA256: built.meta.capture_sha256,
       MEASURE_BODY_SHA256: built.meta.capture_body_sha256,
+      // THE ADMISSION PREDICATE THE STEP CALLS. In the workflow this is the module of the TRUSTED authority
+      // checkout; here it is this repository's own copy of the same file, which is the file under test.
+      ADMISSIBILITY: ADMISSIBILITY_MODULE,
       ...run,
     },
   });
@@ -1494,6 +1501,11 @@ const emitterWithoutShapeChecks = () => {
   // The same for the authority-scope module, which the emitter imports from beside itself for the same
   // reason: a module path this process is told could be told wrong.
   fs.copyFileSync(world.AUTHORITY_SCOPE, path.join(dir, 'authority-scope.mjs'));
+  // And the admission predicate, which the emitter imports from beside itself for the same reason again - and
+  // its permission list, because the predicate reads the authorized skips from beside ITSELF.
+  fs.copyFileSync(ADMISSIBILITY_MODULE, path.join(dir, 'admissibility.mjs'));
+  fs.copyFileSync(path.join(import.meta.dirname, '..', 'tolerated-skips.json'),
+    path.join(dir, 'tolerated-skips.json'));
   return neuteredEmitter;
 };
 
@@ -2159,11 +2171,50 @@ test('a red suite whose failures are outside the claim is a QUALIFIED success, a
   assert.match(receipt.conclusion.qualifications[1],
     /every failing test of that run is OUTSIDE the set of names this claim rests on/);
   assert.match(emitted.stdout, /suite red \(exit 1, tests 6\)/);
-  // And the gate admits it - the exclusion is stated and it holds.
+
+  // AND IT IS NOT PINNABLE, WHICH IS A DECISION AND NOT A DEFECT. The verdict above is still a qualified
+  // success - it is about the 4 names the claim rests on, and every one of them passed - but a RED SUITE
+  // CANNOT ESTABLISH AN ADMISSIBLE PIN, however far outside the claim's named set its failures fall. That is
+  // the rule in .github/verifier-receipt/admissibility.mjs, and this is the case that used to be admissible.
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  const why = receipt.provenance.inadmissibility_reasons.join(' | ');
+  assert.match(why, /suite\.state is "red", not "green"/);
+  assert.match(why, /conclusion\.suite_state is "red", not "green"/);
+  assert.match(why,
+    /the measured suite reports 2 failing test\(s\) out of 6[^|]*an unrelated check of something else/);
+  // The gate agrees with the receipt, so the step passes and publishes the refusal rather than failing the job:
+  // a receipt that says NO is a product of this authority just as much as one that says yes.
   const gate = runGate(built);
   assert.equal(gate.code, 0, `${gate.stdout}${gate.stderr}`);
   assert.match(gate.stdout, /qualified success: the suite is red and all 2 failing test\(s\) are outside the 4 name\(s\)/);
-  assert.equal(gate.output, 'admissible=true\n');
+  assert.match(gate.stdout, /not admissible as a pin:.*suite\.state is "red"/);
+  assert.equal(gate.output, 'admissible=false\n');
+});
+
+// GREEN WITH ONLY AUTHORIZED SKIPS IS THE WHOLE OF WHAT IS PINNABLE, and nothing is authorized yet: the
+// allow-list `.github/verifier-receipt/tolerated-skips.json` ships empty. This is that rule over a REAL
+// capture - `node --test` over a fixture that really skips one test, really marks one todo and really declares
+// an empty describe() - rather than over a body a test wrote.
+test('a skip, a todo and a suite point the allow-list does not name make the receipt inadmissible', () => {
+  const built = world.build({ capture: world.genuineTap('skipped-and-suite.mjs'), claim: SKIP_SUITE_CLAIM });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  const why = receipt.provenance.inadmissibility_reasons.join(' | ');
+  assert.match(why, /1 skipped test\(s\) are not in the authorized list `?\.github\/verifier-receipt\/tolerated-skips\.json`?[^|]*"the stale-head guard holds"/);
+  assert.match(why, /reports 1 test\(s\) carrying a `# TODO` directive/);
+  assert.match(why, /1 named test\(s\) are recorded `suite` rather than passing/);
+  assert.match(why, /1 named test\(s\) are recorded `unbound` rather than passing/);
+  // Nothing was skipped INTO permission: the shipped allow-list is empty, and the rule names the file it
+  // consulted so that a reader knows where the permission would have had to be written.
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'tolerated-skips.json'),
+    'utf8')).authorized, []);
+  // The gate refuses this world outright, and on the older ground: a receipt whose verdict is failure records
+  // no measurement for it to gate at all, so it never reaches the admissibility reading.
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /the receipt does not record a successful measurement of the named tests/);
+  assert.equal(gate.output, '');
 });
 
 test('a red suite whose failure IS named by the claim is a failure, and the gate refuses it', () => {
@@ -2343,7 +2394,7 @@ const GUARD_SOURCE = (() => {
   return body.replace(/\\`/g, '`');
 })();
 const runGuard = (built, gateSays) => world.runNode(['-e', GUARD_SOURCE],
-  { cwd: path.dirname(built.receiptPath), env: { GATE_SAYS: gateSays } });
+  { cwd: path.dirname(built.receiptPath), env: { GATE_SAYS: gateSays, ADMISSIBILITY: ADMISSIBILITY_MODULE } });
 
 test('THE BYPASS: admissible=true beside a receipt whose body says false is refused before anything is signed', () => {
   // A rehearsal's receipt: every provenance check passed, and it is not admissible as a pin.
@@ -2975,13 +3026,13 @@ test('THE FLIPPED FLAG: a receipt whose body records the authority as absent is 
   // 1. The gate, which used to publish admissible=true from that flag alone.
   const gate = runGate(built);
   assert.equal(gate.code, 1, gate.stdout);
-  assert.match(gate.stderr, /this receipt says admissible_as_pin=true, but its own body says false: the receipt authority is absent on the protected branch \(\.github\/verifier-receipt\)/);
+  assert.match(gate.stderr, /this receipt says admissible_as_pin=true, but its own body says false: the receipt authority is absent on main \(\.github\/verifier-receipt\)/);
   assert.equal(gate.output, '', 'nothing is published for the attest job to select on');
 
   // 2. The guard, which used to compare that flag to itself.
   const guard = runGuard(built, 'true');
   assert.equal(guard.code, 1, guard.stdout);
-  assert.match(guard.stderr, /this receipt says admissible_as_pin=true while its own body says false: the authority is absent on the protected branch \(\.github\/verifier-receipt\)/);
+  assert.match(guard.stderr, /this receipt says admissible_as_pin=true while its own body says false: the receipt authority is absent on main \(\.github\/verifier-receipt\)/);
 
   // 3. The attest job's subject re-read, which used to check the run id, the event and the branch and nothing else.
   const attest = runAttest(built);
@@ -3001,18 +3052,23 @@ test('the three readers pass an honestly admissible receipt, so none of them is 
 });
 
 test('each of the six grounds, flipped alone in the body, is re-derived by the gate and the guard', () => {
-  // The six the emitter computes the field from. Each is turned off in the receipt's body with the flag left
-  // saying true, so what is being tested is whether the reader derives the answer or reads it.
+  // The six PROVENANCE grounds, each turned off in the receipt's body with the flag left saying true, so what
+  // is being tested is whether the reader derives the answer or reads it. The words are the ONE predicate's -
+  // .github/verifier-receipt/admissibility.mjs - because the gate and the guard now call it instead of each
+  // keeping a copy of the grounds. The suite-state ground is a seventh, and it has cases of its own.
   const grounds = [
-    ['the verdict', receipt => { receipt.conclusion.verdict = 'failure'; }, /its verdict is "failure"/],
+    ['the verdict', receipt => { receipt.conclusion.verdict = 'failure'; },
+      /this receipt's verdict is failure, so there is nothing in it for a manifest to pin/],
     ['the authority on main', receipt => { receipt.candidate.authority_identity[0].protected_sha = null; },
-      /the authority is absent on the protected branch/],
-    ['the event', receipt => { receipt.workflow.event = 'pull_request'; }, /its event is "pull_request"/],
-    ['the branch', receipt => { receipt.workflow.head_branch = 'a-lane'; }, /it was made on "a-lane"/],
+      /the receipt authority is absent on main/],
+    ['the event', receipt => { receipt.workflow.event = 'pull_request'; },
+      /this run's event is pull_request; only a workflow_dispatch of/],
+    ['the branch', receipt => { receipt.workflow.head_branch = 'a-lane'; },
+      /this run was made on a-lane, not the protected default branch/],
     ['the origin', receipt => { receipt.workflow.trusted_source_origin = 'pull-request-head'; },
-      /its authority came from "pull-request-head"/],
+      /the authority files came from pull-request-head, not from protected main/],
     ['the authority commit', receipt => { receipt.workflow.trusted_source_on_main = false; },
-      /its authority commit is not contained in main/],
+      /the authority commit [0-9a-f]{12} is not contained in main/],
   ];
   for (const [what, breakIt, expected] of grounds) {
     const built = world.build();
