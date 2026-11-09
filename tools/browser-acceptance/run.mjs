@@ -82,7 +82,18 @@ async function documentPage(page,language,metadata) {
       check(detail.includes(type==='resume'?'PDF':'PNG, JPEG') && detail.includes('10 MiB'),'Guidance matches current admission');
     }
   }
-  assert.equal(await page.locator('main form, main input, main button, main time, main a[href*="candidate-documents"], main a[href*="private-documents"]').count(),0,'Read-only page has no mutation controls, delivery links or dates');
+  assert.equal(await page.locator('main form').count(),4,'Each document slot has one upload form');
+  for(const type of documentSlots) {
+    const form=page.locator(`#document-${type} form`);
+    assert.equal(await form.count(),1,'Exactly one form per slot');
+    assert.equal(await form.getAttribute('method'),'post');
+    assert.equal(await form.getAttribute('enctype'),'multipart/form-data');
+    assert.equal(await form.getAttribute('action'),`/profile/documents/${type}/upload`);
+    assert.equal(await form.locator('input[type="file"][name="file"]').count(),1);
+    assert.equal(await form.locator('input[type="hidden"][name="submission"]').count(),1);
+    assert.equal(await form.locator('button[type="submit"]').count(),1);
+  }
+  assert.equal(await page.locator('main time, main a[href*="candidate-documents"], main a[href*="private-documents"]').count(),0,'Page has no delivery links or dates');
   const shown=await page.locator('main').innerText();
   check(!/Date unavailable|https?:\/\/|uploads\//.test(shown),'No document dates or storage URLs displayed');
   if(metadata) {

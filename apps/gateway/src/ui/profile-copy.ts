@@ -57,6 +57,7 @@ const english = {
   "help.university": "Not listed records no university; ask staff to add a university.",
 
   "nav.profile": "My profile",
+  "nav.documents": "My documents",
   "nav.background": "Education and experience",
   "nav.workspaces": "Workspaces",
   "nav.main": "Main navigation",
@@ -65,6 +66,8 @@ const english = {
   "nav.back": "Back to my profile",
   "action.signOut": "Sign out",
   "action.signIn": "Sign in to continue",
+  "action.upload": "Upload",
+  "action.replace": "Replace",
   "action.edit": "Edit",
   "action.editField": "Edit {field}",
   "action.addField": "Add {field}",
@@ -255,6 +258,7 @@ const arabic = {
   "help.university": "اختيار غير مدرج لا يسجّل جامعة؛ اطلب من الموظفين إضافة الجامعة.",
 
   "nav.profile": "ملفي الشخصي",
+  "nav.documents": "مستنداتي",
   "nav.background": "التعليم والخبرة",
   "nav.workspaces": "مساحات العمل",
   "nav.main": "التنقل الرئيسي",
@@ -263,6 +267,8 @@ const arabic = {
   "nav.back": "العودة إلى ملفي الشخصي",
   "action.signOut": "تسجيل الخروج",
   "action.signIn": "سجّل الدخول للمتابعة",
+  "action.upload": "رفع",
+  "action.replace": "استبدال",
   "action.edit": "تعديل",
   "action.editField": "تعديل {field}",
   "action.addField": "إضافة {field}",
