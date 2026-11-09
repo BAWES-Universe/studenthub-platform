@@ -384,7 +384,7 @@ function repairBootstrap({ repair, issueReceipts, targetIssueId, config, authori
 // (repairBootstrap); after that it routes exactly as any episode does, with
 // max_revise 0 for this call only, so the re-review's BLOCK (round 1) is
 // exhausted and its PASS ends it. Absent, nothing below changes.
-export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null, episodeScope = null, repair = null } = {}) {
+export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null, episodeScope = null, repair = null, receiptsRead = true } = {}) {
   const issueReceipts = (receipts ?? []).filter((r) => r && r.issue_id === targetIssueId);
   // SHU-231: only the SPEND / TERMINAL / ROUTING inputs are episode-scoped. The
   // receipt list itself is never filtered for anything else.
@@ -400,6 +400,13 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   if (failed >= maxFailed) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` };
 
   if (scopedReceipts.length === 0) {
+    // A landing repair's revise is minted from the card's trusted PASS, so only
+    // a caller that read the card's receipts can decide it. The host's child
+    // gate (supervisor-authorization.mjs) reads no card thread: with no
+    // receipts it would find no PASS and refuse every repair as spent, after
+    // the dispatcher had already decided it from the real receipts. It decides
+    // nothing here, as it decides nothing for any other card episode.
+    if (repair && !receiptsRead) return { ended: false, reason: "landing repair: the card's receipts are not read here; the dispatcher decided the revise" };
     if (repair) return repairBootstrap({ repair, issueReceipts, targetIssueId, config, authoritativeHead });
     return { ended: false, reason: "no attempt has been dispatched yet" };
   }
@@ -900,6 +907,9 @@ export function singleRunActivationStatus({
   env = {},
   issues = [],
   unreadIssueIds = new Set(),
+  // false when the caller never read the target's receipts (the host's child
+  // gate for a card): a landing repair's spend is then the dispatcher's call.
+  receiptsRead = true,
 } = {}) {
   if (!filePath) return { requested: false, state: "absent", valid: true, reason: null, target_issue_id: null, activation_id: null, expires_at: null };
 
@@ -1095,6 +1105,7 @@ export function singleRunActivationStatus({
     bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
     // Self-repair B1: null unless the record is a landing repair.
     repair: repairFromActivation(record, config),
+    receiptsRead,
   });
   if (episode.ended) {
     return refused(
