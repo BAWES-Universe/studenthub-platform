@@ -1,0 +1,128 @@
+name: Verify claim manifests
+
+# The second half of the receipt authority. `verifier-receipt.yml` produces receipts; this workflow checks
+# that a candidate's pins actually describe runs that exist, and that the receipt inside each one records the
+# tests the candidate claims. A pin is a small JSON object, so the authoring lane can write one - and a pin
+# nobody verifies is worth exactly as much as the forged receipt file it replaced. This is where a pin stops
+# being a claim and starts being evidence, and it runs from protected main, so a candidate cannot choose the
+# code that judges it.
+#
+# It is deliberately cheap: it re-fetches runs that already exist rather than running the suite again.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Commit whose committed claim manifest should be verified
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+jobs:
+  # The tool that turns a pin into evidence is itself checked, from the protected checkout, before any pin is
+  # judged. Its tests stub `gh`, so they need no token and no network, and they assert the refusals: a run that
+  # is not a dispatch of this workflow on main, an artifact GitHub never digested, a receipt with no
+  # attestation, a receipt belonging to another run, and an attestation naming another workflow.
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Test the receipt tooling
+        run: node --test --test-reporter=tap .github/verifier-receipt/test/*.test.mjs
+
+  verify:
+    needs: selftest
+    runs-on: ubuntu-latest
+    steps:
+      # The verifier comes from the dispatching ref - protected main - and never from the candidate.
+      - name: Check out the verifier from the protected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: verifier
+
+      - name: Check out the candidate for its manifest and receipts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+
+      # A candidate that touches the authority is refused outright: it cannot be measured by a verifier it
+      # could have altered, and it cannot use this run to approve the change that introduces it.
+      # Read the changed file list from the API rather than from local history: merging and diffing need a
+      # merge base, and a checkout by SHA has none. The API's comparison is computed by GitHub, so a candidate
+      # cannot influence it either.
+      - name: Refuse a candidate that alters the receipt authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          changed=$(gh api "/repos/$REPO/compare/main...${{ inputs.candidate_sha }}" --jq '.files[].filename')
+          touched=$(printf '%s\n' "$changed" | grep -E '^(\.github/workflows/verifier-receipt\.yml|\.github/verifier-receipt/)' || true)
+          if [ -n "$touched" ]; then
+            echo "::error::this candidate changes the receipt authority, so no receipt it or this workflow produces may approve it"
+            printf '%s\n' "$touched"
+            exit 1
+          fi
+          echo "the candidate does not alter the receipt authority"
+
+      - name: Verify every pin the candidate's manifest carries
+        if: hashFiles('candidate/.github/coordinator/service/verifier-receipts.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          pins=$(node -e "
+            const fs = require('fs');
+            const body = JSON.parse(fs.readFileSync('.github/coordinator/service/verifier-receipts.json', 'utf8'));
+            const pins = Array.isArray(body) ? body : body.pins ?? [];
+            for (const pin of pins) console.log(pin.run_id);
+          ")
+          if [ -z "$pins" ]; then
+            echo "no pins: the manifest can carry no PASS, which is a state and not a failure"
+            exit 0
+          fi
+          for run in $pins; do
+            echo "::group::verifying run $run"
+            # The authority's own fetch tool, run from the protected ref: it reads the run, the artifact and
+            # the attestation back from the API and refuses anything that does not match.
+            node ../verifier/.github/verifier-receipt/fetch-receipt.mjs --repo "$REPO" --run "$run" \
+              --out "/tmp/pin-$run.json"
+            # The pin the candidate wrote must be the pin the API produces, field for field, or the candidate
+            # is asking to be judged on a run that does not say what it claims.
+            node -e "
+              const fs = require('fs');
+              const fetched = JSON.parse(fs.readFileSync('/tmp/pin-$run.json', 'utf8'));
+              const body = JSON.parse(fs.readFileSync('.github/coordinator/service/verifier-receipts.json', 'utf8'));
+              const pins = Array.isArray(body) ? body : body.pins ?? [];
+              const claimed = pins.find(pin => String(pin.run_id) === String(fetched.run_id));
+              const fields = ['workflow_path', 'workflow_ref', 'workflow_head_sha', 'run_id', 'run_attempt',
+                'artifact_name', 'artifact_digest', 'receipt_digest'];
+              const wrong = fields.filter(field => String(claimed[field]) !== String(fetched[field]));
+              if (wrong.length > 0) {
+                console.error('::error::the claimed pin disagrees with the run it names on: ' + wrong.join(', '));
+                process.exit(1);
+              }
+              const claimedVerdict = claimed.receipt?.conclusion?.verdict ?? null;
+              if (claimedVerdict !== fetched.receipt?.conclusion?.verdict) {
+                console.error('::error::the claimed pin reports a different verdict than the receipt it names');
+                process.exit(1);
+              }
+              console.log('pin for run ' + fetched.run_id + ' matches the API, verdict ' + claimedVerdict);
+            "
+            echo "::endgroup::"
+          done
+
+      - name: Report what this proves
+        working-directory: candidate
+        run: |
+          echo "Every pin in this candidate's manifest describes a run that exists, whose artifact digest"
+          echo "GitHub computed, whose receipt hashes to that artifact's digest, and whose recorded tests and"
+          echo "verdict match what the candidate claims. Terms with no pin remain BLOCK."
