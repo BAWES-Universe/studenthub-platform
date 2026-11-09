@@ -4784,6 +4784,7 @@
     "M11 C3: an approval counts only from a listed approver who is not the author, by their latest decision, at the exact head",
     "M11 C4: an approved code change installs in order, reports as a code install and leaves the queue as it was",
     "M11 C5: a code install that fails after the merge puts the installed revision back and does not pause",
+    "Velocity A3: a code install carries the installed queue's claims over, so a stopped card's moved branch does not refuse the plan",
     "M11 C6: when the installed revision cannot be put back, the host pauses as before",
     "M16 Q1: a re-cut queue of one new lane and later installed lanes that have not landed installs itself",
     "M16 Q2: a stopped queue's timer start installs the re-cut queue, whose new lane runs next",
@@ -34512,6 +34513,10 @@
     },
     {
       "name": "M11 C5: a code install that fails after the merge puts the installed revision back and does not pause",
+      "capabilities": []
+    },
+    {
+      "name": "Velocity A3: a code install carries the installed queue's claims over, so a stopped card's moved branch does not refuse the plan",
       "capabilities": []
     },
     {

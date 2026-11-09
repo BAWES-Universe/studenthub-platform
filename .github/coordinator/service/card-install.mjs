@@ -566,7 +566,13 @@ export function carryClaims(io, paths, revision, main, queue) {
   for (const id of queue) {
     const from = revisionClaim(paths, revision, id);
     const to = revisionClaim(paths, main, id);
-    if (!io.fs.existsSync(from) || io.fs.existsSync(to)) continue;
+    if (!io.fs.existsSync(from)) continue;
+    if (io.fs.existsSync(to)) {
+      // A claim an earlier, put-back attempt of this install carried is
+      // still a carried claim: the card did not run at N.
+      if (parse(String(io.fs.readFileSync(to, "utf8")))?.carried_from === revision) carried.push(id);
+      continue;
+    }
     const text = String(io.fs.readFileSync(from, "utf8"));
     const claim = parse(text);
     if (!plainObject(claim)) throw new Error(`the claim of ${id} at ${revision} cannot be read`);
@@ -581,9 +587,9 @@ export function carryClaims(io, paths, revision, main, queue) {
 
 // M11: a code install leaves the queue as it was. N's own card-run.mjs must
 // still plan: exit 0, read the same queue, and refuse no queued preparation.
-// Velocity A3: an appended install's carried cards ran at R and do not run
-// again at N, so their preparation (a stopped card's moved branch or state)
-// is not asked to pass.
+// Velocity A3: an appended or code install's carried cards ran at R and do
+// not run again at N, so their preparation (a stopped card's moved branch or
+// state) is not asked to pass.
 function codePlanCheck(io, paths, scope, carried = []) {
   const node = io.nodePath?.() ?? process.execPath;
   const result = io.exec(node, [path.join(paths.checkout, CARD_RUN), "plan"]);
@@ -798,8 +804,13 @@ async function installMain({ io, paths, deps, credentials, repo, revision, main,
       }
       // Velocity A3: an appended queue's cards that ran at R and did not land
       // are as they were at N, and its next card is whichever runs first.
+      // A code install keeps the installed queue, so its cards that ran at R
+      // carry over the same way: a stopped card stays stopped at N, and its
+      // preparation (a branch with its own commits) is not asked to pass.
+      // 2026-11-08: #440's install was put back because two stopped cards'
+      // branches refused the plan check.
       let carried = [];
-      if (append) run("carry", () => { carried = carryClaims(io, paths, revision, main, queue); });
+      if (append || !queue) run("carry", () => { carried = carryClaims(io, paths, revision, main, queue ?? scope); });
       run("plan", () => (queue && !append ? planCheck(io, paths, queue) : codePlanCheck(io, paths, queue ?? scope, carried)));
       result = { ...base, ok: true, outcome: "INSTALLED", queue, ...(code ? { code, approval } : {}), steps: [...steps],
         reason: queue && append ? `the next timer start runs the first card of ${queue.join(", ")} that has not landed and is not running`

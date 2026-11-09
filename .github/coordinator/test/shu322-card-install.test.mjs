@@ -988,10 +988,12 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   const carried = JSON.parse(host.files.get(autoClaim(PATHS, N, stopped)).text);
   assert.deepEqual(carried, { card: stopped, revision: R, outcome: "STOPPED", ok: false, land: null, carried_from: R });
   assert.equal(host.files.has(autoClaim(PATHS, N, PRIOR[0])), false, "a card that never ran has nothing to carry");
-  // A claim already at N is left as it is.
+  // A claim already at N is left as it is; only one carried from R counts
+  // as carried again.
   host.put(autoClaim(PATHS, N, PRIOR[0]), "{\"card\":\"kept\"}", { mode: 0o600 });
   host.put(autoClaim(PATHS, R, PRIOR[0]), "{\"card\":\"old\"}", { mode: 0o600 });
-  assert.deepEqual(carryClaims(host.io, PATHS, R, N, PRIOR), []);
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, PRIOR), [stopped]);
+  assert.equal(host.files.get(autoClaim(PATHS, N, stopped)).text, `${JSON.stringify({ ...JSON.parse(host.files.get(autoClaim(PATHS, R, stopped)).text), carried_from: R })}\n`);
   assert.equal(host.files.get(autoClaim(PATHS, N, PRIOR[0])).text, "{\"card\":\"kept\"}");
   assert.equal(revisionClaim(PATHS, R, "SHU-1"), autoClaim(PATHS, R, "SHU-1"), "the install names claims as card-run does");
   // A claim with no outcome whose writer is gone (a run that died before its
@@ -1115,6 +1117,36 @@ test("M11 C5: a code install that fails after the merge puts the installed revis
   assert.equal(verified.outcome, "INSTALL_RESTORED");
   assert.deepEqual(verifyFails.steps.slice(-5), [`rollback ${N}`, `checkout ${R}`, `install ${R}`, `verify ${R}`, `precondition ${R}`]);
   assert.equal(verifyFails.steps.filter((entry) => entry === `rollback ${N}`).length, 1, "N is rolled back once");
+});
+
+test("Velocity A3: a code install carries the installed queue's claims over, so a stopped card's moved branch does not refuse the plan", async () => {
+  // 2026-11-08: #440's code install was put back at the plan check because
+  // two stopped cards' branches carried their own commits
+  // (CARD_RUN_BRANCH_NOT_AT_TARGET). Those cards ran at R and do not run
+  // again at N, as with an appended queue.
+  const host = codeHost();
+  const queue = host.plan.queue;
+  const [stopped, fresh] = queue;
+  const ran = { card: stopped, revision: R, outcome: "STOPPED", ok: false, land: null };
+  host.put(autoClaim(PATHS, R, stopped), JSON.stringify(ran), { mode: 0o600 });
+  const prepare = { branch: { action: "create" }, card: { action: "move-to-todo" } };
+  host.plan = { id: fresh ?? null, queue, next: fresh ? { id: fresh } : { id: null, skipped: "QUEUE_STOPPED" }, busy: [], prepare,
+    queued: queue.map((id) => ({ id, prepare: id === stopped ? { refused: "CARD_RUN_BRANCH_NOT_AT_TARGET", reason: "its branch has its own commits" } : prepare })) };
+  const out = (await install(host, withPolicy(REVIEW_POLICY))).result ?? {};
+  assert.equal(out.outcome, "INSTALLED", JSON.stringify(out));
+  assert.deepEqual(out.steps, ["claim", "idle", "merge", "rollback", "install", "verify", "precondition", "carry", "plan"]);
+  assert.deepEqual(JSON.parse(host.files.get(autoClaim(PATHS, N, stopped)).text), { ...ran, carried_from: R }, "the stopped card stays stopped at N");
+  // A card that did not run at R is still asked to pass.
+  const unrun = codeHost();
+  unrun.files.delete(autoClaim(PATHS, R, stopped));
+  unrun.plan = { ...host.plan };
+  const refusedOut = (await install(unrun, withPolicy(REVIEW_POLICY))).result ?? {};
+  assert.equal(refusedOut.outcome, "INSTALL_RESTORED", JSON.stringify(refusedOut));
+  assert.equal(refusedOut.failed_step, "plan");
+  assert.match(refusedOut.reason, /CARD_RUN_BRANCH_NOT_AT_TARGET|its branch has its own commits/);
+  // A claim an earlier, put-back attempt already carried to N still counts
+  // as carried, so a retry of the same install does not refuse on it.
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [stopped]), [stopped]);
 });
 
 test("M11 C6: when the installed revision cannot be put back, the host pauses as before", async () => {
