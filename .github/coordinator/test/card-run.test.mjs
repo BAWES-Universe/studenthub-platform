@@ -4046,6 +4046,23 @@ test("Self-repair A: a card a person merged at the reviewed head counts as lande
   }
 });
 
+test("Self-repair A: a repair whose landing found its pull request already merged by a person counts as landed at the repaired head", async () => {
+  const host = handGitHub(fakeHost({ config: queueConfig() }));
+  // The first run passed at an earlier head and stopped with CI red; its repair
+  // passed at PASSED and, coming to land, found #77 already merged (LAND_ERROR).
+  claimFor(host, REV, "SHU-301", handClaim({ land: "PR_OPENED_CI_RED", reviewed_head: "6".repeat(40) }));
+  host.files.set(path.join(PATHS.stateDir, `card-repair-${REV}-SHU-301.json`), { text: `${JSON.stringify({ card: "SHU-301", revision: REV,
+    state: "finished", outcome: "PASS", ok: false, land: "LAND_ERROR", repo: COMMITTED.pilot_repo, pr: HAND_PR, repaired_head: PASSED })}\n`,
+  mode: 0o600, uid: 0, gid: 0 });
+  const landing = { repo: COMMITTED.pilot_repo, gh: (method, url) => host.io.fetch(url, { method }) };
+  assert.deepEqual(await cardLanded(host.io, PATHS, "SHU-301", landing), { landed: true, by: "hand", pr: HAND_PR, merge: HAND_MERGE });
+  // The same round, merged at any other head, still proves nothing.
+  const other = handGitHub(fakeHost({ config: queueConfig() }), { head: "7".repeat(40) });
+  other.files.set(path.join(PATHS.stateDir, `card-repair-${REV}-SHU-301.json`), host.files.get(path.join(PATHS.stateDir, `card-repair-${REV}-SHU-301.json`)));
+  const otherLanding = { repo: COMMITTED.pilot_repo, gh: (method, url) => other.io.fetch(url, { method }) };
+  assert.equal((await cardLanded(other.io, PATHS, "SHU-301", otherLanding)).landed, false);
+});
+
 test("Self-repair A: no other merge, claim or read counts a card as landed", async () => {
   const cases = [
     ["a different head", {}, { head: "6".repeat(40) }],

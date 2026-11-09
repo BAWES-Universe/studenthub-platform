@@ -1871,6 +1871,13 @@ const CASES = [
     to: "  try { holder = JSON.parse(text); } catch { return; } // SHU86-M319",
     pattern: "Velocity A: with two workers a start selects and claims under the selection lock",
   },
+  {
+    name: "M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
+    file: "service/card-landed.mjs",
+    from: "export const REPAIR_HAND_LAND_OUTCOMES = Object.freeze(new Set([\"LAND_ERROR\"]));",
+    to: "export const REPAIR_HAND_LAND_OUTCOMES = Object.freeze(new Set([])); // SHU86-M320",
+    pattern: "Self-repair A: a repair whose landing found its pull request already merged by a person",
+  },
 ];
 
 for (const mutation of CASES) {
