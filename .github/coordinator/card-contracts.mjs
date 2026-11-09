@@ -6537,7 +6537,45 @@ const RECUT_546_CONTRACTS = (() => {
     brief,
   }) };
 })();
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_539, ...RECUT_546_CONTRACTS });
+const CARD_CONTRACTS_546 = { ...CARD_CONTRACTS_539, ...RECUT_546_CONTRACTS };
+
+// SHU-549 stopped: fast-checks failed apps/gateway/test/documents-actions-mutations.mjs
+// because mutants died by a thrown error (a fetch that failed, a fixture Error
+// that escaped profile-avatar.test.ts) and not by an assertion, and its one
+// landing repair ran out of revisions. The box review also found acceptance
+// clauses no test pinned. SHU-551 stopped when its builder exited on its first
+// build with no verdict; its contract shows no fault. Both have stopped runs, so
+// they leave the queue with the cards that wait on them: SHU-558 is SHU-549's
+// contract with a brief line on how a mutant must die and which tests are
+// missing, and SHU-559 to SHU-562 are SHU-550 to SHU-553 re-cut with their
+// contracts unchanged but for the ids. SHU-548 has landed, so no lane waits on it.
+const RECUT_549 = Object.freeze({
+  "SHU-549": "SHU-558", "SHU-550": "SHU-559", "SHU-551": "SHU-560", "SHU-552": "SHU-561", "SHU-553": "SHU-562",
+});
+const recut549 = (text) => text.replace(/\bSHU-(549|550|551|552|553)\b/g, (id) => RECUT_549[id]);
+const SHU558_MUTANTS = `
+- The last run of this card (SHU-549) failed fast-checks in apps/gateway/test/documents-actions-mutations.mjs: the Q14_2_VIEW mutant made its test fail with "fetch failed" (failureType testCodeFailure), and the avatar mutant that drops \`.catch(() => undefined)\` made profile-avatar.test.ts fail because the fixture's Error escaped before any assert. The script requires every mutant to die by an AssertionError in its named test, so a mutant that makes the code throw, crash or close the connection must still reach an assertion: await each request inside the test and assert its status and body (if the server can drop the connection under a mutant, catch that and assert on it), and in the avatar suite await the call, assert it resolved, and assert the empty result, so a thrown Error fails assert.doesNotReject and not the test runner. Never drop or weaken a mutant to make the script pass. Run the mutation script on the built files before you finish, and say in your final message which assertion kills each mutant.
+- The review of SHU-549 also found acceptance clauses that no test pinned. Pin each one with the real CandidateDocuments rig that apps/gateway/test/documents-page.test.ts already builds (no new fakes): after Remove, the removed file is held for cleanup and gone from My documents; the 303 target of View, fetched with the owner's session cookie, serves the file, and fetched with another person's cookie does not; a Remove with a stamp from another document or version answers 409 and removes nothing; and S1, a removed document disappears from the rendered page and an uploaded personal photo appears as the avatar on My profile.
+- apps/gateway/src/profile-avatar.ts keeps per-request state in a map: delete each entry when its response finishes or closes, so the map cannot grow, and say in your final message how you did it.`;
+const RECUT_549_CONTRACTS = Object.fromEntries(Object.entries(RECUT_549).map(([from, to]) => {
+  const base = CARD_CONTRACTS_546[from];
+  let brief = recut549(base.brief);
+  if (from === "SHU-549") brief = replaceOnce(brief, "\n- Before you finish,", `${SHU558_MUTANTS}\n- Before you finish,`, `${to} mutants and missing tests`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-549"
+    ? "after fast-checks found mutants dying by thrown errors and not by assertions and the review found acceptance clauses no test pinned, with both spelled out"
+    : from === "SHU-551"
+      ? "after its builder exited on its first build with no verdict"
+      : `because its installed lane waited on ${from === "SHU-550" ? "SHU-549" : "SHU-551"}, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut549(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
