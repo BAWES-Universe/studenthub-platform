@@ -9,6 +9,7 @@ const definitions = {
   gate: { source: "src/universe/embed-host-gate.js", test: "test/universe-embed-host-gate.test.js", variable: "E1_HOST_GATE_MODULE" },
   gateway: { source: "src/index.js", test: "test/universe-embed-http.test.js", variable: "E1_GATEWAY_MODULE" },
   startup: { source: "src/index.js", test: "test/universe-embed-policy.test.js", variable: "E1_GATEWAY_MODULE" },
+  wire: { source: "src/index.js", test: "test/universe-embed-host-gate.test.js", variable: "E1_GATEWAY_MODULE" },
 };
 const mutations = [
   ["caller replaces security headers", "policy", "E1_HEADER_PRECEDENCE", "...additional, ...policy.headers", "...policy.headers, ...additional"],
@@ -20,6 +21,7 @@ const mutations = [
   ["canonical Host comparison removed", "gate", "E1_HOST_CANONICAL", "canonicalEmbedHost(hosts[0])", "hosts[0]"],
   ["terminal host gate removed", "gateway", "E1 terminal gate", "if (gateUniverseEmbedRequest(request, response, universeEmbed))", "if (false)"],
   ["runtime configuration ignored", "startup", "E1_STARTUP", "createUniverseEmbedConfigFromEnv(process.env, runtimeLogin?.application.web?.origin)", "undefined"],
+  ["missing Host bypasses response policy", "wire", "E1_WIRE", "requireHostHeader: universeEmbed === undefined", "requireHostHeader: true"],
 ];
 
 for (const [name, kind, pattern, from, to] of mutations) {

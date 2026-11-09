@@ -152,7 +152,9 @@ export function createGatewayServer(
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
 
-  return createServer((request, response) => {
+  // When reserved, the terminal gate supplies the missing-Host 400 and policy.
+  // Otherwise retain Node's existing automatic Host-header requirement.
+  return createServer({ requireHostHeader: universeEmbed === undefined }, (request, response) => {
     if (gateUniverseEmbedRequest(request, response, universeEmbed)) return;
     const span = newSpan(); // Ignore incoming request/trace IDs: they can contain PII.
     const started = performance.now();

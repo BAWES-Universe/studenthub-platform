@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { request as httpRequest } from "node:http";
-import { createGatewayServer } from "../src/index.js";
 import { canonicalEmbedHost, createUniverseEmbedConfigFromEnv } from "../src/universe/embed-policy.js";
 
 const { gateUniverseEmbedRequest } = await import(process.env.E1_HOST_GATE_MODULE ?? new URL("../src/universe/embed-host-gate.js", import.meta.url).href) as typeof import("../src/universe/embed-host-gate.js");
+const { createGatewayServer } = await import(process.env.E1_GATEWAY_MODULE ?? new URL("../src/index.js", import.meta.url).href) as typeof import("../src/index.js");
 const MAIN = "https://studenthub.test.invalid";
 const ENV = { UNIVERSE_EMBED_ORIGIN: "https://embed.bawes.test" };
 const enabled = { ...ENV, UNIVERSE_EMBED_ENABLED: "true", UNIVERSE_EMBED_ANCESTORS: "https://universe.bawes.test",
