@@ -6479,7 +6479,65 @@ const RECUT_537_CONTRACTS = (() => {
     brief,
   }) };
 })();
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_521, ...RECUT_531_CONTRACTS, ...RECUT_537_CONTRACTS });
+const CARD_CONTRACTS_537 = { ...CARD_CONTRACTS_521, ...RECUT_531_CONTRACTS, ...RECUT_537_CONTRACTS };
+
+// SHU-539 stopped: its pull request passed browser-acceptance, but fast-checks
+// failed one Q14_1_OWNER test. A second signed-in person posting a valid form
+// to their own slot got 404 where the test expected 303. Its landing repair
+// then stopped on SUPERVISOR_WORKER_EXIT_CHILD_AUTH_ACTIVATION_SPENT, which
+// the landing repair fix merged into this same change closes. SHU-539 has
+// commits on its branch, so it leaves the queue: SHU-548 is its contract with
+// a brief line on the second person, and SHU-540 to SHU-544, which wait on it
+// directly or through one another, are re-cut under fresh ids with their
+// contracts unchanged but for the ids. SHU-546 waits on nothing, has no
+// commits of its own, and keeps its place.
+const RECUT_539 = Object.freeze({
+  "SHU-539": "SHU-548", "SHU-540": "SHU-549", "SHU-541": "SHU-550", "SHU-542": "SHU-551", "SHU-543": "SHU-552", "SHU-544": "SHU-553",
+});
+const recut539 = (text) => text.replace(/\bSHU-(539|540|541|542|543|544)\b/g, (id) => RECUT_539[id]);
+const SHU548_OWNER = `
+- The last run of this card (SHU-539) passed browser-acceptance but failed one Q14_1_OWNER test in CI: a second signed-in person who posted a valid form to their own personal-photo slot got 404 where the test expected 303. A signed-in person's own slot, one of the four slot names, is never 404. The second person must be set up in the test exactly as the first one is: a live session in the login store, a profile the route resolves, and the same documents organization. The route must resolve every signed-in person the same way, by their session alone. Find which of the two did not know the second person, fix that, and keep the expected 303 and the assertion that the first person's list stays empty. Never change the expected status to make the test pass. Run that test on the built files before you finish and say in your final message what caused the 404.`;
+const RECUT_539_CONTRACTS = Object.fromEntries(Object.entries(RECUT_539).map(([from, to]) => {
+  const base = CARD_CONTRACTS_537[from];
+  let brief = recut539(base.brief);
+  if (from === "SHU-539") brief = replaceOnce(brief, "\n- Before you finish,", `${SHU548_OWNER}\n- Before you finish,`, `${to} owner test`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-539"
+    ? "after fast-checks failed a Q14_1_OWNER test with 404 for a second signed-in person, with the setup of that person and the 404 spelled out"
+    : `because its installed lane waited on ${from === "SHU-541" ? "SHU-540, which waits on " : from === "SHU-544" ? "SHU-542, which waits on " : ""}SHU-539, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut539(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+const CARD_CONTRACTS_539 = { ...CARD_CONTRACTS_537, ...RECUT_539_CONTRACTS };
+
+// SHU-546 stopped: its pull request passed browser-acceptance, but fast-checks
+// failed packages/profile/test/area-mutations.mjs. Its script also mutates the
+// PostgreSQL store when DATABASE_URL is set, and the mutant that skips the
+// store's stale-revision check survived: no database test saves with a stale
+// revision. Its landing repair then stopped on a HOLD. SHU-546 has commits on
+// its branch, so it leaves the queue: SHU-555 is its contract with a brief
+// line on that database test and on running the script against a database.
+const SHU555_REVISION = `
+- The last run of this card (SHU-546) passed browser-acceptance but failed fast-checks in packages/profile/test/area-mutations.mjs: with DATABASE_URL set, the mutant that replaces \`(current?.revision ?? 0) !== input.expectedRevision\` with \`false\` in the compiled PostgreSQL store survived, because no test in packages/db/test/postgres-person-location.test.ts saves with a stale revision. Add a test there named with Q14_5_AREA first that saves once, then saves again with the old expected revision, and asserts {ok:false, reason:"stale_revision"}, that the stored row is unchanged, and that only one event row exists. Every mutant the script runs, the database ones included, must die by assertion in its named test; never drop a mutant to make the script pass. Before you finish, run the mutation script with DATABASE_URL pointing at a migrated database, and say in your final message whether you could and what it printed.`;
+const RECUT_546_CONTRACTS = (() => {
+  const base = CARD_CONTRACTS_539["SHU-546"];
+  let brief = base.brief.replace(/\bSHU-546\b/g, "SHU-555");
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU555_REVISION}\n- Before you finish,`, "SHU-555 stale revision test");
+  if (!brief.startsWith("Card SHU-555:")) throw new Error("the re-cut brief for SHU-555 must name its own card");
+  return { "SHU-555": Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${base.acceptance.replace(/\bSHU-546\b/g, "SHU-555")} The PostgreSQL stale-revision mutant dies in a Q14_5_AREA test in postgres-person-location.test.ts. SHU-555 is SHU-546's contract re-queued under a fresh id after fast-checks found that mutant alive, with the missing database test spelled out; SHU-546 never lands.`,
+    brief,
+  }) };
+})();
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_539, ...RECUT_546_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

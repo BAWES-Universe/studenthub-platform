@@ -42,7 +42,9 @@ function evaluate(order, io) {
     // seed, and the pair would refuse as a rewind under the wrong name.
     if (evidence && (evidence.unavailable === true || !Array.isArray(evidence.comments))) return denied("EVIDENCE_UNAVAILABLE");
     const receipts = evidence ? parseReceiptsFromComments(evidence.comments, config.linear_receipt_actor_ids) : [];
-    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts, dir, env,
+    // A card's thread is never read here, so its receipts are unknown, not
+    // empty: a landing repair's spend stays the dispatcher's decision.
+    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts, receiptsRead: evidence !== null, dir, env,
       initialTargetSha: env.DISPATCH_TARGET_SHA, ...io.activation }) : null;
     if (activation?.code === "ACT_EVIDENCE_UNAVAILABLE") return denied("EVIDENCE_UNAVAILABLE");
     if (!dispatchEnabledFor(env, config, activation)) {
@@ -56,6 +58,15 @@ function evaluate(order, io) {
     if (activation?.review_only === true || Object.hasOwn(order, "review_base_sha")) {
       if (activation?.review_only !== true || order.role !== "review" || order.target_sha !== activation.initial_target_sha
           || order.review_base_sha !== activation.review_base_sha) return denied("REVIEW_BINDING");
+    }
+    // Self-repair B1: a landing repair runs its one revise and that revise's
+    // re-review, nothing else. The revise starts at the head its record names
+    // (repair_head, else the passed head), so a signed order cannot revise
+    // another head. The re-review's head is the revise's output, which only the
+    // dispatcher knows.
+    if (activation?.landing_repair === true) {
+      if (!["revise", "review"].includes(order.role)) return denied("REPAIR_BINDING");
+      if (order.role === "revise" && order.target_sha !== (activation.repair_head ?? activation.initial_target_sha)) return denied("REPAIR_BINDING");
     }
     if (!validateFixtureAttemptScope(order).ok) return denied("ATTEMPT_SCOPE");
     return { ok: true, code: null };
