@@ -185,7 +185,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string; editValue?: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; civilId?: Readonly<{ country:"KW"|"BH"|null; maskedNumber:string|null; expiry:string|null; needsReview:boolean; updatedAt:string }> } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; civilId?: Readonly<{ country:"KW"|"BH"|null; maskedNumber:string|null; expiry:string|null; needsReview:boolean; updatedAt:string }>; area?: Readonly<{areaId:string|null;areaNameEn:string|null;areaNameAr:string|null;latitude:number|null;longitude:number|null;updatedAt:string}> } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -257,6 +257,16 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
     fields.civilId = written(spec, Object.freeze({ country:civil.country, maskedNumber:civil.maskedNumber, expiry:civil.expiry, needsReview:civil.needsReview }), civil.updatedAt);
     fields.civilExpired = civil.expiry !== null ? written(PROFILE_FIELD_SPECS.civilExpired, civil.expiry < profile.asOfDate, civil.updatedAt)
       : Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS.civilExpired.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: civil.updatedAt }) });
+  }
+  const location = preferences.area;
+  if (location) {
+    const language = fields.language.state === "available" ? fields.language.value : "en";
+    fields.area = location.areaId === null ? Object.freeze({ state:"unavailable", reason:"not_recorded", provenance:provenance(PROFILE_FIELD_SPECS.area.sourceField), freshness:Object.freeze({kind:"written_by_person",observedAt:location.updatedAt}) })
+      : Object.freeze({ ...written(PROFILE_FIELD_SPECS.area, language === "ar" && location.areaNameAr ? location.areaNameAr : location.areaNameEn!, location.updatedAt), editValue: location.areaId });
+    if (location.latitude !== null && location.longitude !== null) {
+      const spec=fieldSpec("person_locations.coordinates","Coordinates","Optional location shared by this person.",text());
+      fields.coordinates=written(spec,Object.freeze({latitude:location.latitude,longitude:location.longitude}),location.updatedAt);
+    }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.

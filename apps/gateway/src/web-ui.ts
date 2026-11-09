@@ -30,6 +30,7 @@ import type {NotificationPage} from "../../../packages/notifications/src/notific
 import type { LegacyLinkService } from "./legacy-link-http.js";
 import { renderCivilIdRow } from "./civil-id-http.js";
 import type { CivilIdService } from "@studenthub/profile";
+import type { AreaHttp } from "./area-http.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -45,6 +46,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly bankDetails?: BankDetailsService;
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
+  readonly area?: AreaHttp;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
@@ -320,7 +322,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
     throw new Error("invalid authorized profile");
   }
   const keys = Object.keys(projection.fields);
-  if (keys.some(key => !OWN_PROFILE_FIELD_NAMES.includes(key as OwnProfileFieldName) && key !== "phone" && key !== "handle" && key !== "kuwaitiMother" && key !== "civilId")
+  if (keys.some(key => !OWN_PROFILE_FIELD_NAMES.includes(key as OwnProfileFieldName) && key !== "phone" && key !== "handle" && key !== "kuwaitiMother" && key !== "civilId" && key !== "coordinates")
     || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
     throw new Error("invalid authorized profile");
   }
@@ -381,7 +383,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
       : `<label>${escapeHtml(label(key))}${key === "intro" ? `<textarea name="value">${escapeHtml(value)}</textarea>` : `<input type="${key === "birthDate" ? "date" : key === "phone" ? "tel" : "text"}" name="value" value="${escapeHtml(value)}"${key === "handle" ? ' maxlength="30"' : key === "phone" ? ' maxlength="32"' : ""}>`}</label>`;
     return `<form method="post" action="/profile/edit/preview" aria-label="${copy("profile.changeField",{field:label(key)})}"><input type="hidden" name="field" value="${key}">${control}<button class="p-button" type="submit">${copy("action.review")}</button></form>`;
   };
-  const row = (key: Key): string => `<div id="field-${key}" class="p-row" tabindex="-1"${key === "kuwaitiMother" ? ' data-origin-field="kuwaitiMother"' : ""}><dt>${escapeHtml(label(key))}</dt><dd>${valueHtml(key)}${editable.has(key) ? login.browserEdit ? `<div class="p-row-actions">${editLink(key,label(key))}</div>` : login.profileEdit ? legacyForm(key) : `<p class="p-meta">${copy("meta.readOnly")}</p>` : key === "language" && login.preferences ? `<a class="p-edit" href="#profile-language">${copy("profile.changeLanguage")}</a>` : `<p class="p-meta">${copy("meta.readOnly")}</p>`}</dd></div>`;
+  const row = (key: Key): string => `<div id="field-${key}" class="p-row" tabindex="-1"${key === "kuwaitiMother" ? ' data-origin-field="kuwaitiMother"' : ""}><dt>${escapeHtml(label(key))}</dt><dd>${valueHtml(key)}${key === "area" && login.area ? `<a class="p-edit" href="/profile/area">${copy("action.edit")}</a>` : editable.has(key) ? login.browserEdit ? `<div class="p-row-actions">${editLink(key,label(key))}</div>` : login.profileEdit ? legacyForm(key) : `<p class="p-meta">${copy("meta.readOnly")}</p>` : key === "language" && login.preferences ? `<a class="p-edit" href="#profile-language">${copy("profile.changeLanguage")}</a>` : `<p class="p-meta">${copy("meta.readOnly")}</p>`}</dd></div>`;
   const section = (key: "work" | "personal" | "background", fields: readonly Key[], extra = "", extraRow = "") => `<section id="section-${key}" class="p-card" aria-labelledby="${key}-heading"><h2 id="${key}-heading">${copy(`section.${key}`)}</h2>${extra}<dl class="p-fields">${fields.map(row).join("")}${extraRow}${contributions.profileRows.filter(item => item.section === key).map(item => item.render(language, copy)).join("")}</dl></section>`;
   const displayName = profile.fields.displayName, name = displayName.state === "available" ? displayName.value : text("title.fallback");
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? "S";
@@ -393,7 +395,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}${contributions.profileRows.filter(item => item.section === "details").map(item => item.render(language, copy)).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
-  const civilRow = login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "";
+  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
   const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${legacyAccountMark}${legacyAccountPrompt}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"],"",civilRow)}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
   return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }

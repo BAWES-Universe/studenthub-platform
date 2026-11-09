@@ -10,3 +10,4 @@ export type { PostgresBankDetailsStoreOptions } from "../postgres-bank-details-s
 export { PostgresLegacyLinkStore, LegacyCandidateAlreadyLinkedError, PrincipalAlreadyLinkedError } from "../postgres-legacy-link-store.js";
 export type { LegacyLinkMethod, LegacyLinkStatus, LegacySnapshotPort } from "../postgres-legacy-link-store.js";
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdStore", { value: PostgresPersonCivilIdStore });
+export { PostgresPersonLocationStore } from "../postgres-person-location-store.js";
