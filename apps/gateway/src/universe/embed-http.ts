@@ -24,9 +24,12 @@ export function handleUniverseEmbed(request: IncomingMessage, response: ServerRe
   // spelling (with an ignored query string) can match; query values do nothing.
   const path = request.url?.split("?", 1)[0];
   const route = `${request.method} ${path}`;
-  if (route === "GET /universe/embed") {
+  if (route === "GET /universe/embed" || route === "HEAD /universe/embed") {
     const html = NOT_READY.replace("</head>", '<script src="/universe/embed/embed.js" defer></script></head>');
-    writeEmbedResponse(response, 200, html, "text/html; charset=utf-8", universeEmbedPolicy(config));
+    // Universe probes HEAD first and only retries GET after a 405. The probe
+    // must see the display policy, without receiving the body or creating state.
+    writeEmbedResponse(response, 200, request.method === "HEAD" ? "" : html,
+      "text/html; charset=utf-8", universeEmbedPolicy(config), { "content-length": String(Buffer.byteLength(html)) });
   } else if (route === "GET /universe/embed/embed.js") {
     writeEmbedResponse(response, 200, UNIVERSE_EMBED_SCRIPT, "text/javascript; charset=utf-8");
   } else if (route === "GET /assets/studenthub.css") {

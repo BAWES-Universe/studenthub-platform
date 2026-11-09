@@ -83,9 +83,9 @@ test("E1_WIRE cookie-less probe and invalid Host use the real HTTP listener", as
     assert.ok(address && typeof address !== "string");
     for (const hosts of [["Host", "EMBED.BAWES.TEST.:443"], [], ["Host", "embed.bawes.test", "Host", "studenthub.test.invalid"],
       ["Host", "user@embed.bawes.test"], ["Host", "embed.bawes.test:invalid"]]) {
-      const response = await new Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }>((resolve, reject) => {
+      const probe = (method: "HEAD" | "GET") => new Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }>((resolve, reject) => {
         const request = httpRequest({ hostname: "127.0.0.1", port: address.port, path: "/universe/embed",
-          method: "GET", setHost: false, headers: [...hosts, "Connection", "close"] }, (response) => {
+          method, setHost: false, headers: [...hosts, "Connection", "close"] }, (response) => {
           let body = "";
           response.setEncoding("utf8");
           response.on("data", (chunk: string) => { body += chunk; });
@@ -96,13 +96,25 @@ test("E1_WIRE cookie-less probe and invalid Host use the real HTTP listener", as
         request.on("error", reject);
         request.end();
       });
+      // Match the real Universe EmbeddableWebsiteProbe's cookie-less HEAD-first
+      // request. It does not retry GET on our previous 404 response.
+      const response = await probe("HEAD");
       const valid = hosts.length === 2 && hosts[1] === "EMBED.BAWES.TEST.:443";
-      assert.equal(response.status, valid ? config!.enabled ? 200 : 404 : 400);
+      assert.equal(response.status, valid ? config!.enabled ? 200 : 404 : 400, "HEAD-first Universe probe must reach the display policy");
+      assert.equal(response.body, "", "HEAD sends no representation body");
       assert.equal(response.headers["cache-control"], "no-store");
       assert.equal(response.headers["set-cookie"], undefined);
       assert.equal(response.headers["x-frame-options"], valid && config!.enabled ? undefined : "DENY");
       assert.match(String(response.headers["content-security-policy"]), valid && config!.enabled
         ? /frame-ancestors https:\/\/universe.bawes.test/ : /frame-ancestors 'none'/);
+      if (valid && config!.enabled) {
+        const get = await probe("GET");
+        const stable = (headers: IncomingMessage["headers"]) => Object.fromEntries(Object.entries(headers).filter(([key]) => key !== "date"));
+        assert.equal(response.status, get.status);
+        assert.deepEqual(stable(response.headers), stable(get.headers), "HEAD and GET expose identical response headers");
+        assert.equal(Number(response.headers["content-length"]), Buffer.byteLength(get.body));
+        assert.match(get.body, /not ready yet/);
+      }
     }
   }
 });

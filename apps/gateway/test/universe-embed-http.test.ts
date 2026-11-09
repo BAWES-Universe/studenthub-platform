@@ -65,6 +65,7 @@ function appPolicy(reply: Reply) {
 }
 const manifest: Array<RequestCase & { status: number; type: string }> = [
   { method: 'GET', path: '/universe/embed', status: 200, type: 'text/html' },
+  { method: 'HEAD', path: '/universe/embed', status: 200, type: 'text/html' },
   { method: 'GET', path: '/universe/embed/embed.js', status: 200, type: 'javascript' },
   { method: 'GET', path: '/assets/studenthub.css', status: 200, type: 'text/css' },
   ...['status', 'profile'].map(name => ({ method: 'GET', path: `/universe/embed/${name}`, status: 503, type: 'application/json' })),
@@ -93,6 +94,13 @@ test('E1 enabled host serves the complete inert manifest and only the shell is f
       assert.match(csp, /script-src 'self'(?:;|$)/);
       assert.match(csp, /connect-src 'self'(?:;|$)/);
       assert.equal(r.headers['x-frame-options'], undefined);
+      if (c.method === 'HEAD') {
+        assert.equal(r.body, '');
+        const get = await request(s, { method: 'GET', path: c.path });
+        assert.deepEqual(r.headers, get.headers, 'HEAD has the complete GET header policy');
+        assert.equal(Number(r.headers['content-length']), Buffer.byteLength(get.body));
+        continue;
+      }
       assert.match(r.body, /not.ready/i);
       const scripts = [...r.body.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
       assert.equal(scripts.length, 1);
@@ -123,7 +131,7 @@ test('E1 shell script executes without network, messaging, cookies or storage', 
 test('E1 exact allowlist rejects unrelated paths, aliases and wrong methods', async () => {
   const s = server(config(true));
   const rejected = [...ordinary, ...manifest.flatMap(c => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
-    .filter(method => method !== c.method).map(method => ({ method, path: c.path }))),
+    .filter(method => !manifest.some(allowed => allowed.path === c.path && allowed.method === method)).map(method => ({ method, path: c.path }))),
     ...['/universe/embed/', '/universe//embed', '/universe/%65mbed', '/universe/embed/../embed', '/UNIVERSE/embed',
       'https://embed.example.test/universe/embed', '/universe/embed/unknown', '/favicon.ico'].map(path => ({ method: 'GET', path }))];
   for (const c of rejected) { const r = await request(s, c); assert.equal(r.status, 404, `${c.method} ${c.path}`); appPolicy(r); }
@@ -154,7 +162,9 @@ test('E1 validates raw Host before dispatch and ignores forwarded authority', as
       const r = await request(s, manifest[0]!, [host], { 'x-forwarded-host': 'app.example.test', forwarded: 'host=app.example.test' });
       assert.equal(r.status, enabled ? 200 : 404, host);
     }
-    for (const host of ['app.example.test', 'unknown.example.test', 'embed.example.test:444']) {
+    // Nondefault ports are distinct authorities under the agreed host rule.
+    // Ingress must reject unconfigured embed authorities before live activation.
+    for (const host of ['app.example.test', 'unknown.example.test', 'embed.example.test:80', 'embed.example.test:444', 'embed.example.test:8443']) {
       const r = await request(s, { method: 'GET', path: '/health' }, [host], { 'x-forwarded-host': 'embed.example.test', forwarded: 'host=embed.example.test' });
       assert.equal(r.status, 200, host);
     }
@@ -192,7 +202,7 @@ function golden(reply: Reply, path: string): string {
   if (path === '/health') { const health = JSON.parse(body); health.timestamp = '<clock>'; body = JSON.stringify(health); }
   return createHash('sha256').update(JSON.stringify({ status: reply.status, headers, body })).digest('hex');
 }
-const goldenCases: RequestCase[] = [...ordinary, ...manifest.filter(c => !ordinary.some(o => o.path === c.path))]
+const goldenCases: RequestCase[] = [...ordinary, ...manifest.filter(c => c.method !== 'HEAD' && !ordinary.some(o => o.path === c.path))]
   .flatMap(c => ['application/json', 'text/html'].map(accept => ({ method: c.method, path: c.path, accept })));
 const GOLDENS: string[] = [
   "76b077c710b8efcd67edfe4aefa1aa9e57071cc6d356a94a0df106897f391d17",
