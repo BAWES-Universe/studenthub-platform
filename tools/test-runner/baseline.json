@@ -1,5 +1,6 @@
 {
   "runnerTests": [
+    "tools/test-runner/test/ci-workflow.test.mjs",
     "tools/test-runner/test/discover.test.mjs"
   ],
   "runnerMutationTests": [
