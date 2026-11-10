@@ -53,7 +53,8 @@
       "SHU-560",
       "SHU-559",
       "SHU-561",
-      "SHU-562"
+      "SHU-562",
+      "SHU-563"
     ]
   },
   "adapter_pause_map": {},
@@ -7914,6 +7915,31 @@
       ],
       "after": [
         "SHU-560"
+      ]
+    },
+    {
+      "id": "SHU-563",
+      "authorization_ref": "SHU-563",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), S4 hardening: candidate document reads move their audit to an append-only table and, on the PostgreSQL store, stop taking the snapshot's global FOR UPDATE, rewriting it and hydrating documents they do not serve; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. Raised from a Sentry finding on SHU-558's pull request. Appended after the installed queue, which stays as it is; it waits on nothing.",
+      "initial_build_paths": [
+        "packages/db/migrations/0220_candidate_document_read_audit.sql",
+        "packages/private-documents/src/index.ts",
+        "packages/private-documents/src/candidate-lifecycle.ts",
+        "packages/private-documents/src/r2-storage.ts",
+        "packages/private-documents/test/read-audit.test.mjs",
+        "packages/private-documents/test/read-audit-postgres.test.mjs",
+        "packages/private-documents/test/read-audit-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0220_candidate_document_read_audit.sql",
+        "packages/private-documents/src/index.ts",
+        "packages/private-documents/src/candidate-lifecycle.ts",
+        "packages/private-documents/src/r2-storage.ts",
+        "packages/private-documents/test/read-audit.test.mjs",
+        "packages/private-documents/test/read-audit-postgres.test.mjs",
+        "packages/private-documents/test/read-audit-mutations.mjs"
       ]
     }
   ],
