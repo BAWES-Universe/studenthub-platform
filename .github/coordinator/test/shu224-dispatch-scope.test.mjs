@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-548", "SHU-555", "SHU-549", "SHU-550", "SHU-551", "SHU-552", "SHU-553"], "SHU-224: the scope names the current card queue (SHU-312): the second re-cut of the stopped upload card, the cards that wait on it and the re-cut area card, with every stopped and landed card left out");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-558", "SHU-560", "SHU-559", "SHU-561", "SHU-562"], "SHU-224: the scope names the current card queue (SHU-312): the re-cut documents-actions and civil ID cards and the cards that wait on them, with every stopped and landed card left out");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -464,6 +464,30 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-555"].brief, /saves again with the old expected revision, and asserts \{ok:false, reason:"stale_revision"\}/, "SHU-224: SHU-555 asks for the stale-revision database test");
   assert.match(contracts["SHU-555"].brief, /never drop a mutant to make the script pass/, "SHU-224: SHU-555 keeps every mutant");
   assert.match(contracts["SHU-555"].brief, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nYour paths/, "SHU-224: SHU-555 keeps the path self-check last");
+  // SHU-549 stopped on mutants dying by thrown errors and SHU-551 on a builder
+  // exit; both leave the queue with the cards that wait on them.
+  const RECUT_549 = { "SHU-549": "SHU-558", "SHU-550": "SHU-559", "SHU-551": "SHU-560", "SHU-552": "SHU-561", "SHU-553": "SHU-562" };
+  assert.equal(after("SHU-558"), undefined, "SHU-224: SHU-558 waits on nothing");
+  assert.equal(after("SHU-560"), undefined, "SHU-224: SHU-560 waits on nothing");
+  assert.deepEqual(after("SHU-559"), ["SHU-558"], "SHU-224: SHU-559 waits on SHU-558");
+  assert.deepEqual(after("SHU-561"), ["SHU-560"], "SHU-224: SHU-561 waits on SHU-560 alone, since SHU-548 landed");
+  assert.deepEqual(after("SHU-562"), ["SHU-560"], "SHU-224: SHU-562 waits on SHU-560");
+  const recut549 = (text) => text.replace(/\bSHU-(549|550|551|552|553)\b/g, (id) => RECUT_549[id]);
+  for (const [from, id] of Object.entries(RECUT_549)) {
+    const lane = config.card_lanes.find((entry) => entry.id === id);
+    const base = contracts[from];
+    assert.deepEqual(lane.initial_build_paths, base.initial_build_paths, `SHU-224: ${id} keeps ${from}'s paths`);
+    assert.deepEqual(lane.revision_paths, base.revision_paths, `SHU-224: ${id} keeps ${from}'s revision paths`);
+    assert.deepEqual(contracts[id].initial_build_paths, base.initial_build_paths, `SHU-224: ${id}'s contract keeps ${from}'s paths`);
+    assert.ok(contracts[id].acceptance.endsWith(`; ${from} never lands.`), `SHU-224: ${id} names the card it replaces`);
+    if (from !== "SHU-549") assert.equal(contracts[id].brief, recut549(base.brief), `SHU-224: ${id} keeps ${from}'s brief but for the ids`);
+  }
+  assert.ok(contracts["SHU-558"].initial_build_paths.includes("tools/browser-acceptance/run.mjs"), "SHU-224: SHU-558 keeps the browser acceptance file for its Remove and View controls");
+  assert.match(contracts["SHU-558"].brief, /every mutant to die by an AssertionError in its named test/, "SHU-224: SHU-558 says how a mutant dies");
+  assert.match(contracts["SHU-558"].brief, /Never drop or weaken a mutant to make the script pass\./, "SHU-224: SHU-558 keeps every mutant");
+  assert.match(contracts["SHU-558"].brief, /real CandidateDocuments rig/, "SHU-224: SHU-558 pins the missing tests on the real rig");
+  assert.match(contracts["SHU-558"].brief, /answers 409 and removes nothing/, "SHU-224: SHU-558 pins the foreign stamp");
+  assert.match(contracts["SHU-558"].brief, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nYour paths/, "SHU-224: SHU-558 keeps the path self-check last");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
