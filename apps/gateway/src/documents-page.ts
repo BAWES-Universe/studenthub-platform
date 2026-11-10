@@ -7,8 +7,8 @@ import { pageDocument, wantsHtml, writeHtml, type BrowserLoginApplication } from
 import { profileCopyText, type ProfileLanguage } from './ui/profile-copy.js';
 
 const COPY = {
-  en: { title: 'My documents', back: 'My profile', onFile: 'On file', missing: 'Not uploaded', accepted: 'Accepted formats', maximum: 'Maximum size', bytes: 'bytes', signIn: 'Sign in to view your documents', continue: 'Continue with Universe', unavailable: 'Documents are temporarily unavailable. Please try again.', slots: ['Personal photo', 'CV', 'Civil ID front', 'Civil ID back'] },
-  ar: { title: 'مستنداتي', back: 'ملفي الشخصي', onFile: 'محفوظ', missing: 'لم يتم الرفع', accepted: 'الصيغ المقبولة', maximum: 'الحجم الأقصى', bytes: 'بايت', signIn: 'سجّل الدخول لعرض مستنداتك', continue: 'المتابعة مع Universe', unavailable: 'المستندات غير متاحة مؤقتًا. يرجى المحاولة مرة أخرى.', slots: ['الصورة الشخصية', 'السيرة الذاتية', 'البطاقة المدنية (الوجه الأمامي)', 'البطاقة المدنية (الوجه الخلفي)'] },
+  en: { title: 'My documents', back: 'My profile', onFile: 'On file', missing: 'Not uploaded', accepted: 'Accepted formats', maximum: 'Maximum size', bytes: 'bytes', remove: 'Remove', view: 'View', signIn: 'Sign in to view your documents', continue: 'Continue with Universe', unavailable: 'Documents are temporarily unavailable. Please try again.', slots: ['Personal photo', 'CV', 'Civil ID front', 'Civil ID back'] },
+  ar: { title: 'مستنداتي', back: 'ملفي الشخصي', onFile: 'محفوظ', missing: 'لم يتم الرفع', accepted: 'الصيغ المقبولة', maximum: 'الحجم الأقصى', bytes: 'بايت', remove: 'إزالة', view: 'عرض', signIn: 'سجّل الدخول لعرض مستنداتك', continue: 'المتابعة مع Universe', unavailable: 'المستندات غير متاحة مؤقتًا. يرجى المحاولة مرة أخرى.', slots: ['الصورة الشخصية', 'السيرة الذاتية', 'البطاقة المدنية (الوجه الأمامي)', 'البطاقة المدنية (الوجه الخلفي)'] },
 } as const;
 function escape(value: string): string {
   return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
@@ -26,7 +26,7 @@ export function documentsPage(documents: readonly Metadata[], language: ProfileL
     const admission = CANDIDATE_DOCUMENT_ADMISSION[type];
     return `<div id="document-${type}" class="p-row"><dt>${copy.slots[index]}</dt><dd><strong>${document ? copy.onFile : copy.missing}</strong><p class="p-meta">${document
       ? `${escape(format(document.mime))} · ${escape(String(document.size))} ${copy.bytes}`
-      : `${copy.accepted}: ${admission.mimeTypes.map(mime => escape(format(mime))).join(', ')}. ${copy.maximum}: ${escape(String(admission.maxBytes / (1024 * 1024)))} MiB.`}</p><form method="post" enctype="multipart/form-data" action="/profile/documents/${type}/upload"><input type="file" name="file" accept="${admission.mimeTypes.join(',')}"><input type="hidden" name="submission" value="${Date.now()}.${randomUUID()}"><button class="p-button p-primary" type="submit">${profileCopyText(language, document ? 'action.replace' : 'action.upload')}</button></form></dd></div>`;
+      : `${copy.accepted}: ${admission.mimeTypes.map(mime => escape(format(mime))).join(', ')}. ${copy.maximum}: ${escape(String(admission.maxBytes / (1024 * 1024)))} MiB.`}</p><form method="post" enctype="multipart/form-data" action="/profile/documents/${type}/upload"><input type="file" name="file" accept="${admission.mimeTypes.join(',')}"><input type="hidden" name="submission" value="${Date.now()}.${randomUUID()}"><button class="p-button p-primary" type="submit">${profileCopyText(language, document ? 'action.replace' : 'action.upload')}</button></form>${document ? `<div class="p-row-actions"><a href="/profile/documents/${type}/remove">${copy.remove}</a><form method="post" action="/profile/documents/${type}/view"><button class="p-button" type="submit">${copy.view}</button></form></div>` : ''}</dd></div>`;
   }).join('');
   return shell(language, `<dl class="p-stack">${slots}</dl>`);
 }

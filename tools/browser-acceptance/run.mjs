@@ -82,9 +82,9 @@ async function documentPage(page,language,metadata) {
       check(detail.includes(type==='resume'?'PDF':'PNG, JPEG') && detail.includes('10 MiB'),'Guidance matches current admission');
     }
   }
-  assert.equal(await page.locator('main form').count(),4,'Each document slot has one upload form');
   for(const type of documentSlots) {
-    const form=page.locator(`#document-${type} form`);
+    const uploaded=metadata && type==='personal-photo';
+    const form=page.locator(`#document-${type} form[enctype="multipart/form-data"]`);
     assert.equal(await form.count(),1,'Exactly one form per slot');
     assert.equal(await form.getAttribute('method'),'post');
     assert.equal(await form.getAttribute('enctype'),'multipart/form-data');
@@ -92,6 +92,8 @@ async function documentPage(page,language,metadata) {
     assert.equal(await form.locator('input[type="file"][name="file"]').count(),1);
     assert.equal(await form.locator('input[type="hidden"][name="submission"]').count(),1);
     assert.equal(await form.locator('button[type="submit"]').count(),1);
+    assert.equal(await page.locator(`#document-${type} a[href="/profile/documents/${type}/remove"]`).count(),uploaded?1:0,'Remove link follows slot state');
+    assert.equal(await page.locator(`#document-${type} form[action="/profile/documents/${type}/view"]`).count(),uploaded?1:0,'View form follows slot state');
   }
   assert.equal(await page.locator('main time, main a[href*="candidate-documents"], main a[href*="private-documents"]').count(),0,'Page has no delivery links or dates');
   const shown=await page.locator('main').innerText();
