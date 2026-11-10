@@ -7929,7 +7929,7 @@
         "packages/private-documents/src/candidate-lifecycle.ts",
         "packages/private-documents/src/r2-storage.ts",
         "packages/private-documents/test/read-audit.test.mjs",
-        "packages/private-documents/test/read-audit-postgres.test.mjs",
+        "packages/private-documents/test/r2-postgres.test.mjs",
         "packages/private-documents/test/read-audit-mutations.mjs"
       ],
       "revision_paths": [
@@ -7938,7 +7938,7 @@
         "packages/private-documents/src/candidate-lifecycle.ts",
         "packages/private-documents/src/r2-storage.ts",
         "packages/private-documents/test/read-audit.test.mjs",
-        "packages/private-documents/test/read-audit-postgres.test.mjs",
+        "packages/private-documents/test/r2-postgres.test.mjs",
         "packages/private-documents/test/read-audit-mutations.mjs"
       ]
     }

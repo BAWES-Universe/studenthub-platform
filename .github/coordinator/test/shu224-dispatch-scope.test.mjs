@@ -495,6 +495,9 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.deepEqual(lane563.revision_paths, [...contracts["SHU-563"].revision_paths], "SHU-224: SHU-563's revision paths match its contract");
   assert.ok(lane563.initial_build_paths.includes("packages/db/migrations/0220_candidate_document_read_audit.sql"), "SHU-224: SHU-563 owns migration 0220");
   assert.ok(!lane563.initial_build_paths.some((path) => path.startsWith("apps/") || path.startsWith("tools/")), "SHU-224: SHU-563 touches no gateway or browser file");
+  assert.ok(lane563.initial_build_paths.includes("packages/private-documents/test/r2-postgres.test.mjs"), "SHU-224: SHU-563's PostgreSQL tests live in the one file npm run test:db runs for this package");
+  assert.match(contracts["SHU-563"].brief, /BEFORE TRUNCATE/, "SHU-224: SHU-563's read audit table refuses TRUNCATE");
+  assert.match(contracts["SHU-563"].brief, /reader pool/, "SHU-224: SHU-563 keeps reads off the writer pool");
   assert.match(contracts["SHU-563"].brief, /^Card SHU-563:/, "SHU-224: SHU-563's brief names its own card");
   assert.match(contracts["SHU-563"].brief, /Without readPath, everything stays exactly as today/, "SHU-224: SHU-563 keeps every store without the read path as it is");
   assert.match(contracts["SHU-563"].brief, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nFinish with/, "SHU-224: SHU-563 keeps the path self-check last");
