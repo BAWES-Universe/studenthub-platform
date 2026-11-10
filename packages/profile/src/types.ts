@@ -33,7 +33,7 @@ export interface FieldProvenance {
 }
 
 export interface FieldFreshness {
-  readonly kind: "imported_snapshot" | "written_by_person";
+  readonly kind: "imported_snapshot" | "written_by_person" | "derived";
   readonly observedAt: string;
 }
 
@@ -48,7 +48,7 @@ export interface AvailableProfileField<T> {
 
 export interface UnavailableProfileField {
   readonly state: "unavailable";
-  readonly reason: "not_imported" | "not_recorded";
+  readonly reason: "not_imported" | "not_recorded" | "check_failed";
   readonly provenance: FieldProvenance;
   readonly freshness: FieldFreshness | { readonly kind: "not_imported"; readonly observedAt: "" };
 }
