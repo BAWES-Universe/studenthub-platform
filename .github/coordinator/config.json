@@ -54,7 +54,8 @@
       "SHU-559",
       "SHU-561",
       "SHU-562",
-      "SHU-563"
+      "SHU-563",
+      "SHU-564"
     ]
   },
   "adapter_pause_map": {},
@@ -7940,6 +7941,23 @@
         "packages/private-documents/test/read-audit.test.mjs",
         "packages/private-documents/test/r2-postgres.test.mjs",
         "packages/private-documents/test/read-audit-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-564",
+      "authorization_ref": "SHU-564",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), SHU-558 follow-up: a remove form the idempotency contract refuses answers 400 Check the form, and a document action whose session was revoked mid-action answers 401 with the sign-in link as the My documents page does; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. Raised from two review findings on SHU-558's pull request. Appended after the installed queue, which stays as it is; it waits on nothing.",
+      "initial_build_paths": [
+        "apps/gateway/src/documents-actions-http.ts",
+        "apps/gateway/test/documents-actions-http.test.ts",
+        "apps/gateway/test/documents-actions-mutations.mjs"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/documents-actions-http.ts",
+        "apps/gateway/test/documents-actions-http.test.ts",
+        "apps/gateway/test/documents-actions-mutations.mjs"
       ]
     }
   ],

@@ -6652,7 +6652,57 @@ const SHU563_CONTRACT = { "SHU-563": Object.freeze({
   acceptance: SHU563_ACCEPTANCE,
   brief: SHU563_BRIEF,
 }) };
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT });
+export const SHU564_PATHS = Object.freeze([
+  "apps/gateway/src/documents-actions-http.ts",
+  "apps/gateway/test/documents-actions-http.test.ts",
+  "apps/gateway/test/documents-actions-mutations.mjs",
+]);
+
+const SHU564_ACCEPTANCE = [
+  "(1) DA_KEY_400: a remove POST with a valid stamp whose submission has a 13-digit time and a well-formed UUID that is not version 4 (for example 1800000000000.00000000-0000-1000-8000-000000000000) answers 400 with the 'Check the form and try again.' copy, never calls remove, and never shows the unavailable copy; the same holds for a time that is not a valid instant;",
+  "(2) DA_REVOKED_401: when list, issueDelivery or remove rejects with LifecycleError code 'denied' and a fresh login.profile for the same session answers 401, the remove GET, the remove POST and the view POST answer 401 with the sign-in copy and the /login/universe?return_to= link, in English and in Arabic;",
+  "(3) DA_STILL_503: when the denial comes with login.profile still answering 200, or login.profile rejecting, the action answers 503 with the unavailable copy and no sign-in link, exactly as today; a non-denied error makes no second login.profile call;",
+  "(4) apps/gateway/test/documents-actions-mutations.mjs keeps its five existing mutants and adds one per item (1), (2) and (3), each dying by an AssertionError in its named test; every existing test in documents-actions-http.test.ts passes unchanged; npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU564_BRIEF = `Card SHU-564: a bad remove form or a session revoked mid-action shows the right message on My documents (follow-up to SHU-558; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-558. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Read first:
+- apps/gateway/src/documents-actions-http.ts: the key helper (it parses the submission and calls createIdempotencyKey), failure (401 adds the Continue with Universe link) and the catch block that maps every error that is not 400 or 409 to 503.
+- packages/idempotency-contract/src/idempotency.ts: createIdempotencyKey throws a RangeError for a time that is not a valid instant and a TypeError for a UUID that is not version 4.
+- apps/gateway/src/documents-page.ts: its catch block, which rechecks login.profile after a 'denied' error and answers 401 when the session is gone (the pattern to follow).
+- apps/gateway/test/documents-actions-http.test.ts and apps/gateway/test/documents-actions-mutations.mjs: the exchange helper, the stub service and login, and the mutation-script shape (SHU558_ACTIONS_MODULE).
+
+Goal. Two edge cases answer 503 "Documents are temporarily unavailable" today when the person can act on a better answer.
+- A remove form whose submission time or UUID the idempotency contract refuses must answer 400 "Check the form and try again", like any other malformed form. The key helper turns that refusal into LifecycleError(400, 'invalid'), either by checking for a version 4 UUID and a valid instant itself or by catching exactly the contract's RangeError and TypeError. Do not catch anything wider.
+- When a document call rejects with a LifecycleError whose code is 'denied', the session may have been revoked after the first profile check. The catch block calls login.profile({ sessionId }) once more, as documents-page.ts does. If it answers 401, the action answers 401 through failure with login, so the sign-in copy and the link show. Otherwise, or if that call rejects, it answers 503 exactly as today. Errors that are not 'denied' make no second call.
+
+Guards: no other status, copy, header, redirect, cookie or route changes; the origin check, the stamp check and the 409 path stay as they are; no new dependency; no change outside the three paths.
+
+Tests are named with their token first and a space after it, and every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion and not the runner.
+
+Mutations (add to apps/gateway/test/documents-actions-mutations.mjs, each needle binding exactly once in the built dist file, each required to fail with AssertionError or ERR_ASSERTION): the key helper lets the contract's error escape (DA_KEY_400); the 401 recheck is skipped (DA_REVOKED_401); the recheck answers 401 whatever login.profile returns (DA_STILL_503). Never drop or weaken a mutant to make the script pass.
+
+Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
+${SHU564_PATHS.map((path) => `- ${path}`).join("\n")}
+
+Out of scope: documents-page.ts, profile-avatar.ts, the private-documents package, the browser-acceptance run, organization documents, package.json and the lockfile.
+
+- Before you finish, run the mutation script on the built files and say in your final message which assertion kills each mutant.
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+const SHU564_CONTRACT = { "SHU-564": Object.freeze({
+  workspace_mode: "repo",
+  initial_build_paths: SHU564_PATHS,
+  revision_paths: SHU564_PATHS,
+  acceptance: SHU564_ACCEPTANCE,
+  brief: SHU564_BRIEF,
+}) };
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

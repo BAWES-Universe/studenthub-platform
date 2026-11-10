@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-558", "SHU-560", "SHU-559", "SHU-561", "SHU-562", "SHU-563"], "SHU-224: the scope names the current card queue (SHU-312): the installed queue as it is, with the document read audit card appended");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-558", "SHU-560", "SHU-559", "SHU-561", "SHU-562", "SHU-563", "SHU-564"], "SHU-224: the scope names the current card queue (SHU-312): the installed queue as it is, with the document read audit card and the document actions follow-up appended");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -501,6 +501,15 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-563"].brief, /^Card SHU-563:/, "SHU-224: SHU-563's brief names its own card");
   assert.match(contracts["SHU-563"].brief, /Without readPath, everything stays exactly as today/, "SHU-224: SHU-563 keeps every store without the read path as it is");
   assert.match(contracts["SHU-563"].brief, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nFinish with/, "SHU-224: SHU-563 keeps the path self-check last");
+  // SHU-564 is appended after SHU-563 and waits on nothing.
+  assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");
+  const lane564 = config.card_lanes.find((entry) => entry.id === "SHU-564");
+  assert.deepEqual(lane564.initial_build_paths, [...contracts["SHU-564"].initial_build_paths], "SHU-224: SHU-564's lane matches its contract");
+  assert.deepEqual(lane564.revision_paths, [...contracts["SHU-564"].revision_paths], "SHU-224: SHU-564's revision paths match its contract");
+  assert.deepEqual([...lane564.initial_build_paths], ["apps/gateway/src/documents-actions-http.ts", "apps/gateway/test/documents-actions-http.test.ts", "apps/gateway/test/documents-actions-mutations.mjs"], "SHU-224: SHU-564 changes only the document actions and their tests");
+  assert.match(contracts["SHU-564"].brief, /^Card SHU-564:/, "SHU-224: SHU-564's brief names its own card");
+  assert.match(contracts["SHU-564"].brief, /\n- apps\/gateway\/test\/documents-actions-mutations\.mjs\n\nOut of scope:/, "SHU-224: SHU-564's brief lists its paths one per line");
+  assert.match(contracts["SHU-564"].brief, /\n- Before you finish, run git status and compare every changed or added file with your paths[^\n]*\n\nFinish with/, "SHU-224: SHU-564 keeps the path self-check last");
   assert.equal(config.max_dispatch, 1, "SHU-224: one card, one slot");
 });
 
