@@ -8351,7 +8351,8 @@
         "apps/gateway/test/routes-order.test.ts",
         "apps/gateway/test/profile-kit.test.ts",
         "apps/gateway/test/profile-journey.test.ts",
-        "apps/gateway/test/documents-page.test.ts"
+        "apps/gateway/test/documents-page.test.ts",
+        "apps/gateway/test/profile-completeness-mutations.mjs"
       ],
       "revision_paths": [
         "apps/gateway/src/profile-completeness.ts",
@@ -8370,7 +8371,8 @@
         "apps/gateway/test/routes-order.test.ts",
         "apps/gateway/test/profile-kit.test.ts",
         "apps/gateway/test/profile-journey.test.ts",
-        "apps/gateway/test/documents-page.test.ts"
+        "apps/gateway/test/documents-page.test.ts",
+        "apps/gateway/test/profile-completeness-mutations.mjs"
       ],
       "after": [
         "SHU-576"
