@@ -513,6 +513,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   }
   assert.match(contracts["SHU-566"].brief, /RETURNING o\.id/, "SHU-224: SHU-566 says how to qualify its RETURNING columns");
   assert.match(contracts["SHU-566"].brief, /Export PostgresCivilIdOcrStore[^\n]*packages\/db\/src\/profile\/index\.ts/, "SHU-224: SHU-566 exports its store from the profile area");
+  assert.match(contracts["SHU-566"].acceptance, /OCR_BASELINE: the first sweep[^;]*reads nothing/, "SHU-224: SHU-566 does not flag or read the photos already stored when it first runs");
   assert.match(contracts["SHU-566"].brief, /name: 'AssertionError'/, "SHU-224: SHU-566's mutants must die by AssertionError");
   assert.match(contracts["SHU-566"].brief, /\n- Before you finish, [^\n]*\n[\s\S]*\n\nFinish with/, "SHU-224: SHU-566 keeps its finishing lines last");
   // SHU-564 is appended after SHU-563 and waits on nothing.
