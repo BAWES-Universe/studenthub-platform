@@ -6575,6 +6575,40 @@ const RECUT_549_CONTRACTS = Object.fromEntries(Object.entries(RECUT_549).map(([f
     brief,
   })];
 }));
+// SHU-560 (civil ID photo reading) stopped with its revisions used up on a
+// final BLOCK at 465dbd3: its claim UPDATE ... FROM picked ... RETURNING named
+// an unqualified id that picked also has (Postgres 42702), so the Postgres test
+// aborted and the worker's catch swallowed the error in production; it did not
+// export PostgresCivilIdOcrStore from the profile area; and two mutants died by
+// thrown errors, one of them against the wrong behaviour. SHU-561 and SHU-562
+// wait on it, so all three leave the queue: SHU-566 is SHU-560's contract with
+// a brief section on those three faults, and SHU-567 and SHU-568 are SHU-561
+// and SHU-562 with their contracts unchanged but for the ids. The review
+// verified everything else, so the rest of the contract stays as it is.
+const RECUT_560 = Object.freeze({ "SHU-560": "SHU-566", "SHU-561": "SHU-567", "SHU-562": "SHU-568" });
+const recut560 = (text) => text.replace(/\bSHU-(560|561|562)\b/g, (id) => RECUT_560[id]);
+const SHU566_REVIEW = `
+- The last run of this card (SHU-560) was refused at review for three faults. Fix all three; the review verified the rest (parser, in-memory store, Textract adapter, migration 0218, S1 and S2), so keep those as the contract states them.
+- The claim in packages/db/src/postgres-civil-id-ocr-store.ts, an UPDATE civil_id_ocr_jobs j ... FROM picked ... RETURNING ..., returned an unqualified id::text while picked also has an id column. Postgres refuses that with 42702 (column reference is ambiguous), so the Postgres test aborted, and in production the worker's catch would swallow the error and never read a photo. Qualify every column in every RETURNING and SELECT list of a statement that joins or uses FROM (j.id::text and so on), as packages/db/src/postgres-email-outbox-store.ts does with RETURNING o.id, o.class, .... The Postgres test must claim a real queued job and assert the claimed row's fields.
+- Export PostgresCivilIdOcrStore (and its option type, if any) from packages/db/src/profile/index.ts in one contiguous block next to the other profile stores. Consumers import it from that area path, never through a deep relative path into packages/db/src.
+- packages/profile/test/civil-id-ocr-mutations.mjs must require each mutant to die by an AssertionError in its named test, as packages/profile/test/mutations.mjs does: assert the named test reports not ok, and that the output has code: 'ERR_ASSERTION' and name: 'AssertionError'. The item 5 mutant died by an Error thrown from CivilIdVault.open: await that call inside the test and assert on its result, or on its rejection with assert.rejects, so a thrown Error fails an assertion and not the runner. The item 4 mutant must be "a photo with no readable text is marked failed" (it must stay unreadable and not be retried as failed), not a flip of unreadable: false. Never drop or weaken a mutant to make the script pass.
+- Smaller points from the same review: the five-minute throttle on beginSweep must not also delay claiming queued jobs; do not assume a single DOCUMENT_ORG_ID in the statement that supersedes a job when its document is removed; make civil-id-reads.test.mjs remove its temporary directory when it finishes; and do not write a second copy of the Kuwait date helper where an exported one can be used.`;
+const RECUT_560_CONTRACTS = Object.fromEntries(Object.entries(RECUT_560).map(([from, to]) => {
+  const base = RECUT_549_CONTRACTS[from];
+  let brief = recut560(base.brief);
+  if (from === "SHU-560") brief = replaceOnce(brief, "\n- Before you finish,", `${SHU566_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-560"
+    ? "after its revisions ran out on a final BLOCK for an ambiguous RETURNING column in its claim, a missing profile-area export and mutants dying by thrown errors, all three spelled out"
+    : "because its installed lane waited on SHU-560, which stopped";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut560(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
 // SHU-563: a Sentry finding on SHU-558's pull request (profile-avatar.ts)
 // showed that every candidate document read, list, issueDelivery and deliver,
 // runs in R2SnapshotStore's one global transaction: SELECT ... FOR UPDATE on
@@ -6702,7 +6736,7 @@ const SHU564_CONTRACT = { "SHU-564": Object.freeze({
   acceptance: SHU564_ACCEPTANCE,
   brief: SHU564_BRIEF,
 }) };
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT });
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
