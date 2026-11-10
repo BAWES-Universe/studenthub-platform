@@ -6610,6 +6610,47 @@ const RECUT_560_CONTRACTS = Object.fromEntries(Object.entries(RECUT_560).map(([f
     brief,
   })];
 }));
+// SHU-559 (profile completeness) stopped with its revisions used up on a final
+// BLOCK at 3404ca9: web-ui.ts hard-coded the old row labels when the fields
+// were not derived, which broke the U3A_PROVENANCE tests in
+// profile-journey.test.ts; and its gateway module listed documents on the JSON
+// path, which SHU-558's test in documents-page.test.ts pins at zero document
+// reads. The contract asked for both JSON and HTML to carry derived values
+// from the one documents list SHU-558 makes, but that list is made only for
+// HTML, so the contract itself was contradictory. SHU-570 is SHU-559's
+// contract with the derived values on the HTML path only, JSON unchanged, the
+// two test files in its paths, and the review's non-blocking points pinned in
+// its acceptance. SHU-558 has landed, so it waits on nothing.
+const RECUT_559 = Object.freeze({ "SHU-559": "SHU-570" });
+const recut559 = (text) => text.replace(/\bSHU-559\b/g, (id) => RECUT_559[id]);
+const SHU570_EXTRA_PATHS = Object.freeze(["apps/gateway/test/profile-journey.test.ts", "apps/gateway/test/documents-page.test.ts"]);
+const SHU570_REVIEW = `
+- The last run of this card (SHU-559) was refused at review. Fix these, and read them as part of the contract; where they differ from the text above, they win.
+- JSON stays as it is. apps/gateway/src/profile-avatar.ts lists documents only for an HTML GET /profile, and apps/gateway/test/documents-page.test.ts pins that a JSON GET /profile makes no documents list and no delivery (the loop over 'application/json,text/html' and 'text/html;q=0'). The last run listed documents on the JSON path and failed that test. Derive completeness on the HTML path only, from the list profile-avatar.ts already made (currentProfileAvatar()), never a second list. A JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them today. Do not change that test's assertions.
+- Labels come only from the copy. The last run made web-ui.ts print the old 'Imported profile completeness' and 'Imported profile requirements' words (and the Arabic) itself when the fields were not derived, overriding apps/gateway/src/ui/profile-copy.ts, and the U3A_PROVENANCE tests in apps/gateway/test/profile-journey.test.ts failed. Change the two labels only in profile-copy.ts (field.isProfileCompleted and field.pendingFields, English and Arabic); web-ui.ts takes every row label from PROFILE_COPY and has no special label for these rows. profile-journey.test.ts must pass unchanged.
+- After any platform write, applyPreferences in packages/profile/src/profile.ts replaces the imported isProfileCompleted and pendingFields with not_recorded, so the imported pending list is gone. From then on phone, civil_id, civil_expiry and kuwaiti_mother are decided by their live values only (a written phone, the civil ID store's recorded number and expiry, a stored Yes or No for Kuwaiti mother), and one with no live value counts as missing, never as met. Before any write, a live value still wins, and the imported pending list decides only a requirement with no live value.
+- Tests the review asked for: each checklist item's words and its target are asserted together (the list item that carries a requirement's words holds exactly that requirement's href, in both languages), not only that the hrefs appear on the page; the identity_reference mutant puts identity_reference back and changes nothing else (it must not work by deleting nationality or any other requirement); and phone, civil_id, civil_expiry and kuwaiti_mother each have positive fixtures where they count as met, from a live value and, before any write, from an imported pending list that does not name them.
+- apps/gateway/test/profile-journey.test.ts and apps/gateway/test/documents-page.test.ts are in your paths so you can add tests there; keep every existing test in them as it is.`;
+const SHU570_ACCEPTANCE_REVIEW = " (Review) Q14_4_JSON: a JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them; documents-page.test.ts's JSON assertions pass unchanged; the checklist and the derived rows are HTML only. Q14_4_LABELS: web-ui.ts takes both row labels from PROFILE_COPY only, and profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged. Q14_4_CHECKLIST asserts each list item's words and target together, in English and Arabic. Q14_4_RULES has positive fixtures where phone, civil_id, civil_expiry and kuwaiti_mother count as met, from a live value and, before any write, from an imported pending list that does not name them; after one unrelated platform write wipes the imported list, each of the four with no live value counts as missing and one with a live value counts as met. The identity_reference mutant puts identity_reference back and changes no other requirement.";
+const RECUT_559_CONTRACTS = Object.fromEntries(Object.entries(RECUT_559).map(([from, to]) => {
+  const base = RECUT_549_CONTRACTS[from];
+  let brief = recut559(base.brief);
+  brief = replaceOnce(brief, "- The projection returned by GET /profile in both JSON and HTML gains real", "- The projection rendered by GET /profile as HTML (never JSON; see below) gains real", `${to} HTML only`);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU570_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  brief = replaceOnce(brief, "- apps/gateway/test/profile-kit.test.ts\n", `- apps/gateway/test/profile-kit.test.ts\n${SHU570_EXTRA_PATHS.map((path) => `- ${path}\n`).join("")}`, `${to} paths`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  let acceptance = recut559(base.acceptance);
+  acceptance = replaceOnce(acceptance, "GET /profile as JSON and as HTML both carry isProfileCompleted", "GET /profile as HTML carries isProfileCompleted", `${to} acceptance HTML only`);
+  acceptance = replaceOnce(acceptance, "in both the JSON and the HTML path (Q14_4_SHOWN)", "in the HTML path, while a JSON read makes no documents list (Q14_4_SHOWN)", `${to} acceptance reads`);
+  const paths = Object.freeze([...base.initial_build_paths, ...SHU570_EXTRA_PATHS]);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance}${SHU570_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id after its revisions ran out on a final BLOCK for a hard-coded label override, a documents list on the JSON path that the contract itself asked for, and missing tests, all spelled out; ${from} never lands.`,
+    brief,
+  })];
+}));
 // SHU-563: a Sentry finding on SHU-558's pull request (profile-avatar.ts)
 // showed that every candidate document read, list, issueDelivery and deliver,
 // runs in R2SnapshotStore's one global transaction: SELECT ... FOR UPDATE on
@@ -6737,7 +6778,7 @@ const SHU564_CONTRACT = { "SHU-564": Object.freeze({
   acceptance: SHU564_ACCEPTANCE,
   brief: SHU564_BRIEF,
 }) };
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS });
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
