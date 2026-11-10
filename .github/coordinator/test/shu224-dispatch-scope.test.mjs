@@ -557,6 +557,8 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.deepEqual([...contracts["SHU-576"].initial_build_paths, ...contracts["SHU-577"].initial_build_paths].sort(), [...contracts["SHU-570"].initial_build_paths, "apps/gateway/test/profile-completeness-mutations.mjs"].sort(), "SHU-224: the two halves of SHU-570 share its paths between them, and SHU-577 adds its gateway mutation script");
   assert.ok(contracts["SHU-577"].initial_build_paths.includes("apps/gateway/test/profile-completeness-mutations.mjs"), "SHU-224: SHU-577 may write the gateway mutation script its acceptance requires");
   assert.match(contracts["SHU-577"].acceptance, /\(6\) mutants [^;]*in apps\/gateway\/test\/profile-completeness-mutations\.mjs/, "SHU-224: SHU-577's acceptance names that script");
+  assert.match(contracts["SHU-577"].acceptance, /no part of the HTML page says complete; JSON follows item \(5\)/, "SHU-224: SHU-577's failure clause covers the HTML page and leaves JSON to item (5)");
+  assert.doesNotMatch(contracts["SHU-577"].brief, /no part of the page or JSON says complete/, "SHU-224: SHU-577 never says JSON must not say complete");
   assert.match(contracts["SHU-577"].acceptance, /Q14_4_JSON: a JSON GET \/profile makes no documents list, no delivery and no completeness read/, "SHU-224: SHU-577 keeps JSON GET /profile at zero document reads");
   assert.match(contracts["SHU-573"].acceptance, /a photo uploaded after it is queued, read and flagged/, "SHU-224: SHU-573 reads and flags a photo uploaded after the baseline");
   assert.match(contracts["SHU-573"].acceptance, /the current-suggestion read never returns a baseline job/, "SHU-224: SHU-573 never shows a baseline job as a suggestion");
