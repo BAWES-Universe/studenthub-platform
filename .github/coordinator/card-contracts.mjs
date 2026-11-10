@@ -6778,7 +6778,109 @@ const SHU564_CONTRACT = { "SHU-564": Object.freeze({
   acceptance: SHU564_ACCEPTANCE,
   brief: SHU564_BRIEF,
 }) };
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS });
+// The 9a6b9fd queue finished with two stops. SHU-566 (civil ID reading) stopped
+// when its builder returned FAILED and pushed nothing: the full test runner
+// could not spawn in its sandbox (spawnSync EPERM), and a builder FAILED has no
+// route, so the card stopped and SHU-567 and SHU-568, which wait on it, with it.
+// SHU-573 to SHU-575 re-cut them; SHU-573's brief tells the builder to hand in
+// its work when only the sandbox stops the full run, and makes the baseline
+// marker mandatory (CodeRabbit on #458). SHU-570 (profile completeness) stopped
+// a second time with its revisions used up, so it is split: SHU-576 builds the
+// pure rules in packages/profile, and SHU-577 gathers the evidence and shows
+// the checklist on My profile, waiting on SHU-576. Each states the faults of
+// SHU-570's final BLOCK at 2b4c629.
+const SANDBOX_FINISH = "Finish with npm run typecheck and npm test passing, run to the end. If the full npm test cannot start in your sandbox (for example the runner's spawnSync fails with EPERM) or a test cannot run there (for example because it opens a network listener), run npm run typecheck and every focused suite for the files you changed, say in your final message exactly which suites could not run and why, and still commit your work and hand in a BUILD_READY result: never return FAILED because of a sandbox limit, because a FAILED result stops the card with no way to continue, while the box's CI and review run the full suite. Do not work around or change a test that cannot run. In your final message, list the files you changed, how each acceptance item is pinned, and answer S1 for each value you write or record.";
+const finishWithSandbox = (brief, name) => {
+  const at = brief.indexOf("\n\nFinish with");
+  if (at < 0 || brief.indexOf("\n\nFinish with", at + 1) >= 0) throw new Error(`${name}: expected exactly one finishing paragraph`);
+  return `${brief.slice(0, at)}\n\n${SANDBOX_FINISH}`;
+};
+const RECUT_566 = Object.freeze({ "SHU-566": "SHU-573", "SHU-567": "SHU-574", "SHU-568": "SHU-575" });
+const recut566 = (text) => text.replace(/\bSHU-(566|567|568)\b/g, (id) => RECUT_566[id]);
+const SHU573_BASELINE_FROM = "It records in the same transaction that the baseline has been taken (a one-row marker, or the baseline jobs themselves, in migration 0218), so the baseline happens once.";
+const SHU573_BASELINE_TO = "It records in the same transaction that the baseline has been taken, in a one-row marker table that migration 0218 creates; the marker is mandatory and is never inferred from the job rows, so the baseline happens once even when the store held no photos at all. With an empty store, the first sweep writes the marker and no job; a photo uploaded after that is new, and is queued, read and flagged as the contract says. Baseline jobs are never a suggestion: the read of a person's current suggestion skips them.";
+const RECUT_566_CONTRACTS = Object.fromEntries(Object.entries(RECUT_566).map(([from, to]) => {
+  const base = RECUT_560_CONTRACTS[from];
+  let brief = recut566(base.brief);
+  if (from === "SHU-566") brief = replaceOnce(brief, SHU573_BASELINE_FROM, SHU573_BASELINE_TO, `${to} mandatory baseline marker`);
+  brief = finishWithSandbox(brief, to);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-566"
+    ? "after its builder returned FAILED and pushed nothing because the full test runner could not spawn in its sandbox, with a rule to hand in the work when only the sandbox stops the full run"
+    : "because its installed lane waited on SHU-566, which stopped";
+  const baseline = from === "SHU-566" ? " (Baseline marker) OCR_BASELINE also proves: the marker row is written in the same transaction as the baseline jobs; with an empty store, the first sweep writes the marker and no job, and a photo uploaded after it is queued, read and flagged; a second sweep writes no baseline; and the current-suggestion read never returns a baseline job." : "";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut566(base.acceptance)}${baseline} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-570 split into SHU-576 (rules) and SHU-577 (My profile).
+const SHU570 = RECUT_559_CONTRACTS["SHU-570"];
+const shu570Items = (() => {
+  const text = SHU570.acceptance;
+  const items = {};
+  for (let n = 1; n <= 6; n += 1) {
+    const start = text.indexOf(`(${n}) `);
+    const end = n < 6 ? text.indexOf(`; (${n + 1}) `) : text.indexOf(" Appending route names");
+    if (start < 0 || end < start) throw new Error(`SHU-570 acceptance item ${n} not found`);
+    items[n] = text.slice(start + `(${n}) `.length, end);
+  }
+  return items;
+})();
+const SHU576_PATHS = Object.freeze([
+  "packages/profile/src/completeness.ts",
+  "packages/profile/src/index.ts",
+  "packages/profile/src/types.ts",
+  "packages/profile/test/completeness.test.ts",
+  "packages/profile/test/completeness-mutations.mjs",
+]);
+const SHU577_PATHS = Object.freeze([...SHU570.initial_build_paths.filter((path) => !SHU576_PATHS.includes(path)), "apps/gateway/test/profile-completeness-mutations.mjs"]);
+const SHU570_RULES_LESSONS = `
+- Imported nationality has no catalogue id. The imported snapshot carries nationality only as a display name (packages/profile/src/profile.ts, PROFILE_FIELD_SPECS.nationality); only a written nationality has a catalogue id (editValue). The last run threw on an imported-only nationality. Rules: a non-empty imported nationality name meets the nationality requirement; with no catalogue id, the Kuwaiti nationality cannot be recognised (never by name), so Kuwaiti mother is required only when the imported pending list, while it is still available, names it; once a platform write has wiped the list, Kuwaiti mother with no catalogue id and no stored answer is not required. A catalogue id that is not in the catalogue choices makes the result unavailable (check_failed). The derivation never throws: every input it cannot use yields a missing item or an unavailable result, as these rules say.
+- Answers can be booleans. Driving licence and Kuwaiti mother are stored as booleans or codes, not text: the last run's presence check called .trim() on false, so its mutant died by a TypeError and not by an assertion. The presence check handles every field type explicitly (a boolean false or a No is an answer; empty or whitespace-only text is not), and every mutant, including those on boolean fields, dies by an AssertionError in its named test (the script asserts code: 'ERR_ASSERTION' and name: 'AssertionError', as packages/profile/test/mutations.mjs does).
+- After any platform write, applyPreferences replaces the imported isProfileCompleted and pendingFields with not_recorded, so the imported pending list is gone. From then on phone, civil_id, civil_expiry and kuwaiti_mother are decided by their live values only (a written phone, the civil ID store's recorded number and expiry, a stored Yes or No), and one with no live value counts as missing, except Kuwaiti mother with no catalogue id as above. Before any write, a live value still wins, and the imported pending list decides only a requirement with no live value.`;
+const SHU576_SPLIT = `
+- This card is part 1 of 2 of SHU-570, which stopped twice as one card. Build only the pure rules in packages/profile: an exported function that takes the profile projection, the principal's email presence, the active education and skill counts, the document types on file, the civil ID's recorded number and expiry (booleans), the nationality's catalogue code when known, and a marker for each source that failed or is not configured, and returns either the ordered list of missing closed-name requirements or unavailable with its reason; plus the derived FieldFreshness kind and the types it needs. Change no file outside your paths: no gateway file, no copy, no page. SHU-577 gathers the evidence, renders the checklist and links each item, and waits on this card, so name the export and its input type plainly and say them in your final message.
+- Where the text above asks for the checklist, the page, the copy, the links, the gateway module, the reads or the JSON and HTML paths, that is SHU-577's work; this card meets it by giving SHU-577 a function that needs nothing more.${SHU570_RULES_LESSONS}`;
+const SHU577_LESSONS = `
+- This card is part 2 of 2 of SHU-570, which stopped twice as one card. SHU-576 has landed the pure rules in packages/profile/src/completeness.ts (read it at the bound head; its final message names the export and its input). Do not change packages/profile: gather the evidence, call SHU-576's function, and render the result. If the function cannot express something this card needs, say so in your final message rather than editing it.
+- A completeness failure never changes the page's status. The last run sent the principal read through the completeness gatherer (wiring/profile.ts), and the gatherer returned undefined on any rejection, so a failed background-records or choices read turned My profile into a 404 through the not_found branch of the GET /profile route in apps/gateway/src/index.ts. Keep the principal read and readOwn exactly where they are; the gatherer runs after a found profile, catches each source's failure on its own, and turns it into an unavailable result ('Couldn't check right now'). The page answers with the same status, 200, whatever the evidence does, and a failure is never a 404 or a 503.
+- The last run's gateway test rendered a hard-coded 200 profile and called the renderer itself, so it passed without the route. Every gateway acceptance test makes a real GET /profile through createGatewayServer and the route, with counting fakes behind the real wiring, as apps/gateway/test/documents-page.test.ts does.
+- TypeScript narrowing does not reach inside a callback or an immediately invoked function: the last run narrowed the evidence inside one in web-ui.ts and likely failed typecheck (TS2345). Hoist the narrowed value into a const before you use it.
+- JSON stays as it is. apps/gateway/src/profile-avatar.ts lists documents only for an HTML GET /profile, and apps/gateway/test/documents-page.test.ts pins that a JSON GET /profile makes no documents list and no delivery. Derive completeness on the HTML path only, from the list profile-avatar.ts already made (currentProfileAvatar()), never a second list. A JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them today. Wherever the text above says JSON and HTML, read HTML.
+- Labels come only from the copy. Change the two row labels only in apps/gateway/src/ui/profile-copy.ts (field.isProfileCompleted and field.pendingFields, English and Arabic); web-ui.ts takes every row label from PROFILE_COPY and has no special label for these rows. apps/gateway/test/profile-journey.test.ts must pass unchanged.
+- Test each checklist item's words and its target together: the list item that carries a requirement's words holds exactly that requirement's href, in both languages, not only that the hrefs appear somewhere on the page.
+- apps/gateway/test/profile-journey.test.ts and apps/gateway/test/documents-page.test.ts are in your paths so you can add tests there; keep every existing test in them as it is.`;
+const SHU576_ACCEPTANCE = `(1) ${shu570Items[2].replace("(Q14_4_RULES)", "")}, the rules being those of the brief, including Kuwaiti mother for a nationality with no catalogue id, the wiped imported list after a platform write, positive fixtures where phone, civil_id, civil_expiry and kuwaiti_mother count as met (from a live value and, before any write, from an imported list that does not name them), and a test that every input type, booleans included, gives a result and never throws (Q14_4_RULES); (2) any failed or unconfigured source gives unavailable with its distinct reason and never an empty list, and a catalogue id missing from the choices gives check_failed (Q14_4_DERIVED); (3) packages/profile/test/profile.test.ts (including SHU371_PROJECTION) and packages/profile/test/mutations.mjs pass unchanged, and OwnProfileRepository.readOwn returns exactly what it returns today (Q14_4_COMPAT); (4) mutants in packages/profile/test/completeness-mutations.mjs (compiled completeness.js, needles from the built dist file, each binding exactly once) die by an AssertionError in their named tests: treat a No answer or a boolean false as missing, require Kuwaiti mother for KW or by name, let the imported list satisfy a document requirement, report complete when a source failed, keep identity_reference (putting it back and changing no other requirement); nothing outside the card's paths changes. SHU-576 is the rules half of SHU-570's contract, split under a fresh id after SHU-570 stopped twice with its revisions used up; SHU-570 never lands.`;
+const SHU577_ACCEPTANCE = `(1) ${shu570Items[1]}; each item's words and target are asserted together in English and Arabic; (2) ${shu570Items[3].replace("no part of the page or JSON says complete", "no part of the HTML page says complete; JSON follows item (5)").replace("(Q14_4_DERIVED)", "with the evidence gathered after a found profile, so My profile still answers 200 when any source fails (Q14_4_DERIVED)")}; (3) ${shu570Items[4]}; (4) ${shu570Items[5]}; (5) Q14_4_JSON: a JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them; documents-page.test.ts's JSON assertions pass unchanged; Q14_4_LABELS: web-ui.ts takes both row labels from PROFILE_COPY only, and profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged; Q14_4_STATUS: with each of the background-records read, the choices read, the documents list and the civil ID read failing in turn, a real GET /profile through the route answers 200 with 'Couldn't check right now', never 404 or 503, and the principal read is not part of the gatherer; every gateway test in this card makes a real GET /profile through createGatewayServer and the route, never a renderer call with a hard-coded profile; (6) mutants of apps/gateway/src/profile-completeness.ts and web-ui.ts, in apps/gateway/test/profile-completeness-mutations.mjs (compiled dist files, needles from the built files, each binding exactly once, as apps/gateway/test/documents-page-mutations.mjs does), or checked by hand and reported if they do not bind: a second documents list, storing the result, dropping an item's link or changing its target, and a gatherer failure that changes the status, each dying by an AssertionError in its named test; every existing test and mutant of the profile package and the gateway still passes unchanged except language-preference.test.ts line 86, packages/profile is not changed, and nothing outside the card's paths changes. Appending route names and bumping the length in apps/gateway/test/routes-order.test.ts, and bumping the U1_COPY key count in apps/gateway/test/profile-kit.test.ts, exactly as the brief says counts as no change to an existing test. SHU-577 is the My profile half of SHU-570's contract, split under a fresh id after SHU-570 stopped twice with its revisions used up, and it waits on SHU-576, the rules half; SHU-570 never lands.`;
+const splitBrief = (to, opening, extra, paths, acceptance) => {
+  let brief = SHU570.brief.replace(/\bSHU-570\b/g, to);
+  const firstBreak = brief.indexOf("\n\n");
+  brief = `${opening}${brief.slice(firstBreak)}`;
+  const acceptanceAt = brief.indexOf("\nAcceptance. ");
+  const standingAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, acceptanceAt)}\nAcceptance. Tests are named with their token first and a space after it; every mutation named below makes its named test fail in the card's mutations script and passes unmutated.\n${acceptance}${brief.slice(standingAt)}`;
+  const reviewAt = brief.indexOf("\n- The last run of this card (SHU-559)");
+  const finishAt = brief.indexOf("\n- Before you finish,");
+  if (reviewAt < 0 || finishAt < reviewAt) throw new Error(`${to}: SHU-570 review section not found`);
+  brief = `${brief.slice(0, reviewAt)}${extra}${brief.slice(finishAt)}`;
+  const pathsAt = brief.indexOf("\n\nYour paths");
+  const pathsEnd = brief.indexOf("\n\nOut of scope:");
+  const heading = brief.slice(pathsAt, brief.indexOf("\n", pathsAt + 2));
+  brief = `${brief.slice(0, pathsAt)}${heading}\n${paths.map((path) => `- ${path}`).join("\n")}${brief.slice(pathsEnd)}`;
+  brief = brief.replace("the GET /profile branch: JSON and HTML both flow through it;", "the GET /profile branch: JSON and HTML both flow through it, and only the HTML path changes;");
+  return finishWithSandbox(brief, to);
+};
+const SHU576_BRIEF = splitBrief("SHU-576", "Card SHU-576: the platform works out, legacy rule by rule, which profile requirements a person is still missing, as a pure function in packages/profile that My profile will use (part 1 of 2 of the profile completeness card; legacy isInCompleteProfile; risk R2).", SHU576_SPLIT, SHU576_PATHS, SHU576_ACCEPTANCE);
+const SHU577_BRIEF = splitBrief("SHU-577", "Card SHU-577: a person sees on My profile either 'Profile complete' or a checklist of what is still missing, each item linking to the place that fixes it, using the rules SHU-576 built (part 2 of 2 of the profile completeness card; S2 last step: legacy isInCompleteProfile; risk R2).", SHU577_LESSONS, SHU577_PATHS, SHU577_ACCEPTANCE);
+const SPLIT_570_CONTRACTS = Object.freeze({
+  "SHU-576": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU576_PATHS, revision_paths: SHU576_PATHS, acceptance: SHU576_ACCEPTANCE, brief: SHU576_BRIEF }),
+  "SHU-577": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU577_PATHS, revision_paths: SHU577_PATHS, acceptance: SHU577_ACCEPTANCE, brief: SHU577_BRIEF }),
+});
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
