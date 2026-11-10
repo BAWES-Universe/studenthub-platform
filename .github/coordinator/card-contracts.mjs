@@ -6575,7 +6575,210 @@ const RECUT_549_CONTRACTS = Object.fromEntries(Object.entries(RECUT_549).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS });
+// SHU-560 (civil ID photo reading) stopped with its revisions used up on a
+// final BLOCK at 465dbd3: its claim UPDATE ... FROM picked ... RETURNING named
+// an unqualified id that picked also has (Postgres 42702), so the Postgres test
+// aborted and the worker's catch swallowed the error in production; it did not
+// export PostgresCivilIdOcrStore from the profile area; and two mutants died by
+// thrown errors, one of them against the wrong behaviour. SHU-561 and SHU-562
+// wait on it, so all three leave the queue: SHU-566 is SHU-560's contract with
+// a brief section on those three faults, and SHU-567 and SHU-568 are SHU-561
+// and SHU-562 with their contracts unchanged but for the ids. The review
+// verified everything else, so the rest of the contract stays as it is.
+const RECUT_560 = Object.freeze({ "SHU-560": "SHU-566", "SHU-561": "SHU-567", "SHU-562": "SHU-568" });
+const recut560 = (text) => text.replace(/\bSHU-(560|561|562)\b/g, (id) => RECUT_560[id]);
+const SHU566_REVIEW = `
+- The last run of this card (SHU-560) was refused at review for three faults. Fix all three; the review verified the rest (parser, in-memory store, Textract adapter, migration 0218, S1 and S2), so keep those as the contract states them.
+- The claim in packages/db/src/postgres-civil-id-ocr-store.ts, an UPDATE civil_id_ocr_jobs j ... FROM picked ... RETURNING ..., returned an unqualified id::text while picked also has an id column. Postgres refuses that with 42702 (column reference is ambiguous), so the Postgres test aborted, and in production the worker's catch would swallow the error and never read a photo. Qualify every column in every RETURNING and SELECT list of a statement that joins or uses FROM (j.id::text and so on), as packages/db/src/postgres-email-outbox-store.ts does with RETURNING o.id, o.class, .... The Postgres test must claim a real queued job and assert the claimed row's fields.
+- Export PostgresCivilIdOcrStore (and its option type, if any) from packages/db/src/profile/index.ts in one contiguous block next to the other profile stores. Consumers import it from that area path, never through a deep relative path into packages/db/src.
+- packages/profile/test/civil-id-ocr-mutations.mjs must require each mutant to die by an AssertionError in its named test, as packages/profile/test/mutations.mjs does: assert the named test reports not ok, and that the output has code: 'ERR_ASSERTION' and name: 'AssertionError'. The item 5 mutant died by an Error thrown from CivilIdVault.open: await that call inside the test and assert on its result, or on its rejection with assert.rejects, so a thrown Error fails an assertion and not the runner. The item 4 mutant must be "a photo with no readable text is marked failed" (it must stay unreadable and not be retried as failed), not a flip of unreadable: false. Never drop or weaken a mutant to make the script pass.
+- First-deployment baseline (a gap in the contract, found by review of this re-cut). Legacy flagged a civil ID for review only when its photo changed, and the import already maps legacy candidate_civil_need_verification to needs_review. So the very first sweep, which finds no job rows, must not treat every stored photo as new. That sweep records each current front and back version as already seen, as a baseline job in a terminal state of its own, with no read, no reader call, no needs_review change and no revision bump. It records in the same transaction that the baseline has been taken (a one-row marker, or the baseline jobs themselves, in migration 0218), so the baseline happens once. Every version uploaded after that is new and follows the contract as written. Pin it with OCR_BASELINE: photos already in the store and no job rows; the first sweep reads nothing, calls no reader, and leaves every civil ID row's needs_review and revision unchanged; a photo uploaded after it is queued, read and flagged as the contract says; a second sweep adds no baseline rows. Add a mutant that drops the baseline, so the first sweep queues and flags every stored photo, and it must die by an AssertionError in OCR_BASELINE.
+- Smaller points from the same review: the five-minute throttle on beginSweep must not also delay claiming queued jobs; do not assume a single DOCUMENT_ORG_ID in the statement that supersedes a job when its document is removed; make civil-id-reads.test.mjs remove its temporary directory when it finishes; and do not write a second copy of the Kuwait date helper where an exported one can be used.`;
+const RECUT_560_CONTRACTS = Object.fromEntries(Object.entries(RECUT_560).map(([from, to]) => {
+  const base = RECUT_549_CONTRACTS[from];
+  let brief = recut560(base.brief);
+  if (from === "SHU-560") brief = replaceOnce(brief, "\n- Before you finish,", `${SHU566_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-560"
+    ? "after its revisions ran out on a final BLOCK for an ambiguous RETURNING column in its claim, a missing profile-area export and mutants dying by thrown errors, all three spelled out"
+    : "because its installed lane waited on SHU-560, which stopped";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut560(base.acceptance)}${from === "SHU-560" ? " (Baseline) OCR_BASELINE: the first sweep, with photos already stored and no job rows, records each current front and back version as a baseline job, reads nothing, calls no reader and changes no civil ID row's needs_review or revision; a version uploaded after the baseline is queued, read and flagged as above; the baseline is taken once; a mutant that drops it dies by an AssertionError in OCR_BASELINE." : ""} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-559 (profile completeness) stopped with its revisions used up on a final
+// BLOCK at 3404ca9: web-ui.ts hard-coded the old row labels when the fields
+// were not derived, which broke the U3A_PROVENANCE tests in
+// profile-journey.test.ts; and its gateway module listed documents on the JSON
+// path, which SHU-558's test in documents-page.test.ts pins at zero document
+// reads. The contract asked for both JSON and HTML to carry derived values
+// from the one documents list SHU-558 makes, but that list is made only for
+// HTML, so the contract itself was contradictory. SHU-570 is SHU-559's
+// contract with the derived values on the HTML path only, JSON unchanged, the
+// two test files in its paths, and the review's non-blocking points pinned in
+// its acceptance. SHU-558 has landed, so it waits on nothing.
+const RECUT_559 = Object.freeze({ "SHU-559": "SHU-570" });
+const recut559 = (text) => text.replace(/\bSHU-559\b/g, (id) => RECUT_559[id]);
+const SHU570_EXTRA_PATHS = Object.freeze(["apps/gateway/test/profile-journey.test.ts", "apps/gateway/test/documents-page.test.ts"]);
+const SHU570_REVIEW = `
+- The last run of this card (SHU-559) was refused at review. Fix these, and read them as part of the contract; where they differ from the text above, they win.
+- JSON stays as it is. apps/gateway/src/profile-avatar.ts lists documents only for an HTML GET /profile, and apps/gateway/test/documents-page.test.ts pins that a JSON GET /profile makes no documents list and no delivery (the loop over 'application/json,text/html' and 'text/html;q=0'). The last run listed documents on the JSON path and failed that test. Derive completeness on the HTML path only, from the list profile-avatar.ts already made (currentProfileAvatar()), never a second list. A JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them today. Do not change that test's assertions.
+- Labels come only from the copy. The last run made web-ui.ts print the old 'Imported profile completeness' and 'Imported profile requirements' words (and the Arabic) itself when the fields were not derived, overriding apps/gateway/src/ui/profile-copy.ts, and the U3A_PROVENANCE tests in apps/gateway/test/profile-journey.test.ts failed. Change the two labels only in profile-copy.ts (field.isProfileCompleted and field.pendingFields, English and Arabic); web-ui.ts takes every row label from PROFILE_COPY and has no special label for these rows. profile-journey.test.ts must pass unchanged.
+- After any platform write, applyPreferences in packages/profile/src/profile.ts replaces the imported isProfileCompleted and pendingFields with not_recorded, so the imported pending list is gone. From then on phone, civil_id, civil_expiry and kuwaiti_mother are decided by their live values only (a written phone, the civil ID store's recorded number and expiry, a stored Yes or No for Kuwaiti mother), and one with no live value counts as missing, never as met. Before any write, a live value still wins, and the imported pending list decides only a requirement with no live value.
+- Tests the review asked for: each checklist item's words and its target are asserted together (the list item that carries a requirement's words holds exactly that requirement's href, in both languages), not only that the hrefs appear on the page; the identity_reference mutant puts identity_reference back and changes nothing else (it must not work by deleting nationality or any other requirement); and phone, civil_id, civil_expiry and kuwaiti_mother each have positive fixtures where they count as met, from a live value and, before any write, from an imported pending list that does not name them.
+- apps/gateway/test/profile-journey.test.ts and apps/gateway/test/documents-page.test.ts are in your paths so you can add tests there; keep every existing test in them as it is.`;
+const SHU570_ACCEPTANCE_REVIEW = " (Review) Q14_4_JSON: a JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them; documents-page.test.ts's JSON assertions pass unchanged; the checklist and the derived rows are HTML only. Q14_4_LABELS: web-ui.ts takes both row labels from PROFILE_COPY only, and profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged. Q14_4_CHECKLIST asserts each list item's words and target together, in English and Arabic. Q14_4_RULES has positive fixtures where phone, civil_id, civil_expiry and kuwaiti_mother count as met, from a live value and, before any write, from an imported pending list that does not name them; after one unrelated platform write wipes the imported list, each of the four with no live value counts as missing and one with a live value counts as met. The identity_reference mutant puts identity_reference back and changes no other requirement.";
+const RECUT_559_CONTRACTS = Object.fromEntries(Object.entries(RECUT_559).map(([from, to]) => {
+  const base = RECUT_549_CONTRACTS[from];
+  let brief = recut559(base.brief);
+  brief = replaceOnce(brief, "- The projection returned by GET /profile in both JSON and HTML gains real", "- The projection rendered by GET /profile as HTML (never JSON; see below) gains real", `${to} HTML only`);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU570_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  brief = replaceOnce(brief, "- apps/gateway/test/profile-kit.test.ts\n", `- apps/gateway/test/profile-kit.test.ts\n${SHU570_EXTRA_PATHS.map((path) => `- ${path}\n`).join("")}`, `${to} paths`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  let acceptance = recut559(base.acceptance);
+  acceptance = replaceOnce(acceptance, "GET /profile as JSON and as HTML both carry isProfileCompleted", "GET /profile as HTML carries isProfileCompleted", `${to} acceptance HTML only`);
+  acceptance = replaceOnce(acceptance, "in both the JSON and the HTML path (Q14_4_SHOWN)", "in the HTML path, while a JSON read makes no documents list (Q14_4_SHOWN)", `${to} acceptance reads`);
+  const paths = Object.freeze([...base.initial_build_paths, ...SHU570_EXTRA_PATHS]);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance}${SHU570_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id after its revisions ran out on a final BLOCK for a hard-coded label override, a documents list on the JSON path that the contract itself asked for, and missing tests, all spelled out; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-563: a Sentry finding on SHU-558's pull request (profile-avatar.ts)
+// showed that every candidate document read, list, issueDelivery and deliver,
+// runs in R2SnapshotStore's one global transaction: SELECT ... FOR UPDATE on
+// candidate_document_snapshot, hydration of every stored document from R2, an
+// audit entry appended to the snapshot's lifecycle.audit (never trimmed), and a
+// rewrite of the whole jsonb row. My documents already did this per view, and
+// the avatar now does it on My profile. Past 16 MiB the row refuses every
+// write, so every document operation fails. SHU-563 moves read audits to their
+// own append-only table and gives the PostgreSQL store a read path with no
+// lock, no rewrite and no hydration of documents the read does not serve.
+export const SHU563_PATHS = Object.freeze([
+  "packages/db/migrations/0220_candidate_document_read_audit.sql",
+  "packages/private-documents/src/index.ts",
+  "packages/private-documents/src/candidate-lifecycle.ts",
+  "packages/private-documents/src/r2-storage.ts",
+  "packages/private-documents/test/read-audit.test.mjs",
+  "packages/private-documents/test/r2-postgres.test.mjs",
+  "packages/private-documents/test/read-audit-mutations.mjs",
+]);
+
+const SHU563_ACCEPTANCE = [
+  "(1) RA_NO_LOCK: with DATABASE_URL set, while another connection holds an open SELECT ... FOR UPDATE on candidate_document_snapshot, the owner's list, issueDelivery and deliver through R2DocumentStore over PostgresDocumentSnapshot each complete well inside the 5 s lock_timeout and return the right result, and they also complete while two transactions through the same PostgresDocumentSnapshot are open at once (the first holding the row inside its operation, the second waiting for it), so both writer-pool connections are busy;",
+  "(2) RA_NO_WRITE: twenty reads (list, issueDelivery and deliver) leave the snapshot row's jsonb text byte-identical and lifecycle.audit's length unchanged;",
+  "(3) RA_AUDIT_ROW: each successful read adds exactly one row to candidate_document_read_audit with its operation, principal_ref equal to the sha256 hex of the principal id (the same value the snapshot audit uses) and occurred_at; the table has only the columns id, operation, principal_ref and occurred_at, an operation outside list, issueDelivery and deliver is refused, and UPDATE, DELETE and TRUNCATE on it are refused;",
+  "(4) RA_HYDRATE: with a counting object port and documents of at least two other people stored, list and issueDelivery read no object and deliver reads exactly the one object it serves, after checking its size and digest against the snapshot's blob reference;",
+  "(5) RA_FAIL_CLOSED: when the read audit append rejects, list, issueDelivery and deliver reject as unavailable and return no metadata, URL or bytes;",
+  "(6) RA_DENIED: a read with a bad credential, by another person, or of another person's document is refused exactly as today and appends no read audit row;",
+  "(7) RA_FALLBACK: a store without the read path (FileDocumentStore and every in-memory test store) behaves exactly as today, so every existing private-documents, gateway and browser-acceptance test passes unchanged, and finalize and remove keep their transaction and their snapshot audit entries;",
+  "(8) packages/private-documents/test/read-audit-mutations.mjs applies one mutant per item (1), (3), (4), (5) and (6), each dies by an AssertionError in its named test, and the script passes unmutated; npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU563_BRIEF = `Card SHU-563: document reads stop locking and growing the shared document record (S4 hardening; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests cannot run here, so write them carefully; CI runs them with DATABASE_URL set on the card's pull request.
+
+Read first:
+- packages/private-documents/src/r2-storage.ts: SnapshotPort, PostgresDocumentSnapshot.transaction (BEGIN, lock_timeout 5s, SELECT snapshot ... FOR UPDATE, UPDATE when the JSON changed, a 16 MiB cap) and R2DocumentStore.transaction (it hydrates every stored document's bytes from R2 into the state before running the operation, then re-packs).
+- packages/private-documents/src/candidate-lifecycle.ts: list, issueDelivery and deliver, which each run in options.store.transaction, check the principal twice and the ownership, and call auditRead, which appends to s.lifecycle.audit; finalize and remove, which also append there.
+- packages/private-documents/src/index.ts: DocumentStore, FileDocumentStore and the PrivateDocuments primitive's issueDelivery, deliver and metadata.
+- packages/db/migrations/0004_create_authorization_mutation_audit.sql: the append-only triggers, including the BEFORE TRUNCATE one.
+- tools/test-runner/discover.mjs (read only): npm run test:db runs exactly packages/private-documents/test/r2-postgres.test.mjs from this package, so this card's PostgreSQL tests go in that file; a new PostgreSQL test file here would run in no lane.
+- packages/private-documents/test/r2-postgres.test.mjs: the PostgreSQL rig (runMigrations, PostgresDocumentSnapshot, R2DocumentStore with an object port, CandidateDocuments) and how it skips without DATABASE_URL. packages/private-documents/test/candidate-lifecycle-mutations.mjs: the mutation-script shape.
+
+Goal. Today each read takes the one global row lock, hydrates every person's documents from R2, appends an audit entry to the snapshot and rewrites the whole row, so every My documents and My profile view waits on one lock, and the row grows until its 16 MiB cap refuses every document operation. After this card, on the PostgreSQL store, a read takes no lock, writes nothing to the snapshot, fetches from R2 only the bytes it serves, and records its audit as one row in its own append-only table. Who may read what, and every response, stays exactly as today.
+
+Design:
+- packages/db/migrations/0220_candidate_document_read_audit.sql creates candidate_document_read_audit (id uuid primary key, operation text NOT NULL CHECK operation IN ('list','issueDelivery','deliver'), principal_ref text NOT NULL CHECK it is 64 lowercase hex characters, occurred_at timestamptz NOT NULL), an index on (principal_ref, occurred_at), a row trigger that raises on UPDATE and DELETE, and a statement-level BEFORE TRUNCATE trigger that raises too (TRUNCATE fires no DELETE trigger; follow packages/db/migrations/0004_create_authorization_mutation_audit.sql). Nothing else: no document id, link, mime type, size or bytes. Lane 1 owns 0210 to 0299 and 0220 is this card's number; do not edit any list of migrations.
+- DocumentStore (index.ts) gains one optional member, readPath: { read<T>(fn:(state:DocumentState)=>Promise<T>):Promise<T>; audit(entry:{operation:'list'|'issueDelivery'|'deliver';principalRef:string;at:number}):Promise<void> }. FileDocumentStore does not get it.
+- SnapshotPort gains optional read(): one plain SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true, with no FOR UPDATE, no transaction block and no UPDATE, and optional auditRead(entry): one INSERT into candidate_document_read_audit. PostgresDocumentSnapshot implements both on a third pool of its own (a reader pool, max 2), never on the two-connection writer pool or the journal pool: while one writer holds the row lock and another waits for it, both writer connections are taken, and a read or audit on that pool would queue behind them. close() ends the reader pool too.
+- R2DocumentStore gets readPath when its SnapshotPort has both. read runs the operation on a validated copy of the state in which each row keeps its r2: reference; the one row the operation serves is hydrated only when its bytes are needed (deliver), by reading exactly that object and checking its size and digest against packed.blobs as transaction does. The copy is never written back.
+- CandidateDocuments: when options.store.readPath exists, list, issueDelivery and deliver run in readPath.read instead of transaction, with the same two principal checks and the same ownership checks in the same order. After the result is computed and before it is returned, await readPath.audit with the same principalRef (sha256 hex of the principal id) and operation. If the audit rejects, throw LifecycleError(503, 'unavailable') and return nothing. A refused read appends no audit. Without readPath, everything stays exactly as today, including auditRead into the snapshot. finalize, remove and cleanup do not change.
+- Existing lifecycle.audit entries stay in the snapshot as they are; lifecycle-state.ts keeps accepting them. Nothing is migrated, trimmed or deleted.
+
+Tests:
+- packages/private-documents/test/read-audit.test.mjs (new, no database; build CandidateDocuments as candidate-lifecycle.test.mjs does, over an in-memory store that has a counting readPath and a counting transaction): RA_FAIL_CLOSED, RA_DENIED, a test that reads with readPath present make zero transaction calls, and RA_HYDRATE with a counting object port behind an R2DocumentStore over an in-memory SnapshotPort that has read and auditRead.
+- packages/private-documents/test/r2-postgres.test.mjs (existing; add new tests after the existing ones, under the same DATABASE_URL skip, and change no existing test): RA_NO_LOCK (first hold FOR UPDATE on the snapshot row from a second client in an open transaction and run the three reads with a short timeout; then open two transactions through the store's own PostgresDocumentSnapshot, the first parked inside its operation and the second waiting on the row, run the three reads and an audit with a short timeout, and release both well inside the 5 s lock_timeout), RA_NO_WRITE and RA_AUDIT_ROW (including that UPDATE, DELETE and TRUNCATE on the table fail and a bad operation is refused).
+- Tests are named with their token first and a space after it. Every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion (for example assert.rejects or assert.doesNotReject) and not the test runner.
+
+Mutations (packages/private-documents/test/read-audit-mutations.mjs, new, applied to the built dist files, each needle binding exactly once, each mutant run against its named test with --test-name-pattern, each required to fail with AssertionError or ERR_ASSERTION in the output): the read query gains FOR UPDATE (RA_NO_LOCK); read and auditRead use the writer pool instead of the reader pool (RA_NO_LOCK; these two and the audit-row one run only when DATABASE_URL is set, as packages/profile/test/area-mutations.mjs does); the audit INSERT is skipped (RA_AUDIT_ROW); the read path hydrates every row (RA_HYDRATE); the audit rejection is swallowed and the result returned (RA_FAIL_CLOSED); the audit is appended before the ownership check (RA_DENIED). Never drop or weaken a mutant to make the script pass.
+
+Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
+${SHU563_PATHS.map((path) => `- ${path}`).join("\n")}
+
+Out of scope: moving finalize or remove audits out of the snapshot, splitting the snapshot per person, a retention or export job for the read audit table, organization documents (apps/gateway/src/organization-documents-runtime.ts), any gateway, page or browser-acceptance file, package.json, the lockfile, and any network call, credential, staging or production access.
+
+- Before you finish, run the mutation script on the built files, and with DATABASE_URL if you can, and say in your final message which assertion kills each mutant.
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+const SHU563_CONTRACT = { "SHU-563": Object.freeze({
+  workspace_mode: "repo",
+  initial_build_paths: SHU563_PATHS,
+  revision_paths: SHU563_PATHS,
+  acceptance: SHU563_ACCEPTANCE,
+  brief: SHU563_BRIEF,
+}) };
+export const SHU564_PATHS = Object.freeze([
+  "apps/gateway/src/documents-actions-http.ts",
+  "apps/gateway/test/documents-actions-http.test.ts",
+  "apps/gateway/test/documents-actions-mutations.mjs",
+]);
+
+const SHU564_ACCEPTANCE = [
+  "(1) DA_KEY_400: a remove POST with a valid stamp whose submission has a 13-digit time and a well-formed UUID that is not version 4 (for example 1800000000000.00000000-0000-1000-8000-000000000000) answers 400 with the 'Check the form and try again.' copy, never calls remove, and never shows the unavailable copy; the same holds for a time that is not a valid instant;",
+  "(2) DA_REVOKED_401: when list, issueDelivery or remove rejects with LifecycleError code 'denied' and a fresh login.profile for the same session answers 401, the remove GET, the remove POST and the view POST answer 401 with the sign-in copy and the /login/universe?return_to= link, in English and in Arabic;",
+  "(3) DA_STILL_503: when the denial comes with login.profile still answering 200, or login.profile rejecting, the action answers 503 with the unavailable copy and no sign-in link, exactly as today; a non-denied error makes no second login.profile call;",
+  "(4) apps/gateway/test/documents-actions-mutations.mjs keeps its five existing mutants and adds one per item (1), (2) and (3), each dying by an AssertionError in its named test; every existing test in documents-actions-http.test.ts passes unchanged; npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU564_BRIEF = `Card SHU-564: a bad remove form or a session revoked mid-action shows the right message on My documents (follow-up to SHU-558; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-558. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Read first:
+- apps/gateway/src/documents-actions-http.ts: the key helper (it parses the submission and calls createIdempotencyKey), failure (401 adds the Continue with Universe link) and the catch block that maps every error that is not 400 or 409 to 503.
+- packages/idempotency-contract/src/idempotency.ts: createIdempotencyKey throws a RangeError for a time that is not a valid instant and a TypeError for a UUID that is not version 4.
+- apps/gateway/src/documents-page.ts: its catch block, which rechecks login.profile after a 'denied' error and answers 401 when the session is gone (the pattern to follow).
+- apps/gateway/test/documents-actions-http.test.ts and apps/gateway/test/documents-actions-mutations.mjs: the exchange helper, the stub service and login, and the mutation-script shape (SHU558_ACTIONS_MODULE).
+
+Goal. Two edge cases answer 503 "Documents are temporarily unavailable" today when the person can act on a better answer.
+- A remove form whose submission time or UUID the idempotency contract refuses must answer 400 "Check the form and try again", like any other malformed form. The key helper turns that refusal into LifecycleError(400, 'invalid'), either by checking for a version 4 UUID and a valid instant itself or by catching exactly the contract's RangeError and TypeError. Do not catch anything wider.
+- When a document call rejects with a LifecycleError whose code is 'denied', the session may have been revoked after the first profile check. The catch block calls login.profile({ sessionId }) once more, as documents-page.ts does. If it answers 401, the action answers 401 through failure with login, so the sign-in copy and the link show. Otherwise, or if that call rejects, it answers 503 exactly as today. Errors that are not 'denied' make no second call.
+
+Guards: no other status, copy, header, redirect, cookie or route changes; the origin check, the stamp check and the 409 path stay as they are; no new dependency; no change outside the three paths.
+
+Tests are named with their token first and a space after it, and every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion and not the runner.
+
+Mutations (add to apps/gateway/test/documents-actions-mutations.mjs, each needle binding exactly once in the built dist file, each required to fail with AssertionError or ERR_ASSERTION): the key helper lets the contract's error escape (DA_KEY_400); the 401 recheck is skipped (DA_REVOKED_401); the recheck answers 401 whatever login.profile returns (DA_STILL_503). Never drop or weaken a mutant to make the script pass.
+
+Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
+${SHU564_PATHS.map((path) => `- ${path}`).join("\n")}
+
+Out of scope: documents-page.ts, profile-avatar.ts, the private-documents package, the browser-acceptance run, organization documents, package.json and the lockfile.
+
+- Before you finish, run the mutation script on the built files and say in your final message which assertion kills each mutant.
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+const SHU564_CONTRACT = { "SHU-564": Object.freeze({
+  workspace_mode: "repo",
+  initial_build_paths: SHU564_PATHS,
+  revision_paths: SHU564_PATHS,
+  acceptance: SHU564_ACCEPTANCE,
+  brief: SHU564_BRIEF,
+}) };
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
