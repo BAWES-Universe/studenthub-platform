@@ -4,6 +4,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { universeEmbedNames, runUniverseEmbed } from './universe-embed.mjs';
 
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
@@ -32,7 +33,7 @@ const names = [
 const bfcacheScenarios=['cancel','revoked-session','intervening-language'];
 const bfcacheNames=['en','ar'].flatMap(language=>bfcacheScenarios.map(scenario=>`bfcache-language-${scenario}-${language}`));
 const evidence = { schemaVersion:1, syntheticOnly:true, candidateSha:null, playwrightVersion:null,
-  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames].map(name=>({name,status:'NOT_RUN'})),
+  chromiumVersion:null, expectedChromiumVersion:null, chromiumRevision:null, startedAt:new Date().toISOString(), cases:[...names,...bfcacheNames,...universeEmbedNames].map(name=>({name,status:'NOT_RUN'})),
   policy:'Synthetic data only. No cookies, hidden tokens, credentials, HTML dumps, traces or HAR recorded. TLS verification enabled.' };
 let browser, fixture, bfcacheBrowser;
 const contexts = new Set();
@@ -1346,6 +1347,7 @@ try {
             'Cancel and native Back refresh Review without confirming, replaying POST, or writing any preference/receipt.'};
     });
   }
+  await runUniverseEmbed({browser,run,screenshot,sourceRevision:evidence.candidateSha});
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';
