@@ -580,6 +580,8 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   for (const id of ["SHU-574", "SHU-575"]) assert.ok(contracts[id].initial_build_paths.every((path) => !contracts["SHU-579"].initial_build_paths.includes(path)), `SHU-224: SHU-579 shares no file with ${id}`);
   assert.match(contracts["SHU-579"].brief, /^Card SHU-579:/, "SHU-224: SHU-579's brief names its own card");
   for (const token of ["OCR_LEASE", "OCR_THROTTLE", "OCR_ORG", "OCR_EXPIRED_NULL", "OCR_ACCEPT_COMPLETE", "OCR_DATES", "OCR_PHOTO_THROW"]) assert.match(contracts["SHU-579"].acceptance, new RegExp(`${token}: `), `SHU-224: SHU-579 pins ${token}`);
+  assert.match(contracts["SHU-579"].acceptance, /OCR_LEASE: [^;]*times two reads[^;]*every claimed job it has not finished yet[^]*?neither a claimed job still waiting its turn in the batch nor a late front job/, "SHU-224: SHU-579's lease covers the whole batch, back-photo reads and waiting jobs included");
+  assert.match(contracts["SHU-579"].brief, /Renewing only the job about to be read is not enough/, "SHU-224: SHU-579 rules out per-job renewal alone");
   assert.match(contracts["SHU-579"].brief, /never return FAILED because of a sandbox limit/, "SHU-224: SHU-579 hands in its work when only the sandbox stops the full run");
   assert.match(contracts["SHU-579"].brief, /\n- packages\/profile\/test\/civil-id-ocr-mutations\.mjs\n\nOut of scope:/, "SHU-224: SHU-579's brief lists its paths one per line");
   // SHU-564 is appended after SHU-563 and waits on nothing.
