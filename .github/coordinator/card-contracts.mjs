@@ -6947,7 +6947,68 @@ const SHU579_CONTRACT = { "SHU-579": Object.freeze({
   acceptance: SHU579_ACCEPTANCE,
   brief: SHU579_BRIEF,
 }) };
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT });
+// SHU-577 (profile completeness, My profile half) stopped with its revisions
+// used up on a final BLOCK at 321c86b. The review found contract gaps, not only
+// builder slips: the route-test fixture the page needs, where the derived
+// freshness is applied (the renderer stamping it broke U3A_PROVENANCE), the
+// PREP_NAV golden digests that the relabelled rows change (a file outside the
+// paths), and acceptance tests that still called the renderer on hard-coded
+// projections. SHU-581 is SHU-577's contract with each settled. SHU-575 has not
+// started but waits on SHU-573, which has landed, and a re-cut queue may only
+// wait on cards it lists, so SHU-582 is SHU-575 unchanged but for the ids.
+const RECUT_577 = Object.freeze({ "SHU-577": "SHU-581", "SHU-575": "SHU-582" });
+const recut577 = (text) => text.replace(/\bSHU-(577|575)\b/g, (id) => RECUT_577[id]);
+const replaceEvery = (text, from, to, name) => {
+  if (!text.includes(from)) throw new Error(`${name}: ${JSON.stringify(from)} not found`);
+  return text.split(from).join(to);
+};
+const SHU581_DIGEST_PATH = "apps/gateway/test/contributions.test.ts";
+const SHU581_REVIEW = `
+- The last run of this card (SHU-577) used up its revisions. Its reviews found the faults below; read them as part of the contract, and where they differ from the text above, they win.
+- Keep the principal read and readOwn exactly where they are in the GET /profile route (both rounds of review flagged a gatherer that took them over). The gatherer runs only after a found profile and only on the HTML path.
+- The route-test fixture: the HTML GET /profile calls login.browserEdit.notice, and a login whose browserEdit is {} makes that call throw, so the page answers 503 and no route test reaches 200 (the last run's S1 and S2 never did). Give the login a real notice, as apps/gateway/test/web-ui.test.ts does in U2B_MOTHER_LINK: browserEdit: { async notice() { return {}; } }.
+- Where the derived freshness lives: the gateway completeness module applies the derived freshness ('Worked out from your profile') and the derived values to the projection before it calls profileDocument. profileDocument never stamps or changes a field's freshness itself: a projection passed straight to it renders its fields exactly as today, so the U3A_PROVENANCE tests in apps/gateway/test/profile-journey.test.ts, which call profileDocument with imported isProfileCompleted and pendingFields, pass unchanged. The last run stamped derived inside the renderer and broke them.
+- The checklist section appears only when the gateway passes profileDocument a completeness result (complete, a list, or couldn't check); a call without one renders no section.
+- The frozen digests: the PREP_NAV test in ${SHU581_DIGEST_PATH} hashes the profile HTML that profileDocument renders for 10 login shapes and languages. Relabelling the two rows ('Profile completeness' and 'Still to do') changes all 10, and that file is now in your paths. Regenerate exactly those 10 expected digests from the new output, change nothing else in that file, and say in your final message that the only change in the rendered HTML is the two row labels (diff the HTML before and after to check it). If anything else in that HTML changed, the renderer changed more than this card allows.
+- Every acceptance test of the page makes a real GET /profile through createGatewayServer and the route, with counting fakes behind the real wiring: Q14_4_CHECKLIST (each item's words and href together), Q14_4_DERIVED, Q14_4_COMPAT, Q14_4_LABELS, Q14_4_JSON and Q14_4_STATUS, and at least one of them in Arabic. A renderer call on a hard-coded projection may add detail but never stands in for one of these; the last run's did, and passed without the route.
+- The civil ID items link to #field-civilId, which exists only when login.civilId is configured (apps/gateway/src/civil-id-http.ts, renderCivilIdRow). The civil ID read is a source of the result, so without login.civilId the result is couldn't check and no civil ID item, and so no dead link, is shown.
+- Declare only the dependencies the gatherer uses: the documents come from currentProfileAvatar(), so no separate documents dependency. Every negative assertion uses the real labels from the copy (for example 'Civil ID front' and 'Civil ID back'), never a string that could never appear.
+- The mutation script must kill every mutant it names: run it on the built files and show each named test failing by an AssertionError. The first run's script killed nothing.`;
+const SHU581_ACCEPTANCE_REVIEW = ` (Review) Q14_4_ROUTE: every token above that checks the page (Q14_4_CHECKLIST, Q14_4_DERIVED, Q14_4_COMPAT, Q14_4_LABELS, Q14_4_JSON, Q14_4_STATUS) is proved by a real GET /profile through createGatewayServer and the route, with browserEdit: { async notice() { return {}; } } in the login, and at least one in Arabic; Q14_4_RENDER_PURE: profileDocument called with a projection and no completeness result renders no checklist section and leaves every field's freshness as given, so profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged; PREP_NAV: the ten expected digests in ${SHU581_DIGEST_PATH} are regenerated, nothing else in that file changes, and the only change in that HTML is the two row labels; with login.civilId not configured the result is couldn't check and no item links to #field-civilId; the principal read and readOwn stay in the route; the mutation script kills every mutant it names by an AssertionError.`;
+const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([from, to]) => {
+  const base = from === "SHU-577" ? SPLIT_570_CONTRACTS[from] : RECUT_566_CONTRACTS[from];
+  let brief = recut577(base.brief);
+  let acceptance = recut577(base.acceptance);
+  let paths = base.initial_build_paths;
+  if (from === "SHU-577") {
+    brief = replaceOnce(brief, "\n- Before you finish,", `${SHU581_REVIEW}\n- Before you finish,`, `${to} review faults`);
+    brief = replaceOnce(brief, "- apps/gateway/test/profile-completeness-mutations.mjs\n", `- apps/gateway/test/profile-completeness-mutations.mjs\n- ${SHU581_DIGEST_PATH}\n`, `${to} paths`);
+    for (const name of ["brief", "acceptance"]) {
+      const text = name === "brief" ? brief : acceptance;
+      const changed = replaceEvery(text, "unchanged except language-preference.test.ts line 86", `unchanged except language-preference.test.ts line 86 and the ten PREP_NAV digests in ${SHU581_DIGEST_PATH}`, `${to} ${name} exceptions`);
+      if (name === "brief") brief = changed; else acceptance = changed;
+    }
+    brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+    const reviewAt = brief.indexOf("\n\nStanding lines");
+    brief = `${brief.slice(0, reviewAt)}${SHU581_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+    acceptance = `${acceptance}${SHU581_ACCEPTANCE_REVIEW}`;
+    paths = Object.freeze([...paths, SHU581_DIGEST_PATH]);
+    brief = replaceEvery(brief, ", and it waits on SHU-576, the rules half;", ", built on SHU-576, the rules half, which has landed;", `${to} brief landed rules`);
+    acceptance = replaceEvery(acceptance, ", and it waits on SHU-576, the rules half;", ", built on SHU-576, the rules half, which has landed;", `${to} acceptance landed rules`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-577"
+    ? "after its revisions ran out on a final BLOCK that found contract gaps (the route-test fixture, where the derived freshness is applied, the PREP_NAV digests and renderer-only tests), all settled here"
+    : "because its installed lane waited on SHU-573, which has landed, and a re-cut queue may only wait on cards it lists";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
