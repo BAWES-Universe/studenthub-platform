@@ -7174,7 +7174,40 @@ const RECUT_584_CONTRACTS = Object.fromEntries(Object.entries(RECUT_584).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS });
+// SHU-592 re-cuts SHU-586, the civil ID suggestion line on My profile. It
+// stopped with its revisions used up; the final review found the line never
+// showed (the read was gated on a person id taken after the projection), a
+// third web-ui.ts edit that moved other rows, and acceptance tests that called
+// the handler and renderer directly, so the re-cut spells out each one.
+const RECUT_586 = Object.freeze({ "SHU-586": "SHU-592" });
+const recut586 = (text) => text.replace(/\bSHU-586\b/g, (id) => RECUT_586[id]);
+const SHU592_REVIEW = `
+- The last run of this card (SHU-586) also used up its revisions. Its final review found the faults below; read them with the bullets above, and where they differ, these win.
+- The person id comes from requesterPrincipalId, the session's own person id that the GET /profile handler in apps/gateway/src/index.ts binds inside the readOwn block before it replaces result with the readOwn projection. Gate the suggestion read on that value, captured before the replacement. Never read result.body?.personId after readOwn: the projection has no personId, so the last run's gate was always false and the line never showed.
+- The read runs only when the query has no person_id, or when person_id equals requesterPrincipalId; any other person_id (staff viewing someone else) makes zero suggestion reads.
+- apps/gateway/src/web-ui.ts: do not touch section() or row(). The last run changed section() to insert an extra row before the area row, which moved SHU-513's Civil ID row and the coordinates row; that edit is refused. The two edits stay exactly the two named above: the new optional last parameter of profileDocument, and the suggestion line appended next to the Civil ID row where profileDocument builds it (after renderCivilIdRow). Every existing row keeps its order and markup byte for byte.
+- Every acceptance test goes through createGatewayServer and a real request, with the gateway built so the real apps/gateway/src/wiring/profile.ts runs: CIVIL_ID_ENCRYPTION_KEY set, the session made by the real login path, a counting suggestion store behind the wiring. A direct call to handleCivilIdSuggestion or profileDocument never stands in for an acceptance test, and OCRP_SEAM does not hand-build login.
+- These cases each have their own test through the server, and the last run had none of them: an accept whose number duplicates another person's civil ID (CIV's own refusal reaches the person, nothing saved, the suggestion stays); an accept whose expiry is already past in Asia/Kuwait (refused, nothing saved); a KW number that is not 12 digits and a BH number that is not 9 digits (each refused by CIV's length rule); a double POST with the same submission id (one save, both answer the same 303); an accept or dismiss for a suggestion whose photo version was replaced (409, nothing saved); after a dismiss, the same photo version shows no line again, while a later photo version's read shows its line; a POST with no session cookie (redirect to login, nothing saved); a Bearer-only request with no cookie (refused, nothing saved); a POST missing a required field (400, nothing saved); a POST with Sec-Fetch-Site cross-site (403 before the body is read, nothing saved).`;
+const SHU592_ACCEPTANCE_REVIEW = " (Review) OCRP_GATE: with a read suggestion a real cookie GET /profile through createGatewayServer and the real wiring/profile.ts (CIVIL_ID_ENCRYPTION_KEY set) shows the line, the read is gated on requesterPrincipalId bound before the readOwn projection, and person_id for another person makes zero reads; OCRP_ROWS: section() and row() are unchanged and every existing row of My profile, the area and coordinates rows included, keeps its order and markup; OCRP_CASES: duplicate number, expired expiry, KW and BH length refusals, double POST with one submission id, replaced photo version, no re-show for a dismissed version but a line for a later one, no session, Bearer-only, missing field and cross-site Sec-Fetch-Site each have a test through the server that also proves nothing was saved where refused.";
+const RECUT_586_CONTRACTS = Object.fromEntries(Object.entries(RECUT_586).map(([from, to]) => {
+  const base = RECUT_575_CONTRACTS[from];
+  let brief = recut586(base.brief);
+  let acceptance = recut586(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU592_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU592_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  if (brief.includes("We are reading your photo")) throw new Error(`the re-cut brief for ${to} must not bring back the reading-state line`);
+  const reason = "after its revisions ran out on a final BLOCK (a suggestion read gated on a person id the projection had dropped, a third web-ui.ts edit that moved other rows, and acceptance tests that bypassed the server), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU592_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
