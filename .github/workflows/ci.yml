@@ -49,9 +49,10 @@ jobs:
           # runner; apt-get update only warns then, so retry until the index
           # really downloads instead of failing on the install that follows.
           for attempt in 1 2 3 4 5 6; do
-            if apt-get update -qq -o Acquire::Retries=3 2>&1 | tee /tmp/apt-update.log && ! grep -q '^W: Failed to fetch' /tmp/apt-update.log; then
+            if apt-get update -qq -o Acquire::Retries=3 >/tmp/apt-update.log 2>&1 && ! grep -q '^W: Failed to fetch' /tmp/apt-update.log; then
               break
             fi
+            cat /tmp/apt-update.log
             [ "$attempt" = 6 ] && { echo "apt index unavailable after $attempt attempts" >&2; exit 1; }
             sleep $((attempt * 10))
           done
