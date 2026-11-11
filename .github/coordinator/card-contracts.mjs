@@ -6974,9 +6974,11 @@ const replaceEvery = (text, from, to, name) => {
   return text.split(from).join(to);
 };
 const SHU581_DIGEST_PATH = "apps/gateway/test/contributions.test.ts";
+const SHU581_INDEX_PATH = "apps/gateway/src/index.ts";
 const SHU581_REVIEW = `
 - The last run of this card (SHU-577) used up its revisions. Its reviews found the faults below; read them as part of the contract, and where they differ from the text above, they win.
 - Keep the principal read and readOwn exactly where they are in the GET /profile route (both rounds of review flagged a gatherer that took them over). The gatherer runs only after a found profile and only on the HTML path.
+- apps/gateway/src/index.ts is in your paths for one change only. The GET /profile handler is still in that file on main (it did not move to apps/gateway/src/routes/), so the line above that sends apps/gateway/src/index.ts edits to the ROUTES list does not cover it. In that handler, after readOwn answers found and before the html branch calls profileDocument, call the gatherer as one contiguous block, on the HTML path only, and pass its completeness result to profileDocument. The JSON path, the principal read, readOwn and every other line of that file stay unchanged.
 - The route-test fixture: the HTML GET /profile calls login.browserEdit.notice, and a login whose browserEdit is {} makes that call throw, so the page answers 503 and no route test reaches 200 (the last run's S1 and S2 never did). Give the login a real notice, as apps/gateway/test/web-ui.test.ts does in U2B_MOTHER_LINK: browserEdit: { async notice() { return {}; } }.
 - Where the derived freshness lives: the gateway completeness module applies the derived freshness ('Worked out from your profile') and the derived values to the projection before it calls profileDocument. profileDocument never stamps or changes a field's freshness itself: a projection passed straight to it renders its fields exactly as today, so the U3A_PROVENANCE tests in apps/gateway/test/profile-journey.test.ts, which call profileDocument with imported isProfileCompleted and pendingFields, pass unchanged. The last run stamped derived inside the renderer and broke them.
 - The checklist section appears only when the gateway passes profileDocument a completeness result (complete, a list, or couldn't check); a call without one renders no section.
@@ -7000,7 +7002,7 @@ const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([f
   let paths = base.initial_build_paths;
   if (from === "SHU-577") {
     brief = replaceOnce(brief, "\n- Before you finish,", `${SHU581_REVIEW}\n- Before you finish,`, `${to} review faults`);
-    brief = replaceOnce(brief, "- apps/gateway/test/profile-completeness-mutations.mjs\n", `- apps/gateway/test/profile-completeness-mutations.mjs\n- ${SHU581_DIGEST_PATH}\n`, `${to} paths`);
+    brief = replaceOnce(brief, "- apps/gateway/test/profile-completeness-mutations.mjs\n", `- apps/gateway/test/profile-completeness-mutations.mjs\n- ${SHU581_DIGEST_PATH}\n- ${SHU581_INDEX_PATH}\n`, `${to} paths`);
     for (const name of ["brief", "acceptance"]) {
       const text = name === "brief" ? brief : acceptance;
       const changed = replaceEvery(text, "unchanged except language-preference.test.ts line 86", `unchanged except language-preference.test.ts line 86 and the ten PREP_NAV digests in ${SHU581_DIGEST_PATH}`, `${to} ${name} exceptions`);
@@ -7010,7 +7012,7 @@ const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([f
     const reviewAt = brief.indexOf("\n\nStanding lines");
     brief = `${brief.slice(0, reviewAt)}${SHU581_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
     acceptance = `${acceptance}${SHU581_ACCEPTANCE_REVIEW}`;
-    paths = Object.freeze([...paths, SHU581_DIGEST_PATH]);
+    paths = Object.freeze([...paths, SHU581_DIGEST_PATH, SHU581_INDEX_PATH]);
     brief = replaceEvery(brief, ", and it waits on SHU-576, the rules half;", ", built on SHU-576, the rules half, which has landed;", `${to} brief landed rules`);
     acceptance = replaceEvery(acceptance, ", and it waits on SHU-576, the rules half;", ", built on SHU-576, the rules half, which has landed;", `${to} acceptance landed rules`);
   }

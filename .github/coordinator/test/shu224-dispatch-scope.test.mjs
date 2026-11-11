@@ -601,7 +601,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-584"].acceptance, /GET \/workspace\/civil-ids\/delivery and reached by a real GET through createGatewayServer with no Origin header/, "SHU-224: SHU-584 serves staff images on a reachable route");
   assert.match(contracts["SHU-584"].acceptance, /postgres-civil-id-review\.test\.ts opens a real database/, "SHU-224: SHU-584's Postgres test opens a real database");
   assert.match(contracts["SHU-584"].acceptance, /SHU-584 is SHU-574's contract re-queued under a fresh id [^;]*; SHU-574 never lands\.$/, "SHU-224: SHU-584 says which card it replaces");
-  assert.deepEqual([...contracts["SHU-581"].initial_build_paths], [...contracts["SHU-577"].initial_build_paths, "apps/gateway/test/contributions.test.ts"], "SHU-224: SHU-581 keeps SHU-577's paths and adds the PREP_NAV digests");
+  assert.deepEqual([...contracts["SHU-581"].initial_build_paths], [...contracts["SHU-577"].initial_build_paths, "apps/gateway/test/contributions.test.ts", "apps/gateway/src/index.ts"], "SHU-224: SHU-581 keeps SHU-577's paths and adds the PREP_NAV digests");
   assert.match(contracts["SHU-581"].brief, /browserEdit: \{ async notice\(\) \{ return \{\}; \} \}/, "SHU-224: SHU-581 names the route-test fixture");
   assert.match(contracts["SHU-581"].brief, /profileDocument never stamps or changes a field's freshness itself/, "SHU-224: SHU-581 keeps the derived freshness out of the renderer");
   assert.match(contracts["SHU-581"].brief, /Regenerate exactly those 10 expected digests/, "SHU-224: SHU-581 regenerates the PREP_NAV digests and nothing else");
