@@ -627,6 +627,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-588"].brief, /escapeHtml turns an apostrophe into &#39;/, "SHU-224: SHU-588 says how to find escaped copy in a page");
   assert.match(contracts["SHU-588"].acceptance, /Q14_4_EMAIL: [^;]*renders 'Profile complete'/, "SHU-224: SHU-588 proves 'Profile complete' is reachable");
   assert.match(contracts["SHU-588"].acceptance, /Q14_4_NOWRITE: [^;]*write methods throw/, "SHU-224: SHU-588 proves no write with fakes inside its paths");
+  assert.match(contracts["SHU-588"].acceptance, /Q14_4_STATUS's civil ID case fails the gatherer's own civil ID read while readOwn succeeds/, "SHU-224: SHU-588 states which civil ID failure the page survives");
   assert.doesNotMatch(contracts["SHU-588"].acceptance, /real store seams/, "SHU-224: SHU-588 drops the no-write test its paths could not hold");
   assert.match(contracts["SHU-588"].acceptance, /SHU-588 is SHU-581's contract re-queued under a fresh id [^;]*; SHU-581 never lands\.$/, "SHU-224: SHU-588 says which card it replaces");
   // SHU-590 re-cuts SHU-584, which used up its revisions on build faults.
