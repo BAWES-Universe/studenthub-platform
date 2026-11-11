@@ -7036,7 +7036,58 @@ const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS });
+// SHU-586 re-cuts SHU-575, the person-facing civil ID suggestion card. Its
+// first review passed but CI was red; the landing repair's fresh review
+// blocked and used up the budget. Two of the blocks were contract gaps: the
+// 'We are reading your photo' state cannot happen, because SHU-573's
+// current-suggestion read returns only read, unreadable and failed jobs, and the
+// contract never named one place to read the suggestion, so the builder wrapped
+// web.profiles and the read ran on JSON /profile, the preview pages and the
+// documents page too. The reading state is dropped (legacy had none, and
+// widening the read would put this card on the OCR store that SHU-579 is
+// changing), and the one read lives in the HTML branch of the GET /profile
+// handler in apps/gateway/src/index.ts.
+const RECUT_575 = Object.freeze({ "SHU-575": "SHU-586" });
+const recut575 = (text) => text.replace(/\bSHU-575\b/g, (id) => RECUT_575[id]);
+const SHU586_INDEX_PATH = "apps/gateway/src/index.ts";
+const SHU586_SEAM = "- One read, in one place: the suggestion is read only in the HTML branch of the GET /profile handler in apps/gateway/src/index.ts (that handler is still in that file on main; it did not move to apps/gateway/src/routes/), after readOwn answers found and only when the session's person is the profile's person. It is read once through a civilIdSuggestion service that wiring/profile.ts adds to the login application as its own entry, and passed to profileDocument as a new optional last parameter. profileDocument reads nothing itself, and with no suggestion passed it renders byte-identically to today. No wrapper around web.profiles or readOwn, so JSON /profile, the preview pages (apps/gateway/src/routes/profile.ts) and the documents page (apps/gateway/src/documents-page.ts) make no suggestion read. The suggestion is kept out of the 19 definition rows and out of the JSON /profile body.";
+const SHU586_REVIEW = `
+- The last run of this card (SHU-575) used up its revisions. Its final review found the faults below; read them as part of the contract, and where they differ from the text above, they win.
+- apps/gateway/src/index.ts is in your paths for one change only: the suggestion read in the HTML branch of the GET /profile handler, as one contiguous block. Change no other line of that file. If SHU-581's completeness block is already in that handler, put yours as its own block beside it, and add your profileDocument parameter after any parameter that card added. A suggestion read that throws renders My profile without the line, never a 503 or a 404.
+- There is no reading-in-progress line. SHU-573's current-suggestion read returns only read, unreadable and failed jobs, so a pending or running job shows nothing until the read finishes. This card does not change the OCR store or its read: packages/db/src/postgres-civil-id-ocr-store.ts and packages/profile/src/civil-id-ocr.ts are not in your paths, because SHU-579 is changing them.
+- Directly under the Civil ID row means between the Civil ID row and any row after it, including the area row when login.area is configured. The line is a <div> with a <dt> and a <dd> inside dl.p-fields, like every other row there. It adds no definition row to the count of 19 and no unavailable marker.
+- Status codes: a suggestion id that is not the person's current one, an answered one, one for a replaced photo version and another person's id are each 409, the same as CIV's own stale_revision. If CIV's save succeeds and resolve then finds the suggestion already accepted by the same derived submission id (a double click that raced), the answer is the same 303 as a first success, not a 409.
+- S1 is end to end: FakeCivilIdOcrReader, InMemoryCivilIdOcrStore and runCivilIdOcr read a photo, and the suggestion they store is what a real GET /profile through createGatewayServer shows. A hand-built CivilIdSuggestionView never stands in for that test.
+- The wiring is proved, not only the renderer: one test builds the gateway with CIVIL_ID_ENCRYPTION_KEY set, so the real wiring/profile.ts path runs, with a counting suggestion store behind it. It shows that HTML My profile makes exactly one suggestion read, and that JSON /profile, a preview page and the documents page each make zero.`;
+const SHU586_ACCEPTANCE_REVIEW = " (Review) OCRP_SEAM: with CIVIL_ID_ENCRYPTION_KEY set and the real wiring, a counting suggestion store sees exactly one read for HTML GET /profile and zero for JSON GET /profile, a preview page and the documents page; another person's profile makes no read; a throwing read renders My profile without the line; OCRP_E2E: a suggestion stored by runCivilIdOcr from FakeCivilIdOcrReader into InMemoryCivilIdOcrStore shows on a real GET /profile, and after accept CIV's row shows the masked number, the expiry and the waiting state; OCRP_PLACE: the line sits directly after the Civil ID row with login.area configured, as a div with a dt and a dd in dl.p-fields; stale, answered, replaced and foreign suggestion ids are each 409, and a raced double accept answers 303; no pending or running state is rendered and the OCR store files are unchanged.";
+const RECUT_575_CONTRACTS = Object.fromEntries(Object.entries(RECUT_575).map(([from, to]) => {
+  const base = RECUT_566_CONTRACTS[from];
+  let brief = recut575(base.brief);
+  let acceptance = recut575(base.acceptance);
+  brief = replaceOnce(brief, "; pending and running show 'We are reading your photo'.", "; a job still pending or running shows nothing yet, because the current-suggestion read returns only finished reads, and the line appears once the read finishes.", `${to} reading state decision`);
+  brief = replaceOnce(brief, "'We are reading your photo' while the job is pending or running; ", "", `${to} reading state outcome`);
+  const seamAt = brief.indexOf("- The projection stays untouched:");
+  brief = `${brief.slice(0, seamAt)}${SHU586_SEAM}${brief.slice(brief.indexOf("\n", seamAt))}`;
+  brief = replaceOnce(brief, "pending and running show the reading line; ", "a pending or running job renders nothing; ", `${to} brief reading state acceptance`);
+  acceptance = replaceOnce(acceptance, "pending and running show the reading line; ", "a pending or running job renders nothing; ", `${to} reading state acceptance`);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU586_REVIEW}${MUTATION_SCRIPT_RULE}\n- Before you finish,`, `${to} review faults`);
+  brief = replaceOnce(brief, "- apps/gateway/src/web-ui.ts\n", `- apps/gateway/src/web-ui.ts\n- ${SHU586_INDEX_PATH}\n`, `${to} paths`);
+  brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU586_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  const paths = Object.freeze([...base.initial_build_paths, SHU586_INDEX_PATH]);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  if (brief.includes("We are reading your photo")) throw new Error(`${to} still names the reading state`);
+  const reason = "after its revisions ran out on a final BLOCK that found contract gaps (a reading state the current-suggestion read never returns, no single place for the suggestion read, and a hand-built end-to-end test), all settled here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance}${SHU586_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
