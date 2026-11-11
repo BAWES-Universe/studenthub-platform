@@ -50,8 +50,8 @@
   "dispatch_scope": {
     "issue_ids": [
       "SHU-581",
-      "SHU-579",
-      "SHU-582"
+      "SHU-584",
+      "SHU-579"
     ]
   },
   "adapter_pause_map": {},
@@ -8451,15 +8451,21 @@
       ]
     },
     {
-      "id": "SHU-582",
-      "authorization_ref": "SHU-582",
+      "id": "SHU-584",
+      "authorization_ref": "SHU-584",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
-      "note": "lane 1 (organizations and profile/people), card Q15-1 part two: suggestion line, accept and dismiss on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs Re-cut from SHU-468 as SHU-508 after SHU-489 stopped a second time on a path outside its card, because its installed lane waited on SHU-489 through a chain of after edges; only the real waits are kept, since the box now keeps cards that share files apart by itself. Re-cut from SHU-508 as SHU-519 because its installed lane waited on SHU-506, which waits on SHU-500, which stopped; its paths add the route-order test, the profile copy and its key-count test; appended after the installed queue, which stays as it is. Re-cut from SHU-519 as SHU-526 because its installed lane waited on SHU-517, which waits on SHU-503, which stopped; its contract is unchanged but for the ids; appended after the installed queue, which stays as it is. Re-cut from SHU-526 as SHU-536 because its installed lane waited on SHU-524, which waits on SHU-521, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-536 as SHU-544 because its installed lane waited on SHU-534, which waits on SHU-531, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-544 as SHU-553 because its installed lane waited on SHU-542, which waits on SHU-539, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-553 as SHU-562 because its installed lane waited on SHU-551, which stopped; its contract is unchanged but for the ids. The new queue leaves out every stopped and landed card, starts with SHU-558, and waits only on cards it lists. Re-cut from SHU-562 as SHU-568 because its installed lane waited on SHU-560, which stopped; its contract is unchanged but for the ids. Appended after the installed queue, which stays as it is; it waits only on SHU-566. Re-cut from SHU-568 as SHU-575 because its installed lane waited on SHU-566, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-575 as SHU-582 because it waited on SHU-573, which has landed, and a re-cut queue may only wait on cards it lists; its contract is unchanged but for the ids.",
+      "note": "lane 1 (organizations and profile/people), card Q15-2: staff civil ID review queue, decision page, audited staff image delivery and result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs Re-cut from SHU-469 as SHU-507 after SHU-489 stopped a second time on a path outside its card, because its installed lane waited on SHU-489 through a chain of after edges; only the real waits are kept, since the box now keeps cards that share files apart by itself. Re-cut from SHU-507 as SHU-518 because its installed lane waited on SHU-500, which stopped; its paths add the route-order test, the profile copy and its key-count test; appended after the installed queue, which stays as it is. Re-cut from SHU-518 as SHU-525 because its installed lane waited on SHU-503, which stopped; its contract is unchanged but for the ids; appended after the installed queue, which stays as it is. Re-cut from SHU-525 as SHU-535 because its installed lane waited on SHU-521, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-535 as SHU-543 because its installed lane waited on SHU-531, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-543 as SHU-552 because its installed lane waited on SHU-539, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-552 as SHU-561 because its installed lane waited on SHU-551, which stopped, and on SHU-548, which landed; its contract is unchanged but for the ids. The new queue leaves out every stopped and landed card, starts with SHU-558, and waits only on cards it lists. Re-cut from SHU-561 as SHU-567 because its installed lane waited on SHU-560, which stopped; its contract is unchanged but for the ids. Appended after the installed queue, which stays as it is; it waits only on SHU-566. Re-cut from SHU-567 as SHU-574 because its installed lane waited on SHU-566, which stopped; its contract is unchanged but for the ids. Re-cut from SHU-574 as SHU-584 after its builder returned BLOCKED on two contract path gaps: its paths add apps/gateway/src/index.ts for the sidebar count, and the staff images move to GET /workspace/civil-ids/delivery. SHU-573 has landed, so it waits on nothing.",
       "initial_build_paths": [
-        "apps/gateway/src/civil-id-suggestion-http.ts",
-        "apps/gateway/test/civil-id-suggestion-http.test.ts",
-        "apps/gateway/test/civil-id-suggestion-mutations.mjs",
+        "packages/db/migrations/0219_civil_id_reviews.sql",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/private-documents/src/staff-delivery.ts",
+        "packages/private-documents/test/staff-delivery.test.mjs",
+        "packages/private-documents/test/staff-delivery-mutations.mjs",
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
         "apps/gateway/src/web-ui.ts",
         "apps/gateway/src/routes/index.ts",
         "apps/gateway/src/routes/context.ts",
@@ -8470,12 +8476,19 @@
         "packages/db/src/profile/index.ts",
         "apps/gateway/test/routes-order.test.ts",
         "apps/gateway/test/profile-kit.test.ts",
-        "apps/gateway/src/ui/profile-copy.ts"
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/src/index.ts"
       ],
       "revision_paths": [
-        "apps/gateway/src/civil-id-suggestion-http.ts",
-        "apps/gateway/test/civil-id-suggestion-http.test.ts",
-        "apps/gateway/test/civil-id-suggestion-mutations.mjs",
+        "packages/db/migrations/0219_civil_id_reviews.sql",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/private-documents/src/staff-delivery.ts",
+        "packages/private-documents/test/staff-delivery.test.mjs",
+        "packages/private-documents/test/staff-delivery-mutations.mjs",
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
         "apps/gateway/src/web-ui.ts",
         "apps/gateway/src/routes/index.ts",
         "apps/gateway/src/routes/context.ts",
@@ -8486,7 +8499,8 @@
         "packages/db/src/profile/index.ts",
         "apps/gateway/test/routes-order.test.ts",
         "apps/gateway/test/profile-kit.test.ts",
-        "apps/gateway/src/ui/profile-copy.ts"
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/src/index.ts"
       ]
     }
   ],

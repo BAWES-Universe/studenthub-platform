@@ -6880,6 +6880,10 @@ const SPLIT_570_CONTRACTS = Object.freeze({
   "SHU-576": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU576_PATHS, revision_paths: SHU576_PATHS, acceptance: SHU576_ACCEPTANCE, brief: SHU576_BRIEF }),
   "SHU-577": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU577_PATHS, revision_paths: SHU577_PATHS, acceptance: SHU577_ACCEPTANCE, brief: SHU577_BRIEF }),
 });
+// Shared by the briefs written from here on: how a mutation script and a route
+// or Postgres test must work, after builders shipped needle greps and direct calls.
+const MUTATION_SCRIPT_RULE = `
+- A mutation script writes each mutant and runs the tests against it; a script that only searches the source for a needle proves nothing and is refused at review (the last runs of SHU-574 and SHU-577 shipped such scripts). Follow apps/gateway/test/documents-page-mutations.mjs: read the built dist file, assert the needle binds exactly once, write the mutated copy beside it, run the named test with spawnSync(process.execPath, ['--test', '--test-name-pattern=^<TOKEN> ...', suite]) pointed at the mutant, assert the unmutated control passes, assert the mutant run fails with 'not ok', 'AssertionError' and the named assertion's message and with no SyntaxError or ERR_MODULE_NOT_FOUND, print KILLED <token>, and in a finally block delete the mutant and assert the original file is unchanged. Every acceptance test of a route goes through createGatewayServer and a real request, never the handler or renderer called directly, and every Postgres test opens a real database through the test:db harness, never a regular expression over a source file.`;
 // SHU-579: SHU-573 (civil ID photo reading) landed by hand as cece265 with
 // eight review-bot findings answered as real but not live, because the worker
 // does nothing until civil ID reading is configured. One follow-up fixes them
@@ -6929,7 +6933,7 @@ Guards: no migration, no new table or column, no new export (apps/gateway/test/d
 
 Tests are named with their token first and a space after it, and every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion and not the runner.
 
-Mutations (add to packages/profile/test/civil-id-ocr-mutations.mjs, each needle binding exactly once in the built dist file, each required to fail with an AssertionError): the photo read moved back outside the per-job try (OCR_PHOTO_THROW); the date finder using the number normaliser again (OCR_DATES). Never drop or weaken a mutant to make the script pass.
+Mutations (add to packages/profile/test/civil-id-ocr-mutations.mjs, each needle binding exactly once in the built dist file, each required to fail with an AssertionError): the photo read moved back outside the per-job try (OCR_PHOTO_THROW); the date finder using the number normaliser again (OCR_DATES). Never drop or weaken a mutant to make the script pass.${MUTATION_SCRIPT_RULE}
 
 Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
 ${SHU579_PATHS.map((path) => `- ${path}`).join("\n")}
@@ -6953,11 +6957,18 @@ const SHU579_CONTRACT = { "SHU-579": Object.freeze({
 // freshness is applied (the renderer stamping it broke U3A_PROVENANCE), the
 // PREP_NAV golden digests that the relabelled rows change (a file outside the
 // paths), and acceptance tests that still called the renderer on hard-coded
-// projections. SHU-581 is SHU-577's contract with each settled. SHU-575 has not
-// started but waits on SHU-573, which has landed, and a re-cut queue may only
-// wait on cards it lists, so SHU-582 is SHU-575 unchanged but for the ids.
-const RECUT_577 = Object.freeze({ "SHU-577": "SHU-581", "SHU-575": "SHU-582" });
-const recut577 = (text) => text.replace(/\bSHU-(577|575)\b/g, (id) => RECUT_577[id]);
+// projections. SHU-581 is SHU-577's contract with each settled. SHU-574 (staff
+// civil ID review) stopped when its builder returned BLOCKED on two path gaps:
+// the sidebar count needs the session, which only apps/gateway/src/index.ts
+// has, and GET /private-documents/staff-delivery is unreachable because the
+// candidate documents handler claims the whole /private-documents/ prefix.
+// SHU-584 is SHU-574's contract with index.ts in its paths, the staff images
+// moved under /workspace/civil-ids/, and its builder slips spelled out. Both
+// briefs, and SHU-579's, carry MUTATION_SCRIPT_RULE: earlier builders shipped
+// mutation scripts that only grepped for needles and tests that called a
+// handler or renderer directly.
+const RECUT_577 = Object.freeze({ "SHU-577": "SHU-581", "SHU-574": "SHU-584" });
+const recut577 = (text) => text.replace(/\bSHU-(577|574)\b/g, (id) => RECUT_577[id]);
 const replaceEvery = (text, from, to, name) => {
   if (!text.includes(from)) throw new Error(`${name}: ${JSON.stringify(from)} not found`);
   return text.split(from).join(to);
@@ -6975,6 +6986,13 @@ const SHU581_REVIEW = `
 - Declare only the dependencies the gatherer uses: the documents come from currentProfileAvatar(), so no separate documents dependency. Every negative assertion uses the real labels from the copy (for example 'Civil ID front' and 'Civil ID back'), never a string that could never appear.
 - The mutation script must kill every mutant it names: run it on the built files and show each named test failing by an AssertionError. The first run's script killed nothing.`;
 const SHU581_ACCEPTANCE_REVIEW = ` (Review) Q14_4_ROUTE: every token above that checks the page (Q14_4_CHECKLIST, Q14_4_DERIVED, Q14_4_COMPAT, Q14_4_LABELS, Q14_4_JSON, Q14_4_STATUS) is proved by a real GET /profile through createGatewayServer and the route, with browserEdit: { async notice() { return {}; } } in the login, and at least one in Arabic; Q14_4_RENDER_PURE: profileDocument called with a projection and no completeness result renders no checklist section and leaves every field's freshness as given, so profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged; PREP_NAV: the ten expected digests in ${SHU581_DIGEST_PATH} are regenerated, nothing else in that file changes, and the only change in that HTML is the two row labels; with login.civilId not configured the result is couldn't check and no item links to #field-civilId; the principal read and readOwn stay in the route; the mutation script kills every mutant it names by an AssertionError.`;
+const SHU584_STAFF_DELIVERY_FROM = "GET /private-documents/staff-delivery";
+const SHU584_STAFF_DELIVERY_TO = "GET /workspace/civil-ids/delivery";
+const SHU584_REVIEW = `
+- The last run of this card (SHU-574) stopped on two gaps in its contract, both settled here; read these lines as part of the contract, and where they differ from the text above, they win.
+- The sidebar count: renderWorkspace in apps/gateway/src/web-ui.ts is synchronous and receives no principal, and only apps/gateway/src/index.ts has the session. apps/gateway/src/index.ts is now in your paths: in the /workspace route, after login.navigation.open answers, read the count once (countPending, one statement) only when the active context is staff or admin on an operator organization, and pass it to renderWorkspace as a new optional parameter; renderWorkspace stays synchronous, renders the link only when it is given a count, and renders byte-identically when it is not. Add these lines to index.ts as one contiguous block and change no other line there.
+- The staff images: apps/gateway/src/candidate-documents-http.ts claims every path that starts with /private-documents/ and answers 403 or 404, so the old route GET /private-documents/staff-delivery could never be reached (an <img> GET carries no Origin). The staff delivery route is GET /workspace/civil-ids/delivery instead, mounted with the other /workspace/civil-ids routes; candidate-documents-http.ts does not change. Prove it with a real GET through createGatewayServer with no Origin header, as an <img> sends it.
+- Tests the review found missing or hollow, each through createGatewayServer: packages/db/test/postgres-civil-id-review.test.ts opens a real database (the last one read source files with regular expressions); item 3's success path (303 to the queue, exactly one decision row, needs_review cleared, revision unchanged, a replay storing nothing, an expired confirmation refused); item 5's My profile render of 'Checked' and of 'Rejected: <reason>' with the Fix it links; a malformed id answering the identical 404 body; a non-staff session and an org-owner grant refused on the staff delivery route; and item 7's Sec-Fetch-Site cross-site, Bearer-only and oversized-body refusals.`;
 const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([from, to]) => {
   const base = from === "SHU-577" ? SPLIT_570_CONTRACTS[from] : RECUT_566_CONTRACTS[from];
   let brief = recut577(base.brief);
@@ -6996,10 +7014,18 @@ const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([f
     brief = replaceEvery(brief, ", and it waits on SHU-576, the rules half;", ", built on SHU-576, the rules half, which has landed;", `${to} brief landed rules`);
     acceptance = replaceEvery(acceptance, ", and it waits on SHU-576, the rules half;", ", built on SHU-576, the rules half, which has landed;", `${to} acceptance landed rules`);
   }
+  if (from === "SHU-574") {
+    brief = replaceEvery(brief, SHU584_STAFF_DELIVERY_FROM, SHU584_STAFF_DELIVERY_TO, `${to} staff delivery route`);
+    brief = replaceOnce(brief, "\n- Before you finish,", `${SHU584_REVIEW}${MUTATION_SCRIPT_RULE}\n- Before you finish,`, `${to} review faults`);
+    brief = replaceOnce(brief, "- apps/gateway/src/web-ui.ts\n", "- apps/gateway/src/web-ui.ts\n- apps/gateway/src/index.ts\n", `${to} paths`);
+    acceptance = `${acceptance} (Review) REV_ROUTES: the sidebar count is read in the /workspace route of apps/gateway/src/index.ts once per render, only for a staff or admin context on an operator organization, and passed to a synchronous renderWorkspace that renders byte-identically without it; the staff images are served at GET /workspace/civil-ids/delivery and reached by a real GET through createGatewayServer with no Origin header; candidate-documents-http.ts is unchanged; postgres-civil-id-review.test.ts opens a real database; item 3's success path, item 5's profile render, the identical malformed-id 404, the non-staff and org-owner delivery refusals and item 7's Sec-Fetch-Site, Bearer-only and oversized-body refusals each have a test through createGatewayServer; every mutation script writes its mutants and runs the suites against them.`;
+    paths = Object.freeze([...paths, "apps/gateway/src/index.ts"]);
+  }
+  if (from === "SHU-577") brief = replaceOnce(brief, "\n- Before you finish,", `${MUTATION_SCRIPT_RULE}\n- Before you finish,`, `${to} mutation rule`);
   if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
   const reason = from === "SHU-577"
     ? "after its revisions ran out on a final BLOCK that found contract gaps (the route-test fixture, where the derived freshness is applied, the PREP_NAV digests and renderer-only tests), all settled here"
-    : "because its installed lane waited on SHU-573, which has landed, and a re-cut queue may only wait on cards it lists";
+    : "after its builder returned BLOCKED on two contract path gaps (the sidebar count needs apps/gateway/src/index.ts, and the staff image route sat under a prefix the candidate documents handler claims), both settled here";
   return [to, Object.freeze({
     workspace_mode: base.workspace_mode,
     initial_build_paths: paths,
