@@ -7174,7 +7174,108 @@ const RECUT_584_CONTRACTS = Object.fromEntries(Object.entries(RECUT_584).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS });
+// SHU-592 re-cuts SHU-586, the civil ID suggestion line on My profile. It
+// stopped with its revisions used up; the final review found the line never
+// showed (the read was gated on a person id taken after the projection), a
+// third web-ui.ts edit that moved other rows, and acceptance tests that called
+// the handler and renderer directly, so the re-cut spells out each one.
+const RECUT_586 = Object.freeze({ "SHU-586": "SHU-592" });
+const recut586 = (text) => text.replace(/\bSHU-586\b/g, (id) => RECUT_586[id]);
+const SHU592_REVIEW = `
+- The last run of this card (SHU-586) also used up its revisions. Its final review found the faults below; read them with the bullets above, and where they differ, these win.
+- The person id comes from requesterPrincipalId, the session's own person id that the GET /profile handler in apps/gateway/src/index.ts binds inside the readOwn block before it replaces result with the readOwn projection. Gate the suggestion read on that value, captured before the replacement. Never read result.body?.personId after readOwn: the projection has no personId, so the last run's gate was always false and the line never showed.
+- The read runs only when the query has no person_id, or when person_id equals requesterPrincipalId; any other person_id (staff viewing someone else) makes zero suggestion reads.
+- apps/gateway/src/web-ui.ts: do not touch section() or row(). The last run changed section() to insert an extra row before the area row, which moved SHU-513's Civil ID row and the coordinates row; that edit is refused. The two edits stay exactly the two named above: the new optional last parameter of profileDocument, and the suggestion line appended next to the Civil ID row where profileDocument builds it (after renderCivilIdRow). Every existing row keeps its order and markup byte for byte.
+- Every acceptance test goes through createGatewayServer and a real request, with the gateway built so the real apps/gateway/src/wiring/profile.ts runs: CIVIL_ID_ENCRYPTION_KEY set, the session made by the real login path, a counting suggestion store behind the wiring. A direct call to handleCivilIdSuggestion or profileDocument never stands in for an acceptance test, and OCRP_SEAM does not hand-build login.
+- These cases each have their own test through the server, and the last run had none of them: an accept whose number duplicates another person's civil ID (CIV's own refusal reaches the person, nothing saved, the suggestion stays); an accept whose expiry is already past in Asia/Kuwait (refused, nothing saved); a KW number that is not 12 digits and a BH number that is not 9 digits (each refused by CIV's length rule); a double POST with the same submission id, both raced and one after the other (one save, both answer the same 303); an accept or dismiss for a suggestion whose photo version was replaced (409, nothing saved); after a dismiss, the same photo version shows no line again, while a later photo version's read shows its line; a POST with no session cookie (the sign-in page with 401 and no store call, as OCRP_ORIGIN says, nothing saved); a Bearer-only request with no cookie (refused like no session, nothing saved); a POST missing a required field (400, nothing saved); a POST with Sec-Fetch-Site cross-site (403 before the body is read, nothing saved); an accept whose read values are already on file (303, the suggestion resolved as accepted, nothing saved).
+- A retry that arrives after the first accept has finished finds the suggestion already answered, so the current-suggestion check alone would answer 409. Before answering 409 for a suggestion that is no longer current, the handler asks the civil ID store whether this person already recorded the submission id derived from that suggestion id (CivilIdStore.submissionRecorded, passed in through wiring/profile.ts); if so, the answer is the same 303 as a first success. A dismissed, replaced or foreign suggestion has no such record and stays 409.
+- CIV answers nothing_to_save when the read number and expiry are already on file. On accept that is not a refusal: the handler resolves the suggestion as accepted and answers the same 303, so a person whose photo matches what they typed is never left with a suggestion they cannot clear. Every other CIV refusal still leaves the suggestion open. That path records no submission, and the OCR store gives no way to read how a resolved suggestion was answered (SHU-579 owns it), so a retry sent after such an accept has finished answers 409 like any answered suggestion; nothing is saved and the profile already holds those values. That is accepted, and a server test pins it with two POSTs in a row: 303, then 409.`;
+const SHU592_ACCEPTANCE_REVIEW = " (Review) OCRP_GATE: with a read suggestion a real cookie GET /profile through createGatewayServer and the real wiring/profile.ts (CIVIL_ID_ENCRYPTION_KEY set) shows the line, the read is gated on requesterPrincipalId bound before the readOwn projection, and person_id for another person makes zero reads; OCRP_ROWS: section() and row() are unchanged and every existing row of My profile, the area and coordinates rows included, keeps its order and markup; OCRP_CASES: duplicate number, expired expiry, KW and BH length refusals, double POST with one submission id (raced and one after the other, both 303), values already on file (303 and resolved, then 409 for a retry after it), replaced photo version, no re-show for a dismissed version but a line for a later one, no session (401 sign-in page), Bearer-only, missing field and cross-site Sec-Fetch-Site each have a test through the server that also proves nothing was saved where refused.";
+const RECUT_586_CONTRACTS = Object.fromEntries(Object.entries(RECUT_586).map(([from, to]) => {
+  const base = RECUT_575_CONTRACTS[from];
+  let brief = recut586(base.brief);
+  let acceptance = recut586(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU592_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU592_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  if (brief.includes("We are reading your photo")) throw new Error(`the re-cut brief for ${to} must not bring back the reading-state line`);
+  const reason = "after its revisions ran out on a final BLOCK (a suggestion read gated on a person id the projection had dropped, a third web-ui.ts edit that moved other rows, and acceptance tests that bypassed the server), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU592_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-594 re-cuts SHU-588, the profile completeness page. It stopped with its
+// revisions used up; the product code was verified, but its tests matched the
+// bare text 'Profile complete', which every English page carries inside the
+// label 'Profile completeness', so the status test, the mutation script's
+// control and the compatibility pin all failed or proved nothing.
+const RECUT_588 = Object.freeze({ "SHU-588": "SHU-594" });
+const recut588 = (text) => text.replace(/\bSHU-588\b/g, (id) => RECUT_588[id]);
+const SHU594_REVIEW = `
+- The last run of this card (SHU-588) used up its revisions. Its final review found the product code largely right and every remaining fault in the tests; read them with the bullets above, and where they differ, these win.
+- Every English My profile page carries the row label 'Profile completeness' (a details <dt> and a provenance <dt>), and that label contains the text 'Profile complete'. A test never matches, or refuses, the bare text 'Profile complete'. The complete state is the section heading: assert it as /<h2>Profile complete<\\/h2>/, and assert its absence the same way; the checklist heading 'To finish your profile' is anchored to its <h2> too. The last run's Q14_4_STATUS asserted doesNotMatch(html, /Profile complete/) and so failed on its first case, which made the mutation script's control fail and abort before any mutant ran, and red CI.
+- Q14_4_COMPAT pins that the two relabelled rows carry the derived values, anchored to the rows themselves: the <dt>Profile completeness</dt> row's own <dd> shows the derived complete value, and the <dt>Still to do</dt> row's own <dd> shows None (or the derived list), each matched inside that row's markup, never as text that could match anywhere later on the page. The mutant that keeps the stored placeholder must fail at that pin with the message the mutation script expects.
+- In the clear-a-field case of Q14_4_SHOWN, the test asserts the checklist's exact item list, not only that the cleared item is present. A field written by the person makes the derivation ignore the imported pending list (importedPending in packages/profile/src/completeness.ts), so a requirement met only through that list comes back as missing: in the complete fixture with the display name cleared, the list is Display name and Phone number, in that order. Item (4)'s 'adds exactly that one' does not hold there; assert the list the derivation produces at the bound head, and if it differs from these two, name it in your final message.
+- The mutation script's control runs each named test unmutated and must pass before any mutant is written; run npm test end to end before you finish, so CI runs it green.`;
+const SHU594_ACCEPTANCE_REVIEW = " (Review) Q14_4_ANCHOR: no test matches or refuses the bare text 'Profile complete'; the complete state is asserted as <h2>Profile complete</h2>, Q14_4_COMPAT matches the derived values inside the Profile completeness and Still to do rows' own markup, and its mutant dies at that pin with the script's expected message; the clear-a-field case of Q14_4_SHOWN asserts the exact checklist (Display name and Phone number in the complete fixture); the mutation script's controls pass and every named mutant dies by an AssertionError, and npm test runs green.";
+const RECUT_588_CONTRACTS = Object.fromEntries(Object.entries(RECUT_588).map(([from, to]) => {
+  const base = RECUT_581_CONTRACTS[from];
+  let brief = recut588(base.brief);
+  let acceptance = recut588(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU594_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.includes("the (Review) clause wins")) brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU594_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its revisions ran out on a final BLOCK (tests that matched the bare text 'Profile complete' inside the 'Profile completeness' label, an aborted mutation script, and an unpinned clear-a-field list), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU594_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-596 re-cuts SHU-590, the staff civil ID check. It stopped with its
+// revisions used up; its reviews found the person-id trap on My profile (the
+// decision read gated on a person id the projection had dropped), mutation
+// scripts that only searched the source, missing REV_DECIDE and REV_SHOWN
+// tests, no photo read on the decision page, a db test that never opened the
+// real store, and three missing staff-delivery cases.
+const RECUT_590 = Object.freeze({ "SHU-590": "SHU-596" });
+const recut590 = (text) => text.replace(/\bSHU-590\b/g, (id) => RECUT_590[id]);
+const SHU596_REVIEW = `
+- The last run of this card (SHU-590) also used up its revisions. Its reviews found the faults below; read them with the bullets above, and where they differ, these win.
+- The person id for the Civil ID row's decision comes from requesterPrincipalId, the session's own person id that the GET /profile handler in apps/gateway/src/index.ts binds inside the readOwn block before it replaces result with the readOwn projection; capture it (or the authorized target id built from it) before that replacement. Never read result.body?.personId after readOwn: the projection has no personId, so a gate on it is always false and the decision never shows. A test through createGatewayServer proves 'Checked' and 'Rejected: <reason>' appear on a real cookie GET /profile.
+- Both mutation scripts (apps/gateway/test/civil-id-review-mutations.mjs and packages/private-documents/test/staff-delivery-mutations.mjs) write each mutant and run the tests against it, as apps/gateway/test/documents-page-mutations.mjs does: read the built file, assert the needle binds exactly once, write the mutated copy, run the named test against it with spawnSync, assert the unmutated control passes and the mutant fails with 'not ok' and an AssertionError carrying the named message, print KILLED <token>, and restore the file in a finally block. A script that only searches the source for a needle is refused; the last run's scripts wrote no mutant at all.
+- REV_DECIDE and REV_SHOWN are real tests named with their token first, in the files the acceptance names; the last run had neither.
+- The decision page shows the photo-reading result, so the civilIdReview block in apps/gateway/src/wiring/profile.ts passes the OCR store's read to the review service, and a test through createGatewayServer shows the reading result on the decision page.
+- packages/db/test/postgres-civil-id-review.test.ts imports PostgresCivilIdReviewStore from packages/db/src/postgres-civil-id-review-store.ts and drives it against the real database; a test that only runs SQL by hand does not prove the store.
+- packages/private-documents/test/staff-delivery.test.mjs has its own test for each of: a link signed for another slot is refused; a real owner-signed link on the staff route is refused; a real staff-signed link on the owner route is refused, each on its MAC and label.`;
+const SHU596_ACCEPTANCE_REVIEW = " (Review) REV_PERSON: the Civil ID row's decision is read with requesterPrincipalId bound before the readOwn projection, and a real cookie GET /profile through createGatewayServer shows 'Checked' and 'Rejected: <reason>'; REV_MUTANTS: both mutation scripts write each mutant, run its named test with the unmutated control passing, and every mutant dies by an AssertionError; REV_DECIDE and REV_SHOWN exist as tests; the decision page shows the photo-reading result through the real wiring; the db test drives PostgresCivilIdReviewStore; staff delivery refuses another slot, an owner link on the staff route and a staff link on the owner route in their own tests.";
+const RECUT_590_CONTRACTS = Object.fromEntries(Object.entries(RECUT_590).map(([from, to]) => {
+  const base = RECUT_584_CONTRACTS[from];
+  let brief = recut590(base.brief);
+  let acceptance = recut590(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU596_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU596_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its revisions ran out on a final BLOCK (a My profile decision read gated on a person id the projection had dropped, mutation scripts that wrote no mutant, missing tests, and an unwired photo read), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU596_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
