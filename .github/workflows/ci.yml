@@ -45,8 +45,17 @@ jobs:
     steps:
       - name: Install and assert the Git 2.43 compatibility floor
         run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends git ca-certificates util-linux
+          # The job container's resolver sometimes fails for a while on a fresh
+          # runner; apt-get update only warns then, so retry until the index
+          # really downloads instead of failing on the install that follows.
+          for attempt in 1 2 3 4 5 6; do
+            if apt-get update -qq -o Acquire::Retries=3 2>&1 | tee /tmp/apt-update.log && ! grep -q '^W: Failed to fetch' /tmp/apt-update.log; then
+              break
+            fi
+            [ "$attempt" = 6 ] && { echo "apt index unavailable after $attempt attempts" >&2; exit 1; }
+            sleep $((attempt * 10))
+          done
+          apt-get install -y --no-install-recommends -o Acquire::Retries=3 git ca-certificates util-linux
           test "$(git --version)" = "git version 2.43.0"
           git --version
           setpriv --reuid=65534 --regid=65534 --clear-groups id -u
