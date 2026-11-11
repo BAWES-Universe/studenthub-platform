@@ -40,7 +40,12 @@ jobs:
     # The orchestrator compatibility floor is Git 2.43. A newer runner's Git
     # previously hid a distinct-UID upload-pack ownership refusal.
     runs-on: ubuntu-24.04
-    container: ubuntu:24.04
+    container:
+      image: ubuntu:24.04
+      # Since 2026-11-11 14:10Z the job network's default resolver has failed
+      # every lookup of the Ubuntu archive while host jobs resolve normally;
+      # name public resolvers so the container does not depend on it.
+      options: --dns 1.1.1.1 --dns 8.8.8.8
     timeout-minutes: 10
     steps:
       - name: Install and assert the Git 2.43 compatibility floor
@@ -52,7 +57,7 @@ jobs:
             if apt-get update -qq -o Acquire::Retries=3 >/tmp/apt-update.log 2>&1 && ! grep -q '^W: Failed to fetch' /tmp/apt-update.log; then
               break
             fi
-            cat /tmp/apt-update.log
+            cat /tmp/apt-update.log /etc/resolv.conf
             [ "$attempt" = 6 ] && { echo "apt index unavailable after $attempt attempts" >&2; exit 1; }
             sleep $((attempt * 10))
           done
