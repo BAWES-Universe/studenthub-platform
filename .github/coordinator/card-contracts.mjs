@@ -7036,7 +7036,145 @@ const RECUT_577_CONTRACTS = Object.fromEntries(Object.entries(RECUT_577).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS });
+// SHU-586 re-cuts SHU-575, the person-facing civil ID suggestion card. Its
+// first review passed but CI was red; the landing repair's fresh review
+// blocked and used up the budget. Two of the blocks were contract gaps: the
+// 'We are reading your photo' state cannot happen, because SHU-573's
+// current-suggestion read returns only read, unreadable and failed jobs, and the
+// contract never named one place to read the suggestion, so the builder wrapped
+// web.profiles and the read ran on JSON /profile, the preview pages and the
+// documents page too. The reading state is dropped (legacy had none, and
+// widening the read would put this card on the OCR store that SHU-579 is
+// changing), and the one read lives in the HTML branch of the GET /profile
+// handler in apps/gateway/src/index.ts.
+const RECUT_575 = Object.freeze({ "SHU-575": "SHU-586" });
+const recut575 = (text) => text.replace(/\bSHU-575\b/g, (id) => RECUT_575[id]);
+const SHU586_INDEX_PATH = "apps/gateway/src/index.ts";
+const SHU586_SEAM = "- One read, in one place: the suggestion is read only in the HTML branch of the GET /profile handler in apps/gateway/src/index.ts (that handler is still in that file on main; it did not move to apps/gateway/src/routes/), after readOwn answers found and only when the session's person is the profile's person. It is read once through a civilIdSuggestion service that wiring/profile.ts adds to the login application as its own entry, and passed to profileDocument as a new optional last parameter. profileDocument reads nothing itself, and with no suggestion passed it renders byte-identically to today. No wrapper around web.profiles or readOwn, so JSON /profile, the preview pages (apps/gateway/src/routes/profile.ts) and the documents page (apps/gateway/src/documents-page.ts) make no suggestion read. The suggestion is kept out of the 19 definition rows and out of the JSON /profile body.";
+const SHU586_REVIEW = `
+- The last run of this card (SHU-575) used up its revisions. Its final review found the faults below; read them as part of the contract, and where they differ from the text above, they win.
+- apps/gateway/src/index.ts is in your paths for one change only: the suggestion read in the HTML branch of the GET /profile handler, as one contiguous block. Change no other line of that file. If the completeness block of SHU-588 (or SHU-581) is already in that handler, put yours as its own block beside it, and add your profileDocument parameter after any parameter that card added. A suggestion read that throws renders My profile without the line, never a 503 or a 404.
+- There is no reading-in-progress line. SHU-573's current-suggestion read returns only read, unreadable and failed jobs, so a pending or running job shows nothing until the read finishes. This card does not change the OCR store or its read: packages/db/src/postgres-civil-id-ocr-store.ts and packages/profile/src/civil-id-ocr.ts are not in your paths, because SHU-579 owns them.
+- Directly under the Civil ID row means between the Civil ID row and any row after it, including the area row when login.area is configured. The line is a <div> with a <dt> and a <dd> inside dl.p-fields, like every other row there. It adds no definition row to the count of 19 and no unavailable marker.
+- Status codes: a suggestion id that is not the person's current one, an answered one, one for a replaced photo version and another person's id are each 409, the same as CIV's own stale_revision. Once CIV's save has succeeded, or CIV answers that the same derived submission id was already saved (a double click that raced), the answer is the same 303 to /profile#field-civilId as a first success, whatever resolve then reports: an already-answered suggestion at that point is not an error, so the handler never has to tell an accept from a dismiss after the save.
+- The check, CIV's save and resolve are separate steps, and this card does not make them one transaction. A dismiss or a newer photo's read landing between them can leave the civil ID saved from the suggestion the person just accepted. That is accepted: the save is the person's own confirmation of values they saw, it goes through every CIV rule and sets needs_review for staff, and a newer photo's suggestion still shows on the next render. Do not change the OCR store or CIV's store for it.
+- apps/gateway/src/web-ui.ts takes exactly two edits, each its own block, as an exception to the one-block rule for shared files: the new optional last parameter of profileDocument, and the suggestion line placed directly after the Civil ID row. Change no other line of that file.
+- S1 is end to end: FakeCivilIdOcrReader, InMemoryCivilIdOcrStore and runCivilIdOcr read a photo, and the suggestion they store is what a real GET /profile through createGatewayServer shows. A hand-built CivilIdSuggestionView never stands in for that test.
+- The wiring is proved, not only the renderer: one test builds the gateway with CIVIL_ID_ENCRYPTION_KEY set, so the real wiring/profile.ts path runs, with a counting suggestion store behind it. It shows that HTML My profile makes exactly one suggestion read, and that JSON /profile, a preview page and the documents page each make zero.`;
+const SHU586_ACCEPTANCE_REVIEW = " (Review) OCRP_SEAM: with CIVIL_ID_ENCRYPTION_KEY set and the real wiring, a counting suggestion store sees exactly one read for HTML GET /profile and zero for JSON GET /profile, a preview page and the documents page; another person's profile makes no read; a throwing read renders My profile without the line; OCRP_E2E: a suggestion stored by runCivilIdOcr from FakeCivilIdOcrReader into InMemoryCivilIdOcrStore shows on a real GET /profile, and after accept CIV's row shows the masked number, the expiry and the waiting state; OCRP_PLACE: the line sits directly after the Civil ID row with login.area configured, as a div with a dt and a dd in dl.p-fields; stale, answered, replaced and foreign suggestion ids are each 409, and a raced double accept answers 303 once CIV's save has succeeded or reports the same submission already saved; no pending or running state is rendered and the OCR store files are unchanged.";
+const RECUT_575_CONTRACTS = Object.fromEntries(Object.entries(RECUT_575).map(([from, to]) => {
+  const base = RECUT_566_CONTRACTS[from];
+  let brief = recut575(base.brief);
+  let acceptance = recut575(base.acceptance);
+  brief = replaceOnce(brief, "; pending and running show 'We are reading your photo'.", "; a job still pending or running shows nothing yet, because the current-suggestion read returns only finished reads, and the line appears once the read finishes.", `${to} reading state decision`);
+  brief = replaceOnce(brief, "'We are reading your photo' while the job is pending or running; ", "", `${to} reading state outcome`);
+  const seamAt = brief.indexOf("- The projection stays untouched:");
+  brief = `${brief.slice(0, seamAt)}${SHU586_SEAM}${brief.slice(brief.indexOf("\n", seamAt))}`;
+  brief = replaceOnce(brief, "pending and running show the reading line; ", "a pending or running job renders nothing; ", `${to} brief reading state acceptance`);
+  acceptance = replaceOnce(acceptance, "pending and running show the reading line; ", "a pending or running job renders nothing; ", `${to} reading state acceptance`);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU586_REVIEW}${MUTATION_SCRIPT_RULE}\n- Before you finish,`, `${to} review faults`);
+  brief = replaceOnce(brief, "- apps/gateway/src/web-ui.ts\n", `- apps/gateway/src/web-ui.ts\n- ${SHU586_INDEX_PATH}\n`, `${to} paths`);
+  brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU586_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  const paths = Object.freeze([...base.initial_build_paths, SHU586_INDEX_PATH]);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  if (brief.includes("We are reading your photo")) throw new Error(`${to} still names the reading state`);
+  const reason = "after its revisions ran out on a final BLOCK that found contract gaps (a reading state the current-suggestion read never returns, no single place for the suggestion read, and a hand-built end-to-end test), all settled here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance}${SHU586_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-588 re-cuts SHU-581, the My profile completeness card. Its builder
+// stopped on a contract path gap: the email item needs the principal's email,
+// and login.profile()'s body is { personId, role }, so 'Profile complete' could
+// never show in production. The principal is already read on every request
+// (login-runtime.ts roleFor calls authzStore.getPrincipal), so the re-cut lets
+// that one read carry the email into login.profile()'s body through an
+// optional authorization method, with the login application and its contract
+// types in the card's paths. The other review faults are spelled out.
+const RECUT_581 = Object.freeze({ "SHU-581": "SHU-588" });
+const recut581 = (text) => text.replace(/\bSHU-581\b/g, (id) => RECUT_581[id]);
+const SHU588_LOGIN_PATHS = Object.freeze([
+  "packages/login-contract/src/types.ts",
+  "apps/gateway/src/login-application.ts",
+  "apps/gateway/test/login-application.test.ts",
+  "apps/gateway/src/login-runtime.ts",
+]);
+const SHU588_REVIEW = `
+- The last run of this card (SHU-581) stopped on a path gap, settled here; read these lines as part of the contract, and where they differ from the text above, they win.
+- Where the principal's email comes from: login.profile() answers { personId, role } (apps/gateway/src/login-application.ts), so the route has no email today. The principal is already read on every request: the authorization roleFor in apps/gateway/src/login-runtime.ts calls authzStore.getPrincipal(personId) and throws the result away. Add an optional method to AuthorizationStore in packages/login-contract/src/types.ts that answers the role and the principal's email from one call (for example principalFor(personId): Promise<{ role: string; email?: string }>). login-application.ts profile() calls it instead of roleFor when it is present, and adds email to the body only when it is a non-empty string; without it, profile() calls roleFor exactly as today and the body stays { personId, role }. login-runtime.ts implements it from the getPrincipal read it already makes, so each request still reads the principal once. No second principal read, no new store, and no fake seam. The GET /profile route passes body.email to the gatherer.
+- Those four files are in your paths for that change only: packages/login-contract/src/types.ts (the optional method), apps/gateway/src/login-application.ts (profile() only), apps/gateway/test/login-application.test.ts (tests that profile() carries the email when principalFor answers one, leaves it out for an empty or missing email, and answers { personId, role } exactly as today when only roleFor exists) and apps/gateway/src/login-runtime.ts (the authorization object passed to createLoginApplication only). Each change is one contiguous block; change no other line. packages/login-contract/test is not in your paths: its reference adapter has no principalFor, so its tests keep passing unchanged.
+- Copy in HTML: escapeHtml turns an apostrophe into &#39;, so a test that looks for copy such as 'Couldn't check right now' in a rendered page searches for the escaped form, or for escapeHtml of the copy string, never the raw text. The last run's assertions failed on this.
+- Mutation needles: the text 'from "./web-ui.js"' occurs more than once in apps/gateway/src/index.ts, so it is not a needle. Every needle binds exactly once in the compiled file; the script checks that before it writes a mutant and fails if not.
+- Do not rewrap webProfiles or readOwn in apps/gateway/src/wiring/profile.ts; that file changes only where the gatherer's dependencies need wiring.
+- docs/ux/profile-journey.md still shows the old row labels. It is not in your paths; a later card updates it. Say so in your final message.
+- The checklist test asserts the order of the list items, not only their presence: the missing items appear in the fixed closed-name order.
+- The civil ID read happens twice on My profile: once inside readOwn, through the preferences adapter in apps/gateway/src/wiring/profile.ts (readOwnPreferences calls civilId.readOwn in its Promise.all), and once in the gatherer. If the civil ID store fails, the first read rejects and GET /profile answers 503 before the gatherer runs; that is today's behaviour on main and this card does not change it (do not touch readOwnPreferences). So Q14_4_STATUS's civil ID case is the gatherer's own read failing while readOwn succeeds: give the gatherer's civil ID dependency a fake that throws, keep the projection read working, and assert 200 with 'Couldn't check right now'. Say in your final message that a civil ID store outage still answers 503 through readOwn.`;
+const SHU588_ACCEPTANCE_REVIEW = " (Review) Q14_4_EMAIL: with principalFor answering an email through the real login-application profile() and the real GET /profile route, a profile with every other requirement met renders 'Profile complete', and without an email it lists the email item; login.profile() reads the principal once per request; with only roleFor the body is exactly { personId, role }; Q14_4_ORDER: the checklist items are asserted in their fixed order; Q14_4_NOWRITE: every source behind the gatherer is a counting fake whose write methods throw, and a GET /profile calls none of them; no migration or table is added; Q14_4_STATUS's civil ID case fails the gatherer's own civil ID read while readOwn succeeds, and readOwnPreferences in apps/gateway/src/wiring/profile.ts is unchanged.";
+const RECUT_581_CONTRACTS = Object.fromEntries(Object.entries(RECUT_581).map(([from, to]) => {
+  const base = RECUT_577_CONTRACTS[from];
+  let brief = recut581(base.brief);
+  let acceptance = recut581(base.acceptance);
+  const noWriteFrom = "a test over the real store seams proves nothing is written (no INSERT or UPDATE, no new table)";
+  const noWriteTo = "a test with counting fakes behind every source proves nothing is written (Q14_4_NOWRITE)";
+  brief = replaceOnce(brief, noWriteFrom, noWriteTo, `${to} brief no-write`);
+  acceptance = replaceOnce(acceptance, noWriteFrom, noWriteTo, `${to} acceptance no-write`);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU588_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  brief = replaceOnce(brief, "- apps/gateway/src/index.ts\n", `- apps/gateway/src/index.ts\n${SHU588_LOGIN_PATHS.map((path) => `- ${path}\n`).join("")}`, `${to} paths`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU588_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  const paths = Object.freeze([...base.initial_build_paths, ...SHU588_LOGIN_PATHS]);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its builder stopped on a path gap (the principal's email never reaches login.profile()'s body, so 'Profile complete' was unreachable), settled here with the login application and its contract types in its paths";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance}${SHU588_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-590 re-cuts SHU-584, the staff civil ID check. It stopped with its
+// revisions used up; the final review's blocks were build faults (surviving
+// mutants, a CHECK that admits NULL, hollow tests), so the re-cut spells each
+// one out with what the review found correct and not to be redone.
+const RECUT_584 = Object.freeze({ "SHU-584": "SHU-590" });
+const recut584 = (text) => text.replace(/\bSHU-584\b/g, (id) => RECUT_584[id]);
+const SHU590_REVIEW = `
+- The last run of this card (SHU-584) used up its revisions. Its final review found the faults below; read them as part of the contract, and where they differ from the text above, they win.
+- Already right, keep it: the delivery route is GET /workspace/civil-ids/delivery and a real cookie GET with no Origin reaches it; apps/gateway/src/candidate-documents-http.ts is unchanged; the sidebar count is read once in the /workspace route of apps/gateway/src/index.ts, only for a staff or admin context on an operator organization, and renderWorkspace stays synchronous and byte-identical without it; decide() locks the row FOR UPDATE, refuses a stale revision, leaves the revision untouched and is replay-safe on confirm_ref; stateFor and listPending are each one statement; the full number appears only on the decision page.
+- Origin refusals are asserted exactly: in REV_ORIGIN a wrong Origin and a cross-site Sec-Fetch-Site each answer 403 with the denied page before the body is read, distinct from the 400 a missing field gets. A status of 400 or more is not enough, because a skipped Origin check then falls through to the 400 and the mutant lives.
+- REV_DECIDE includes a decision POST carrying a stale revision, which is refused and stores nothing, and a decision for a changed photo version, which is refused and stores nothing.
+- The mutation script names every mutant the acceptance lists, including 'list a released or decided row', 'clear needs_review without a decision' and 'read the state twice', and every mutant it names dies by an AssertionError in its named test; npm test runs to the end.
+- Migration 0219: a CHECK whose expression is NULL passes in Postgres. The rejected branch states reason IS NOT NULL explicitly, so a rejected decision with no reason is refused; check every other branch the same way.
+- packages/db/test/postgres-civil-id-review.test.ts opens a real database and exercises each CHECK on its own: every insert uses a subject and a reviewer that differ, so the subject-is-not-reviewer CHECK never hides another one, and the control-character reason, the over-long reason, the rejected-with-no-reason and the confirmed-with-a-reason rows are each refused, with a valid row of each kind accepted.
+- Item 4 is pinned in packages/private-documents/test/staff-delivery.test.mjs with a fixture of at least two documents: a link signed for another slot or another version is refused; a real owner-signed link presented on the staff route is refused, and a real staff-signed link presented on the owner route is refused, each on its MAC and label, not on a rewritten path.
+- REV_SECRECY scans the confirmation token, the redirect, every response header and the sidebar as well as the queue HTML and the captured calls. Item 5's S2 is proved with 0, 1 and 60 waiting people, for both the queue and the decision page, with a counting fake.`;
+const SHU590_ACCEPTANCE_REVIEW = " (Review) REV_EXACT: a wrong Origin and a cross-site Sec-Fetch-Site are each 403 before the body is read; a stale revision and a changed photo version are each refused with nothing stored; 0219's rejected branch has an explicit reason IS NOT NULL and the real-database test refuses each CHECK's bad row on its own with distinct subject and reviewer; staff delivery refuses another slot or version and a real owner link on the staff route and a staff link on the owner route; REV_SECRECY covers the token, redirect, headers and sidebar; S2 holds for 60 waiting people on the queue and the decision page; every named mutant, including the three the last script left out, dies by an AssertionError.";
+const RECUT_584_CONTRACTS = Object.fromEntries(Object.entries(RECUT_584).map(([from, to]) => {
+  const base = RECUT_577_CONTRACTS[from];
+  let brief = recut584(base.brief);
+  let acceptance = recut584(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU590_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.includes("the (Review) clause wins")) brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU590_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its revisions ran out on a final BLOCK (surviving mutants, a reason CHECK that admitted NULL, and hollow tests), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU590_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
