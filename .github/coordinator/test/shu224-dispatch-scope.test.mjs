@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-576", "SHU-573", "SHU-577", "SHU-574", "SHU-575"], "SHU-224: the scope names the current card queue (SHU-312): a re-cut that leaves out every stopped and landed card and starts with a new card, so the box dispatches none of them again");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-581", "SHU-584", "SHU-579"], "SHU-224: the scope names the current card queue (SHU-312): a re-cut that leaves out every stopped and landed card and SHU-575, which runs before this installs, and starts with a new card");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -518,7 +518,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-566"].brief, /\n- Before you finish, [^\n]*\n[\s\S]*\n\nFinish with/, "SHU-224: SHU-566 keeps its finishing lines last");
   // SHU-570 re-cuts SHU-559 after it stopped: the derived checklist is HTML only,
   // JSON keeps zero document reads, and the two test files it may extend are in its paths.
-  for (const id of ["SHU-558", "SHU-559", "SHU-560", "SHU-561", "SHU-562", "SHU-563", "SHU-564", "SHU-566", "SHU-567", "SHU-568", "SHU-570"]) assert.ok(!config.dispatch_scope.issue_ids.includes(id), `SHU-224: stopped or landed ${id} is not dispatched again`);
+  for (const id of ["SHU-558", "SHU-559", "SHU-560", "SHU-561", "SHU-562", "SHU-563", "SHU-564", "SHU-566", "SHU-567", "SHU-568", "SHU-570", "SHU-573", "SHU-574", "SHU-575", "SHU-576", "SHU-577"]) assert.ok(!config.dispatch_scope.issue_ids.includes(id), `SHU-224: stopped or landed ${id} is not dispatched again`);
   assert.equal(after("SHU-570"), undefined, "SHU-224: SHU-570 waits on nothing, since SHU-558 has landed");
   const lane570 = config.card_lanes.find((entry) => entry.id === "SHU-570");
   assert.deepEqual(lane570.initial_build_paths, [...contracts["SHU-570"].initial_build_paths], "SHU-224: SHU-570's lane matches its contract");
@@ -572,6 +572,45 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.doesNotMatch(contracts[id].brief, /in both the JSON and the HTML path|as JSON and as HTML both carry|SHU-559/, `SHU-224: ${id} has no JSON-and-HTML leftovers and no stale ids`);
     assert.match(contracts[id].acceptance, new RegExp(`${id} is the [^;]* half of SHU-570's contract[^;]*; SHU-570 never lands\\.$`), `SHU-224: ${id} says which card it splits`);
   }
+  // SHU-579 follows up SHU-573's review findings; it shares no file with SHU-574 or SHU-575.
+  assert.equal(after("SHU-579"), undefined, "SHU-224: SHU-579 waits on nothing");
+  const lane579 = config.card_lanes.find((entry) => entry.id === "SHU-579");
+  assert.deepEqual(lane579.initial_build_paths, [...contracts["SHU-579"].initial_build_paths], "SHU-224: SHU-579's lane matches its contract");
+  assert.deepEqual(lane579.revision_paths, [...contracts["SHU-579"].revision_paths], "SHU-224: SHU-579's revision paths match its contract");
+  for (const id of ["SHU-574", "SHU-575"]) assert.ok(contracts[id].initial_build_paths.every((path) => !contracts["SHU-579"].initial_build_paths.includes(path)), `SHU-224: SHU-579 shares no file with ${id}`);
+  assert.match(contracts["SHU-579"].brief, /^Card SHU-579:/, "SHU-224: SHU-579's brief names its own card");
+  for (const token of ["OCR_LEASE", "OCR_THROTTLE", "OCR_ORG", "OCR_EXPIRED_NULL", "OCR_ACCEPT_COMPLETE", "OCR_DATES", "OCR_PHOTO_THROW"]) assert.match(contracts["SHU-579"].acceptance, new RegExp(`${token}: `), `SHU-224: SHU-579 pins ${token}`);
+  assert.match(contracts["SHU-579"].acceptance, /OCR_LEASE: [^;]*times two reads[^;]*every claimed job it has not finished yet[^]*?neither a claimed job still waiting its turn in the batch nor a late front job/, "SHU-224: SHU-579's lease covers the whole batch, back-photo reads and waiting jobs included");
+  assert.match(contracts["SHU-579"].brief, /Renewing only the job about to be read is not enough/, "SHU-224: SHU-579 rules out per-job renewal alone");
+  assert.match(contracts["SHU-579"].brief, /never return FAILED because of a sandbox limit/, "SHU-224: SHU-579 hands in its work when only the sandbox stops the full run");
+  assert.match(contracts["SHU-579"].brief, /\n- packages\/profile\/test\/civil-id-ocr-mutations\.mjs\n\nOut of scope:/, "SHU-224: SHU-579's brief lists its paths one per line");
+  // SHU-581 re-cuts SHU-577 and SHU-584 re-cuts SHU-574, each with its contract gaps settled.
+  assert.equal(after("SHU-581"), undefined, "SHU-224: SHU-581 waits on nothing, since SHU-576 has landed");
+  assert.equal(after("SHU-584"), undefined, "SHU-224: SHU-584 waits on nothing, since SHU-573 has landed");
+  for (const id of ["SHU-579", "SHU-581", "SHU-584"]) {
+    const lane = config.card_lanes.find((entry) => entry.id === id);
+    assert.deepEqual(lane.initial_build_paths, [...contracts[id].initial_build_paths], `SHU-224: ${id}'s lane matches its contract`);
+    assert.deepEqual(lane.revision_paths, [...contracts[id].revision_paths], `SHU-224: ${id}'s revision paths match its contract`);
+    assert.match(contracts[id].brief, new RegExp(`^Card ${id}:`), `SHU-224: ${id}'s brief names its own card`);
+    assert.match(contracts[id].brief, /A mutation script writes each mutant and runs the tests against it[^\n]*documents-page-mutations\.mjs[^\n]*never a regular expression over a source file\./, `SHU-224: ${id} says how a mutation script and a route or Postgres test must work`);
+  }
+  assert.deepEqual([...contracts["SHU-584"].initial_build_paths], [...contracts["SHU-574"].initial_build_paths, "apps/gateway/src/index.ts"], "SHU-224: SHU-584 keeps SHU-574's paths and adds the gateway entry for the sidebar count");
+  assert.ok(!contracts["SHU-584"].initial_build_paths.includes("apps/gateway/src/candidate-documents-http.ts"), "SHU-224: SHU-584 leaves the candidate documents handler alone");
+  assert.doesNotMatch(contracts["SHU-584"].acceptance, /\/private-documents\/staff-delivery/, "SHU-224: SHU-584's acceptance never names the unreachable route");
+  assert.match(contracts["SHU-584"].acceptance, /REV_ROUTES: [^;]*index\.ts[^;]*synchronous renderWorkspace/, "SHU-224: SHU-584 passes the sidebar count in from the route");
+  assert.match(contracts["SHU-584"].acceptance, /GET \/workspace\/civil-ids\/delivery and reached by a real GET through createGatewayServer with no Origin header/, "SHU-224: SHU-584 serves staff images on a reachable route");
+  assert.match(contracts["SHU-584"].acceptance, /postgres-civil-id-review\.test\.ts opens a real database/, "SHU-224: SHU-584's Postgres test opens a real database");
+  assert.match(contracts["SHU-584"].acceptance, /SHU-584 is SHU-574's contract re-queued under a fresh id [^;]*; SHU-574 never lands\.$/, "SHU-224: SHU-584 says which card it replaces");
+  assert.deepEqual([...contracts["SHU-581"].initial_build_paths], [...contracts["SHU-577"].initial_build_paths, "apps/gateway/test/contributions.test.ts", "apps/gateway/src/index.ts"], "SHU-224: SHU-581 keeps SHU-577's paths and adds the PREP_NAV digests");
+  assert.match(contracts["SHU-581"].brief, /browserEdit: \{ async notice\(\) \{ return \{\}; \} \}/, "SHU-224: SHU-581 names the route-test fixture");
+  assert.match(contracts["SHU-581"].brief, /profileDocument never stamps or changes a field's freshness itself/, "SHU-224: SHU-581 keeps the derived freshness out of the renderer");
+  assert.match(contracts["SHU-581"].brief, /Regenerate exactly those 10 expected digests/, "SHU-224: SHU-581 regenerates the PREP_NAV digests and nothing else");
+  assert.match(contracts["SHU-581"].brief, /Keep the principal read and readOwn exactly where they are/, "SHU-224: SHU-581 keeps the principal read out of the gatherer");
+  assert.match(contracts["SHU-581"].acceptance, /Q14_4_ROUTE: [^;]*real GET \/profile through createGatewayServer[^]*?at least one in Arabic/, "SHU-224: SHU-581 proves the page through the real route");
+  assert.match(contracts["SHU-581"].acceptance, /Q14_4_RENDER_PURE: /, "SHU-224: SHU-581 pins the pure renderer");
+  assert.match(contracts["SHU-581"].acceptance, /no item links to #field-civilId/, "SHU-224: SHU-581 shows no dead civil ID link");
+  assert.match(contracts["SHU-581"].acceptance, /SHU-581 is SHU-577's contract re-queued under a fresh id [^;]*; SHU-577 never lands\.$/, "SHU-224: SHU-581 says which card it replaces");
+  assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.
   assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");
   const lane564 = config.card_lanes.find((entry) => entry.id === "SHU-564");
