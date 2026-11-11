@@ -6880,7 +6880,74 @@ const SPLIT_570_CONTRACTS = Object.freeze({
   "SHU-576": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU576_PATHS, revision_paths: SHU576_PATHS, acceptance: SHU576_ACCEPTANCE, brief: SHU576_BRIEF }),
   "SHU-577": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU577_PATHS, revision_paths: SHU577_PATHS, acceptance: SHU577_ACCEPTANCE, brief: SHU577_BRIEF }),
 });
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS });
+// SHU-579: SHU-573 (civil ID photo reading) landed by hand as cece265 with
+// eight review-bot findings answered as real but not live, because the worker
+// does nothing until civil ID reading is configured. One follow-up fixes them
+// before it is switched on. It shares no file with SHU-574 or SHU-575, so it
+// waits on nothing.
+export const SHU579_PATHS = Object.freeze([
+  "apps/worker/src/civil-id-ocr-worker.ts",
+  "apps/worker/test/civil-id-ocr-worker.test.ts",
+  "packages/db/src/postgres-civil-id-ocr-store.ts",
+  "packages/db/test/postgres-civil-id-ocr.test.ts",
+  "packages/profile/src/civil-id-ocr.ts",
+  "packages/profile/test/civil-id-ocr.test.ts",
+  "packages/profile/test/civil-id-ocr-mutations.mjs",
+]);
+const SHU579_ACCEPTANCE = [
+  "(1) OCR_LEASE: a claimed job's lease outlasts the work done on it: either the lease the worker asks for covers the whole batch (batch size times the reader's 15-second timeout, plus a margin) or the worker renews each job's lease before it reads it; a test with a slow fake reader and a small lease shows a second worker cannot claim a job the first is still reading, and a job whose lease really expired can still be claimed again;",
+  "(2) OCR_THROTTLE: the Textract reader maps HTTP 408 and 429, and HTTP 400 whose JSON __type ends in ProvisionedThroughputExceededException or ThrottlingException, to provider_unavailable (retried), and every other 4xx to provider_rejected, with one fake-fetch test per case;",
+  "(3) OCR_ORG: runCivilIdOcrCommand passes orgId from its env argument's DOCUMENT_ORG_ID to the store, and a test proves the store is built with the env argument's value even when process.env.DOCUMENT_ORG_ID differs;",
+  "(4) OCR_EXPIRED_NULL: currentSuggestion in the Postgres store returns expired false, never null, when the job has no expiry date (COALESCE(j.expiry_date < $2::date, false)), matching the in-memory store; a Postgres test reads a suggestion with no expiry, one expired and one not;",
+  "(5) OCR_ACCEPT_COMPLETE: openForAccept in the Postgres store returns null unless country and number_ciphertext are both NOT NULL, matching the in-memory store; a Postgres test opens a read job with a missing number and gets null;",
+  "(6) OCR_DATES: the date finder in packages/profile/src/civil-id-ocr.ts normalises digits (Arabic-Indic and NFKC) with a helper that keeps whitespace and separators, so two dates on one line are both seen and the later valid one wins as today; the civil ID number path keeps its own normaliser unchanged; tests cover two dates on one line in Western and Arabic-Indic digits and a line with one date;",
+  "(7) OCR_PHOTO_THROW: in runCivilIdOcr, a throw from photos.read for one job fails that job with provider_unavailable (retried) and the batch goes on to the next job; a test with three jobs whose second photo read throws shows the first and third read and the second failed;",
+  "(8) mutants in packages/profile/test/civil-id-ocr-mutations.mjs, each binding exactly once in the built dist file and dying by an AssertionError (code 'ERR_ASSERTION', name 'AssertionError') in its named test: the photo read moved back outside the per-job try (OCR_PHOTO_THROW), the date finder using the number normaliser again (OCR_DATES); the existing mutants still pass; every existing test in the card's test files passes unchanged; no new export, so apps/gateway/test/db-subpaths.test.ts is unchanged; npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+const SHU579_BRIEF = `Card SHU-579: civil ID photo reading survives slow, throttled and odd reads before it is switched on (follow-up to SHU-573; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-573. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests (npm run test:db) cannot run here, so write them carefully; CI runs them on the card's pull request.
+
+Why. SHU-573 landed civil ID photo reading. Review then found seven faults that are real but not live, because the worker does nothing until civil ID reading is configured. Fix them all before it is switched on. Each item below is one finding; keep every other behaviour as it is.
+
+Read first:
+- apps/worker/src/civil-id-ocr-worker.ts: TextractCivilIdReader.read (15-second AbortController, the !response.ok branch that maps only 5xx to provider_unavailable), and runCivilIdOcrCommand (leaseMs 60_000, batchSize 20, the store built with only a connection string).
+- packages/db/src/postgres-civil-id-ocr-store.ts: the constructor's orgId fallback to process.env, claim, currentSuggestion (its expired column) and openForAccept.
+- packages/profile/src/civil-id-ocr.ts: digits, dateIn, parseCivilIdLines, the in-memory store's currentSuggestion and openForAccept (the behaviour the Postgres store must match), and runCivilIdOcr (photos.read is outside the per-job try).
+- packages/profile/test/civil-id-ocr-mutations.mjs and packages/profile/test/mutations.mjs: how a mutant must die.
+
+Goal, one line per finding:
+- Lease: a 60-second lease covers a batch of 20 reads that can each take 15 seconds, so a lease can lapse while its job is still being read and another worker can claim it. Size the lease to the batch (batch size times the read timeout, plus a margin) or renew each job's lease before its read; say which in your final message.
+- Throttling: Textract answers 408, 429, or 400 with __type ProvisionedThroughputExceededException or ThrottlingException when it is busy. Those are provider_unavailable and are retried; every other 4xx stays provider_rejected. Read the error body only for a 400, and treat a body that cannot be read as provider_rejected.
+- Organisation: the worker passes orgId from its env argument's DOCUMENT_ORG_ID to the store; the store's process.env fallback stays for other callers.
+- Expiry: currentSuggestion's expired is COALESCE(j.expiry_date < $2::date, false), so a suggestion with no expiry is not expired and never null.
+- Accept: openForAccept requires country IS NOT NULL AND number_ciphertext IS NOT NULL, as the in-memory store does.
+- Dates: dateIn uses its own digit normaliser (Arabic-Indic to Western and NFKC) that keeps whitespace and separators, so 'from 01/01/2020 to 31/12/2030' finds both dates and keeps the later valid one, as today. The civil ID number keeps the existing normaliser.
+- One bad photo: in runCivilIdOcr, move o.photos.read(j) inside the per-job try, so a throw fails that job with provider_unavailable (retried) and the next job is still read.
+
+Guards: no migration, no new table or column, no new export (apps/gateway/test/db-subpaths.test.ts pins the db subpath exports), no change to the baseline sweep, the claim order, the vault, the parser's number rules or any page; no new dependency; no change outside the paths.
+
+Tests are named with their token first and a space after it, and every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion and not the runner.
+
+Mutations (add to packages/profile/test/civil-id-ocr-mutations.mjs, each needle binding exactly once in the built dist file, each required to fail with an AssertionError): the photo read moved back outside the per-job try (OCR_PHOTO_THROW); the date finder using the number normaliser again (OCR_DATES). Never drop or weaken a mutant to make the script pass.
+
+Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
+${SHU579_PATHS.map((path) => `- ${path}`).join("\n")}
+
+Out of scope: the staff review queue and the confirm-or-correct page (SHU-574, SHU-575), migration 0218, the baseline marker, switching civil ID reading on, package.json and the lockfile.
+
+- Before you finish, run the mutation script on the built files and say in your final message which assertion kills each mutant.
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.
+
+${SANDBOX_FINISH.replace(", and answer S1 for each value you write or record", "")}`;
+const SHU579_CONTRACT = { "SHU-579": Object.freeze({
+  workspace_mode: "repo",
+  initial_build_paths: SHU579_PATHS,
+  revision_paths: SHU579_PATHS,
+  acceptance: SHU579_ACCEPTANCE,
+  brief: SHU579_BRIEF,
+}) };
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

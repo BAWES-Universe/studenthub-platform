@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-576", "SHU-573", "SHU-577", "SHU-574", "SHU-575"], "SHU-224: the scope names the current card queue (SHU-312): a re-cut that leaves out every stopped and landed card and starts with a new card, so the box dispatches none of them again");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-576", "SHU-573", "SHU-577", "SHU-574", "SHU-575", "SHU-579"], "SHU-224: the scope names the current card queue (SHU-312): the installed queue as it is, with the civil ID reading follow-up appended");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -572,6 +572,16 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.doesNotMatch(contracts[id].brief, /in both the JSON and the HTML path|as JSON and as HTML both carry|SHU-559/, `SHU-224: ${id} has no JSON-and-HTML leftovers and no stale ids`);
     assert.match(contracts[id].acceptance, new RegExp(`${id} is the [^;]* half of SHU-570's contract[^;]*; SHU-570 never lands\\.$`), `SHU-224: ${id} says which card it splits`);
   }
+  // SHU-579 follows up SHU-573's review findings; it shares no file with SHU-574 or SHU-575.
+  assert.equal(after("SHU-579"), undefined, "SHU-224: SHU-579 waits on nothing");
+  const lane579 = config.card_lanes.find((entry) => entry.id === "SHU-579");
+  assert.deepEqual(lane579.initial_build_paths, [...contracts["SHU-579"].initial_build_paths], "SHU-224: SHU-579's lane matches its contract");
+  assert.deepEqual(lane579.revision_paths, [...contracts["SHU-579"].revision_paths], "SHU-224: SHU-579's revision paths match its contract");
+  for (const id of ["SHU-574", "SHU-575"]) assert.ok(contracts[id].initial_build_paths.every((path) => !contracts["SHU-579"].initial_build_paths.includes(path)), `SHU-224: SHU-579 shares no file with ${id}`);
+  assert.match(contracts["SHU-579"].brief, /^Card SHU-579:/, "SHU-224: SHU-579's brief names its own card");
+  for (const token of ["OCR_LEASE", "OCR_THROTTLE", "OCR_ORG", "OCR_EXPIRED_NULL", "OCR_ACCEPT_COMPLETE", "OCR_DATES", "OCR_PHOTO_THROW"]) assert.match(contracts["SHU-579"].acceptance, new RegExp(`${token}: `), `SHU-224: SHU-579 pins ${token}`);
+  assert.match(contracts["SHU-579"].brief, /never return FAILED because of a sandbox limit/, "SHU-224: SHU-579 hands in its work when only the sandbox stops the full run");
+  assert.match(contracts["SHU-579"].brief, /\n- packages\/profile\/test\/civil-id-ocr-mutations\.mjs\n\nOut of scope:/, "SHU-224: SHU-579's brief lists its paths one per line");
   // SHU-564 is appended after SHU-563 and waits on nothing.
   assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");
   const lane564 = config.card_lanes.find((entry) => entry.id === "SHU-564");
