@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";import {spawnSync} from "node:child_process";import {readFile,unlink,writeFile} from "node:fs/promises";import {fileURLToPath} from "node:url";
+const source=new URL("../dist/civil-id-ocr.js",import.meta.url),original=await readFile(source,"utf8"),suite=fileURLToPath(new URL("../../../dist/packages/profile/test/civil-id-ocr.test.js",import.meta.url));
+const mutations=[
+ ["take first date","OCR_PARSE","expiry = date;","expiry ??= date;"],
+ ["skip digit conversion","OCR_PARSE","normalizeCivilIdNumber(s)","s"],
+ ["drop unique version","OCR_JOB","this.jobs.some(j => j.documentId === p.documentId && j.version === p.version)","false"],
+ ["read superseded version","OCR_JOB","if (!await o.store.current(j.documentId, j.version))","if (false)"],
+ ["let lost lease complete","OCR_LEASE","j?.status === \"running\" && j.leaseOwner === owner","j?.status === \"running\""],
+ ["store thrown message","OCR_FAILURE","const code = e instanceof CivilIdOcrError ? e.code : \"provider_unavailable\";","const code = e instanceof Error ? e.message : \"provider_unavailable\";"],
+ ["mark no text failed","OCR_FAILURE","if (!parsed.number && !parsed.expiry)\n                await o.store.unreadable(j.id, o.workerId, at);","if (!parsed.number && !parsed.expiry)\n                await o.store.fail(j.id, o.workerId, \"provider_rejected\", at);"],
+ ["write plain number","OCR_SECRECY","numberCiphertext: sealed?.ciphertext ?? null","numberCiphertext: parsed.number ? Buffer.from(parsed.number) : null"],
+ ["skip review flag","OCR_REVIEW","needsReview: true","needsReview: false"],
+ ["overwrite entered number","OCR_REVIEW","{ ...r, needsReview: true, revision: r.revision + 1 }","{ ...r, enteredNumber: \"Y\", needsReview: true, revision: r.revision + 1 }"],
+ ["drop baseline","OCR_BASELINE","if (!this.baseline)","if (false)"],
+];
+for(const [name,token,from,to] of mutations){assert.equal(original.split(from).length-1,1,`mutation must bind exactly once: ${name}`);const target=new URL(`../dist/civil-id-ocr-mutation-${process.pid}.js`,import.meta.url);try{await writeFile(target,original.replace(from,to));const result=spawnSync(process.execPath,["--test","--test-reporter=tap",`--test-name-pattern=^${token} `,suite],{encoding:"utf8",env:{...process.env,SHU573_TEST_MODULE:`${target.href}?mutation=${encodeURIComponent(name)}`},timeout:30_000});const output=result.stdout+result.stderr;assert.equal(result.error,undefined,`${name}: runner error`);assert.notEqual(result.status,0,`${name}: survived`);assert.match(output,new RegExp(`not ok \\d+ - ${token} `),`${name}: named test did not fail\n${output}`);assert.doesNotMatch(output,/SyntaxError|ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION/,`${name}: infrastructure failure\n${output}`);assert.match(output,/code: 'ERR_ASSERTION'/,`${name}: must die by AssertionError\n${output}`);assert.match(output,/name: 'AssertionError'/,`${name}: must die by AssertionError\n${output}`);process.stdout.write(`KILLED ${name} -> ${token}\n`);}finally{await unlink(target).catch(()=>undefined);}}
+process.stdout.write(`${mutations.length}/${mutations.length} SHU-573 mutations killed\n`);

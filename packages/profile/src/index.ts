@@ -4,5 +4,6 @@ export * from "./adapter.js";
 export * from "./fixtures.js";
 export * from "./self-edit.js";
 export * from "./civil-id.js";
+export * from "./civil-id-ocr.js";
 export * from "./area.js";
 export * from "./completeness.js";
