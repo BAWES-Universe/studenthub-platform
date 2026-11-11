@@ -7209,7 +7209,39 @@ const RECUT_586_CONTRACTS = Object.fromEntries(Object.entries(RECUT_586).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS });
+// SHU-594 re-cuts SHU-588, the profile completeness page. It stopped with its
+// revisions used up; the product code was verified, but its tests matched the
+// bare text 'Profile complete', which every English page carries inside the
+// label 'Profile completeness', so the status test, the mutation script's
+// control and the compatibility pin all failed or proved nothing.
+const RECUT_588 = Object.freeze({ "SHU-588": "SHU-594" });
+const recut588 = (text) => text.replace(/\bSHU-588\b/g, (id) => RECUT_588[id]);
+const SHU594_REVIEW = `
+- The last run of this card (SHU-588) used up its revisions. Its final review found the product code largely right and every remaining fault in the tests; read them with the bullets above, and where they differ, these win.
+- Every English My profile page carries the row label 'Profile completeness' (a details <dt> and a provenance <dt>), and that label contains the text 'Profile complete'. A test never matches, or refuses, the bare text 'Profile complete'. The complete state is the section heading: assert it as /<h2>Profile complete<\\/h2>/, and assert its absence the same way; the checklist heading 'To finish your profile' is anchored to its <h2> too. The last run's Q14_4_STATUS asserted doesNotMatch(html, /Profile complete/) and so failed on its first case, which made the mutation script's control fail and abort before any mutant ran, and red CI.
+- Q14_4_COMPAT pins that the two relabelled rows carry the derived values, anchored to the rows themselves: the <dt>Profile completeness</dt> row's own <dd> shows the derived complete value, and the <dt>Still to do</dt> row's own <dd> shows None (or the derived list), each matched inside that row's markup, never as text that could match anywhere later on the page. The mutant that keeps the stored placeholder must fail at that pin with the message the mutation script expects.
+- In the clear-a-field case of Q14_4_SHOWN, the test asserts the checklist's exact item list, not only that the cleared item is present. A field written by the person makes the derivation ignore the imported pending list (importedPending in packages/profile/src/completeness.ts), so a requirement met only through that list comes back as missing: in the complete fixture with the display name cleared, the list is Display name and Phone number, in that order. Item (4)'s 'adds exactly that one' does not hold there; assert the list the derivation produces at the bound head, and if it differs from these two, name it in your final message.
+- The mutation script's control runs each named test unmutated and must pass before any mutant is written; run npm test end to end before you finish, so CI runs it green.`;
+const SHU594_ACCEPTANCE_REVIEW = " (Review) Q14_4_ANCHOR: no test matches or refuses the bare text 'Profile complete'; the complete state is asserted as <h2>Profile complete</h2>, Q14_4_COMPAT matches the derived values inside the Profile completeness and Still to do rows' own markup, and its mutant dies at that pin with the script's expected message; the clear-a-field case of Q14_4_SHOWN asserts the exact checklist (Display name and Phone number in the complete fixture); the mutation script's controls pass and every named mutant dies by an AssertionError, and npm test runs green.";
+const RECUT_588_CONTRACTS = Object.fromEntries(Object.entries(RECUT_588).map(([from, to]) => {
+  const base = RECUT_581_CONTRACTS[from];
+  let brief = recut588(base.brief);
+  let acceptance = recut588(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU594_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.includes("the (Review) clause wins")) brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU594_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its revisions ran out on a final BLOCK (tests that matched the bare text 'Profile complete' inside the 'Profile completeness' label, an aborted mutation script, and an unpinned clear-a-field list), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU594_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

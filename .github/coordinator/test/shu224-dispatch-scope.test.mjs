@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-586", "SHU-588", "SHU-590", "SHU-592"], "SHU-224: the scope names the current card queue (SHU-312): the installed re-cut of SHU-575, SHU-581 and SHU-584, with SHU-592 appended for the stopped SHU-586 while SHU-588 and SHU-590 still run");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-586", "SHU-588", "SHU-590", "SHU-592", "SHU-594"], "SHU-224: the scope names the current card queue (SHU-312): the installed re-cut of SHU-575, SHU-581 and SHU-584, with SHU-592 and SHU-594 appended for the stopped SHU-586 and SHU-588 while SHU-590 still runs");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -587,7 +587,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   // SHU-581 re-cuts SHU-577 and SHU-584 re-cuts SHU-574, each with its contract gaps settled.
   assert.equal(after("SHU-581"), undefined, "SHU-224: SHU-581 waits on nothing, since SHU-576 has landed");
   assert.equal(after("SHU-584"), undefined, "SHU-224: SHU-584 waits on nothing, since SHU-573 has landed");
-  for (const id of ["SHU-579", "SHU-581", "SHU-584", "SHU-586", "SHU-588", "SHU-590", "SHU-592"]) {
+  for (const id of ["SHU-579", "SHU-581", "SHU-584", "SHU-586", "SHU-588", "SHU-590", "SHU-592", "SHU-594"]) {
     const lane = config.card_lanes.find((entry) => entry.id === id);
     assert.deepEqual(lane.initial_build_paths, [...contracts[id].initial_build_paths], `SHU-224: ${id}'s lane matches its contract`);
     assert.deepEqual(lane.revision_paths, [...contracts[id].revision_paths], `SHU-224: ${id}'s revision paths match its contract`);
@@ -649,6 +649,14 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-592"].brief, /CivilIdStore\.submissionRecorded, passed in through wiring\/profile\.ts/, "SHU-224: SHU-592 answers a finished accept's retry with the same 303");
   assert.match(contracts["SHU-592"].brief, /CIV answers nothing_to_save when the read number and expiry are already on file\. On accept that is not a refusal/, "SHU-224: SHU-592 clears a suggestion that matches what is on file");
   assert.match(contracts["SHU-592"].acceptance, /SHU-592 is SHU-586's contract re-queued under a fresh id [^;]*; SHU-586 never lands\.$/, "SHU-224: SHU-592 says which card it replaces");
+  // SHU-594 re-cuts SHU-588, which used up its revisions on test faults.
+  assert.equal(after("SHU-594"), undefined, "SHU-224: SHU-594 waits on nothing");
+  assert.deepEqual([...contracts["SHU-594"].initial_build_paths], [...contracts["SHU-588"].initial_build_paths], "SHU-224: SHU-594 keeps SHU-588's paths");
+  assert.match(contracts["SHU-594"].brief, /A test never matches, or refuses, the bare text 'Profile complete'/, "SHU-224: SHU-594 forbids the bare-text match");
+  assert.match(contracts["SHU-594"].brief, /assert it as \/<h2>Profile complete<\\\/h2>\//, "SHU-224: SHU-594 anchors the complete state to its heading");
+  assert.match(contracts["SHU-594"].brief, /the list is Display name and Phone number, in that order/, "SHU-224: SHU-594 spells out the clear-a-field list");
+  assert.match(contracts["SHU-594"].acceptance, /Q14_4_ANCHOR: no test matches or refuses the bare text 'Profile complete'/, "SHU-224: SHU-594 adds the anchor clause");
+  assert.match(contracts["SHU-594"].acceptance, /SHU-594 is SHU-588's contract re-queued under a fresh id [^;]*; SHU-588 never lands\.$/, "SHU-224: SHU-594 says which card it replaces");
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.
   assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");
