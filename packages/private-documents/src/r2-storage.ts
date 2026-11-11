@@ -3,7 +3,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import pg from 'pg';
 import { LifecycleError } from './candidate-lifecycle.js';
-import { DocumentError, validateState, type DocumentState, type DocumentStore } from './index.js';
+import { DocumentError, documentReadHydrator, validateReferencedState, validateState, type DocumentState, type DocumentStore } from './index.js';
 import type { UploadTicket } from './lifecycle-state.js';
 
 const digest = (bytes:Buffer):string => createHash('sha256').update(bytes).digest('hex');
@@ -78,6 +78,8 @@ export interface SnapshotPort {
   /** Independent durable quarantine reservation BEFORE any immutable object PUT.
    * It survives metadata rollback. No implementation may delete these objects. */
   reserve(key:string):Promise<void>;
+  read?():Promise<PackedSnapshot>;
+  auditRead?(entry:{operation:'list'|'issueDelivery'|'deliver';principalRef:string;at:number}):Promise<void>;
 }
 /** Production metadata port, isolated from profile tables. One locked metadata
  * row provides the same transaction semantics as the existing reference store.
@@ -85,7 +87,14 @@ export interface SnapshotPort {
 export class PostgresDocumentSnapshot implements SnapshotPort {
   private readonly pool:pg.Pool;
   private readonly journal:pg.Pool;
-  constructor(connectionString:string){this.pool=new pg.Pool({connectionString,max:2});this.journal=new pg.Pool({connectionString,max:1});}
+  private readonly reader:pg.Pool;
+  constructor(connectionString:string){this.pool=new pg.Pool({connectionString,max:2});this.journal=new pg.Pool({connectionString,max:1});this.reader=new pg.Pool({connectionString,max:2});}
+  async read():Promise<PackedSnapshot>{
+    try {const rows=await this.reader.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true');if(rows.rowCount!==1)throw new Error();return rows.rows[0].snapshot as PackedSnapshot;}catch{throw new Error('unavailable');}
+  }
+  async auditRead(entry:{operation:'list'|'issueDelivery'|'deliver';principalRef:string;at:number}):Promise<void>{
+    try {await this.reader.query('INSERT INTO candidate_document_read_audit (id, operation, principal_ref, occurred_at) VALUES (gen_random_uuid(), $1, $2, to_timestamp($3 / 1000.0))',[entry.operation,entry.principalRef,entry.at]);}catch{throw new Error('unavailable');}
+  }
   async reserve(key:string):Promise<void>{
     checkKey(key);
     await this.journal.query('INSERT INTO candidate_document_object_reservations (object_key) VALUES ($1) ON CONFLICT DO NOTHING',[key]);
@@ -108,13 +117,34 @@ export class PostgresDocumentSnapshot implements SnapshotPort {
       throw new Error('unavailable');
     } finally {c.release(destroy);}
   }
-  async close():Promise<void>{await Promise.all([this.pool.end(),this.journal.end()]);}
+  async close():Promise<void>{await Promise.all([this.pool.end(),this.journal.end(),this.reader.end()]);}
 }
 /** Hydrate only inside the private transaction, reuse all primitive validators,
  * then store bytes exclusively in immutable R2 objects. SQL holds references,
  * metadata, receipts and audit, never document bodies. */
 export class R2DocumentStore implements DocumentStore {
-  constructor(readonly snapshots:SnapshotPort,readonly objects:PrivateObjectPort){}
+  readonly readPath?:DocumentStore['readPath'];
+  constructor(readonly snapshots:SnapshotPort,readonly objects:PrivateObjectPort){
+    if(snapshots.read&&snapshots.auditRead)this.readPath={
+      read:async fn=>{
+        const packed=await snapshots.read!();
+        if(!packed||typeof packed!=='object'||!packed.state||!packed.blobs||typeof packed.blobs!=='object'||!Array.isArray(packed.state.documents)||!Array.isArray(packed.state.retired))throw new Error('unavailable');
+        const s=structuredClone(packed.state),rows=[...s.documents,...s.retired,...(s.lifecycle?.uploads??[]).filter(t=>t.data!==undefined)];
+        const refs=new Map<string,{row:(typeof rows)[number];key:string;digest:string;size:number}>();let total=0;
+        for(const row of rows){
+          if(typeof row.data!=='string'||!row.data.startsWith('r2:'))throw new Error('unavailable');
+          const key=row.data.slice(3);checkKey(key);const ref=packed.blobs[key];
+          if(!ref||ref.key!==key||!Number.isSafeInteger(ref.size)||ref.size<1||ref.size>100*1024*1024||ref.size!==row.size||!/^[0-9a-f]{64}$/.test(ref.digest))throw new Error('unavailable');
+          total+=ref.size;if(total>192*1024*1024)throw new Error('unavailable');
+          if('version'in row&&s.documents.includes(row))refs.set(row.id,{row,key,digest:ref.digest,size:ref.size});
+        }
+        validateReferencedState(s);
+        Object.defineProperty(s,documentReadHydrator,{value:async(id:string)=>{const item=refs.get(id);if(!item)return;const bytes=await this.objects.read(item.key,item.size);if(bytes.length!==item.size||digest(bytes)!==item.digest)throw new Error('unavailable');item.row.data=bytes.toString('base64');}});
+        return fn(s);
+      },
+      audit:entry=>snapshots.auditRead!(entry)
+    };
+  }
   async transaction<T>(fn:(state:DocumentState)=>Promise<T>):Promise<T>{
     return this.snapshots.transaction(async packed=>{
       if (!packed || typeof packed!=='object' || !packed.state || !packed.blobs || typeof packed.blobs!=='object'

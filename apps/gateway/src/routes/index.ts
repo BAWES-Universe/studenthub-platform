@@ -6,9 +6,16 @@ import { organizationProfileRoute, organizationStatusRoute, organizationCommerci
 import { payContractsRoute } from "./pay-contracts.js";
 import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
+import { handleDocumentsActions } from "../documents-actions-http.js";
+import { prepareProfileAvatar } from "../profile-avatar.js";
 
 const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
   handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
+const documentsActionsRoute: GatewayRoute = { name: "documents-actions", handle: (ctx) =>
+  handleDocumentsActions(ctx.request, ctx.response, ctx.documents, ctx.login) };
+const profileAvatarRoute: GatewayRoute = { name: "profile-avatar", handle: async (ctx) => {
+  await prepareProfileAvatar(ctx.request, ctx.response, ctx.documents); return false;
+} };
 
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
@@ -27,6 +34,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
   candidateDocumentsRoute,
   documentsUploadRoute,
+  documentsActionsRoute,
   organizationDocumentsRoute,
   profileEditPageRoute,
   profileEditRoute,
@@ -34,6 +42,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   languagePreferencePageRoute,
   languagePreferenceRoute,
   bankDetailsRoute,
+  profileAvatarRoute,
   organizationProfileRoute,
   organizationStatusRoute,
   organizationCommercialTermsRoute,

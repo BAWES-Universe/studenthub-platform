@@ -28,10 +28,17 @@ export interface DocumentState {
     retired: StoredDocument[];
     lifecycle?: LifecycleState;
 }
+/** Internal read-only adapter hook. It is non-enumerable and never persisted. */
+export const documentReadHydrator = Symbol('documentReadHydrator');
+type ReadableDocumentState = DocumentState & { [documentReadHydrator]?: (id: string) => Promise<void> };
 /** Must isolate concurrent transactions, commit atomically, and roll back on callback failure.
  * This is a trusted server-only port, never a client adapter or metadata endpoint. */
 export interface DocumentStore {
     transaction<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
+    readPath?: {
+        read<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
+        audit(entry: { operation: 'list' | 'issueDelivery' | 'deliver'; principalRef: string; at: number }): Promise<void>;
+    };
 }
 type Code = 'denied' | 'invalid' | 'unavailable';
 export class DocumentError extends Error {
@@ -95,6 +102,27 @@ export function validateState(value: unknown): asserts value is DocumentState {
             fail('unavailable');
         ids.add(d.id);
     }
+}
+/** Validate an R2-backed state without fetching its private bodies. Object keys,
+ * sizes and digests are validated by the storage adapter before this check. */
+export function validateReferencedState(value: unknown): asserts value is DocumentState {
+    if (!record(value) || value.format !== 1 || !exact(value, ['format', 'documents', 'retired', 'lifecycle']) || !Array.isArray(value.documents) || !Array.isArray(value.retired))
+        fail('unavailable');
+    if (value.lifecycle !== undefined) {
+        const lifecycle = structuredClone(value.lifecycle) as LifecycleState;
+        for (const upload of lifecycle.uploads) { delete upload.data; delete upload.digest; }
+        validateLifecycleState(lifecycle);
+    }
+    const ids = new Set<string>();
+    for (const d of [...value.documents, ...value.retired]) {
+        if (!record(d) || !exact(d, ['id', 'version', 'type', 'mime', 'size', 'scope', 'acl', 'data']) || typeof d.id !== 'string' || !uuid.test(d.id) || typeof d.version !== 'string' || !uuid.test(d.version) || d.acl !== 'private' || typeof d.data !== 'string' || !d.data.startsWith('r2:') || !Number.isSafeInteger(d.size) || (d.size as number) < 1 || typeof d.type !== 'string' || !types.has(d.type) || typeof d.mime !== 'string')
+            fail('unavailable');
+        const scope = scopeOf(d.scope);
+        if (orgType(d.type) !== (scope.personId === undefined) || (d.type === 'video' ? d.mime !== 'video/mp4' || (d.size as number) > 100 * 1024 * 1024 : (d.size as number) > 10 * 1024 * 1024)) fail('unavailable');
+        const mimeOk = d.type === 'video' ? d.mime === 'video/mp4' : d.type === 'resume' ? d.mime === 'application/pdf' : d.type === 'commercial-licence' ? ['application/pdf','image/png','image/jpeg'].includes(d.mime) : ['image/png','image/jpeg'].includes(d.mime);
+        if (!mimeOk) fail('unavailable');
+    }
+    for (const d of value.documents) { if (ids.has(d.id)) fail('unavailable'); ids.add(d.id); }
 }
 /** Durable private filesystem reference adapter for isolated/synthetic storage.
  * No web root, public ACL or unsigned URL capability. A busy/stale lock fails closed;
@@ -227,7 +255,7 @@ export class PrivateDocuments {
             const principalId = this.options.ownDocumentOrgId === undefined ? undefined : await resolvePrincipalId(identity, this.options.authz);
             if (principalId === null) return fail('denied');
             const result = await this.options.store.transaction(async (state) => {
-                validateState(state);
+                if (!(documentReadHydrator in state)) validateState(state);
                 if (this.options.ownDocumentOrgId !== undefined) {
                     const currentIdentity = await this.options.authenticate(credential as string);
                     if (!currentIdentity || await resolvePrincipalId(currentIdentity, this.options.authz) !== principalId)
@@ -392,6 +420,7 @@ export class PrivateDocuments {
             const now = this.now();
             if (!record(claim) || claim.v !== 1 || !Number.isSafeInteger(claim.exp) || !Number.isSafeInteger(claim.iat) || Number(claim.exp) <= now || Number(claim.iat) > now || Number(claim.exp) - Number(claim.iat) > 300000 || Number(claim.exp) <= Number(claim.iat))
                 return fail('denied');
+            await (s as ReadableDocumentState)[documentReadHydrator]?.(String(claim.id));
             const d = await this.find(i, s, claim.id);
             const principal = await this.authorize(i, d.scope);
             if (claim.version !== d.version || claim.subject !== this.mac('subject:' + principal))

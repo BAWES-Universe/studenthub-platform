@@ -2,6 +2,7 @@ export { LANGUAGE_FIELD, LANGUAGES, PostgresSafeWriteStore, SAFE_WRITE_OPERATION
 export type { Language } from "../safe-write-store.js";
 import { PostgresPersonProfileStore } from "../person-profile-store.js";
 import { PostgresPersonCivilIdStore } from "../postgres-person-civil-id-store.js";
+import { PostgresCivilIdOcrStore } from "../postgres-civil-id-ocr-store.js";
 export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_PROFILE_FIELDS } from "../person-profile-store.js";
 export type { PersonProfileField, PersonProfileBrowserOptions, PersonProfileBrowserPrepared, PersonProfileShownFallback, PersonProfileSessionLiveness, PersonProfileImportedFallback } from "../person-profile-store.js";
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "../postgres-profile-records-store.js";
@@ -10,4 +11,5 @@ export type { PostgresBankDetailsStoreOptions } from "../postgres-bank-details-s
 export { PostgresLegacyLinkStore, LegacyCandidateAlreadyLinkedError, PrincipalAlreadyLinkedError } from "../postgres-legacy-link-store.js";
 export type { LegacyLinkMethod, LegacyLinkStatus, LegacySnapshotPort } from "../postgres-legacy-link-store.js";
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdStore", { value: PostgresPersonCivilIdStore });
+Object.defineProperty(PostgresPersonProfileStore, "CivilIdOcrStore", { value: PostgresCivilIdOcrStore });
 export { PostgresPersonLocationStore } from "../postgres-person-location-store.js";

@@ -6537,7 +6537,350 @@ const RECUT_546_CONTRACTS = (() => {
     brief,
   }) };
 })();
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_539, ...RECUT_546_CONTRACTS });
+const CARD_CONTRACTS_546 = { ...CARD_CONTRACTS_539, ...RECUT_546_CONTRACTS };
+
+// SHU-549 stopped: fast-checks failed apps/gateway/test/documents-actions-mutations.mjs
+// because mutants died by a thrown error (a fetch that failed, a fixture Error
+// that escaped profile-avatar.test.ts) and not by an assertion, and its one
+// landing repair ran out of revisions. The box review also found acceptance
+// clauses no test pinned. SHU-551 stopped when its builder exited on its first
+// build with no verdict; its contract shows no fault. Both have stopped runs, so
+// they leave the queue with the cards that wait on them: SHU-558 is SHU-549's
+// contract with a brief line on how a mutant must die and which tests are
+// missing, and SHU-559 to SHU-562 are SHU-550 to SHU-553 re-cut with their
+// contracts unchanged but for the ids. SHU-548 has landed, so no lane waits on it.
+const RECUT_549 = Object.freeze({
+  "SHU-549": "SHU-558", "SHU-550": "SHU-559", "SHU-551": "SHU-560", "SHU-552": "SHU-561", "SHU-553": "SHU-562",
+});
+const recut549 = (text) => text.replace(/\bSHU-(549|550|551|552|553)\b/g, (id) => RECUT_549[id]);
+const SHU558_MUTANTS = `
+- The last run of this card (SHU-549) failed fast-checks in apps/gateway/test/documents-actions-mutations.mjs: the Q14_2_VIEW mutant made its test fail with "fetch failed" (failureType testCodeFailure), and the avatar mutant that drops \`.catch(() => undefined)\` made profile-avatar.test.ts fail because the fixture's Error escaped before any assert. The script requires every mutant to die by an AssertionError in its named test, so a mutant that makes the code throw, crash or close the connection must still reach an assertion: await each request inside the test and assert its status and body (if the server can drop the connection under a mutant, catch that and assert on it), and in the avatar suite await the call, assert it resolved, and assert the empty result, so a thrown Error fails assert.doesNotReject and not the test runner. Never drop or weaken a mutant to make the script pass. Run the mutation script on the built files before you finish, and say in your final message which assertion kills each mutant.
+- The review of SHU-549 also found acceptance clauses that no test pinned. Pin each one with the real CandidateDocuments rig that apps/gateway/test/documents-page.test.ts already builds (no new fakes): after Remove, the removed file is held for cleanup and gone from My documents; the 303 target of View, fetched with the owner's session cookie, serves the file, and fetched with another person's cookie does not; a Remove with a stamp from another document or version answers 409 and removes nothing; and S1, a removed document disappears from the rendered page and an uploaded personal photo appears as the avatar on My profile.
+- apps/gateway/src/profile-avatar.ts keeps per-request state in a map: delete each entry when its response finishes or closes, so the map cannot grow, and say in your final message how you did it.`;
+const RECUT_549_CONTRACTS = Object.fromEntries(Object.entries(RECUT_549).map(([from, to]) => {
+  const base = CARD_CONTRACTS_546[from];
+  let brief = recut549(base.brief);
+  if (from === "SHU-549") brief = replaceOnce(brief, "\n- Before you finish,", `${SHU558_MUTANTS}\n- Before you finish,`, `${to} mutants and missing tests`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-549"
+    ? "after fast-checks found mutants dying by thrown errors and not by assertions and the review found acceptance clauses no test pinned, with both spelled out"
+    : from === "SHU-551"
+      ? "after its builder exited on its first build with no verdict"
+      : `because its installed lane waited on ${from === "SHU-550" ? "SHU-549" : "SHU-551"}, which stopped`;
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut549(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-560 (civil ID photo reading) stopped with its revisions used up on a
+// final BLOCK at 465dbd3: its claim UPDATE ... FROM picked ... RETURNING named
+// an unqualified id that picked also has (Postgres 42702), so the Postgres test
+// aborted and the worker's catch swallowed the error in production; it did not
+// export PostgresCivilIdOcrStore from the profile area; and two mutants died by
+// thrown errors, one of them against the wrong behaviour. SHU-561 and SHU-562
+// wait on it, so all three leave the queue: SHU-566 is SHU-560's contract with
+// a brief section on those three faults, and SHU-567 and SHU-568 are SHU-561
+// and SHU-562 with their contracts unchanged but for the ids. The review
+// verified everything else, so the rest of the contract stays as it is.
+const RECUT_560 = Object.freeze({ "SHU-560": "SHU-566", "SHU-561": "SHU-567", "SHU-562": "SHU-568" });
+const recut560 = (text) => text.replace(/\bSHU-(560|561|562)\b/g, (id) => RECUT_560[id]);
+const SHU566_REVIEW = `
+- The last run of this card (SHU-560) was refused at review for three faults. Fix all three; the review verified the rest (parser, in-memory store, Textract adapter, migration 0218, S1 and S2), so keep those as the contract states them.
+- The claim in packages/db/src/postgres-civil-id-ocr-store.ts, an UPDATE civil_id_ocr_jobs j ... FROM picked ... RETURNING ..., returned an unqualified id::text while picked also has an id column. Postgres refuses that with 42702 (column reference is ambiguous), so the Postgres test aborted, and in production the worker's catch would swallow the error and never read a photo. Qualify every column in every RETURNING and SELECT list of a statement that joins or uses FROM (j.id::text and so on), as packages/db/src/postgres-email-outbox-store.ts does with RETURNING o.id, o.class, .... The Postgres test must claim a real queued job and assert the claimed row's fields.
+- Export PostgresCivilIdOcrStore (and its option type, if any) from packages/db/src/profile/index.ts in one contiguous block next to the other profile stores. Consumers import it from that area path, never through a deep relative path into packages/db/src.
+- packages/profile/test/civil-id-ocr-mutations.mjs must require each mutant to die by an AssertionError in its named test, as packages/profile/test/mutations.mjs does: assert the named test reports not ok, and that the output has code: 'ERR_ASSERTION' and name: 'AssertionError'. The item 5 mutant died by an Error thrown from CivilIdVault.open: await that call inside the test and assert on its result, or on its rejection with assert.rejects, so a thrown Error fails an assertion and not the runner. The item 4 mutant must be "a photo with no readable text is marked failed" (it must stay unreadable and not be retried as failed), not a flip of unreadable: false. Never drop or weaken a mutant to make the script pass.
+- First-deployment baseline (a gap in the contract, found by review of this re-cut). Legacy flagged a civil ID for review only when its photo changed, and the import already maps legacy candidate_civil_need_verification to needs_review. So the very first sweep, which finds no job rows, must not treat every stored photo as new. That sweep records each current front and back version as already seen, as a baseline job in a terminal state of its own, with no read, no reader call, no needs_review change and no revision bump. It records in the same transaction that the baseline has been taken (a one-row marker, or the baseline jobs themselves, in migration 0218), so the baseline happens once. Every version uploaded after that is new and follows the contract as written. Pin it with OCR_BASELINE: photos already in the store and no job rows; the first sweep reads nothing, calls no reader, and leaves every civil ID row's needs_review and revision unchanged; a photo uploaded after it is queued, read and flagged as the contract says; a second sweep adds no baseline rows. Add a mutant that drops the baseline, so the first sweep queues and flags every stored photo, and it must die by an AssertionError in OCR_BASELINE.
+- Smaller points from the same review: the five-minute throttle on beginSweep must not also delay claiming queued jobs; do not assume a single DOCUMENT_ORG_ID in the statement that supersedes a job when its document is removed; make civil-id-reads.test.mjs remove its temporary directory when it finishes; and do not write a second copy of the Kuwait date helper where an exported one can be used.`;
+const RECUT_560_CONTRACTS = Object.fromEntries(Object.entries(RECUT_560).map(([from, to]) => {
+  const base = RECUT_549_CONTRACTS[from];
+  let brief = recut560(base.brief);
+  if (from === "SHU-560") brief = replaceOnce(brief, "\n- Before you finish,", `${SHU566_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-560"
+    ? "after its revisions ran out on a final BLOCK for an ambiguous RETURNING column in its claim, a missing profile-area export and mutants dying by thrown errors, all three spelled out"
+    : "because its installed lane waited on SHU-560, which stopped";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut560(base.acceptance)}${from === "SHU-560" ? " (Baseline) OCR_BASELINE: the first sweep, with photos already stored and no job rows, records each current front and back version as a baseline job, reads nothing, calls no reader and changes no civil ID row's needs_review or revision; a version uploaded after the baseline is queued, read and flagged as above; the baseline is taken once; a mutant that drops it dies by an AssertionError in OCR_BASELINE." : ""} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-559 (profile completeness) stopped with its revisions used up on a final
+// BLOCK at 3404ca9: web-ui.ts hard-coded the old row labels when the fields
+// were not derived, which broke the U3A_PROVENANCE tests in
+// profile-journey.test.ts; and its gateway module listed documents on the JSON
+// path, which SHU-558's test in documents-page.test.ts pins at zero document
+// reads. The contract asked for both JSON and HTML to carry derived values
+// from the one documents list SHU-558 makes, but that list is made only for
+// HTML, so the contract itself was contradictory. SHU-570 is SHU-559's
+// contract with the derived values on the HTML path only, JSON unchanged, the
+// two test files in its paths, and the review's non-blocking points pinned in
+// its acceptance. SHU-558 has landed, so it waits on nothing.
+const RECUT_559 = Object.freeze({ "SHU-559": "SHU-570" });
+const recut559 = (text) => text.replace(/\bSHU-559\b/g, (id) => RECUT_559[id]);
+const SHU570_EXTRA_PATHS = Object.freeze(["apps/gateway/test/profile-journey.test.ts", "apps/gateway/test/documents-page.test.ts"]);
+const SHU570_REVIEW = `
+- The last run of this card (SHU-559) was refused at review. Fix these, and read them as part of the contract; where they differ from the text above, they win.
+- JSON stays as it is. apps/gateway/src/profile-avatar.ts lists documents only for an HTML GET /profile, and apps/gateway/test/documents-page.test.ts pins that a JSON GET /profile makes no documents list and no delivery (the loop over 'application/json,text/html' and 'text/html;q=0'). The last run listed documents on the JSON path and failed that test. Derive completeness on the HTML path only, from the list profile-avatar.ts already made (currentProfileAvatar()), never a second list. A JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them today. Do not change that test's assertions.
+- Labels come only from the copy. The last run made web-ui.ts print the old 'Imported profile completeness' and 'Imported profile requirements' words (and the Arabic) itself when the fields were not derived, overriding apps/gateway/src/ui/profile-copy.ts, and the U3A_PROVENANCE tests in apps/gateway/test/profile-journey.test.ts failed. Change the two labels only in profile-copy.ts (field.isProfileCompleted and field.pendingFields, English and Arabic); web-ui.ts takes every row label from PROFILE_COPY and has no special label for these rows. profile-journey.test.ts must pass unchanged.
+- After any platform write, applyPreferences in packages/profile/src/profile.ts replaces the imported isProfileCompleted and pendingFields with not_recorded, so the imported pending list is gone. From then on phone, civil_id, civil_expiry and kuwaiti_mother are decided by their live values only (a written phone, the civil ID store's recorded number and expiry, a stored Yes or No for Kuwaiti mother), and one with no live value counts as missing, never as met. Before any write, a live value still wins, and the imported pending list decides only a requirement with no live value.
+- Tests the review asked for: each checklist item's words and its target are asserted together (the list item that carries a requirement's words holds exactly that requirement's href, in both languages), not only that the hrefs appear on the page; the identity_reference mutant puts identity_reference back and changes nothing else (it must not work by deleting nationality or any other requirement); and phone, civil_id, civil_expiry and kuwaiti_mother each have positive fixtures where they count as met, from a live value and, before any write, from an imported pending list that does not name them.
+- apps/gateway/test/profile-journey.test.ts and apps/gateway/test/documents-page.test.ts are in your paths so you can add tests there; keep every existing test in them as it is.`;
+const SHU570_ACCEPTANCE_REVIEW = " (Review) Q14_4_JSON: a JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them; documents-page.test.ts's JSON assertions pass unchanged; the checklist and the derived rows are HTML only. Q14_4_LABELS: web-ui.ts takes both row labels from PROFILE_COPY only, and profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged. Q14_4_CHECKLIST asserts each list item's words and target together, in English and Arabic. Q14_4_RULES has positive fixtures where phone, civil_id, civil_expiry and kuwaiti_mother count as met, from a live value and, before any write, from an imported pending list that does not name them; after one unrelated platform write wipes the imported list, each of the four with no live value counts as missing and one with a live value counts as met. The identity_reference mutant puts identity_reference back and changes no other requirement.";
+const RECUT_559_CONTRACTS = Object.fromEntries(Object.entries(RECUT_559).map(([from, to]) => {
+  const base = RECUT_549_CONTRACTS[from];
+  let brief = recut559(base.brief);
+  brief = replaceOnce(brief, "- The projection returned by GET /profile in both JSON and HTML gains real", "- The projection rendered by GET /profile as HTML (never JSON; see below) gains real", `${to} HTML only`);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU570_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  brief = replaceOnce(brief, "- apps/gateway/test/profile-kit.test.ts\n", `- apps/gateway/test/profile-kit.test.ts\n${SHU570_EXTRA_PATHS.map((path) => `- ${path}\n`).join("")}`, `${to} paths`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  let acceptance = recut559(base.acceptance);
+  acceptance = replaceOnce(acceptance, "GET /profile as JSON and as HTML both carry isProfileCompleted", "GET /profile as HTML carries isProfileCompleted", `${to} acceptance HTML only`);
+  acceptance = replaceOnce(acceptance, "in both the JSON and the HTML path (Q14_4_SHOWN)", "in the HTML path, while a JSON read makes no documents list (Q14_4_SHOWN)", `${to} acceptance reads`);
+  const paths = Object.freeze([...base.initial_build_paths, ...SHU570_EXTRA_PATHS]);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: paths,
+    acceptance: `${acceptance}${SHU570_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id after its revisions ran out on a final BLOCK for a hard-coded label override, a documents list on the JSON path that the contract itself asked for, and missing tests, all spelled out; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-563: a Sentry finding on SHU-558's pull request (profile-avatar.ts)
+// showed that every candidate document read, list, issueDelivery and deliver,
+// runs in R2SnapshotStore's one global transaction: SELECT ... FOR UPDATE on
+// candidate_document_snapshot, hydration of every stored document from R2, an
+// audit entry appended to the snapshot's lifecycle.audit (never trimmed), and a
+// rewrite of the whole jsonb row. My documents already did this per view, and
+// the avatar now does it on My profile. Past 16 MiB the row refuses every
+// write, so every document operation fails. SHU-563 moves read audits to their
+// own append-only table and gives the PostgreSQL store a read path with no
+// lock, no rewrite and no hydration of documents the read does not serve.
+export const SHU563_PATHS = Object.freeze([
+  "packages/db/migrations/0220_candidate_document_read_audit.sql",
+  "packages/private-documents/src/index.ts",
+  "packages/private-documents/src/candidate-lifecycle.ts",
+  "packages/private-documents/src/r2-storage.ts",
+  "packages/private-documents/test/read-audit.test.mjs",
+  "packages/private-documents/test/r2-postgres.test.mjs",
+  "packages/private-documents/test/read-audit-mutations.mjs",
+]);
+
+const SHU563_ACCEPTANCE = [
+  "(1) RA_NO_LOCK: with DATABASE_URL set, while another connection holds an open SELECT ... FOR UPDATE on candidate_document_snapshot, the owner's list, issueDelivery and deliver through R2DocumentStore over PostgresDocumentSnapshot each complete well inside the 5 s lock_timeout and return the right result, and they also complete while two transactions through the same PostgresDocumentSnapshot are open at once (the first holding the row inside its operation, the second waiting for it), so both writer-pool connections are busy;",
+  "(2) RA_NO_WRITE: twenty reads (list, issueDelivery and deliver) leave the snapshot row's jsonb text byte-identical and lifecycle.audit's length unchanged;",
+  "(3) RA_AUDIT_ROW: each successful read adds exactly one row to candidate_document_read_audit with its operation, principal_ref equal to the sha256 hex of the principal id (the same value the snapshot audit uses) and occurred_at; the table has only the columns id, operation, principal_ref and occurred_at, an operation outside list, issueDelivery and deliver is refused, and UPDATE, DELETE and TRUNCATE on it are refused;",
+  "(4) RA_HYDRATE: with a counting object port and documents of at least two other people stored, list and issueDelivery read no object and deliver reads exactly the one object it serves, after checking its size and digest against the snapshot's blob reference;",
+  "(5) RA_FAIL_CLOSED: when the read audit append rejects, list, issueDelivery and deliver reject as unavailable and return no metadata, URL or bytes;",
+  "(6) RA_DENIED: a read with a bad credential, by another person, or of another person's document is refused exactly as today and appends no read audit row;",
+  "(7) RA_FALLBACK: a store without the read path (FileDocumentStore and every in-memory test store) behaves exactly as today, so every existing private-documents, gateway and browser-acceptance test passes unchanged, and finalize and remove keep their transaction and their snapshot audit entries;",
+  "(8) packages/private-documents/test/read-audit-mutations.mjs applies one mutant per item (1), (3), (4), (5) and (6), each dies by an AssertionError in its named test, and the script passes unmutated; npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU563_BRIEF = `Card SHU-563: document reads stop locking and growing the shared document record (S4 hardening; risk R3).
+
+You are working in the StudentHub platform monorepo at the bound head. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/. The Postgres tests cannot run here, so write them carefully; CI runs them with DATABASE_URL set on the card's pull request.
+
+Read first:
+- packages/private-documents/src/r2-storage.ts: SnapshotPort, PostgresDocumentSnapshot.transaction (BEGIN, lock_timeout 5s, SELECT snapshot ... FOR UPDATE, UPDATE when the JSON changed, a 16 MiB cap) and R2DocumentStore.transaction (it hydrates every stored document's bytes from R2 into the state before running the operation, then re-packs).
+- packages/private-documents/src/candidate-lifecycle.ts: list, issueDelivery and deliver, which each run in options.store.transaction, check the principal twice and the ownership, and call auditRead, which appends to s.lifecycle.audit; finalize and remove, which also append there.
+- packages/private-documents/src/index.ts: DocumentStore, FileDocumentStore and the PrivateDocuments primitive's issueDelivery, deliver and metadata.
+- packages/db/migrations/0004_create_authorization_mutation_audit.sql: the append-only triggers, including the BEFORE TRUNCATE one.
+- tools/test-runner/discover.mjs (read only): npm run test:db runs exactly packages/private-documents/test/r2-postgres.test.mjs from this package, so this card's PostgreSQL tests go in that file; a new PostgreSQL test file here would run in no lane.
+- packages/private-documents/test/r2-postgres.test.mjs: the PostgreSQL rig (runMigrations, PostgresDocumentSnapshot, R2DocumentStore with an object port, CandidateDocuments) and how it skips without DATABASE_URL. packages/private-documents/test/candidate-lifecycle-mutations.mjs: the mutation-script shape.
+
+Goal. Today each read takes the one global row lock, hydrates every person's documents from R2, appends an audit entry to the snapshot and rewrites the whole row, so every My documents and My profile view waits on one lock, and the row grows until its 16 MiB cap refuses every document operation. After this card, on the PostgreSQL store, a read takes no lock, writes nothing to the snapshot, fetches from R2 only the bytes it serves, and records its audit as one row in its own append-only table. Who may read what, and every response, stays exactly as today.
+
+Design:
+- packages/db/migrations/0220_candidate_document_read_audit.sql creates candidate_document_read_audit (id uuid primary key, operation text NOT NULL CHECK operation IN ('list','issueDelivery','deliver'), principal_ref text NOT NULL CHECK it is 64 lowercase hex characters, occurred_at timestamptz NOT NULL), an index on (principal_ref, occurred_at), a row trigger that raises on UPDATE and DELETE, and a statement-level BEFORE TRUNCATE trigger that raises too (TRUNCATE fires no DELETE trigger; follow packages/db/migrations/0004_create_authorization_mutation_audit.sql). Nothing else: no document id, link, mime type, size or bytes. Lane 1 owns 0210 to 0299 and 0220 is this card's number; do not edit any list of migrations.
+- DocumentStore (index.ts) gains one optional member, readPath: { read<T>(fn:(state:DocumentState)=>Promise<T>):Promise<T>; audit(entry:{operation:'list'|'issueDelivery'|'deliver';principalRef:string;at:number}):Promise<void> }. FileDocumentStore does not get it.
+- SnapshotPort gains optional read(): one plain SELECT snapshot FROM candidate_document_snapshot WHERE singleton = true, with no FOR UPDATE, no transaction block and no UPDATE, and optional auditRead(entry): one INSERT into candidate_document_read_audit. PostgresDocumentSnapshot implements both on a third pool of its own (a reader pool, max 2), never on the two-connection writer pool or the journal pool: while one writer holds the row lock and another waits for it, both writer connections are taken, and a read or audit on that pool would queue behind them. close() ends the reader pool too.
+- R2DocumentStore gets readPath when its SnapshotPort has both. read runs the operation on a validated copy of the state in which each row keeps its r2: reference; the one row the operation serves is hydrated only when its bytes are needed (deliver), by reading exactly that object and checking its size and digest against packed.blobs as transaction does. The copy is never written back.
+- CandidateDocuments: when options.store.readPath exists, list, issueDelivery and deliver run in readPath.read instead of transaction, with the same two principal checks and the same ownership checks in the same order. After the result is computed and before it is returned, await readPath.audit with the same principalRef (sha256 hex of the principal id) and operation. If the audit rejects, throw LifecycleError(503, 'unavailable') and return nothing. A refused read appends no audit. Without readPath, everything stays exactly as today, including auditRead into the snapshot. finalize, remove and cleanup do not change.
+- Existing lifecycle.audit entries stay in the snapshot as they are; lifecycle-state.ts keeps accepting them. Nothing is migrated, trimmed or deleted.
+
+Tests:
+- packages/private-documents/test/read-audit.test.mjs (new, no database; build CandidateDocuments as candidate-lifecycle.test.mjs does, over an in-memory store that has a counting readPath and a counting transaction): RA_FAIL_CLOSED, RA_DENIED, a test that reads with readPath present make zero transaction calls, and RA_HYDRATE with a counting object port behind an R2DocumentStore over an in-memory SnapshotPort that has read and auditRead.
+- packages/private-documents/test/r2-postgres.test.mjs (existing; add new tests after the existing ones, under the same DATABASE_URL skip, and change no existing test): RA_NO_LOCK (first hold FOR UPDATE on the snapshot row from a second client in an open transaction and run the three reads with a short timeout; then open two transactions through the store's own PostgresDocumentSnapshot, the first parked inside its operation and the second waiting on the row, run the three reads and an audit with a short timeout, and release both well inside the 5 s lock_timeout), RA_NO_WRITE and RA_AUDIT_ROW (including that UPDATE, DELETE and TRUNCATE on the table fail and a bad operation is refused).
+- Tests are named with their token first and a space after it. Every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion (for example assert.rejects or assert.doesNotReject) and not the test runner.
+
+Mutations (packages/private-documents/test/read-audit-mutations.mjs, new, applied to the built dist files, each needle binding exactly once, each mutant run against its named test with --test-name-pattern, each required to fail with AssertionError or ERR_ASSERTION in the output): the read query gains FOR UPDATE (RA_NO_LOCK); read and auditRead use the writer pool instead of the reader pool (RA_NO_LOCK; these two and the audit-row one run only when DATABASE_URL is set, as packages/profile/test/area-mutations.mjs does); the audit INSERT is skipped (RA_AUDIT_ROW); the read path hydrates every row (RA_HYDRATE); the audit rejection is swallowed and the result returned (RA_FAIL_CLOSED); the audit is appended before the ownership check (RA_DENIED). Never drop or weaken a mutant to make the script pass.
+
+Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
+${SHU563_PATHS.map((path) => `- ${path}`).join("\n")}
+
+Out of scope: moving finalize or remove audits out of the snapshot, splitting the snapshot per person, a retention or export job for the read audit table, organization documents (apps/gateway/src/organization-documents-runtime.ts), any gateway, page or browser-acceptance file, package.json, the lockfile, and any network call, credential, staging or production access.
+
+- Before you finish, run the mutation script on the built files, and with DATABASE_URL if you can, and say in your final message which assertion kills each mutant.
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+const SHU563_CONTRACT = { "SHU-563": Object.freeze({
+  workspace_mode: "repo",
+  initial_build_paths: SHU563_PATHS,
+  revision_paths: SHU563_PATHS,
+  acceptance: SHU563_ACCEPTANCE,
+  brief: SHU563_BRIEF,
+}) };
+export const SHU564_PATHS = Object.freeze([
+  "apps/gateway/src/documents-actions-http.ts",
+  "apps/gateway/test/documents-actions-http.test.ts",
+  "apps/gateway/test/documents-actions-mutations.mjs",
+]);
+
+const SHU564_ACCEPTANCE = [
+  "(1) DA_KEY_400: a remove POST with a valid stamp whose submission has a 13-digit time and a well-formed UUID that is not version 4 (for example 1800000000000.00000000-0000-1000-8000-000000000000) answers 400 with the 'Check the form and try again.' copy, never calls remove, and never shows the unavailable copy; the same holds for a time that is not a valid instant;",
+  "(2) DA_REVOKED_401: when list, issueDelivery or remove rejects with LifecycleError code 'denied' and a fresh login.profile for the same session answers 401, the remove GET, the remove POST and the view POST answer 401 with the sign-in copy and the /login/universe?return_to= link, in English and in Arabic;",
+  "(3) DA_STILL_503: when the denial comes with login.profile still answering 200, or login.profile rejecting, the action answers 503 with the unavailable copy and no sign-in link, exactly as today; a non-denied error makes no second login.profile call;",
+  "(4) apps/gateway/test/documents-actions-mutations.mjs keeps its five existing mutants and adds one per item (1), (2) and (3), each dying by an AssertionError in its named test; every existing test in documents-actions-http.test.ts passes unchanged; npm run typecheck and npm test pass, and nothing outside the card's paths changes.",
+].join(" ");
+
+const SHU564_BRIEF = `Card SHU-564: a bad remove form or a session revoked mid-action shows the right message on My documents (follow-up to SHU-558; risk R2).
+
+You are working in the StudentHub platform monorepo at the bound head, which includes SHU-558. Dependencies are installed. There is no network. You may run npm run typecheck, npm test and node --test on built files under dist/.
+
+Read first:
+- apps/gateway/src/documents-actions-http.ts: the key helper (it parses the submission and calls createIdempotencyKey), failure (401 adds the Continue with Universe link) and the catch block that maps every error that is not 400 or 409 to 503.
+- packages/idempotency-contract/src/idempotency.ts: createIdempotencyKey throws a RangeError for a time that is not a valid instant and a TypeError for a UUID that is not version 4.
+- apps/gateway/src/documents-page.ts: its catch block, which rechecks login.profile after a 'denied' error and answers 401 when the session is gone (the pattern to follow).
+- apps/gateway/test/documents-actions-http.test.ts and apps/gateway/test/documents-actions-mutations.mjs: the exchange helper, the stub service and login, and the mutation-script shape (SHU558_ACTIONS_MODULE).
+
+Goal. Two edge cases answer 503 "Documents are temporarily unavailable" today when the person can act on a better answer.
+- A remove form whose submission time or UUID the idempotency contract refuses must answer 400 "Check the form and try again", like any other malformed form. The key helper turns that refusal into LifecycleError(400, 'invalid'), either by checking for a version 4 UUID and a valid instant itself or by catching exactly the contract's RangeError and TypeError. Do not catch anything wider.
+- When a document call rejects with a LifecycleError whose code is 'denied', the session may have been revoked after the first profile check. The catch block calls login.profile({ sessionId }) once more, as documents-page.ts does. If it answers 401, the action answers 401 through failure with login, so the sign-in copy and the link show. Otherwise, or if that call rejects, it answers 503 exactly as today. Errors that are not 'denied' make no second call.
+
+Guards: no other status, copy, header, redirect, cookie or route changes; the origin check, the stamp check and the 409 path stay as they are; no new dependency; no change outside the three paths.
+
+Tests are named with their token first and a space after it, and every assertion a mutant must trip awaits its call inside the test, so a thrown error fails an assertion and not the runner.
+
+Mutations (add to apps/gateway/test/documents-actions-mutations.mjs, each needle binding exactly once in the built dist file, each required to fail with AssertionError or ERR_ASSERTION): the key helper lets the contract's error escape (DA_KEY_400); the 401 recheck is skipped (DA_REVOKED_401); the recheck answers 401 whatever login.profile returns (DA_STILL_503). Never drop or weaken a mutant to make the script pass.
+
+Your paths (exactly these files; nothing else changes, and a result that touches anything else is refused before review):
+${SHU564_PATHS.map((path) => `- ${path}`).join("\n")}
+
+Out of scope: documents-page.ts, profile-avatar.ts, the private-documents package, the browser-acceptance run, organization documents, package.json and the lockfile.
+
+- Before you finish, run the mutation script on the built files and say in your final message which assertion kills each mutant.
+- Before you finish, run git status and compare every changed or added file with your paths; if one is outside them, undo it and find a way inside the paths, or name it in your final message.
+
+Finish with npm run typecheck and npm test passing, run to the end. If a test cannot run in your sandbox, say which one and why in your final message rather than working around it or changing it. In your final message, list the files you changed and how each acceptance item is pinned.`;
+
+const SHU564_CONTRACT = { "SHU-564": Object.freeze({
+  workspace_mode: "repo",
+  initial_build_paths: SHU564_PATHS,
+  revision_paths: SHU564_PATHS,
+  acceptance: SHU564_ACCEPTANCE,
+  brief: SHU564_BRIEF,
+}) };
+// The 9a6b9fd queue finished with two stops. SHU-566 (civil ID reading) stopped
+// when its builder returned FAILED and pushed nothing: the full test runner
+// could not spawn in its sandbox (spawnSync EPERM), and a builder FAILED has no
+// route, so the card stopped and SHU-567 and SHU-568, which wait on it, with it.
+// SHU-573 to SHU-575 re-cut them; SHU-573's brief tells the builder to hand in
+// its work when only the sandbox stops the full run, and makes the baseline
+// marker mandatory (CodeRabbit on #458). SHU-570 (profile completeness) stopped
+// a second time with its revisions used up, so it is split: SHU-576 builds the
+// pure rules in packages/profile, and SHU-577 gathers the evidence and shows
+// the checklist on My profile, waiting on SHU-576. Each states the faults of
+// SHU-570's final BLOCK at 2b4c629.
+const SANDBOX_FINISH = "Finish with npm run typecheck and npm test passing, run to the end. If the full npm test cannot start in your sandbox (for example the runner's spawnSync fails with EPERM) or a test cannot run there (for example because it opens a network listener), run npm run typecheck and every focused suite for the files you changed, say in your final message exactly which suites could not run and why, and still commit your work and hand in a BUILD_READY result: never return FAILED because of a sandbox limit, because a FAILED result stops the card with no way to continue, while the box's CI and review run the full suite. Do not work around or change a test that cannot run. In your final message, list the files you changed, how each acceptance item is pinned, and answer S1 for each value you write or record.";
+const finishWithSandbox = (brief, name) => {
+  const at = brief.indexOf("\n\nFinish with");
+  if (at < 0 || brief.indexOf("\n\nFinish with", at + 1) >= 0) throw new Error(`${name}: expected exactly one finishing paragraph`);
+  return `${brief.slice(0, at)}\n\n${SANDBOX_FINISH}`;
+};
+const RECUT_566 = Object.freeze({ "SHU-566": "SHU-573", "SHU-567": "SHU-574", "SHU-568": "SHU-575" });
+const recut566 = (text) => text.replace(/\bSHU-(566|567|568)\b/g, (id) => RECUT_566[id]);
+const SHU573_BASELINE_FROM = "It records in the same transaction that the baseline has been taken (a one-row marker, or the baseline jobs themselves, in migration 0218), so the baseline happens once.";
+const SHU573_BASELINE_TO = "It records in the same transaction that the baseline has been taken, in a one-row marker table that migration 0218 creates; the marker is mandatory and is never inferred from the job rows, so the baseline happens once even when the store held no photos at all. With an empty store, the first sweep writes the marker and no job; a photo uploaded after that is new, and is queued, read and flagged as the contract says. Baseline jobs are never a suggestion: the read of a person's current suggestion skips them.";
+const RECUT_566_CONTRACTS = Object.fromEntries(Object.entries(RECUT_566).map(([from, to]) => {
+  const base = RECUT_560_CONTRACTS[from];
+  let brief = recut566(base.brief);
+  if (from === "SHU-566") brief = replaceOnce(brief, SHU573_BASELINE_FROM, SHU573_BASELINE_TO, `${to} mandatory baseline marker`);
+  brief = finishWithSandbox(brief, to);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-566"
+    ? "after its builder returned FAILED and pushed nothing because the full test runner could not spawn in its sandbox, with a rule to hand in the work when only the sandbox stops the full run"
+    : "because its installed lane waited on SHU-566, which stopped";
+  const baseline = from === "SHU-566" ? " (Baseline marker) OCR_BASELINE also proves: the marker row is written in the same transaction as the baseline jobs; with an empty store, the first sweep writes the marker and no job, and a photo uploaded after it is queued, read and flagged; a second sweep writes no baseline; and the current-suggestion read never returns a baseline job." : "";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut566(base.acceptance)}${baseline} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-570 split into SHU-576 (rules) and SHU-577 (My profile).
+const SHU570 = RECUT_559_CONTRACTS["SHU-570"];
+const shu570Items = (() => {
+  const text = SHU570.acceptance;
+  const items = {};
+  for (let n = 1; n <= 6; n += 1) {
+    const start = text.indexOf(`(${n}) `);
+    const end = n < 6 ? text.indexOf(`; (${n + 1}) `) : text.indexOf(" Appending route names");
+    if (start < 0 || end < start) throw new Error(`SHU-570 acceptance item ${n} not found`);
+    items[n] = text.slice(start + `(${n}) `.length, end);
+  }
+  return items;
+})();
+const SHU576_PATHS = Object.freeze([
+  "packages/profile/src/completeness.ts",
+  "packages/profile/src/index.ts",
+  "packages/profile/src/types.ts",
+  "packages/profile/test/completeness.test.ts",
+  "packages/profile/test/completeness-mutations.mjs",
+]);
+const SHU577_PATHS = Object.freeze([...SHU570.initial_build_paths.filter((path) => !SHU576_PATHS.includes(path)), "apps/gateway/test/profile-completeness-mutations.mjs"]);
+const SHU570_RULES_LESSONS = `
+- Imported nationality has no catalogue id. The imported snapshot carries nationality only as a display name (packages/profile/src/profile.ts, PROFILE_FIELD_SPECS.nationality); only a written nationality has a catalogue id (editValue). The last run threw on an imported-only nationality. Rules: a non-empty imported nationality name meets the nationality requirement; with no catalogue id, the Kuwaiti nationality cannot be recognised (never by name), so Kuwaiti mother is required only when the imported pending list, while it is still available, names it; once a platform write has wiped the list, Kuwaiti mother with no catalogue id and no stored answer is not required. A catalogue id that is not in the catalogue choices makes the result unavailable (check_failed). The derivation never throws: every input it cannot use yields a missing item or an unavailable result, as these rules say.
+- Answers can be booleans. Driving licence and Kuwaiti mother are stored as booleans or codes, not text: the last run's presence check called .trim() on false, so its mutant died by a TypeError and not by an assertion. The presence check handles every field type explicitly (a boolean false or a No is an answer; empty or whitespace-only text is not), and every mutant, including those on boolean fields, dies by an AssertionError in its named test (the script asserts code: 'ERR_ASSERTION' and name: 'AssertionError', as packages/profile/test/mutations.mjs does).
+- After any platform write, applyPreferences replaces the imported isProfileCompleted and pendingFields with not_recorded, so the imported pending list is gone. From then on phone, civil_id, civil_expiry and kuwaiti_mother are decided by their live values only (a written phone, the civil ID store's recorded number and expiry, a stored Yes or No), and one with no live value counts as missing, except Kuwaiti mother with no catalogue id as above. Before any write, a live value still wins, and the imported pending list decides only a requirement with no live value.`;
+const SHU576_SPLIT = `
+- This card is part 1 of 2 of SHU-570, which stopped twice as one card. Build only the pure rules in packages/profile: an exported function that takes the profile projection, the principal's email presence, the active education and skill counts, the document types on file, the civil ID's recorded number and expiry (booleans), the nationality's catalogue code when known, and a marker for each source that failed or is not configured, and returns either the ordered list of missing closed-name requirements or unavailable with its reason; plus the derived FieldFreshness kind and the types it needs. Change no file outside your paths: no gateway file, no copy, no page. SHU-577 gathers the evidence, renders the checklist and links each item, and waits on this card, so name the export and its input type plainly and say them in your final message.
+- Where the text above asks for the checklist, the page, the copy, the links, the gateway module, the reads or the JSON and HTML paths, that is SHU-577's work; this card meets it by giving SHU-577 a function that needs nothing more.${SHU570_RULES_LESSONS}`;
+const SHU577_LESSONS = `
+- This card is part 2 of 2 of SHU-570, which stopped twice as one card. SHU-576 has landed the pure rules in packages/profile/src/completeness.ts (read it at the bound head; its final message names the export and its input). Do not change packages/profile: gather the evidence, call SHU-576's function, and render the result. If the function cannot express something this card needs, say so in your final message rather than editing it.
+- A completeness failure never changes the page's status. The last run sent the principal read through the completeness gatherer (wiring/profile.ts), and the gatherer returned undefined on any rejection, so a failed background-records or choices read turned My profile into a 404 through the not_found branch of the GET /profile route in apps/gateway/src/index.ts. Keep the principal read and readOwn exactly where they are; the gatherer runs after a found profile, catches each source's failure on its own, and turns it into an unavailable result ('Couldn't check right now'). The page answers with the same status, 200, whatever the evidence does, and a failure is never a 404 or a 503.
+- The last run's gateway test rendered a hard-coded 200 profile and called the renderer itself, so it passed without the route. Every gateway acceptance test makes a real GET /profile through createGatewayServer and the route, with counting fakes behind the real wiring, as apps/gateway/test/documents-page.test.ts does.
+- TypeScript narrowing does not reach inside a callback or an immediately invoked function: the last run narrowed the evidence inside one in web-ui.ts and likely failed typecheck (TS2345). Hoist the narrowed value into a const before you use it.
+- JSON stays as it is. apps/gateway/src/profile-avatar.ts lists documents only for an HTML GET /profile, and apps/gateway/test/documents-page.test.ts pins that a JSON GET /profile makes no documents list and no delivery. Derive completeness on the HTML path only, from the list profile-avatar.ts already made (currentProfileAvatar()), never a second list. A JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them today. Wherever the text above says JSON and HTML, read HTML.
+- Labels come only from the copy. Change the two row labels only in apps/gateway/src/ui/profile-copy.ts (field.isProfileCompleted and field.pendingFields, English and Arabic); web-ui.ts takes every row label from PROFILE_COPY and has no special label for these rows. apps/gateway/test/profile-journey.test.ts must pass unchanged.
+- Test each checklist item's words and its target together: the list item that carries a requirement's words holds exactly that requirement's href, in both languages, not only that the hrefs appear somewhere on the page.
+- apps/gateway/test/profile-journey.test.ts and apps/gateway/test/documents-page.test.ts are in your paths so you can add tests there; keep every existing test in them as it is.`;
+const SHU576_ACCEPTANCE = `(1) ${shu570Items[2].replace("(Q14_4_RULES)", "")}, the rules being those of the brief, including Kuwaiti mother for a nationality with no catalogue id, the wiped imported list after a platform write, positive fixtures where phone, civil_id, civil_expiry and kuwaiti_mother count as met (from a live value and, before any write, from an imported list that does not name them), and a test that every input type, booleans included, gives a result and never throws (Q14_4_RULES); (2) any failed or unconfigured source gives unavailable with its distinct reason and never an empty list, and a catalogue id missing from the choices gives check_failed (Q14_4_DERIVED); (3) packages/profile/test/profile.test.ts (including SHU371_PROJECTION) and packages/profile/test/mutations.mjs pass unchanged, and OwnProfileRepository.readOwn returns exactly what it returns today (Q14_4_COMPAT); (4) mutants in packages/profile/test/completeness-mutations.mjs (compiled completeness.js, needles from the built dist file, each binding exactly once) die by an AssertionError in their named tests: treat a No answer or a boolean false as missing, require Kuwaiti mother for KW or by name, let the imported list satisfy a document requirement, report complete when a source failed, keep identity_reference (putting it back and changing no other requirement); nothing outside the card's paths changes. SHU-576 is the rules half of SHU-570's contract, split under a fresh id after SHU-570 stopped twice with its revisions used up; SHU-570 never lands.`;
+const SHU577_ACCEPTANCE = `(1) ${shu570Items[1]}; each item's words and target are asserted together in English and Arabic; (2) ${shu570Items[3].replace("no part of the page or JSON says complete", "no part of the HTML page says complete; JSON follows item (5)").replace("(Q14_4_DERIVED)", "with the evidence gathered after a found profile, so My profile still answers 200 when any source fails (Q14_4_DERIVED)")}; (3) ${shu570Items[4]}; (4) ${shu570Items[5]}; (5) Q14_4_JSON: a JSON GET /profile makes no documents list, no delivery and no completeness read, and returns isProfileCompleted and pendingFields exactly as OwnProfileRepository.readOwn returns them; documents-page.test.ts's JSON assertions pass unchanged; Q14_4_LABELS: web-ui.ts takes both row labels from PROFILE_COPY only, and profile-journey.test.ts (U3A_PROVENANCE included) passes unchanged; Q14_4_STATUS: with each of the background-records read, the choices read, the documents list and the civil ID read failing in turn, a real GET /profile through the route answers 200 with 'Couldn't check right now', never 404 or 503, and the principal read is not part of the gatherer; every gateway test in this card makes a real GET /profile through createGatewayServer and the route, never a renderer call with a hard-coded profile; (6) mutants of apps/gateway/src/profile-completeness.ts and web-ui.ts, in apps/gateway/test/profile-completeness-mutations.mjs (compiled dist files, needles from the built files, each binding exactly once, as apps/gateway/test/documents-page-mutations.mjs does), or checked by hand and reported if they do not bind: a second documents list, storing the result, dropping an item's link or changing its target, and a gatherer failure that changes the status, each dying by an AssertionError in its named test; every existing test and mutant of the profile package and the gateway still passes unchanged except language-preference.test.ts line 86, packages/profile is not changed, and nothing outside the card's paths changes. Appending route names and bumping the length in apps/gateway/test/routes-order.test.ts, and bumping the U1_COPY key count in apps/gateway/test/profile-kit.test.ts, exactly as the brief says counts as no change to an existing test. SHU-577 is the My profile half of SHU-570's contract, split under a fresh id after SHU-570 stopped twice with its revisions used up, and it waits on SHU-576, the rules half; SHU-570 never lands.`;
+const splitBrief = (to, opening, extra, paths, acceptance) => {
+  let brief = SHU570.brief.replace(/\bSHU-570\b/g, to);
+  const firstBreak = brief.indexOf("\n\n");
+  brief = `${opening}${brief.slice(firstBreak)}`;
+  const acceptanceAt = brief.indexOf("\nAcceptance. ");
+  const standingAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, acceptanceAt)}\nAcceptance. Tests are named with their token first and a space after it; every mutation named below makes its named test fail in the card's mutations script and passes unmutated.\n${acceptance}${brief.slice(standingAt)}`;
+  const reviewAt = brief.indexOf("\n- The last run of this card (SHU-559)");
+  const finishAt = brief.indexOf("\n- Before you finish,");
+  if (reviewAt < 0 || finishAt < reviewAt) throw new Error(`${to}: SHU-570 review section not found`);
+  brief = `${brief.slice(0, reviewAt)}${extra}${brief.slice(finishAt)}`;
+  const pathsAt = brief.indexOf("\n\nYour paths");
+  const pathsEnd = brief.indexOf("\n\nOut of scope:");
+  const heading = brief.slice(pathsAt, brief.indexOf("\n", pathsAt + 2));
+  brief = `${brief.slice(0, pathsAt)}${heading}\n${paths.map((path) => `- ${path}`).join("\n")}${brief.slice(pathsEnd)}`;
+  brief = brief.replace("the GET /profile branch: JSON and HTML both flow through it;", "the GET /profile branch: JSON and HTML both flow through it, and only the HTML path changes;");
+  return finishWithSandbox(brief, to);
+};
+const SHU576_BRIEF = splitBrief("SHU-576", "Card SHU-576: the platform works out, legacy rule by rule, which profile requirements a person is still missing, as a pure function in packages/profile that My profile will use (part 1 of 2 of the profile completeness card; legacy isInCompleteProfile; risk R2).", SHU576_SPLIT, SHU576_PATHS, SHU576_ACCEPTANCE);
+const SHU577_BRIEF = splitBrief("SHU-577", "Card SHU-577: a person sees on My profile either 'Profile complete' or a checklist of what is still missing, each item linking to the place that fixes it, using the rules SHU-576 built (part 2 of 2 of the profile completeness card; S2 last step: legacy isInCompleteProfile; risk R2).", SHU577_LESSONS, SHU577_PATHS, SHU577_ACCEPTANCE);
+const SPLIT_570_CONTRACTS = Object.freeze({
+  "SHU-576": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU576_PATHS, revision_paths: SHU576_PATHS, acceptance: SHU576_ACCEPTANCE, brief: SHU576_BRIEF }),
+  "SHU-577": Object.freeze({ workspace_mode: SHU570.workspace_mode, initial_build_paths: SHU577_PATHS, revision_paths: SHU577_PATHS, acceptance: SHU577_ACCEPTANCE, brief: SHU577_BRIEF }),
+});
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
