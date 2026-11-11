@@ -7241,7 +7241,41 @@ const RECUT_588_CONTRACTS = Object.fromEntries(Object.entries(RECUT_588).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS });
+// SHU-596 re-cuts SHU-590, the staff civil ID check. It stopped with its
+// revisions used up; its reviews found the person-id trap on My profile (the
+// decision read gated on a person id the projection had dropped), mutation
+// scripts that only searched the source, missing REV_DECIDE and REV_SHOWN
+// tests, no photo read on the decision page, a db test that never opened the
+// real store, and three missing staff-delivery cases.
+const RECUT_590 = Object.freeze({ "SHU-590": "SHU-596" });
+const recut590 = (text) => text.replace(/\bSHU-590\b/g, (id) => RECUT_590[id]);
+const SHU596_REVIEW = `
+- The last run of this card (SHU-590) also used up its revisions. Its reviews found the faults below; read them with the bullets above, and where they differ, these win.
+- The person id for the Civil ID row's decision comes from requesterPrincipalId, the session's own person id that the GET /profile handler in apps/gateway/src/index.ts binds inside the readOwn block before it replaces result with the readOwn projection; capture it (or the authorized target id built from it) before that replacement. Never read result.body?.personId after readOwn: the projection has no personId, so a gate on it is always false and the decision never shows. A test through createGatewayServer proves 'Checked' and 'Rejected: <reason>' appear on a real cookie GET /profile.
+- Both mutation scripts (apps/gateway/test/civil-id-review-mutations.mjs and packages/private-documents/test/staff-delivery-mutations.mjs) write each mutant and run the tests against it, as apps/gateway/test/documents-page-mutations.mjs does: read the built file, assert the needle binds exactly once, write the mutated copy, run the named test against it with spawnSync, assert the unmutated control passes and the mutant fails with 'not ok' and an AssertionError carrying the named message, print KILLED <token>, and restore the file in a finally block. A script that only searches the source for a needle is refused; the last run's scripts wrote no mutant at all.
+- REV_DECIDE and REV_SHOWN are real tests named with their token first, in the files the acceptance names; the last run had neither.
+- The decision page shows the photo-reading result, so the civilIdReview block in apps/gateway/src/wiring/profile.ts passes the OCR store's read to the review service, and a test through createGatewayServer shows the reading result on the decision page.
+- packages/db/test/postgres-civil-id-review.test.ts imports PostgresCivilIdReviewStore from packages/db/src/postgres-civil-id-review-store.ts and drives it against the real database; a test that only runs SQL by hand does not prove the store.
+- packages/private-documents/test/staff-delivery.test.mjs has its own test for each of: a link signed for another slot is refused; a real owner-signed link on the staff route is refused; a real staff-signed link on the owner route is refused, each on its MAC and label.`;
+const SHU596_ACCEPTANCE_REVIEW = " (Review) REV_PERSON: the Civil ID row's decision is read with requesterPrincipalId bound before the readOwn projection, and a real cookie GET /profile through createGatewayServer shows 'Checked' and 'Rejected: <reason>'; REV_MUTANTS: both mutation scripts write each mutant, run its named test with the unmutated control passing, and every mutant dies by an AssertionError; REV_DECIDE and REV_SHOWN exist as tests; the decision page shows the photo-reading result through the real wiring; the db test drives PostgresCivilIdReviewStore; staff delivery refuses another slot, an owner link on the staff route and a staff link on the owner route in their own tests.";
+const RECUT_590_CONTRACTS = Object.fromEntries(Object.entries(RECUT_590).map(([from, to]) => {
+  const base = RECUT_584_CONTRACTS[from];
+  let brief = recut590(base.brief);
+  let acceptance = recut590(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU596_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU596_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its revisions ran out on a final BLOCK (a My profile decision read gated on a person id the projection had dropped, mutation scripts that wrote no mutant, missing tests, and an unwired photo read), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU596_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
