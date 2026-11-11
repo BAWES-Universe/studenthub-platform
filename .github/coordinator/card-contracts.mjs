@@ -7138,7 +7138,42 @@ const RECUT_581_CONTRACTS = Object.fromEntries(Object.entries(RECUT_581).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS });
+// SHU-590 re-cuts SHU-584, the staff civil ID check. It stopped with its
+// revisions used up; the final review's blocks were build faults (surviving
+// mutants, a CHECK that admits NULL, hollow tests), so the re-cut spells each
+// one out with what the review found correct and not to be redone.
+const RECUT_584 = Object.freeze({ "SHU-584": "SHU-590" });
+const recut584 = (text) => text.replace(/\bSHU-584\b/g, (id) => RECUT_584[id]);
+const SHU590_REVIEW = `
+- The last run of this card (SHU-584) used up its revisions. Its final review found the faults below; read them as part of the contract, and where they differ from the text above, they win.
+- Already right, keep it: the delivery route is GET /workspace/civil-ids/delivery and a real cookie GET with no Origin reaches it; apps/gateway/src/candidate-documents-http.ts is unchanged; the sidebar count is read once in the /workspace route of apps/gateway/src/index.ts, only for a staff or admin context on an operator organization, and renderWorkspace stays synchronous and byte-identical without it; decide() locks the row FOR UPDATE, refuses a stale revision, leaves the revision untouched and is replay-safe on confirm_ref; stateFor and listPending are each one statement; the full number appears only on the decision page.
+- Origin refusals are asserted exactly: in REV_ORIGIN a wrong Origin and a cross-site Sec-Fetch-Site each answer 403 with the denied page before the body is read, distinct from the 400 a missing field gets. A status of 400 or more is not enough, because a skipped Origin check then falls through to the 400 and the mutant lives.
+- REV_DECIDE includes a decision POST carrying a stale revision, which is refused and stores nothing, and a decision for a changed photo version, which is refused and stores nothing.
+- The mutation script names every mutant the acceptance lists, including 'list a released or decided row', 'clear needs_review without a decision' and 'read the state twice', and every mutant it names dies by an AssertionError in its named test; npm test runs to the end.
+- Migration 0219: a CHECK whose expression is NULL passes in Postgres. The rejected branch states reason IS NOT NULL explicitly, so a rejected decision with no reason is refused; check every other branch the same way.
+- packages/db/test/postgres-civil-id-review.test.ts opens a real database and exercises each CHECK on its own: every insert uses a subject and a reviewer that differ, so the subject-is-not-reviewer CHECK never hides another one, and the control-character reason, the over-long reason, the rejected-with-no-reason and the confirmed-with-a-reason rows are each refused, with a valid row of each kind accepted.
+- Item 4 is pinned in packages/private-documents/test/staff-delivery.test.mjs with a fixture of at least two documents: a link signed for another slot or another version is refused; a real owner-signed link presented on the staff route is refused, and a real staff-signed link presented on the owner route is refused, each on its MAC and label, not on a rewritten path.
+- REV_SECRECY scans the confirmation token, the redirect, every response header and the sidebar as well as the queue HTML and the captured calls. Item 5's S2 is proved with 0, 1 and 60 waiting people, for both the queue and the decision page, with a counting fake.`;
+const SHU590_ACCEPTANCE_REVIEW = " (Review) REV_EXACT: a wrong Origin and a cross-site Sec-Fetch-Site are each 403 before the body is read; a stale revision and a changed photo version are each refused with nothing stored; 0219's rejected branch has an explicit reason IS NOT NULL and the real-database test refuses each CHECK's bad row on its own with distinct subject and reviewer; staff delivery refuses another slot or version and a real owner link on the staff route and a staff link on the owner route; REV_SECRECY covers the token, redirect, headers and sidebar; S2 holds for 60 waiting people on the queue and the decision page; every named mutant, including the three the last script left out, dies by an AssertionError.";
+const RECUT_584_CONTRACTS = Object.fromEntries(Object.entries(RECUT_584).map(([from, to]) => {
+  const base = RECUT_577_CONTRACTS[from];
+  let brief = recut584(base.brief);
+  let acceptance = recut584(base.acceptance);
+  brief = replaceOnce(brief, "\n- Before you finish,", `${SHU590_REVIEW}\n- Before you finish,`, `${to} review faults`);
+  if (!brief.includes("the (Review) clause wins")) brief = replaceOnce(brief, "\nAcceptance. ", "\nAcceptance. Where a (Review) clause at the end differs from an item, the (Review) clause wins. ", `${to} precedence`);
+  const reviewAt = brief.indexOf("\n\nStanding lines");
+  brief = `${brief.slice(0, reviewAt)}${SHU590_ACCEPTANCE_REVIEW}${brief.slice(reviewAt)}`;
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its revisions ran out on a final BLOCK (surviving mutants, a reason CHECK that admitted NULL, and hollow tests), each fault spelled out here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance}${SHU590_ACCEPTANCE_REVIEW} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
