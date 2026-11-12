@@ -3,7 +3,7 @@ import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
 import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, kuwaitDate, type ApprovedProfileAdapter, type CivilIdOcrStore, type CivilIdStore, type OwnProfileReader } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -42,6 +42,17 @@ export function composeOwnProfiles(options: {
     } } });
 }
 
+/**
+ * The civil ID suggestion service as production composes it, over whatever
+ * stores it is given; wireProfile passes Postgres stores, the test helper
+ * in-memory ones. The current suggestion is judged against now() in Kuwait.
+ */
+export function composeCivilIdSuggestion(options: { readonly store: CivilIdOcrStore; readonly civilId: ReturnType<typeof createCivilId>; readonly civilStore: CivilIdStore; readonly vault: CivilIdVault; readonly now?: () => Date }) {
+  const now = options.now ?? (() => new Date());
+  return { store: options.store, civilId: options.civilId, civilStore: options.civilStore, vault: options.vault, now,
+    current: (principalId: string) => options.store.currentSuggestion(principalId, kuwaitDate(now())) };
+}
+
 export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter): Wired<{
   readonly application: Record<string, unknown>;
   readonly web: { readonly profiles: OwnProfileReader; readonly profileCompleteness?: ProfileCompletenessDependencies };
@@ -65,7 +76,11 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const civilKey = civilRaw === undefined ? undefined : Buffer.from(civilRaw, "base64");
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
   const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
-  const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
+  const civilVault = civilKey ? new CivilIdVault(civilKey) : undefined;
+  const civilId = civilStore && civilVault ? createCivilId({ store: civilStore, vault: civilVault }) : undefined;
+  const CivilIdOcrStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdOcrStore: typeof import("../../../../packages/db/src/postgres-civil-id-ocr-store.js").PostgresCivilIdOcrStore }).CivilIdOcrStore;
+  const civilSuggestionStore = civilKey ? new CivilIdOcrStore({ connectionString: databaseUrl }) : undefined;
+  const civilIdSuggestion = civilSuggestionStore && civilId && civilStore && civilVault ? composeCivilIdSuggestion({ store: civilSuggestionStore, civilId, civilStore, vault: civilVault }) : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -150,9 +165,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
   };
 }
