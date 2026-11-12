@@ -92,6 +92,7 @@ export interface IdentityStore {
 
 export interface AuthorizationStore {
   roleFor(personId: string): Promise<string>;
+  principalFor?(personId: string): Promise<{ readonly role: string; readonly email?: string }>;
 }
 
 export interface TestJsonWebKey {

@@ -12,12 +12,13 @@ import { HttpLegacyLogin } from "../legacy-login.js";
 import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
+import type { ProfileCompletenessDependencies } from "../profile-completeness.js";
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
 export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter): Wired<{
   readonly application: Record<string, unknown>;
-  readonly web: { readonly profiles: OwnProfileReader };
+  readonly web: { readonly profiles: OwnProfileReader; readonly profileCompleteness?: ProfileCompletenessDependencies };
   readonly browserSessionPool: pg.Pool | undefined;
   readonly sessions: typeof access.loginStore.sessions;
 }> {
@@ -129,7 +130,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
-      }, web: { profiles: webProfiles }, browserSessionPool, sessions,
+      }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
     async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
   };

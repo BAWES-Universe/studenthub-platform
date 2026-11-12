@@ -201,6 +201,11 @@ export const createLoginApplication: LoginApplicationFactory = (
       const session = await dependencies.sessions.get(request.sessionId);
       if (!session) return rejected(401);
       if (request.personId && request.personId !== session.personId) return rejected(404);
+      if (dependencies.authorization.principalFor) {
+        const principal = await dependencies.authorization.principalFor(session.personId);
+        const email = typeof principal.email === "string" && principal.email.trim().length > 0 ? principal.email : undefined;
+        return { status: 200, body: { personId: session.personId, role: principal.role, ...(email ? { email } : {}) } };
+      }
       const role = await dependencies.authorization.roleFor(session.personId);
       return { status: 200, body: { personId: session.personId, role } };
     } catch {
