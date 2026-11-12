@@ -692,6 +692,13 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.deepEqual(after("SHU-606"), ["SHU-604", "SHU-605"], "SHU-224: SHU-606 (the pages) waits on the store and the image links it wires");
   assert.deepEqual(after("SHU-607"), ["SHU-604"], "SHU-224: SHU-607 (the directory query) waits on the decisions table its civil ID state reads");
   assert.deepEqual(after("SHU-608"), ["SHU-607"], "SHU-224: SHU-608 (the People page) waits on the query it renders");
+  const migrations = fs.readdirSync(join(COORDINATOR_DIR, "../../packages/db/migrations"));
+  for (const [id, file] of [["SHU-604", "0219_civil_id_reviews.sql"], ["SHU-607", "0227_people_directory_indexes.sql"]]) {
+    assert.ok(contracts[id].initial_build_paths.includes(`packages/db/migrations/${file}`), `SHU-224: ${id} owns ${file}`);
+    assert.ok(!migrations.some((name) => name.slice(0, 5) === file.slice(0, 5)), `SHU-224: ${id}'s migration number ${file.slice(0, 4)} is not taken by a landed migration`);
+  }
+  assert.ok(!contracts["SHU-608"].acceptance.includes("/workspace/people/"), "SHU-224: SHU-608 asks for no link to a Person page no route serves");
+  assert.match(contracts["SHU-604"].acceptance, /a released row whose needs_review is still true gives null from stateFor and stays out of listPending/, "SHU-224: SHU-604 keeps released civil IDs out of waiting");
   for (const id of ["SHU-604", "SHU-605", "SHU-606", "SHU-607", "SHU-608"]) {
     const lane = config.card_lanes.find((entry) => entry.id === id);
     assert.deepEqual(lane.initial_build_paths, [...contracts[id].initial_build_paths], `SHU-224: ${id}'s lane matches its contract`);

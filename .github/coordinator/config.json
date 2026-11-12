@@ -9011,9 +9011,9 @@
       "authorization_ref": "SHU-607",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
-      "note": "lane 1 (organizations and profile/people), card Q15-3 part 1 of 2: the People directory query, its indexes (migration 0220) and its pure rules; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on SHU-604, whose civil_id_review_decisions table its civil ID state reads.",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 1 of 2: the People directory query, its indexes (migration 0227) and its pure rules; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on SHU-604, whose civil_id_review_decisions table its civil ID state reads.",
       "initial_build_paths": [
-        "packages/db/migrations/0220_people_directory_indexes.sql",
+        "packages/db/migrations/0227_people_directory_indexes.sql",
         "packages/db/src/postgres-people-directory-store.ts",
         "packages/db/test/postgres-people-directory.test.ts",
         "packages/db/src/profile/index.ts",
@@ -9023,7 +9023,7 @@
         "packages/profile/test/people-directory-mutations.mjs"
       ],
       "revision_paths": [
-        "packages/db/migrations/0220_people_directory_indexes.sql",
+        "packages/db/migrations/0227_people_directory_indexes.sql",
         "packages/db/src/postgres-people-directory-store.ts",
         "packages/db/test/postgres-people-directory.test.ts",
         "packages/db/src/profile/index.ts",
