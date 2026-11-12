@@ -16,6 +16,32 @@ import type { ProfileCompletenessDependencies } from "../profile-completeness.js
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
+type OwnPreferencesReader = { readOwnPreferences(id: string): Promise<object | null | undefined> };
+
+/**
+ * The My profile read as production composes it: the approved profile source
+ * plus the person's own preferences, civil ID and area, merged in one read.
+ * wireProfile builds it over Postgres stores; tests build it over in-memory
+ * stores through test/helpers/real-profile-server.ts, so both run this code.
+ */
+export function composeOwnProfiles(options: {
+  readonly principals: ConstructorParameters<typeof OwnProfileRepository>[0]["principals"];
+  readonly source: ApprovedProfileAdapter;
+  readonly safeWrites?: OwnPreferencesReader;
+  readonly personProfiles?: OwnPreferencesReader;
+  readonly civilId?: { readOwn(id: string): Promise<unknown> };
+  readonly area: { readOwn(id: string): Promise<unknown> };
+  readonly today?: () => string;
+}): OwnProfileRepository {
+  const { safeWrites, personProfiles, civilId, area } = options;
+  return new OwnProfileRepository({ principals: options.principals, source: options.source, ...(options.today ? { today: options.today } : {}),
+    preferences: { async readOwnPreferences(id: string) {
+      const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id).catch(() => null)]);
+      const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };
+      return Object.keys(merged).length > 0 ? merged as never : null;
+    } } });
+}
+
 export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter): Wired<{
   readonly application: Record<string, unknown>;
   readonly web: { readonly profiles: OwnProfileReader; readonly profileCompleteness?: ProfileCompletenessDependencies };
@@ -51,12 +77,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
   const area = createArea({ store: personLocations });
-  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
-    ...({ preferences: { async readOwnPreferences(id: string) {
-      const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id).catch(() => null)]);
-      const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };
-      return Object.keys(merged).length > 0 ? merged as never : null;
-    } } }) });
+  const profiles = composeOwnProfiles({ principals: access.authzStore, source: profileSource, safeWrites, personProfiles, civilId, area });
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: databaseUrl }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: databaseUrl }) : undefined;
