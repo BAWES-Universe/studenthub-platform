@@ -179,6 +179,10 @@ test("OCRP_DISMISS dismiss resolves without a civil ID write; the same version s
   assert.equal(suggestionRows(await f.page()), 0, "OCRP_DISMISS the same version stays hidden");
   f.store.jobs.push(job(S2));
   assert.ok((await f.page()).includes("We read a number ending 1234"), "OCRP_DISMISS a later version shows");
+  const unreadable = await setup(t, { status: "unreadable" }), before = await unreadable.page();
+  assert.equal(before.split(`action="${DISMISS}"`).length - 1, 1, "OCRP_DISMISS an unreadable suggestion renders a dismiss form");
+  assert.equal((await unreadable.dismiss()).status, 303, "OCRP_DISMISS an unreadable suggestion can be dismissed");
+  assert.equal(suggestionRows(await unreadable.page()), 0, "OCRP_DISMISS dismissing an unreadable suggestion removes the row");
 });
 
 test("OCRP_ORIGIN only same-origin cookie posts with exact fields reach the service", async (t) => {
