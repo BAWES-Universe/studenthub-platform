@@ -4,7 +4,9 @@ import { CIVIL_ID_MESSAGES, type CivilIdOcrStore, type CivilIdService, type Civi
 const LIMIT = 2048;
 const esc = (value:string) => value.replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]!);
 const sessionCookie = (header:string|undefined) => { for (const part of header?.split(";") ?? []) { const [key,...rest]=part.trim().split("="); const value=rest.join("="); if(key==="__Host-studenthub_session"&&/^[A-Za-z0-9_-]{43}$/.test(value))return value; } };
-const submissionId = (id:string) => `civil-id-suggestion:${id}`;
+// The civil ID event table keys submissions by uuid, and a suggestion id is already one, so it doubles as the submission id.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const submissionId = (id:string) => id;
 const errorBody = (message:string) => `<main id="main" class="profile-ui"><div class="p-shell"><section class="p-main p-card p-stack"><h1>Civil ID</h1><section class="p-error-summary" role="alert"><h2>Check your details</h2><p>${esc(message)}</p></section><a href="/profile#field-civilId">Back to profile</a></section></div></main>`;
 
 export interface CivilIdSuggestionService {
@@ -37,7 +39,7 @@ export async function handleCivilIdSuggestion(request:IncomingMessage,response:S
   if(!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(request.headers["content-type"]??"")||Number(request.headers["content-length"])>LIMIT){request.resume();write(400,"Civil ID",errorBody("Invalid request."));return true;}
   request.setEncoding("utf8");let raw="";for await(const chunk of request){raw+=String(chunk);if(Buffer.byteLength(raw)>LIMIT){write(400,"Civil ID",errorBody("Invalid request."));return true;}}
   const params=new URLSearchParams(raw),keys=[...params.keys()].sort();if(keys.join()!==["submissionId","suggestionId"].sort().join()||keys.some((key,index)=>index>0&&key===keys[index-1])){write(400,"Civil ID",errorBody("Invalid request."));return true;}
-  const id=params.get("suggestionId")??"", submitted=params.get("submissionId")??"";if(!id||submitted!==submissionId(id)){write(400,"Civil ID",errorBody("Invalid request."));return true;}
+  const id=params.get("suggestionId")??"", submitted=params.get("submissionId")??"";if(!UUID.test(id)||submitted!==submissionId(id)){write(400,"Civil ID",errorBody("Invalid request."));return true;}
   const current=await service.current(principal);if(!current||current.id!==id){if(how==="accepted"&&await service.civilStore.submissionRecorded(principal,submitted)){finish(303,{location:"/profile#field-civilId"});return true;}write(409,"Civil ID",errorBody(CIVIL_ID_MESSAGES.stale_revision));return true;}
   if(how==="dismissed"){await service.store.resolve(id,principal,"dismissed",service.now().toISOString());finish(303,{location:"/profile/civil-id"});return true;}
   if(current.state!=="read"||current.expired){write(409,"Civil ID",errorBody(CIVIL_ID_MESSAGES.stale_revision));return true;}

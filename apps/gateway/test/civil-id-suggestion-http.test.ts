@@ -31,6 +31,9 @@ const vault = new CivilIdVault(Buffer.from(REAL_PROFILE_CIVIL_KEY, "base64"));
 type Job = InMemoryCivilIdOcrStore["jobs"][number];
 type Options = { number?: string; country?: "KW" | "BH"; expiry?: string; status?: Job["status"]; ocrStore?: InMemoryCivilIdOcrStore; seed?: boolean; feature?: boolean };
 
+const S1 = "5f0c2a1e-8d3b-4c7a-9e21-3b6d4f8a1c01", S2 = "5f0c2a1e-8d3b-4c7a-9e21-3b6d4f8a1c02", STALE = "5f0c2a1e-8d3b-4c7a-9e21-3b6d4f8a1c99";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function job(id: string, o: Options = {}): Job {
   const number = o.number ?? NUMBER, country = o.country ?? "KW", sealed = vault.seal(PERSON, country, number), at = NOW().toISOString();
   return { id, principalId: PERSON, side: "front", documentId: "doc", version: `${id}-v`, size: 12, status: o.status ?? "read", attempts: 1, notBefore: at,
@@ -40,7 +43,7 @@ function job(id: string, o: Options = {}): Job {
 
 async function setup(t: TestContext, o: Options = {}) {
   const store = o.ocrStore ?? new InMemoryCivilIdOcrStore();
-  if (o.seed !== false) store.jobs.push(job("suggestion-1", o));
+  if (o.seed !== false) store.jobs.push(job(S1, o));
   let reads = 0;
   let service: ReturnType<typeof composeCivilIdSuggestion> | undefined;
   const server = await startRealProfileServer(t, { row: SYNTHETIC_PROFILE_FIXTURES.unavailable, now: NOW, extend: (s) => {
@@ -49,8 +52,8 @@ async function setup(t: TestContext, o: Options = {}) {
     service = { ...raw, current: async (id: string) => { reads++; return raw.current(id); } };
     return { civilIdSuggestion: service } as never;
   } });
-  const open = () => store.jobs.find((entry) => !entry.resolved && !entry.supersededAt)?.id ?? "suggestion-1";
-  const form = (id = open()) => ({ suggestionId: id, submissionId: `civil-id-suggestion:${id}` });
+  const open = () => store.jobs.find((entry) => !entry.resolved && !entry.supersededAt)?.id ?? S1;
+  const form = (id = open()) => ({ suggestionId: id, submissionId: id });
   return {
     ...server, store, service: service!, form,
     get reads() { return reads; },
@@ -94,8 +97,9 @@ test("OCRP_LINE a read suggestion shows the masked line with exactly two forms u
   assert.match(html, /id="field-civilId"[\s\S]*?<\/div><\/dd><\/div><div class="p-row"><dt>Civil ID photo<\/dt>/, "OCRP_LINE line directly under the Civil ID row");
   assert.equal((html.match(/action="\/profile\/civil-id\/suggestion\/accept"/g) ?? []).length, 1, "OCRP_LINE one accept form");
   assert.equal((html.match(/action="\/profile\/civil-id\/suggestion\/dismiss"/g) ?? []).length, 1, "OCRP_LINE one dismiss form");
-  assert.equal((html.match(/<input type="hidden" name="suggestionId" value="suggestion-1">/g) ?? []).length, 2, "OCRP_LINE each form carries the suggestion id");
-  assert.equal((html.match(/<input type="hidden" name="submissionId" value="civil-id-suggestion:suggestion-1">/g) ?? []).length, 2, "OCRP_LINE each form carries the derived submission id");
+  assert.equal(html.split(`<input type="hidden" name="suggestionId" value="${S1}">`).length - 1, 2, "OCRP_LINE each form carries the suggestion id");
+  assert.equal(html.split(`<input type="hidden" name="submissionId" value="${S1}">`).length - 1, 2, "OCRP_LINE each form carries the derived submission id");
+  for (const [, value] of html.matchAll(/name="submissionId" value="([^"]*)"/g)) assert.match(value!, UUID, "OCRP_LINE the submission id is a uuid, as the civil ID event table requires");
   assert.ok(!html.includes(NUMBER), "OCRP_LINE the full number never renders");
 });
 
@@ -144,23 +148,23 @@ test("OCRP_ACCEPT refusals keep CIV's messages, save nothing and leave the sugge
 test("OCRP_STALE a retry saves once; not-current, replaced, answered and foreign ids are 409", async (t) => {
   const f = await setup(t);
   assert.equal((await f.accept()).status, 303, "OCRP_STALE first accept redirects");
-  assert.equal((await f.accept(f.form("suggestion-1"))).status, 303, "OCRP_STALE a retry of the same form redirects");
+  assert.equal((await f.accept(f.form(S1))).status, 303, "OCRP_STALE a retry of the same form redirects");
   assert.equal(f.civilStore.events.length, 1, "OCRP_STALE a retry saves once");
-  assert.equal(f.civilStore.events[0]!.submissionId, "civil-id-suggestion:suggestion-1", "OCRP_STALE the submission id is derived from the suggestion");
-  const wrong = await setup(t), notCurrent = await wrong.accept(wrong.form("not-current"));
+  assert.equal(f.civilStore.events[0]!.submissionId, S1, "OCRP_STALE the submission id is derived from the suggestion");
+  const wrong = await setup(t), notCurrent = await wrong.accept(wrong.form(STALE));
   assert.equal(notCurrent.status, 409, "OCRP_STALE a not-current id is 409");
   assert.ok((await notCurrent.text()).includes(CIVIL_ID_MESSAGES.stale_revision), "OCRP_STALE a not-current id shows CIV's stale message");
-  assert.equal((await wrong.dismiss(wrong.form("not-current"))).status, 409, "OCRP_STALE a not-current id cannot be dismissed");
+  assert.equal((await wrong.dismiss(wrong.form(STALE))).status, 409, "OCRP_STALE a not-current id cannot be dismissed");
   const replaced = await setup(t);
   replaced.store.jobs[0]!.supersededAt = NOW().toISOString();
-  assert.equal((await replaced.accept(replaced.form("suggestion-1"))).status, 409, "OCRP_STALE a replaced photo version is 409");
+  assert.equal((await replaced.accept(replaced.form(S1))).status, 409, "OCRP_STALE a replaced photo version is 409");
   const answered = await setup(t);
   assert.equal((await answered.dismiss()).status, 303);
-  assert.equal((await answered.accept(answered.form("suggestion-1"))).status, 409, "OCRP_STALE an answered suggestion is 409");
+  assert.equal((await answered.accept(answered.form(S1))).status, 409, "OCRP_STALE an answered suggestion is 409");
   const foreign = await setup(t);
   foreign.store.jobs[0]!.principalId = REAL_PROFILE_OTHER_PERSON;
-  assert.equal((await foreign.accept(foreign.form("suggestion-1"))).status, 409, "OCRP_STALE another person's suggestion cannot be accepted");
-  assert.equal((await foreign.dismiss(foreign.form("suggestion-1"))).status, 409, "OCRP_STALE another person's suggestion cannot be dismissed");
+  assert.equal((await foreign.accept(foreign.form(S1))).status, 409, "OCRP_STALE another person's suggestion cannot be accepted");
+  assert.equal((await foreign.dismiss(foreign.form(S1))).status, 409, "OCRP_STALE another person's suggestion cannot be dismissed");
   for (const g of [wrong, replaced, answered, foreign]) assert.equal(g.civilStore.events.length, 0, "OCRP_STALE refused ids save nothing");
   assert.equal(foreign.store.jobs[0]!.resolved, null, "OCRP_STALE another person's suggestion stays open");
 });
@@ -173,7 +177,7 @@ test("OCRP_DISMISS dismiss resolves without a civil ID write; the same version s
   assert.equal(f.civilStore.events.length, 0, "OCRP_DISMISS writes no civil ID");
   assert.equal(await f.civilId.readOwn(PERSON), null, "OCRP_DISMISS leaves the civil ID empty");
   assert.equal(suggestionRows(await f.page()), 0, "OCRP_DISMISS the same version stays hidden");
-  f.store.jobs.push(job("suggestion-2"));
+  f.store.jobs.push(job(S2));
   assert.ok((await f.page()).includes("We read a number ending 1234"), "OCRP_DISMISS a later version shows");
 });
 
@@ -190,7 +194,7 @@ test("OCRP_ORIGIN only same-origin cookie posts with exact fields reach the serv
   assert.equal(wrong.status, 403, "OCRP_ORIGIN a wrong Origin is 403");
   const extra = await f.accept({ ...f.form(), personId: PERSON });
   assert.equal(extra.status, 400, "OCRP_ORIGIN an extra field is 400");
-  const missing = await f.accept({ suggestionId: "suggestion-1" });
+  const missing = await f.accept({ suggestionId: S1 });
   assert.equal(missing.status, 400, "OCRP_ORIGIN a missing field is 400");
   for (const r of [none, bearer, cross, wrong, extra, missing]) assert.equal(r.headers.get("cache-control"), "no-store", "OCRP_ORIGIN every answer is no-store");
   assert.equal(f.reads, 0, "OCRP_ORIGIN refused posts never read the suggestion");
@@ -210,7 +214,7 @@ test("OCRP_SECRECY the plain number appears in no field, redirect, body, header 
   const duplicate = await setup(t);
   await duplicate.civilId.save({ principalId: REAL_PROFILE_OTHER_PERSON, submissionId: "holder", revision: 0, country: "KW", number: NUMBER, expiry: NEXT_YEAR });
   await record(await duplicate.accept());
-  await record(await duplicate.accept(duplicate.form("stale-id")));
+  await record(await duplicate.accept(duplicate.form(STALE)));
   const dismissed = await setup(t);
   await record(await dismissed.dismiss());
   for (const text of [...seen, ...logged]) assert.ok(!text.includes(NUMBER), "OCRP_SECRECY the plain number never leaves the server");
@@ -303,7 +307,7 @@ test("OCRP_CASES raced and sequential double accepts both redirect with one save
   assert.equal(raced.civilStore.events.length, 1, "OCRP_CASES raced accepts save once");
   const sequential = await setup(t);
   assert.equal((await sequential.accept()).status, 303);
-  assert.equal((await sequential.accept(sequential.form("suggestion-1"))).status, 303, "OCRP_CASES a sequential retry redirects");
+  assert.equal((await sequential.accept(sequential.form(S1))).status, 303, "OCRP_CASES a sequential retry redirects");
   assert.equal(sequential.civilStore.events.length, 1, "OCRP_CASES a sequential retry saves once");
 });
 
@@ -314,22 +318,23 @@ test("OCRP_CASES values already on file resolve with 303, then a retry is 409", 
   assert.equal((await f.accept()).status, 303, "OCRP_CASES values on file redirect");
   assert.equal(f.store.jobs[0]!.resolved, "accepted", "OCRP_CASES values on file resolve the suggestion");
   assert.equal(f.civilStore.events.length, count, "OCRP_CASES values on file save nothing");
-  assert.equal((await f.accept(f.form("suggestion-1"))).status, 409, "OCRP_CASES a retry after values on file is 409");
+  assert.equal((await f.accept(f.form(S1))).status, 409, "OCRP_CASES a retry after values on file is 409");
 });
 
 test("OCRP_CASES replaced and dismissed versions; no session, Bearer-only, missing field and cross-site each save nothing", async (t) => {
   const replaced = await setup(t);
   replaced.store.jobs[0]!.supersededAt = NOW().toISOString();
-  assert.equal((await replaced.accept(replaced.form("suggestion-1"))).status, 409, "OCRP_CASES a replaced version is 409");
+  assert.equal((await replaced.accept(replaced.form(S1))).status, 409, "OCRP_CASES a replaced version is 409");
   const dismissed = await setup(t);
   await dismissed.dismiss();
   assert.equal(suggestionRows(await dismissed.page()), 0, "OCRP_CASES a dismissed version does not return");
-  dismissed.store.jobs.push(job("suggestion-2"));
+  dismissed.store.jobs.push(job(S2));
   assert.equal(suggestionRows(await dismissed.page()), 1, "OCRP_CASES a later version shows");
   const f = await setup(t), body = new URLSearchParams(f.form()).toString(), headers = { origin: "https://studenthub.test.invalid", "content-type": "application/x-www-form-urlencoded" };
   assert.equal((await fetch(f.url + ACCEPT, { method: "POST", redirect: "manual", headers, body })).status, 401, "OCRP_CASES no session is 401");
   assert.equal((await fetch(f.url + ACCEPT, { method: "POST", redirect: "manual", headers: { ...headers, authorization: "Bearer synthetic" }, body })).status, 401, "OCRP_CASES Bearer-only is 401");
-  assert.equal((await f.accept({ suggestionId: "suggestion-1" })).status, 400, "OCRP_CASES a missing field is 400");
+  assert.equal((await f.accept({ suggestionId: S1 })).status, 400, "OCRP_CASES a missing field is 400");
+  assert.equal((await f.accept({ suggestionId: "not-a-uuid", submissionId: "not-a-uuid" })).status, 400, "OCRP_CASES a suggestion id that is not a uuid is 400");
   assert.equal((await fetch(f.url + ACCEPT, { method: "POST", redirect: "manual", headers: { ...headers, cookie: f.cookie(), "sec-fetch-site": "cross-site" }, body })).status, 403, "OCRP_CASES cross-site is 403");
   for (const g of [replaced, dismissed, f] as Setup[]) assert.equal(g.civilStore.events.length, 0, "OCRP_CASES refused requests save nothing");
   assert.equal(f.store.jobs[0]!.resolved, null, "OCRP_CASES refused requests leave the suggestion open");
