@@ -73,7 +73,7 @@ jobs:
           node-version: 22
       - name: Real Git and distinct-UID episode, including scoped bundle transport
         run: node --test .github/coordinator/test/attempt-workspace.test.mjs .github/coordinator/test/workspace-result.test.mjs .github/coordinator/test/workspace-result-mutations.test.mjs .github/coordinator/test/shu241-scoped-build.test.mjs .github/coordinator/test/shu241-mutations.test.mjs
-  fast-checks:
+  application-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The db suite (packages/db) runs against a real Postgres on every PR:
@@ -106,20 +106,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
-      # Deterministic coordinator dry-run package (dispatch disabled): pure JS,
-      # no build step — runs directly via node --test.
-      - name: Assert service verification prerequisites
-        run: |
-          # Host artifacts require /usr/bin/node; setup-node supplies a tool-cache binary.
-          runner_node="$(command -v node)"
-          test -x "$runner_node"
-          if [ "$(readlink -f /usr/bin/node)" != "$(readlink -f "$runner_node")" ]; then
-            sudo ln -sfn "$runner_node" /usr/bin/node
-          fi
-          test -x /usr/bin/node
-          test "$(/usr/bin/node -p 'process.execPath')" = "$(node -p 'process.execPath')"
-          systemd-analyze --version && test -x /usr/bin/flock
-      - run: npm run test:coordinator
       # npm test is the no-external-dependencies suite; the db suite needs the
       # postgres service above, so it runs as its own explicit step (test:db).
       # Both are required for the PR to be green.
@@ -142,6 +128,47 @@ jobs:
           OIDC_JWKS_URL: https://auth.example.test/application/o/studenthub/jwks/
           LOGIN_ALLOWED_RETURN_URLS: https://studenthub.example.test/
         run: docker compose -f deploy/coolify/compose.yaml config --quiet
+  fast-checks:
+    # Keep the branch-protection check stable while the two suites run independently.
+    needs: [application-checks, coordinator-tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every split suite to succeed
+        env:
+          APPLICATION_RESULT: ${{ needs.application-checks.result }}
+          COORDINATOR_RESULT: ${{ needs.coordinator-tests.result }}
+        shell: bash
+        run: |
+          if [ "$APPLICATION_RESULT" != "success" ] || [ "$COORDINATOR_RESULT" != "success" ]; then
+            echo "Required suites did not succeed: application=$APPLICATION_RESULT coordinator=$COORDINATOR_RESULT"
+            exit 1
+          fi
+  coordinator-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Deterministic coordinator dry-run package (dispatch disabled): pure JS,
+      # no build step — runs directly via node --test.
+      - name: Assert service verification prerequisites
+        run: |
+          # Host artifacts require /usr/bin/node; setup-node supplies a tool-cache binary.
+          runner_node="$(command -v node)"
+          test -x "$runner_node"
+          if [ "$(readlink -f /usr/bin/node)" != "$(readlink -f "$runner_node")" ]; then
+            sudo ln -sfn "$runner_node" /usr/bin/node
+          fi
+          test -x /usr/bin/node
+          test "$(/usr/bin/node -p 'process.execPath')" = "$(node -p 'process.execPath')"
+          systemd-analyze --version && test -x /usr/bin/flock
+      - run: npm run test:coordinator
   image-smoke:
     name: gateway-image-smoke
     runs-on: ubuntu-latest
