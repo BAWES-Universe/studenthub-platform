@@ -17,11 +17,13 @@ import type { OrganizationDeletion } from "../organization-deletion.js";
 import type { OrganizationCreation } from "../organization-creation.js";
 import type { LegacyLinkService } from "../legacy-link-http.js";
 import type { CivilIdService } from "@studenthub/profile";
+import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
 import type { AreaHttp } from "../area-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilId?: CivilIdService;
+  readonly civilIdSuggestion?: CivilIdSuggestionService;
   readonly area?: AreaHttp;
   readonly organizationProfile?: OrganizationProfile;
   readonly organizationStatus?: OrganizationStatus;

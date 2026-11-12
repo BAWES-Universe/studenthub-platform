@@ -29,9 +29,13 @@ import { CONTRIBUTIONS, type Contributions } from "./contributions/index.js";
 import type {NotificationPage} from "../../../packages/notifications/src/notifications.js";
 import type { LegacyLinkService } from "./legacy-link-http.js";
 import { renderCivilIdRow } from "./civil-id-http.js";
+import { renderCivilIdSuggestion, type CivilIdSuggestionService } from "./civil-id-suggestion-http.js";
+import type { CivilIdSuggestion } from "@studenthub/profile";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "./area-http.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
+import type { ProfileCompletenessResult } from "@studenthub/profile";
+import type { ProfileCompletenessDependencies } from "./profile-completeness.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -47,11 +51,13 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly bankDetails?: BankDetailsService;
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
+  readonly civilIdSuggestion?: CivilIdSuggestionService;
   readonly area?: AreaHttp;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
     readonly profiles: OwnProfileReader;
+    readonly profileCompleteness?: ProfileCompletenessDependencies;
   };
 }
 
@@ -330,7 +336,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
   return projection as OwnProfileProjection;
 }
 
-export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS): Promise<{ status: number; html: string }> {
+export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS, completeness?: ProfileCompletenessResult, civilIdSuggestion?: CivilIdSuggestion): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
   const profile = projectionFrom(result);
   const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
@@ -354,7 +360,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
   const formatted = (key: Key): string => {
     const field = profile.fields[key];
-    if ((key === "isProfileCompleted" || key === "pendingFields") && hasWrites) return text("profile.checkedLater");
+    if (!completeness && (key === "isProfileCompleted" || key === "pendingFields") && hasWrites) return text("profile.checkedLater");
     if (!field || field.state !== "available") return text(field?.freshness.kind === "written_by_person" || !field ? "value.missing" : "value.unavailable");
     const value = field.value;
     if (key === "gender") return text(({male:"value.male",female:"value.female",other:"value.other"} as const)[String(value) as "male" | "female" | "other"] ?? "value.unavailable");
@@ -390,15 +396,18 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? "S";
   const languageForm = login.preferences ? `<form class="p-language" method="post" action="/profile/language/preview"><label for="profile-language">${copy("profile.changeLanguage")}</label><select id="profile-language" name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select><button class="p-button" type="submit">${copy("action.review")}</button></form>` : "";
   const provenanceKeys: (Key|"civilId")[] = [...OWN_PROFILE_FIELD_NAMES,...(["phone","handle","kuwaitiMother","civilId"] as const).filter(key => profile.fields[key])];
-  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(key === "civilId" ? (language === "ar" ? "البطاقة المدنية" : "Civil ID") : label(key))}</dt><dd>${copy(field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "not_imported" ? "meta.notImported" : field.freshness.observedAt ? "meta.imported" : "meta.importedUndated",{date:date(field.freshness.observedAt ?? "")})}</dd></div>`; }).join("")}</dl></details>`;
+  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(key === "civilId" ? (language === "ar" ? "البطاقة المدنية" : "Civil ID") : label(key))}</dt><dd>${copy(field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "derived" ? "meta.derived" : field.freshness.kind === "not_imported" ? "meta.notImported" : field.freshness.observedAt ? "meta.imported" : "meta.importedUndated",{date:date(field.freshness.observedAt ?? "")})}</dd></div>`; }).join("")}</dl></details>`;
   const avatar = currentProfileAvatar()?.avatarUrl;
   const summary = `<section id="profile-summary" class="p-card p-identity" aria-labelledby="profile-name">${avatar ? `<img class="p-monogram" src="${escapeHtml(avatar)}" alt="">` : `<div class="p-monogram" aria-hidden="true">${escapeHtml(initial)}</div>`}<div class="p-identity-text"><p class="p-kicker">${copy("profile.account")}</p><h2 id="profile-name"><bdi dir="auto">${escapeHtml(name)}</bdi></h2>${profile.fields.arabicName.state === "available" ? `<p lang="ar"><bdi dir="auto">${escapeHtml(profile.fields.arabicName.value)}</bdi></p>` : ""}${profile.fields.objective.state === "available" ? `<p class="p-lead"><bdi dir="auto">${escapeHtml(profile.fields.objective.value)}</bdi></p>` : ""}</div><dl class="p-status">${row("jobSearchStatus")}</dl></section>`;
+  const editableTargets: Readonly<Record<string,string>> = { display_name:"displayName",arabic_name:"arabicName",objective:"objective",gender:"gender",birth_date:"birthDate",phone:"phone",driving_licence:"drivingLicence",nationality:"nationality",kuwaiti_mother:"kuwaitiMother" };
+  const target = (requirement: string): string | undefined => editableTargets[requirement] ? (login.browserEdit ? `/profile/edit/${editableTargets[requirement]}` : `#field-${editableTargets[requirement]}`) : requirement === "location" ? "#field-area" : requirement === "civil_id" || requirement === "civil_expiry" ? "#field-civilId" : requirement === "personal_photo" || requirement === "civil_front" || requirement === "civil_back" ? "/profile/documents" : requirement === "education" || requirement === "skill" ? "/profile/background" : undefined;
+  const checklist = completeness ? completeness.kind === "unavailable" ? `<section class="p-card p-checklist"><h2>${copy("profile.checkFailed")}</h2></section>` : completeness.pendingFields.length === 0 ? `<section class="p-card p-checklist"><h2>${copy("profile.complete")}</h2></section>` : `<section class="p-card p-checklist"><h2>${copy("profile.finish")}</h2><ul>${completeness.pendingFields.map(requirement => { const href = target(requirement), words = copy(`pending.${requirement}` as ProfileCopyKey); return `<li>${href ? `<a href="${href}">${words}</a>` : words}${requirement === "email" ? ` <span>${copy("profile.emailUniverse")}</span>` : ""}</li>`; }).join("")}</ul></section>` : "";
   const navigation = `<nav class="p-nav" aria-label="${copy("nav.main")}">${contributions.navigation.filter(item => item.visible(login)).map(item => `<a href="${item.href}"${item.current ? ' aria-current="page"' : ""}>${copy(item.labelKey)}</a>${item.key === "profile" && documentsAvailable ? `<a href="/profile/documents">${copy("nav.documents")}</a>` : ""}`).join("")}</nav>`;
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}${contributions.profileRows.filter(item => item.section === "details").map(item => item.render(language, copy)).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
-  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
-  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${legacyAccountMark}${legacyAccountPrompt}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"],"",civilRow)}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
+  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + renderCivilIdSuggestion(language, civilIdSuggestion) + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
+  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${legacyAccountMark}${legacyAccountPrompt}${summary}${checklist}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"],"",civilRow)}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
   return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }
 

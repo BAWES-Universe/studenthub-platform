@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createSyntheticLoginRig, runLoginConformance } from "@studenthub/login-contract";
+import type { AuthorizationStore } from "@studenthub/login-contract";
 
 import { createLoginApplication } from "../src/login-application.js";
 import {
@@ -45,6 +46,20 @@ test("the real profile path reports persistent dependency failure as unavailable
     status: 503,
     body: { error: "login_unavailable" },
   });
+});
+
+test("Q14_4_EMAIL profile carries a non-empty principal email without a second authorization read", async () => {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.sessions.put({ id: "synthetic-session", personId: "person-1" });
+  let reads = 0;
+  const authorization = rig.authorization as AuthorizationStore;
+  authorization.principalFor = async () => { reads++; return { role: "self", email: "person@universe.invalid" }; };
+  assert.deepEqual(await rig.app.profile({ sessionId: "synthetic-session" }), { status: 200, body: { personId:"person-1", role:"self", email:"person@universe.invalid" } });
+  assert.equal(reads, 1);
+  authorization.principalFor = async () => ({ role:"self", email:"   " });
+  assert.deepEqual(await rig.app.profile({ sessionId:"synthetic-session" }), { status:200, body:{personId:"person-1",role:"self"} });
+  delete authorization.principalFor;
+  assert.deepEqual(await rig.app.profile({ sessionId:"synthetic-session" }), { status:200, body:{personId:"person-1",role:"candidate"} });
 });
 
 test("runtime configuration rejects non-HTTPS identity endpoints before opening PostgreSQL", () => {
