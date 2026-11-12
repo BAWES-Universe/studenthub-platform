@@ -43,6 +43,7 @@ export const REAL_PROFILE_CIVIL_KEY = Buffer.alloc(32, 9).toString("base64");
 export type RealProfileServices = {
   readonly civilId: ReturnType<typeof createCivilId>;
   readonly civilStore: InMemoryCivilIdStore;
+  readonly vault: CivilIdVault;
   readonly profiles: ReturnType<typeof composeOwnProfiles>;
   readonly now: () => Date;
 };
@@ -86,17 +87,20 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     rows,
   });
   const civilStore = new InMemoryCivilIdStore();
-  const civilId = createCivilId({ store: civilStore, vault: new CivilIdVault(key), clock: { now } });
+  const vault = new CivilIdVault(key);
+  const civilId = createCivilId({ store: civilStore, vault, clock: { now } });
   const area = createArea({ store: new InMemoryLocationStore() });
   // Every civil read, from the My profile render or a civil ID route, is counted.
   const counts = { profileReads: 0, civilReads: 0 };
   const countedCivil = { ...civilId, async readOwn(id: string) { counts.civilReads++; return civilId.readOwn(id); } } as typeof civilId;
   const profiles = composeOwnProfiles({ principals: authz, source, civilId: countedCivil, area, today: options.today ?? (() => kuwaitDate(now())) });
   const countedProfiles = { async readOwn(request: Parameters<typeof profiles.readOwn>[0]) { counts.profileReads++; return profiles.readOwn(request); } };
-  const services: RealProfileServices = { civilId, civilStore, profiles, now };
+  const services: RealProfileServices = { civilId, civilStore, vault, profiles, now };
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,
+    // As wireProfile: the area service with the session store and origin.
+    area: { area, sessions: rig.sessions, origin: REAL_PROFILE_ORIGIN },
     ...(options.extend?.(services) ?? {}),
     // As wireProfile: the completeness check reads the same civil ID service.
     web: { origin: REAL_PROFILE_ORIGIN, returnTo: rig.config.allowedReturnUrls[1], profiles: countedProfiles,

@@ -347,6 +347,7 @@ export function createGatewayServer(
       const url = new URL(request.url, "http://gateway.invalid");
       let result: import("@studenthub/login-contract").BrowserResponse;
       let completeness: ProfileCompletenessResult | undefined;
+      let civilIdSuggestion: import("@studenthub/profile").CivilIdSuggestion | undefined;
       try {
         result = await login.profile({
           sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
@@ -367,6 +368,9 @@ export function createGatewayServer(
             targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
           });
           if (profile.kind === "found" && html) {
+            if ((!url.searchParams.has("person_id") || url.searchParams.get("person_id") === requesterPrincipalId) && login.civilIdSuggestion) {
+              try { civilIdSuggestion = await login.civilIdSuggestion.current(requesterPrincipalId) ?? undefined; } catch { civilIdSuggestion = undefined; }
+            }
             const gathered = await gatherProfileCompleteness({ principalId: requesterPrincipalId,
               ...(typeof result.body?.email === "string" ? { email: result.body.email } : {}), profile: profile.profile,
               avatar: currentProfileAvatar(), records: profileRecords, dependencies: login.web.profileCompleteness });
@@ -387,7 +391,7 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness, civilIdSuggestion);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
