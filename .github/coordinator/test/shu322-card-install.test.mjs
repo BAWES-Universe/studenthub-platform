@@ -964,8 +964,11 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   // claim has no outcome yet, its writer is alive) holds the install too, so
   // the carry never copies a claim whose outcome is still to come.
   host.files.delete(other);
-  const reporting = autoClaim(PATHS, R, PRIOR[1]);
-  host.put(reporting, JSON.stringify({ card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 5151 }), { mode: 0o600 });
+  // A middle card of the queue, or, when the queue holds only its first and
+  // its stopped last card, a card lane outside it.
+  const reporter = PRIOR.length > 2 ? PRIOR[1] : QUEUE_ONLY.card_lanes.map((lane) => lane.id).find((id) => !PRIOR.includes(id));
+  const reporting = autoClaim(PATHS, R, reporter);
+  host.put(reporting, JSON.stringify({ card: reporter, revision: R, claimed_at: "x", worker: 2, pid: 5151 }), { mode: 0o600 });
   host.put("/proc/5151", "");
   const waits = await autoRun({ io: host.io, paths: PATHS });
   assert.equal(waits.skipped, "INSTALL_PENDING", JSON.stringify(waits));
@@ -997,10 +1000,10 @@ test("Velocity A3: an install main has ready holds new card starts until the hos
   // A claim with no outcome whose writer is gone (a run that died before its
   // outcome was written) is carried as it is: the card stays stopped at N as
   // it was at R, never run again.
-  const died = { card: PRIOR[1], revision: R, claimed_at: "x", worker: 2, pid: 4242 };
-  host.put(autoClaim(PATHS, R, PRIOR[1]), JSON.stringify(died), { mode: 0o600 });
-  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [PRIOR[1]]), [PRIOR[1]]);
-  assert.deepEqual(JSON.parse(host.files.get(autoClaim(PATHS, N, PRIOR[1])).text), { ...died, carried_from: R });
+  const died = { card: reporter, revision: R, claimed_at: "x", worker: 2, pid: 4242 };
+  host.put(autoClaim(PATHS, R, reporter), JSON.stringify(died), { mode: 0o600 });
+  assert.deepEqual(carryClaims(host.io, PATHS, R, N, [reporter]), [reporter]);
+  assert.deepEqual(JSON.parse(host.files.get(autoClaim(PATHS, N, reporter)).text), { ...died, carried_from: R });
 });
 
 test("M11 C7: every module the root install tools import, at any depth, is owner-only or installable", () => {
