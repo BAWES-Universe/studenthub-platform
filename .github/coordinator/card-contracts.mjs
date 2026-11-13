@@ -7689,7 +7689,34 @@ const RECUT_604_CONTRACTS = Object.fromEntries(Object.entries(RECUT_604).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS });
+// SHU-611 stopped because the queue's own scope test refused the migration
+// file the card adds (the landed-number check counted the card's own 0219),
+// not because of its work. The test now refuses only a different landed file
+// with the same number, and the four cards are queued again under fresh ids,
+// each still SHU-604..608's contract with only the ids changed.
+const RECUT_611 = Object.freeze({ "SHU-604": "SHU-616", "SHU-606": "SHU-617", "SHU-607": "SHU-618", "SHU-608": "SHU-619" });
+const RECUT_611_FROM = Object.freeze({ "SHU-604": "SHU-611", "SHU-606": "SHU-612", "SHU-607": "SHU-613", "SHU-608": "SHU-614" });
+const recut611 = (text) => text.replace(/\bSHU-(604|606|607|608)\b/g, (id) => RECUT_611[id]);
+const RECUT_611_REASONS = Object.freeze({
+  "SHU-604": "after SHU-611's run stopped on a fault in the queue's own scope test (it refused the 0219 migration the card adds), so the contract itself was never judged",
+  "SHU-606": "because SHU-611, whose store it wires, was re-queued as SHU-616",
+  "SHU-607": "because SHU-611, whose civil_id_review_decisions table it indexes, was re-queued as SHU-616",
+  "SHU-608": "because SHU-613, the query it renders, was re-queued as SHU-618",
+});
+const RECUT_611_CONTRACTS = Object.fromEntries(Object.entries(RECUT_611).map(([original, to]) => {
+  const base = SPLIT_600_CONTRACTS[original];
+  const from = RECUT_611_FROM[original];
+  const brief = recut611(base.brief);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut611(base.acceptance)} ${to} is ${from}'s contract (first ${original}'s) re-queued under a fresh id ${RECUT_611_REASONS[original]}; ${from} and ${original} never land.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

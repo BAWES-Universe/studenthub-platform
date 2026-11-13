@@ -49,10 +49,10 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-611",
-      "SHU-612",
-      "SHU-613",
-      "SHU-614"
+      "SHU-616",
+      "SHU-617",
+      "SHU-618",
+      "SHU-619"
     ]
   },
   "adapter_pause_map": {},
@@ -9224,6 +9224,155 @@
       ],
       "after": [
         "SHU-613"
+      ]
+    },
+    {
+      "id": "SHU-616",
+      "authorization_ref": "SHU-616",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 part 1 of 3: civil ID review decisions and the staff view log in the database (migration 0219, the Postgres and in-memory review stores); workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-616 re-queues SHU-611's contract (originally SHU-604's). SHU-611's run stopped on the queue's own scope test (it refused the 0219 migration the card adds), so the contract was never judged.",
+      "initial_build_paths": [
+        "packages/db/migrations/0219_civil_id_reviews.sql",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/civil-id-review.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/civil-id-review.test.ts",
+        "packages/profile/test/civil-id-review-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0219_civil_id_reviews.sql",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/civil-id-review.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/civil-id-review.test.ts",
+        "packages/profile/test/civil-id-review-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-617",
+      "authorization_ref": "SHU-617",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 part 3 of 3: the staff queue, the decision page, the sidebar count and the result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-617 re-queues SHU-612's contract (originally SHU-606's). Re-queued because SHU-611 was.",
+      "initial_build_paths": [
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/profile-kit.test.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/profile-kit.test.ts"
+      ],
+      "after": [
+        "SHU-616"
+      ]
+    },
+    {
+      "id": "SHU-618",
+      "authorization_ref": "SHU-618",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 1 of 2: the People directory query, its indexes (migration 0227) and its pure rules; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-618 re-queues SHU-613's contract (originally SHU-607's). Re-queued because SHU-611 was.",
+      "initial_build_paths": [
+        "packages/db/migrations/0227_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/people-directory.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/people-directory.test.ts",
+        "packages/profile/test/people-directory-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0227_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/people-directory.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/people-directory.test.ts",
+        "packages/profile/test/people-directory-mutations.mjs"
+      ],
+      "after": [
+        "SHU-616"
+      ]
+    },
+    {
+      "id": "SHU-619",
+      "authorization_ref": "SHU-619",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 2 of 2: the staff People page, its JSON, route and sidebar link; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on SHU-618, whose store and names it renders. SHU-619 re-queues SHU-614's contract (originally SHU-608's). Re-queued because SHU-613 was.",
+      "initial_build_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "after": [
+        "SHU-618"
       ]
     }
   ],
