@@ -204,3 +204,84 @@ test('SHU261_MODEL_ARGV: contract pins length 3 and sandbox index 2', () => {
     assert.doesNotMatch(doc, /--preserve-env=CLAUDE_CODE_OAUTH_TOKEN/);
   }
 });
+
+import {
+  reviewFindingsFromCallback, reviewFindingsContext, validReviewFindings,
+  REVIEW_FINDINGS_SUMMARY_MAX, REVIEW_FINDINGS_CONTEXT_BYTES_MAX,
+} from '../review-findings.mjs';
+
+const truncationMarker = '\n[review summary truncated]';
+const blockedFindings = (summary, links = []) =>
+  reviewFindingsFromCallback({ stage: 'BLOCKED', target_sha: 'a'.repeat(40), summary, links });
+
+test('feedback truncation: exact cap is intact, one over is visibly shortened', () => {
+  assert.equal(REVIEW_FINDINGS_SUMMARY_MAX, 4000);
+  assert.equal(REVIEW_FINDINGS_CONTEXT_BYTES_MAX, 16384);
+  const exact = 'a'.repeat(4000);
+  assert.equal(blockedFindings(exact).summary, exact);
+  const over = blockedFindings(exact + 'b');
+  assert.equal(over.summary, 'a'.repeat(4000 - truncationMarker.length) + truncationMarker);
+  assert.equal(over.summary.length, 4000);
+  assert.equal(validReviewFindings(over), true);
+  assert.deepEqual(Object.keys(over).sort(), ['links', 'summary', 'target_sha', 'verdict_stage']);
+});
+
+test('feedback truncation: supplementary characters stay whole at both cuts', () => {
+  const cut = 4000 - truncationMarker.length;
+  for (const lead of [cut - 1, cut, cut + 1, 3999]) {
+    const text = 'a'.repeat(lead) + '😀' + 'b'.repeat(100);
+    const result = blockedFindings(text);
+    assert.equal(result.summary.isWellFormed(), true);
+    assert.ok(result.summary.endsWith(truncationMarker));
+    assert.ok(text.startsWith(result.summary.slice(0, -truncationMarker.length)));
+    assert.ok(result.summary.length <= 4000);
+    assert.equal(validReviewFindings(result), true);
+  }
+  // The escaped-byte budget cuts independently of the UTF-16 length cap.
+  const result = blockedFindings('<'.repeat(2000) + '😀'.repeat(1000));
+  assert.ok(result.summary.endsWith(truncationMarker));
+  assert.equal(result.summary.isWellFormed(), true);
+  assert.equal(validReviewFindings(result), true);
+});
+
+test('feedback truncation: escaped-byte budget preserves the marker and redaction', () => {
+  for (const char of ['<', '\u0001']) {
+    const result = blockedFindings(char.repeat(4000), ['safe/path']);
+    assert.deepEqual(result.links, [], 'trailing citations still go before summary text');
+    assert.ok(result.summary.endsWith(truncationMarker));
+    const context = reviewFindingsContext({ scope_phase: 'revision', review_findings: result });
+    const encoded = context.match(/<review-findings>(.*)<\/review-findings>/)[1];
+    assert.ok(Buffer.byteLength(JSON.stringify(encoded)) <= 16384);
+    assert.equal(validReviewFindings(result), true);
+  }
+  const secret = 'ghp_' + 'x'.repeat(36);
+  assert.equal(blockedFindings('a'.repeat(4001) + secret), null, 'redact before cutting, even for a secret beyond the cap');
+  assert.equal(reviewFindingsFromCallback({ stage: 'PASS', summary: 'x'.repeat(4001) }), null);
+});
+
+test('feedback truncation: replay a recorded mid-sentence review through serialized revision context', () => {
+  // Recorded terminal review receipt, comment 2714e393-dba3-4787-bcce-3d68d2033e6d.
+  // Only the already-capped prefix is available. The continuation below is
+  // deliberately synthetic, not a claim to have recovered the missing text.
+  const recorded = {"verdict_stage":"BLOCKED","target_sha":"98b3c7718c68dfb146dcf34ab50c12e4f9e16d43","summary":"BLOCKED: the card's own acceptance suite contains three assertions that contradict the code at the bound head, which also disables the mutation script, and the required real-wiring proof is absent.\n\nD1 (item 1, OCRP_LINE): test/civil-id-suggestion-http.test.ts:13 asserts exactly 19 `data-state=\"unavailable\"` markers, but the rig projection at test:9 supplies 22 unavailable fields ([...OWN_PROFILE_FIELD_NAMES, \"phone\", \"handle\", \"kuwaitiMother\"]) and profileDocument renders a row for each (summary jobSearchStatus 1 + work 3 + personal 11 + background 1 + details 6 = 22), with the marker stamped per unavailable field at web-ui.ts:378. The 19/19 figure holds only for the real repository projection (test/web-ui.test.ts:285). Fix: drop phone/handle/kuwaitiMother from the rig projection.\n\nD2 (Review OCRP_ROWS): test:35 pins ids.slice(0,19) without `kuwaitiMother`, but web-ui.ts:405 includes the kuwaitiMother row whenever profile.fields.kuwaitiMother exists, which the same rig provides; actual index 12 is \"kuwaitiMother\", so the deepEqual fails.\n\nD3 (item 2, OCRP_ACCEPT): test:19 asserts the 409 body matches /changed since you opened/, but the handler writes CIVIL_ID_MESSAGES.stale_revision = \"Your civil ID details changed. Review them and try again.\" (civil-id-suggestion-http.ts:56, packages/profile/src/civil-id.ts:10); the /changed since you opened/ wording belongs to error.conflict/editor.conflict in ui/profile-copy.ts:28,177 and pageDocument (web-ui.ts:111-118) adds nothing.\n\nD4 (item 7): civil-id-suggestion-mutations.mjs:19 asserts `control.status === 0` before writing each mutant and selects tests with `--test-name-pattern=^OCRP_LINE `, which includes the test failing under D1, so the script aborts on its first control run and reports no KILLED line; the OCRP_ACCEPT control fails likewise under D3. `npm test` therefore cannot run to the end.\n\nD5 (Review OCRP_SEAM / OCRP_GATE): every test builds the gateway from a hand-written login object (test:10, `createGatewayServer(undefined, undefined, undefined, login as never)`) and CIVIL_ID_ENCRYPTION_KEY appears in no gateway test, so the real apps/gateway/src/wiring/profile.ts path (wiring/profile.ts:38-45,135) is never exercised, the session is not made by the real login path, and the counting store sits behind a fake login. The carried-forward faults state explicitly that OCRP_SEAM must not hand-build login and that OCRP_GATE must run through the real wiring with the key set.\n\nSound and not to be redone: route registration and order (routes/index.ts:33-37,67; test/routes-order.test.ts:21,23 bumped to 29 in place), the single suggestion read gated on requesterPrincipalId captured before the readOwn projection with a throwing read rendering no line and a foreign person_id making zero reads (index.ts:362,379-382), secrecy shape (last-four only, hidden field carries the suggestion id, exactly one vault.open in the service's open method), the status model (409 for stale/answered/replaced/foreign, submissionRecorded -> 303 on a finished retry, nothing_to_save -> resolve + 303, both raced accepts 303 with one CIV write), profile-copy.ts untouched so U1_COPY stays correct, and no edits to the OCR store or CIV store.\n\nAdvisory, non-blocking: index.ts has three edited regions (:346, :358-362, :379-384) and renames the existing const requesterPrincipalId where the brief allows one contiguous block; web-ui.ts has four edited regions against \"exactly two edits\"; the item-5 mutant mutates only the sec-fetch-site clause rather than the Origin equality and no mutant targets web-ui.js; the 403 branch does not request.resume() unlike civil-id-http.ts:20; OCRP_SECRECY greps one .ts file by a cwd-relative path and no test proves \"no store call\" for the no-session POST.\n\nMethod note: the confined evidence payload records tests.executed=false (whole-tree card, no build in the runner) and I am read-only, so D1-D4 are derived by reading the code paths and counting rendered rows, not from an executed run; a","links":["file:///srv/shu/state/reviewer-evidence/3b800e05-2257-47bf-873a-07bf73a40004.review-test.1.json","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:9","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:13","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:19","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:35","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:10","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:30","apps/gateway/test/civil-id-suggestion-http.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:36","apps/gateway/src/web-ui.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:378","apps/gateway/src/web-ui.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:405","apps/gateway/src/web-ui.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:337","apps/gateway/src/web-ui.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:404","apps/gateway/src/civil-id-suggestion-http.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:56","apps/gateway/src/civil-id-suggestion-http.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:49","packages/profile/src/civil-id.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:10","apps/gateway/src/ui/profile-copy.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:177","apps/gateway/test/civil-id-suggestion-mutations.mjs@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:19","apps/gateway/test/web-ui.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:285","apps/gateway/src/wiring/profile.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:38-45","apps/gateway/src/index.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:379-384","apps/gateway/src/index.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:358-362","apps/gateway/src/routes/index.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:33-37","apps/gateway/test/routes-order.test.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:21-23","packages/db/src/profile/index.ts@98b3c7718c68dfb146dcf34ab50c12e4f9e16d43:5-6"]};
+  assert.equal(recorded.summary.length, 4000);
+  assert.ok(recorded.summary.endsWith('not from an executed run; a'));
+  const callback = { stage: 'BLOCKED', target_sha: recorded.target_sha,
+    summary: recorded.summary + ' [synthetic continuation beyond the recorded cap]', links: recorded.links };
+  const findings = reviewFindingsFromCallback(callback);
+  assert.equal(findings.target_sha, recorded.target_sha);
+  assert.equal(findings.verdict_stage, 'BLOCKED');
+  assert.deepEqual(findings.links, recorded.links);
+  assert.ok(findings.summary.endsWith(truncationMarker));
+  assert.ok(findings.summary.startsWith("BLOCKED: the card's own acceptance suite"));
+  assert.match(findings.summary, /D5 \(Review OCRP_SEAM/);
+  const receipt = { scope_phase: 'revision', review_findings: findings };
+  const context = reviewFindingsContext(JSON.parse(JSON.stringify(receipt)));
+  assert.equal(context, reviewFindingsContext(structuredClone(receipt)), 'retry renders identical findings');
+  const rendered = JSON.parse(context.match(/<review-findings>(.*)<\/review-findings>/)[1]);
+  assert.equal(rendered.summary, findings.summary);
+  assert.deepEqual(rendered.links, findings.links);
+  assert.equal(reviewFindingsContext({ ...receipt, scope_phase: 'review' }), '');
+  // Existing receipts cannot retroactively reveal whether they were truncated.
+  assert.equal(reviewFindingsFromCallback({ ...callback, summary: recorded.summary }).summary, recorded.summary);
+});
