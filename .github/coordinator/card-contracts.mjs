@@ -7772,7 +7772,32 @@ ${SPLIT_600_FINISH(SHU620_PATHS, "every page, route and sidebar link (SHU-617), 
 const SHU620_CONTRACT = Object.freeze({
   "SHU-620": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU620_PATHS, revision_paths: SHU620_PATHS, acceptance: SHU620_ACCEPTANCE, brief: SHU620_BRIEF }),
 });
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT });
+// SHU-617 stopped on its first build with BLOCKED: the production wiring of
+// StaffDocuments needs apps/gateway/src/login-runtime.ts (which calls
+// wireProfile) and its paths did not allow it. A contract path gap, not a code
+// fault, so SHU-622 re-queues SHU-617's contract with that file added.
+const SHU622_ADDED_PATH = "apps/gateway/src/login-runtime.ts";
+const SHU622_WIRING = `
+
+Production wiring (added after the last run of this card, SHU-617, stopped because it could not touch the login runtime). At the bound head, apps/gateway/src/login-runtime.ts createRuntimeLoginFromEnv calls wireProfile(settings, access.services, approvedProfiles) (around line 205), and the gateway entrypoint in apps/gateway/src/index.ts builds CandidateDocuments afterwards (createRuntimeCandidateDocumentsFromEnv, after createRuntimeLoginFromEnv) and passes it to createGatewayServer as documents. So StaffDocuments cannot be built inside wireProfile from a CandidateDocuments that does not exist yet. Build it where both exist: for example, expose the review store from the profile wiring through login-runtime.ts's RuntimeLogin, and build StaffDocuments in index.ts (or inside createGatewayServer) from documents, DEFAULT_OPERATOR_ORG_IDS and that review store, only when both are configured. apps/gateway/src/login-runtime.ts is now in your paths for this; treat it like the shared files above (one contiguous block of added lines, no other line changed). Tests still start the real profile server through apps/gateway/test/helpers/real-profile-server.ts, which wires the same StaffDocuments over in-memory or r2-backed document state.`;
+const RECUT_617 = Object.freeze({ "SHU-617": "SHU-622" });
+const recut617 = (text) => text.replace(/\bSHU-617\b/g, (id) => RECUT_617[id]);
+const RECUT_617_CONTRACTS = Object.fromEntries(Object.entries(RECUT_617).map(([from, to]) => {
+  const base = RECUT_611_CONTRACTS[from];
+  let brief = recut617(base.brief);
+  brief = replaceOnce(brief, "\n- apps/gateway/test/profile-kit.test.ts\n\nOut of scope", `\n- apps/gateway/test/profile-kit.test.ts\n- ${SHU622_ADDED_PATH}\n\nOut of scope`, `${to} paths`);
+  brief = replaceOnce(brief, "\n\nAcceptance.", `${SHU622_WIRING}\n\nAcceptance.`, `${to} wiring`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its first build stopped BLOCKED because the production StaffDocuments wiring needs apps/gateway/src/login-runtime.ts, which its paths did not allow, so that file is added here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: Object.freeze([...base.initial_build_paths, SHU622_ADDED_PATH]),
+    revision_paths: Object.freeze([...base.revision_paths, SHU622_ADDED_PATH]),
+    acceptance: `${recut617(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

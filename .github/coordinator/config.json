@@ -50,10 +50,10 @@
   "dispatch_scope": {
     "issue_ids": [
       "SHU-616",
-      "SHU-617",
       "SHU-618",
       "SHU-619",
-      "SHU-620"
+      "SHU-620",
+      "SHU-622"
     ]
   },
   "adapter_pause_map": {},
@@ -9405,6 +9405,58 @@
         "packages/profile/src/civil-id-review.ts",
         "packages/profile/test/civil-id-review.test.ts",
         "packages/profile/test/civil-id-review-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-622",
+      "authorization_ref": "SHU-622",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 part 3 of 3: the staff queue, the decision page, the sidebar count and the result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-622 re-queues SHU-617's contract (first SHU-606's) with apps/gateway/src/login-runtime.ts added: SHU-617 stopped BLOCKED because the production StaffDocuments wiring needs that file.",
+      "initial_build_paths": [
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/profile-kit.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/profile-kit.test.ts",
+        "apps/gateway/src/login-runtime.ts"
+      ],
+      "after": [
+        "SHU-616"
       ]
     }
   ],
