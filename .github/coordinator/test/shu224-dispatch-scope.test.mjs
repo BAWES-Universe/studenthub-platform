@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-616", "SHU-617", "SHU-618", "SHU-619"], "SHU-224: the scope names the current card queue (SHU-312): SHU-611 re-queued after the scope test refused its own migration, with the three cards that wait on it");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-616", "SHU-617", "SHU-618", "SHU-619", "SHU-620"], "SHU-224: the scope names the current card queue (SHU-312): SHU-611 re-queued after the scope test refused its own migration, with the three cards that wait on it, and the store fix SHU-620 appended after SHU-616 landed");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -760,6 +760,27 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.ok(contracts[to].acceptance.startsWith(renamed(contracts[original].acceptance)), `SHU-224: ${to}'s acceptance is ${original}'s with only the ids changed`);
     assert.match(contracts[to].acceptance, new RegExp(`${to} is ${from}'s contract \\(first ${original}'s\\) re-queued under a fresh id [^;]*; ${from} and ${original} never land\\.$`), `SHU-224: ${to} says which cards it replaces`);
     assert.doesNotMatch(contracts[to].brief, /\bSHU-6(0[4678]|1[1-4])\b/, `SHU-224: ${to}'s brief names no card it replaces`);
+  }
+  // SHU-620 fixes the store SHU-616 landed: a photo replaced during a pending
+  // check must make the old decision stale, plus three smaller faults.
+  assert.equal(after("SHU-620"), undefined, "SHU-224: SHU-620 waits on nothing: SHU-616 has landed");
+  {
+    const lane = config.card_lanes.find((entry) => entry.id === "SHU-620");
+    assert.deepEqual(lane.initial_build_paths, [...contracts["SHU-620"].initial_build_paths], "SHU-224: SHU-620's lane matches its contract");
+    assert.deepEqual(lane.revision_paths, [...contracts["SHU-620"].revision_paths], "SHU-224: SHU-620's revision paths match its contract");
+    assert.match(contracts["SHU-620"].brief, /^Card SHU-620:/, "SHU-224: SHU-620's brief names its own card");
+    const listed = contracts["SHU-620"].brief.slice(contracts["SHU-620"].brief.indexOf("\nYour paths"), contracts["SHU-620"].brief.indexOf("\n\nOut of scope:")).split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
+    assert.deepEqual(listed, [...contracts["SHU-620"].initial_build_paths], "SHU-224: SHU-620's brief lists exactly its paths");
+    assert.ok(!contracts["SHU-620"].initial_build_paths.some((path) => path.includes("/migrations/") || path.endsWith("/index.ts")), "SHU-224: SHU-620 adds no migration and touches no barrel file");
+    for (const id of ["SHU-617", "SHU-618", "SHU-619"]) {
+      assert.ok(!contracts[id].initial_build_paths.some((path) => contracts["SHU-620"].initial_build_paths.includes(path)), `SHU-224: SHU-620 shares no path with ${id}`);
+    }
+    assert.match(contracts["SHU-620"].acceptance, /REVFIX_PHOTO: a new civil photo version queued by the OCR sweep bumps person_civil_ids\.revision whether or not needs_review is already true/, "SHU-224: SHU-620 bumps the revision on a photo replaced mid-check");
+    assert.match(contracts["SHU-620"].acceptance, /answers stale_revision and stores nothing/, "SHU-224: SHU-620 proves the old decision goes stale");
+    assert.match(contracts["SHU-620"].acceptance, /REVFIX_REPLAY: [^;]*after it takes the FOR UPDATE lock[^;]*never not_waiting/, "SHU-224: SHU-620 re-checks confirm_ref under the lock");
+    assert.match(contracts["SHU-620"].acceptance, /REVFIX_SYNC: [^;]*countPending and readForDecision/, "SHU-224: SHU-620 syncs the OCR state in every read");
+    assert.match(contracts["SHU-620"].acceptance, /REVFIX_INMEMORY: [^;]*reason is null, empty, longer than 300 characters or holds a control character/, "SHU-224: SHU-620 matches the 0219 reason CHECK in memory");
+    assert.match(contracts["SHU-620"].brief, /A mutation script writes each mutant and runs the tests against it/, "SHU-224: SHU-620 says a mutation script writes its mutants");
   }
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.

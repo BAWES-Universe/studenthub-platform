@@ -7716,7 +7716,63 @@ const RECUT_611_CONTRACTS = Object.fromEntries(Object.entries(RECUT_611).map(([o
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS });
+// SHU-620 fixes four defects that the bot reviews of SHU-616 (landed by hand
+// as #480) raised and the orchestrator confirmed against the code. The major
+// one: the OCR sweep bumps revision only while needs_review is false, so a
+// photo replaced during a pending check kept its revision and a decision made
+// on the old photo passed. It must land before the staff review page ships.
+export const SHU620_PATHS = Object.freeze([
+  "packages/db/src/postgres-civil-id-ocr-store.ts",
+  "packages/db/test/postgres-civil-id-ocr.test.ts",
+  "packages/db/src/postgres-civil-id-review-store.ts",
+  "packages/db/test/postgres-civil-id-review.test.ts",
+  "packages/profile/src/civil-id-ocr.ts",
+  "packages/profile/test/civil-id-ocr.test.ts",
+  "packages/profile/test/civil-id-ocr-mutations.mjs",
+  "packages/profile/src/civil-id-review.ts",
+  "packages/profile/test/civil-id-review.test.ts",
+  "packages/profile/test/civil-id-review-mutations.mjs",
+]);
+const SHU620_ACCEPTANCE = [
+  "(1) REVFIX_PHOTO: a new civil photo version queued by the OCR sweep bumps person_civil_ids.revision whether or not needs_review is already true (it still sets needs_review true and still skips released rows), in both PostgresCivilIdOcrStore.beginSweep and InMemoryCivilIdOcrStore.beginSweep; a test in each store's suite starts a check (needs_review true at revision r), takes readForDecision's revision, replaces the front photo through a sweep, and then decide with the revision read before the replacement answers stale_revision and stores nothing, while readForDecision now shows revision r + 1 and a decide with r + 1 succeeds;",
+  "(2) REVFIX_REPLAY: PostgresCivilIdReviewStore.decide checks confirm_ref after it takes the FOR UPDATE lock on the civil ID row (it may also check before), so of two concurrent decide calls with the same confirmRef one succeeds and the other answers already_decided, never not_waiting; a real-database test starts both with Promise.all on separate pool clients and asserts exactly one ok and one already_decided, and one stored decision;",
+  "(3) REVFIX_SYNC: InMemoryCivilIdReviewStore.countPending and readForDecision bring in the OCR store's review state first, as listPending and stateFor already do, so a person flagged only by the OCR sweep is counted and read as waiting with the bumped revision; a test flags a person through InMemoryCivilIdOcrStore.beginSweep alone (no pre-filled review entry beyond the starting one) and asserts countPending, readForDecision, listPending and stateFor all agree;",
+  "(4) REVFIX_INMEMORY: InMemoryCivilIdReviewStore.decide refuses a rejected decision whose reason is null, empty, longer than 300 characters or holds a control character, and a confirmed decision with a reason, exactly as the 0219 CHECK refuses them (throwing, as the Postgres insert does, and storing nothing); after a decision it writes needs_review false at the same revision into the OCR store's review entry too, so a later photo replacement flags the person again: a test confirms, then replaces the photo through a sweep (with no hand-set ocr.review after the decision) and asserts stateFor answers waiting;",
+  "(5) mutants added to packages/profile/test/civil-id-review-mutations.mjs and packages/profile/test/civil-id-ocr-mutations.mjs, each needle read from the freshly built dist file, binding exactly once, with the unmutated control passing first, each dying by an AssertionError on its named test's message: skip the bump while a check is pending, skip the OCR sync in countPending, skip it in readForDecision, accept a rejected decision with no reason, and skip writing the decision into the OCR review entry; the Postgres changes are pinned by the real-database tests of (1) and (2), which CI runs.",
+].join(" ");
+const SHU620_BRIEF = `${SPLIT_600_INTRO("SHU-620", "a civil ID photo replaced while a staff check is waiting makes any decision taken on the old photo stale, and three smaller faults in the civil ID check store are fixed (a follow-up to the store that landed with SHU-616, Q15-2; risk R3).", ", which includes CIV (person_civil_ids, migration 0216), the civil ID photo reading (civil_id_ocr_jobs, migration 0218) and the civil ID check store (civil_id_review_decisions, migration 0219, landed with SHU-616)")}
+
+Why. The staff civil ID check binds a decision to the civil ID's revision, and the contract says any later change of number, expiry or civil photo bumps revision so an older decision goes stale. The OCR sweep breaks that for photos: it bumps revision only AND needs_review = false, so when a person replaces a photo while a check is already waiting, the revision stays the same and a decision made on the old photo passes. The other three faults were found in the same review: a confirm_ref replay checked before the row lock, an in-memory store that reads stale review state in two methods, and an in-memory decide that accepts what the database refuses. Nothing is released yet; this card must land before the staff review page ships.
+
+Read first:
+- packages/db/src/postgres-civil-id-ocr-store.ts beginSweep: the UPDATE person_civil_ids SET needs_review=true, revision=revision+1 ... AND needs_review=false after new jobs are inserted.
+- packages/profile/src/civil-id-ocr.ts InMemoryCivilIdOcrStore.beginSweep and its review map (needsReview, revision, enteredNumber): the same condition, if (r && !r.needsReview).
+- packages/db/src/postgres-civil-id-review-store.ts decide: the confirm_ref SELECT runs before SELECT ... FOR UPDATE, and the unique violation on confirm_ref answers already_decided.
+- packages/profile/src/civil-id-review.ts InMemoryCivilIdReviewStore: syncOcr, listPending and stateFor (which call it), countPending and readForDecision (which do not), and decide.
+- packages/db/migrations/0219_civil_id_reviews.sql: the reason CHECK the in-memory decide must match.
+- packages/db/test/postgres-civil-id-review.test.ts, packages/db/test/postgres-civil-id-ocr.test.ts, packages/profile/test/civil-id-review.test.ts and packages/profile/test/civil-id-ocr.test.ts: the existing cases, which keep passing (change one only where it asserted the old no-bump behaviour, and say so in your final message).
+
+Outcome:
+- The sweep bumps revision on every queued new photo version for an unreleased civil ID, in both stores; everything else about the sweep stays as it is (baseline, five-minute spacing, superseding, entered number kept).
+- decide in the Postgres store re-checks confirm_ref once it holds the row lock; the existing unique-violation fallback stays.
+- The in-memory review store calls syncOcr in countPending and readForDecision, validates the reason exactly as the 0219 CHECK does, and writes its decision's needs_review false at the same revision into the OCR store's review entry when one is wired.
+- No interface, export, migration or name changes: SHU-617 (the review page) is built against these stores at the same time and must keep working unchanged.
+
+Guards:
+- No number, hash or ciphertext is logged or put in an error message.
+- The in-memory stores behave exactly as the Postgres stores on every acceptance item; both are driven by the same cases.
+- Add no migration: 0219 already has the CHECK, and revision is an existing column.${SPLIT_600_DB_RULES}${MUTATION_SCRIPT_RULE.replace("Every acceptance test of a route goes through createGatewayServer and a real request, never the handler or renderer called directly, and every", "Every")}
+
+Acceptance. Tests are named with their token first and a space after it.
+${SHU620_ACCEPTANCE}
+
+${SPLIT_600_STANDING}
+
+${SPLIT_600_FINISH(SHU620_PATHS, "every page, route and sidebar link (SHU-617), the People directory (SHU-618, SHU-619), any change to interfaces, exports or migrations, the barrel files packages/db/src/profile/index.ts and packages/profile/src/index.ts, and any network call, credential, staging or production access.")}`;
+const SHU620_CONTRACT = Object.freeze({
+  "SHU-620": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU620_PATHS, revision_paths: SHU620_PATHS, acceptance: SHU620_ACCEPTANCE, brief: SHU620_BRIEF }),
+});
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

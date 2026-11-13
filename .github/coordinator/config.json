@@ -52,7 +52,8 @@
       "SHU-616",
       "SHU-617",
       "SHU-618",
-      "SHU-619"
+      "SHU-619",
+      "SHU-620"
     ]
   },
   "adapter_pause_map": {},
@@ -9373,6 +9374,37 @@
       ],
       "after": [
         "SHU-618"
+      ]
+    },
+    {
+      "id": "SHU-620",
+      "authorization_ref": "SHU-620",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), follow-up to the civil ID check store that landed with SHU-616: a photo replaced during a pending check bumps the revision so an old decision goes stale, confirm_ref re-checked under the row lock, and the in-memory review store's sync and reason checks; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on nothing; its paths overlap no queued card's, and it must land before the staff review page is released.",
+      "initial_build_paths": [
+        "packages/db/src/postgres-civil-id-ocr-store.ts",
+        "packages/db/test/postgres-civil-id-ocr.test.ts",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/profile/src/civil-id-ocr.ts",
+        "packages/profile/test/civil-id-ocr.test.ts",
+        "packages/profile/test/civil-id-ocr-mutations.mjs",
+        "packages/profile/src/civil-id-review.ts",
+        "packages/profile/test/civil-id-review.test.ts",
+        "packages/profile/test/civil-id-review-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/src/postgres-civil-id-ocr-store.ts",
+        "packages/db/test/postgres-civil-id-ocr.test.ts",
+        "packages/db/src/postgres-civil-id-review-store.ts",
+        "packages/db/test/postgres-civil-id-review.test.ts",
+        "packages/profile/src/civil-id-ocr.ts",
+        "packages/profile/test/civil-id-ocr.test.ts",
+        "packages/profile/test/civil-id-ocr-mutations.mjs",
+        "packages/profile/src/civil-id-review.ts",
+        "packages/profile/test/civil-id-review.test.ts",
+        "packages/profile/test/civil-id-review-mutations.mjs"
       ]
     }
   ],
