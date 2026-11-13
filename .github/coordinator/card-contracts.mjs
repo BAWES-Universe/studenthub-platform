@@ -7716,7 +7716,133 @@ const RECUT_611_CONTRACTS = Object.fromEntries(Object.entries(RECUT_611).map(([o
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS });
+// SHU-620 fixes four defects that the bot reviews of SHU-616 (landed by hand
+// as #480) raised and the orchestrator confirmed against the code. The major
+// one: the OCR sweep bumps revision only while needs_review is false, so a
+// photo replaced during a pending check kept its revision and a decision made
+// on the old photo passed. It must land before the staff review page ships.
+export const SHU620_PATHS = Object.freeze([
+  "packages/db/src/postgres-civil-id-ocr-store.ts",
+  "packages/db/test/postgres-civil-id-ocr.test.ts",
+  "packages/db/src/postgres-civil-id-review-store.ts",
+  "packages/db/test/postgres-civil-id-review.test.ts",
+  "packages/profile/src/civil-id-ocr.ts",
+  "packages/profile/test/civil-id-ocr.test.ts",
+  "packages/profile/test/civil-id-ocr-mutations.mjs",
+  "packages/profile/src/civil-id-review.ts",
+  "packages/profile/test/civil-id-review.test.ts",
+  "packages/profile/test/civil-id-review-mutations.mjs",
+]);
+const SHU620_ACCEPTANCE = [
+  "(1) REVFIX_PHOTO: a new civil photo version queued by the OCR sweep bumps person_civil_ids.revision whether or not needs_review is already true (it still sets needs_review true and still skips released rows), in both PostgresCivilIdOcrStore.beginSweep and InMemoryCivilIdOcrStore.beginSweep; a test in each store's suite starts a check (needs_review true at revision r), takes readForDecision's revision, replaces the front photo through a sweep, and then decide with the revision read before the replacement answers stale_revision and stores nothing, while readForDecision now shows revision r + 1 and a decide with r + 1 succeeds;",
+  "(2) REVFIX_REPLAY: PostgresCivilIdReviewStore.decide checks confirm_ref after it takes the FOR UPDATE lock on the civil ID row (it may also check before), so of two concurrent decide calls with the same confirmRef one succeeds and the other answers already_decided, never not_waiting; a real-database test starts both with Promise.all on separate pool clients and asserts exactly one ok and one already_decided, and one stored decision;",
+  "(3) REVFIX_SYNC: InMemoryCivilIdReviewStore.countPending and readForDecision bring in the OCR store's review state first, as listPending and stateFor already do, so a person flagged only by the OCR sweep is counted and read as waiting with the bumped revision; a test flags a person through InMemoryCivilIdOcrStore.beginSweep alone (no pre-filled review entry beyond the starting one) and asserts countPending, readForDecision, listPending and stateFor all agree;",
+  "(4) REVFIX_INMEMORY: InMemoryCivilIdReviewStore.decide refuses a rejected decision whose reason is null, empty, longer than 300 characters or holds a control character, and a confirmed decision with a reason, exactly as the 0219 CHECK refuses them (throwing, as the Postgres insert does, and storing nothing); after a decision it writes needs_review false at the same revision into the OCR store's review entry too, so a later photo replacement flags the person again: a test confirms, then replaces the photo through a sweep (with no hand-set ocr.review after the decision) and asserts stateFor answers waiting;",
+  "(5) mutants added to packages/profile/test/civil-id-review-mutations.mjs and packages/profile/test/civil-id-ocr-mutations.mjs, each needle read from the freshly built dist file, binding exactly once, with the unmutated control passing first, each dying by an AssertionError on its named test's message: skip the bump while a check is pending, skip the OCR sync in countPending, skip it in readForDecision, accept a rejected decision with no reason, and skip writing the decision into the OCR review entry; the Postgres changes are pinned by the real-database tests of (1) and (2), which CI runs.",
+].join(" ");
+const SHU620_BRIEF = `${SPLIT_600_INTRO("SHU-620", "a civil ID photo replaced while a staff check is waiting makes any decision taken on the old photo stale, and three smaller faults in the civil ID check store are fixed (a follow-up to the store that landed with SHU-616, Q15-2; risk R3).", ", which includes CIV (person_civil_ids, migration 0216), the civil ID photo reading (civil_id_ocr_jobs, migration 0218) and the civil ID check store (civil_id_review_decisions, migration 0219, landed with SHU-616)")}
+
+Why. The staff civil ID check binds a decision to the civil ID's revision, and the contract says any later change of number, expiry or civil photo bumps revision so an older decision goes stale. The OCR sweep breaks that for photos: it bumps revision only AND needs_review = false, so when a person replaces a photo while a check is already waiting, the revision stays the same and a decision made on the old photo passes. The other three faults were found in the same review: a confirm_ref replay checked before the row lock, an in-memory store that reads stale review state in two methods, and an in-memory decide that accepts what the database refuses. Nothing is released yet; this card must land before the staff review page ships.
+
+Read first:
+- packages/db/src/postgres-civil-id-ocr-store.ts beginSweep: the UPDATE person_civil_ids SET needs_review=true, revision=revision+1 ... AND needs_review=false after new jobs are inserted.
+- packages/profile/src/civil-id-ocr.ts InMemoryCivilIdOcrStore.beginSweep and its review map (needsReview, revision, enteredNumber): the same condition, if (r && !r.needsReview).
+- packages/db/src/postgres-civil-id-review-store.ts decide: the confirm_ref SELECT runs before SELECT ... FOR UPDATE, and the unique violation on confirm_ref answers already_decided.
+- packages/profile/src/civil-id-review.ts InMemoryCivilIdReviewStore: syncOcr, listPending and stateFor (which call it), countPending and readForDecision (which do not), and decide.
+- packages/db/migrations/0219_civil_id_reviews.sql: the reason CHECK the in-memory decide must match.
+- packages/db/test/postgres-civil-id-review.test.ts, packages/db/test/postgres-civil-id-ocr.test.ts, packages/profile/test/civil-id-review.test.ts and packages/profile/test/civil-id-ocr.test.ts: the existing cases, which keep passing (change one only where it asserted the old no-bump behaviour, and say so in your final message).
+
+Outcome:
+- The sweep bumps revision on every queued new photo version for an unreleased civil ID, in both stores; everything else about the sweep stays as it is (baseline, five-minute spacing, superseding, entered number kept).
+- decide in the Postgres store re-checks confirm_ref once it holds the row lock; the existing unique-violation fallback stays.
+- The in-memory review store calls syncOcr in countPending and readForDecision, validates the reason exactly as the 0219 CHECK does, and writes its decision's needs_review false at the same revision into the OCR store's review entry when one is wired.
+- No interface, export, migration or name changes: SHU-617 (the review page) is built against these stores at the same time and must keep working unchanged.
+
+Guards:
+- No number, hash or ciphertext is logged or put in an error message.
+- The in-memory stores behave exactly as the Postgres stores on every acceptance item; both are driven by the same cases.
+- Add no migration: 0219 already has the CHECK, and revision is an existing column.${SPLIT_600_DB_RULES}${MUTATION_SCRIPT_RULE.replace("Every acceptance test of a route goes through createGatewayServer and a real request, never the handler or renderer called directly, and every", "Every")}
+
+Acceptance. Tests are named with their token first and a space after it.
+${SHU620_ACCEPTANCE}
+
+${SPLIT_600_STANDING}
+
+${SPLIT_600_FINISH(SHU620_PATHS, "every page, route and sidebar link (SHU-617), the People directory (SHU-618, SHU-619), any change to interfaces, exports or migrations, the barrel files packages/db/src/profile/index.ts and packages/profile/src/index.ts, and any network call, credential, staging or production access.")}`;
+const SHU620_CONTRACT = Object.freeze({
+  "SHU-620": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU620_PATHS, revision_paths: SHU620_PATHS, acceptance: SHU620_ACCEPTANCE, brief: SHU620_BRIEF }),
+});
+// SHU-617 stopped on its first build with BLOCKED: the production wiring of
+// StaffDocuments needs apps/gateway/src/login-runtime.ts (which calls
+// wireProfile) and its paths did not allow it. A contract path gap, not a code
+// fault, so SHU-622 re-queues SHU-617's contract with that file added.
+const SHU622_ADDED_PATH = "apps/gateway/src/login-runtime.ts";
+const SHU622_WIRING = `
+
+Production wiring (added after the last run of this card, SHU-617, stopped because it could not touch the login runtime). At the bound head, apps/gateway/src/login-runtime.ts createRuntimeLoginFromEnv calls wireProfile(settings, access.services, approvedProfiles) (around line 205), and the gateway entrypoint in apps/gateway/src/index.ts builds CandidateDocuments afterwards (createRuntimeCandidateDocumentsFromEnv, after createRuntimeLoginFromEnv) and passes it to createGatewayServer as documents. So StaffDocuments cannot be built inside wireProfile from a CandidateDocuments that does not exist yet. Build it where both exist: for example, expose the review store from the profile wiring through login-runtime.ts's RuntimeLogin, and build StaffDocuments in index.ts (or inside createGatewayServer) from documents, DEFAULT_OPERATOR_ORG_IDS and that review store, only when both are configured. apps/gateway/src/login-runtime.ts is now in your paths for this; treat it like the shared files above (one contiguous block of added lines, no other line changed). Tests still start the real profile server through apps/gateway/test/helpers/real-profile-server.ts, which wires the same StaffDocuments over in-memory or r2-backed document state.`;
+const RECUT_617 = Object.freeze({ "SHU-617": "SHU-622" });
+const recut617 = (text) => text.replace(/\bSHU-617\b/g, (id) => RECUT_617[id]);
+const RECUT_617_CONTRACTS = Object.fromEntries(Object.entries(RECUT_617).map(([from, to]) => {
+  const base = RECUT_611_CONTRACTS[from];
+  let brief = recut617(base.brief);
+  brief = replaceOnce(brief, "\n- apps/gateway/test/profile-kit.test.ts\n\nOut of scope", `\n- apps/gateway/test/profile-kit.test.ts\n- ${SHU622_ADDED_PATH}\n\nOut of scope`, `${to} paths`);
+  brief = replaceOnce(brief, "\n\nAcceptance.", `${SHU622_WIRING}\n\nAcceptance.`, `${to} wiring`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = "after its first build stopped BLOCKED because the production StaffDocuments wiring needs apps/gateway/src/login-runtime.ts, which its paths did not allow, so that file is added here";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: Object.freeze([...base.initial_build_paths, SHU622_ADDED_PATH]),
+    revision_paths: Object.freeze([...base.revision_paths, SHU622_ADDED_PATH]),
+    acceptance: `${recut617(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-618 stopped after its revision budget ran out on test-setup faults its
+// final review found (the db test imported runMigrations from a path that
+// resolves to a missing dist folder, so every DIRDB test failed, and skipped
+// silently without DATABASE_URL), with smaller findings across the rounds.
+// SHU-624 re-queues its contract with every one of them named, and SHU-625
+// re-queues SHU-619, which waits on it.
+const RECUT_618 = Object.freeze({ "SHU-618": "SHU-624", "SHU-619": "SHU-625" });
+const RECUT_618_TEXT = Object.freeze({ ...RECUT_618, "SHU-617": "SHU-622" });
+const recut618 = (text) => text.replace(/\bSHU-(617|618|619)\b/g, (id) => RECUT_618_TEXT[id]);
+const SHU624_REVIEW = `
+
+Faults the last run of this card (SHU-618) hit, every one of them already found by its reviews; do not rediscover them:
+- packages/db/test/postgres-people-directory.test.ts imports runMigrations from "@studenthub/db", exactly as packages/db/test/postgres-civil-id-ocr.test.ts and every other landed db test do. Importing it from "../src/migrate.js" resolves to dist/packages/db/migrations, which does not exist, and every DIRDB test fails.
+- Without DATABASE_URL the db test throws in before() (if (!URL) throw Error("DATABASE_URL is required ...")), as the landed db tests do; no test-runner skip option and no silent early return.
+- Fixtures: every seeded name is letters only (a name like 'Paged 00 Person' is refused by the person_profiles display_name CHECK); the Kuwaiti-mother answer is seeded as the value the test means (a null stays null, never coerced to false); legacy employee ids in fixtures never start with 0, so no leading-zero flake.
+- The Kuwaiti-mother requirement tests the nationality's catalogue code with ci.code IS DISTINCT FROM 'KW', so an unknown nationality is not mistaken for Kuwaiti.
+- The SQL's copy of the search classifier is pinned against classifySearchTerm by one table-driven test over a wide set of terms (employee ids, full phones with and without +965 and spaces, four- to eight-digit phone suffixes, handles with and without @, Arabic and Latin names, mixed letters and digits, empty and whitespace-only).
+- The details fixtures are derived from PEOPLE_DETAILS_KEYS (one person per key with exactly that key missing), never a hand-written list.
+- The store validates before any SQL: a nationality filter that is not a uuid, and a page that is not a whole number of 1 or more, are refused without a query; q of "" (or only whitespace) means everyone.
+- q is capped (at most 200 characters after trimming, refused above) so to_tsquery never sees a word over its 2047-byte limit.`;
+const SHU624_ACCEPTANCE_REVIEW = " (Review) DIRDB_SETUP: the db test imports runMigrations from \"@studenthub/db\" and throws without DATABASE_URL; fixture names are letters only, a null Kuwaiti-mother answer stays null and no legacy id starts with 0; the Kuwaiti-mother check uses IS DISTINCT FROM 'KW'; one table-driven test pins the SQL classifier against classifySearchTerm; the details fixtures come from PEOPLE_DETAILS_KEYS; a non-uuid nationality, a bad page and an over-long q are refused before any SQL and an empty q means everyone.";
+const RECUT_618_CONTRACTS = Object.fromEntries(Object.entries(RECUT_618).map(([from, to]) => {
+  const base = RECUT_611_CONTRACTS[from];
+  let brief = recut618(base.brief);
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  let acceptance = recut618(base.acceptance.slice(0, tail));
+  if (from === "SHU-618") {
+    brief = replaceOnce(brief, "\n\nAcceptance.", `${SHU624_REVIEW}\n\nAcceptance.`, `${to} review faults`);
+    const at = brief.indexOf("\n\nStanding lines");
+    brief = `${brief.slice(0, at)}${SHU624_ACCEPTANCE_REVIEW}${brief.slice(at)}`;
+    acceptance = `${acceptance}${SHU624_ACCEPTANCE_REVIEW}`;
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-618"
+    ? "after its revisions ran out on test-setup faults (runMigrations imported from a missing dist path, a silent skip without DATABASE_URL) and the smaller findings, each spelled out here"
+    : "because SHU-618, the query it renders, was re-queued as SHU-624";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
