@@ -7816,7 +7816,8 @@ Faults the last run of this card (SHU-618) hit, every one of them already found 
 - The SQL's copy of the search classifier is pinned against classifySearchTerm by one table-driven test over a wide set of terms (employee ids, full phones with and without +965 and spaces, four- to eight-digit phone suffixes, handles with and without @, Arabic and Latin names, mixed letters and digits, empty and whitespace-only).
 - The details fixtures are derived from PEOPLE_DETAILS_KEYS (one person per key with exactly that key missing), never a hand-written list.
 - The store validates before any SQL: a nationality filter that is not a uuid, and a page that is not a whole number of 1 or more, are refused without a query; q of "" (or only whitespace) means everyone.
-- q is capped (at most 200 characters after trimming, refused above) so to_tsquery never sees a word over its 2047-byte limit.`;
+- q is capped (at most 200 characters after trimming, refused above) so to_tsquery never sees a word over its 2047-byte limit.
+- The nationality filter compares pp.nationality_id = $7::uuid directly (not ci.id::text = $7::uuid::text), so the planner can use person_profiles_nationality_id_idx from 0214.`;
 const SHU624_ACCEPTANCE_REVIEW = " (Review) DIRDB_SETUP: the db test imports runMigrations from \"@studenthub/db\" and throws without DATABASE_URL; fixture names are letters only, a null Kuwaiti-mother answer stays null and no legacy id starts with 0; the Kuwaiti-mother check uses IS DISTINCT FROM 'KW'; one table-driven test pins the SQL classifier against classifySearchTerm; the details fixtures come from PEOPLE_DETAILS_KEYS; a non-uuid nationality, a bad page and an over-long q are refused before any SQL and an empty q means everyone.";
 const RECUT_618_CONTRACTS = Object.fromEntries(Object.entries(RECUT_618).map(([from, to]) => {
   const base = RECUT_611_CONTRACTS[from];

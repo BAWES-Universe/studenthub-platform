@@ -50,8 +50,8 @@
   "dispatch_scope": {
     "issue_ids": [
       "SHU-620",
-      "SHU-622",
       "SHU-624",
+      "SHU-622",
       "SHU-625"
     ]
   },
