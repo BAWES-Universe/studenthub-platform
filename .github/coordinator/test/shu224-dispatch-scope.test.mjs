@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-620", "SHU-622", "SHU-624", "SHU-625"], "SHU-224: the scope names the current card queue (SHU-312): the store fix SHU-620, SHU-622 re-queuing SHU-617 with the login runtime in its paths and after the fix, and SHU-624/625 re-queuing the People directory");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-620", "SHU-624", "SHU-622", "SHU-625"], "SHU-224: the scope names the current card queue (SHU-312): the store fix SHU-620, then SHU-624 (the People directory query, which waits on nothing, so it starts beside the fix), SHU-622 re-queuing SHU-617 with the login runtime in its paths and after the fix, and SHU-625 after SHU-624");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -824,6 +824,8 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(brief624, /not a uuid, and a page that is not a whole number[^\n]*q of "" \(or only whitespace\) means everyone/, "SHU-224: SHU-624 validates before SQL");
   assert.match(brief624, /q is capped[^\n]*2047-byte limit/, "SHU-224: SHU-624 caps the search term");
   assert.match(contracts["SHU-624"].acceptance, /DIRDB_SETUP: the db test imports runMigrations from "@studenthub\/db"/, "SHU-224: SHU-624 adds the setup clause");
+  assert.match(contracts["SHU-624"].brief, /compares pp\.nationality_id = \$7::uuid directly[^\n]*person_profiles_nationality_id_idx/, "SHU-224: SHU-624 filters nationality on the indexed column");
+  for (const id of ["SHU-616"]) assert.ok(!config.dispatch_scope.issue_ids.includes(id), `SHU-224: landed ${id} is not dispatched again`);
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.
   assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");
