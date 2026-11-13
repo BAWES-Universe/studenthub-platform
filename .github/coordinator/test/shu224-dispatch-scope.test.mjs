@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-616", "SHU-620", "SHU-622", "SHU-624", "SHU-625"], "SHU-224: the scope names the current card queue (SHU-312): SHU-616 (landed), the store fix SHU-620, SHU-622 re-queuing SHU-617 with the login runtime in its paths and after the fix, and SHU-624/625 re-queuing the People directory");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-620", "SHU-622", "SHU-624", "SHU-625"], "SHU-224: the scope names the current card queue (SHU-312): the store fix SHU-620, SHU-622 re-queuing SHU-617 with the login runtime in its paths and after the fix, and SHU-624/625 re-queuing the People directory");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -784,7 +784,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   }
   // SHU-622 re-queues SHU-617, which stopped BLOCKED on a path gap: the
   // production StaffDocuments wiring needs the login runtime.
-  assert.deepEqual(after("SHU-622"), ["SHU-616", "SHU-620"], "SHU-224: SHU-622 waits on the landed store, as SHU-617 did, and on the stale-photo fix, so the review page never lands before it");
+  assert.deepEqual(after("SHU-622"), ["SHU-620"], "SHU-224: SHU-622 waits on the stale-photo fix (the store SHU-616 has landed, and a lane waits on queued cards only), so the review page never lands before it");
   {
     const lane = config.card_lanes.find((entry) => entry.id === "SHU-622");
     const expected = [...contracts["SHU-617"].initial_build_paths, "apps/gateway/src/login-runtime.ts"];
@@ -801,7 +801,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   }
   // SHU-624 re-queues SHU-618, which ran out of revisions on test-setup
   // faults, with every finding named; SHU-625 re-queues SHU-619 after it.
-  assert.deepEqual(after("SHU-624"), ["SHU-616"], "SHU-224: SHU-624 (the directory query) waits on the landed decisions table");
+  assert.equal(after("SHU-624"), undefined, "SHU-224: SHU-624 (the directory query) waits on nothing: the decisions table it reads landed with SHU-616");
   assert.deepEqual(after("SHU-625"), ["SHU-624"], "SHU-224: SHU-625 (the People page) waits on the query it renders");
   for (const [from, to] of [["SHU-618", "SHU-624"], ["SHU-619", "SHU-625"]]) {
     const lane = config.card_lanes.find((entry) => entry.id === to);

@@ -49,7 +49,6 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-616",
       "SHU-620",
       "SHU-622",
       "SHU-624",
@@ -9456,7 +9455,6 @@
         "apps/gateway/src/login-runtime.ts"
       ],
       "after": [
-        "SHU-616",
         "SHU-620"
       ]
     },
@@ -9485,9 +9483,6 @@
         "packages/profile/src/index.ts",
         "packages/profile/test/people-directory.test.ts",
         "packages/profile/test/people-directory-mutations.mjs"
-      ],
-      "after": [
-        "SHU-616"
       ]
     },
     {
