@@ -7660,7 +7660,36 @@ const SPLIT_600_CONTRACTS = Object.freeze({
   "SHU-607": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU607_PATHS, revision_paths: SHU607_PATHS, acceptance: SHU607_ACCEPTANCE, brief: SHU607_BRIEF }),
   "SHU-608": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU608_PATHS, revision_paths: SHU608_PATHS, acceptance: SHU608_ACCEPTANCE, brief: SHU608_BRIEF }),
 });
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS });
+// SHU-604 stopped without a review: its build was ready, but every review
+// round failed with REVIEW_SANDBOX_BUSY until the activation expired (a box
+// fault, filed separately). Its contract was never judged, so it is queued
+// again unchanged under a fresh id. Every card waiting on it is re-cut with
+// it, since an installed lane keeps its waits: SHU-606 (the pages; SHU-605
+// landed, so the re-cut waits on the store only), SHU-607 (the directory
+// query, which indexes the decisions table 0219 creates) and SHU-608 (the
+// People page, after the query).
+const RECUT_604 = Object.freeze({ "SHU-604": "SHU-611", "SHU-606": "SHU-612", "SHU-607": "SHU-613", "SHU-608": "SHU-614" });
+const recut604 = (text) => text.replace(/\bSHU-(604|606|607|608)\b/g, (id) => RECUT_604[id]);
+const RECUT_604_REASONS = Object.freeze({
+  "SHU-604": "after its run ended unreviewed (every review round found the box's review sandbox busy until the activation expired), so the contract itself was never judged",
+  "SHU-606": "because SHU-604, whose store it wires, was re-queued as SHU-611 without a review",
+  "SHU-607": "because SHU-604, whose civil_id_review_decisions table it indexes, was re-queued as SHU-611 without a review",
+  "SHU-608": "because SHU-607, the query it renders, was re-queued as SHU-613",
+});
+const RECUT_604_CONTRACTS = Object.fromEntries(Object.entries(RECUT_604).map(([from, to]) => {
+  const base = SPLIT_600_CONTRACTS[from];
+  const brief = recut604(base.brief);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = RECUT_604_REASONS[from];
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut604(base.acceptance)} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
