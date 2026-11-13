@@ -50,10 +50,10 @@
   "dispatch_scope": {
     "issue_ids": [
       "SHU-616",
-      "SHU-618",
-      "SHU-619",
       "SHU-620",
-      "SHU-622"
+      "SHU-622",
+      "SHU-624",
+      "SHU-625"
     ]
   },
   "adapter_pause_map": {},
@@ -9412,7 +9412,7 @@
       "authorization_ref": "SHU-622",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
-      "note": "lane 1 (organizations and profile/people), card Q15-2 part 3 of 3: the staff queue, the decision page, the sidebar count and the result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-622 re-queues SHU-617's contract (first SHU-606's) with apps/gateway/src/login-runtime.ts added: SHU-617 stopped BLOCKED because the production StaffDocuments wiring needs that file.",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 part 3 of 3: the staff queue, the decision page, the sidebar count and the result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-622 re-queues SHU-617's contract (first SHU-606's) with apps/gateway/src/login-runtime.ts added: SHU-617 stopped BLOCKED because the production StaffDocuments wiring needs that file. It also waits on SHU-620, so the review page never lands before the stale-photo fix.",
       "initial_build_paths": [
         "apps/gateway/src/civil-id-review-http.ts",
         "apps/gateway/test/civil-id-review-http.test.ts",
@@ -9456,7 +9456,80 @@
         "apps/gateway/src/login-runtime.ts"
       ],
       "after": [
+        "SHU-616",
+        "SHU-620"
+      ]
+    },
+    {
+      "id": "SHU-624",
+      "authorization_ref": "SHU-624",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 1 of 2: the People directory query, its indexes (migration 0227) and its pure rules; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. SHU-624 re-queues SHU-618's contract (first SHU-607's) with every fault its reviews found named: SHU-618 ran out of revisions on test-setup faults.",
+      "initial_build_paths": [
+        "packages/db/migrations/0227_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/people-directory.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/people-directory.test.ts",
+        "packages/profile/test/people-directory-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0227_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/people-directory.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/people-directory.test.ts",
+        "packages/profile/test/people-directory-mutations.mjs"
+      ],
+      "after": [
         "SHU-616"
+      ]
+    },
+    {
+      "id": "SHU-625",
+      "authorization_ref": "SHU-625",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 2 of 2: the staff People page, its JSON, route and sidebar link; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on SHU-624, whose store and names it renders. SHU-625 re-queues SHU-619's contract (first SHU-608's) because SHU-618 was re-queued as SHU-624.",
+      "initial_build_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "after": [
+        "SHU-624"
       ]
     }
   ],

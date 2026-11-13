@@ -7797,7 +7797,52 @@ const RECUT_617_CONTRACTS = Object.fromEntries(Object.entries(RECUT_617).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS });
+// SHU-618 stopped after its revision budget ran out on test-setup faults its
+// final review found (the db test imported runMigrations from a path that
+// resolves to a missing dist folder, so every DIRDB test failed, and skipped
+// silently without DATABASE_URL), with smaller findings across the rounds.
+// SHU-624 re-queues its contract with every one of them named, and SHU-625
+// re-queues SHU-619, which waits on it.
+const RECUT_618 = Object.freeze({ "SHU-618": "SHU-624", "SHU-619": "SHU-625" });
+const RECUT_618_TEXT = Object.freeze({ ...RECUT_618, "SHU-617": "SHU-622" });
+const recut618 = (text) => text.replace(/\bSHU-(617|618|619)\b/g, (id) => RECUT_618_TEXT[id]);
+const SHU624_REVIEW = `
+
+Faults the last run of this card (SHU-618) hit, every one of them already found by its reviews; do not rediscover them:
+- packages/db/test/postgres-people-directory.test.ts imports runMigrations from "@studenthub/db", exactly as packages/db/test/postgres-civil-id-ocr.test.ts and every other landed db test do. Importing it from "../src/migrate.js" resolves to dist/packages/db/migrations, which does not exist, and every DIRDB test fails.
+- Without DATABASE_URL the db test throws in before() (if (!URL) throw Error("DATABASE_URL is required ...")), as the landed db tests do; no test-runner skip option and no silent early return.
+- Fixtures: every seeded name is letters only (a name like 'Paged 00 Person' is refused by the person_profiles display_name CHECK); the Kuwaiti-mother answer is seeded as the value the test means (a null stays null, never coerced to false); legacy employee ids in fixtures never start with 0, so no leading-zero flake.
+- The Kuwaiti-mother requirement tests the nationality's catalogue code with ci.code IS DISTINCT FROM 'KW', so an unknown nationality is not mistaken for Kuwaiti.
+- The SQL's copy of the search classifier is pinned against classifySearchTerm by one table-driven test over a wide set of terms (employee ids, full phones with and without +965 and spaces, four- to eight-digit phone suffixes, handles with and without @, Arabic and Latin names, mixed letters and digits, empty and whitespace-only).
+- The details fixtures are derived from PEOPLE_DETAILS_KEYS (one person per key with exactly that key missing), never a hand-written list.
+- The store validates before any SQL: a nationality filter that is not a uuid, and a page that is not a whole number of 1 or more, are refused without a query; q of "" (or only whitespace) means everyone.
+- q is capped (at most 200 characters after trimming, refused above) so to_tsquery never sees a word over its 2047-byte limit.`;
+const SHU624_ACCEPTANCE_REVIEW = " (Review) DIRDB_SETUP: the db test imports runMigrations from \"@studenthub/db\" and throws without DATABASE_URL; fixture names are letters only, a null Kuwaiti-mother answer stays null and no legacy id starts with 0; the Kuwaiti-mother check uses IS DISTINCT FROM 'KW'; one table-driven test pins the SQL classifier against classifySearchTerm; the details fixtures come from PEOPLE_DETAILS_KEYS; a non-uuid nationality, a bad page and an over-long q are refused before any SQL and an empty q means everyone.";
+const RECUT_618_CONTRACTS = Object.fromEntries(Object.entries(RECUT_618).map(([from, to]) => {
+  const base = RECUT_611_CONTRACTS[from];
+  let brief = recut618(base.brief);
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  let acceptance = recut618(base.acceptance.slice(0, tail));
+  if (from === "SHU-618") {
+    brief = replaceOnce(brief, "\n\nAcceptance.", `${SHU624_REVIEW}\n\nAcceptance.`, `${to} review faults`);
+    const at = brief.indexOf("\n\nStanding lines");
+    brief = `${brief.slice(0, at)}${SHU624_ACCEPTANCE_REVIEW}${brief.slice(at)}`;
+    acceptance = `${acceptance}${SHU624_ACCEPTANCE_REVIEW}`;
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  const reason = from === "SHU-618"
+    ? "after its revisions ran out on test-setup faults (runMigrations imported from a missing dist path, a silent skip without DATABASE_URL) and the smaller findings, each spelled out here"
+    : "because SHU-618, the query it renders, was re-queued as SHU-624";
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${acceptance} ${to} is ${from}'s contract re-queued under a fresh id ${reason}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
