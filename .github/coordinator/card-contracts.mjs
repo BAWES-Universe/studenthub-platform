@@ -8071,7 +8071,48 @@ const RECUT_630_CONTRACTS = Object.fromEntries(Object.entries(RECUT_630).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS });
+// SHU-634 stopped with its revisions exhausted. Its three reviews found test
+// and wiring faults, one of them a path gap: a new key on the login
+// application changes apps/gateway/test/wiring-runtime.test.ts's closed key
+// list and pool count, which was not in its paths. SHU-638 re-queues the
+// contract with every finding named and that test added; SHU-633, the query it
+// renders, has landed, so it waits on nothing.
+const SHU638_WIRING_TEST = "apps/gateway/test/wiring-runtime.test.ts";
+const SHU638_FAULTS = `
+
+Faults the last run of this card (SHU-634) hit at review; do not repeat them:
+- A test built new RegExp("+96550000000") from a phone number, which throws (a leading + is a regex quantifier), so DIR_ROWS and the mutation control failed. Never build a regular expression from data: check absence and presence with includes, and remember a row carries only phoneLast4, never the full phone.
+- 404 must be byte-identical to the gateway's own answer for a path that does not exist (apps/gateway/src/index.ts, the final 404: content-type application/json, body {"ok":false,"error":"not_found"}), for every non-staff session, on both the HTML and the JSON route, and also when login.people is not configured. Rendering renderError for a hidden HTML page, or a different body when the feature is off, tells a probe the page exists. A test compares the status, the content-type and the body of a non-staff request with a request to a path that does not exist.
+- DIR_ACCESS needs the org-owner and employer personas the acceptance names, each as its own test persona with the grant that role really holds in the authz store the server reads, not only an ordinary person and a self-scope grant.
+- renderPeopleDirectory renders inside the same document shell renderCompanyDirectory uses (its layout, header, sidebar and classes, through the same helper), not a hand-written document.
+- Wiring: apps/gateway/test/wiring-runtime.test.ts pins the closed list of login application keys (PREP_WIRING_SHAPE) and the number of pools closed (PREP_WIRING_COUNT). Expose the page as a top-level people key on the profile wiring's application (not nested under area, and with no login.area?.people fallback anywhere), and build PostgresPeopleDirectoryStore over a pool the profile wiring already owns ({ pool }, so it closes nothing of its own) and the country read over the existing profile store, so no new pool is created. ${SHU638_WIRING_TEST} is in your paths for exactly two changes: add "people" to the always list, and, only if a new pool is truly unavoidable, raise the two counts by exactly the pools added, saying why in your final message. Change no other line of that test.
+- The mutation script's needles are read from the freshly built file and must each bind exactly once; the last run's sidebar needle predated a later edit of the same condition and bound zero times, so the script threw after five mutants and npm test could not finish. Run the whole script end to end after your last edit, and copy each needle from the built dist file, never from memory or the TypeScript source.
+- kuwaitDate is exported from packages/profile/src/self-edit.ts (and re-exported by the package index), not from packages/profile/src/people-directory.ts.`;
+const SHU638_ACCEPTANCE = " (Review) DIR_FIXES: no test builds a regular expression from a phone number or other data; a non-staff request and a request to a path that does not exist get the same status, content-type and body on the HTML and JSON routes, and so does the page when login.people is not configured; an org-owner and an employer persona are each refused with that body; the page renders in renderCompanyDirectory's shell; login.people is a top-level key, wiring-runtime.test.ts changes only by adding it to the always list (and the pool counts only if a new pool is unavoidable), and no login.area?.people fallback exists; the mutation script runs end to end with every needle binding once.";
+const RECUT_634_CONTRACTS = (() => {
+  const from = "SHU-634";
+  const to = "SHU-638";
+  const base = RECUT_628_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const recut = (text) => text.replace(/\bSHU-634\b/g, to);
+  const oldBody = recut(base.acceptance.slice(0, tail));
+  const body = `${replaceOnce(oldBody, "except the route-order lines the brief allows", "except the route-order lines and the wiring-runtime.test.ts list the brief allows", `${to} acceptance allowance`)}${SHU638_ACCEPTANCE}`;
+  const paths = Object.freeze([...base.initial_build_paths, SHU638_WIRING_TEST]);
+  let brief = recut(base.brief);
+  brief = replaceOnce(brief, oldBody, body, `${to} acceptance`);
+  brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU638_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+  brief = replaceOnce(brief, "\n- apps/gateway/test/routes-order.test.ts\n\nOut of scope", `\n- apps/gateway/test/routes-order.test.ts\n- ${SHU638_WIRING_TEST}\n\nOut of scope`, `${to} paths`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return Object.freeze({ [to]: Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: Object.freeze([...base.revision_paths, SHU638_WIRING_TEST]),
+    acceptance: `${body} ${to} is ${from}'s contract re-queued under a fresh id after its run exhausted its revisions on test, 404 and wiring faults its reviews named, with the wiring test it had to change added to its paths; ${from} never lands.`,
+    brief,
+  }) });
+})();
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
