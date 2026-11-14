@@ -901,7 +901,9 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(brief633, /principal id tiebreak is exercised/, "SHU-224: SHU-633 exercises the tiebreak");
   assert.match(brief633, /An empty q evaluates no full-text function[^\n]*asserts none arrive/, "SHU-224: SHU-633 keeps an empty q quiet");
   assert.ok(brief633.includes(contracts["SHU-633"].acceptance.slice(0, contracts["SHU-633"].acceptance.lastIndexOf(" SHU-633 is "))), "SHU-224: SHU-633's brief carries its acceptance");
-  assert.match(contracts["SHU-633"].acceptance, /DIRDB_EVERYONE: a principal seeded with INSERT INTO principals\(id, display_name\) and no person_profiles row[^\n]*imported true, workStatus null, civilState none and detailsMissing 15/, "SHU-224: SHU-633 pins a person with no profile row");
+  assert.match(contracts["SHU-633"].acceptance, /DIRDB_EVERYONE: a principal seeded with INSERT INTO principals\(id, display_name\) and no person_profiles row[^\n]*imported true, workStatus null, civilState none and detailsMissing 14 \(every covered requirement except kuwaiti_mother/, "SHU-224: SHU-633 pins a person with no profile row");
+  assert.match(brief633, /SQL predicate is pp\.nationality_id IS NOT NULL AND ci\.code IS DISTINCT FROM 'KW'/, "SHU-224: SHU-633 requires the Kuwaiti-mother answer only with a written nationality, as CMP does");
+  assert.match(contracts["SHU-633"].acceptance, /no nationality written has detailsMissing 1 \(nationality only, never kuwaiti_mother\)/, "SHU-224: SHU-633 pins a person with no nationality as not missing the Kuwaiti-mother answer");
   assert.match(contracts["SHU-634"].brief, /SHU-630 may add one[\s\S]*SHU-631's civil ID count/, "SHU-224: SHU-634 points at the cards that replaced SHU-622");
   assert.match(contracts["SHU-634"].brief, /SHU-633/, "SHU-224: SHU-634 builds against SHU-633");
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
