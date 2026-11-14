@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-628", "SHU-629", "SHU-630", "SHU-631", "SHU-633", "SHU-634"], "SHU-224: the scope names the current card queue (SHU-312): the installed SHU-628 to SHU-631 kept as a prefix so the queue installs as an append, then SHU-633 and SHU-634 re-queuing SHU-628 (revisions exhausted) and SHU-629 (which waited on it); SHU-620 has landed, so it is not in the scope");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-628", "SHU-629", "SHU-630", "SHU-631", "SHU-633", "SHU-634", "SHU-635", "SHU-636"], "SHU-224: the scope names the current card queue (SHU-312): the installed SHU-628 to SHU-631 kept as a prefix so the queue installs as an append, then SHU-633 and SHU-634 re-queuing SHU-628 (revisions exhausted) and SHU-629 (which waited on it), then SHU-635 and SHU-636 re-queuing SHU-630 (its worker died before review) and SHU-631 (which waited on it); SHU-620 has landed, so it is not in the scope");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -904,8 +904,26 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   assert.match(contracts["SHU-633"].acceptance, /DIRDB_EVERYONE: a principal seeded with INSERT INTO principals\(id, display_name\) and no person_profiles row[^\n]*imported true, workStatus null, civilState none and detailsMissing 14 \(every covered requirement except kuwaiti_mother/, "SHU-224: SHU-633 pins a person with no profile row");
   assert.match(brief633, /SQL predicate is pp\.nationality_id IS NOT NULL AND ci\.code IS DISTINCT FROM 'KW'/, "SHU-224: SHU-633 requires the Kuwaiti-mother answer only with a written nationality, as CMP does");
   assert.match(contracts["SHU-633"].acceptance, /no nationality written has detailsMissing 1 \(nationality only, never kuwaiti_mother\)/, "SHU-224: SHU-633 pins a person with no nationality as not missing the Kuwaiti-mother answer");
-  assert.match(contracts["SHU-634"].brief, /SHU-630 may add one[\s\S]*SHU-631's civil ID count/, "SHU-224: SHU-634 points at the cards that replaced SHU-622");
+  assert.match(contracts["SHU-634"].brief, /SHU-635 may add one[\s\S]*SHU-636's civil ID count/, "SHU-224: SHU-634 points at the cards that replaced SHU-622");
   assert.match(contracts["SHU-634"].brief, /SHU-633/, "SHU-224: SHU-634 builds against SHU-633");
+  // SHU-635 re-queues SHU-630, whose worker died before any review ran;
+  // SHU-636 re-queues SHU-631 after it.
+  assert.equal(after("SHU-635"), undefined, "SHU-224: SHU-635 (the staff civil ID pages) waits on nothing");
+  assert.deepEqual(after("SHU-636"), ["SHU-635"], "SHU-224: SHU-636 (the sidebar link and My profile row) waits on the pages it builds against");
+  for (const [from, to] of [["SHU-630", "SHU-635"], ["SHU-631", "SHU-636"]]) {
+    const lane = config.card_lanes.find((entry) => entry.id === to);
+    assert.equal(lane.authorization_ref, to, `SHU-224: ${to}'s lane authorizes itself`);
+    assert.deepEqual(lane.initial_build_paths, [...contracts[from].initial_build_paths], `SHU-224: ${to} keeps ${from}'s paths`);
+    assert.deepEqual(lane.revision_paths, [...contracts[from].revision_paths], `SHU-224: ${to} keeps ${from}'s revision paths`);
+    const renamed = (text) => text.replace(/\bSHU-(630|631)\b/g, (id) => ({ "SHU-630": "SHU-635", "SHU-631": "SHU-636" })[id]);
+    const fromBody = contracts[from].acceptance.slice(0, contracts[from].acceptance.lastIndexOf(` ${from} is `));
+    const toBody = contracts[to].acceptance.slice(0, contracts[to].acceptance.lastIndexOf(` ${to} is `));
+    assert.equal(toBody, renamed(fromBody), `SHU-224: ${to}'s acceptance is ${from}'s with only the ids changed`);
+    assert.equal(contracts[to].brief, renamed(contracts[from].brief).replace(renamed(contracts[from].acceptance), contracts[to].acceptance), `SHU-224: ${to}'s brief is ${from}'s with only the ids and the re-queue sentence changed`);
+    assert.match(contracts[to].acceptance, new RegExp(`${to} is ${from}'s contract re-queued under a fresh id [^;]*; ${from} never lands\\.$`), `SHU-224: ${to} says which card it replaces`);
+    assert.equal(contracts[to].acceptance.split(" is SHU-").length, 2, `SHU-224: ${to}'s acceptance carries one re-queue sentence`);
+  }
+  assert.match(contracts["SHU-636"].brief, /builds against SHU-635|SHU-635 \(apps\/gateway\/src\/civil-id-review-http\.ts/, "SHU-224: SHU-636 builds against SHU-635");
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.
   assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");

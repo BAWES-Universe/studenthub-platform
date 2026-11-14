@@ -8034,8 +8034,8 @@ const RECUT_628_CONTRACTS = Object.fromEntries(Object.entries(RECUT_628).map(([f
     body = `${body}${SHU633_ACCEPTANCE}`;
   } else {
     brief = replaceOnce(brief, "searches and filters everyone with a profile", "searches and filters everyone who has signed in (with or without a profile row)", `${to} title`);
-    brief = replaceOnce(brief, "(SHU-622 may add one)", "(SHU-630 may add one)", `${to} helper note`);
-    brief = replaceOnce(brief, "(SHU-622's civil ID count)", "(SHU-631's civil ID count)", `${to} sidebar note`);
+    brief = replaceOnce(brief, "(SHU-622 may add one)", "(SHU-635 may add one)", `${to} helper note`);
+    brief = replaceOnce(brief, "(SHU-622's civil ID count)", "(SHU-636's civil ID count)", `${to} sidebar note`);
   }
   if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
   return [to, Object.freeze({
@@ -8046,7 +8046,32 @@ const RECUT_628_CONTRACTS = Object.fromEntries(Object.entries(RECUT_628).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS });
+// SHU-630's worker died after its build pushed coordinator/SHU-630 and before
+// any review ran, so the contract was never judged; the box now refuses the
+// card (CARD_RUN_BRANCH_NOT_AT_TARGET). SHU-635 re-queues it unchanged, and
+// SHU-636 re-queues SHU-631, which waited on it.
+const RECUT_630 = Object.freeze({ "SHU-630": "SHU-635", "SHU-631": "SHU-636" });
+const recut630 = (text) => text.replace(/\bSHU-(630|631)\b/g, (id) => RECUT_630[id]);
+const RECUT_630_REASONS = Object.freeze({
+  "SHU-630": "after its worker died once its build had pushed and before any review ran, so the contract itself was never judged",
+  "SHU-631": "because SHU-630, whose routes and login.civilIdReview it builds against, was re-queued as SHU-635",
+});
+const RECUT_630_CONTRACTS = Object.fromEntries(Object.entries(RECUT_630).map(([from, to]) => {
+  const base = SPLIT_622_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const acceptance = `${recut630(base.acceptance.slice(0, tail))} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_630_REASONS[from]}; ${from} never lands.`;
+  const brief = replaceOnce(recut630(base.brief), recut630(base.acceptance), acceptance, `${to} acceptance`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run

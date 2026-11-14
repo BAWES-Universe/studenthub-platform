@@ -54,7 +54,9 @@
       "SHU-630",
       "SHU-631",
       "SHU-633",
-      "SHU-634"
+      "SHU-634",
+      "SHU-635",
+      "SHU-636"
     ]
   },
   "adapter_pause_map": {},
@@ -9738,6 +9740,79 @@
       ],
       "after": [
         "SHU-633"
+      ]
+    },
+    {
+      "id": "SHU-635",
+      "authorization_ref": "SHU-635",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 staff civil ID pages part 1 of 2: the queue, the decision routes, their wiring, HTTP tests through the real profile server and the handler mutants; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on nothing. SHU-635 re-queues SHU-630, whose worker died after its build pushed and before any review ran.",
+      "initial_build_paths": [
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/civil-id-review-http.ts",
+        "apps/gateway/test/civil-id-review-http.test.ts",
+        "apps/gateway/test/civil-id-review-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/login-runtime.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ]
+    },
+    {
+      "id": "SHU-636",
+      "authorization_ref": "SHU-636",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 staff civil ID pages part 2 of 2: the staff sidebar link behind the full staff gate and the check result on My profile; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on SHU-635, whose routes and login.civilIdReview it builds against. SHU-636 re-queues SHU-631 because SHU-630 was re-queued as SHU-635.",
+      "initial_build_paths": [
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/test/profile-kit.test.ts",
+        "apps/gateway/test/civil-id-review-shown.test.ts",
+        "apps/gateway/test/civil-id-review-shown-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/civil-id-http.ts",
+        "apps/gateway/test/civil-id-http.test.ts",
+        "apps/gateway/src/ui/profile-copy.ts",
+        "apps/gateway/test/profile-kit.test.ts",
+        "apps/gateway/test/civil-id-review-shown.test.ts",
+        "apps/gateway/test/civil-id-review-shown-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts"
+      ],
+      "after": [
+        "SHU-635"
       ]
     }
   ],
