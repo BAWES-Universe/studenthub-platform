@@ -254,7 +254,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
   assert.deepEqual(Object.keys(config.dispatch_scope), ["issue_ids"]);
-  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-638", "SHU-635", "SHU-636"], "SHU-224: the scope names the current card queue (SHU-312): SHU-638 re-queuing the stopped SHU-634 first, as a new queue so no stopped card with branch commits (SHU-628, SHU-630, SHU-634) stays queued to block a code install, then SHU-635 and SHU-636 as installed; SHU-633 has landed and SHU-629 and SHU-631 were replaced, so none of them is in the scope");
+  assert.deepEqual(config.dispatch_scope.issue_ids, ["SHU-638", "SHU-635", "SHU-636", "SHU-640", "SHU-641"], "SHU-224: the scope names the current card queue (SHU-312): SHU-638 re-queuing the stopped SHU-634 first, as a new queue so no stopped card with branch commits (SHU-628, SHU-630, SHU-634) stays queued to block a code install, then SHU-635 and SHU-636 as installed, then SHU-640 and SHU-641 appended to re-queue SHU-635 (revisions exhausted) and SHU-636 (which waited on it), so SHU-638's claim carries over; SHU-633 has landed and SHU-629 and SHU-631 were replaced, so none of them is in the scope");
   const after = (id) => config.card_lanes.find((lane) => lane.id === id).after;
   // Only the real waits: the box keeps cards that share files apart by itself
   // (Velocity A), so no card waits on another just to stay off its files.
@@ -952,6 +952,36 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.match(acc, /SHU-638 is SHU-634's contract re-queued under a fresh id [^;]*; SHU-634 never lands\.$/, "SHU-224: SHU-638 says which card it replaces");
     assert.equal(acc.split(" is SHU-").length, 2, "SHU-224: SHU-638's acceptance carries one re-queue sentence");
   }
+  // SHU-640 re-queues SHU-635, which exhausted its revisions on test faults;
+  // SHU-641 re-queues SHU-636 after it.
+  assert.equal(after("SHU-640"), undefined, "SHU-224: SHU-640 (the staff civil ID pages) waits on nothing");
+  assert.deepEqual(after("SHU-641"), ["SHU-640"], "SHU-224: SHU-641 (the sidebar link and My profile row) waits on the pages it builds against");
+  for (const [from, to] of [["SHU-635", "SHU-640"], ["SHU-636", "SHU-641"]]) {
+    const lane = config.card_lanes.find((entry) => entry.id === to);
+    assert.equal(lane.authorization_ref, to, `SHU-224: ${to}'s lane authorizes itself`);
+    assert.deepEqual(lane.initial_build_paths, [...contracts[from].initial_build_paths], `SHU-224: ${to} keeps ${from}'s paths`);
+    assert.deepEqual(lane.revision_paths, [...contracts[from].revision_paths], `SHU-224: ${to} keeps ${from}'s revision paths`);
+    assert.match(contracts[to].brief, new RegExp(`^Card ${to}:`), `SHU-224: ${to}'s brief names its own card`);
+    assert.ok(contracts[to].brief.includes(contracts[to].acceptance), `SHU-224: ${to}'s brief carries its acceptance`);
+    const renamed = (text) => text.replace(/\bSHU-(635|636)\b/g, (id) => ({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" })[id]);
+    const fromBody = contracts[from].acceptance.slice(0, contracts[from].acceptance.lastIndexOf(` ${from} is `));
+    assert.ok(contracts[to].acceptance.startsWith(renamed(fromBody)), `SHU-224: ${to}'s acceptance keeps ${from}'s`);
+    assert.match(contracts[to].acceptance, new RegExp(`${to} is ${from}'s contract re-queued under a fresh id [^;]*; ${from} never lands\\.$`), `SHU-224: ${to} says which card it replaces`);
+    assert.equal(contracts[to].acceptance.split(" is SHU-").length, 2, `SHU-224: ${to}'s acceptance carries one re-queue sentence`);
+  }
+  {
+    const brief = contracts["SHU-640"].brief;
+    assert.match(brief, /Queue fixture order\.[^\n]*Age the filler rows instead/, "SHU-224: SHU-640 names the queue fixture fault");
+    assert.match(brief, /Own-row probe\.[^\n]*person-10 to person-19/, "SHU-224: SHU-640 names the own-row probe fault");
+    assert.match(brief, /Image links\.[^\n]*one query key t[^\n]*decode the claim/, "SHU-224: SHU-640 names the image link shape");
+    assert.match(brief, /the assertion a mutant is named after must be the first one that fails[^\n]*error field/, "SHU-224: SHU-640 names the mutant kill rule");
+    assert.match(brief, /REV_STAFF each refused persona[^\n]*on all five routes/, "SHU-224: SHU-640 lists the missing staff cases");
+    assert.match(brief, /a reason of 301 characters refused/, "SHU-224: SHU-640 lists the missing decision cases");
+    assert.match(brief, /same store and port call count for 0, 1 and 60 waiting people/, "SHU-224: SHU-640 requires the cost test");
+    assert.match(brief, /login\.civilIdReview exists only where StaffDocuments exists too[^\n]*never 500/, "SHU-224: SHU-640 closes the wiring gap");
+    assert.match(contracts["SHU-640"].acceptance, /REV_FIXES: /, "SHU-224: SHU-640 adds the review clause");
+  }
+  assert.equal(contracts["SHU-641"].brief, contracts["SHU-636"].brief.replace(/\bSHU-(635|636)\b/g, (id) => ({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" })[id]).replace(contracts["SHU-636"].acceptance.replace(/\bSHU-(635|636)\b/g, (id) => ({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" })[id]), contracts["SHU-641"].acceptance), "SHU-224: SHU-641's brief is SHU-636's with only the ids and the re-queue sentence changed");
   assert.doesNotMatch(contracts["SHU-581"].brief + contracts["SHU-581"].acceptance, /waits on SHU-576/, "SHU-224: SHU-581 does not wait on the landed rules card");
   // SHU-564 is appended after SHU-563 and waits on nothing.
   assert.equal(after("SHU-564"), undefined, "SHU-224: SHU-564 waits on nothing");
