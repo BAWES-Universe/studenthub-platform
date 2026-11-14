@@ -1899,15 +1899,27 @@ const CASES = [
   },
   {
     name: "M324 release a dead run's lock when its revert did not finish",
-    from: "  if (reverted.reverted !== true) {\n    let pause;",
-    to: "  if (false) { // SHU86-M324\n    let pause;",
+    from: "  if (reverted.reverted !== true) return failed(",
+    to: "  if (false) return failed( // SHU86-M324\n",
     pattern: "2026-11-14: a dead run whose revert does not finish",
   },
   {
     name: "M325 leave a dead run's claim without its outcome",
     from: "  const claims = markDeadClaims(io, paths, pid, at);",
-    to: "  const claims = []; // SHU86-M325",
+    to: "  const claims = { marked: [], failed: [] }; // SHU86-M325",
     pattern: "2026-11-14: a card worker's start that finds its lock",
+  },
+  {
+    name: "M329 release a dead run's lock when its claim could not be marked DIED",
+    from: "  if (claims.failed.length) {",
+    to: "  if (false) { // SHU86-M329",
+    pattern: "2026-11-14: a dead run whose claim cannot be marked DIED",
+  },
+  {
+    name: "M330 report a dead run recovered when its lock could not be removed",
+    from: "    if (error.code !== \"ENOENT\") {\n      return failed(\"lock\"",
+    to: "    if (false) { // SHU86-M330\n      return failed(\"lock\"",
+    pattern: "2026-11-14: a dead run whose claim cannot be marked DIED",
   },
   {
     name: "M326 pause every card run for one card worker's run that ended without finishing",

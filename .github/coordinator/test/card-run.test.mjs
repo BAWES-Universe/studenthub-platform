@@ -6552,6 +6552,54 @@ test("2026-11-14: a dead run whose revert does not finish keeps the lock and wri
   assert.equal(again.host.files.has(again.paths.lock), true);
 });
 
+test("2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock cannot be removed, keeps the lock and writes the pause file", async () => {
+  // The claim's update cannot be written.
+  const writes = await deadRunHost();
+  const file = autoClaim(writes.paths, REV, "SHU-301");
+  const fs = writes.host.io.fs;
+  const failing = (call, target) => (...args) => {
+    if (String(args[0]) === target || String(args[1]) === target) throw Object.assign(new Error("EIO"), { code: "EIO" });
+    return fs[call](...args);
+  };
+  writes.host.io = { ...writes.host.io, fs: { ...fs, renameSync: failing("renameSync", file), writeFileSync: (target, ...rest) =>
+    (String(target) === file ? failing("writeFileSync", file)(target, ...rest) : fs.writeFileSync(target, ...rest)) } };
+  const claimed = await main(["auto", "--worker", "2"], writes.host.io, PATHS);
+  assert.equal(claimed.code, 1, JSON.stringify(claimed.output));
+  assert.equal(claimed.output.outcome, "RECOVER_FAILED");
+  assert.equal(claimed.output.failed_step, "claims");
+  assert.equal(claimed.output.revert.reverted, true);
+  assert.deepEqual(claimed.output.claims_failed, [{ file, code: "EIO" }]);
+  assert.deepEqual(claimed.output.pause, { written: true });
+  assert.match(writes.host.files.get(PATHS.pause).text, new RegExp(`worker 2 could not recover \\(claims\\) the dead run of pid ${DEAD_PID}`));
+  assert.equal(writes.host.files.get(writes.paths.lock).text, String(DEAD_PID), "the lock stays");
+  assert.equal(JSON.parse(writes.host.files.get(file).text).outcome, undefined, "the claim is unchanged");
+  // A claim that cannot be read may be the dead run's, so recovery stops too.
+  const unreadable = await deadRunHost();
+  const bad = autoClaim(unreadable.paths, REV, "SHU-304");
+  unreadable.host.files.set(bad, { text: "{not json", mode: 0o600, uid: 0, gid: 0 });
+  const read = await main(["auto", "--worker", "2"], unreadable.host.io, PATHS);
+  assert.equal(read.output.outcome, "RECOVER_FAILED", JSON.stringify(read.output));
+  assert.equal(read.output.failed_step, "claims");
+  assert.equal(read.output.claims_failed[0].file, bad);
+  assert.equal(unreadable.host.files.has(unreadable.paths.lock), true, "the lock stays");
+  assert.equal(unreadable.host.files.has(PATHS.pause), true);
+  // The lock cannot be removed.
+  const locked = await deadRunHost();
+  const lfs = locked.host.io.fs;
+  locked.host.io = { ...locked.host.io, fs: { ...lfs, unlinkSync: (target, ...rest) => {
+    if (String(target) === locked.paths.lock) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+    return lfs.unlinkSync(target, ...rest);
+  } } };
+  const held = await main(["auto", "--worker", "2"], locked.host.io, PATHS);
+  assert.equal(held.code, 1, JSON.stringify(held.output));
+  assert.equal(held.output.outcome, "RECOVER_FAILED");
+  assert.equal(held.output.failed_step, "lock");
+  assert.equal(held.output.skipped, undefined, "never reported as recovered");
+  assert.deepEqual(held.output.pause, { written: true });
+  assert.match(locked.host.files.get(PATHS.pause).text, /could not recover \(lock\)/);
+  assert.equal(locked.host.files.has(locked.paths.lock), true);
+});
+
 test("2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses", async () => {
   const { cardRunPaths } = await import("../service/card-run.mjs");
   const w2 = cardRunPaths(2, PATHS);

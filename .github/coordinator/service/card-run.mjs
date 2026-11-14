@@ -1473,45 +1473,68 @@ export function lockHolder(io, lock) {
 export const DEAD_RUN_OUTCOME = "DIED";
 function recoverDeadRun({ io, paths, limits, pid }) {
   const reason = `${paths.lock} holds pid ${pid}, which is no longer running: the run that took it died`;
+  // Recovery fails closed: the lock stays and card runs are paused unless the
+  // revert, every claim update and the lock's removal all succeed.
+  const failed = (step, detail, extra) => ({ ok: false, trigger: "timer", outcome: "RECOVER_FAILED",
+    reason: `${reason}; ${detail}, so the lock stays and card runs are paused`, failed_step: step, ...extra,
+    pause: writeRecoverPause(io, paths, `card-run: worker ${workerOf(paths)} could not ${step === "revert" ? "revert" : `recover (${step})`} the dead run of pid ${pid}\n`) });
   let reverted;
   try { reverted = revert(io, paths, limits); }
   catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
-  if (reverted.reverted !== true) {
-    let pause;
-    try {
-      io.fs.writeFileSync(paths.pause, `card-run: worker ${workerOf(paths)} could not revert the dead run of pid ${pid}\n`, { flag: "wx", mode: 0o644 });
-      pause = { written: true };
-    } catch (error) {
-      pause = error.code === "EEXIST" ? { written: false, held: true } : { written: false, held: false, code: error.code ?? "PAUSE_WRITE_FAILED" };
-    }
-    return { ok: false, trigger: "timer", outcome: "RECOVER_FAILED",
-      reason: `${reason}; its revert did not finish (${reverted.code ?? "unknown"}), so the lock stays and card runs are paused`, revert: reverted, pause };
-  }
+  if (reverted.reverted !== true) return failed("revert", `its revert did not finish (${reverted.code ?? "unknown"})`, { revert: reverted });
   const at = io.now().toISOString();
   const claims = markDeadClaims(io, paths, pid, at);
+  if (claims.failed.length) {
+    return failed("claims", `its claim could not be marked ${DEAD_RUN_OUTCOME} (${claims.failed.map((f) => `${path.basename(f.file)}: ${f.code}`).join("; ")})`,
+      { revert: reverted, claims: claims.marked, claims_failed: claims.failed });
+  }
   const status = markStatusRecovered(io, paths, at);
-  try { io.fs.unlinkSync(paths.lock); } catch { /* gone already */ }
-  return { ok: true, trigger: "timer", skipped: "RECOVERED", reason, revert: reverted, claims, status_recovered: status };
+  try { io.fs.unlinkSync(paths.lock); }
+  catch (error) {
+    if (error.code !== "ENOENT") {
+      return failed("lock", `${paths.lock} could not be removed (${error.code ?? "unknown"})`,
+        { revert: reverted, claims: claims.marked, status_recovered: status });
+    }
+  }
+  return { ok: true, trigger: "timer", skipped: "RECOVERED", reason, revert: reverted, claims: claims.marked, status_recovered: status };
+}
+
+function writeRecoverPause(io, paths, text) {
+  try {
+    io.fs.writeFileSync(paths.pause, text, { flag: "wx", mode: 0o644 });
+    return { written: true };
+  } catch (error) {
+    return error.code === "EEXIST" ? { written: false, held: true } : { written: false, held: false, code: error.code ?? "PAUSE_WRITE_FAILED" };
+  }
 }
 
 // The dead run's card claims: this worker's, written by the lock's pid, with
 // no outcome yet. Each keeps every field it had and gains the outcome DIED,
-// so the queue reads its card as one that ran and did not land.
+// so the queue reads its card as one that ran and did not land. A claim that
+// cannot be read, or whose update cannot be written, is listed under failed:
+// it may be the dead run's, so recovery stops there.
 function markDeadClaims(io, paths, pid, at) {
   const marked = [];
+  const failed = [];
   let names = [];
-  try { names = io.fs.readdirSync(paths.stateDir); } catch { return marked; }
+  try { names = io.fs.readdirSync(paths.stateDir); }
+  catch (error) {
+    if (error.code !== "ENOENT") failed.push({ file: paths.stateDir, code: error.code ?? "READDIR_FAILED" });
+    return { marked, failed };
+  }
   for (const name of names) {
     if (!RUN_CLAIM.test(name)) continue;
     const file = path.join(paths.stateDir, name);
+    let claim;
+    try { claim = JSON.parse(io.fs.readFileSync(file, "utf8")); }
+    catch (error) { failed.push({ file, code: error.code ?? "CLAIM_UNREADABLE" }); continue; }
+    if (claim?.worker !== workerOf(paths) || claim.pid !== pid || claim.outcome !== undefined) continue;
     try {
-      const claim = JSON.parse(io.fs.readFileSync(file, "utf8"));
-      if (claim?.worker !== workerOf(paths) || claim.pid !== pid || claim.outcome !== undefined) continue;
       replaceClaim(io, file, `${JSON.stringify({ ...claim, outcome: DEAD_RUN_OUTCOME, ok: false, reverted: true, recovered_at: at })}\n`);
       marked.push(file);
-    } catch { /* an unreadable claim is left as it is */ }
+    } catch (error) { failed.push({ file, code: error.code ?? "CLAIM_WRITE_FAILED" }); }
   }
-  return marked;
+  return { marked, failed };
 }
 
 // The worker's status, moved from the step the dead run left it at to
