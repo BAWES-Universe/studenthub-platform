@@ -4776,6 +4776,19 @@
     "SHU-86 mutation M319 never take over a selection lock that holds no holder",
     "SHU-86 mutation M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
     "SHU-86 mutation M321 never record the repaired head of a pull request a person merged before the first landing read",
+    "SHU-86 mutation M322 recover worker 1's lock held by a dead pid, which a person may hold by hand",
+    "SHU-86 mutation M323 recover a card worker's lock whose holder is still alive",
+    "SHU-86 mutation M324 release a dead run's lock when its revert did not finish",
+    "SHU-86 mutation M325 leave a dead run's claim without its outcome",
+    "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
+    "SHU-86 mutation M327 leave the pause off for a card worker's ended run whose lock is gone",
+    "SHU-86 mutation M328 never alert a run a worker's start recovered before the watch saw it ended",
+    "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
+    "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
+    "2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file",
+    "2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses",
+    "2026-11-14: a run a worker's start recovered before the watch saw it ended is alerted once, without the pause",
+    "2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -34460,6 +34473,58 @@
     },
     {
       "name": "SHU-86 mutation M321 never record the repaired head of a pull request a person merged before the first landing read",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M322 recover worker 1's lock held by a dead pid, which a person may hold by hand",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M323 recover a card worker's lock whose holder is still alive",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M324 release a dead run's lock when its revert did not finish",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M325 leave a dead run's claim without its outcome",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M327 leave the pause off for a card worker's ended run whose lock is gone",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M328 never alert a run a worker's start recovered before the watch saw it ended",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a run a worker's start recovered before the watch saw it ended is alerted once, without the pause",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it",
       "capabilities": []
     },
     {
