@@ -7843,7 +7843,31 @@ const RECUT_618_CONTRACTS = Object.fromEntries(Object.entries(RECUT_618).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS });
+// SHU-624 stopped after its build reached a head: the review ran, but its
+// result failed callback binding (CALLBACK_BINDING_INVALID), a box fault and
+// no finding on the work. SHU-628 re-queues its contract unchanged, and
+// SHU-629 re-queues SHU-625, which waits on it.
+const RECUT_624 = Object.freeze({ "SHU-624": "SHU-628", "SHU-625": "SHU-629" });
+const recut624 = (text) => text.replace(/\bSHU-(624|625)\b/g, (id) => RECUT_624[id]);
+const RECUT_624_REASONS = Object.freeze({
+  "SHU-624": "after its run stopped when the review's result failed callback binding (CALLBACK_BINDING_INVALID), a box fault, so the contract itself was never judged",
+  "SHU-625": "because SHU-624, the query it renders, was re-queued as SHU-628",
+});
+const RECUT_624_CONTRACTS = Object.fromEntries(Object.entries(RECUT_624).map(([from, to]) => {
+  const base = RECUT_618_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const brief = recut624(base.brief);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${recut624(base.acceptance.slice(0, tail))} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_624_REASONS[from]}; ${from} never lands.`,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
