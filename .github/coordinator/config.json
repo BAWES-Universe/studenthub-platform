@@ -52,7 +52,9 @@
       "SHU-628",
       "SHU-629",
       "SHU-630",
-      "SHU-631"
+      "SHU-631",
+      "SHU-633",
+      "SHU-634"
     ]
   },
   "adapter_pause_map": {},
@@ -9667,6 +9669,75 @@
       ],
       "after": [
         "SHU-630"
+      ]
+    },
+    {
+      "id": "SHU-633",
+      "authorization_ref": "SHU-633",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 1 of 2: the People directory query driven from principals (every person, with or without a profile row), its indexes and pure rules; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on nothing. SHU-633 re-queues SHU-628, whose run exhausted its revisions on an inner join from person_profiles and filters tested on uniform populations.",
+      "initial_build_paths": [
+        "packages/db/migrations/0227_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/people-directory.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/people-directory.test.ts",
+        "packages/profile/test/people-directory-mutations.mjs"
+      ],
+      "revision_paths": [
+        "packages/db/migrations/0227_people_directory_indexes.sql",
+        "packages/db/src/postgres-people-directory-store.ts",
+        "packages/db/test/postgres-people-directory.test.ts",
+        "packages/db/src/profile/index.ts",
+        "packages/profile/src/people-directory.ts",
+        "packages/profile/src/index.ts",
+        "packages/profile/test/people-directory.test.ts",
+        "packages/profile/test/people-directory-mutations.mjs"
+      ]
+    },
+    {
+      "id": "SHU-634",
+      "authorization_ref": "SHU-634",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 2 of 2: the staff People page, its JSON, route and sidebar link; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on SHU-633, whose store and names it renders. SHU-634 re-queues SHU-629 because SHU-628 was re-queued as SHU-633.",
+      "initial_build_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts"
+      ],
+      "after": [
+        "SHU-633"
       ]
     }
   ],
