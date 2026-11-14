@@ -41,7 +41,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { sendLinear } from "../reconcile.mjs";
 import { readCoordinatorCredentials, postRunReport, plainReason, reportMarker, REPORT_ISSUE, REPORT_ISSUE_QUERY, RUN_OUTCOME_TEXT } from "./card-prepare.mjs";
-import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE, cardRunPaths, autoServiceName, cardWorkers, MAX_CARD_WORKERS } from "./card-run.mjs";
+import { CARD_RUN_PATHS, CARD_RUN_LIMITS, AUTO_SERVICE, cardRunPaths, autoServiceName, cardWorkers, MAX_CARD_WORKERS, lockHolder } from "./card-run.mjs";
 import { statusPath, ownerMention, nextStart } from "./card-status.mjs";
 
 export const WATCH_MODULE = fileURLToPath(import.meta.url);
@@ -426,8 +426,13 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
     // while the run is stuck, whether or not its alert is already posted.
     const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;
     // 2026-11-14: a card worker's run that ended without finishing is left to
-    // that worker's next start to recover, without the pause.
-    const recovers = worker > 1 && stuck.kind === "ended";
+    // that worker's next start to recover, without the pause, but only when
+    // that start can: the worker's lock is there and its pid is gone (what
+    // autoRun recovers). A run whose lock went away (a reboot clears
+    // /run/lock) while its activation record stayed would only ever skip
+    // HOST_BUSY, so it pauses as before.
+    const holder = worker > 1 && stuck.kind === "ended" && io.fs.existsSync(paths.lock) ? lockHolder(io, paths.lock) : null;
+    const recovers = holder !== null && holder.pid !== null && holder.alive === false;
     const pause = pauseKept ? entry.pause : recovers ? { written: false, left: true } : writePause(io, paths, stuck);
     if (entry?.posted) {
       entry.pause = pause;

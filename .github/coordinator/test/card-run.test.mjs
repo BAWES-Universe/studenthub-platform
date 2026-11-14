@@ -6558,6 +6558,8 @@ test("2026-11-14: the watch alerts a card worker's run that ended without finish
     now: Date.parse("2026-10-18T07:04:00.000Z") + 30 * MIN });
   host.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
   host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  // The dead run's lock is still there, its pid gone: the next start recovers it.
+  host.put(w2.lock, "4242", { mode: 0o600 });
   const result = await watchOnce({ io: host.io, paths: PATHS });
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.alert, null);
@@ -6587,6 +6589,28 @@ test("2026-11-14: the watch alerts a card worker's run that ended without finish
   assert.equal(own.alert.kind, "ended");
   assert.deepEqual(own.alert.pause, { written: true });
   assert.ok(host.files.has(PATHS.pause));
+});
+
+test("2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+    now: Date.parse("2026-10-18T07:04:00.000Z") + 30 * MIN });
+  host.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
+  host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.workers[0].alert.kind, "ended");
+  assert.deepEqual(result.workers[0].alert.pause, { written: true });
+  assert.ok(host.files.has(PATHS.pause), "no lock to recover: the box pauses as before");
+  // A lock whose pid is still alive is not the next start's to recover either.
+  const live = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+    now: Date.parse("2026-10-18T07:04:00.000Z") + 30 * MIN });
+  live.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
+  live.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  live.put(w2.lock, "4243", { mode: 0o600 });
+  live.put("/proc/4243", "", { mode: 0o555 });
+  const held = await watchOnce({ io: live.io, paths: PATHS });
+  assert.deepEqual(held.workers[0].alert.pause, { written: true });
 });
 
 test("M15 W5: no card run starts while the install lock is held", async () => {

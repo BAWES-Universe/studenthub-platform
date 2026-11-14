@@ -1453,7 +1453,7 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
 // a live run (the plain LOCKED skip), so only a pid that is plainly gone is
 // ever recovered. A pid reused by another process reads as alive: the start
 // then skips LOCKED as before, never reverts under a live run.
-function lockHolder(io, lock) {
+export function lockHolder(io, lock) {
   let text;
   try { text = String(io.fs.readFileSync(lock, "utf8")).trim(); } catch { return { pid: null, alive: true }; }
   if (!/^[1-9]\d{0,9}$/.test(text)) return { pid: null, alive: true };
