@@ -1034,7 +1034,7 @@ const CASES = [
   {
     name: "M153 call a finished run ended without finishing",
     file: "service/card-watchdog.mjs",
-    from: "  if (!status || status.trigger !== \"timer\" || status.step === null || status.step === \"finished\") return null;",
+    from: "  if (!status || status.trigger !== \"timer\" || status.step === null || TERMINAL_STEPS.has(status.step)) return null;",
     to: "  if (!status || status.trigger !== \"timer\" || status.step === null) return null; // SHU86-M153",
     pattern: "SHU-86 0d: a timer run that ended without finishing",
   },
@@ -1884,6 +1884,37 @@ const CASES = [
     from: "    && headMatches(pull, { repo, branch, head })) seen();",
     to: "    && false) seen(); // SHU86-M321",
     pattern: "Self-repair B2: L2b a repaired pull request a person merged before the first landing read",
+  },
+  {
+    name: "M322 recover worker 1's lock held by a dead pid, which a person may hold by hand",
+    from: "    const holder = workerOf(paths) > 1 ? lockHolder(io, paths.lock) : null;",
+    to: "    const holder = lockHolder(io, paths.lock); // SHU86-M322",
+    pattern: "2026-11-14: a live lock holder",
+  },
+  {
+    name: "M323 recover a card worker's lock whose holder is still alive",
+    from: "  return { pid, alive: pid === process.pid || io.fs.existsSync(`/proc/${pid}`) };",
+    to: "  return { pid, alive: false }; // SHU86-M323",
+    pattern: "2026-11-14: a live lock holder",
+  },
+  {
+    name: "M324 release a dead run's lock when its revert did not finish",
+    from: "  if (reverted.reverted !== true) {\n    let pause;",
+    to: "  if (false) { // SHU86-M324\n    let pause;",
+    pattern: "2026-11-14: a dead run whose revert does not finish",
+  },
+  {
+    name: "M325 leave a dead run's claim without its outcome",
+    from: "  const claims = markDeadClaims(io, paths, pid, at);",
+    to: "  const claims = []; // SHU86-M325",
+    pattern: "2026-11-14: a card worker's start that finds its lock",
+  },
+  {
+    name: "M326 pause every card run for one card worker's run that ended without finishing",
+    file: "service/card-watchdog.mjs",
+    from: "    const recovers = worker > 1 && stuck.kind === \"ended\";",
+    to: "    const recovers = false; // SHU86-M326",
+    pattern: "2026-11-14: the watch alerts a card worker's run",
   },
 ];
 

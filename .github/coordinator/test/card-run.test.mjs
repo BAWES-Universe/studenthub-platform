@@ -6424,9 +6424,169 @@ test("M15 W5: auto --worker N runs as card worker N, and a worker the config tur
   assert.equal(statusPath(w2), "/srv/shu/state/card-run-status-w2.json");
   assert.equal(statusPath(PATHS), "/srv/shu/state/card-run-status.json");
   host.files.set(w2.lock, { text: "1", mode: 0o600, uid: 0, gid: 0 });
+  // 2026-11-14: the run that holds it is alive; a dead one is recovered (below).
+  host.files.set("/proc/1", { text: "", mode: 0o555, uid: 0, gid: 0 });
   const locked = await main(["auto", "--worker", "2"], host.io, PATHS);
   assert.equal(locked.output.skipped, "LOCKED");
   assert.match(locked.output.reason, /shu-card-run-w2\.lock/);
+});
+
+// 2026-11-14: worker 2's run died after its first tick with its lock, its
+// activation record and a claim with no outcome left behind; every later start
+// skipped LOCKED and the watch paused all eight workers.
+const DEAD_PID = 1793899;
+async function deadRunHost({ worker = 2 } = {}) {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const paths = cardRunPaths(worker, PATHS);
+  const host = cgroupHost(configFor("SHU-301", (config) => ({ ...config, workers: { max: 2 } })), new Map());
+  const put = (file, text) => host.files.set(file, { text, mode: 0o600, uid: 0, gid: 0 });
+  const supervisor = worker === 1 ? "shu-supervisor.service" : `shu-supervisor-w${worker}.service`;
+  // The worker's supervisor runs as host.supervisorPid, whose environment the revert reads back.
+  const exec = host.io.exec;
+  host.io = { ...host.io, exec: (file, args, ...rest) => ([file, ...args].join(" ") === `systemctl show -p MainPID --value ${supervisor}`
+    ? (host.calls.push(`systemctl ${args.join(" ")}`), { status: 0, stdout: `${host.supervisorPid}\n`, stderr: "" }) : exec(file, args, ...rest)) };
+  put(paths.lock, String(DEAD_PID));
+  put(paths.activation, "{}");
+  for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) put(dropIn(supervisor, name), "[Service]\n");
+  const claim = { card: "SHU-301", revision: REV, claimed_at: "2026-10-18T07:00:04.000Z", worker, pid: DEAD_PID, pid_start: "99" };
+  put(autoClaim(paths, REV, "SHU-301"), `${JSON.stringify(claim)}\n`);
+  // Not the dead run's: worker 1's claim with the same pid, and an earlier
+  // claim of this worker that already has its outcome.
+  const others = {
+    [autoClaim(paths, REV, "SHU-302")]: `${JSON.stringify({ ...claim, card: "SHU-302", worker: worker === 1 ? 2 : 1 })}\n`,
+    [autoClaim(paths, REV, "SHU-303")]: `${JSON.stringify({ ...claim, card: "SHU-303", outcome: "PASS", ok: true })}\n`,
+  };
+  for (const [file, text] of Object.entries(others)) put(file, text);
+  put(statusPath(paths), `${JSON.stringify(watchStatus({ card: "SHU-301", run_id: "shu-301-run-20261018T070000Z" }))}\n`);
+  return { host, paths, claim, others };
+}
+
+test("2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock", async () => {
+  const { host, paths, claim, others } = await deadRunHost();
+  const { code, output } = await main(["auto", "--worker", "2"], host.io, PATHS);
+  assert.equal(code, 0, JSON.stringify(output));
+  assert.equal(output.ok, true);
+  assert.equal(output.skipped, "RECOVERED");
+  assert.match(output.reason, new RegExp(`holds pid ${DEAD_PID}, which is no longer running`));
+  assert.equal(output.revert.reverted, true, JSON.stringify(output.revert));
+  // The revert is the worker's own: its activation retired, its drop-ins gone,
+  // its supervisor restarted; worker 1's are never touched.
+  assert.equal(host.files.has(paths.activation), false);
+  assert.match(output.revert.retired, /spent-\d{8}T\d{6}Z-shu71-activation-w2\.json$/);
+  for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) assert.equal(host.files.has(dropIn("shu-supervisor-w2.service", name)), false, name);
+  assert.ok(host.calls.includes("systemctl restart shu-supervisor-w2.service"));
+  assert.equal(host.calls.includes("systemctl restart shu-supervisor.service"), false);
+  // The dead run's claim keeps every field and gains its outcome; no other claim changes.
+  const file = autoClaim(paths, REV, "SHU-301");
+  assert.deepEqual(output.claims, [file]);
+  const died = JSON.parse(host.files.get(file).text);
+  assert.deepEqual({ ...died, recovered_at: null }, { ...claim, outcome: "DIED", ok: false, reverted: true, recovered_at: null });
+  assert.equal(died.recovered_at, START.toISOString());
+  for (const [other, text] of Object.entries(others)) assert.equal(host.files.get(other).text, text, other);
+  // The status reaches a terminal step, which the watch never reads as a run that died.
+  const status = readStatus(host.io, paths);
+  assert.equal(status.step, "recovered");
+  assert.equal(status.outcome, "DIED");
+  assert.equal(status.card, "SHU-301");
+  assert.equal(output.status_recovered, true);
+  assert.equal(stuckRun({ unit: { state: "inactive", running: false, since: null, start: null }, status, now: START.getTime() + 60 * MIN }), null);
+  // The lock is released, and nothing paused the box.
+  assert.equal(host.files.has(paths.lock), false);
+  assert.equal(host.files.has(PATHS.pause), false);
+  // The next start is no longer held by the lock.
+  const next = await attempt(() => autoRun({ io: host.io, paths }));
+  assert.notEqual(next.skipped, "LOCKED", JSON.stringify(next));
+  assert.notEqual(next.skipped, "RECOVERED", JSON.stringify(next));
+});
+
+test("2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing", async () => {
+  const unchanged = (host, paths) => {
+    assert.equal(host.files.has(paths.lock), true);
+    assert.equal(host.files.has(paths.activation), true);
+    assert.equal(host.files.has(PATHS.pause), false);
+    assert.equal(JSON.parse(host.files.get(autoClaim(paths, REV, "SHU-301")).text).outcome, undefined);
+    assert.equal(host.calls.some((call) => call.startsWith("systemctl")), false, JSON.stringify(host.calls));
+  };
+  // Worker 2's run is alive.
+  const live = await deadRunHost();
+  live.host.files.set(`/proc/${DEAD_PID}`, { text: "", mode: 0o555, uid: 0, gid: 0 });
+  const held = await main(["auto", "--worker", "2"], live.host.io, PATHS);
+  assert.equal(held.output.skipped, "LOCKED", JSON.stringify(held.output));
+  unchanged(live.host, live.paths);
+  // Worker 2's lock holds no pid it can read.
+  const blank = await deadRunHost();
+  blank.host.files.set(blank.paths.lock, { text: "", mode: 0o600, uid: 0, gid: 0 });
+  assert.equal((await main(["auto", "--worker", "2"], blank.host.io, PATHS)).output.skipped, "LOCKED");
+  unchanged(blank.host, blank.paths);
+  // Worker 1: a person may hold its lock with `run` by hand, so a dead pid is still LOCKED.
+  const one = await deadRunHost({ worker: 1 });
+  const first = await main(["auto"], one.host.io, PATHS);
+  assert.equal(first.output.skipped, "LOCKED", JSON.stringify(first.output));
+  unchanged(one.host, one.paths);
+});
+
+test("2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file", async () => {
+  const { host, paths } = await deadRunHost();
+  const exec = host.io.exec;
+  host.io = { ...host.io, exec: (file, args, ...rest) => (file === "systemctl" && args[0] === "daemon-reload"
+    ? (host.calls.push("systemctl daemon-reload"), { status: 1, stdout: "", stderr: "failed" }) : exec(file, args, ...rest)) };
+  const { code, output } = await main(["auto", "--worker", "2"], host.io, PATHS);
+  assert.equal(code, 1, JSON.stringify(output));
+  assert.equal(output.ok, false);
+  assert.equal(output.outcome, "RECOVER_FAILED");
+  assert.equal(output.skipped, undefined);
+  assert.equal(output.revert.reverted, false);
+  assert.deepEqual(output.pause, { written: true });
+  assert.match(host.files.get(PATHS.pause).text, new RegExp(`worker 2 could not revert the dead run of pid ${DEAD_PID}`));
+  assert.equal(host.files.get(paths.lock).text, String(DEAD_PID), "the lock stays");
+  assert.equal(JSON.parse(host.files.get(autoClaim(paths, REV, "SHU-301")).text).outcome, undefined, "the claim is not marked");
+  assert.equal(readStatus(host.io, paths).step, "ticking");
+  // A pause already in place is kept as it is.
+  const again = await deadRunHost();
+  again.host.files.set(PATHS.pause, { text: "by hand\n", mode: 0o644, uid: 0, gid: 0 });
+  again.host.io = { ...again.host.io, exec: (file, args, ...rest) => (file === "systemctl" && args[0] === "daemon-reload"
+    ? { status: 1, stdout: "", stderr: "failed" } : exec(file, args, ...rest)) };
+  // PAUSED comes first: a paused box recovers nothing.
+  assert.equal((await main(["auto", "--worker", "2"], again.host.io, PATHS)).output.skipped, "PAUSED");
+  assert.equal(again.host.files.has(again.paths.lock), true);
+});
+
+test("2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+    now: Date.parse("2026-10-18T07:04:00.000Z") + 30 * MIN });
+  host.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
+  host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.alert, null);
+  assert.deepEqual(result.workers[0].alert, { key: "w2-shu-305-run-20261018T070000Z", kind: "ended", pause: { written: false, left: true }, posted: true });
+  assert.equal(host.files.has(PATHS.pause), false, "one worker's dead run never pauses the box");
+  const alert = alertsOf(host);
+  assert.equal(alert.length, 1);
+  assert.match(alert[0].body, /shu-card-run-w2\.service is not running, but the run's status stopped at step ticking/);
+  assert.match(alert[0].body, /No pause file was written: the other card workers go on, and shu-card-run-w2\.service's next start recovers this run/);
+  assert.doesNotMatch(alert[0].body, /removing the pause file/);
+  host.now += 10 * MIN;
+  const again = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(again.workers[0].alert.already, true);
+  assert.equal(again.ok, true);
+  assert.equal(alertsOf(host).length, 1, "alerted once");
+  assert.equal(host.files.has(PATHS.pause), false);
+  // Once the worker's next start writes its status recovered, nothing is stuck.
+  host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", step: "recovered", outcome: "DIED",
+    updated_at: new Date(host.now).toISOString() }))}\n`, { mode: 0o600 });
+  host.now += 30 * MIN;
+  const recovered = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(recovered.workers[0].alert, null);
+  assert.equal(recovered.workers[0].step, "recovered");
+  // Worker 1's run that ended without finishing still pauses every card run.
+  host.put(statusPath(PATHS), `${JSON.stringify(watchStatus({ updated_at: new Date(host.now - 20 * MIN).toISOString() }))}\n`, { mode: 0o600 });
+  const own = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(own.alert.kind, "ended");
+  assert.deepEqual(own.alert.pause, { written: true });
+  assert.ok(host.files.has(PATHS.pause));
 });
 
 test("M15 W5: no card run starts while the install lock is held", async () => {

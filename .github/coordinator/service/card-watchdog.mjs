@@ -28,6 +28,13 @@
 // status file, each stuck or stalled run alerted once under its own key, and
 // one status comment with a section per worker. One worker is watched exactly
 // as before.
+//
+// 2026-11-14: a card worker N > 1 whose run ended without finishing is
+// alerted once as before, but no longer pauses every card run: worker N's
+// next timer start finds the dead run's lock and recovers it (card-run.mjs,
+// recoverDeadRun), and writes the pause itself only when that revert does not
+// finish. On 11-14 worker 2's dead run paused all eight workers for five
+// hours. Worker 1, a failed unit and a run still going still pause.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -65,7 +72,10 @@ export const WATCH_LIMITS = Object.freeze({
 });
 
 export const RUNNING_STATES = Object.freeze(new Set(["active", "activating", "deactivating", "reloading"]));
-export const STATUS_STEPS = Object.freeze(new Set(["armed", "ticking", "reverting", "landing", "finished"]));
+// 2026-11-14: "recovered" is the step a card worker's next start writes over
+// a run that died; like "finished", it ends the run.
+export const STATUS_STEPS = Object.freeze(new Set(["armed", "ticking", "reverting", "landing", "finished", "recovered"]));
+export const TERMINAL_STEPS = Object.freeze(new Set(["finished", "recovered"]));
 export const STATUS_MARKER = "<!-- card-run-status -->";
 
 export function watchServiceUnit({ node, module }) {
@@ -181,7 +191,7 @@ export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
       invocation: unit.invocation ?? null, since: new Date(unit.since).toISOString(),
       last: new Date(last).toISOString(), status: own ? status : null };
   }
-  if (!status || status.trigger !== "timer" || status.step === null || status.step === "finished") return null;
+  if (!status || status.trigger !== "timer" || status.step === null || TERMINAL_STEPS.has(status.step)) return null;
   if (now - Date.parse(status.updated_at) <= limits.endedMs) return null;
   return { kind: "ended", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
 }
@@ -229,10 +239,11 @@ export function renderAlert({ stuck, mention, pause, paths = CARD_RUN_PATHS, lim
       : stuck.kind === "stale"
       ? `${service} has been running since ${stuck.since}, and ${stuck.status ? `the run's status was last written at ${stuck.last} (step ${stuck.status.step ?? "unknown"})` : "no status was written since it started"}: nothing for more than ${Math.round(limits.staleMs / 60000)} minutes.`
       : `${service} is not running, but the run's status stopped at step ${stuck.status.step} at ${stuck.last} and never reached finished: the run ended without finishing, and may have left the host armed and ${paths.lock} in place.`,
-    pause.written ? `Wrote ${paths.pause}, so no new card run starts until the owner removes it.`
+    pause.left ? `No pause file was written: the other card workers go on, and ${service}'s next start recovers this run (it reverts the worker and releases ${paths.lock}), or writes ${paths.pause} itself if that revert does not finish.`
+      : pause.written ? `Wrote ${paths.pause}, so no new card run starts until the owner removes it.`
       : pause.held ? `${paths.pause} was already in place.`
         : `${paths.pause} could not be written (${plainReason(pause.code)}).`,
-    "The watch never stops, kills or reverts a run. Check the host before removing the pause file.",
+    pause.left ? "The watch never stops, kills or reverts a run." : "The watch never stops, kills or reverts a run. Check the host before removing the pause file.",
   ];
   return lines.join("\n");
 }
@@ -390,7 +401,7 @@ export async function watchOnce({ io, paths = CARD_RUN_PATHS, limits = WATCH_LIM
   }
   result.state_written = writeState(io, paths, state);
   const healthy = (seen) => seen.unit_error === undefined && seen.alert?.posted !== false && seen.stall?.posted !== false
-    && (seen.alert === null || seen.alert.pause.written === true || seen.alert.pause.held === true);
+    && (seen.alert === null || seen.alert.pause.written === true || seen.alert.pause.held === true || seen.alert.pause.left === true);
   result.ok = result.state_written && healthy(result) && others.every((other) => healthy(other.result)) && result.status_comment.posted !== false;
   return result;
 }
@@ -414,7 +425,10 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
     // A pause file that could not be written is tried again on every pass
     // while the run is stuck, whether or not its alert is already posted.
     const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;
-    const pause = pauseKept ? entry.pause : writePause(io, paths, stuck);
+    // 2026-11-14: a card worker's run that ended without finishing is left to
+    // that worker's next start to recover, without the pause.
+    const recovers = worker > 1 && stuck.kind === "ended";
+    const pause = pauseKept ? entry.pause : recovers ? { written: false, left: true } : writePause(io, paths, stuck);
     if (entry?.posted) {
       entry.pause = pause;
       // What a later pass learns about the run is kept, so every later read

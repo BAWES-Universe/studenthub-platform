@@ -558,6 +558,8 @@ export const RUN_OUTCOME_TEXT = Object.freeze({
   LAND_BASE_MOVING: "main kept moving under the pull request; nothing was handed off or merged",
   // Self-repair B2
   REPAIR_INTERRUPTED: "a landing repair round was claimed but never finished; it is never run again at this revision",
+  // 2026-11-14: a card worker's run whose process died; its next start reverted it.
+  DIED: "the run's process died before it finished; the worker's next start reverted it and released its lock",
   REPAIR_TEST_WEAKENED: "the repair skipped, removed or loosened a test, or changed how tests run; nothing was handed off or merged",
 });
 
