@@ -49,12 +49,7 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-628",
-      "SHU-629",
-      "SHU-630",
-      "SHU-631",
-      "SHU-633",
-      "SHU-634",
+      "SHU-638",
       "SHU-635",
       "SHU-636"
     ]
@@ -9813,6 +9808,47 @@
       ],
       "after": [
         "SHU-635"
+      ]
+    },
+    {
+      "id": "SHU-638",
+      "authorization_ref": "SHU-638",
+      "reviewer_lane": "claude-verifier",
+      "writer_lane": "codex-builder",
+      "note": "lane 1 (organizations and profile/people), card Q15-3 part 2 of 2: the staff People page, its JSON, route and sidebar link; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on nothing: SHU-633, the query it renders, has landed. SHU-638 re-queues SHU-634, whose run exhausted its revisions, with every review finding named and the wiring test it must change added to its paths.",
+      "initial_build_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/wiring-runtime.test.ts"
+      ],
+      "revision_paths": [
+        "apps/gateway/src/people-directory.ts",
+        "apps/gateway/test/people-directory.test.ts",
+        "apps/gateway/test/people-directory-mutations.mjs",
+        "apps/gateway/test/helpers/real-profile-server.ts",
+        "apps/gateway/src/web-ui.ts",
+        "apps/gateway/src/index.ts",
+        "apps/gateway/src/routes/index.ts",
+        "apps/gateway/src/routes/profile.ts",
+        "apps/gateway/src/routes/context.ts",
+        "apps/gateway/src/wiring/context.ts",
+        "apps/gateway/src/wiring/profile.ts",
+        "apps/gateway/src/contributions/index.ts",
+        "apps/gateway/src/contributions/profile.ts",
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/wiring-runtime.test.ts"
       ]
     }
   ],
