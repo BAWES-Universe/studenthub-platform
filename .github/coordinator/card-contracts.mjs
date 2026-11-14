@@ -7867,7 +7867,138 @@ const RECUT_624_CONTRACTS = Object.fromEntries(Object.entries(RECUT_624).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS });
+// SHU-622 stopped BLOCKED at review on its first build (head 3b4b4f9): the
+// handler read as sound, but no test drove it through a real request, the
+// mutation script carried none of the eight named mutants, and the sidebar
+// gate checked the role only. One card was too much for one run, so it is split:
+// SHU-630 is the handler, its wiring, HTTP tests and six mutants; SHU-631 (after
+// SHU-630) is the sidebar link and the My profile row. SHU-620 has landed, so
+// neither waits on it.
+const SPLIT_622_FROM = RECUT_617_CONTRACTS["SHU-622"].brief;
+const SPLIT_622_READ_FIRST = SPLIT_622_FROM.slice(SPLIT_622_FROM.indexOf("Read first:"), SPLIT_622_FROM.indexOf("\n\nOutcome:"));
+const SPLIT_622_WAITS = ", which includes SHU-616 and SHU-620 (packages/profile/src/civil-id-review.ts: CivilIdReviewStore, InMemoryCivilIdReviewStore, StaffView; PostgresCivilIdReviewStore attached as PostgresPersonProfileStore.CivilIdReviewStore, migration 0219) and SHU-605 (packages/private-documents/src/staff-delivery.ts: StaffDocuments, STAFF_DELIVERY_PATH). Build against their names as they are at the bound head, and say so in your final message if they differ from this brief";
+const SPLIT_622_LAST_RUN = `What the last run (SHU-622, head 3b4b4f9 on coordinator/SHU-622, not on main) got wrong, so this run does not repeat it. Its review read the handler logic as sound (staff gate re-resolved per request through StaffDocuments.principal, own-row 403 before the subject is read, Origin and Sec-Fetch-Site refused before the body is read, masked number only in the queue and JSON, a confirmation under its own signing label carrying no number, confirmRef the SHA-256 of the token) and blocked it because nothing held that logic in place: (A) apps/gateway/test/civil-id-review-http.test.ts had three tests, two of them calling renderCivilIdRow directly and one checking a route name in ROUTES; no test sent an HTTP request to any civil ID route, and the civilIdReview option it added to apps/gateway/test/helpers/real-profile-server.ts was used by no test; (B) apps/gateway/test/civil-id-review-mutations.mjs carried one mutant, none of the named ones, with no unmutated control, no --test-name-pattern, a grep of the whole output for AssertionError and no check that the compiled file was unchanged afterwards; (C) the sidebar gate in apps/gateway/src/index.ts checked active.role only, leaving out scope subtree and the operator organization that apps/gateway/src/legacy-link-http.ts staff() and packages/private-documents/src/staff-delivery.ts viewer() both require. It also left four smaller faults: stateFor on My profile without the try/catch its sibling suggestion read has (a store failure became a 503), the queue showing the raw updatedAt instead of how long the row has waited, a waiting person missing a photo answering 404 on the decision page and so never decidable while staying in the queue, and the U1_COPY key count. You may read that branch for ideas; build from the bound head.`;
+const SPLIT_622_MUTANT_RULE = `- The mutation script follows apps/gateway/test/civil-id-suggestion-mutations.mjs exactly (lines 52 to 72 at the bound head): for each mutant it reads the freshly built dist file the running gateway imports, asserts the needle binds exactly once, runs the unmutated control first with --test-name-pattern set to the named test and asserts it passes and ran that test, writes the mutant as a sibling file and loads it through apps/gateway/test/helpers/swap-module.mjs, asserts the named test fails ('not ok'), dies by name: 'AssertionError' on that test's own assertion message (not a grep of the whole output), and loads (no SyntaxError or ERR_MODULE_NOT_FOUND), then removes the sibling and asserts the dist file is byte-identical to before. It never overwrites a dist file, and a script that only searches the source for a needle is refused.`;
+const SPLIT_622_HTTP_RULE = `- Every acceptance test sends a real HTTP request to a server started with startRealProfileServer (apps/gateway/test/helpers/real-profile-server.ts) and asserts on the response, the stores and the captured rows. A test that calls a handler, a renderer or a route table directly does not pin an acceptance item and is refused at review. Tests use InMemoryCivilIdReviewStore and a real StaffDocuments over in-memory or r2-backed document state.`;
+
+export const SHU630_PATHS = Object.freeze([
+  "apps/gateway/src/civil-id-review-http.ts",
+  "apps/gateway/test/civil-id-review-http.test.ts",
+  "apps/gateway/test/civil-id-review-mutations.mjs",
+  "apps/gateway/test/helpers/real-profile-server.ts",
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/login-runtime.ts",
+  "apps/gateway/src/routes/index.ts",
+  "apps/gateway/src/routes/profile.ts",
+  "apps/gateway/src/routes/context.ts",
+  "apps/gateway/src/wiring/context.ts",
+  "apps/gateway/src/wiring/profile.ts",
+  "apps/gateway/src/contributions/index.ts",
+  "apps/gateway/src/contributions/profile.ts",
+  "apps/gateway/test/routes-order.test.ts",
+]);
+const SHU630_ACCEPTANCE = [
+  "(1) REV_QUEUE: a real cookie GET /workspace/civil-ids as staff lists the waiting people newest first, 25 per page, leaving out the caller's own row; each row shows the name, country, the masked number (CIV's maskCivilId after opening the sealed number in process), the expiry, how long it has waited (for example '3 days', from the time the row started waiting to now; the raw updatedAt timestamp is never shown) and whether the photo reading found something; page 2 and an empty page work; HTML and JSON (by Accept) carry the same rows; the closed query vocabulary is page only (another key, a repeated key or a bad page is 400);",
+  "(2) REV_STAFF: on the queue, the decision page, both decision POSTs and the delivery route, no session is 401; a session with a staff or admin grant that is not scope subtree, one with a staff or admin subtree grant on an organization outside DEFAULT_OPERATOR_ORG_IDS, an org-owner, a person not waiting, an unknown person and a malformed id are each 404 with byte-identical bodies; a staff member opening or deciding their own row is 403 with a plain page; login.civilIdReview.isStaff answers true only for a staff or admin subtree grant on an operator organization, each of the refused grants above answering false;",
+  "(3) REV_DECIDE: Reject needs a reason of 1 to 300 characters and Confirm takes none (each wrong form is 400 with nothing stored); the preview page names the person, the decision and the reason and carries a signed confirmation that expires; confirming answers 303 to /workspace/civil-ids, stores exactly one decision, clears needs_review and leaves revision unchanged; a replayed confirmation stores nothing twice; a stale revision, a changed photo version, an expired confirmation and a row no longer waiting are each refused with nothing stored; a waiting person missing the front or back photo opens with 200 and a page that names the missing photo and shows no <img> for it, can be rejected with a reason, and Confirm for them is 400 with nothing stored;",
+  "(4) REV_IMAGES: the decision page shows the full number (CIV's vault), the expiry with an 'expired' note judged in Asia/Kuwait (today is not expired), what the photo reading found (through the real OCR store wiring) and two <img> tags whose sources are SHU-605 staff links; a real cookie GET to /workspace/civil-ids/delivery with no Origin header, as an <img> sends it, returns the stored bytes once; every page view writes one civil_id_page view and every image link and delivery its own view row; the queue page and the decision page cost the same number of store and port calls for 0, 1 and 60 waiting people (counting fakes around the real stores); apps/gateway/src/candidate-documents-http.ts is unchanged;",
+  "(5) REV_SECRECY: a scan of the queue HTML and JSON, every redirect, every response header, the confirmation token, every captured view and decision row and every captured log line for the full number finds none; the full number appears on the decision page only;",
+  "(6) REV_ORIGIN: on both decision POSTs a wrong Origin and a cross-site Sec-Fetch-Site are each 403 with the denied page before the body is read and before anything is stored, distinct from the 400 a missing field gets; no session, a Bearer header alone, an extra field and an oversized body are each refused with nothing stored;",
+  "(7) mutants in apps/gateway/test/civil-id-review-mutations.mjs, built as the brief's mutation rule says, each dying by an AssertionError on its named test's message: show the full number in the queue (REV_SECRECY or REV_QUEUE), drop the own-row refusal (REV_STAFF), drop scope subtree from isStaff (REV_STAFF), accept a reject without a reason (REV_DECIDE), skip the revision check (REV_DECIDE), skip the confirmation expiry (REV_DECIDE), drop the Origin check (REV_ORIGIN); every existing gateway test passes unchanged except the route-order lines the brief allows; npm run typecheck and npm test pass to the end, and nothing outside the card's paths changes.",
+].join(" ");
+const SHU630_BRIEF = `${SPLIT_600_INTRO("SHU-630", "staff see a queue of civil IDs waiting for a check, open one to compare the number and expiry with the front and back photos, and confirm it or reject it with a reason, every route held by real HTTP tests and mutants (part 1 of 2 of the staff civil ID pages, re-cut from SHU-622; Q15-2, S5, S6, PD-04; risk R3).", SPLIT_622_WAITS)}
+
+${SPLIT_600_WHY} This card builds the staff pages and their wiring only; the storage and the image links are on main, and the sidebar link and the My profile row are SHU-631, which waits for this card.
+
+${SPLIT_622_LAST_RUN}
+
+${SPLIT_622_READ_FIRST}
+
+Outcome:
+- apps/gateway/src/civil-id-review-http.ts serves, for staff only: GET /workspace/civil-ids (the queue, HTML and JSON by Accept, page only); GET /workspace/civil-ids/<personId> (the decision page: name, country, the FULL number opened with CIV's vault, expiry with an 'expired' note judged in Asia/Kuwait, what the photo reading found when there is a result, the front and back photos as <img> tags whose sources are StaffDocuments links with purpose civil_id_review, a plain line naming a missing photo in place of its <img>, and one civil_id_page view recorded before the page renders); POST /workspace/civil-ids/<personId>/decision (decision confirm or reject, reason, revision, the evidence digest of the front and back versions, a missing photo entering the digest as a fixed 'none' marker) answering the preview page with a signed, expiring confirmation that binds the reviewer, the person, the decision, the reason, the revision and the photo versions and holds no number; POST /workspace/civil-ids/<personId>/decision/confirm, which re-checks the photo versions, calls decide with a confirmRef derived from the confirmation, and answers 303 to /workspace/civil-ids; and GET /workspace/civil-ids/delivery, which hands the token to StaffDocuments.deliver and writes its bytes and headers. The personId is a principal id (any other shape is 404). JSON is the queue and the decision POSTs only; the full number is never in JSON. Every page reads the staff gate from grants on every request.
+- The queue shows how long each row has waited as a short duration, never the raw updatedAt.
+- A waiting person missing a photo is decidable: the page opens, Reject with a reason works, and Confirm is refused with 400 until both photos exist.
+- The login application gets one new optional field, civilIdReview (add it to BrowserLoginApplication in apps/gateway/src/web-ui.ts as one line beside civilIdSuggestion, and change nothing else in web-ui.ts): { store: CivilIdReviewStore; isStaff(principalId: string): Promise<boolean> }. isStaff reads the person's grants and answers true only for a grant with role staff or admin, scope subtree and an orgId in DEFAULT_OPERATOR_ORG_IDS, exactly the check of staff() in apps/gateway/src/legacy-link-http.ts; the handler uses it (or StaffDocuments, which applies the same check) on every request. SHU-631 builds the sidebar link and the My profile row against exactly these names, so use them as written.
+- apps/gateway/src/wiring/profile.ts builds the review store (PostgresPersonProfileStore.CivilIdReviewStore) only where the civil ID service is configured and passes the OCR store's read to the review page; StaffDocuments is built where both it and CandidateDocuments exist (see the production wiring below); the routes go into the ROUTES list (and routes-order.test.ts's PREP_ORDER and length, one per route, nothing else in that test).
+- apps/gateway/test/helpers/real-profile-server.ts gets, as one contiguous block that changes nothing for existing callers, an option that wires the review store and StaffDocuments into the real profile server and an option or exposed store that grants a test person a staff subtree grant on an operator organization (and, for REV_STAFF, a staff grant that is not subtree and one on a non-operator organization); real-profile-server.test.ts stays green unchanged.
+${SHU622_WIRING.replace(/^\n+/, "").replace("Production wiring (added after the last run of this card, SHU-617, stopped because it could not touch the login runtime).", "Production wiring.")}
+
+Guards:
+- Staff only, re-resolved from grants on every request: no session is the sign-in page 401; a session without a staff or admin subtree grant on an operator organization, an employer, and an unknown, malformed or non-waiting person are all 404 with the same body.
+- A staff member cannot review their own civil ID: absent from their queue, 403 on open and on decision.
+- The full civil ID number appears only in the decision page HTML: never in the queue, JSON, a URL, a redirect, a log, an error, a view or decision row, a confirmation token or a response header.
+- Every look at an image is audited before bytes leave (SHU-605 does it; this card must not bypass StaffDocuments).
+- Same-origin cookie posts only (exact Origin, Sec-Fetch-Site not cross-site, urlencoded body under a small cap, only the form's fields), refused before the body is read; a Bearer header alone does not authenticate a post.
+${SPLIT_622_HTTP_RULE}
+- The sidebar, My profile, apps/gateway/src/civil-id-http.ts, apps/gateway/src/ui/profile-copy.ts and their tests are SHU-631's and do not change here; renderWorkspace and profileDocument render byte-identically to the bound head.
+- The owner's document routes, CIV's form, the suggestion line, the OCR worker and apps/gateway/src/candidate-documents-http.ts are unchanged.
+${SPLIT_622_MUTANT_RULE}
+
+Acceptance. Tests are named with their token first and a space after it.
+${SHU630_ACCEPTANCE}
+
+${SPLIT_600_STANDING}
+
+${SPLIT_600_FINISH(SHU630_PATHS, "the sidebar link and the My profile row (SHU-631), the database tables and store (SHU-616, SHU-620), the staff image class (SHU-605), staff editing the civil ID number or expiry (Q15-5), the People directory and the Person page, re-running OCR, notifying the person by email, a staff-initiated flag, bulk decisions, and any network call, credential, staging or production access.")}`;
+
+export const SHU631_PATHS = Object.freeze([
+  "apps/gateway/src/web-ui.ts",
+  "apps/gateway/src/index.ts",
+  "apps/gateway/src/civil-id-http.ts",
+  "apps/gateway/test/civil-id-http.test.ts",
+  "apps/gateway/src/ui/profile-copy.ts",
+  "apps/gateway/test/profile-kit.test.ts",
+  "apps/gateway/test/civil-id-review-shown.test.ts",
+  "apps/gateway/test/civil-id-review-shown-mutations.mjs",
+  "apps/gateway/test/helpers/real-profile-server.ts",
+]);
+const SHU631_ACCEPTANCE = [
+  "(1) REV_SIDEBAR: a real cookie GET /workspace shows 'Civil IDs to check (n)' beside the Companies links, with n equal to the queue's count, only when the active context is role staff or admin on an organization in DEFAULT_OPERATOR_ORG_IDS and login.civilIdReview.isStaff answers true for the person; it is absent, with the page byte-identical to the bound head's and no countPending call made, for a staff context on a non-operator organization, a staff or admin grant that is not scope subtree, an org-owner, an employer, a candidate-only person and when civilIdReview is not configured; countPending is called at most once per GET /workspace;",
+  "(2) REV_SHOWN: after a Confirm made through the SHU-630 routes, a real cookie GET /profile shows 'Checked' inside the Civil ID row (<div id=\"field-civilId\" class=\"p-row\">), after a Reject 'Rejected: <reason>' (the reason as typed, escaped) with Fix it links to /profile/civil-id and /profile/documents, and 'Waiting for StudentHub to check' appears exactly once while waiting; a later CIV save of a changed number or expiry brings back the waiting line; every label is PROFILE_COPY in English and Arabic (an Arabic GET shows the Arabic labels); nothing renders when civilIdReview is not configured; My profile makes exactly one stateFor call per HTML render (a counting fake around the real store);",
+  "(3) REV_DEGRADE: when stateFor throws, GET /profile answers 200 with the Civil ID row and no decision line, as the civil ID suggestion read does when it fails, never a 503;",
+  "(4) mutants in apps/gateway/test/civil-id-review-shown-mutations.mjs, built as the brief's mutation rule says, each dying by an AssertionError on its named test's message: render the sidebar link for a staff context on a non-operator organization (REV_SIDEBAR), render it for a grant that is not subtree (REV_SIDEBAR), read the decision state twice per My profile render (REV_SHOWN), drop the try/catch around stateFor (REV_DEGRADE), drop the reason from the Rejected line (REV_SHOWN); the U1_COPY key count in apps/gateway/test/profile-kit.test.ts goes up by exactly the number of keys added (read the count at the bound head, it is not 203 unless the bound head says so); every existing gateway test passes unchanged except that count line; npm run typecheck and npm test pass to the end, and nothing outside the card's paths changes.",
+].join(" ");
+const SHU631_BRIEF = `${SPLIT_600_INTRO("SHU-631", "staff on an operator organization see 'Civil IDs to check (n)' in the sidebar, and the person sees the result of the civil ID check on My profile (part 2 of 2 of the staff civil ID pages, re-cut from SHU-622; Q15-2, S5, PD-04; risk R3).", `${SPLIT_622_WAITS}, and SHU-630 (apps/gateway/src/civil-id-review-http.ts: the queue at /workspace/civil-ids, the decision routes, and the login application's optional civilIdReview field { store: CivilIdReviewStore; isStaff(principalId: string): Promise<boolean> })`)}
+
+${SPLIT_600_WHY} SHU-630 built the staff pages; this card adds the two places a person meets them: the staff sidebar and the person's own My profile row.
+
+${SPLIT_622_LAST_RUN}
+
+Read first:
+- apps/gateway/src/civil-id-review-http.ts and apps/gateway/test/civil-id-review-http.test.ts (SHU-630): the routes, login.civilIdReview, and how the tests start the real profile server with the review store and a staff grant; drive decisions through those routes in your tests.
+- apps/gateway/src/legacy-link-http.ts staff() and packages/private-documents/src/staff-delivery.ts viewer(): the full staff gate (role staff or admin, scope subtree, orgId in DEFAULT_OPERATOR_ORG_IDS). WorkspaceContext in apps/gateway/src/context-navigation.ts carries orgId and role only, so the role alone is never enough.
+- apps/gateway/src/index.ts: the /workspace route (login.navigation.open, renderWorkspace) and the GET /profile handler, where requesterPrincipalId is bound inside the readOwn block and the civil ID suggestion read is wrapped in try/catch; apps/gateway/src/web-ui.ts renderWorkspace, companiesLink and profileDocument (the civilRow line).
+- apps/gateway/src/civil-id-http.ts renderCivilIdRow, apps/gateway/src/ui/profile-copy.ts and apps/gateway/test/profile-kit.test.ts (the U1_COPY key count).
+- apps/gateway/test/helpers/real-profile-server.ts, apps/gateway/test/civil-id-suggestion-http.test.ts and apps/gateway/test/civil-id-suggestion-mutations.mjs: the tests and the mutation script to follow.
+
+Outcome:
+- The sidebar: in the /workspace route of apps/gateway/src/index.ts, after login.navigation.open answers, read login.civilIdReview.store.countPending once only when the active context has role staff or admin on an organization in DEFAULT_OPERATOR_ORG_IDS and login.civilIdReview.isStaff(principal) answers true (which adds scope subtree), and pass the count to renderWorkspace as a new optional parameter; renderWorkspace stays synchronous, renders 'Civil IDs to check (n)' linking to /workspace/civil-ids beside the Companies links only when given a count, and renders byte-identically when not.
+- My profile: in the GET /profile handler, capture requesterPrincipalId before result is replaced with the readOwn projection, call stateFor once per HTML render inside a try/catch exactly as the civil ID suggestion read is wrapped (a failure leaves the state undefined), and pass the result to renderCivilIdRow, which renders 'Checked' or 'Rejected: <reason>' (the reason as typed, escaped) with Fix it links to /profile/civil-id and /profile/documents, or 'Waiting for StudentHub to check', inside the same Civil ID row, every label from PROFILE_COPY in English and Arabic (the U1_COPY count goes up by the keys added); web-ui.ts adds no markup of its own beside the row, and nothing renders when the feature is off.
+- apps/gateway/test/helpers/real-profile-server.ts may get, as one contiguous block that changes nothing for existing callers, an option to wrap the review store in a counting or failing fake.
+
+Guards:
+- The sidebar link never shows, and countPending is never called, for a context that fails any part of the staff gate.
+- The full civil ID number never appears on My profile, the sidebar, a header or a log.
+- A failing review store never fails My profile or /workspace: both degrade to the page without the new line.
+${SPLIT_622_HTTP_RULE}
+- apps/gateway/src/civil-id-review-http.ts, the routes and the wiring are SHU-630's and do not change here.
+- Every key added to apps/gateway/src/ui/profile-copy.ts goes into both en and ar, and the U1_COPY key count in apps/gateway/test/profile-kit.test.ts goes up by the number added; change nothing else in that test.
+${SPLIT_622_MUTANT_RULE}
+
+Acceptance. Tests are named with their token first and a space after it.
+${SHU631_ACCEPTANCE}
+
+${SPLIT_600_STANDING}
+
+${SPLIT_600_FINISH(SHU631_PATHS, "the queue and decision routes, the wiring and the login runtime (SHU-630), the database tables and store (SHU-616, SHU-620), the staff image class (SHU-605), notifying the person by email, and any network call, credential, staging or production access.")}`;
+
+const SPLIT_622_TAIL = (id) => ` ${id} is part of SHU-622's contract re-queued under a fresh id after its first build stopped BLOCKED with no HTTP tests, none of the named mutants and a role-only sidebar gate, so the card is split in two; SHU-622 never lands.`;
+const SPLIT_622_CONTRACTS = Object.freeze({
+  "SHU-630": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU630_PATHS, revision_paths: SHU630_PATHS, acceptance: `${SHU630_ACCEPTANCE}${SPLIT_622_TAIL("SHU-630")}`, brief: SHU630_BRIEF.replace(SHU630_ACCEPTANCE, `${SHU630_ACCEPTANCE}${SPLIT_622_TAIL("SHU-630")}`) }),
+  "SHU-631": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU631_PATHS, revision_paths: SHU631_PATHS, acceptance: `${SHU631_ACCEPTANCE}${SPLIT_622_TAIL("SHU-631")}`, brief: SHU631_BRIEF.replace(SHU631_ACCEPTANCE, `${SHU631_ACCEPTANCE}${SPLIT_622_TAIL("SHU-631")}`) }),
+});
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
