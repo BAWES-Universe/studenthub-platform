@@ -49,10 +49,8 @@
   },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-638",
-      "SHU-635",
-      "SHU-636",
       "SHU-640",
+      "SHU-638",
       "SHU-641"
     ]
   },
@@ -9858,7 +9856,7 @@
       "authorization_ref": "SHU-640",
       "reviewer_lane": "claude-verifier",
       "writer_lane": "codex-builder",
-      "note": "lane 1 (organizations and profile/people), card Q15-2 staff civil ID pages part 1 of 2: the queue, the decision routes, their wiring, HTTP tests through the real profile server and the handler mutants; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on nothing. SHU-640 re-queues SHU-635, whose run exhausted its revisions on test faults its reviews named.",
+      "note": "lane 1 (organizations and profile/people), card Q15-2 staff civil ID pages part 1 of 2: the queue, the decision routes, their wiring, HTTP tests through the real profile server and the handler mutants; workspace_mode, paths, brief and acceptance pinned in card-contracts.mjs. It waits on nothing. SHU-640 re-queues SHU-635, whose run exhausted its revisions on test faults its reviews named, with the wiring test its new login key changes added to its paths.",
       "initial_build_paths": [
         "apps/gateway/src/civil-id-review-http.ts",
         "apps/gateway/test/civil-id-review-http.test.ts",
@@ -9874,7 +9872,8 @@
         "apps/gateway/src/wiring/profile.ts",
         "apps/gateway/src/contributions/index.ts",
         "apps/gateway/src/contributions/profile.ts",
-        "apps/gateway/test/routes-order.test.ts"
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/wiring-runtime.test.ts"
       ],
       "revision_paths": [
         "apps/gateway/src/civil-id-review-http.ts",
@@ -9891,7 +9890,8 @@
         "apps/gateway/src/wiring/profile.ts",
         "apps/gateway/src/contributions/index.ts",
         "apps/gateway/src/contributions/profile.ts",
-        "apps/gateway/test/routes-order.test.ts"
+        "apps/gateway/test/routes-order.test.ts",
+        "apps/gateway/test/wiring-runtime.test.ts"
       ]
     },
     {

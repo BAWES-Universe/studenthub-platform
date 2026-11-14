@@ -8118,13 +8118,18 @@ const RECUT_634_CONTRACTS = (() => {
 // a shape SHU-605 never issues, a mutant killed by the wrong assertion, and
 // many clauses with no test), and the review service could be installed
 // without StaffDocuments. SHU-640 re-queues it with each named; SHU-641
-// re-queues SHU-636 after it. Appended, so SHU-638's claim carries over.
+// re-queues SHU-636 after it. Its new login key would change
+// apps/gateway/test/wiring-runtime.test.ts's closed key list, the gap that
+// stopped SHU-634, so SHU-640 has that test in its paths too. The queue is a
+// new one, SHU-640 first, so the stopped SHU-635 and SHU-636 leave it and the
+// coordinator code install can plan.
 const RECUT_635 = Object.freeze({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" });
 const recut635 = (text) => text.replace(/\bSHU-(635|636)\b/g, (id) => RECUT_635[id]);
 const RECUT_635_REASONS = Object.freeze({
-  "SHU-635": "after its run exhausted its revisions on test fixtures, missing tests and a wiring gap its reviews named, while the handler logic read as sound",
+  "SHU-635": "after its run exhausted its revisions on test fixtures, missing tests and a wiring gap its reviews named, while the handler logic read as sound, with the wiring test its new login key changes added to its paths",
   "SHU-636": "because SHU-635, whose routes and login.civilIdReview it builds against, was re-queued as SHU-640",
 });
+const SHU640_WIRING_TEST = "apps/gateway/test/wiring-runtime.test.ts";
 const SHU640_FAULTS = `
 
 Faults the last run of this card (SHU-635) hit at review; its handler logic read as sound every time (keep it), and these are what stopped it:
@@ -8134,8 +8139,9 @@ Faults the last run of this card (SHU-635) hit at review; its handler logic read
 - Every assertion that pins an acceptance clause carries its token message, and the assertion a mutant is named after must be the first one that fails under that mutant (the last run's unmessaged mask check failed before "REV_QUEUE queue omits full number", so the script never saw its message). The script reads the killed message from the failing test's error field, as apps/gateway/test/civil-id-suggestion-mutations.mjs does at line 65, never by grepping the whole output.
 - Every clause of every acceptance item has its own assertion; the last run left these with none, so write each: REV_QUEUE newest first, 25 per page, page 2, an empty page, the caller's own row absent, HTML and JSON carrying the same rows, an unknown key, a repeated key and a bad page each 400, and each row's country, expiry, time waited ('3 days' for a row three days old) and photo-reading column; REV_STAFF split in two matrices (this is how the REV_STAFF clause is read, since the queue takes no person): the authorization matrix on all five routes (queue, decision page, both POSTs, delivery), where no session is 401 and a non-subtree staff grant, a subtree grant on a non-operator organization and an org-owner are each 404 with byte-identical bodies; and the person matrix on the four person routes only (decision page, both POSTs, delivery), where an authorized staff member asking for a person not waiting, an unknown person or a malformed id gets that same 404 body, while the same staff member's GET /workspace/civil-ids answers the queue; plus 403 on deciding one's own row as well as opening it, and isStaff true for the served grant; REV_DECIDE a reason of 301 characters refused, Confirm with a reason refused, a changed photo version refused, a row no longer waiting refused, the preview naming the person, decision and reason, and nothing stored after every refusal; REV_IMAGES the 'expired' note for an expiry before today in Asia/Kuwait and none for today, the photo reading shown through the real OCR store wiring (seed a reading in the OCR store the helper wires), the delivered bytes equal to the stored bytes, and the same store and port call count for 0, 1 and 60 waiting people with counting fakes; REV_SECRECY a scan of the JSON body, every redirect, every response header, the decoded confirmation payload, the captured view and decision rows and the captured log lines (capture console output in the test); REV_ORIGIN a cross-site Sec-Fetch-Site and a wrong Origin on both POSTs, distinct from the 400 of a missing field, and no session, a Bearer header alone, an extra field and an oversized body each refused with nothing stored.
 - Wiring. login.civilIdReview exists only where StaffDocuments exists too; when the civil ID service is configured but CandidateDocuments is not, every civil ID review route answers as unconfigured (the same 404 as a non-staff session), never 500 from an undefined staffDocuments. A test pins that configuration.
-- The helper's civilIdReview option is the way tests wire the review service, typed, used by the tests (no extend with as never to bypass it).`;
-const SHU640_ACCEPTANCE = " (Review) REV_FIXES: the queue fixture puts the asserted row on the page the test reads; no own-row probe matches another id; image sources are asserted as delivery?t= links with the purpose decoded from the claim; each mutant dies on its named assertion's message read from the failing test's error field; every clause the brief lists under the faults has its own assertion; civilIdReview is installed only with StaffDocuments and an unconfigured route answers 404, never 500; tests wire through the helper's typed civilIdReview option.";
+- The helper's civilIdReview option is the way tests wire the review service, typed, used by the tests (no extend with as never to bypass it).
+- Wiring test. apps/gateway/test/wiring-runtime.test.ts pins the closed list of login application keys (PREP_WIRING_SHAPE, its always and signed lists) and the number of pools closed (PREP_WIRING_COUNT); SHU-634 stopped because a new login key changed that list and the test was not in its paths. It is in yours for exactly two changes: when civilIdReview (or any key you add) is on the login application, add it to the list or lists the test's environment produces it in; and, only if a new pool is truly unavoidable, raise the counts by exactly the pools added, saying why in your final message. Keep every key already there (another card may have added one, such as people). Change no other line of that test.`;
+const SHU640_ACCEPTANCE = " (Review) REV_FIXES: the queue fixture puts the asserted row on the page the test reads; no own-row probe matches another id; image sources are asserted as delivery?t= links with the purpose decoded from the claim; each mutant dies on its named assertion's message read from the failing test's error field; every clause the brief lists under the faults has its own assertion; civilIdReview is installed only with StaffDocuments and an unconfigured route answers 404, never 500; tests wire through the helper's typed civilIdReview option; wiring-runtime.test.ts changes only by adding the new login key to its lists (and the pool counts only if a new pool is unavoidable).";
 const RECUT_635_CONTRACTS = Object.fromEntries(Object.entries(RECUT_635).map(([from, to]) => {
   const base = RECUT_630_CONTRACTS[from];
   const tail = base.acceptance.lastIndexOf(` ${from} is `);
@@ -8143,12 +8149,15 @@ const RECUT_635_CONTRACTS = Object.fromEntries(Object.entries(RECUT_635).map(([f
   const extra = to === "SHU-640" ? SHU640_ACCEPTANCE : "";
   const acceptance = `${recut635(base.acceptance.slice(0, tail))}${extra} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_635_REASONS[from]}; ${from} never lands.`;
   let brief = replaceOnce(recut635(base.brief), recut635(base.acceptance), acceptance, `${to} acceptance`);
-  if (to === "SHU-640") brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU640_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+  if (to === "SHU-640") {
+    brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU640_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+    brief = replaceOnce(brief, "\n- apps/gateway/test/routes-order.test.ts\n\nOut of scope", `\n- apps/gateway/test/routes-order.test.ts\n- ${SHU640_WIRING_TEST}\n\nOut of scope`, `${to} paths`);
+  }
   if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
   return [to, Object.freeze({
     workspace_mode: base.workspace_mode,
-    initial_build_paths: base.initial_build_paths,
-    revision_paths: base.revision_paths,
+    initial_build_paths: to === "SHU-640" ? Object.freeze([...base.initial_build_paths, SHU640_WIRING_TEST]) : base.initial_build_paths,
+    revision_paths: to === "SHU-640" ? Object.freeze([...base.revision_paths, SHU640_WIRING_TEST]) : base.revision_paths,
     acceptance,
     brief,
   })];
