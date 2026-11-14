@@ -205,10 +205,7 @@ test('SHU261_MODEL_ARGV: contract pins length 3 and sandbox index 2', () => {
   }
 });
 
-import {
-  reviewFindingsFromCallback, reviewFindingsContext, validReviewFindings,
-  REVIEW_FINDINGS_SUMMARY_MAX, REVIEW_FINDINGS_CONTEXT_BYTES_MAX,
-} from '../review-findings.mjs';
+import { reviewFindingsFromCallback, reviewFindingsContext, validReviewFindings, REVIEW_FINDINGS_SUMMARY_MAX, REVIEW_FINDINGS_CONTEXT_BYTES_MAX } from '../review-findings.mjs';
 
 const truncationMarker = '\n[review summary truncated]';
 const blockedFindings = (summary, links = []) =>
