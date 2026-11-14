@@ -1912,16 +1912,23 @@ const CASES = [
   {
     name: "M326 pause every card run for one card worker's run that ended without finishing",
     file: "service/card-watchdog.mjs",
-    from: "    const recovers = holder !== null && holder.pid !== null && holder.alive === false;",
+    from: "    const recovers = stuck.kind === \"recovered\" || (holder !== null && holder.pid !== null && holder.alive === false);",
     to: "    const recovers = false; // SHU86-M326",
     pattern: "2026-11-14: the watch alerts a card worker's run",
   },
   {
     name: "M327 leave the pause off for a card worker's ended run whose lock is gone",
     file: "service/card-watchdog.mjs",
-    from: "    const recovers = holder !== null && holder.pid !== null && holder.alive === false;",
-    to: "    const recovers = worker > 1 && stuck.kind === \"ended\"; // SHU86-M327",
+    from: "    const recovers = stuck.kind === \"recovered\" || (holder !== null && holder.pid !== null && holder.alive === false);",
+    to: "    const recovers = stuck.kind === \"recovered\" || (worker > 1 && stuck.kind === \"ended\"); // SHU86-M327",
     pattern: "2026-11-14: a card worker's ended run whose lock is gone",
+  },
+  {
+    name: "M328 never alert a run a worker's start recovered before the watch saw it ended",
+    file: "service/card-watchdog.mjs",
+    from: "  if (status && status.trigger === \"timer\" && status.step === \"recovered\") {",
+    to: "  if (false) { // SHU86-M328",
+    pattern: "2026-11-14: a run a worker's start recovered before the watch",
   },
 ];
 

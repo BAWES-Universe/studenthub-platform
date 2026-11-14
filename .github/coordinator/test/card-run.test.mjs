@@ -6489,7 +6489,8 @@ test("2026-11-14: a card worker's start that finds its lock held by a dead pid r
   assert.equal(status.outcome, "DIED");
   assert.equal(status.card, "SHU-301");
   assert.equal(output.status_recovered, true);
-  assert.equal(stuckRun({ unit: { state: "inactive", running: false, since: null, start: null }, status, now: START.getTime() + 60 * MIN }), null);
+  // The watch reads a recovered run as one to tell the owner about once, never as ended.
+  assert.equal(stuckRun({ unit: { state: "inactive", running: false, since: null, start: null }, status, now: START.getTime() + 60 * MIN }).kind, "recovered");
   // The lock is released, and nothing paused the box.
   assert.equal(host.files.has(paths.lock), false);
   assert.equal(host.files.has(PATHS.pause), false);
@@ -6581,14 +6582,37 @@ test("2026-11-14: the watch alerts a card worker's run that ended without finish
     updated_at: new Date(host.now).toISOString() }))}\n`, { mode: 0o600 });
   host.now += 30 * MIN;
   const recovered = await watchOnce({ io: host.io, paths: PATHS });
-  assert.equal(recovered.workers[0].alert, null);
+  assert.equal(recovered.workers[0].alert.already, true, "the run alerted ended is not alerted again once recovered");
   assert.equal(recovered.workers[0].step, "recovered");
+  assert.equal(alertsOf(host).length, 1);
+  assert.equal(host.files.has(PATHS.pause), false);
   // Worker 1's run that ended without finishing still pauses every card run.
   host.put(statusPath(PATHS), `${JSON.stringify(watchStatus({ updated_at: new Date(host.now - 20 * MIN).toISOString() }))}\n`, { mode: 0o600 });
   const own = await watchOnce({ io: host.io, paths: PATHS });
   assert.equal(own.alert.kind, "ended");
   assert.deepEqual(own.alert.pause, { written: true });
   assert.ok(host.files.has(PATHS.pause));
+});
+
+test("2026-11-14: a run a worker's start recovered before the watch saw it ended is alerted once, without the pause", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+    now: Date.parse("2026-10-18T07:04:00.000Z") + 30 * MIN });
+  host.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
+  host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", step: "recovered", outcome: "DIED",
+    recovered_at: "2026-10-18T07:30:00.000Z", updated_at: "2026-10-18T07:30:00.000Z" }))}\n`, { mode: 0o600 });
+  const result = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.workers[0].alert, { key: "w2-shu-305-run-20261018T070000Z", kind: "recovered", pause: { written: false, left: true }, posted: true });
+  assert.equal(host.files.has(PATHS.pause), false);
+  const alert = alertsOf(host);
+  assert.equal(alert.length, 1);
+  assert.match(alert[0].body, /recovered it at 2026-10-18T07:30:00\.000Z: it reverted the worker, released \/run\/lock\/shu-card-run-w2\.lock and marked the card's run DIED/);
+  host.now += 30 * MIN;
+  const again = await watchOnce({ io: host.io, paths: PATHS });
+  assert.equal(again.workers[0].alert.already, true);
+  assert.equal(alertsOf(host).length, 1, "alerted once");
 });
 
 test("2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it", async () => {

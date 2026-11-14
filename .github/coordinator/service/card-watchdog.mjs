@@ -191,6 +191,13 @@ export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
       invocation: unit.invocation ?? null, since: new Date(unit.since).toISOString(),
       last: new Date(last).toISOString(), status: own ? status : null };
   }
+  // 2026-11-14: a run a worker's start already recovered is still a death the
+  // owner hears about once, even when the recovery came before any pass saw
+  // the run ended. Matched by run id, so a run alerted ended is not alerted
+  // again.
+  if (status && status.trigger === "timer" && status.step === "recovered") {
+    return { kind: "recovered", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
+  }
   if (!status || status.trigger !== "timer" || status.step === null || TERMINAL_STEPS.has(status.step)) return null;
   if (now - Date.parse(status.updated_at) <= limits.endedMs) return null;
   return { kind: "ended", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
@@ -238,8 +245,11 @@ export function renderAlert({ stuck, mention, pause, paths = CARD_RUN_PATHS, lim
       ? `${service} failed after starting at ${stuck.since}, before its run wrote any status: the run may have left its claim or ${paths.lock} in place, holding every later start.`
       : stuck.kind === "stale"
       ? `${service} has been running since ${stuck.since}, and ${stuck.status ? `the run's status was last written at ${stuck.last} (step ${stuck.status.step ?? "unknown"})` : "no status was written since it started"}: nothing for more than ${Math.round(limits.staleMs / 60000)} minutes.`
+      : stuck.kind === "recovered"
+      ? `${service}'s run ended without finishing, and a later start of ${service} recovered it at ${stuck.status.recovered_at ?? stuck.last}: it reverted the worker, released ${paths.lock} and marked the card's run DIED, so the queue reads that card as stopped until it is re-cut.`
       : `${service} is not running, but the run's status stopped at step ${stuck.status.step} at ${stuck.last} and never reached finished: the run ended without finishing, and may have left the host armed and ${paths.lock} in place.`,
-    pause.left ? `No pause file was written: the other card workers go on, and ${service}'s next start recovers this run (it reverts the worker and releases ${paths.lock}), or writes ${paths.pause} itself if that revert does not finish.`
+    pause.left && stuck.kind === "recovered" ? "No pause file was written: the other card workers went on."
+      : pause.left ? `No pause file was written: the other card workers go on, and ${service}'s next start recovers this run (it reverts the worker and releases ${paths.lock}), or writes ${paths.pause} itself if that revert does not finish.`
       : pause.written ? `Wrote ${paths.pause}, so no new card run starts until the owner removes it.`
       : pause.held ? `${paths.pause} was already in place.`
         : `${paths.pause} could not be written (${plainReason(pause.code)}).`,
@@ -432,7 +442,7 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
     // /run/lock) while its activation record stayed would only ever skip
     // HOST_BUSY, so it pauses as before.
     const holder = worker > 1 && stuck.kind === "ended" && io.fs.existsSync(paths.lock) ? lockHolder(io, paths.lock) : null;
-    const recovers = holder !== null && holder.pid !== null && holder.alive === false;
+    const recovers = stuck.kind === "recovered" || (holder !== null && holder.pid !== null && holder.alive === false);
     const pause = pauseKept ? entry.pause : recovers ? { written: false, left: true } : writePause(io, paths, stuck);
     if (entry?.posted) {
       entry.pause = pause;
