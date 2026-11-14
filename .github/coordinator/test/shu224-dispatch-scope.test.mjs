@@ -975,7 +975,7 @@ test("SHU-224: committed scope is pinned to the current card lanes while dispatc
     assert.match(brief, /Own-row probe\.[^\n]*person-10 to person-19/, "SHU-224: SHU-640 names the own-row probe fault");
     assert.match(brief, /Image links\.[^\n]*one query key t[^\n]*decode the claim/, "SHU-224: SHU-640 names the image link shape");
     assert.match(brief, /the assertion a mutant is named after must be the first one that fails[^\n]*error field/, "SHU-224: SHU-640 names the mutant kill rule");
-    assert.match(brief, /REV_STAFF each refused persona[^\n]*on all five routes/, "SHU-224: SHU-640 lists the missing staff cases");
+    assert.match(brief, /REV_STAFF split in two matrices[^\n]*the authorization matrix on all five routes[^\n]*the person matrix on the four person routes only[^\n]*GET \/workspace\/civil-ids answers the queue/, "SHU-224: SHU-640 splits the staff matrix so the queue never needs a person");
     assert.match(brief, /a reason of 301 characters refused/, "SHU-224: SHU-640 lists the missing decision cases");
     assert.match(brief, /same store and port call count for 0, 1 and 60 waiting people/, "SHU-224: SHU-640 requires the cost test");
     assert.match(brief, /login\.civilIdReview exists only where StaffDocuments exists too[^\n]*never 500/, "SHU-224: SHU-640 closes the wiring gap");
