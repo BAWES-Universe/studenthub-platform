@@ -4,6 +4,7 @@ import { PostgresPersonProfileStore } from "../person-profile-store.js";
 import { PostgresPersonCivilIdStore } from "../postgres-person-civil-id-store.js";
 import { PostgresCivilIdOcrStore } from "../postgres-civil-id-ocr-store.js";
 import { PostgresCivilIdReviewStore } from "../postgres-civil-id-review-store.js";
+import { PostgresPeopleDirectoryStore } from "../postgres-people-directory-store.js";
 export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_PROFILE_FIELDS } from "../person-profile-store.js";
 export type { PersonProfileField, PersonProfileBrowserOptions, PersonProfileBrowserPrepared, PersonProfileShownFallback, PersonProfileSessionLiveness, PersonProfileImportedFallback } from "../person-profile-store.js";
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "../postgres-profile-records-store.js";
@@ -14,4 +15,5 @@ export type { LegacyLinkMethod, LegacyLinkStatus, LegacySnapshotPort } from "../
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdStore", { value: PostgresPersonCivilIdStore });
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdOcrStore", { value: PostgresCivilIdOcrStore });
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdReviewStore", { value: PostgresCivilIdReviewStore });
+Object.defineProperty(PostgresPersonProfileStore, "PeopleDirectoryStore", { value: PostgresPeopleDirectoryStore });
 export { PostgresPersonLocationStore } from "../postgres-person-location-store.js";

@@ -7871,7 +7871,7 @@ const RECUT_624_CONTRACTS = Object.fromEntries(Object.entries(RECUT_624).map(([f
 // handler read as sound, but no test drove it through a real request, the
 // mutation script carried none of the eight named mutants, and the sidebar
 // gate checked the role only. One card was too much for one run, so it is split:
-// SHU-630 is the handler, its wiring, HTTP tests and six mutants; SHU-631 (after
+// SHU-630 is the handler, its wiring, HTTP tests and seven mutants; SHU-631 (after
 // SHU-630) is the sidebar link and the My profile row. SHU-620 has landed, so
 // neither waits on it.
 const SPLIT_622_FROM = RECUT_617_CONTRACTS["SHU-622"].brief;
@@ -7998,7 +7998,171 @@ const SPLIT_622_CONTRACTS = Object.freeze({
   "SHU-630": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU630_PATHS, revision_paths: SHU630_PATHS, acceptance: `${SHU630_ACCEPTANCE}${SPLIT_622_TAIL("SHU-630")}`, brief: SHU630_BRIEF.replace(SHU630_ACCEPTANCE, `${SHU630_ACCEPTANCE}${SPLIT_622_TAIL("SHU-630")}`) }),
   "SHU-631": Object.freeze({ workspace_mode: "repo", initial_build_paths: SHU631_PATHS, revision_paths: SHU631_PATHS, acceptance: `${SHU631_ACCEPTANCE}${SPLIT_622_TAIL("SHU-631")}`, brief: SHU631_BRIEF.replace(SHU631_ACCEPTANCE, `${SHU631_ACCEPTANCE}${SPLIT_622_TAIL("SHU-631")}`) }),
 });
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS });
+// SHU-628 stopped with its revisions exhausted (4 builds, 4 reviews; the
+// directory query's third stop after SHU-618 and SHU-624). Its last review
+// blocked on a contract gap: the page was driven from person_profiles by an
+// inner join, so people with no profile row (imported-only people, most staff)
+// never appeared, against decision (a). The brief now names the SQL shape and
+// requires mixed filter fixtures. SHU-634 re-queues SHU-629, which waits on it.
+const RECUT_628 = Object.freeze({ "SHU-628": "SHU-633", "SHU-629": "SHU-634" });
+const recut628 = (text) => text.replace(/\bSHU-(628|629)\b/g, (id) => RECUT_628[id]);
+const RECUT_628_REASONS = Object.freeze({
+  "SHU-628": "after its run exhausted its revisions on an inner join from person_profiles that hid every person without a profile row and on filters tested only on uniform populations, so the brief now names the SQL shape and the mixed fixtures",
+  "SHU-629": "because SHU-628, the query it renders, was re-queued as SHU-633",
+});
+const SHU633_FAULTS = `
+
+Faults the last run of this card (SHU-628) hit at review, on top of those above; do not repeat them:
+- Everyone, not only people with a profile row. person_profiles rows exist only after a person's first self-edit (packages/db/src/person-profile-store.ts writes them with INSERT ... ON CONFLICT (principal_id) DO UPDATE), so people who only have an imported snapshot, and most staff, have none. Legacy's staff list shows every candidate, so by the legacy-benchmark rule the directory lists every principal. The page statement is driven from principals with every other table left-joined, in this shape: FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id = p.id LEFT JOIN legacy_account_links l ON l.principal_id = p.id (re-read the real column names), and the civil ID, decision, catalogue, area and background reads left-joined or correlated the same way. Never FROM person_profiles, and never an inner join to person_profiles. A person with no profile row shows their Universe name (principals.display_name) as the name shown and sorts by it, has workStatus null (so status=unset finds them), nationality null and civilState none unless person_civil_ids says otherwise, and counts every person_profiles requirement as missing.
+- Filters are proven on mixed populations. The seeded people cover every work status (not_looking, active, open_to_offers and unset), at least two nationalities, every civil state and both details results, and each filter test asserts which seeded people it EXCLUDES as well as which it keeps, alone and combined with q. A test where every seeded person has the same value for the filtered column pins nothing and is refused at review.
+- The order's principal id tiebreak is exercised: two people with the same name shown, on the boundary of two pages, come back in principal id order and neither is repeated or skipped.
+- total comes from the same one statement, either the named window count (count(*) OVER ()) or a scalar count over the filtered CTE; say in your final message which, and the counting-pool test still sees one statement per page.
+- An empty q evaluates no full-text function: to_tsquery and to_tsvector are only reached when the term has a usable token (for example CASE WHEN $5::text <> '' THEN ... END, or building the predicate so the planner never calls them), and a database test listens for the pool client's notice events on an empty-q page and asserts none arrive.
+- The Kuwaiti-mother answer is required exactly as deriveProfileCompleteness requires it from platform-held values: when a nationality is written (pp.nationality_id IS NOT NULL) and its catalogue code is not KW, so the SQL predicate is pp.nationality_id IS NOT NULL AND ci.code IS DISTINCT FROM 'KW' (an unknown nationality id still counts the answer as required, and the nationality itself as missing, never as Kuwaiti). With no nationality written CMP falls back to the imported pending list, which the directory does not see before SHU-121 (decision (a)), so a person with no nationality is never missing the Kuwaiti-mother answer. The 'IS DISTINCT FROM' rule above is this predicate's second half, not the whole of it.
+- The closed-list unit test may union two CMP inputs (CMP asks for the Kuwaiti-mother answer only when a written nationality's code is not KW, so no single input misses all eighteen requirements); say so in a comment on that test.`;
+const SHU633_ACCEPTANCE = " (Review) DIRDB_EVERYONE: a principal seeded with INSERT INTO principals(id, display_name) and no person_profiles row, no email and a legacy_account_links row appears on an unfiltered page, is found by a word of their Universe name, has imported true, workStatus null, civilState none and detailsMissing 14 (every covered requirement except kuwaiti_mother, which CMP does not require without a written nationality), matches status=unset and details=missing, and is excluded by status=active; a principal with no profile row and no legacy link appears with imported false; every work status, a second nationality and every civil state are seeded and each filter test asserts the people it excludes, alone and combined with q; a person with every covered requirement met and no nationality written has detailsMissing 1 (nationality only, never kuwaiti_mother), and the same person with a written non-KW nationality and no answer has detailsMissing 1 (kuwaiti_mother only); two people sharing a name shown across a page boundary come back in principal id order; an empty-q page raises no notice.";
+const RECUT_628_CONTRACTS = Object.fromEntries(Object.entries(RECUT_628).map(([from, to]) => {
+  const base = RECUT_624_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  let body = recut628(base.acceptance.slice(0, tail));
+  let brief = recut628(base.brief);
+  if (to === "SHU-633") {
+    brief = replaceOnce(brief, "staff can search and filter everyone with a profile from one database query per page", "staff can search and filter everyone who has signed in (every principal, with or without a profile row) from one database query per page", `${to} title`);
+    brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU633_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+    brief = replaceOnce(brief, body, `${body}${SHU633_ACCEPTANCE}`, `${to} acceptance`);
+    body = `${body}${SHU633_ACCEPTANCE}`;
+  } else {
+    brief = replaceOnce(brief, "searches and filters everyone with a profile", "searches and filters everyone who has signed in (with or without a profile row)", `${to} title`);
+    brief = replaceOnce(brief, "(SHU-622 may add one)", "(SHU-635 may add one)", `${to} helper note`);
+    brief = replaceOnce(brief, "(SHU-622's civil ID count)", "(SHU-636's civil ID count)", `${to} sidebar note`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance: `${body} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_628_REASONS[from]}; ${from} never lands.`,
+    brief,
+  })];
+}));
+// SHU-630's worker died after its build pushed coordinator/SHU-630 and before
+// any review ran, so the contract was never judged; the box now refuses the
+// card (CARD_RUN_BRANCH_NOT_AT_TARGET). SHU-635 re-queues it unchanged, and
+// SHU-636 re-queues SHU-631, which waited on it.
+const RECUT_630 = Object.freeze({ "SHU-630": "SHU-635", "SHU-631": "SHU-636" });
+const recut630 = (text) => text.replace(/\bSHU-(630|631)\b/g, (id) => RECUT_630[id]);
+const RECUT_630_REASONS = Object.freeze({
+  "SHU-630": "after its worker died once its build had pushed and before any review ran, so the contract itself was never judged",
+  "SHU-631": "because SHU-630, whose routes and login.civilIdReview it builds against, was re-queued as SHU-635",
+});
+const RECUT_630_CONTRACTS = Object.fromEntries(Object.entries(RECUT_630).map(([from, to]) => {
+  const base = SPLIT_622_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const acceptance = `${recut630(base.acceptance.slice(0, tail))} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_630_REASONS[from]}; ${from} never lands.`;
+  const brief = replaceOnce(recut630(base.brief), recut630(base.acceptance), acceptance, `${to} acceptance`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance,
+    brief,
+  })];
+}));
+// SHU-634 stopped with its revisions exhausted. Its three reviews found test
+// and wiring faults, one of them a path gap: a new key on the login
+// application changes apps/gateway/test/wiring-runtime.test.ts's closed key
+// list and pool count, which was not in its paths. SHU-638 re-queues the
+// contract with every finding named and that test added; SHU-633, the query it
+// renders, has landed, so it waits on nothing.
+const SHU638_WIRING_TEST = "apps/gateway/test/wiring-runtime.test.ts";
+const SHU638_FAULTS = `
+
+Faults the last run of this card (SHU-634) hit at review; do not repeat them:
+- A test built new RegExp("+96550000000") from a phone number, which throws (a leading + is a regex quantifier), so DIR_ROWS and the mutation control failed. Never build a regular expression from data: check absence and presence with includes, and remember a row carries only phoneLast4, never the full phone.
+- 404 must be byte-identical to the gateway's own answer for a path that does not exist (apps/gateway/src/index.ts, the final 404: content-type application/json, body {"ok":false,"error":"not_found"}), for every non-staff session, on both the HTML and the JSON route, and also when login.people is not configured. Rendering renderError for a hidden HTML page, or a different body when the feature is off, tells a probe the page exists. A test compares the status, the content-type and the body of a non-staff request with a request to a path that does not exist.
+- DIR_ACCESS needs the org-owner and employer personas the acceptance names, each as its own test persona with the grant that role really holds in the authz store the server reads, not only an ordinary person and a self-scope grant.
+- renderPeopleDirectory renders inside the same document shell renderCompanyDirectory uses (its layout, header, sidebar and classes, through the same helper), not a hand-written document.
+- Wiring: apps/gateway/test/wiring-runtime.test.ts pins the closed list of login application keys (PREP_WIRING_SHAPE) and the number of pools closed (PREP_WIRING_COUNT). Expose the page as a top-level people key on the profile wiring's application (not nested under area, and with no login.area?.people fallback anywhere), and build PostgresPeopleDirectoryStore over a pool the profile wiring already owns ({ pool }, so it closes nothing of its own) and the country read over the existing profile store, so no new pool is created. ${SHU638_WIRING_TEST} is in your paths for exactly two changes: add "people" to the always list, and, only if a new pool is truly unavoidable, raise the two counts by exactly the pools added, saying why in your final message. Change no other line of that test.
+- The mutation script's needles are read from the freshly built file and must each bind exactly once; the last run's sidebar needle predated a later edit of the same condition and bound zero times, so the script threw after five mutants and npm test could not finish. Run the whole script end to end after your last edit, and copy each needle from the built dist file, never from memory or the TypeScript source.
+- kuwaitDate is exported from packages/profile/src/self-edit.ts (and re-exported by the package index), not from packages/profile/src/people-directory.ts.`;
+const SHU638_ACCEPTANCE = " (Review) DIR_FIXES: no test builds a regular expression from a phone number or other data; a non-staff request and a request to a path that does not exist get the same status, content-type and body on the HTML and JSON routes, and so does the page when login.people is not configured; an org-owner and an employer persona are each refused with that body; the page renders in renderCompanyDirectory's shell; login.people is a top-level key, wiring-runtime.test.ts changes only by adding it to the always list (and the pool counts only if a new pool is unavoidable), and no login.area?.people fallback exists; the mutation script runs end to end with every needle binding once.";
+const RECUT_634_CONTRACTS = (() => {
+  const from = "SHU-634";
+  const to = "SHU-638";
+  const base = RECUT_628_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const recut = (text) => text.replace(/\bSHU-634\b/g, to);
+  const oldBody = recut(base.acceptance.slice(0, tail));
+  const body = `${replaceOnce(oldBody, "except the route-order lines the brief allows", "except the route-order lines and the wiring-runtime.test.ts list the brief allows", `${to} acceptance allowance`)}${SHU638_ACCEPTANCE}`;
+  const paths = Object.freeze([...base.initial_build_paths, SHU638_WIRING_TEST]);
+  let brief = recut(base.brief);
+  brief = replaceOnce(brief, oldBody, body, `${to} acceptance`);
+  brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU638_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+  brief = replaceOnce(brief, "\n- apps/gateway/test/routes-order.test.ts\n\nOut of scope", `\n- apps/gateway/test/routes-order.test.ts\n- ${SHU638_WIRING_TEST}\n\nOut of scope`, `${to} paths`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return Object.freeze({ [to]: Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: paths,
+    revision_paths: Object.freeze([...base.revision_paths, SHU638_WIRING_TEST]),
+    acceptance: `${body} ${to} is ${from}'s contract re-queued under a fresh id after its run exhausted its revisions on test, 404 and wiring faults its reviews named, with the wiring test it had to change added to its paths; ${from} never lands.`,
+    brief,
+  }) });
+})();
+// SHU-635 stopped with its revisions exhausted. Every review read the handler
+// logic as sound; the tests kept failing (a queue fixture aging the wrong row,
+// an own-row probe matching person-10 to person-19, an image link asserted in
+// a shape SHU-605 never issues, a mutant killed by the wrong assertion, and
+// many clauses with no test), and the review service could be installed
+// without StaffDocuments. SHU-640 re-queues it with each named; SHU-641
+// re-queues SHU-636 after it. Its new login key would change
+// apps/gateway/test/wiring-runtime.test.ts's closed key list, the gap that
+// stopped SHU-634, so SHU-640 has that test in its paths too. The queue is a
+// new one, SHU-640 first, so the stopped SHU-635 and SHU-636 leave it and the
+// coordinator code install can plan; SHU-638 has landed, so it leaves too.
+const RECUT_635 = Object.freeze({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" });
+const recut635 = (text) => text.replace(/\bSHU-(635|636)\b/g, (id) => RECUT_635[id]);
+const RECUT_635_REASONS = Object.freeze({
+  "SHU-635": "after its run exhausted its revisions on test fixtures, missing tests and a wiring gap its reviews named, while the handler logic read as sound, with the wiring test its new login key changes added to its paths",
+  "SHU-636": "because SHU-635, whose routes and login.civilIdReview it builds against, was re-queued as SHU-640",
+});
+const SHU640_WIRING_TEST = "apps/gateway/test/wiring-runtime.test.ts";
+const SHU640_FAULTS = `
+
+Faults the last run of this card (SHU-635) hit at review; its handler logic read as sound every time (keep it), and these are what stopped it:
+- Queue fixture order. listPending is newest first, 25 per page, ties by principal id. The last run aged the row it asserted on (person-2, three days old) and saved 26 filler rows at the helper's frozen clock, so person-2 fell to page 2 and every page-1 assertion about it failed. Age the filler rows instead (each older than the asserted row) or assert on the page that holds the row, and derive which page from the fixture, never by hand.
+- Own-row probe. A pattern like /person-1/ matches person-10 to person-19. Assert on the exact link or id (for example /civil-ids\\/person-1"/), never on a prefix of another id.
+- Image links. SHU-605 issues \`\${STAFF_DELIVERY_PATH}?t=<payload>.<mac>\`: one query key t, with the purpose inside the base64url claim and no '=' anywhere. Assert /^\\/workspace\\/civil-ids\\/delivery\\?t=/ on each <img src>, and decode the claim to check purpose civil_id_review.
+- Every assertion that pins an acceptance clause carries its token message, and the assertion a mutant is named after must be the first one that fails under that mutant (the last run's unmessaged mask check failed before "REV_QUEUE queue omits full number", so the script never saw its message). The script reads the killed message from the failing test's error field, as apps/gateway/test/civil-id-suggestion-mutations.mjs does at line 65, never by grepping the whole output.
+- Every clause of every acceptance item has its own assertion; the last run left these with none, so write each: REV_QUEUE newest first, 25 per page, page 2, an empty page, the caller's own row absent, HTML and JSON carrying the same rows, an unknown key, a repeated key and a bad page each 400, and each row's country, expiry, time waited ('3 days' for a row three days old) and photo-reading column; REV_STAFF split in two matrices (this is how the REV_STAFF clause is read, since the queue takes no person): the authorization matrix on all five routes (queue, decision page, both POSTs, delivery), where no session is 401 and a non-subtree staff grant, a subtree grant on a non-operator organization and an org-owner are each 404 with byte-identical bodies; and the person matrix on the four person routes only (decision page, both POSTs, delivery), where an authorized staff member asking for a person not waiting, an unknown person or a malformed id gets that same 404 body, while the same staff member's GET /workspace/civil-ids answers the queue; plus 403 on deciding one's own row as well as opening it, and isStaff true for the served grant; REV_DECIDE a reason of 301 characters refused, Confirm with a reason refused, a changed photo version refused, a row no longer waiting refused, the preview naming the person, decision and reason, and nothing stored after every refusal; REV_IMAGES the 'expired' note for an expiry before today in Asia/Kuwait and none for today, the photo reading shown through the real OCR store wiring (seed a reading in the OCR store the helper wires), the delivered bytes equal to the stored bytes, and the same store and port call count for 0, 1 and 60 waiting people with counting fakes; REV_SECRECY a scan of the JSON body, every redirect, every response header, the decoded confirmation payload, the captured view and decision rows and the captured log lines (capture console output in the test); REV_ORIGIN a cross-site Sec-Fetch-Site and a wrong Origin on both POSTs, distinct from the 400 of a missing field, and no session, a Bearer header alone, an extra field and an oversized body each refused with nothing stored.
+- Wiring. login.civilIdReview exists only where StaffDocuments exists too; when the civil ID service is configured but CandidateDocuments is not, every civil ID review route answers as unconfigured (the same 404 as a non-staff session), never 500 from an undefined staffDocuments. A test pins that configuration.
+- The helper's civilIdReview option is the way tests wire the review service, typed, used by the tests (no extend with as never to bypass it).
+- Wiring test. apps/gateway/test/wiring-runtime.test.ts pins the closed list of login application keys (PREP_WIRING_SHAPE, its always and signed lists) and the number of pools closed (PREP_WIRING_COUNT); SHU-634 stopped because a new login key changed that list and the test was not in its paths. It is in yours for exactly two changes: when civilIdReview (or any key you add) is on the login application, add it to the list or lists the test's environment produces it in; and, only if a new pool is truly unavoidable, raise the counts by exactly the pools added, saying why in your final message. Keep every key already there (another card may have added one, such as people). Change no other line of that test.`;
+const SHU640_ACCEPTANCE = " (Review) REV_FIXES: the queue fixture puts the asserted row on the page the test reads; no own-row probe matches another id; image sources are asserted as delivery?t= links with the purpose decoded from the claim; each mutant dies on its named assertion's message read from the failing test's error field; every clause the brief lists under the faults has its own assertion; civilIdReview is installed only with StaffDocuments and an unconfigured route answers 404, never 500; tests wire through the helper's typed civilIdReview option; wiring-runtime.test.ts changes only by adding the new login key to its lists (and the pool counts only if a new pool is unavoidable).";
+const RECUT_635_CONTRACTS = Object.fromEntries(Object.entries(RECUT_635).map(([from, to]) => {
+  const base = RECUT_630_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const extra = to === "SHU-640" ? SHU640_ACCEPTANCE : "";
+  const acceptance = `${recut635(base.acceptance.slice(0, tail))}${extra} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_635_REASONS[from]}; ${from} never lands.`;
+  let brief = replaceOnce(recut635(base.brief), recut635(base.acceptance), acceptance, `${to} acceptance`);
+  if (to === "SHU-640") {
+    brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU640_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+    brief = replaceOnce(brief, "\n- apps/gateway/test/routes-order.test.ts\n\nOut of scope", `\n- apps/gateway/test/routes-order.test.ts\n- ${SHU640_WIRING_TEST}\n\nOut of scope`, `${to} paths`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: to === "SHU-640" ? Object.freeze([...base.initial_build_paths, SHU640_WIRING_TEST]) : base.initial_build_paths,
+    revision_paths: to === "SHU-640" ? Object.freeze([...base.revision_paths, SHU640_WIRING_TEST]) : base.revision_paths,
+    acceptance,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
