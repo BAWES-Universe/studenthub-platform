@@ -61,6 +61,8 @@
     ".github/coordinator/test/card-run-mutations.test.mjs",
     ".github/coordinator/test/card-run.test.mjs",
     ".github/coordinator/test/card-usage.test.mjs",
+    ".github/coordinator/test/ci-before-review-mutations.test.mjs",
+    ".github/coordinator/test/ci-before-review.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
     ".github/coordinator/test/disk-prune.test.mjs",
@@ -4869,7 +4871,35 @@
     "Disk D3b: a clone whose launch the supervisor ordered but never completed stays",
     "Disk D12: a lock, order, completion, record or timestamp that cannot be read keeps the clone, never reads as absent",
     "Disk D12b: a removal whose result cannot be confirmed is counted failed, not removed",
-    "Disk D12m: the mutant that reads an unreadable file as absent fails D12"
+    "Disk D12m: the mutant that reads an unreadable file as absent fails D12",
+    "CI before review: mutation C1 turn the gate on without enabled: true",
+    "CI before review: mutation C2 gate every armed review whatever the committed flag says",
+    "CI before review: mutation C3 gate a review-only run or a landing repair",
+    "CI before review: mutation C4 review a red head instead of revising it",
+    "CI before review: mutation C5 dispatch the review although a CI revise was minted",
+    "CI before review: mutation C6 review a head whose CI is still running",
+    "CI before review: mutation C7 let the tick dispatch the review while CI holds it",
+    "CI before review: mutation C8 hold a head forever when CI never settles",
+    "CI before review: mutation C9 mint CI revises past max_ci_revise",
+    "CI before review: mutation C10 count CI revises against max_revise",
+    "CI before review: mutation C11 bind CI findings of another head to the revise",
+    "CI before review: mutation C12 judge a build head's CI without the landing's external-check policy",
+    "CI before review: the gate is off unless enabled is exactly true, with defaults of 45 minutes and 2 revises",
+    "CI before review: only a review of a build or revise head is gated, never a review-only run or a landing repair",
+    "CI before review: green proceeds to review",
+    "CI before review: pending or unreported checks hold inside wait_minutes",
+    "CI before review: checks still pending past wait_minutes proceed to review with a note that CI did not settle",
+    "CI before review: red mints a revise until max_ci_revise, then proceeds to review",
+    "CI before review: a CI revise is shaped like a routed revise, bound to the head under review, with CI findings",
+    "CI before review: CI revises are counted on their own and never consume max_revise",
+    "CI before review: with the flag off the review is dispatched exactly as today and no check is read",
+    "CI before review: green checks at the build head dispatch the review",
+    "CI before review: pending checks hold the review, and a later tick dispatches it once green",
+    "CI before review: checks still pending past wait_minutes dispatch the review with a note that CI did not settle",
+    "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
+    "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
+    "CI before review: a failing third-party check the policy names as required still mints a CI revise",
+    "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round"
   ],
   "requirements": [
     {
@@ -34886,6 +34916,118 @@
     },
     {
       "name": "Disk D12m: the mutant that reads an unreadable file as absent fails D12",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C1 turn the gate on without enabled: true",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C2 gate every armed review whatever the committed flag says",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C3 gate a review-only run or a landing repair",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C4 review a red head instead of revising it",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C5 dispatch the review although a CI revise was minted",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C6 review a head whose CI is still running",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C7 let the tick dispatch the review while CI holds it",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C8 hold a head forever when CI never settles",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C9 mint CI revises past max_ci_revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C10 count CI revises against max_revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C11 bind CI findings of another head to the revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C12 judge a build head's CI without the landing's external-check policy",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: the gate is off unless enabled is exactly true, with defaults of 45 minutes and 2 revises",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: only a review of a build or revise head is gated, never a review-only run or a landing repair",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: green proceeds to review",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: pending or unreported checks hold inside wait_minutes",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: checks still pending past wait_minutes proceed to review with a note that CI did not settle",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: red mints a revise until max_ci_revise, then proceeds to review",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a CI revise is shaped like a routed revise, bound to the head under review, with CI findings",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: CI revises are counted on their own and never consume max_revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: with the flag off the review is dispatched exactly as today and no check is read",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: green checks at the build head dispatch the review",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: pending checks hold the review, and a later tick dispatches it once green",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: checks still pending past wait_minutes dispatch the review with a note that CI did not settle",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a failing third-party check the policy names as required still mints a CI revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round",
       "capabilities": []
     }
   ],
