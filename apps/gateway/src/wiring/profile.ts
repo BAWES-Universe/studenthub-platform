@@ -4,6 +4,7 @@ import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocati
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, kuwaitDate, type ApprovedProfileAdapter, type CivilIdOcrStore, type CivilIdStore, type OwnProfileReader } from "@studenthub/profile";
+import { createPeopleDirectory } from "../people-directory.js";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -89,8 +90,12 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const browserSessionPool = browserTokens ? new pg.Pool({ connectionString: databaseUrl }) : undefined;
   const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
+  const profileReadPool=new pg.Pool({connectionString:databaseUrl});
+  const profileChoices=new PostgresPersonProfileStore({pool:profileReadPool});
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
-  const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
+  const personLocations = new PostgresPersonLocationStore({ pool:profileReadPool });
+  const PeopleDirectoryStore=(PostgresPersonProfileStore as typeof PostgresPersonProfileStore&{PeopleDirectoryStore:new(options:{pool:pg.Pool})=>import("@studenthub/profile").PeopleDirectoryStore}).PeopleDirectoryStore;
+  const people=createPeopleDirectory({sessions:access.loginStore.sessions,authz:access.authzStore,store:new PeopleDirectoryStore({pool:profileReadPool}),choices:()=>profileChoices.readOriginChoices()});
   const area = createArea({ store: personLocations });
   const profiles = composeOwnProfiles({ principals: access.authzStore, source: profileSource, safeWrites, personProfiles, civilId, area });
   // SHU-182: a candidate's own bank details, behind the same signing key.
@@ -167,8 +172,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(civilId ? { civilId } : {}),
       ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
+      people,
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), profileReadPool.end(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
   };
 }

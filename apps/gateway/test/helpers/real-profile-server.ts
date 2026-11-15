@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import type { SessionStore } from "@studenthub/login-contract";
 import {
   CivilIdVault,
   InMemoryApprovedProfileAdapter,
@@ -41,6 +42,8 @@ export const REAL_PROFILE_OTHER_SESSION = "t".repeat(43);
 export const REAL_PROFILE_CIVIL_KEY = Buffer.alloc(32, 9).toString("base64");
 
 export type RealProfileServices = {
+  readonly authz: InMemoryAuthzStore;
+  readonly sessions: SessionStore;
   readonly civilId: ReturnType<typeof createCivilId>;
   readonly civilStore: InMemoryCivilIdStore;
   readonly vault: CivilIdVault;
@@ -95,7 +98,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const countedCivil = { ...civilId, async readOwn(id: string) { counts.civilReads++; return civilId.readOwn(id); } } as typeof civilId;
   const profiles = composeOwnProfiles({ principals: authz, source, civilId: countedCivil, area, today: options.today ?? (() => kuwaitDate(now())) });
   const countedProfiles = { async readOwn(request: Parameters<typeof profiles.readOwn>[0]) { counts.profileReads++; return profiles.readOwn(request); } };
-  const services: RealProfileServices = { civilId, civilStore, vault, profiles, now };
+  const services: RealProfileServices = { authz, sessions:rig.sessions, civilId, civilStore, vault, profiles, now };
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,
