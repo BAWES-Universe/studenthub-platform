@@ -187,8 +187,8 @@ function ciWorld(h, { checks = () => [] } = {}) {
 
 // Drive one armed episode to a completed build whose push moved the branch to
 // SHA_WRITE; the next tick routes its review.
-async function builtEpisode({ ci = ON, checks } = {}) {
-  const h = createEpisodeHarness({ githubToken: "ghtok", configOverrides: ci ? { ci_before_review: ci } : {} });
+async function builtEpisode({ ci = ON, checks, config = {} } = {}) {
+  const h = createEpisodeHarness({ githubToken: "ghtok", configOverrides: { ...config, ...(ci ? { ci_before_review: ci } : {}) } });
   const world = ciWorld(h, { checks });
   await world.tick();
   const build = h.launched[0];
@@ -276,12 +276,24 @@ test("CI before review: red checks dispatch a CI revise to the writer with ci-fi
 
 test("CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides", async () => {
   const advisory = (head) => ({ id: 301, name: "seer-advisory", status: "completed", conclusion: "failure", head_sha: head, app: { slug: "seer-by-sentry" } });
-  const { h, world } = await builtEpisode({ checks: (head) => [job(101, head ?? SHA_WRITE, "success"), advisory(head ?? SHA_WRITE)] });
+  const { h, world } = await builtEpisode({ config: { external_checks: { required: ["sentry"] } },
+    checks: (head) => [job(101, head ?? SHA_WRITE, "success"), advisory(head ?? SHA_WRITE)] });
   try {
     await world.tick();
     assert.equal(h.triggers["codex-cli"], 1, "no CI revise for an advisory check");
     assert.equal(h.triggers["claude-code"], 1, "the review is dispatched");
     assert.equal(h.latestFor("claude-verifier").target_sha, SHA_WRITE);
+  } finally { h.cleanup(); }
+});
+
+test("CI before review: a failing third-party check the policy names as required still mints a CI revise", async () => {
+  const required = (head) => ({ id: 302, name: "sentry-checks", status: "completed", conclusion: "failure", head_sha: head, app: { slug: "sentry" } });
+  const { h, world } = await builtEpisode({ config: { external_checks: { required: ["sentry"] } },
+    checks: (head) => [job(101, head ?? SHA_WRITE, "success"), required(head ?? SHA_WRITE)] });
+  try {
+    await world.tick();
+    assert.equal(h.triggers["claude-code"], 0, "no review is spent on a head a required check failed");
+    assert.equal(h.triggers["codex-cli"], 2, "the writer gets the head back");
   } finally { h.cleanup(); }
 });
 

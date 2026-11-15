@@ -814,7 +814,10 @@ export function ciBeforeReviewSettings(config) {
 
 // Only a review of a build or revise output is gated. A review-only run
 // reviews someone else's pull request, and a landing repair's re-review
-// already follows a CI-driven revise; both keep today's behaviour.
+// already follows a CI-driven revise; both keep today's behaviour. The gate
+// lives on the armed-activation path only: every box card run is armed, and
+// the unarmed configured-dispatch fallback (handoffContinuations) is left
+// ungated on purpose, so it reviews exactly as before.
 export function ciBeforeReviewApplies({ settings, activation, successor }) {
   return Boolean(settings) && successor?.role === "review"
     && activation?.review_only !== true && activation?.landing_repair !== true;
