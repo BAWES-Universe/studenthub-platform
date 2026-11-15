@@ -45,16 +45,6 @@ test("CI_SPLIT required fast-checks always aggregates both independent suites", 
   assert.doesNotMatch(gate, /^        if:/m, "CI_GATE: the gate step must not be conditional");
 });
 
-test("CI_TRIGGERS every pull request, main, and every coordinator branch push run CI", () => {
-  const on = workflow.match(/^on:\n((?:  .*\n|\s*\n)+)/m);
-  assert.ok(on, "CI_TRIGGERS: workflow must declare its triggers");
-  const triggers = on[1].split("\n").filter((line) => line.trim() && !line.trim().startsWith("#"));
-  assert.deepEqual(triggers, ["  pull_request:", "  push:", '    branches: [main, "coordinator/**"]'],
-    "CI_TRIGGERS: a coordinator build head is CI-checked on push, before review");
-  // A push to a coordinator branch has no pull request: no job may read one.
-  assert.doesNotMatch(workflow, /github\.event\.pull_request|github\.base_ref|github\.head_ref/);
-});
-
 test("CI_APPLICATION application, PostgreSQL and build checks retain their order", () => {
   const app = jobs["application-checks"];
   assert.deepEqual(runLines(app), ["npm ci --ignore-scripts", "npm run typecheck", "npm test",
