@@ -8162,7 +8162,52 @@ const RECUT_635_CONTRACTS = Object.fromEntries(Object.entries(RECUT_635).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS });
+// SHU-640 stopped with its revisions exhausted, but its last review (head
+// ae25c6a on coordinator/SHU-640, based on the bound head) found only two
+// blocking faults and read everything else as sound. SHU-643 re-queues it to
+// start from that head and fix the two, with the earlier reviews' findings
+// named so none comes back; SHU-644 re-queues SHU-641 after it. A new queue,
+// SHU-643 first, so the stopped SHU-640 leaves it.
+const RECUT_640 = Object.freeze({ "SHU-640": "SHU-643", "SHU-641": "SHU-644" });
+const recut640 = (text) => text.replace(/\bSHU-(640|641)\b/g, (id) => RECUT_640[id]);
+const RECUT_640_REASONS = Object.freeze({
+  "SHU-640": "to start from its last head, whose review found only a cost test reading a staff image service nothing exposed and one untested person-matrix case",
+  "SHU-641": "because SHU-640, whose routes and login.civilIdReview it builds against, was re-queued as SHU-643",
+});
+const SHU643_FAULTS = `
+
+Start from the last run's head. The last run of this card (SHU-640) ended at ae25c6a on coordinator/SHU-640, whose merge base with main is the bound head of this run, and its last review read everything as sound except the two faults below. Begin by applying that head's change to your paths: git fetch origin coordinator/SHU-640 if ae25c6a is not in your clone, then git diff $(git merge-base HEAD ae25c6a) ae25c6a -- <your paths> | git apply --3way. Keep what it did and fix only what follows. If ae25c6a cannot be reached, say so in your final message and build from this brief, holding every line below.
+
+Faults the last run of this card (SHU-640) hit at review. Its last head is blocked on these two only:
+- One StaffDocuments per server. The cost test (REV_IMAGES, 0, 1 and 60 waiting people) read the staff image port as login.civilIdReview.staffDocuments, but nothing set that field: the helper built civilIdReview without it, and apps/gateway/src/index.ts built a new StaffDocuments inside the per-request callback into a fresh copy of login.civilIdReview. So the test threw a TypeError before its first assertion and npm test did not run to the end. Build StaffDocuments once per server, before the request handler (in createGatewayServer or in the helper and the entrypoint), and expose that same instance as login.civilIdReview.staffDocuments (an added optional field, beside store and isStaff), so a counting wrapper around it is the instance the handler calls. No request builds a StaffDocuments. Keep the case where the civil ID service is configured and CandidateDocuments is not: civilIdReview carries no staffDocuments and every civil ID review route answers the unconfigured 404, never 500.
+- The person matrix on all four person routes. GET /workspace/civil-ids/<a person not waiting> was asserted nowhere. Assert each of a person not waiting (a real row with needs_review false), an unknown person and a malformed id on each of the decision page GET, both decision POSTs and delivery, each a 404 with a body byte-identical to the non-staff 404.
+
+Found by its earlier reviews and fixed by the last head; keep each fixed, and keep its assertion:
+- Wall clock. The helper passes options.now into the civilIdReview service, so how long a row has waited is read from the test's clock, never new Date(); fixture times are derived from that clock, never written as dates.
+- Every REV_QUEUE, REV_STAFF, REV_DECIDE, REV_IMAGES, REV_SECRECY and REV_ORIGIN clause the faults above name has its own assertion with its token message: newest first, 25 per page, a page 2 that holds rows, an empty page's body, the caller's own row absent (person-1 has a waiting row of its own in the fixture), each row's country, expiry and photo-reading column; the authorization matrix (no session 401; a non-subtree staff grant, a subtree grant on a non-operator organization and an org-owner each the same 404) on all five routes; a changed photo version refused with nothing stored; the 'expired' note before today in Asia/Kuwait and none for today; a reading seeded in the OCR store the helper wires and shown on the page; the redirect, every response header, the decoded confirmation payload, the decision rows and captured console output scanned for the full number; a wrong Origin and a cross-site Sec-Fetch-Site on both POSTs.
+- The evidence digest. POST .../decision carries the digest of the front and back versions, a missing photo entering it as the fixed 'none' marker, as the brief's closed field list says.
+- Pages are written through writeHtml and securityHeaders (apps/gateway/src/web-ui.ts), never with their own headers: a no-referrer policy on the decision page makes the browser send Origin null on its own form, and the exact-Origin check then refuses every real decision.
+- Delivery maps every StaffDocuments refusal to the person matrix's 404 body, never passing a LifecycleError status (403 or 503) through.
+- The isStaff mutant drops scope subtree from the shipped check in apps/gateway/src/wiring/profile.ts, never from the test helper's copy.`;
+const SHU643_ACCEPTANCE = " (Review) REV_FIXES2: one StaffDocuments per server, exposed as login.civilIdReview.staffDocuments and wrapped by the cost test, which passes for 0, 1 and 60 waiting people; no request builds a StaffDocuments; the person matrix (not waiting, unknown, malformed) is asserted on the decision page GET, both POSTs and delivery; npm test runs to the end.";
+const RECUT_640_CONTRACTS = Object.fromEntries(Object.entries(RECUT_640).map(([from, to]) => {
+  const base = RECUT_635_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const extra = to === "SHU-643" ? SHU643_ACCEPTANCE : "";
+  const acceptance = `${recut640(base.acceptance.slice(0, tail))}${extra} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_640_REASONS[from]}; ${from} never lands.`;
+  let brief = replaceOnce(recut640(base.brief), recut640(base.acceptance), acceptance, `${to} acceptance`);
+  if (to === "SHU-643") brief = replaceOnce(brief, "\n\nAcceptance. Tests are named", `${SHU643_FAULTS}\n\nAcceptance. Tests are named`, `${to} faults`);
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
