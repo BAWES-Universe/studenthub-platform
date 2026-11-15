@@ -199,7 +199,7 @@ export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
   // A start that found the run dead but could not release its lock is an
   // incomplete recovery: alerted, and paused, never read as done.
   if (status && status.trigger === "timer" && status.step === "recover_failed") {
-    return { kind: "recover_failed", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
+    return { kind: "recover_failed", key: `${status.run_id}-recover-failed`, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
   }
   if (status && status.trigger === "timer" && status.step === "recovered") {
     return { kind: "recovered", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
@@ -445,12 +445,16 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
   // as recover_failed; before it, the start may still be releasing the lock.
   const raw = stuckRun({ unit, status, now, limits });
   const found = raw?.kind === "recovered" && holder !== null
-    ? (now - Date.parse(raw.last) > limits.endedMs ? { ...raw, kind: "recover_failed" } : null)
+    ? (now - Date.parse(raw.last) > limits.endedMs ? { ...raw, kind: "recover_failed", key: `${raw.key}-recover-failed` } : null)
     : raw;
   const stuck = found && worker > 1 ? { ...found, key: `w${worker}-${found.key}` } : found;
   if (stuck) {
-    const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)
-      || (stuck.invocation !== null && alert.invocation === stuck.invocation));
+    // A failed recovery is its own alert: an earlier alert of the same run
+    // (ended, which said the next start recovers it) never stands for it.
+    const failedRecovery = stuck.kind === "recover_failed";
+    const entry = state.alerts.find((alert) => (alert.kind === "recover_failed") === failedRecovery
+      && (alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)
+      || (stuck.invocation !== null && alert.invocation === stuck.invocation)));
     // A pause file that could not be written is tried again on every pass
     // while the run is stuck, whether or not its alert is already posted.
     const pauseKept = entry?.pause?.written === true || entry?.pause?.held === true;

@@ -6739,6 +6739,27 @@ test("2026-11-14: the watch pauses on a recovery that could not release its lock
   assert.equal(late.workers[0].alert?.kind, "recover_failed", JSON.stringify(late));
   assert.deepEqual(late.workers[0].alert.pause, { written: true });
   assert.ok(stale.files.has(PATHS.pause));
+  // A run first alerted ended (its next start was to recover it), whose
+  // recovery then failed: the failure is a second alert, never folded into the first.
+  const twice = setup();
+  twice.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  const endedFirst = await watchOnce({ io: twice.io, paths: PATHS });
+  assert.equal(endedFirst.workers[0].alert.kind, "ended", JSON.stringify(endedFirst));
+  assert.deepEqual(endedFirst.workers[0].alert.pause, { written: false, left: true });
+  twice.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", step: "recover_failed", outcome: "DIED",
+    updated_at: new Date(twice.now).toISOString() }))}\n`, { mode: 0o600 });
+  twice.now += 10 * MIN;
+  const thenFailed = await watchOnce({ io: twice.io, paths: PATHS });
+  assert.equal(thenFailed.workers[0].alert.kind, "recover_failed", JSON.stringify(thenFailed));
+  assert.equal(thenFailed.workers[0].alert.posted, true);
+  assert.deepEqual(thenFailed.workers[0].alert.pause, { written: true });
+  const both = alertsOf(twice);
+  assert.equal(both.length, 2, "the failed recovery is its own alert");
+  assert.match(both[1].body, /could not release/);
+  assert.match(both[1].body, /Check the host before removing the pause file/);
+  twice.now += 10 * MIN;
+  assert.equal((await watchOnce({ io: twice.io, paths: PATHS })).workers[0].alert.already, true);
+  assert.equal(alertsOf(twice).length, 2, "and alerted once");
   // An ended run whose start's recovery failed and wrote the pause itself:
   // the lock and its dead pid are still there, and the pause is reported in place.
   const ended = setup();

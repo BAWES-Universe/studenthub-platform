@@ -1948,6 +1948,13 @@ const CASES = [
     pattern: "2026-11-14: the watch pauses on a recovery that could not release its lock",
   },
   {
+    name: "M335 fold a failed recovery into the run's earlier ended alert",
+    file: "service/card-watchdog.mjs",
+    from: "    const entry = state.alerts.find((alert) => (alert.kind === \"recover_failed\") === failedRecovery\n      && (",
+    to: "    const entry = state.alerts.find((alert) => true // SHU86-M335\n      && (",
+    pattern: "2026-11-14: the watch pauses on a recovery that could not release its lock",
+  },
+  {
     name: "M326 pause every card run for one card worker's run that ended without finishing",
     file: "service/card-watchdog.mjs",
     from: "    const recovers = stuck.kind === \"recovered\" || (stuck.kind === \"ended\" && holder !== null && holder.pid !== null && holder.alive === false);",
