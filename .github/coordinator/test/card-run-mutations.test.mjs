@@ -1905,7 +1905,7 @@ const CASES = [
   },
   {
     name: "M325 leave a dead run's claim without its outcome",
-    from: "  const claims = markDeadClaims(io, paths, pid, at);",
+    from: "  const claims = markDeadClaims(io, paths, pid, at, named);",
     to: "  const claims = { marked: [], failed: [] }; // SHU86-M325",
     pattern: "2026-11-14: a card worker's start that finds its lock",
   },
@@ -1974,6 +1974,18 @@ const CASES = [
     from: "  if (status && status.trigger === \"timer\" && status.step === \"recovered\") {",
     to: "  if (false) { // SHU86-M328",
     pattern: "2026-11-14: a run a worker's start recovered before the watch",
+  },
+  {
+    name: "M336 mark every unfinished same-pid claim of the worker DIED, whichever run wrote it",
+    from: "    if (file !== named) continue;",
+    to: "    // SHU86-M336",
+    pattern: "2026-11-14: a card worker's start that finds its lock",
+  },
+  {
+    name: "M337 recover a dead run whose status names no run without knowing which claim is its own",
+    from: "    if (named === null) { failed.push({ file, code: \"CLAIM_RUN_UNKNOWN\" }); continue; }",
+    to: "    if (named === null) continue; // SHU86-M337",
+    pattern: "2026-11-15: a dead run whose status names no unfinished run",
   },
 ];
 

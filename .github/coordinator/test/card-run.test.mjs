@@ -6435,6 +6435,7 @@ test("M15 W5: auto --worker N runs as card worker N, and a worker the config tur
 // activation record and a claim with no outcome left behind; every later start
 // skipped LOCKED and the watch paused all eight workers.
 const DEAD_PID = 1793899;
+const OLD_REV = "b".repeat(40);
 async function deadRunHost({ worker = 2 } = {}) {
   const { cardRunPaths } = await import("../service/card-run.mjs");
   const paths = cardRunPaths(worker, PATHS);
@@ -6450,11 +6451,13 @@ async function deadRunHost({ worker = 2 } = {}) {
   for (const name of [RUN_DROP_IN, TARGET_DROP_IN]) put(dropIn(supervisor, name), "[Service]\n");
   const claim = { card: "SHU-301", revision: REV, claimed_at: "2026-10-18T07:00:04.000Z", worker, pid: DEAD_PID, pid_start: "99" };
   put(autoClaim(paths, REV, "SHU-301"), `${JSON.stringify(claim)}\n`);
-  // Not the dead run's: worker 1's claim with the same pid, and an earlier
-  // claim of this worker that already has its outcome.
+  // Not the dead run's: worker 1's claim with the same pid, an earlier claim
+  // of this worker that already has its outcome, and an older unfinished claim
+  // of this worker whose earlier process had the same (reused) pid.
   const others = {
     [autoClaim(paths, REV, "SHU-302")]: `${JSON.stringify({ ...claim, card: "SHU-302", worker: worker === 1 ? 2 : 1 })}\n`,
     [autoClaim(paths, REV, "SHU-303")]: `${JSON.stringify({ ...claim, card: "SHU-303", outcome: "PASS", ok: true })}\n`,
+    [autoClaim(paths, OLD_REV, "SHU-301")]: `${JSON.stringify({ ...claim, revision: OLD_REV, pid_start: "42", claimed_at: "2026-10-11T07:00:04.000Z" })}\n`,
   };
   for (const [file, text] of Object.entries(others)) put(file, text);
   put(statusPath(paths), `${JSON.stringify(watchStatus({ card: "SHU-301", run_id: "shu-301-run-20261018T070000Z" }))}\n`);
@@ -6498,6 +6501,24 @@ test("2026-11-14: a card worker's start that finds its lock held by a dead pid r
   const next = await attempt(() => autoRun({ io: host.io, paths }));
   assert.notEqual(next.skipped, "LOCKED", JSON.stringify(next));
   assert.notEqual(next.skipped, "RECOVERED", JSON.stringify(next));
+});
+
+test("2026-11-15: a dead run whose status names no unfinished run cannot tell which same-pid claim is its own, so it keeps the lock and writes the pause file", async () => {
+  for (const status of [null, watchStatus({ step: "finished", outcome: "PASS", card: "SHU-300" })]) {
+    const { host, paths, claim, others } = await deadRunHost();
+    if (status === null) host.files.delete(statusPath(paths));
+    else host.files.set(statusPath(paths), { text: `${JSON.stringify(status)}\n`, mode: 0o600, uid: 0, gid: 0 });
+    const { output } = await main(["auto", "--worker", "2"], host.io, PATHS);
+    assert.equal(output.ok, false, JSON.stringify(output));
+    assert.equal(output.outcome, "RECOVER_FAILED");
+    assert.equal(output.failed_step, "claims");
+    assert.ok(output.claims_failed.some((f) => f.file === autoClaim(paths, REV, "SHU-301") && f.code === "CLAIM_RUN_UNKNOWN"), JSON.stringify(output.claims_failed));
+    // Nothing is marked: not the claim the run may have held, not an older one.
+    assert.deepEqual(JSON.parse(host.files.get(autoClaim(paths, REV, "SHU-301")).text), claim);
+    for (const [other, text] of Object.entries(others)) assert.equal(host.files.get(other).text, text, other);
+    assert.equal(host.files.has(paths.lock), true);
+    assert.equal(host.files.has(PATHS.pause), true);
+  }
 });
 
 test("2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing", async () => {
@@ -6630,9 +6651,12 @@ test("2026-11-14: a dead run whose status cannot be marked recovered keeps the l
   assert.equal(read.output.outcome, "RECOVER_FAILED", JSON.stringify(read.output));
   assert.equal(read.output.failed_step, "status");
   assert.equal(unreadable.host.files.has(unreadable.paths.lock), true, "the lock stays");
-  // No status at all is not a failure: the run is recovered.
+  // No status at all is not a failure when no unfinished claim could be the
+  // run's: the run is recovered.
   const none = await deadRunHost();
   none.host.files.delete(statusPath(none.paths));
+  none.host.files.delete(autoClaim(none.paths, REV, "SHU-301"));
+  none.host.files.delete(autoClaim(none.paths, OLD_REV, "SHU-301"));
   const ok = await main(["auto", "--worker", "2"], none.host.io, PATHS);
   assert.equal(ok.output.skipped, "RECOVERED", JSON.stringify(ok.output));
   assert.equal(ok.output.status_recovered, false);

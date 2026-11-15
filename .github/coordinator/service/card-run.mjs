@@ -1483,7 +1483,10 @@ function recoverDeadRun({ io, paths, limits, pid }) {
   catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
   if (reverted.reverted !== true) return failed("revert", `its revert did not finish (${reverted.code ?? "unknown"})`, { revert: reverted });
   const at = io.now().toISOString();
-  const claims = markDeadClaims(io, paths, pid, at);
+  let named;
+  try { named = deadRunClaim(io, paths); }
+  catch (error) { return failed("status", `its status could not be read (${error.code})`, { revert: reverted }); }
+  const claims = markDeadClaims(io, paths, pid, at, named);
   if (claims.failed.length) {
     return failed("claims", `its claim could not be marked ${DEAD_RUN_OUTCOME} (${claims.failed.map((f) => `${path.basename(f.file)}: ${f.code}`).join("; ")})`,
       { revert: reverted, claims: claims.marked, claims_failed: claims.failed });
@@ -1515,12 +1518,25 @@ function writeRecoverPause(io, paths, text) {
   }
 }
 
-// The dead run's card claims: this worker's, written by the lock's pid, with
-// no outcome yet. Each keeps every field it had and gains the outcome DIED,
-// so the queue reads its card as one that ran and did not land. A claim that
-// cannot be read, or whose update cannot be written, is listed under failed:
-// it may be the dead run's, so recovery stops there.
-function markDeadClaims(io, paths, pid, at) {
+// The dead run's card claim: the one its status names (card and revision),
+// this worker's, written by the lock's pid, with no outcome yet. It keeps
+// every field it had and gains the outcome DIED, so the queue reads its card
+// as one that ran and did not land. A pid is reused, so a pid match alone
+// never makes a claim the dead run's: an older unfinished claim of this worker
+// with the same pid is left as it is. When the status names no unfinished run
+// (the run died before writing it) and such a claim exists, recovery cannot
+// tell which is the dead run's and stops, as it does when a claim cannot be
+// read or written.
+// The claim file of the run the worker's status names, or null when the
+// status names no unfinished run. A status that cannot be read throws.
+function deadRunClaim(io, paths) {
+  let status = null;
+  try { status = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw Object.assign(new Error("status unreadable"), { code: error.code ?? "STATUS_UNREADABLE" }); }
+  return status && typeof status === "object" && !["finished", "recovered"].includes(status.step)
+    && typeof status.card === "string" && /^[0-9a-f]{40}$/.test(status.revision ?? "") ? autoClaim(paths, status.revision, status.card) : null;
+}
+function markDeadClaims(io, paths, pid, at, named) {
   const marked = [];
   const failed = [];
   let names = [];
@@ -1536,6 +1552,8 @@ function markDeadClaims(io, paths, pid, at) {
     try { claim = JSON.parse(io.fs.readFileSync(file, "utf8")); }
     catch (error) { failed.push({ file, code: error.code ?? "CLAIM_UNREADABLE" }); continue; }
     if (claim?.worker !== workerOf(paths) || claim.pid !== pid || claim.outcome !== undefined) continue;
+    if (named === null) { failed.push({ file, code: "CLAIM_RUN_UNKNOWN" }); continue; }
+    if (file !== named) continue;
     try {
       replaceClaim(io, file, `${JSON.stringify({ ...claim, outcome: DEAD_RUN_OUTCOME, ok: false, reverted: true, recovered_at: at })}\n`);
       marked.push(file);
