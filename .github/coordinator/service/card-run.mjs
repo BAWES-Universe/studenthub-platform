@@ -1471,7 +1471,38 @@ export function lockHolder(io, lock) {
 // status a terminal step (recovered), and the start skips RECOVERED: it runs
 // no card itself, and the next start runs as usual.
 export const DEAD_RUN_OUTCOME = "DIED";
+//
+// One recovery at a time per worker: before anything is reverted the start
+// creates ${lock}.recover (exclusive) holding its own pid, and under it reads
+// the lock again, going on only while it still holds the same dead pid. A
+// start that finds the marker held by a live process skips LOCKED; a marker
+// whose holder is gone is a recovery that itself died part way, which no
+// start clears: it fails closed with the pause file so a person looks.
+export const recoverMarker = (paths) => `${paths.lock}.recover`;
 function recoverDeadRun({ io, paths, limits, pid }) {
+  const marker = recoverMarker(paths);
+  try { io.fs.writeFileSync(marker, String(process.pid), { mode: 0o600, flag: "wx" }); }
+  catch (error) {
+    if (error.code !== "EEXIST") return recoverFailedEarly(io, paths, pid, "marker", `${marker} could not be created (${error.code ?? "unknown"})`);
+    const other = lockHolder(io, marker);
+    if (other.alive) return { ok: true, trigger: "timer", skipped: "LOCKED", reason: `${marker} exists: a recovery of ${paths.lock} is in progress` };
+    return recoverFailedEarly(io, paths, pid, "marker", `${marker} was left by a recovery that did not finish`);
+  }
+  try {
+    const now = lockHolder(io, paths.lock);
+    if (now.pid !== pid || now.alive) return { ok: true, trigger: "timer", skipped: "LOCKED", reason: `${paths.lock} changed while the recovery started` };
+    return recoverHeldDeadRun({ io, paths, limits, pid });
+  } finally {
+    try { io.fs.unlinkSync(marker); } catch { /* gone already */ }
+  }
+}
+function recoverFailedEarly(io, paths, pid, step, detail) {
+  const reason = `${paths.lock} holds pid ${pid}, which is no longer running: the run that took it died`;
+  return { ok: false, trigger: "timer", outcome: "RECOVER_FAILED", failed_step: step,
+    reason: `${reason}; ${detail}, so the lock stays and card runs are paused`,
+    pause: writeRecoverPause(io, paths, `card-run: worker ${workerOf(paths)} could not recover (${step}) the dead run of pid ${pid}\n`) };
+}
+function recoverHeldDeadRun({ io, paths, limits, pid }) {
   const reason = `${paths.lock} holds pid ${pid}, which is no longer running: the run that took it died`;
   // Recovery fails closed: the lock stays and card runs are paused unless the
   // revert, every claim update and the lock's removal all succeed.
@@ -1496,7 +1527,10 @@ function recoverDeadRun({ io, paths, limits, pid }) {
     return failed("status", `its status could not be marked recovered (${status.failed})`,
       { revert: reverted, claims: claims.marked, status_recovered: false });
   }
-  try { io.fs.unlinkSync(paths.lock); }
+  try {
+    if (lockHolder(io, paths.lock).pid !== pid) throw Object.assign(new Error("lock changed"), { code: "LOCK_CHANGED" });
+    io.fs.unlinkSync(paths.lock);
+  }
   catch (error) {
     if (error.code !== "ENOENT") {
       // The status already says recovered; it is moved on to recover_failed,

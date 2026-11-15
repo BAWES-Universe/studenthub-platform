@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   planRun, onBase, nextCard, tickOutcome, TICK_HOLD_MAX_SLEEP_MS, tick, publishClaim, replaceClaim, busyReasons, runCard, revert, parseArgs, main,
   CARD_RUN_LIMITS, RUN_DROP_IN, TARGET_DROP_IN, RESIDENT_DROP_IN,
-  autoRun, autoClaim, selectLock, repairIntent, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
+  autoRun, autoClaim, recoverMarker, selectLock, repairIntent, installTimer, removeTimer, autoServiceUnit, autoTimerUnit, AUTO_SERVICE, AUTO_TIMER, AUTO_TIMEOUT_START_MS,
   autoServiceName, autoTimerName,
   reviewClaim, queueConfigPath, coordinatorCodePath, assertQueueConfigReviewer, REFUSED_START_RETRIES, refusedStartRecord,
 } from "../service/card-run.mjs";
@@ -6494,8 +6494,9 @@ test("2026-11-14: a card worker's start that finds its lock held by a dead pid r
   assert.equal(output.status_recovered, true);
   // The watch reads a recovered run as one to tell the owner about once, never as ended.
   assert.equal(stuckRun({ unit: { state: "inactive", running: false, since: null, start: null }, status, now: START.getTime() + 60 * MIN }).kind, "recovered");
-  // The lock is released, and nothing paused the box.
+  // The lock and the recovery's marker are released, and nothing paused the box.
   assert.equal(host.files.has(paths.lock), false);
+  assert.equal(host.files.has(recoverMarker(paths)), false);
   assert.equal(host.files.has(PATHS.pause), false);
   // The next start is no longer held by the lock.
   const next = await attempt(() => autoRun({ io: host.io, paths }));
@@ -6519,6 +6520,46 @@ test("2026-11-15: a dead run whose status names no unfinished run cannot tell wh
     assert.equal(host.files.has(paths.lock), true);
     assert.equal(host.files.has(PATHS.pause), true);
   }
+});
+
+test("2026-11-15: one recovery at a time: a live recovery's marker skips LOCKED, a dead one's pauses, and a lock that changed under the marker is left alone", async () => {
+  const untouched = (host, paths) => {
+    assert.equal(host.files.has(paths.activation), true);
+    assert.equal(JSON.parse(host.files.get(autoClaim(paths, REV, "SHU-301")).text).outcome, undefined);
+    assert.equal(host.calls.some((call) => call.startsWith("systemctl")), false, JSON.stringify(host.calls));
+  };
+  // Another start is recovering this worker right now.
+  const busy = await deadRunHost();
+  busy.host.files.set(recoverMarker(busy.paths), { text: String(process.pid), mode: 0o600, uid: 0, gid: 0 });
+  const held = await main(["auto", "--worker", "2"], busy.host.io, PATHS);
+  assert.equal(held.output.skipped, "LOCKED", JSON.stringify(held.output));
+  assert.match(held.output.reason, /a recovery of .* is in progress/);
+  untouched(busy.host, busy.paths);
+  assert.equal(busy.host.files.has(PATHS.pause), false);
+  assert.equal(busy.host.files.get(recoverMarker(busy.paths)).text, String(process.pid), "another start's marker is never removed");
+  // A recovery that itself died left its marker: no start clears it.
+  const left = await deadRunHost();
+  left.host.files.set(recoverMarker(left.paths), { text: "1793900", mode: 0o600, uid: 0, gid: 0 });
+  const stale = await main(["auto", "--worker", "2"], left.host.io, PATHS);
+  assert.equal(stale.output.outcome, "RECOVER_FAILED", JSON.stringify(stale.output));
+  assert.equal(stale.output.failed_step, "marker");
+  untouched(left.host, left.paths);
+  assert.equal(left.host.files.has(left.paths.lock), true);
+  assert.equal(left.host.files.has(PATHS.pause), true);
+  assert.equal(left.host.files.has(recoverMarker(left.paths)), true);
+  // The lock was taken by a new run between the check and the marker.
+  const raced = await deadRunHost();
+  const fs = raced.host.io.fs;
+  raced.host.io = { ...raced.host.io, fs: { ...fs, writeFileSync: (file, ...rest) => {
+    const written = fs.writeFileSync(file, ...rest);
+    if (String(file) === recoverMarker(raced.paths)) raced.host.files.set(raced.paths.lock, { text: String(process.pid), mode: 0o600, uid: 0, gid: 0 });
+    return written;
+  } } };
+  const moved = await main(["auto", "--worker", "2"], raced.host.io, PATHS);
+  assert.equal(moved.output.skipped, "LOCKED", JSON.stringify(moved.output));
+  untouched(raced.host, raced.paths);
+  assert.equal(raced.host.files.get(raced.paths.lock).text, String(process.pid), "the new run's lock stays");
+  assert.equal(raced.host.files.has(recoverMarker(raced.paths)), false, "the marker is released");
 });
 
 test("2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing", async () => {

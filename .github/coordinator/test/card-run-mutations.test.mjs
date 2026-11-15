@@ -1986,6 +1986,23 @@ const CASES = [
     from: "    if (named === null) { failed.push({ file, code: \"CLAIM_RUN_UNKNOWN\" }); continue; }",
     to: "    if (named === null) continue; // SHU86-M337",
     pattern: "2026-11-15: a dead run whose status names no unfinished run",
+  },  {
+    name: "M338 let two starts recover the same worker at once",
+    from: "try { io.fs.writeFileSync(marker, String(process.pid), { mode: 0o600, flag: \"wx\" }); }",
+    to: "try { io.fs.writeFileSync(marker, String(process.pid), { mode: 0o600 }); } // SHU86-M338",
+    pattern: "2026-11-15: one recovery at a time",
+  },
+  {
+    name: "M339 recover a lock that a new run took before the marker",
+    from: "    if (now.pid !== pid || now.alive) return",
+    to: "    if (false) return // SHU86-M339",
+    pattern: "2026-11-15: one recovery at a time",
+  },
+  {
+    name: "M340 read a dead recovery's marker as one in progress",
+    from: "    return recoverFailedEarly(io, paths, pid, \"marker\", `${marker} was left by a recovery that did not finish`);",
+    to: "    return { ok: true, trigger: \"timer\", skipped: \"LOCKED\", reason: \"\" }; // SHU86-M340",
+    pattern: "2026-11-15: one recovery at a time",
   },
 ];
 
