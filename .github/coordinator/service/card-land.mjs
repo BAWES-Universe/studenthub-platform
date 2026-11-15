@@ -586,7 +586,7 @@ export async function readCommitChecks(gh, repo, sha, external = null) {
   const { response: runsResponse, body: runs, items: listed } = runsRead;
   if (!listed) {
     if (runsResponse?.ok && Array.isArray(runs?.check_runs)) return { green: false, note: "the checks could not be read in full" };
-    return judgeChecks(runsResponse, runs, statusResponse, status, external, { head: sha });
+    return judgeChecks(runsResponse, runs, statusResponse, status, external);
   }
   let boardSuites = new Set();
   if (listed.some((run) => BOARD_ONLY_CHECKS.includes(run?.name) && run?.app?.slug === "github-actions")) {
@@ -598,7 +598,7 @@ export async function readCommitChecks(gh, repo, sha, external = null) {
   }
   const own = listed.filter((run) => !boardOnlyCheck(run, boardSuites));
   if (own.length > 100) return { green: false, note: "the checks could not be read in full" };
-  return judgeChecks(runsResponse, { ...runs, total_count: own.length, check_runs: own }, statusResponse, status, external, { head: sha });
+  return judgeChecks(runsResponse, { ...runs, total_count: own.length, check_runs: own }, statusResponse, status, external);
 }
 
 // One read of the head's checks and the pull request's own state.
