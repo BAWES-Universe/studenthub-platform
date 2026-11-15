@@ -4857,6 +4857,7 @@
     "CI before review: mutation C9 mint CI revises past max_ci_revise",
     "CI before review: mutation C10 count CI revises against max_revise",
     "CI before review: mutation C11 bind CI findings of another head to the revise",
+    "CI before review: mutation C12 judge a build head's CI without the landing's external-check policy",
     "CI before review: the gate is off unless enabled is exactly true, with defaults of 45 minutes and 2 revises",
     "CI before review: only a review of a build or revise head is gated, never a review-only run or a landing repair",
     "CI before review: green proceeds to review",
@@ -4870,6 +4871,8 @@
     "CI before review: pending checks hold the review, and a later tick dispatches it once green",
     "CI before review: checks still pending past wait_minutes dispatch the review with a note that CI did not settle",
     "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
+    "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
+    "CI before review: a failing third-party check the policy names as required still mints a CI revise",
     "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round"
   ],
   "requirements": [
@@ -34830,6 +34833,10 @@
       "capabilities": []
     },
     {
+      "name": "CI before review: mutation C12 judge a build head's CI without the landing's external-check policy",
+      "capabilities": []
+    },
+    {
       "name": "CI before review: the gate is off unless enabled is exactly true, with defaults of 45 minutes and 2 revises",
       "capabilities": []
     },
@@ -34879,6 +34886,14 @@
     },
     {
       "name": "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a failing third-party check the policy names as required still mints a CI revise",
       "capabilities": []
     },
     {
