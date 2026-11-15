@@ -10,6 +10,11 @@
     "max_per_tick": 1
   },
   "landing_repair": true,
+  "ci_before_review": {
+    "enabled": false,
+    "wait_minutes": 45,
+    "max_ci_revise": 2
+  },
   "code_self_install": {
     "approval": "none"
   },

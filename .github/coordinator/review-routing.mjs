@@ -20,6 +20,7 @@
 //    relaunch storm.
 
 import { fixtureScopeConfigured, successorWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import { validReviewFindings } from "./review-findings.mjs";
 import {
   ROLES, RUNTIMES, RUNTIME_ROLE_SUPPORT, RUNTIME_FAMILY, LANES, LANE_NAMES,
   REVIEW_LANES, familyForLane, laneForRuntimeRole, roleForLane, runtimeForLane,
@@ -786,4 +787,106 @@ export function routeSuccessorFromReceipts(state = {}) {
     }
   }
   return nextWorkOrder({ requested, entries, max_revise, review_round, bootstrapReviewer, fixtureLane });
+}
+
+// ---------------------------------------------------------------------------
+// CI before review
+// ---------------------------------------------------------------------------
+// A build or revise head is checked by the repository's own CI before a
+// reviewer spends a round on it. The network read happens in reconcile.mjs;
+// everything that decides lives here and is pure.
+//
+// Off unless config.ci_before_review.enabled is exactly true. wait_minutes is
+// how long a head may wait for its checks to settle before it is reviewed
+// anyway (today's behaviour); max_ci_revise is how many revises red CI may
+// start in one episode before red CI is left to the reviewer and to landing.
+export const CI_BEFORE_REVIEW_DEFAULTS = Object.freeze({ wait_minutes: 45, max_ci_revise: 2 });
+export const CI_REVISE_STAGE = "ci-revise";
+
+export function ciBeforeReviewSettings(config) {
+  const gate = config?.ci_before_review;
+  if (!gate || typeof gate !== "object" || gate.enabled !== true) return null;
+  return {
+    wait_minutes: Number.isFinite(gate.wait_minutes) && gate.wait_minutes >= 0 ? gate.wait_minutes : CI_BEFORE_REVIEW_DEFAULTS.wait_minutes,
+    max_ci_revise: Number.isSafeInteger(gate.max_ci_revise) && gate.max_ci_revise >= 0 ? gate.max_ci_revise : CI_BEFORE_REVIEW_DEFAULTS.max_ci_revise,
+  };
+}
+
+// Only a review of a build or revise output is gated. A review-only run
+// reviews someone else's pull request, and a landing repair's re-review
+// already follows a CI-driven revise; both keep today's behaviour. The gate
+// lives on the armed-activation path only: every box card run is armed, and
+// the unarmed configured-dispatch fallback (handoffContinuations) is left
+// ungated on purpose, so it reviews exactly as before.
+export function ciBeforeReviewApplies({ settings, activation, successor }) {
+  return Boolean(settings) && successor?.role === "review"
+    && activation?.review_only !== true && activation?.landing_repair !== true;
+}
+
+// The CI revises an episode has already started: revise receipts whose
+// findings came from CI. Review receipts are what max_revise counts, so these
+// never touch that budget. A landing repair's revise carries CI findings too,
+// but a repair is its own episode and is never gated (above).
+export function ciReviseCount(receipts = []) {
+  const attempts = new Set();
+  for (const r of receipts ?? []) {
+    if (!r || typeof r.attempt_id !== "string") continue;
+    const authority = resolveReceiptRoleAuthority(r);
+    if (authority.ok && authority.role === "revise" && r.review_findings?.source === "ci") attempts.add(r.attempt_id);
+  }
+  return attempts.size;
+}
+
+// checks is readCommitChecks' answer ({ green } | { red } | { green:false, note }),
+// waitedMs how long the head has waited since its write ended, ciRevises the
+// count above. Returns { action: "review" | "hold" | "revise", reason, note? };
+// a note is what the review receipt records when CI did not decide.
+export function ciBeforeReviewDecision({ checks, waitedMs, settings, ciRevises = 0 }) {
+  if (checks?.green === true) return { action: "review", reason: "CI is green at the head" };
+  if (Array.isArray(checks?.red) && checks.red.length > 0) {
+    if (ciRevises >= settings.max_ci_revise) {
+      return { action: "review", reason: "CI is red but the CI revise cap is spent",
+        note: `ci-before-review: CI red (${checks.red.join(", ")}) after ${ciRevises} CI revise(s), max_ci_revise ${settings.max_ci_revise} reached — reviewed as before` };
+    }
+    return { action: "revise", reason: `CI is red (${checks.red.join(", ")})` };
+  }
+  const waitMs = settings.wait_minutes * 60 * 1000;
+  if (!(waitedMs < waitMs)) {
+    return { action: "review", reason: "CI did not settle in time",
+      note: `ci-before-review: CI did not settle within ${settings.wait_minutes} minutes (${checks?.note ?? "no answer"}) — reviewed as before` };
+  }
+  return { action: "hold", reason: `CI has not settled (${checks?.note ?? "no answer"})` };
+}
+
+// Turn a routed review successor into the revise red CI calls for. It is shaped
+// exactly as nextWorkOrder shapes a revise after a BLOCK: the same order with
+// the active writer, that writer's revise lane and the revision scope, bound
+// to the head under review. Its attempt id is derived from the review it
+// replaces and the CI round, so every tick names the same attempt and no
+// routed review or revise can collide with it. Returns { ok, order?, reason? }.
+export function ciReviseOrder({ review, lineageReceipts = [], ciRound, findings, fixtureLane = null } = {}) {
+  if (!review || typeof review !== "object" || review.role !== "review") return { ok: false, reason: "only a review successor can become a CI revise" };
+  if (!Number.isSafeInteger(ciRound) || ciRound < 1) return { ok: false, reason: "the CI round must be a positive integer" };
+  if (!validReviewFindings(findings) || findings.source !== "ci" || findings.target_sha !== review.target_sha) {
+    return { ok: false, reason: "the CI findings are not valid findings bound to the head under review" };
+  }
+  const entries = (lineageReceipts ?? []).map((r) => provenanceFromReceipt(r)).filter(Boolean);
+  const ciWriter = activeWriter(entries);
+  if (!ciWriter) return { ok: false, reason: "no active writer to route the CI revise to" };
+  const writerLane = laneForRuntimeRole(ciWriter.runtime, "revise");
+  if (!writerLane) return { ok: false, reason: `no writer lane exists for runtime ${String(ciWriter.runtime)}` };
+  return {
+    ok: true,
+    order: {
+      ...mintOrder(review, {
+        role: "revise",
+        runtime: ciWriter.runtime,
+        actor: ciWriter.actor,
+        requested_worker: writerLane,
+        attempt_id: freshAttempt(review.attempt_id, CI_REVISE_STAGE, ciRound),
+        ...successorWorkspaceScope("revise", fixtureLane),
+      }),
+      review_findings: findings,
+    },
+  };
 }
