@@ -34,6 +34,19 @@
 // later start skips LOCKED until the lock is cleared by hand, after checking
 // that no card-run process is alive.
 //
+// 2026-11-14: except on card worker N > 1. Worker 2's run on 11-14 died
+// without a word after its first tick: its lock, its activation record and a
+// claim with no outcome stayed, every later start of the worker skipped
+// LOCKED, and the watch's pause held all eight workers for five hours until a
+// person reverted the worker and removed the lock. Only worker N's own oneshot
+// unit writes worker N's lock, and systemd runs one start of it at a time, so
+// a lock whose pid no longer runs is a run that died: the next start reverts
+// the worker, records the dead run's claim as DIED (a stopped card, not a
+// running one), writes its status as recovered, releases the lock and skips
+// RECOVERED, and the start after it runs as usual. A revert that does not
+// finish keeps the lock and writes the pause file. Worker 1 keeps the plain
+// LOCKED skip: a person may take its lock with `run` by hand.
+//
 // SHU-321: a QUEUE_DONE start may then run the standing review-only card
 // (committed queue_config_review, SHU-304) on one open, labelled queue config
 // pull request at its exact head, with Codex as the reviewer of Claude's
@@ -80,7 +93,7 @@ import { threadReviewer } from "./card-threads.mjs";
 import { selfInstall, RUNTIME_TEST_MODULES, INSTALL_LOCK, installLockHeld } from "./card-install.mjs";
 import { WORKSPACE_STATE_DIR, workerWorkspaceStateDir, SUPERVISOR_STORE_DIRNAME, workerUnitsFromInstalled } from "./units.mjs";
 import { createWatch, parseWatchLine } from "./card-watch.mjs";
-import { createStatus, needsOwner, ownerMention } from "./card-status.mjs";
+import { createStatus, needsOwner, ownerMention, statusPath } from "./card-status.mjs";
 import { readVelocity } from "./card-velocity.mjs";
 import { readRunUsage, hostSnapshot } from "./card-usage.mjs";
 import { diskUpkeep } from "./disk-prune.mjs";
@@ -1302,7 +1315,12 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
   if (io.uid() !== 0) refuse("CARD_RUN_NOT_ROOT", "run as root on the orchestrator host");
   const skip = (skipped, reason) => ({ ok: true, trigger: "timer", skipped, reason });
   if (io.fs.existsSync(paths.pause)) return skip("PAUSED", `${paths.pause} exists`);
-  if (io.fs.existsSync(paths.lock)) return skip("LOCKED", `${paths.lock} exists`);
+  if (io.fs.existsSync(paths.lock)) {
+    // 2026-11-14: a card worker's lock left by a run that died is recovered.
+    const holder = workerOf(paths) > 1 ? lockHolder(io, paths.lock) : null;
+    if (!holder || holder.alive) return skip("LOCKED", `${paths.lock} exists`);
+    return recoverDeadRun({ io, paths, limits, pid: holder.pid });
+  }
   // M15 W5: a worker's timer outlives a config that turns it off again.
   let workers = 1;
   try { workers = cardWorkers(readConfig(io, paths)); } catch { /* read again below */ }
@@ -1428,6 +1446,185 @@ export async function autoRun({ io, paths = CARD_RUN_PATHS, limits = CARD_RUN_LI
       max_progress_gap_ms: result.watch?.max_progress_gap_ms ?? null, would_stall: result.watch?.would_stall ?? null })}\n`);
   } catch (error) { claimError = error.code ?? "CLAIM_WRITE_FAILED"; }
   return { ...result, claim, ...(claimError ? { claim_error: claimError } : {}) };
+}
+
+// 2026-11-14: who holds a run lock. The run writes its pid into the lock as
+// it takes it. A lock that cannot be read, or holds no pid, is read as held by
+// a live run (the plain LOCKED skip), so only a pid that is plainly gone is
+// ever recovered. A pid reused by another process reads as alive: the start
+// then skips LOCKED as before, never reverts under a live run.
+export function lockHolder(io, lock) {
+  let text;
+  try { text = String(io.fs.readFileSync(lock, "utf8")).trim(); } catch { return { pid: null, alive: true }; }
+  if (!/^[1-9]\d{0,9}$/.test(text)) return { pid: null, alive: true };
+  const pid = Number(text);
+  return { pid, alive: pid === process.pid || io.fs.existsSync(`/proc/${pid}`) };
+}
+
+// 2026-11-14: card worker N > 1's run that died with its lock held, recovered
+// by the worker's next timer start, as a person did by hand on 11-14: revert
+// the worker, then release the lock. The lock stays until the revert has
+// finished, so meanwhile every other worker still reads the dead run's card as
+// running and an install still waits. A revert that does not finish leaves
+// the lock and writes the pause file, as the watch would have, so a person
+// looks. Once reverted, the dead run's claim gets its outcome (DIED), its
+// status a terminal step (recovered), and the start skips RECOVERED: it runs
+// no card itself, and the next start runs as usual.
+export const DEAD_RUN_OUTCOME = "DIED";
+//
+// One recovery at a time per worker: before anything is reverted the start
+// creates ${lock}.recover (exclusive) holding its own pid, and under it reads
+// the lock again, going on only while it still holds the same dead pid. A
+// start that finds the marker held by a live process skips LOCKED; a marker
+// whose holder is gone is a recovery that itself died part way, which no
+// start clears: it fails closed with the pause file so a person looks.
+export const recoverMarker = (paths) => `${paths.lock}.recover`;
+const RECOVER_MARKER_WRITE = Object.freeze({ flag: "wx", mode: 0o600 });
+function recoverDeadRun({ io, paths, limits, pid }) {
+  const marker = recoverMarker(paths);
+  try { io.fs.writeFileSync(marker, String(process.pid), RECOVER_MARKER_WRITE); }
+  catch (error) {
+    if (error.code !== "EEXIST") return recoverFailedEarly(io, paths, pid, "marker", `${marker} could not be created (${error.code ?? "unknown"})`);
+    const other = lockHolder(io, marker);
+    if (other.alive) return { ok: true, trigger: "timer", skipped: "LOCKED", reason: `${marker} exists: a recovery of ${paths.lock} is in progress` };
+    return recoverFailedEarly(io, paths, pid, "marker", `${marker} was left by a recovery that did not finish`);
+  }
+  try {
+    const now = lockHolder(io, paths.lock);
+    if (now.pid !== pid || now.alive) return { ok: true, trigger: "timer", skipped: "LOCKED", reason: `${paths.lock} changed while the recovery started` };
+    return recoverHeldDeadRun({ io, paths, limits, pid });
+  } finally {
+    try { io.fs.unlinkSync(marker); } catch { /* gone already */ }
+  }
+}
+function recoverFailedEarly(io, paths, pid, step, detail) {
+  const reason = `${paths.lock} holds pid ${pid}, which is no longer running: the run that took it died`;
+  return { ok: false, trigger: "timer", outcome: "RECOVER_FAILED", failed_step: step,
+    reason: `${reason}; ${detail}, so the lock stays and card runs are paused`,
+    pause: writeRecoverPause(io, paths, `card-run: worker ${workerOf(paths)} could not recover (${step}) the dead run of pid ${pid}\n`) };
+}
+function recoverHeldDeadRun({ io, paths, limits, pid }) {
+  const reason = `${paths.lock} holds pid ${pid}, which is no longer running: the run that took it died`;
+  // Recovery fails closed: the lock stays and card runs are paused unless the
+  // revert, every claim update and the lock's removal all succeed.
+  const failed = (step, detail, extra) => ({ ok: false, trigger: "timer", outcome: "RECOVER_FAILED",
+    reason: `${reason}; ${detail}, so the lock stays and card runs are paused`, failed_step: step, ...extra,
+    pause: writeRecoverPause(io, paths, `card-run: worker ${workerOf(paths)} could not ${step === "revert" ? "revert" : `recover (${step})`} the dead run of pid ${pid}\n`) });
+  let reverted;
+  try { reverted = revert(io, paths, limits); }
+  catch (error) { reverted = { reverted: false, code: error.code ?? "CARD_RUN_ERROR", reason: error.message }; }
+  if (reverted.reverted !== true) return failed("revert", `its revert did not finish (${reverted.code ?? "unknown"})`, { revert: reverted });
+  const at = io.now().toISOString();
+  let named;
+  try { named = deadRunClaim(io, paths); }
+  catch (error) { return failed("status", `its status could not be read (${error.code})`, { revert: reverted }); }
+  const claims = markDeadClaims(io, paths, pid, at, named);
+  if (claims.failed.length) {
+    return failed("claims", `its claim could not be marked ${DEAD_RUN_OUTCOME} (${claims.failed.map((f) => `${path.basename(f.file)}: ${f.code}`).join("; ")})`,
+      { revert: reverted, claims: claims.marked, claims_failed: claims.failed });
+  }
+  const status = markStatusRecovered(io, paths, at);
+  if (status.failed) {
+    return failed("status", `its status could not be marked recovered (${status.failed})`,
+      { revert: reverted, claims: claims.marked, status_recovered: false });
+  }
+  try {
+    if (lockHolder(io, paths.lock).pid !== pid) throw Object.assign(new Error("lock changed"), { code: "LOCK_CHANGED" });
+    io.fs.unlinkSync(paths.lock);
+  }
+  catch (error) {
+    if (error.code !== "ENOENT") {
+      // The status already says recovered; it is moved on to recover_failed,
+      // so the watch reads an incomplete recovery, never a finished one.
+      if (status.written) markStatusRecoverFailed(io, paths, at);
+      return failed("lock", `${paths.lock} could not be removed (${error.code ?? "unknown"})`,
+        { revert: reverted, claims: claims.marked, status_recovered: status.written });
+    }
+  }
+  return { ok: true, trigger: "timer", skipped: "RECOVERED", reason, revert: reverted, claims: claims.marked, status_recovered: status.written };
+}
+
+function writeRecoverPause(io, paths, text) {
+  try {
+    io.fs.writeFileSync(paths.pause, text, { flag: "wx", mode: 0o644 });
+    return { written: true };
+  } catch (error) {
+    return error.code === "EEXIST" ? { written: false, held: true } : { written: false, held: false, code: error.code ?? "PAUSE_WRITE_FAILED" };
+  }
+}
+
+// The dead run's card claim: the one its status names (card and revision),
+// this worker's, written by the lock's pid, with no outcome yet. It keeps
+// every field it had and gains the outcome DIED, so the queue reads its card
+// as one that ran and did not land. A pid is reused, so a pid match alone
+// never makes a claim the dead run's: an older unfinished claim of this worker
+// with the same pid is left as it is. When the status names no unfinished run
+// (the run died before writing it) and such a claim exists, recovery cannot
+// tell which is the dead run's and stops, as it does when a claim cannot be
+// read or written.
+// The claim file of the run the worker's status names, or null when the
+// status names no unfinished run. A status that cannot be read throws.
+function deadRunClaim(io, paths) {
+  let status = null;
+  try { status = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw Object.assign(new Error("status unreadable"), { code: error.code ?? "STATUS_UNREADABLE" }); }
+  return status && typeof status === "object" && !["finished", "recovered"].includes(status.step)
+    && typeof status.card === "string" && /^[0-9a-f]{40}$/.test(status.revision ?? "") ? autoClaim(paths, status.revision, status.card) : null;
+}
+function markDeadClaims(io, paths, pid, at, named) {
+  const marked = [];
+  const failed = [];
+  let names = [];
+  try { names = io.fs.readdirSync(paths.stateDir); }
+  catch (error) {
+    if (error.code !== "ENOENT") failed.push({ file: paths.stateDir, code: error.code ?? "READDIR_FAILED" });
+    return { marked, failed };
+  }
+  for (const name of names) {
+    if (!RUN_CLAIM.test(name)) continue;
+    const file = path.join(paths.stateDir, name);
+    let claim;
+    try { claim = JSON.parse(io.fs.readFileSync(file, "utf8")); }
+    catch (error) { failed.push({ file, code: error.code ?? "CLAIM_UNREADABLE" }); continue; }
+    if (claim?.worker !== workerOf(paths) || claim.pid !== pid || claim.outcome !== undefined) continue;
+    if (named === null) { failed.push({ file, code: "CLAIM_RUN_UNKNOWN" }); continue; }
+    if (file !== named) continue;
+    try {
+      replaceClaim(io, file, `${JSON.stringify({ ...claim, outcome: DEAD_RUN_OUTCOME, ok: false, reverted: true, recovered_at: at })}\n`);
+      marked.push(file);
+    } catch (error) { failed.push({ file, code: error.code ?? "CLAIM_WRITE_FAILED" }); }
+  }
+  // The run the status names must be found and marked: a claim that is gone,
+  // belongs to another worker or pid, or already has its outcome leaves the
+  // run unrecorded, so the recovery stops rather than report it DIED.
+  if (named !== null && !marked.includes(named) && !failed.some((f) => f.file === named)) failed.push({ file: named, code: "CLAIM_RUN_MISSING" });
+  return { marked, failed };
+}
+
+// The worker's status, moved from the step the dead run left it at to
+// "recovered", so the watch no longer reads it as a run that ended without
+// finishing. A status already at a terminal step, or none, is left alone. A
+// status that cannot be read or written is a failure: left as it is, the
+// watch would read it as an ended run and pause every worker.
+function markStatusRecovered(io, paths, at) {
+  let raw;
+  try { raw = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); }
+  catch (error) { return error.code === "ENOENT" ? { written: false } : { written: false, failed: error.code ?? "STATUS_UNREADABLE" }; }
+  if (!raw || typeof raw !== "object" || ["finished", "recovered"].includes(raw.step)) return { written: false };
+  const { paused: _paused, next_start: _next, updated_at: _updated, ...run } = raw;
+  const written = createStatus({ io, paths, run }).write({ step: "recovered", outcome: DEAD_RUN_OUTCOME, recovered_at: at, needs_owner: true });
+  return written ? { written: true } : { written: false, failed: "STATUS_WRITE_FAILED" };
+}
+
+// A recovery that marked the status recovered but could not release the
+// lock: the status moves on to recover_failed, which the watch alerts and
+// pauses on (and retries the pause) rather than reading it as done.
+function markStatusRecoverFailed(io, paths, at) {
+  let raw;
+  try { raw = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); } catch { return false; }
+  if (!raw || typeof raw !== "object" || raw.step !== "recovered") return false;
+  const { paused: _paused, next_start: _next, updated_at: _updated, ...run } = raw;
+  return createStatus({ io, paths, run }).write({ step: "recover_failed", recover_failed_at: at });
 }
 
 // Self-repair B2: the one landing repair of a card, on the timer. Before its
