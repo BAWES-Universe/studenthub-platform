@@ -1988,8 +1988,8 @@ const CASES = [
     pattern: "2026-11-15: a dead run whose status names no unfinished run",
   },  {
     name: "M338 let two starts recover the same worker at once",
-    from: "try { io.fs.writeFileSync(marker, String(process.pid), { mode: 0o600, flag: \"wx\" }); }",
-    to: "try { io.fs.writeFileSync(marker, String(process.pid), { mode: 0o600 }); } // SHU86-M338",
+    from: "const RECOVER_MARKER_WRITE = Object.freeze({ flag: \"wx\", mode: 0o600 });",
+    to: "const RECOVER_MARKER_WRITE = Object.freeze({ mode: 0o600 }); // SHU86-M338",
     pattern: "2026-11-15: one recovery at a time",
   },
   {

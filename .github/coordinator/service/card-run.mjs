@@ -1479,9 +1479,10 @@ export const DEAD_RUN_OUTCOME = "DIED";
 // whose holder is gone is a recovery that itself died part way, which no
 // start clears: it fails closed with the pause file so a person looks.
 export const recoverMarker = (paths) => `${paths.lock}.recover`;
+const RECOVER_MARKER_WRITE = Object.freeze({ flag: "wx", mode: 0o600 });
 function recoverDeadRun({ io, paths, limits, pid }) {
   const marker = recoverMarker(paths);
-  try { io.fs.writeFileSync(marker, String(process.pid), { mode: 0o600, flag: "wx" }); }
+  try { io.fs.writeFileSync(marker, String(process.pid), RECOVER_MARKER_WRITE); }
   catch (error) {
     if (error.code !== "EEXIST") return recoverFailedEarly(io, paths, pid, "marker", `${marker} could not be created (${error.code ?? "unknown"})`);
     const other = lockHolder(io, marker);
