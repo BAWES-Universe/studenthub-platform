@@ -3,7 +3,9 @@ name: Platform CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # A coordinator build or revise head is CI-checked on its push, before the
+    # coordinator spends a review round on it (config ci_before_review).
+    branches: [main, "coordinator/**"]
 
 permissions:
   contents: read

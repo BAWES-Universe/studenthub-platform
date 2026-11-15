@@ -30,13 +30,13 @@ export { consumeMergeReadiness, routineMergeEnabledFor };
 
 import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane, ROLE_REVIEW } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
-import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid, ciBeforeReviewSettings, ciBeforeReviewApplies, ciBeforeReviewDecision, ciReviseCount, ciReviseOrder } from "./review-routing.mjs";
 import { parseActivationArgs, narrowQueueScope, singleRunActivationStatus, activationAllowsTarget, finalLaunchActivation, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope, tmpFloorRefusal, repairFromActivation } from "./single-run-activation.mjs";
 import { repairEligible, readOpenPulls } from "./repair-eligibility.mjs";
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE, orderTaskContext, finishedSupervisorStage } from "./supervisor-dispatch.mjs";
 import { cardWorkers } from "./service/credential-delivery.mjs";
-import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote } from "./review-findings.mjs";
+import { reviewFindingsContext, reviewFindingsFromCallback, reviewPassNote, validReviewFindings, workerSummaryNote, REVIEW_FINDINGS_SUMMARY_MAX } from "./review-findings.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, resolveReviewOnlyLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
@@ -2341,6 +2341,68 @@ async function liveIssues({ config, linearToken, githubToken, openPRsOverride, f
 // dispatches nothing, and exits cleanly (0) for the scheduler to try again. It
 // must never throw the service into ACT_COORDINATOR_TICK_FAILED, because a tick
 // that fails is a tick that never reconciles.
+// ---- CI BEFORE REVIEW --------------------------------------------------------
+// A build or revise head is checked by its own CI (ci.yml runs on every push to
+// coordinator/**) before a reviewer spends a round on it. The decision is pure
+// (review-routing.mjs); this is the one network read, and it only ever runs for
+// an armed episode's verified review successor with the flag on. Returns the
+// successor to admit: the review itself, the review with a note, a CI revise in
+// its place, or null to hold this tick (the next tick reads CI again).
+export const CI_BEFORE_REVIEW_READ_TIMEOUT_MS = 30 * 1000;
+// The failing check names lead the findings; the job log tail fills the rest.
+const CI_FAILING_NAMES_MAX = 600;
+
+async function ciFindings({ red, repo, head, githubToken, fetchImpl }) {
+  const failing = `Failing checks: ${red.join("; ")}`.slice(0, CI_FAILING_NAMES_MAX);
+  try {
+    const { readRepairEvidence, REPAIR_LIMITS } = await import("./service/card-repair.mjs");
+    const evidence = await readRepairEvidence({ io: { fetch: fetchImpl }, token: githubToken, repo, head,
+      limits: { ...REPAIR_LIMITS, evidenceChars: REVIEW_FINDINGS_SUMMARY_MAX - failing.length - 1 } });
+    const findings = { ...evidence.findings, summary: `${failing}\n${evidence.findings.summary}` };
+    return validReviewFindings(findings) ? findings : evidence.findings;
+  } catch (error) {
+    const findings = { verdict_stage: "BLOCKED", source: "ci", target_sha: head, links: [],
+      summary: `${failing}\nThe failing job logs could not be read (${String(error?.code ?? error?.message ?? "unreadable").slice(0, 200)}).` };
+    return validReviewFindings(findings) ? findings : null;
+  }
+}
+
+export async function ciBeforeReview({ successor, terminal, lineage, settings, config, githubToken, fetchImpl, io = {} }) {
+  const say = (line) => io.stdout?.(`ci-before-review: ${line}`);
+  const head = successor.target_sha;
+  const repo = terminal?.repo ?? config.pilot_repo;
+  let checks;
+  try {
+    const land = await import("./service/card-land.mjs");
+    const gh = land.github(land.boundedFetch({ fetch: fetchImpl, delay: io.delay }, CI_BEFORE_REVIEW_READ_TIMEOUT_MS), githubToken);
+    checks = await land.readCommitChecks(gh, repo, head);
+  } catch (error) {
+    checks = { green: false, note: `the checks cannot be read: ${error?.message ?? "error"}` };
+  }
+  const ended = Date.parse(terminal?.timestamps?.terminal ?? terminal?.last_activity ?? "");
+  const now = (io.now?.() ?? new Date()).getTime();
+  const ciRevises = ciReviseCount(lineage);
+  const decision = ciBeforeReviewDecision({ checks, waitedMs: now - ended, settings, ciRevises });
+  if (decision.action === "hold") {
+    say(`HOLD review of ${head} — ${decision.reason}; read again next tick`);
+    return null;
+  }
+  if (decision.action === "review") {
+    say(`review ${head} — ${decision.reason}`);
+    return decision.note ? { ...successor, ci_note: decision.note } : successor;
+  }
+  const findings = await ciFindings({ red: checks.red, repo, head, githubToken, fetchImpl });
+  const minted = ciReviseOrder({ review: successor, lineageReceipts: lineage, ciRound: ciRevises + 1, findings,
+    fixtureLane: resolveFixtureLane(config, successor.issue_id) });
+  if (!minted.ok) {
+    const note = `ci-before-review: CI red at ${head} but no CI revise could be minted (${minted.reason}) — reviewed as before`;
+    say(note);
+    return { ...successor, ci_note: note };
+  }
+  say(`${decision.reason} at ${head} — CI revise ${ciRevises + 1}/${settings.max_ci_revise} via ${minted.order.requested_worker} (attempt ${minted.order.attempt_id}) instead of review`);
+  return minted.order;
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env, io = {}) {
   try {
     return await reconcileTick(argv, env, io);
@@ -2535,10 +2597,20 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
           successor: null,
         };
       } else {
+        let successor = verifiedEpisode.successor ?? null;
+        // CI before review: a verified review of a build/revise head waits for,
+        // or is replaced by a revise from, that head's own CI.
+        const ciSettings = ciBeforeReviewSettings(config);
+        if (ciBeforeReviewApplies({ settings: ciSettings, activation: singleRunActivation, successor })) {
+          successor = await ciBeforeReview({
+            successor, terminal, settings: ciSettings, config, githubToken, fetchImpl, io,
+            lineage: targetReceipts.filter((r) => receiptInEpisodeScope(r, activationEpisodeScope)),
+          });
+        }
         singleRunActivation = {
           ...singleRunActivation,
           episode: verifiedEpisode.reason,
-          successor: verifiedEpisode.successor ?? null,
+          successor,
         };
       }
     }
@@ -3409,6 +3481,8 @@ async function reconcileTick(argv = process.argv.slice(2), env = process.env, io
   if (!reservedOk) {
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);
   }
+  // CI before review: a review admitted although CI did not decide says why.
+  if (typeof successor?.ci_note === "string") receipt.notes.push(successor.ci_note);
   // Persist RESERVED *before* anything reaches the adapter (reserve precedes launch).
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
   if (!singleRunActivation.requested && successor) {
