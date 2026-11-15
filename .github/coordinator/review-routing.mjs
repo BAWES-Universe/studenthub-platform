@@ -868,17 +868,17 @@ export function ciReviseOrder({ review, lineageReceipts = [], ciRound, findings,
     return { ok: false, reason: "the CI findings are not valid findings bound to the head under review" };
   }
   const entries = (lineageReceipts ?? []).map((r) => provenanceFromReceipt(r)).filter(Boolean);
-  const writer = activeWriter(entries);
-  if (!writer) return { ok: false, reason: "no active writer to route the CI revise to" };
-  const writerLane = laneForRuntimeRole(writer.runtime, "revise");
-  if (!writerLane) return { ok: false, reason: `no writer lane exists for runtime ${String(writer.runtime)}` };
+  const ciWriter = activeWriter(entries);
+  if (!ciWriter) return { ok: false, reason: "no active writer to route the CI revise to" };
+  const writerLane = laneForRuntimeRole(ciWriter.runtime, "revise");
+  if (!writerLane) return { ok: false, reason: `no writer lane exists for runtime ${String(ciWriter.runtime)}` };
   return {
     ok: true,
     order: {
       ...mintOrder(review, {
         role: "revise",
-        runtime: writer.runtime,
-        actor: writer.actor,
+        runtime: ciWriter.runtime,
+        actor: ciWriter.actor,
         requested_worker: writerLane,
         attempt_id: freshAttempt(review.attempt_id, CI_REVISE_STAGE, ciRound),
         ...successorWorkspaceScope("revise", fixtureLane),

@@ -2389,6 +2389,7 @@ export async function ciBeforeReview({ successor, terminal, lineage, settings, c
   }
   if (decision.action === "review") {
     say(`review ${head} — ${decision.reason}`);
+    if (decision.note) io.stdout?.(decision.note);
     return decision.note ? { ...successor, ci_note: decision.note } : successor;
   }
   const findings = await ciFindings({ red: checks.red, repo, head, githubToken, fetchImpl });
@@ -2396,7 +2397,7 @@ export async function ciBeforeReview({ successor, terminal, lineage, settings, c
     fixtureLane: resolveFixtureLane(config, successor.issue_id) });
   if (!minted.ok) {
     const note = `ci-before-review: CI red at ${head} but no CI revise could be minted (${minted.reason}) — reviewed as before`;
-    say(note);
+    io.stdout?.(note);
     return { ...successor, ci_note: note };
   }
   say(`${decision.reason} at ${head} — CI revise ${ciRevises + 1}/${settings.max_ci_revise} via ${minted.order.requested_worker} (attempt ${minted.order.attempt_id}) instead of review`);
