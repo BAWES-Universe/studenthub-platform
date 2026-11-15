@@ -1013,8 +1013,8 @@ const CASES = [
   {
     name: "M150 alert a run that ended again under its run id",
     file: "service/card-watchdog.mjs",
-    from: "    const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)\n",
-    to: "    const entry = state.alerts.find((alert) => alert.key === stuck.key // SHU86-M150\n",
+    from: "      && (alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)\n",
+    to: "      && (alert.key === stuck.key // SHU86-M150\n",
     pattern: "SHU-86 0d: a stale status with the unit running",
   },
   {
@@ -1097,8 +1097,8 @@ const CASES = [
   {
     name: "M162 match an alert by key or run id only",
     file: "service/card-watchdog.mjs",
-    from: "      || (stuck.invocation !== null && alert.invocation === stuck.invocation));",
-    to: "      ); // SHU86-M162",
+    from: "      || (stuck.invocation !== null && alert.invocation === stuck.invocation)));",
+    to: "      )); // SHU86-M162",
     pattern: "SHU-86 0d: a run alerted stale before its first status write",
   },
   {
