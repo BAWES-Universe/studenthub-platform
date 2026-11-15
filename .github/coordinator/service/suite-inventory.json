@@ -4782,6 +4782,7 @@
     "SHU-86 mutation M325 leave a dead run's claim without its outcome",
     "SHU-86 mutation M329 release a dead run's lock when its claim could not be marked DIED",
     "SHU-86 mutation M330 report a dead run recovered when its lock could not be removed",
+    "SHU-86 mutation M331 release a dead run's lock when its status could not be marked recovered",
     "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
     "SHU-86 mutation M327 leave the pause off for a card worker's ended run whose lock is gone",
     "SHU-86 mutation M328 never alert a run a worker's start recovered before the watch saw it ended",
@@ -4789,6 +4790,7 @@
     "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
     "2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file",
     "2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock cannot be removed, keeps the lock and writes the pause file",
+    "2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file",
     "2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses",
     "2026-11-14: a run a worker's start recovered before the watch saw it ended is alerted once, without the pause",
     "2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it",
@@ -34503,6 +34505,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M331 release a dead run's lock when its status could not be marked recovered",
+      "capabilities": []
+    },
+    {
       "name": "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
       "capabilities": []
     },
@@ -34528,6 +34534,10 @@
     },
     {
       "name": "2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock cannot be removed, keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file",
       "capabilities": []
     },
     {

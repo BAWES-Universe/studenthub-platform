@@ -1922,6 +1922,12 @@ const CASES = [
     pattern: "2026-11-14: a dead run whose claim cannot be marked DIED",
   },
   {
+    name: "M331 release a dead run's lock when its status could not be marked recovered",
+    from: "  if (status.failed) {",
+    to: "  if (false) { // SHU86-M331",
+    pattern: "2026-11-14: a dead run whose status cannot be marked recovered",
+  },
+  {
     name: "M326 pause every card run for one card worker's run that ended without finishing",
     file: "service/card-watchdog.mjs",
     from: "    const recovers = stuck.kind === \"recovered\" || (holder !== null && holder.pid !== null && holder.alive === false);",

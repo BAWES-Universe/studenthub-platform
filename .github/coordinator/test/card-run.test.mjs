@@ -6600,6 +6600,42 @@ test("2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock ca
   assert.equal(locked.host.files.has(locked.paths.lock), true);
 });
 
+test("2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file", async () => {
+  // The status write fails.
+  const writes = await deadRunHost();
+  const file = statusPath(writes.paths);
+  const before = writes.host.files.get(file).text;
+  const fs = writes.host.io.fs;
+  writes.host.io = { ...writes.host.io, fs: { ...fs, renameSync: (from, to, ...rest) => {
+    if (String(to) === file) throw Object.assign(new Error("EIO"), { code: "EIO" });
+    return fs.renameSync(from, to, ...rest);
+  } } };
+  const failed = await main(["auto", "--worker", "2"], writes.host.io, PATHS);
+  assert.equal(failed.code, 1, JSON.stringify(failed.output));
+  assert.equal(failed.output.outcome, "RECOVER_FAILED");
+  assert.equal(failed.output.failed_step, "status");
+  assert.equal(failed.output.skipped, undefined, "never reported as recovered");
+  assert.equal(failed.output.status_recovered, false);
+  assert.deepEqual(failed.output.pause, { written: true });
+  assert.match(writes.host.files.get(PATHS.pause).text, /could not recover \(status\)/);
+  assert.equal(writes.host.files.get(writes.paths.lock).text, String(DEAD_PID), "the lock stays");
+  assert.equal(writes.host.files.get(file).text, before, "the status is unchanged");
+  // A status that cannot be read stops recovery too.
+  const unreadable = await deadRunHost();
+  unreadable.host.files.set(statusPath(unreadable.paths), { text: "{not json", mode: 0o600, uid: 0, gid: 0 });
+  const read = await main(["auto", "--worker", "2"], unreadable.host.io, PATHS);
+  assert.equal(read.output.outcome, "RECOVER_FAILED", JSON.stringify(read.output));
+  assert.equal(read.output.failed_step, "status");
+  assert.equal(unreadable.host.files.has(unreadable.paths.lock), true, "the lock stays");
+  // No status at all is not a failure: the run is recovered.
+  const none = await deadRunHost();
+  none.host.files.delete(statusPath(none.paths));
+  const ok = await main(["auto", "--worker", "2"], none.host.io, PATHS);
+  assert.equal(ok.output.skipped, "RECOVERED", JSON.stringify(ok.output));
+  assert.equal(ok.output.status_recovered, false);
+  assert.equal(none.host.files.has(none.paths.lock), false);
+});
+
 test("2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses", async () => {
   const { cardRunPaths } = await import("../service/card-run.mjs");
   const w2 = cardRunPaths(2, PATHS);

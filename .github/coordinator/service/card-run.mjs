@@ -1489,14 +1489,18 @@ function recoverDeadRun({ io, paths, limits, pid }) {
       { revert: reverted, claims: claims.marked, claims_failed: claims.failed });
   }
   const status = markStatusRecovered(io, paths, at);
+  if (status.failed) {
+    return failed("status", `its status could not be marked recovered (${status.failed})`,
+      { revert: reverted, claims: claims.marked, status_recovered: false });
+  }
   try { io.fs.unlinkSync(paths.lock); }
   catch (error) {
     if (error.code !== "ENOENT") {
       return failed("lock", `${paths.lock} could not be removed (${error.code ?? "unknown"})`,
-        { revert: reverted, claims: claims.marked, status_recovered: status });
+        { revert: reverted, claims: claims.marked, status_recovered: status.written });
     }
   }
-  return { ok: true, trigger: "timer", skipped: "RECOVERED", reason, revert: reverted, claims: claims.marked, status_recovered: status };
+  return { ok: true, trigger: "timer", skipped: "RECOVERED", reason, revert: reverted, claims: claims.marked, status_recovered: status.written };
 }
 
 function writeRecoverPause(io, paths, text) {
@@ -1539,13 +1543,17 @@ function markDeadClaims(io, paths, pid, at) {
 
 // The worker's status, moved from the step the dead run left it at to
 // "recovered", so the watch no longer reads it as a run that ended without
-// finishing. A status already at a terminal step, or none, is left alone.
+// finishing. A status already at a terminal step, or none, is left alone. A
+// status that cannot be read or written is a failure: left as it is, the
+// watch would read it as an ended run and pause every worker.
 function markStatusRecovered(io, paths, at) {
   let raw;
-  try { raw = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); } catch { return false; }
-  if (!raw || typeof raw !== "object" || ["finished", "recovered"].includes(raw.step)) return false;
+  try { raw = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); }
+  catch (error) { return error.code === "ENOENT" ? { written: false } : { written: false, failed: error.code ?? "STATUS_UNREADABLE" }; }
+  if (!raw || typeof raw !== "object" || ["finished", "recovered"].includes(raw.step)) return { written: false };
   const { paused: _paused, next_start: _next, updated_at: _updated, ...run } = raw;
-  return createStatus({ io, paths, run }).write({ step: "recovered", outcome: DEAD_RUN_OUTCOME, recovered_at: at, needs_owner: true });
+  const written = createStatus({ io, paths, run }).write({ step: "recovered", outcome: DEAD_RUN_OUTCOME, recovered_at: at, needs_owner: true });
+  return written ? { written: true } : { written: false, failed: "STATUS_WRITE_FAILED" };
 }
 
 // Self-repair B2: the one landing repair of a card, on the timer. Before its
