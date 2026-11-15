@@ -1917,8 +1917,8 @@ const CASES = [
   },
   {
     name: "M330 report a dead run recovered when its lock could not be removed",
-    from: "    if (error.code !== \"ENOENT\") {\n      return failed(\"lock\"",
-    to: "    if (false) { // SHU86-M330\n      return failed(\"lock\"",
+    from: "    if (error.code !== \"ENOENT\") {\n      // The status already says recovered",
+    to: "    if (false) { // SHU86-M330\n      // The status already says recovered",
     pattern: "2026-11-14: a dead run whose claim cannot be marked DIED",
   },
   {
@@ -1928,16 +1928,29 @@ const CASES = [
     pattern: "2026-11-14: a dead run whose status cannot be marked recovered",
   },
   {
+    name: "M332 read a recovery that could not release its lock as done",
+    file: "service/card-watchdog.mjs",
+    from: "  if (status && status.trigger === \"timer\" && status.step === \"recover_failed\") {",
+    to: "  if (false) { // SHU86-M332",
+    pattern: "2026-11-14: the watch pauses on a recovery that could not release its lock",
+  },
+  {
+    name: "M333 leave a recovered status in place when the lock could not be released",
+    from: "      if (status.written) markStatusRecoverFailed(io, paths, at);",
+    to: "      // SHU86-M333",
+    pattern: "2026-11-14: a dead run whose claim cannot be marked DIED",
+  },
+  {
     name: "M326 pause every card run for one card worker's run that ended without finishing",
     file: "service/card-watchdog.mjs",
-    from: "    const recovers = stuck.kind === \"recovered\" || (holder !== null && holder.pid !== null && holder.alive === false);",
+    from: "    const recovers = stuck.kind === \"recovered\" || (stuck.kind === \"ended\" && holder !== null && holder.pid !== null && holder.alive === false);",
     to: "    const recovers = false; // SHU86-M326",
     pattern: "2026-11-14: the watch alerts a card worker's run",
   },
   {
     name: "M327 leave the pause off for a card worker's ended run whose lock is gone",
     file: "service/card-watchdog.mjs",
-    from: "    const recovers = stuck.kind === \"recovered\" || (holder !== null && holder.pid !== null && holder.alive === false);",
+    from: "    const recovers = stuck.kind === \"recovered\" || (stuck.kind === \"ended\" && holder !== null && holder.pid !== null && holder.alive === false);",
     to: "    const recovers = stuck.kind === \"recovered\" || (worker > 1 && stuck.kind === \"ended\"); // SHU86-M327",
     pattern: "2026-11-14: a card worker's ended run whose lock is gone",
   },

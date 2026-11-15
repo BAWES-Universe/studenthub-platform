@@ -6598,6 +6598,9 @@ test("2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock ca
   assert.deepEqual(held.output.pause, { written: true });
   assert.match(locked.host.files.get(PATHS.pause).text, /could not recover \(lock\)/);
   assert.equal(locked.host.files.has(locked.paths.lock), true);
+  // The status moves on from recovered, so the watch never reads the recovery as done.
+  assert.equal(readStatus(locked.host.io, locked.paths).step, "recover_failed");
+  assert.equal(held.output.status_recovered, true);
 });
 
 test("2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file", async () => {
@@ -6697,6 +6700,40 @@ test("2026-11-14: a run a worker's start recovered before the watch saw it ended
   const again = await watchOnce({ io: host.io, paths: PATHS });
   assert.equal(again.workers[0].alert.already, true);
   assert.equal(alertsOf(host).length, 1, "alerted once");
+});
+
+test("2026-11-14: the watch pauses on a recovery that could not release its lock, and reports a failed recovery's own pause as in place", async () => {
+  const { cardRunPaths } = await import("../service/card-run.mjs");
+  const w2 = cardRunPaths(2, PATHS);
+  const setup = () => {
+    const host = watchHost({ status: watchStatus({ step: "finished", outcome: "PASS", land: "MERGED", needs_owner: false, updated_at: "2026-10-18T07:40:00.000Z" }),
+      now: Date.parse("2026-10-18T07:04:00.000Z") + 30 * MIN });
+    host.put(`${PATHS.checkout}/.github/coordinator/config.json`, JSON.stringify({ owner_mention: "https://linear.app/bawes/profiles/owner", workers: { max: 2 } }));
+    host.put(w2.lock, "4242", { mode: 0o600 });
+    return host;
+  };
+  // recover_failed: the start reverted the run but could not release the lock.
+  const failed = setup();
+  failed.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", step: "recover_failed", outcome: "DIED",
+    recovered_at: "2026-10-18T07:30:00.000Z", updated_at: "2026-10-18T07:30:01.000Z" }))}\n`, { mode: 0o600 });
+  const first = await watchOnce({ io: failed.io, paths: PATHS });
+  assert.equal(first.workers[0].alert?.kind, "recover_failed", JSON.stringify(first));
+  assert.deepEqual(first.workers[0].alert.pause, { written: true });
+  assert.ok(failed.files.has(PATHS.pause));
+  const body = alertsOf(failed)[0].body;
+  assert.match(body, /could not release \/run\/lock\/shu-card-run-w2\.lock/);
+  assert.match(body, /Check the host before removing the pause file/);
+  // An ended run whose start's recovery failed and wrote the pause itself:
+  // the lock and its dead pid are still there, and the pause is reported in place.
+  const ended = setup();
+  ended.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z" }))}\n`, { mode: 0o600 });
+  ended.put(PATHS.pause, "card-run: worker 2 could not recover (claims) the dead run of pid 4242\n", { mode: 0o644 });
+  const second = await watchOnce({ io: ended.io, paths: PATHS });
+  assert.equal(second.workers[0].alert.kind, "ended", JSON.stringify(second));
+  assert.deepEqual(second.workers[0].alert.pause, { written: false, held: true });
+  const text = alertsOf(ended)[0].body;
+  assert.match(text, /card-run\.paused was already in place/);
+  assert.match(text, /Check the host before removing the pause file/);
 });
 
 test("2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it", async () => {

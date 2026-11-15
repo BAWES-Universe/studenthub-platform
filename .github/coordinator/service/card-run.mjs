@@ -1496,6 +1496,9 @@ function recoverDeadRun({ io, paths, limits, pid }) {
   try { io.fs.unlinkSync(paths.lock); }
   catch (error) {
     if (error.code !== "ENOENT") {
+      // The status already says recovered; it is moved on to recover_failed,
+      // so the watch reads an incomplete recovery, never a finished one.
+      if (status.written) markStatusRecoverFailed(io, paths, at);
       return failed("lock", `${paths.lock} could not be removed (${error.code ?? "unknown"})`,
         { revert: reverted, claims: claims.marked, status_recovered: status.written });
     }
@@ -1554,6 +1557,17 @@ function markStatusRecovered(io, paths, at) {
   const { paused: _paused, next_start: _next, updated_at: _updated, ...run } = raw;
   const written = createStatus({ io, paths, run }).write({ step: "recovered", outcome: DEAD_RUN_OUTCOME, recovered_at: at, needs_owner: true });
   return written ? { written: true } : { written: false, failed: "STATUS_WRITE_FAILED" };
+}
+
+// A recovery that marked the status recovered but could not release the
+// lock: the status moves on to recover_failed, which the watch alerts and
+// pauses on (and retries the pause) rather than reading it as done.
+function markStatusRecoverFailed(io, paths, at) {
+  let raw;
+  try { raw = JSON.parse(io.fs.readFileSync(statusPath(paths), "utf8")); } catch { return false; }
+  if (!raw || typeof raw !== "object" || raw.step !== "recovered") return false;
+  const { paused: _paused, next_start: _next, updated_at: _updated, ...run } = raw;
+  return createStatus({ io, paths, run }).write({ step: "recover_failed", recover_failed_at: at });
 }
 
 // Self-repair B2: the one landing repair of a card, on the timer. Before its

@@ -73,9 +73,10 @@ export const WATCH_LIMITS = Object.freeze({
 
 export const RUNNING_STATES = Object.freeze(new Set(["active", "activating", "deactivating", "reloading"]));
 // 2026-11-14: "recovered" is the step a card worker's next start writes over
-// a run that died; like "finished", it ends the run.
-export const STATUS_STEPS = Object.freeze(new Set(["armed", "ticking", "reverting", "landing", "finished", "recovered"]));
-export const TERMINAL_STEPS = Object.freeze(new Set(["finished", "recovered"]));
+// a run that died; like "finished", it ends the run. "recover_failed" is a
+// recovery that could not release the worker's lock: alerted and paused on.
+export const STATUS_STEPS = Object.freeze(new Set(["armed", "ticking", "reverting", "landing", "finished", "recovered", "recover_failed"]));
+export const TERMINAL_STEPS = Object.freeze(new Set(["finished", "recovered", "recover_failed"]));
 export const STATUS_MARKER = "<!-- card-run-status -->";
 
 export function watchServiceUnit({ node, module }) {
@@ -195,6 +196,11 @@ export function stuckRun({ unit, status, now, limits = WATCH_LIMITS }) {
   // owner hears about once, even when the recovery came before any pass saw
   // the run ended. Matched by run id, so a run alerted ended is not alerted
   // again.
+  // A start that found the run dead but could not release its lock is an
+  // incomplete recovery: alerted, and paused, never read as done.
+  if (status && status.trigger === "timer" && status.step === "recover_failed") {
+    return { kind: "recover_failed", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
+  }
   if (status && status.trigger === "timer" && status.step === "recovered") {
     return { kind: "recovered", key: status.run_id, run_id: status.run_id, invocation: status.invocation ?? null, since: null, last: status.updated_at, status };
   }
@@ -245,6 +251,8 @@ export function renderAlert({ stuck, mention, pause, paths = CARD_RUN_PATHS, lim
       ? `${service} failed after starting at ${stuck.since}, before its run wrote any status: the run may have left its claim or ${paths.lock} in place, holding every later start.`
       : stuck.kind === "stale"
       ? `${service} has been running since ${stuck.since}, and ${stuck.status ? `the run's status was last written at ${stuck.last} (step ${stuck.status.step ?? "unknown"})` : "no status was written since it started"}: nothing for more than ${Math.round(limits.staleMs / 60000)} minutes.`
+      : stuck.kind === "recover_failed"
+      ? `${service}'s run ended without finishing, and a later start of ${service} reverted the worker and marked the card's run DIED at ${stuck.status.recovered_at ?? stuck.last}, but could not release ${paths.lock}, so that worker's starts stay held.`
       : stuck.kind === "recovered"
       ? `${service}'s run ended without finishing, and a later start of ${service} recovered it at ${stuck.status.recovered_at ?? stuck.last}: it reverted the worker, released ${paths.lock} and marked the card's run DIED, so the queue reads that card as stopped until it is re-cut.`
       : `${service} is not running, but the run's status stopped at step ${stuck.status.step} at ${stuck.last} and never reached finished: the run ended without finishing, and may have left the host armed and ${paths.lock} in place.`,
@@ -423,6 +431,10 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
   // The unit is read before the status, so a run that finishes in between is
   // read as running with a fresh status, never as ended without finishing.
   const unit = readUnit(io, now, service);
+  // A card worker's lock is read before its status: a recovery writes its
+  // status before it releases the lock, so a lock already gone means the
+  // status read next is the recovered one.
+  const holder = worker > 1 && io.fs.existsSync(paths.lock) ? lockHolder(io, paths.lock) : null;
   const status = readStatus(io, paths);
   const result = { unit: unit ? unit.state : null, step: status?.step ?? null, alert: null };
   if (unit === null) result.unit_error = "the card-run unit could not be read";
@@ -441,9 +453,12 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
     // autoRun recovers). A run whose lock went away (a reboot clears
     // /run/lock) while its activation record stayed would only ever skip
     // HOST_BUSY, so it pauses as before.
-    const holder = worker > 1 && stuck.kind === "ended" && io.fs.existsSync(paths.lock) ? lockHolder(io, paths.lock) : null;
-    const recovers = stuck.kind === "recovered" || (holder !== null && holder.pid !== null && holder.alive === false);
-    const pause = pauseKept ? entry.pause : recovers ? { written: false, left: true } : writePause(io, paths, stuck);
+    const recovers = stuck.kind === "recovered" || (stuck.kind === "ended" && holder !== null && holder.pid !== null && holder.alive === false);
+    // A recovery that failed writes the pause file itself: the alert then
+    // says it is in place and asks for the host check before removing it.
+    const pause = pauseKept ? entry.pause
+      : recovers ? (io.fs.existsSync(paths.pause) ? { written: false, held: true } : { written: false, left: true })
+        : writePause(io, paths, stuck);
     if (entry?.posted) {
       entry.pause = pause;
       // What a later pass learns about the run is kept, so every later read
