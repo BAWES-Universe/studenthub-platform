@@ -89,6 +89,13 @@ const CASES = [
     to: ' || findings.source !== "ci") { // CI-M11',
     pattern: "CI before review: a CI revise is shaped like a routed revise",
   },
+  {
+    name: "C12 judge a build head's CI without the landing's external-check policy",
+    file: "reconcile.mjs",
+    from: "checks = await land.readCommitChecks(gh, repo, head, externalPolicy(config));",
+    to: "checks = await land.readCommitChecks(gh, repo, head); // CI-M12",
+    pattern: "CI before review: a failing advisory third-party check",
+  },
 ];
 
 for (const mutation of CASES) {

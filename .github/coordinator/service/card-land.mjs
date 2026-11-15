@@ -574,7 +574,9 @@ async function readAllPages(gh, url, key) {
   }
   return { response: first, body, items: items.length < body.total_count ? null : items };
 }
-export async function readCommitChecks(gh, repo, sha) {
+// external: the landing's external-check policy (externalPolicy(config)), so an
+// advisory third-party check never reads as red; null judges every check.
+export async function readCommitChecks(gh, repo, sha, external = null) {
   const api = `https://api.github.com/repos/${repo}`;
   const [runsRead, statusResponse] = await Promise.all([
     readAllPages(gh, `${api}/commits/${sha}/check-runs?filter=latest&per_page=100`, "check_runs"),
@@ -584,7 +586,7 @@ export async function readCommitChecks(gh, repo, sha) {
   const { response: runsResponse, body: runs, items: listed } = runsRead;
   if (!listed) {
     if (runsResponse?.ok && Array.isArray(runs?.check_runs)) return { green: false, note: "the checks could not be read in full" };
-    return judgeChecks(runsResponse, runs, statusResponse, status);
+    return judgeChecks(runsResponse, runs, statusResponse, status, external, { head: sha });
   }
   let boardSuites = new Set();
   if (listed.some((run) => BOARD_ONLY_CHECKS.includes(run?.name) && run?.app?.slug === "github-actions")) {
@@ -596,7 +598,7 @@ export async function readCommitChecks(gh, repo, sha) {
   }
   const own = listed.filter((run) => !boardOnlyCheck(run, boardSuites));
   if (own.length > 100) return { green: false, note: "the checks could not be read in full" };
-  return judgeChecks(runsResponse, { ...runs, total_count: own.length, check_runs: own }, statusResponse, status);
+  return judgeChecks(runsResponse, { ...runs, total_count: own.length, check_runs: own }, statusResponse, status, external, { head: sha });
 }
 
 // One read of the head's checks and the pull request's own state.

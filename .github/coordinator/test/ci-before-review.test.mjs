@@ -274,6 +274,17 @@ test("CI before review: red checks dispatch a CI revise to the writer with ci-fi
   } finally { h.cleanup(); }
 });
 
+test("CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides", async () => {
+  const advisory = (head) => ({ id: 301, name: "seer-advisory", status: "completed", conclusion: "failure", head_sha: head, app: { slug: "seer-by-sentry" } });
+  const { h, world } = await builtEpisode({ checks: (head) => [job(101, head ?? SHA_WRITE, "success"), advisory(head ?? SHA_WRITE)] });
+  try {
+    await world.tick();
+    assert.equal(h.triggers["codex-cli"], 1, "no CI revise for an advisory check");
+    assert.equal(h.triggers["claude-code"], 1, "the review is dispatched");
+    assert.equal(h.latestFor("claude-verifier").target_sha, SHA_WRITE);
+  } finally { h.cleanup(); }
+});
+
 test("CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round", async () => {
   const red = (head) => [job(head === SHA_WRITE ? 201 : head === SHA_REVISED ? 202 : 203, head ?? SHA_WRITE)];
   const { h, world } = await builtEpisode({ checks: (head) => (head ? red(head) : [job(201, SHA_WRITE), job(202, SHA_REVISED), job(203, "e".repeat(40))]) });

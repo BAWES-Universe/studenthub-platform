@@ -2375,7 +2375,10 @@ export async function ciBeforeReview({ successor, terminal, lineage, settings, c
   try {
     const land = await import("./service/card-land.mjs");
     const gh = land.github(land.boundedFetch({ fetch: fetchImpl, delay: io.delay }, CI_BEFORE_REVIEW_READ_TIMEOUT_MS), githubToken);
-    checks = await land.readCommitChecks(gh, repo, head);
+    const { externalPolicy } = await import("./service/external-checks.mjs");
+    // The landing's own external-check policy: an advisory third-party check
+    // neither holds the review nor reads as red.
+    checks = await land.readCommitChecks(gh, repo, head, externalPolicy(config));
   } catch (error) {
     checks = { green: false, note: `the checks cannot be read: ${error?.message ?? "error"}` };
   }
