@@ -8207,7 +8207,43 @@ const RECUT_640_CONTRACTS = Object.fromEntries(Object.entries(RECUT_640).map(([f
     brief,
   })];
 }));
-export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS });
+// SHU-643 told its run to fetch coordinator/SHU-640, but a box run has no
+// network, so it rebuilt from scratch and was blocked again. SHU-646 carries
+// the same contract with that head's change shipped on main as a patch file
+// under this folder's test fixtures (SHU646_SEED, git diff 01953e5 ae25c6a,
+// both on main's history, so it applies to the bound head as it is), applied
+// with no fetch. SHU-647 re-queues SHU-644 after it.
+const RECUT_643 = Object.freeze({ "SHU-643": "SHU-646", "SHU-644": "SHU-647" });
+const recut643 = (text) => text.replace(/\bSHU-(643|644)\b/g, (id) => RECUT_643[id]);
+const RECUT_643_REASONS = Object.freeze({
+  "SHU-643": "with the last head's change shipped on main as a patch file, because its run could not fetch that head with no network",
+  "SHU-644": "because SHU-643, whose routes and login.civilIdReview it builds against, was re-queued as SHU-646",
+});
+const SHU646_SEED = ".github/coordinator/test/fixtures/card-seeds/SHU-640-ae25c6a.patch";
+const SHU646_START = `Start from the last run's head, shipped as a patch. The last run of this card (SHU-640) ended at ae25c6a, and its last review read everything as sound except the two faults below. That head's whole change to your paths is committed at the bound head as ${SHU646_SEED} (git diff 01953e5 ae25c6a; 01953e5 is in the bound head's history and none of your paths changed since). There is no network and nothing to fetch. Begin with git apply ${SHU646_SEED} from the repository root, then keep what it did and fix only what follows. The patch file itself is not one of your paths and does not change. If it does not apply cleanly, say exactly why in your final message and make the same changes by hand from it.`;
+const RECUT_643_CONTRACTS = Object.fromEntries(Object.entries(RECUT_643).map(([from, to]) => {
+  const base = RECUT_640_CONTRACTS[from];
+  const tail = base.acceptance.lastIndexOf(` ${from} is `);
+  if (tail < 0) throw new Error(`${from}'s acceptance must end with its re-queue sentence`);
+  const acceptance = `${recut643(base.acceptance.slice(0, tail))} ${to} is ${from}'s contract re-queued under a fresh id ${RECUT_643_REASONS[from]}; ${from} never lands.`;
+  let brief = replaceOnce(recut643(base.brief), recut643(base.acceptance), acceptance, `${to} acceptance`);
+  if (to === "SHU-646") {
+    const start = brief.indexOf("Start from the last run's head.");
+    const end = brief.indexOf("\n\nFaults the last run of this card (SHU-640)", start);
+    if (start < 0 || end < 0 || brief.indexOf("Start from the last run's head.", start + 1) >= 0) throw new Error(`${to} must replace exactly one start paragraph`);
+    brief = `${brief.slice(0, start)}${SHU646_START}${brief.slice(end)}`;
+    if (/git fetch|origin coordinator/.test(brief)) throw new Error(`${to}'s brief must not ask for a fetch`);
+  }
+  if (!brief.startsWith(`Card ${to}:`)) throw new Error(`the re-cut brief for ${to} must name its own card`);
+  return [to, Object.freeze({
+    workspace_mode: base.workspace_mode,
+    initial_build_paths: base.initial_build_paths,
+    revision_paths: base.revision_paths,
+    acceptance,
+    brief,
+  })];
+}));
+export const CARD_CONTRACTS = Object.freeze({ ...CARD_CONTRACTS_546, ...RECUT_549_CONTRACTS, ...SHU563_CONTRACT, ...SHU564_CONTRACT, ...RECUT_560_CONTRACTS, ...RECUT_559_CONTRACTS, ...RECUT_566_CONTRACTS, ...SPLIT_570_CONTRACTS, ...SHU579_CONTRACT, ...RECUT_577_CONTRACTS, ...RECUT_575_CONTRACTS, ...RECUT_581_CONTRACTS, ...RECUT_584_CONTRACTS, ...RECUT_586_CONTRACTS, ...RECUT_588_CONTRACTS, ...RECUT_590_CONTRACTS, ...RECUT_592_CONTRACTS, ...RECUT_596_CONTRACTS, ...SPLIT_600_CONTRACTS, ...RECUT_604_CONTRACTS, ...RECUT_611_CONTRACTS, ...SHU620_CONTRACT, ...RECUT_617_CONTRACTS, ...RECUT_618_CONTRACTS, ...RECUT_624_CONTRACTS, ...SPLIT_622_CONTRACTS, ...RECUT_628_CONTRACTS, ...RECUT_630_CONTRACTS, ...RECUT_634_CONTRACTS, ...RECUT_635_CONTRACTS, ...RECUT_640_CONTRACTS, ...RECUT_643_CONTRACTS });
 
 // SHU-303: a review-only card has no writer. Each run of it reviews one open
 // pull request of the pilot repository at the exact head its single-run
