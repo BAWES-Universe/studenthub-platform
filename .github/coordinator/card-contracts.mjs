@@ -8122,7 +8122,7 @@ const RECUT_634_CONTRACTS = (() => {
 // apps/gateway/test/wiring-runtime.test.ts's closed key list, the gap that
 // stopped SHU-634, so SHU-640 has that test in its paths too. The queue is a
 // new one, SHU-640 first, so the stopped SHU-635 and SHU-636 leave it and the
-// coordinator code install can plan.
+// coordinator code install can plan; SHU-638 has landed, so it leaves too.
 const RECUT_635 = Object.freeze({ "SHU-635": "SHU-640", "SHU-636": "SHU-641" });
 const recut635 = (text) => text.replace(/\bSHU-(635|636)\b/g, (id) => RECUT_635[id]);
 const RECUT_635_REASONS = Object.freeze({
