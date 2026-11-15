@@ -439,7 +439,14 @@ async function watchWorker({ io, paths, limits, now, state, credentials, service
   const result = { unit: unit ? unit.state : null, step: status?.step ?? null, alert: null };
   if (unit === null) result.unit_error = "the card-run unit could not be read";
 
-  const found = stuckRun({ unit, status, now, limits });
+  // A recovered status whose worker lock is still there is a recovery that
+  // never released the lock: its rewrite to recover_failed failed, or the
+  // start died in between. Past the ended limit it is alerted and paused on
+  // as recover_failed; before it, the start may still be releasing the lock.
+  const raw = stuckRun({ unit, status, now, limits });
+  const found = raw?.kind === "recovered" && holder !== null
+    ? (now - Date.parse(raw.last) > limits.endedMs ? { ...raw, kind: "recover_failed" } : null)
+    : raw;
   const stuck = found && worker > 1 ? { ...found, key: `w${worker}-${found.key}` } : found;
   if (stuck) {
     const entry = state.alerts.find((alert) => alert.key === stuck.key || (stuck.run_id !== null && alert.run_id === stuck.run_id)

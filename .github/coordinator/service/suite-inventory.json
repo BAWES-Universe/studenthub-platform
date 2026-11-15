@@ -4785,6 +4785,7 @@
     "SHU-86 mutation M331 release a dead run's lock when its status could not be marked recovered",
     "SHU-86 mutation M332 read a recovery that could not release its lock as done",
     "SHU-86 mutation M333 leave a recovered status in place when the lock could not be released",
+    "SHU-86 mutation M334 read a recovered status whose lock is still held as done",
     "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
     "SHU-86 mutation M327 leave the pause off for a card worker's ended run whose lock is gone",
     "SHU-86 mutation M328 never alert a run a worker's start recovered before the watch saw it ended",
@@ -34517,6 +34518,10 @@
     },
     {
       "name": "SHU-86 mutation M333 leave a recovered status in place when the lock could not be released",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M334 read a recovered status whose lock is still held as done",
       "capabilities": []
     },
     {

@@ -6664,7 +6664,9 @@ test("2026-11-14: the watch alerts a card worker's run that ended without finish
   assert.equal(again.ok, true);
   assert.equal(alertsOf(host).length, 1, "alerted once");
   assert.equal(host.files.has(PATHS.pause), false);
-  // Once the worker's next start writes its status recovered, nothing is stuck.
+  // Once the worker's next start writes its status recovered and releases
+  // its lock, nothing is stuck.
+  host.files.delete(w2.lock);
   host.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", step: "recovered", outcome: "DIED",
     updated_at: new Date(host.now).toISOString() }))}\n`, { mode: 0o600 });
   host.now += 30 * MIN;
@@ -6723,6 +6725,20 @@ test("2026-11-14: the watch pauses on a recovery that could not release its lock
   const body = alertsOf(failed)[0].body;
   assert.match(body, /could not release \/run\/lock\/shu-card-run-w2\.lock/);
   assert.match(body, /Check the host before removing the pause file/);
+  // A recovered status whose lock is still there: the rewrite to
+  // recover_failed failed, or the start died before releasing the lock.
+  const stale = setup();
+  stale.put(statusPath(w2), `${JSON.stringify(watchStatus({ card: "SHU-305", run_id: "shu-305-run-20261018T070000Z", step: "recovered", outcome: "DIED",
+    recovered_at: "2026-10-18T07:30:00.000Z", updated_at: "2026-10-18T07:30:00.000Z" }))}\n`, { mode: 0o600 });
+  stale.now = Date.parse("2026-10-18T07:30:00.000Z") + 60 * 1000;
+  const fresh = await watchOnce({ io: stale.io, paths: PATHS });
+  assert.equal(fresh.workers[0].alert, null, "a start may still be releasing the lock");
+  assert.equal(stale.files.has(PATHS.pause), false);
+  stale.now = Date.parse("2026-10-18T07:30:00.000Z") + WATCH_LIMITS.endedMs + 60 * 1000;
+  const late = await watchOnce({ io: stale.io, paths: PATHS });
+  assert.equal(late.workers[0].alert?.kind, "recover_failed", JSON.stringify(late));
+  assert.deepEqual(late.workers[0].alert.pause, { written: true });
+  assert.ok(stale.files.has(PATHS.pause));
   // An ended run whose start's recovery failed and wrote the pause itself:
   // the lock and its dead pid are still there, and the pause is reported in place.
   const ended = setup();

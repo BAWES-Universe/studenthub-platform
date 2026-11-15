@@ -1941,6 +1941,13 @@ const CASES = [
     pattern: "2026-11-14: a dead run whose claim cannot be marked DIED",
   },
   {
+    name: "M334 read a recovered status whose lock is still held as done",
+    file: "service/card-watchdog.mjs",
+    from: "  const found = raw?.kind === \"recovered\" && holder !== null",
+    to: "  const found = false // SHU86-M334",
+    pattern: "2026-11-14: the watch pauses on a recovery that could not release its lock",
+  },
+  {
     name: "M326 pause every card run for one card worker's run that ended without finishing",
     file: "service/card-watchdog.mjs",
     from: "    const recovers = stuck.kind === \"recovered\" || (stuck.kind === \"ended\" && holder !== null && holder.pid !== null && holder.alive === false);",
