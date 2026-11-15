@@ -2004,6 +2004,12 @@ const CASES = [
     to: "    return { ok: true, trigger: \"timer\", skipped: \"LOCKED\", reason: \"\" }; // SHU86-M340",
     pattern: "2026-11-15: one recovery at a time",
   },
+  {
+    name: "M341 report a dead run recovered when the claim its status names was never marked",
+    from: "  if (named !== null && !marked.includes(named) && !failed.some((f) => f.file === named)) failed.push(",
+    to: "  if (false) /* SHU86-M341 */ failed.push(",
+    pattern: "2026-11-15: a dead run whose named claim is gone",
+  },
 ];
 
 for (const mutation of CASES) {

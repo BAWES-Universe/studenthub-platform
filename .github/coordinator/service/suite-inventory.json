@@ -4797,10 +4797,12 @@
     "SHU-86 mutation M338 let two starts recover the same worker at once",
     "SHU-86 mutation M339 recover a lock that a new run took before the marker",
     "SHU-86 mutation M340 read a dead recovery's marker as one in progress",
+    "SHU-86 mutation M341 report a dead run recovered when the claim its status names was never marked",
     "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
     "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
     "2026-11-15: a dead run whose status names no unfinished run cannot tell which same-pid claim is its own, so it keeps the lock and writes the pause file",
     "2026-11-15: one recovery at a time: a live recovery's marker skips LOCKED, a dead one's pauses, and a lock that changed under the marker is left alone",
+    "2026-11-15: a dead run whose named claim is gone, belongs to another worker or pid, or already has its outcome keeps the lock and writes the pause file",
     "2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file",
     "2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock cannot be removed, keeps the lock and writes the pause file",
     "2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file",
@@ -34599,6 +34601,10 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M341 report a dead run recovered when the claim its status names was never marked",
+      "capabilities": []
+    },
+    {
       "name": "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
       "capabilities": []
     },
@@ -34612,6 +34618,10 @@
     },
     {
       "name": "2026-11-15: one recovery at a time: a live recovery's marker skips LOCKED, a dead one's pauses, and a lock that changed under the marker is left alone",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-15: a dead run whose named claim is gone, belongs to another worker or pid, or already has its outcome keeps the lock and writes the pause file",
       "capabilities": []
     },
     {

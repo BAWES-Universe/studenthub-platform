@@ -1594,6 +1594,10 @@ function markDeadClaims(io, paths, pid, at, named) {
       marked.push(file);
     } catch (error) { failed.push({ file, code: error.code ?? "CLAIM_WRITE_FAILED" }); }
   }
+  // The run the status names must be found and marked: a claim that is gone,
+  // belongs to another worker or pid, or already has its outcome leaves the
+  // run unrecorded, so the recovery stops rather than report it DIED.
+  if (named !== null && !marked.includes(named) && !failed.some((f) => f.file === named)) failed.push({ file: named, code: "CLAIM_RUN_MISSING" });
   return { marked, failed };
 }
 

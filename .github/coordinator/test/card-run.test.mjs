@@ -6522,6 +6522,32 @@ test("2026-11-15: a dead run whose status names no unfinished run cannot tell wh
   }
 });
 
+test("2026-11-15: a dead run whose named claim is gone, belongs to another worker or pid, or already has its outcome keeps the lock and writes the pause file", async () => {
+  const cases = {
+    absent: null,
+    other_worker: (claim) => ({ ...claim, worker: 1 }),
+    other_pid: (claim) => ({ ...claim, pid: DEAD_PID + 1 }),
+    finished: (claim) => ({ ...claim, outcome: "PASS", ok: true }),
+  };
+  for (const [label, change] of Object.entries(cases)) {
+    const { host, paths, claim, others } = await deadRunHost();
+    const file = autoClaim(paths, REV, "SHU-301");
+    if (change === null) host.files.delete(file);
+    else host.files.set(file, { text: `${JSON.stringify(change(claim))}\n`, mode: 0o600, uid: 0, gid: 0 });
+    const before = host.files.get(file)?.text;
+    const { output } = await main(["auto", "--worker", "2"], host.io, PATHS);
+    assert.equal(output.ok, false, `${label}: ${JSON.stringify(output)}`);
+    assert.equal(output.outcome, "RECOVER_FAILED", label);
+    assert.equal(output.failed_step, "claims", label);
+    assert.equal(output.skipped, undefined, `${label}: never reported as recovered`);
+    assert.ok(output.claims_failed.some((f) => f.file === file && f.code === "CLAIM_RUN_MISSING"), `${label}: ${JSON.stringify(output.claims_failed)}`);
+    assert.equal(host.files.get(file)?.text, before, `${label}: the named claim is unchanged`);
+    for (const [other, text] of Object.entries(others)) assert.equal(host.files.get(other).text, text, `${label}: ${other}`);
+    assert.equal(host.files.has(paths.lock), true, `${label}: the lock stays`);
+    assert.equal(host.files.has(PATHS.pause), true, `${label}: the pause file is written`);
+  }
+});
+
 test("2026-11-15: one recovery at a time: a live recovery's marker skips LOCKED, a dead one's pauses, and a lock that changed under the marker is left alone", async () => {
   const untouched = (host, paths) => {
     assert.equal(host.files.has(paths.activation), true);
