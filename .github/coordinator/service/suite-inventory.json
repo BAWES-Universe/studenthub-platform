@@ -4905,7 +4905,8 @@
     "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
     "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
     "CI before review: a failing third-party check the policy names as required still mints a CI revise",
-    "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round"
+    "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round",
+    "CI before review: the committed config.json turns the gate on, and its settings send a red build head back to the writer"
   ],
   "requirements": [
     {
@@ -35058,6 +35059,10 @@
     },
     {
       "name": "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: the committed config.json turns the gate on, and its settings send a red build head back to the writer",
       "capabilities": []
     }
   ],

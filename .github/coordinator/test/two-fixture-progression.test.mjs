@@ -273,7 +273,11 @@ function tickWorld() {
   const actor = f.config.linear_receipt_actor_ids[0];
   const h = createEpisodeHarness({ revision: f.record.coordinator_revision, activationId: f.record.activation_id,
     callbackActor: actor, githubToken: 'synthetic', initialBranchHead: f.seed,
-    now: new Date('2026-09-14T11:30:00Z'), configOverrides: f.config,
+    // These ticks pin the build, BLOCK revision and re-review sequence itself;
+    // the CI-before-review gate on that review has its own suite
+    // (ci-before-review.test.mjs), so it stays off here whatever config.json ships.
+    now: new Date('2026-09-14T11:30:00Z'),
+    configOverrides: { ...f.config, ci_before_review: { ...f.config.ci_before_review, enabled: false } },
     extraNodes: [{ id: 'uuid-SHU-254', identifier: 'SHU-254', title: 'second fixture', state: { name: 'Todo' },
       priorityLabel: 'Low', labels: { nodes: [{ name: 'repo:platform' }] }, assignee: null, delegate: null, parent: null, relations: { nodes: [] } }] });
   fs.writeFileSync(h.activationPath, JSON.stringify(f.record));
