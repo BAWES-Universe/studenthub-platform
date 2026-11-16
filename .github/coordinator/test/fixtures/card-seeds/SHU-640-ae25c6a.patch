@@ -1,0 +1,407 @@
+diff --git a/apps/gateway/src/civil-id-review-http.ts b/apps/gateway/src/civil-id-review-http.ts
+new file mode 100644
+index 0000000..30acfbc
+--- /dev/null
++++ b/apps/gateway/src/civil-id-review-http.ts
+@@ -0,0 +1,60 @@
++import { createHash, createHmac, timingSafeEqual } from "node:crypto";
++import type { IncomingMessage, ServerResponse } from "node:http";
++import type { CivilIdOcrStore, CivilIdReviewStore, CivilIdVault } from "@studenthub/profile";
++import { CIVIL_ID_REVIEW_PAGE_SIZE, maskCivilId } from "@studenthub/profile";
++import type { StaffDocuments } from "../../../packages/private-documents/src/staff-delivery.js";
++import { pageDocument, writeHtml } from "./web-ui.js";
++
++const LIMIT=4096, PERSON=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
++const esc=(v:string)=>v.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
++const cookie=(v:string|undefined)=>v?.split(";").map(x=>x.trim()).find(x=>x.startsWith("__Host-studenthub_session="))?.slice(26);
++const notFound="<main><h1>Not found</h1><p>The page could not be found.</p></main>";
++const plain=(title:string,message:string)=>`<main><h1>${esc(title)}</h1><p>${esc(message)}</p></main>`;
++const today=(d:Date)=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kuwait",year:"numeric",month:"2-digit",day:"2-digit"}).format(d);
++const waited=(from:string,now:Date)=>{const ms=Math.max(0,now.getTime()-Date.parse(from)),days=Math.floor(ms/86400000);if(days)return `${days} day${days===1?"":"s"}`;const hours=Math.floor(ms/3600000);if(hours)return `${hours} hour${hours===1?"":"s"}`;const mins=Math.floor(ms/60000);return mins?`${mins} minute${mins===1?"":"s"}`:"less than a minute"};
++
++export interface CivilIdReviewHttpService {
++  store:CivilIdReviewStore;
++  isStaff(principalId:string):Promise<boolean>;
++  vault?:CivilIdVault;
++  ocr?:CivilIdOcrStore;
++  staffDocuments?:StaffDocuments;
++  secret?:Buffer;
++  now?:()=>Date;
++}
++type Confirm={v:1;reviewer:string;subject:string;decision:"confirmed"|"rejected";reason:string|null;revision:number;front:string;back:string;evidence:string;issuedAt:number;expiresAt:number};
++const sign=(claim:Confirm,key:Buffer)=>{const p=Buffer.from(JSON.stringify(claim)).toString("base64url");return `${p}.${createHmac("sha256",key).update("civil-id-review-confirm-v1\0"+p).digest("base64url")}`};
++const verify=(token:string,key:Buffer):Confirm|null=>{const [p,m,...rest]=token.split(".");if(!p||!m||rest.length)return null;const expected=createHmac("sha256",key).update("civil-id-review-confirm-v1\0"+p).digest("base64url"),a=Buffer.from(m),b=Buffer.from(expected);if(a.length!==b.length||!timingSafeEqual(a,b))return null;try{const x=JSON.parse(Buffer.from(p,"base64url").toString()) as Confirm;return x.v===1?x:null}catch{return null}};
++const finish=(res:ServerResponse,status:number,body:string,headers:Record<string,string>={})=>writeHtml(res,status,body.startsWith("<!doctype html>")?body:pageDocument("Civil ID",body),headers);
++async function form(req:IncomingMessage,fields:readonly string[]){if(!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(req.headers["content-type"]??"")||Number(req.headers["content-length"])>LIMIT){req.resume();return null}req.setEncoding("utf8");let raw="";for await(const c of req){raw+=c;if(Buffer.byteLength(raw)>LIMIT)return null}const p=new URLSearchParams(raw),keys=[...p.keys()];if(keys.length!==fields.length||new Set(keys).size!==keys.length||keys.some(k=>!fields.includes(k)))return null;return p}
++const NONE="none";
++const evidenceDigest=(front:string|null,back:string|null)=>createHash("sha256").update(`front:${front??NONE}\nback:${back??NONE}`).digest("hex");
++const evidence=async(s:CivilIdReviewHttpService,credential:string,subject:string)=>{const docs=await s.staffDocuments!.documents(credential,subject),front=docs.find(x=>x.type==="civil-id-front")?.version??null,back=docs.find(x=>x.type==="civil-id-back")?.version??null;return{front,back,digest:evidenceDigest(front,back)}};
++
++export async function handleCivilIdReview(req:IncomingMessage,res:ServerResponse,service:CivilIdReviewHttpService|undefined,origin:string|undefined,authorize:(session:string)=>Promise<string|undefined>,document:(title:string,body:string)=>string):Promise<boolean>{
++  const url=new URL(req.url??"/","http://gateway.invalid"),path=url.pathname;
++  if(path!=="/workspace/civil-ids"&&!path.startsWith("/workspace/civil-ids/"))return false;
++  if(!service||!service.staffDocuments||!service.vault||!service.secret){finish(res,404,notFound);return true}
++  const session=cookie(req.headers.cookie);if(!session){finish(res,401,document("Sign in",plain("Sign in","Sign in again to continue safely.")));return true}const principal=await authorize(session);if(!principal){finish(res,401,document("Sign in",plain("Sign in","Sign in again to continue safely.")));return true}
++  let staff=false;try{staff=await service.isStaff(principal)}catch{}if(!staff){finish(res,404,notFound);return true}
++  if(path==="/workspace/civil-ids"&&req.method==="GET"){
++    const keys=[...url.searchParams.keys()];if(keys.some(k=>k!=="page")||keys.filter(k=>k==="page").length>1||!/^\d+$/.test(url.searchParams.get("page")??"1")||Number(url.searchParams.get("page")??"1")<1){finish(res,400,plain("Civil IDs","Invalid page."));return true}
++    const page=Number(url.searchParams.get("page")??"1"),result=await service.store.listPending({page,excludePrincipalId:principal}),now=service.now?.()??new Date();
++    const rows=result.rows.map(r=>({principalId:r.principalId,name:r.name,country:r.country,number:r.numberCiphertext&&r.country?maskCivilId(r.country,service.vault!.open(r.principalId,r.country,r.numberCiphertext)):null,expiry:r.expiry,waited:waited(r.updatedAt,now),reading:r.reading}));
++    if((req.headers.accept??"").includes("application/json")){res.writeHead(200,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});res.end(JSON.stringify({rows,total:result.total,page,pageSize:CIVIL_ID_REVIEW_PAGE_SIZE}));return true}
++    const body=rows.length?`<table><thead><tr><th>Name</th><th>Country</th><th>Number</th><th>Expiry</th><th>Waiting</th><th>Photo reading</th></tr></thead><tbody>${rows.map(r=>`<tr><th><a href="/workspace/civil-ids/${encodeURIComponent(r.principalId)}">${esc(r.name??"Unnamed")}</a></th><td>${esc(r.country??"Not recorded")}</td><td>${esc(r.number??"Not recorded")}</td><td>${esc(r.expiry??"Not recorded")}</td><td>${esc(r.waited)}</td><td>${esc(r.reading??"No result")}</td></tr>`).join("")}</tbody></table>`:"<p>No civil IDs are waiting on this page.</p>";finish(res,200,document("Civil IDs",`<main><h1>Civil IDs</h1>${body}</main>`));return true
++  }
++  if(path==="/workspace/civil-ids/delivery"&&req.method==="GET"){
++    try{const out=await service.staffDocuments.deliver(session,req.url!);res.writeHead(200,out.headers);res.end(out.bytes)}catch{finish(res,404,notFound)}return true
++  }
++  const match=path.match(/^\/workspace\/civil-ids\/([^/]+)(?:\/decision(?:\/confirm)?)?$/);if(!match||!PERSON.test(decodeURIComponent(match[1]!))){finish(res,404,notFound);return true}const subject=decodeURIComponent(match[1]!);if(subject===principal){finish(res,403,plain("Civil ID","You cannot review your own Civil ID."));return true}
++  const row=await service.store.readForDecision(subject);if(!row?.needsReview){finish(res,404,notFound);return true}
++  if(req.method==="GET"&&path===`/workspace/civil-ids/${encodeURIComponent(subject)}`){
++    let ev;try{ev=await evidence(service,session,subject)}catch{finish(res,404,notFound);return true}const images: string[]=[];for(const [kind,version] of [["front",ev.front],["back",ev.back]] as const){if(!version){images.push(`<p>Missing Civil ID ${kind} photo.</p>`);continue}const link=await service.staffDocuments.issue(session,subject,`civil-id-${kind}` as "civil-id-front"|"civil-id-back","civil_id_review");images.push(`<img alt="Civil ID ${kind}" src="${esc(link.url)}">`)}await service.store.recordView({viewerPrincipalId:principal,subjectPrincipalId:subject,kind:"civil_id_page"});
++    const full=row.numberCiphertext&&row.country?service.vault.open(subject,row.country,row.numberCiphertext):"Not recorded",expired=row.expiry&&row.expiry<today(service.now?.()??new Date())?" (expired)":"",reading=await service.ocr?.currentSuggestion(subject,today(service.now?.()??new Date()));const body=`<main><h1>${esc(row.name??"Unnamed")}</h1><p>Country: ${esc(row.country??"Not recorded")}</p><p>Civil ID number: ${esc(full)}</p><p>Expiry: ${esc(row.expiry??"Not recorded")}${expired}</p><p>Photo reading: ${esc(reading?.state??row.reading??"No result")}</p>${images.join("")}<form method="post" action="${esc(path)}/decision"><input type="hidden" name="revision" value="${row.revision}"><input type="hidden" name="evidence" value="${ev.digest}"><label>Reason <textarea name="reason"></textarea></label><button name="decision" value="confirmed">Confirm</button><button name="decision" value="rejected">Reject</button></form></main>`;finish(res,200,document("Review Civil ID",body));return true
++  }
++  const isPreview=path.endsWith("/decision"),isConfirm=path.endsWith("/decision/confirm");if(req.method!=="POST"||(!isPreview&&!isConfirm)){finish(res,405,plain("Civil ID","Method not allowed."),{allow:isPreview||isConfirm?"POST":"GET"});return true}
++  if(!req.headers.origin||!origin||req.headers.origin!==origin||req.headers["sec-fetch-site"]==="cross-site"){req.resume();finish(res,403,plain("Civil ID","We could not verify this request."));return true}
++  if(isPreview){const p=await form(req,["decision","reason","revision","evidence"]);if(!p){finish(res,400,plain("Civil ID","Invalid request."));return true}const decision=p.get("decision"),reason=p.get("reason")??"",revision=Number(p.get("revision")),ev=await evidence(service,session,subject);if((decision!=="confirmed"&&decision!=="rejected")||!Number.isSafeInteger(revision)||revision!==row.revision||p.get("evidence")!==ev.digest||(decision==="confirmed"&&reason!=="")||(decision==="rejected"&&([...reason].length<1||[...reason].length>300||/[\u0000-\u001f\u007f-\u009f]/.test(reason)))){finish(res,400,plain("Civil ID","Invalid decision."));return true}if(decision==="confirmed"&&(!ev.front||!ev.back)){finish(res,400,plain("Civil ID","Both photos are required to confirm."));return true}const now=(service.now?.()??new Date()).getTime(),claim:Confirm={v:1,reviewer:principal,subject,decision,reason:decision==="rejected"?reason:null,revision,front:ev.front??NONE,back:ev.back??NONE,evidence:ev.digest,issuedAt:now,expiresAt:now+300000},confirmation=sign(claim,service.secret);finish(res,200,document("Confirm decision",`<main><h1>Confirm decision</h1><p>${esc(row.name??"Unnamed")}</p><p>${decision==="confirmed"?"Confirm":"Reject"}</p>${claim.reason?`<p>${esc(claim.reason)}</p>`:""}<form method="post" action="${esc(path)}/confirm"><input type="hidden" name="confirmation" value="${confirmation}"><button type="submit">Confirm decision</button></form></main>`));return true}
++  const p=await form(req,["confirmation"]);const token=p?.get("confirmation")??"",claim=p&&verify(token,service.secret);const now=(service.now?.()??new Date()).getTime();if(!claim||claim.reviewer!==principal||claim.subject!==subject||claim.expiresAt<=now||claim.issuedAt>now||claim.expiresAt!==claim.issuedAt+300000){finish(res,400,plain("Civil ID","Invalid or expired confirmation."));return true}const ev=await evidence(service,session,subject);if((ev.front??NONE)!==claim.front||(ev.back??NONE)!==claim.back||ev.digest!==claim.evidence){finish(res,409,plain("Civil ID","The photos changed. Review them again."));return true}const latest=await service.store.readForDecision(subject),decisionRevision=claim.revision;if(!latest?.needsReview||latest.revision!==decisionRevision){finish(res,409,plain("Civil ID","The Civil ID changed. Review it again."));return true}const confirmRef=createHash("sha256").update(token).digest("hex"),saved=await service.store.decide({subjectPrincipalId:subject,reviewerPrincipalId:principal,decision:claim.decision,reason:claim.reason,civilRevision:decisionRevision,frontVersion:claim.front===NONE?null:claim.front,backVersion:claim.back===NONE?null:claim.back,confirmRef});if(!saved.ok){finish(res,409,plain("Civil ID","This decision is no longer available."));return true}res.writeHead(303,{location:"/workspace/civil-ids","cache-control":"no-store","referrer-policy":"no-referrer"});res.end();return true
++}
+diff --git a/apps/gateway/src/index.ts b/apps/gateway/src/index.ts
+index bd1d739..eee9e60 100644
+--- a/apps/gateway/src/index.ts
++++ b/apps/gateway/src/index.ts
+@@ -5,6 +5,8 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
+ import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
+ import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
+ import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
++import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
++import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
+ import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
+ import type {BrowserResponse} from "@studenthub/login-contract";
+ import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
+@@ -180,7 +182,8 @@ export function createGatewayServer(
+     response.once('close', () => complete(!response.writableFinished));
+     void inSpan(webSpan ?? span, async () => {
+     try {
+-    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, catalogue,
++    const reviewLogin=login?.civilIdReview&&documents?{...login,civilIdReview:{...login.civilIdReview,staffDocuments:new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})}}:login;
++    const ctx = { request, response, login: reviewLogin as GatewayRouteLogin | undefined, authz, documents, catalogue,
+       profileRecords, organizationDocuments, writeHtml, pageDocument, renderError };
+     if (await runRoutes(ROUTES, ctx)) return;
+     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
+diff --git a/apps/gateway/src/routes/context.ts b/apps/gateway/src/routes/context.ts
+index 9b669d0..10dfc86 100644
+--- a/apps/gateway/src/routes/context.ts
++++ b/apps/gateway/src/routes/context.ts
+@@ -18,6 +18,7 @@ import type { OrganizationCreation } from "../organization-creation.js";
+ import type { LegacyLinkService } from "../legacy-link-http.js";
+ import type { CivilIdService } from "@studenthub/profile";
+ import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
++import type { CivilIdReviewHttpService } from "../civil-id-review-http.js";
+ import type { AreaHttp } from "../area-http.js";
+ import type { PeopleDirectoryPage } from "../people-directory.js";
+ import { enterProfileAvatarRequest } from "../profile-avatar.js";
+@@ -25,6 +26,7 @@ import { enterProfileAvatarRequest } from "../profile-avatar.js";
+ export type GatewayRouteLogin = BrowserLoginApplication & {
+   readonly civilId?: CivilIdService;
+   readonly civilIdSuggestion?: CivilIdSuggestionService;
++  readonly civilIdReview?: CivilIdReviewHttpService;
+   readonly area?: AreaHttp;
+   readonly people?: PeopleDirectoryPage;
+   readonly organizationProfile?: OrganizationProfile;
+diff --git a/apps/gateway/src/routes/index.ts b/apps/gateway/src/routes/index.ts
+index 971623f..6758ceb 100644
+--- a/apps/gateway/src/routes/index.ts
++++ b/apps/gateway/src/routes/index.ts
+@@ -1,7 +1,7 @@
+ import type { GatewayRoute } from "./context.js";
+ import { catalogueRoute } from "./catalogue.js";
+ import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents.js";
+-import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute } from "./profile.js";
++import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, civilIdReviewRoute } from "./profile.js";
+ import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute } from "./organizations.js";
+ import { payContractsRoute } from "./pay-contracts.js";
+ import { handleLegacyLink } from "../legacy-link-http.js";
+@@ -67,6 +67,7 @@ export const ROUTES: readonly GatewayRoute[] = [
+   civilIdSuggestionRoute,
+   areaRoute,
+   peopleDirectoryRoute,
++  civilIdReviewRoute,
+ ];
+ 
+ export { runRoutes } from "./context.js";
+diff --git a/apps/gateway/src/routes/profile.ts b/apps/gateway/src/routes/profile.ts
+index 3f61873..f5d75ed 100644
+--- a/apps/gateway/src/routes/profile.ts
++++ b/apps/gateway/src/routes/profile.ts
+@@ -5,9 +5,11 @@ import { handleBankDetails } from "../bank-details.js";
+ import { handleProfileRecords } from "../profile-records-http.js";
+ import type { GatewayRoute } from "./context.js";
+ import { renderPeopleDirectory, wantsHtml } from "../web-ui.js";
++import { handleCivilIdReview } from "../civil-id-review-http.js";
+ 
+ const sessionCookie=(value:string|undefined)=>value?.split(";").map(x=>x.trim()).find(x=>x.startsWith("__Host-studenthub_session="))?.slice(26);
+ export const peopleDirectoryRoute:GatewayRoute={name:"people-directory",handle:async ctx=>{if(ctx.request.method!=="GET"||ctx.request.url?.split("?",1)[0]!=="/workspace/people")return false;const html=wantsHtml(ctx.request.headers.accept),result=ctx.login?.people?await ctx.login.people.open(sessionCookie(ctx.request.headers.cookie),new URL(ctx.request.url,"http://gateway.invalid").searchParams,html):{status:404 as const,body:{error:"not_found"}};if(result.status===404){ctx.response.writeHead(404,{"content-type":"application/json"});ctx.response.end(JSON.stringify({ok:false,error:"not_found"}));return true}if(html){ctx.writeHtml(ctx.response,result.status,renderPeopleDirectory(result,ctx.login!),{},true);return true}ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true}};
++export const civilIdReviewRoute:GatewayRoute={name:"civil-id-review",handle:ctx=>handleCivilIdReview(ctx.request,ctx.response,ctx.login?.civilIdReview,ctx.login?.web?.origin,async session=>{if(!ctx.login)return undefined;const result=await ctx.login.profile({sessionId:session});return result.status===200&&typeof result.body?.personId==="string"?result.body.personId:undefined},(title,body)=>ctx.pageDocument(title,body))};
+ 
+ export const profileEditPageRoute: GatewayRoute = { name: "profile-edit-page", handle: (ctx) =>
+   handleProfileEditPage(ctx.request, ctx.response, ctx.login?.profileEdit, ctx.login?.web?.origin,
+diff --git a/apps/gateway/src/web-ui.ts b/apps/gateway/src/web-ui.ts
+index 5ba4c52..148eb0f 100644
+--- a/apps/gateway/src/web-ui.ts
++++ b/apps/gateway/src/web-ui.ts
+@@ -56,6 +56,7 @@ export interface BrowserLoginApplication extends LoginApplication {
+   readonly legacyLink?: LegacyLinkService;
+   readonly civilId?: CivilIdService;
+   readonly civilIdSuggestion?: CivilIdSuggestionService;
++  readonly civilIdReview?: import("./civil-id-review-http.js").CivilIdReviewHttpService;
+   readonly area?: AreaHttp;
+   readonly web?: {
+     readonly origin: string;
+diff --git a/apps/gateway/src/wiring/profile.ts b/apps/gateway/src/wiring/profile.ts
+index 97157e1..91733aa 100644
+--- a/apps/gateway/src/wiring/profile.ts
++++ b/apps/gateway/src/wiring/profile.ts
+@@ -14,11 +14,14 @@ import { createLegacyLinkService } from "../legacy-link-http.js";
+ import type { Wired, WiringSettings } from "./context.js";
+ import type { wireAccess } from "./access.js";
+ import type { ProfileCompletenessDependencies } from "../profile-completeness.js";
++import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
+ 
+ type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
+ 
+ type OwnPreferencesReader = { readOwnPreferences(id: string): Promise<object | null | undefined> };
+ 
++export function hasOperatorStaffGrant(grants:readonly {role:string;scope:string;orgId:string}[]):boolean{return grants.some(grant=>(grant.role==="staff"||grant.role==="admin")&&grant.scope==="subtree"&&DEFAULT_OPERATOR_ORG_IDS.includes(grant.orgId))}
++
+ /**
+  * The My profile read as production composes it: the approved profile source
+  * plus the person's own preferences, civil ID and area, merged in one read.
+@@ -91,6 +94,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess,
+   const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
+   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
+   const profileReadPool=new pg.Pool({connectionString:databaseUrl});
++  const CivilIdReviewStore=(PostgresPersonProfileStore as typeof PostgresPersonProfileStore&{CivilIdReviewStore:new(options:{pool:pg.Pool})=>import("@studenthub/profile").CivilIdReviewStore}).CivilIdReviewStore;
++  const civilIdReviewStore=civilId&&civilVault&&civilSuggestionStore?new CivilIdReviewStore({pool:profileReadPool}):undefined;
++  const civilIdReview=civilIdReviewStore&&civilVault&&civilKey?{store:civilIdReviewStore,vault:civilVault,ocr:civilSuggestionStore,secret:civilKey,async isStaff(principalId:string){const grants=await access.authzStore.listGrantsForPrincipal(principalId);return hasOperatorStaffGrant(grants)}}:undefined;
+   const profileChoices=new PostgresPersonProfileStore({pool:profileReadPool});
+   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
+   const personLocations = new PostgresPersonLocationStore({ pool:profileReadPool });
+@@ -171,6 +177,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess,
+       ...(legacyLink ? { legacyLink } : {}),
+       ...(civilId ? { civilId } : {}),
+       ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
++      ...(civilIdReview ? { civilIdReview } : {}),
+       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
+       people,
+       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
+diff --git a/apps/gateway/test/civil-id-review-http.test.ts b/apps/gateway/test/civil-id-review-http.test.ts
+new file mode 100644
+index 0000000..bb5f204
+--- /dev/null
++++ b/apps/gateway/test/civil-id-review-http.test.ts
+@@ -0,0 +1,89 @@
++import assert from "node:assert/strict";
++import { createHmac, randomUUID } from "node:crypto";
++import test, { type TestContext } from "node:test";
++import { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
++import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
++import { REAL_PROFILE_CIVIL_KEY, REAL_PROFILE_ORIGIN, REAL_PROFILE_OTHER_PERSON, REAL_PROFILE_PERSON, REAL_PROFILE_SESSION, startRealProfileServer } from "./helpers/real-profile-server.js";
++
++const full="290010100030", front=Buffer.from("front-photo"),back=Buffer.from("back-photo");
++async function documents(includeBack=true){const authz=new InMemoryAuthzStore({organizations:[{id:"candidate-documents",name:"Candidates"},{id:"root",name:"StudentHub"}],principals:[createPrincipal({id:REAL_PROFILE_PERSON,pbuuids:[]}),createPrincipal({id:REAL_PROFILE_OTHER_PERSON,pbuuids:[]})]});await authz.grantMany(REAL_PROFILE_PERSON,[{orgId:"root",role:"staff",scope:"subtree"}]);const docs=[{id:randomUUID(),version:randomUUID(),type:"civil-id-front",mime:"image/png",size:front.length,scope:{orgId:"candidate-documents",personId:REAL_PROFILE_OTHER_PERSON},acl:"private",data:front.toString("base64")},...(includeBack?[{id:randomUUID(),version:randomUUID(),type:"civil-id-back",mime:"image/png",size:back.length,scope:{orgId:"candidate-documents",personId:REAL_PROFILE_OTHER_PERSON},acl:"private",data:back.toString("base64")}]:[])];const state={format:1 as const,documents:docs,retired:[]};const service=new CandidateDocuments({store:{transaction:async fn=>fn(state as never)},authz,orgId:"candidate-documents",origin:REAL_PROFILE_ORIGIN,signingKey:Buffer.from(REAL_PROFILE_CIVIL_KEY,"base64"),now:()=>new Date("2026-11-12T09:00:00Z").getTime(),authenticate:async c=>c===REAL_PROFILE_SESSION?{kind:"principal",principalId:REAL_PROFILE_PERSON}:null});return{service,state}}
++async function rig(t:TestContext,includeBack=true){const documentRig=await documents(includeBack),x=await startRealProfileServer(t,{civilIdReview:{documents:documentRig.service},now:()=>new Date("2026-11-12T09:00:00Z")});await x.civilId.save({principalId:REAL_PROFILE_OTHER_PERSON,submissionId:randomUUID(),revision:0,country:"KW",number:full,expiry:"2026-11-20"});const row=x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!;x.civilStore.rows.set(REAL_PROFILE_OTHER_PERSON,{...row,updatedAt:"2026-11-09T09:00:00.000Z"});const decisionPage=await(await x.get(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`)).text(),evidence=/name="evidence" value="([^"]+)"/.exec(decisionPage)?.[1];assert.ok(evidence);x.reviewStore!.views.length=0;const post=x.post;return{...x,documentState:documentRig.state,post:(path:string,form:Record<string,string>,session?:string)=>post(path,path.endsWith("/decision")?{...form,evidence}:form,session)}}
++
++test("REV_QUEUE real queue HTML and JSON contain the same masked waiting row and closed query",async t=>{const x=await rig(t);const html=await x.get("/workspace/civil-ids"),body=await html.text();assert.equal(html.status,200,"REV_QUEUE staff queue served");assert.match(body,/Other Person/);assert.match(body,/•••• •••• 0030/);assert.match(body,/3 days/);assert.doesNotMatch(body,/2026-11-09T09:00:00/);assert.doesNotMatch(body,new RegExp(full),"REV_QUEUE queue omits full number");const json=await fetch(x.url+"/workspace/civil-ids",{headers:{accept:"application/json",cookie:x.cookie()}});const value=await json.json() as {rows:Array<{principalId:string;waited:string}>};assert.deepEqual(value.rows.map(r=>r.principalId),[REAL_PROFILE_OTHER_PERSON],"REV_QUEUE JSON has same rows");assert.equal(value.rows[0]?.waited,"3 days");for(const q of["x=1","page=1&page=2","page=bad"])assert.equal((await x.get("/workspace/civil-ids?"+q)).status,400,"REV_QUEUE closed page query");assert.equal((await x.get("/workspace/civil-ids?page=2")).status,200);assert.equal((await x.get("/workspace/civil-ids?page=999")).status,200)});
++
++test("REV_IMAGES real decision page, audited staff links and delivered bytes",async t=>{const x=await rig(t),page=await x.get(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`),body=await page.text();assert.equal(page.status,200);assert.equal(page.headers.get("referrer-policy"),"same-origin","REV_IMAGES same-origin form retains a usable Origin");assert.match(page.headers.get("content-security-policy")??"",/form-action 'self'/,"REV_IMAGES decision form is CSP restricted");assert.match(page.headers.get("content-security-policy")??"",/frame-ancestors 'none'/,"REV_IMAGES full number page cannot be framed");assert.equal(page.headers.get("x-content-type-options"),"nosniff","REV_IMAGES decision response is nosniff");assert.match(body,new RegExp(full),"REV_IMAGES full number appears on decision page");const links=[...body.matchAll(/<img[^>]+src="([^"]+)"/g)].map(m=>m[1]!);assert.equal(links.length,2);for(const link of links){assert.match(link,/^\/workspace\/civil-ids\/delivery\?t=/);const payload=new URL(link,REAL_PROFILE_ORIGIN).searchParams.get("t")!.split(".")[0]!;assert.equal(JSON.parse(Buffer.from(payload,"base64url").toString()).purpose,"civil_id_review")}const delivered=await x.get(links[0]!);assert.equal(delivered.status,200);assert.deepEqual(Buffer.from(await delivered.arrayBuffer()),front,"REV_IMAGES delivered bytes equal stored bytes");assert.equal(x.reviewStore!.views.filter(v=>v.kind==="civil_id_page").length,1);assert.equal(x.reviewStore!.views.filter(v=>v.kind==="civil_id_image_issue").length,2);assert.equal(x.reviewStore!.views.filter(v=>v.kind==="civil_id_image_deliver").length,1)});
++
++test("REV_DECIDE reject preview and confirmation store once without changing revision",async t=>{const x=await rig(t),preview=await x.post(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`,{decision:"rejected",reason:"Photo is unclear",revision:"1"}),html=await preview.text();assert.equal(preview.status,200);assert.match(html,/Other Person[\s\S]*Reject[\s\S]*Photo is unclear/,"REV_DECIDE preview names person decision and reason");const token=/name="confirmation" value="([^"]+)"/.exec(html)?.[1];assert.ok(token);const confirmed=await x.post(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`,{confirmation:token});assert.equal(confirmed.status,303);assert.equal(confirmed.headers.get("location"),"/workspace/civil-ids");assert.equal(x.reviewStore!.decisions.length,1,"REV_DECIDE exactly one decision stored");assert.equal(x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)?.revision,1);assert.equal(x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)?.needsReview,false);assert.equal((await x.post(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`,{confirmation:token})).status,404);assert.equal(x.reviewStore!.decisions.length,1)});
++
++test("REV_DECIDE missing photo opens and rejects while confirm and invalid reasons are refused",async t=>{const x=await rig(t,false),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,page=await x.get(path),body=await page.text();assert.equal(page.status,200);assert.match(body,/Missing Civil ID back photo/);assert.equal((body.match(/<img/g)??[]).length,1);for(const form of[{decision:"confirmed",reason:"",revision:"1"},{decision:"confirmed",reason:"why",revision:"1"},{decision:"rejected",reason:"",revision:"1"},{decision:"rejected",reason:"x".repeat(301),revision:"1"}])assert.equal((await x.post(path+`/decision`,form)).status,400,"REV_DECIDE invalid form stores nothing");assert.equal(x.reviewStore!.decisions.length,0);const preview=await x.post(path+"/decision",{decision:"rejected",reason:"Missing back image",revision:"1"}),token=/name="confirmation" value="([^"]+)"/.exec(await preview.text())?.[1];assert.equal(preview.status,200,"REV_DECIDE missing-photo Reject previews");assert.ok(token);assert.equal((await x.post(path+"/decision/confirm",{confirmation:token})).status,303,"REV_DECIDE missing-photo Reject succeeds");assert.equal(x.reviewStore!.decisions.length,1,"REV_DECIDE missing-photo Reject stored once")});
++
++test("REV_DECIDE stale revision and expired confirmation store nothing",async t=>{const x=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,preview=await x.post(path+"/decision",{decision:"rejected",reason:"stale",revision:"1"}),html=await preview.text(),token=/name="confirmation" value="([^"]+)"/.exec(html)![1]!,parts=token.split("."),claim=JSON.parse(Buffer.from(parts[0]!,"base64url").toString());claim.issuedAt-=600000;claim.expiresAt-=600000;const payload=Buffer.from(JSON.stringify(claim)).toString("base64url"),mac=createHmac("sha256",Buffer.from(REAL_PROFILE_CIVIL_KEY,"base64")).update("civil-id-review-confirm-v1\0"+payload).digest("base64url");assert.equal((await x.post(path+"/decision/confirm",{confirmation:`${payload}.${mac}`})).status,400,"REV_DECIDE expired confirmation refused");const row=x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!;x.civilStore.rows.set(REAL_PROFILE_OTHER_PERSON,{...row,revision:2});assert.equal((await x.post(path+"/decision/confirm",{confirmation:token})).status,409,"REV_DECIDE stale revision refused");assert.equal(x.reviewStore!.decisions.length,0,"REV_DECIDE stale and expired store nothing")});
++
++test("REV_ORIGIN both POSTs reject wrong origin, cross-site, extra fields and bearer-only",async t=>{const x=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`;for(const headers of[{origin:"https://wrong.invalid","sec-fetch-site":"same-origin"},{origin:REAL_PROFILE_ORIGIN,"sec-fetch-site":"cross-site"}]){const response=await fetch(x.url+path,{method:"POST",headers:{cookie:x.cookie(),"content-type":"application/x-www-form-urlencoded",...headers},body:"decision=rejected&reason=x&revision=1"});assert.equal(response.status,403,"REV_ORIGIN refused before form validation")}assert.equal((await fetch(x.url+path,{method:"POST",headers:{authorization:"Bearer token","content-type":"application/x-www-form-urlencoded",origin:REAL_PROFILE_ORIGIN},body:"decision=rejected&reason=x&revision=1"})).status,401);assert.equal((await x.post(path,{decision:"rejected",reason:"x",revision:"1",extra:"x"})).status,400);assert.equal((await x.post(path,{decision:"rejected",reason:"x"})).status,400,"REV_ORIGIN missing field is a distinct bad request");const oversized=await fetch(x.url+path,{method:"POST",headers:{cookie:x.cookie(),origin:REAL_PROFILE_ORIGIN,"sec-fetch-site":"same-origin","content-type":"application/x-www-form-urlencoded"},body:"x".repeat(4097)});assert.equal(oversized.status,400,"REV_ORIGIN oversized body refused");assert.equal(x.reviewStore!.decisions.length,0,"REV_ORIGIN nothing stored")});
++
++test("REV_STAFF no session, nonwaiting, malformed, own row and unconfigured routes refuse",async t=>{const x=await rig(t);for(const path of["/workspace/civil-ids",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`,`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`,"/workspace/civil-ids/delivery?t=bad"])assert.equal((await fetch(x.url+path,{method:path.includes("decision")?"POST":"GET"})).status,401,"REV_STAFF every route requires a session");const expected=await(await x.get("/workspace/civil-ids/unknown")).text();for(const path of["/workspace/civil-ids/not/well/formed","/workspace/civil-ids/unknown","/workspace/civil-ids/delivery?t=bad"])assert.equal(await(await x.get(path)).text(),expected,"REV_STAFF person refusals are byte-identical 404 pages");assert.equal((await x.get(`/workspace/civil-ids/${REAL_PROFILE_PERSON}`)).status,403,"REV_STAFF own open refused");assert.equal((await x.post(`/workspace/civil-ids/${REAL_PROFILE_PERSON}/decision`,{decision:"rejected",reason:"x",revision:"1"})).status,403,"REV_STAFF own decision refused");await x.authz.grantMany(REAL_PROFILE_OTHER_PERSON,[{orgId:"root",role:"staff",scope:"self"}]);assert.equal(await x.login.civilIdReview!.isStaff(REAL_PROFILE_OTHER_PERSON),false,"REV_STAFF non-subtree grant is false");assert.equal(await x.login.civilIdReview!.isStaff(REAL_PROFILE_PERSON),true,"REV_STAFF served operator subtree grant is true");const y=await startRealProfileServer(t,{civilIdReview:{}});assert.equal((await y.get("/workspace/civil-ids")).status,404,"REV_FIXES civil service without CandidateDocuments is 404")});
++
++test("REV_SECRECY full number appears only on decision HTML",async t=>{const x=await rig(t),queue=await(await x.get("/workspace/civil-ids")).text(),json=await(await fetch(x.url+"/workspace/civil-ids",{headers:{accept:"application/json",cookie:x.cookie()}})).text(),decision=await(await x.get(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`)).text();assert.doesNotMatch(queue,new RegExp(full),"REV_SECRECY queue HTML excludes full number");assert.doesNotMatch(json,new RegExp(full));assert.match(decision,new RegExp(full));assert.doesNotMatch(JSON.stringify(x.reviewStore!.views),new RegExp(full))});
++
++test("REV_QUEUE newest-first pagination, every column, own exclusion and HTML JSON parity",async t=>{
++  const x=await rig(t),base=x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!;
++  const ownSeal=x.vault.seal(REAL_PROFILE_PERSON,"KW","290010100031");
++  x.civilStore.rows.set(REAL_PROFILE_PERSON,{...base,principalId:REAL_PROFILE_PERSON,updatedAt:"2026-11-11T09:00:00.000Z"});x.civilStore.sealed.set(REAL_PROFILE_PERSON,ownSeal);
++  for(let n=0;n<25;n++){const id=`filler-${String(n).padStart(2,"0")}`,number=`2900101${String(n+1000).padStart(5,"0")}`.slice(0,12),sealed=x.vault.seal(id,"KW",number);x.civilStore.rows.set(id,{...base,principalId:id,updatedAt:new Date(Date.parse("2026-11-08T09:00:00.000Z")-n*1000).toISOString()});x.civilStore.sealed.set(id,sealed)}
++  const first=await(await x.get("/workspace/civil-ids")).text(),second=await(await x.get("/workspace/civil-ids?page=2")).text();
++  assert.match(first,new RegExp(`civil-ids/${REAL_PROFILE_OTHER_PERSON}\"`),"REV_QUEUE asserted row stays on page one");
++  assert.doesNotMatch(first,/civil-ids\/person-1\"/,"REV_QUEUE caller exact own link is absent");
++  assert.equal((first.match(/<tbody>[\s\S]*<tr>/g)?.[0].match(/<tr>/g)??[]).length,25,"REV_QUEUE page one has 25 rows");
++  assert.match(second,/filler-24/,"REV_QUEUE page two contains its row");
++  assert.match(first,/Other Person[\s\S]*KW[\s\S]*•••• •••• 0030[\s\S]*2026-11-20[\s\S]*3 days[\s\S]*No result/,"REV_QUEUE renders name country masked number expiry waited and reading");
++  const json=await(await fetch(x.url+"/workspace/civil-ids",{headers:{accept:"application/json",cookie:x.cookie()}})).json() as {rows:Array<{principalId:string;country:string;expiry:string;reading:null}>;total:number};
++  assert.equal(json.rows[0]?.principalId,REAL_PROFILE_OTHER_PERSON,"REV_QUEUE newest row is first in JSON");assert.equal(json.total,26,"REV_QUEUE total excludes caller");assert.equal(json.rows.length,25,"REV_QUEUE JSON page size is 25");assert.equal(json.rows[0]?.country,"KW","REV_QUEUE JSON country");assert.equal(json.rows[0]?.expiry,"2026-11-20","REV_QUEUE JSON expiry");assert.equal(json.rows[0]?.reading,null,"REV_QUEUE JSON reading");
++  assert.match(await(await x.get("/workspace/civil-ids?page=999")).text(),/No civil IDs are waiting/,"REV_QUEUE empty page works");
++});
++
++test("REV_DECIDE changed photos and no-longer-waiting confirmations store nothing",async t=>{
++  const changed=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,preview=await changed.post(path+"/decision",{decision:"rejected",reason:"changed",revision:"1"}),token=/name="confirmation" value="([^"]+)"/.exec(await preview.text())![1]!;
++  changed.documentState.documents[0]!.version=randomUUID();
++  assert.equal((await changed.post(path+"/decision/confirm",{confirmation:token})).status,409,"REV_DECIDE changed photo version refused");assert.equal(changed.reviewStore!.decisions.length,0,"REV_DECIDE changed photo stores nothing");
++  const closed=await rig(t),p=await closed.post(path+"/decision",{decision:"rejected",reason:"closed",revision:"1"}),closedToken=/name="confirmation" value="([^"]+)"/.exec(await p.text())![1]!,row=closed.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!;closed.civilStore.rows.set(REAL_PROFILE_OTHER_PERSON,{...row,needsReview:false});
++  assert.equal((await closed.post(path+"/decision/confirm",{confirmation:closedToken})).status,409,"REV_DECIDE no-longer-waiting refused");assert.equal(closed.reviewStore!.decisions.length,0,"REV_DECIDE no-longer-waiting stores nothing");
++});
++
++test("REV_IMAGES expiry boundary and real OCR reading are rendered",async t=>{
++  const expired=await rig(t),id=REAL_PROFILE_OTHER_PERSON,row=expired.civilStore.rows.get(id)!;expired.civilStore.rows.set(id,{...row,expiry:"2026-11-11"});
++  expired.reviewOcr.jobs.push({principalId:id,side:"front",status:"read",supersededAt:null,resolved:null,last4:"0030",country:"KW",expiry:"2026-11-11",id:randomUUID()} as never);
++  const old=await(await expired.get(`/workspace/civil-ids/${id}`)).text();assert.match(old,/Expiry: 2026-11-11 \(expired\)/,"REV_IMAGES yesterday is expired in Kuwait");assert.match(old,/Photo reading: read/,"REV_IMAGES real OCR store reading is shown");
++  expired.civilStore.rows.set(id,{...row,expiry:"2026-11-12"});const today=await(await expired.get(`/workspace/civil-ids/${id}`)).text();assert.doesNotMatch(today,/2026-11-12 \(expired\)/,"REV_IMAGES today is not expired in Kuwait");
++});
++
++test("REV_ORIGIN confirmation POST also rejects wrong origin and cross-site before parsing",async t=>{
++  const x=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`;
++  for(const headers of[{origin:"https://wrong.invalid","sec-fetch-site":"same-origin"},{origin:REAL_PROFILE_ORIGIN,"sec-fetch-site":"cross-site"}]){const r=await fetch(x.url+path,{method:"POST",headers:{cookie:x.cookie(),"content-type":"application/x-www-form-urlencoded",...headers},body:"confirmation="});assert.equal(r.status,403,"REV_ORIGIN confirm refusal precedes missing-field 400")}
++  assert.equal((await x.post(path,{})).status,400,"REV_ORIGIN confirm missing field is 400");assert.equal(x.reviewStore!.decisions.length,0,"REV_ORIGIN confirm refusals store nothing");
++});
++
++test("REV_STAFF refused grant kinds are byte-identical on every route",async t=>{
++  const baseline=await rig(t),notFound=await(await baseline.get("/workspace/civil-ids/unknown")).text();
++  for(const staffGrant of [{orgId:"root",role:"staff",scope:"self"},{orgId:"candidate-documents",role:"admin",scope:"subtree"},{orgId:"root",role:"owner",scope:"subtree"}] as const){const d=await documents(),x=await startRealProfileServer(t,{civilIdReview:{documents:d.service,staffGrant}});assert.equal(await x.login.civilIdReview!.isStaff(REAL_PROFILE_PERSON),false,"REV_STAFF refused grant isStaff false");for(const [method,path] of [["GET","/workspace/civil-ids"],["GET",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`],["POST",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`],["POST",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`],["GET","/workspace/civil-ids/delivery?t=bad"]]){const r=await fetch(x.url+path,{method,headers:{cookie:x.cookie()}});assert.equal(r.status,404,"REV_STAFF refused grant gets 404 on every route");assert.equal(await r.text(),notFound,"REV_STAFF refused grant bodies match person 404")}}
++});
++
++test("REV_STAFF authorized person refusals cover both POST routes and non-waiting rows",async t=>{
++  const x=await rig(t),notFound=await(await x.get("/workspace/civil-ids/unknown")).text(),row=x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!;
++  x.civilStore.rows.set(REAL_PROFILE_OTHER_PERSON,{...row,needsReview:false});
++  for(const subject of [REAL_PROFILE_OTHER_PERSON,"unknown","bad%2Fid"]){for(const suffix of ["/decision","/decision/confirm"]){const r=await x.post(`/workspace/civil-ids/${subject}${suffix}`,{});assert.equal(r.status,404,"REV_STAFF refused person POST is 404");assert.equal(await r.text(),notFound,"REV_STAFF refused person POST body is byte-identical")}}
++  assert.equal((await x.get("/workspace/civil-ids")).status,200,"REV_STAFF authorized staff still receives queue");
++});
++
++test("REV_IMAGES queue and decision calls stay fixed for 0, 1 and 60 waiting people",async t=>{
++  const x=await rig(t),base=x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!,store=x.reviewStore!,counts={list:0,read:0,views:0,documents:0,issues:0};
++  const list=store.listPending.bind(store),read=store.readForDecision.bind(store),record=store.recordView.bind(store);store.listPending=async i=>{counts.list++;return list(i)};store.readForDecision=async i=>{counts.read++;return read(i)};store.recordView=async i=>{counts.views++;return record(i)};
++  const service=(x.login.civilIdReview as {staffDocuments:{documents:(c:string,s:string)=>Promise<unknown>;issue:(...a:never[])=>Promise<unknown>}}).staffDocuments,documentsMethod=service.documents.bind(service),issueMethod=service.issue.bind(service);service.documents=async(c,s)=>{counts.documents++;return documentsMethod(c,s)};service.issue=async(...a)=>{counts.issues++;return issueMethod(...a) as never};
++  const seed=(total:number,target:boolean)=>{x.civilStore.rows.clear();x.civilStore.sealed.clear();if(target){x.civilStore.rows.set(REAL_PROFILE_OTHER_PERSON,{...base,needsReview:true});x.civilStore.sealed.set(REAL_PROFILE_OTHER_PERSON,x.vault.seal(REAL_PROFILE_OTHER_PERSON,"KW",full))}for(let n=0;n<total;n++){const id=`cost-${n}`,sealed=x.vault.seal(id,"KW",`2900101${String(n+1000).padStart(5,"0")}`.slice(0,12));x.civilStore.rows.set(id,{...base,principalId:id});x.civilStore.sealed.set(id,sealed)}};
++  const queue:Array<typeof counts>=[],decision:Array<typeof counts>=[];
++  for(const total of [0,1,60]){seed(total,false);Object.assign(counts,{list:0,read:0,views:0,documents:0,issues:0});await x.get("/workspace/civil-ids");queue.push({...counts});seed(total,true);Object.assign(counts,{list:0,read:0,views:0,documents:0,issues:0});await x.get(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`);decision.push({...counts})}
++  assert.deepEqual(queue.map(v=>v.list),[1,1,1],"REV_IMAGES queue store calls are fixed for 0 1 and 60 rows");assert.deepEqual(decision.map(v=>({read:v.read,views:v.views,documents:v.documents,issues:v.issues})),Array(3).fill({read:1,views:3,documents:1,issues:2}),"REV_IMAGES decision store and port calls are fixed with 0 1 and 60 other rows");
++});
++
++test("REV_SECRECY token headers redirects views decisions and logs exclude full number",async t=>{
++  const lines:string[]=[],old=console.error;console.error=(...v:unknown[])=>{lines.push(v.join(" "))};try{const x=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,preview=await x.post(path+"/decision",{decision:"rejected",reason:"secret scan",revision:"1"}),html=await preview.text(),token=/name="confirmation" value="([^"]+)"/.exec(html)![1]!,claim=Buffer.from(token.split(".")[0]!,"base64url").toString(),confirmed=await x.post(path+"/decision/confirm",{confirmation:token});const material=[...preview.headers,...confirmed.headers,claim,confirmed.headers.get("location"),JSON.stringify(x.reviewStore!.views),JSON.stringify(x.reviewStore!.decisions),...lines].join("\n");assert.doesNotMatch(material,new RegExp(full),"REV_SECRECY all non-page surfaces exclude full number")}finally{console.error=old}
++});
+diff --git a/apps/gateway/test/civil-id-review-mutations.mjs b/apps/gateway/test/civil-id-review-mutations.mjs
+new file mode 100644
+index 0000000..cec3f4b
+--- /dev/null
++++ b/apps/gateway/test/civil-id-review-mutations.mjs
+@@ -0,0 +1,19 @@
++import assert from "node:assert/strict";
++import { spawnSync } from "node:child_process";
++import { readFile, unlink, writeFile } from "node:fs/promises";
++import { fileURLToPath } from "node:url";
++
++const dist=new URL("../../../dist/apps/gateway/",import.meta.url),http=new URL("src/civil-id-review-http.js",dist),wiring=new URL("src/wiring/profile.js",dist),suite=fileURLToPath(new URL("test/civil-id-review-http.test.js",dist)),hook=new URL("./helpers/swap-module.mjs",import.meta.url).href;
++const cases=[
++ ["show the full number in the queue","REV_SECRECY full number","REV_SECRECY queue HTML excludes full number",http,"maskCivilId(r.country, service.vault.open(r.principalId, r.country, r.numberCiphertext))","service.vault.open(r.principalId, r.country, r.numberCiphertext)"],
++ ["drop the own-row refusal","REV_STAFF no session","REV_STAFF own open refused",http,"if (subject === principal)","if (false)"],
++ ["drop scope subtree from isStaff","REV_STAFF no session","REV_STAFF non-subtree grant is false",wiring,' && grant.scope === "subtree"',""],
++ ["accept a reject without a reason","REV_DECIDE missing photo","REV_DECIDE invalid form stores nothing",http,"[...reason].length < 1","[...reason].length < 0"],
++ ["skip the revision check","REV_DECIDE stale revision","REV_DECIDE stale revision refused",http,"decisionRevision = claim.revision","decisionRevision = latest.revision"],
++ ["skip the confirmation expiry","REV_DECIDE stale revision","REV_DECIDE expired confirmation refused",http,"claim.expiresAt <= now","false"],
++ ["drop the Origin check","REV_ORIGIN both POSTs","REV_ORIGIN refused before form validation",http,"req.headers.origin !== origin","false"],
++];
++const escape=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
++function run(prefix,swaps){const register=`import{register}from"node:module";register(${JSON.stringify(hook)},{data:${JSON.stringify(swaps)}});`,result=spawnSync(process.execPath,["--import",`data:text/javascript,${encodeURIComponent(register)}`,"--test","--test-reporter=tap",`--test-name-pattern=^${escape(prefix)}`,suite],{encoding:"utf8",timeout:60000});assert.equal(result.error,undefined,`${prefix} runner must execute`);return{...result,output:result.stdout+result.stderr}}
++for(const[item,prefix,message,source,from,to]of cases){const original=await readFile(source,"utf8");assert.equal(original.split(from).length-1,1,`${item}: needle binds exactly once`);const target=new URL(source.href.replace(/\.js$/,`-mutant-${process.pid}.js`));try{const control=run(prefix,{});assert.equal(control.status,0,`${item}: unmutated control passes\n${control.output}`);assert.match(control.output,new RegExp(`\\nok \\d+ - ${escape(prefix)}`),`${item}: control ran named test`);await writeFile(target,original.replace(from,to));const mutant=run(prefix,{[source.href]:target.href});assert.notEqual(mutant.status,0,`${item}: mutant survived\n${mutant.output}`);assert.match(mutant.output,new RegExp(`\\nnot ok \\d+ - ${escape(prefix)}`),`${item}: named test fails`);assert.match(mutant.output,/name: 'AssertionError'/,`${item}: dies by AssertionError`);assert.match(mutant.output,new RegExp(`error: (?:'|\\|-\\n\\s+)${escape(message)}`),`${item}: dies on its own assertion message\n${mutant.output}`);assert.doesNotMatch(mutant.output,/SyntaxError|ERR_MODULE_NOT_FOUND/,`${item}: mutant loads`);console.log(`KILLED ${item} -> ${message}`)}finally{await unlink(target).catch(e=>{if(e.code!=="ENOENT")throw e});assert.equal(await readFile(source,"utf8"),original,`${item}: compiled file unchanged`)}}
++console.log(`${cases.length}/${cases.length} civil ID review mutants killed`);
+diff --git a/apps/gateway/test/helpers/real-profile-server.ts b/apps/gateway/test/helpers/real-profile-server.ts
+index 4f92a13..0e9b7dd 100644
+--- a/apps/gateway/test/helpers/real-profile-server.ts
++++ b/apps/gateway/test/helpers/real-profile-server.ts
+@@ -24,6 +24,8 @@ import {
+   CivilIdVault,
+   InMemoryApprovedProfileAdapter,
+   InMemoryCivilIdStore,
++  InMemoryCivilIdOcrStore,
++  InMemoryCivilIdReviewStore,
+   InMemoryLocationStore,
+   SYNTHETIC_PROFILE_FIXTURES,
+   createArea,
+@@ -31,7 +33,8 @@ import {
+ } from "@studenthub/profile";
+ import { createGatewayServer, createLoginApplication } from "../../src/index.js";
+ import type { BrowserLoginApplication } from "../../src/web-ui.js";
+-import { composeOwnProfiles } from "../../src/wiring/profile.js";
++import { composeOwnProfiles, hasOperatorStaffGrant } from "../../src/wiring/profile.js";
++import type { CandidateDocuments } from "../../../../packages/private-documents/src/candidate-lifecycle.js";
+ 
+ export const REAL_PROFILE_ORIGIN = "https://studenthub.test.invalid";
+ export const REAL_PROFILE_PERSON = "person-1";
+@@ -62,6 +65,8 @@ export type RealProfileServerOptions = {
+   readonly countries?: readonly { readonly id: string; readonly code: string | null }[];
+   /** Extra services on the login application, built from the helper's own. */
+   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
++  /** Wire the staff Civil ID review routes through the production gateway composition. */
++  readonly civilIdReview?: { readonly documents?:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string; readonly staffGrant?:{readonly orgId:"root"|"candidate-documents";readonly role:"staff"|"admin"|"owner";readonly scope:"self"|"subtree"} };
+ };
+ 
+ const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+@@ -73,11 +78,12 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
+   const rig = createSyntheticLoginRig(createLoginApplication);
+   await rig.sessions.put({ id: REAL_PROFILE_SESSION, personId: REAL_PROFILE_PERSON });
+   await rig.sessions.put({ id: REAL_PROFILE_OTHER_SESSION, personId: REAL_PROFILE_OTHER_PERSON });
+-  const authz = new InMemoryAuthzStore({ principals: [
++  const authz = new InMemoryAuthzStore({ organizations:[{id:"root",name:"StudentHub"},{id:"candidate-documents",name:"Candidate documents"}], principals: [
+     createPrincipal({ id: REAL_PROFILE_PERSON, pbuuids: ["pbuuid-1"], displayName: "Registry Name", email: "registry@example.invalid" }),
+     createPrincipal({ id: REAL_PROFILE_OTHER_PERSON, pbuuids: ["pbuuid-2"] }),
+   ] });
+   await authz.grantMany(REAL_PROFILE_PERSON, [{ orgId: `candidate:${REAL_PROFILE_PERSON}`, role: "candidate", scope: "self" }]);
++  if(options.civilIdReview)await authz.grantMany(options.civilIdReview.staffPrincipalId??REAL_PROFILE_PERSON,[options.civilIdReview.staffGrant??{orgId:"root",role:"staff",scope:"subtree"}]);
+   const rows = new Map<string, unknown>([
+     ["candidate-1", options.row ?? { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_language_pref: "en" }],
+     ["candidate-2", { ...SYNTHETIC_PROFILE_FIXTURES.partial, candidate_id: 232, candidate_name: "Other Person" }],
+@@ -99,9 +105,11 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
+   const profiles = composeOwnProfiles({ principals: authz, source, civilId: countedCivil, area, today: options.today ?? (() => kuwaitDate(now())) });
+   const countedProfiles = { async readOwn(request: Parameters<typeof profiles.readOwn>[0]) { counts.profileReads++; return profiles.readOwn(request); } };
+   const services: RealProfileServices = { authz, sessions:rig.sessions, civilId, civilStore, vault, profiles, now };
++  const reviewOcr=options.civilIdReview?.ocrStore??new InMemoryCivilIdOcrStore(),reviewStore=options.civilIdReview?.store??(options.civilIdReview?new InMemoryCivilIdReviewStore({civilStore,ocrStore:reviewOcr,names:id=>id===REAL_PROFILE_OTHER_PERSON?"Other Person":"Registry Name"}):undefined);
+   const login: BrowserLoginApplication = {
+     ...rig.app,
+     civilId: countedCivil,
++    ...(options.civilIdReview&&reviewStore?{civilIdReview:{store:reviewStore,vault,ocr:reviewOcr,secret:key,now,isStaff:async(id:string)=>hasOperatorStaffGrant(await authz.listGrantsForPrincipal(id))}}:{}),
+     // As wireProfile: the area service with the session store and origin.
+     area: { area, sessions: rig.sessions, origin: REAL_PROFILE_ORIGIN },
+     ...(options.extend?.(services) ?? {}),
+@@ -109,7 +117,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
+     web: { origin: REAL_PROFILE_ORIGIN, returnTo: rig.config.allowedReturnUrls[1], profiles: countedProfiles,
+       profileCompleteness: { choices: async () => ({ countries: options.countries ?? [] }), civilId: countedCivil } },
+   } as BrowserLoginApplication;
+-  const server = createGatewayServer(undefined, undefined, undefined, login);
++  const server = createGatewayServer(undefined, undefined, undefined, login, null, undefined, options.civilIdReview?.documents);
+   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+   t.after(() => { server.closeAllConnections(); server.close(); });
+   const address = server.address();
+@@ -117,7 +125,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
+   const url = `http://127.0.0.1:${address.port}`;
+   const cookie = (session = REAL_PROFILE_SESSION) => `__Host-studenthub_session=${session}`;
+   return {
+-    url, rig, rows, counts, login, ...services,
++    url, rig, rows, counts, login, reviewStore, reviewOcr, ...services,
+     cookie,
+     /** A browser GET with the session cookie. */
+     get: (path: string, session = REAL_PROFILE_SESSION) => fetch(`${url}${path}`, { headers: { accept: "text/html", cookie: cookie(session) }, redirect: "manual" }),
+diff --git a/apps/gateway/test/routes-order.test.ts b/apps/gateway/test/routes-order.test.ts
+index 98d9c13..8200328 100644
+--- a/apps/gateway/test/routes-order.test.ts
++++ b/apps/gateway/test/routes-order.test.ts
+@@ -18,9 +18,9 @@ test("PREP_ORDER routes retain the exact gateway handler order", async () => {
+     "organization-profile", "organization-status", "organization-commercial-terms",
+     "organization-approved-to-hire", "organization-notes", "pay-contracts", "organization-brands",
+     "organization-stores", "organization-deletion", "organization-creation",
+-    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area", "people-directory",
++    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area", "people-directory", "civil-id-review",
+   ]);
+-  assert.equal(ROUTES.length, 30);
++  assert.equal(ROUTES.length, 31);
+   for (const route of ROUTES) assert.equal(typeof route.handle, "function");
+ });
+ 

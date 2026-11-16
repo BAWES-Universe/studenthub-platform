@@ -61,6 +61,8 @@
     ".github/coordinator/test/card-run-mutations.test.mjs",
     ".github/coordinator/test/card-run.test.mjs",
     ".github/coordinator/test/card-usage.test.mjs",
+    ".github/coordinator/test/ci-before-review-mutations.test.mjs",
+    ".github/coordinator/test/ci-before-review.test.mjs",
     ".github/coordinator/test/claude-contract.test.mjs",
     ".github/coordinator/test/codex-contract.test.mjs",
     ".github/coordinator/test/disk-prune.test.mjs",
@@ -4776,6 +4778,38 @@
     "SHU-86 mutation M319 never take over a selection lock that holds no holder",
     "SHU-86 mutation M320 never count a person's merge of a pull request whose repair landing ended in LAND_ERROR",
     "SHU-86 mutation M321 never record the repaired head of a pull request a person merged before the first landing read",
+    "SHU-86 mutation M322 recover worker 1's lock held by a dead pid, which a person may hold by hand",
+    "SHU-86 mutation M323 recover a card worker's lock whose holder is still alive",
+    "SHU-86 mutation M324 release a dead run's lock when its revert did not finish",
+    "SHU-86 mutation M325 leave a dead run's claim without its outcome",
+    "SHU-86 mutation M329 release a dead run's lock when its claim could not be marked DIED",
+    "SHU-86 mutation M330 report a dead run recovered when its lock could not be removed",
+    "SHU-86 mutation M331 release a dead run's lock when its status could not be marked recovered",
+    "SHU-86 mutation M332 read a recovery that could not release its lock as done",
+    "SHU-86 mutation M333 leave a recovered status in place when the lock could not be released",
+    "SHU-86 mutation M334 read a recovered status whose lock is still held as done",
+    "SHU-86 mutation M335 fold a failed recovery into the run's earlier ended alert",
+    "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
+    "SHU-86 mutation M327 leave the pause off for a card worker's ended run whose lock is gone",
+    "SHU-86 mutation M328 never alert a run a worker's start recovered before the watch saw it ended",
+    "SHU-86 mutation M336 mark every unfinished same-pid claim of the worker DIED, whichever run wrote it",
+    "SHU-86 mutation M337 recover a dead run whose status names no run without knowing which claim is its own",
+    "SHU-86 mutation M338 let two starts recover the same worker at once",
+    "SHU-86 mutation M339 recover a lock that a new run took before the marker",
+    "SHU-86 mutation M340 read a dead recovery's marker as one in progress",
+    "SHU-86 mutation M341 report a dead run recovered when the claim its status names was never marked",
+    "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
+    "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
+    "2026-11-15: a dead run whose status names no unfinished run cannot tell which same-pid claim is its own, so it keeps the lock and writes the pause file",
+    "2026-11-15: one recovery at a time: a live recovery's marker skips LOCKED, a dead one's pauses, and a lock that changed under the marker is left alone",
+    "2026-11-15: a dead run whose named claim is gone, belongs to another worker or pid, or already has its outcome keeps the lock and writes the pause file",
+    "2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file",
+    "2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock cannot be removed, keeps the lock and writes the pause file",
+    "2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file",
+    "2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses",
+    "2026-11-14: a run a worker's start recovered before the watch saw it ended is alerted once, without the pause",
+    "2026-11-14: the watch pauses on a recovery that could not release its lock, and reports a failed recovery's own pause as in place",
+    "2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it",
     "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
     "Usage U2: a run's usage is summed from the supervisor's records for its own card and window, by role and family",
     "Usage U6: a records folder that is a link, or a record swapped for a link after it is listed, is never read",
@@ -4843,7 +4877,35 @@
     "Disk D3b: a clone whose launch the supervisor ordered but never completed stays",
     "Disk D12: a lock, order, completion, record or timestamp that cannot be read keeps the clone, never reads as absent",
     "Disk D12b: a removal whose result cannot be confirmed is counted failed, not removed",
-    "Disk D12m: the mutant that reads an unreadable file as absent fails D12"
+    "Disk D12m: the mutant that reads an unreadable file as absent fails D12",
+    "CI before review: mutation C1 turn the gate on without enabled: true",
+    "CI before review: mutation C2 gate every armed review whatever the committed flag says",
+    "CI before review: mutation C3 gate a review-only run or a landing repair",
+    "CI before review: mutation C4 review a red head instead of revising it",
+    "CI before review: mutation C5 dispatch the review although a CI revise was minted",
+    "CI before review: mutation C6 review a head whose CI is still running",
+    "CI before review: mutation C7 let the tick dispatch the review while CI holds it",
+    "CI before review: mutation C8 hold a head forever when CI never settles",
+    "CI before review: mutation C9 mint CI revises past max_ci_revise",
+    "CI before review: mutation C10 count CI revises against max_revise",
+    "CI before review: mutation C11 bind CI findings of another head to the revise",
+    "CI before review: mutation C12 judge a build head's CI without the landing's external-check policy",
+    "CI before review: the gate is off unless enabled is exactly true, with defaults of 45 minutes and 2 revises",
+    "CI before review: only a review of a build or revise head is gated, never a review-only run or a landing repair",
+    "CI before review: green proceeds to review",
+    "CI before review: pending or unreported checks hold inside wait_minutes",
+    "CI before review: checks still pending past wait_minutes proceed to review with a note that CI did not settle",
+    "CI before review: red mints a revise until max_ci_revise, then proceeds to review",
+    "CI before review: a CI revise is shaped like a routed revise, bound to the head under review, with CI findings",
+    "CI before review: CI revises are counted on their own and never consume max_revise",
+    "CI before review: with the flag off the review is dispatched exactly as today and no check is read",
+    "CI before review: green checks at the build head dispatch the review",
+    "CI before review: pending checks hold the review, and a later tick dispatches it once green",
+    "CI before review: checks still pending past wait_minutes dispatch the review with a note that CI did not settle",
+    "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
+    "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
+    "CI before review: a failing third-party check the policy names as required still mints a CI revise",
+    "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round"
   ],
   "requirements": [
     {
@@ -34463,6 +34525,134 @@
       "capabilities": []
     },
     {
+      "name": "SHU-86 mutation M322 recover worker 1's lock held by a dead pid, which a person may hold by hand",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M323 recover a card worker's lock whose holder is still alive",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M324 release a dead run's lock when its revert did not finish",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M325 leave a dead run's claim without its outcome",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M329 release a dead run's lock when its claim could not be marked DIED",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M330 report a dead run recovered when its lock could not be removed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M331 release a dead run's lock when its status could not be marked recovered",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M332 read a recovery that could not release its lock as done",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M333 leave a recovered status in place when the lock could not be released",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M334 read a recovered status whose lock is still held as done",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M335 fold a failed recovery into the run's earlier ended alert",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M326 pause every card run for one card worker's run that ended without finishing",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M327 leave the pause off for a card worker's ended run whose lock is gone",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M328 never alert a run a worker's start recovered before the watch saw it ended",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M336 mark every unfinished same-pid claim of the worker DIED, whichever run wrote it",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M337 recover a dead run whose status names no run without knowing which claim is its own",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M338 let two starts recover the same worker at once",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M339 recover a lock that a new run took before the marker",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M340 read a dead recovery's marker as one in progress",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-86 mutation M341 report a dead run recovered when the claim its status names was never marked",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a card worker's start that finds its lock held by a dead pid reverts the worker, records the run DIED and releases the lock",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a live lock holder, worker 1's lock and a lock with no pid still skip LOCKED and touch nothing",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-15: a dead run whose status names no unfinished run cannot tell which same-pid claim is its own, so it keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-15: one recovery at a time: a live recovery's marker skips LOCKED, a dead one's pauses, and a lock that changed under the marker is left alone",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-15: a dead run whose named claim is gone, belongs to another worker or pid, or already has its outcome keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a dead run whose revert does not finish keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a dead run whose claim cannot be marked DIED, or whose lock cannot be removed, keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a dead run whose status cannot be marked recovered keeps the lock and writes the pause file",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: the watch alerts a card worker's run that ended without finishing once, but pauses nothing; worker 1's still pauses",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a run a worker's start recovered before the watch saw it ended is alerted once, without the pause",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: the watch pauses on a recovery that could not release its lock, and reports a failed recovery's own pause as in place",
+      "capabilities": []
+    },
+    {
+      "name": "2026-11-14: a card worker's ended run whose lock is gone (a reboot clears /run/lock) still pauses, since its next start cannot recover it",
+      "capabilities": []
+    },
+    {
       "name": "Usage U1: the Codex and Claude CLI outputs give token counts, and anything else gives none",
       "capabilities": [
         {
@@ -34756,6 +34946,118 @@
     },
     {
       "name": "Disk D12m: the mutant that reads an unreadable file as absent fails D12",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C1 turn the gate on without enabled: true",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C2 gate every armed review whatever the committed flag says",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C3 gate a review-only run or a landing repair",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C4 review a red head instead of revising it",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C5 dispatch the review although a CI revise was minted",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C6 review a head whose CI is still running",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C7 let the tick dispatch the review while CI holds it",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C8 hold a head forever when CI never settles",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C9 mint CI revises past max_ci_revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C10 count CI revises against max_revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C11 bind CI findings of another head to the revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: mutation C12 judge a build head's CI without the landing's external-check policy",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: the gate is off unless enabled is exactly true, with defaults of 45 minutes and 2 revises",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: only a review of a build or revise head is gated, never a review-only run or a landing repair",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: green proceeds to review",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: pending or unreported checks hold inside wait_minutes",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: checks still pending past wait_minutes proceed to review with a note that CI did not settle",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: red mints a revise until max_ci_revise, then proceeds to review",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a CI revise is shaped like a routed revise, bound to the head under review, with CI findings",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: CI revises are counted on their own and never consume max_revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: with the flag off the review is dispatched exactly as today and no check is read",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: green checks at the build head dispatch the review",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: pending checks hold the review, and a later tick dispatches it once green",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: checks still pending past wait_minutes dispatch the review with a note that CI did not settle",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: red checks dispatch a CI revise to the writer with ci-findings bound to the build head",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a failing advisory third-party check neither holds nor revises the head; the landing's external policy decides",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: a failing third-party check the policy names as required still mints a CI revise",
+      "capabilities": []
+    },
+    {
+      "name": "CI before review: after max_ci_revise CI revises a red head is reviewed, and the revises spent no review round",
       "capabilities": []
     }
   ],
