@@ -72,6 +72,10 @@ async function composition(t) {
   config.two_fixture_activation_public_key = keys.publicKey.export({ type: 'spki', format: 'pem' });
   config.fixture_lane = pkg.fixtures[0].lane;
   config.fixture_lanes = [pkg.fixtures[1].lane];
+  // These ticks pin the build, BLOCK revision and re-review sequence itself;
+  // the CI-before-review gate on that review has its own suite
+  // (ci-before-review.test.mjs), so it stays off here whatever config.json ships.
+  config.ci_before_review = { ...config.ci_before_review, enabled: false };
   const actor = config.linear_receipt_actor_ids[0];
   const h = createEpisodeHarness({ revision: pkg.coordinator_revision, activationId: p.id,
     nodeId: pkg.fixtures[0].linear_id, callbackActor: actor, githubToken: 'synthetic',
