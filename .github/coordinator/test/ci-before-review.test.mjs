@@ -2,9 +2,11 @@
 // before a reviewer spends a round on it. Green reviews as before, pending
 // waits (up to wait_minutes, then reviews as before), red goes back to the
 // writer as a revise carrying the CI output, at most max_ci_revise times an
-// episode. Off by default, and never for a review-only run or a landing repair.
+// episode. Off unless enabled is exactly true (the committed config.json turns
+// it on), and never for a review-only run or a landing repair.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as routing from "../review-routing.mjs";
 import { episodeVerdict } from "../single-run-activation.mjs";
 import { reviewFindingsContext } from "../review-findings.mjs";
@@ -319,5 +321,20 @@ test("CI before review: after max_ci_revise CI revises a red head is reviewed, a
     const review = h.latestFor("claude-verifier");
     assert.equal(review.target_sha, "e".repeat(40));
     assert.ok(review.notes.some((note) => /max_ci_revise 2 reached/.test(note)), review.notes.join(" | "));
+  } finally { h.cleanup(); }
+});
+
+// The shipped setting itself: every other test injects its own gate, so this one
+// reads the committed config.json and drives an armed episode with exactly the
+// ci_before_review block it ships.
+test("CI before review: the committed config.json turns the gate on, and its settings send a red build head back to the writer", async () => {
+  const committed = JSON.parse(readFileSync(new URL("../config.json", import.meta.url), "utf8"));
+  assert.deepEqual(routing.ciBeforeReviewSettings(committed), SETTINGS, "the committed gate is on with 45 minutes and 2 revises");
+  const { h, world } = await builtEpisode({ ci: committed.ci_before_review, checks: (head) => [job(201, head ?? SHA_WRITE)] });
+  try {
+    await world.tick();
+    assert.ok(world.reads.length > 0 && world.reads.every((sha) => sha === SHA_WRITE), "the committed gate reads CI at the build head");
+    assert.equal(h.triggers["claude-code"], 0, "no review is spent on a red head");
+    assert.equal(h.triggers["codex-cli"], 2, "the writer gets the head back");
   } finally { h.cleanup(); }
 });
