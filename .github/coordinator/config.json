@@ -11,7 +11,7 @@
   },
   "landing_repair": true,
   "ci_before_review": {
-    "enabled": false,
+    "enabled": true,
     "wait_minutes": 45,
     "max_ci_revise": 2
   },
