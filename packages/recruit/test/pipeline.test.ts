@@ -43,7 +43,8 @@ test("REC2_AUTHORITY staff and admin on an operator assign; only the assigned re
   assert.equal(m.pipelineAssignDecision([grant("root", "recruiter")], OPS), false);
   assert.equal(m.pipelineLeadDecision([grant("root", "admin")], OPS), true);
   assert.equal(m.pipelineLeadDecision([grant("root", "staff")], OPS), false);
-  assert.equal(m.pipelineRecruiterEligible([grant("root", "recruiter", "self")], OPS), true);
+  assert.equal(m.pipelineRecruiterEligible([grant("root", "recruiter")], OPS), true);
+  assert.equal(m.pipelineRecruiterEligible([grant("root", "recruiter", "self")], OPS), false, "placement needs subtree scope");
   assert.equal(m.pipelineRecruiterEligible([grant("root", "staff")], OPS), true);
   assert.equal(m.pipelineRecruiterEligible([grant("co", "recruiter")], OPS), false, "a company recruiter is not a StudentHub recruiter");
   assert.equal(m.pipelineAuthority("a", "a", false), true);

@@ -17,7 +17,7 @@ const mutations = [
   ["accepts-filled", "REC2_REQUEST_STATUS", 'return status === "open" || status === "filling";', 'return status !== "closed";'],
   ["any-staff-moves", "REC2_AUTHORITY", "return isLead || (assignedRecruiterId !== null && assignedRecruiterId === principalId);", "return true;"],
   ["staff-lead", "REC2_AUTHORITY", 'return covers(rows, ["admin"], operators);', 'return covers(rows, ["admin", "staff"], operators);'],
-  ["company-recruiter", "REC2_AUTHORITY", '(row.role === "recruiter" || row.role === "staff") && operators.includes(row.org_id)', '(row.role === "recruiter" || row.role === "staff")'],
+  ["company-recruiter", "REC2_AUTHORITY", 'return covers(rows, ["recruiter", "staff"], operators);', 'return rows.some((row) => (row.role === "recruiter" || row.role === "staff"));'],
   ["legacy-guess", "REC2_LEGACY", "return { kind: \"unmapped\", value };", "return { kind: \"mapped\", stage: \"suggested\" };"],
   ["moves-for-all", "REC2_VIEW", "allowedMoves: canMove ?", "allowedMoves: true ?"],
 ];

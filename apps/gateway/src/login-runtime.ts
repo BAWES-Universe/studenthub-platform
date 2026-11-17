@@ -259,7 +259,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: runtimeApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), recruitArea.close(), ops.close(),notificationStore.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(), recruitArea.close(),notificationStore.close()]);
     },
   };
 }

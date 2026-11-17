@@ -61,9 +61,9 @@ export function pipelineLeadDecision(rows: readonly RecruitGrantRow[], operators
   return covers(rows, ["admin"], operators);
 }
 
-/** A recruiter is a person holding recruiter or staff on an operator organization. */
+/** A recruiter is a person holding recruiter or staff on an operator organization, subtree scope (the work lane's placement requires it). */
 export function pipelineRecruiterEligible(rows: readonly RecruitGrantRow[], operators: readonly string[]): boolean {
-  return rows.some((row) => (row.role === "recruiter" || row.role === "staff") && operators.includes(row.org_id));
+  return covers(rows, ["recruiter", "staff"], operators);
 }
 
 /** Only the request's assigned recruiter or a lead adds or moves a card. */

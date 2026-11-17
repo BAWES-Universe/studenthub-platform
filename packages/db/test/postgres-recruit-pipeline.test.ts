@@ -51,7 +51,7 @@ async function setup(headcount = 2, period: { periodStart: string; periodEnd: st
   const created = await requests.create(owner, orgId, { storeId, positionTitle: "Cashier", description: "d", compensationText: "c", positionType: "part_time", headcount, periodStart: period?.periodStart ?? null, periodEnd: period?.periodEnd ?? null, payModel: null, gender: "any", location: null, priority: 0, draft: false });
   const requestId = (created as { requestId: string }).requestId;
   const staff = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }], "Sara Staff");
-  const recruiter = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "self" }], "Rami Recruiter");
+  const recruiter = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }], "Rami Recruiter");
   const lead = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
   return { orgId, owner, storeId, requestId, staff, recruiter, lead };
 }
@@ -68,7 +68,7 @@ async function walk(actor: string, cardId: string, stages: PipelineStage[]) {
 }
 
 test("REC2_ASSIGN staff assign an eligible recruiter; reassigning keeps the first time; companies and ineligible people are refused", async () => {
-  const s = await setup(), other = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "self" }]), companyRecruiter = await person([{ orgId: s.orgId, role: "recruiter", scope: "self" }]);
+  const s = await setup(), other = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }]), companyRecruiter = await person([{ orgId: s.orgId, role: "recruiter", scope: "subtree" }]);
   assert.deepEqual(await pipeline.assign(s.owner, s.requestId, s.recruiter), { kind: "not_found" }, "a company grantee cannot assign");
   assert.deepEqual(await pipeline.assign(s.staff, s.requestId, companyRecruiter), { kind: "recruiter_ineligible" });
   assert.deepEqual(await pipeline.assign(s.staff, randomUUID(), s.recruiter), { kind: "not_found" });
@@ -123,7 +123,7 @@ test("REC2_STAGES against Postgres: every ordered pair of stages is allowed exac
 test("REC2_AUTHORITY only the assigned recruiter or a lead adds or moves; other staff, companies and strangers get not_found", async () => {
   const s = await setup();
   await pipeline.assign(s.staff, s.requestId, s.recruiter);
-  const otherRecruiter = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "self" }]), stranger = await person();
+  const otherRecruiter = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }]), stranger = await person();
   for (const actor of [s.staff, otherRecruiter, s.owner, stranger]) assert.deepEqual(await pipeline.addCard(actor, s.requestId, await person()), { kind: "not_found" });
   const cardId = await add(s.recruiter, s.requestId);
   for (const actor of [s.staff, otherRecruiter, s.owner, stranger]) assert.deepEqual(await pipeline.move(actor, cardId, "contacted"), { kind: "not_found" });
