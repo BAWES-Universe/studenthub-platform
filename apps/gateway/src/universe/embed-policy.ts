@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import { isIP } from "node:net";
+import type { UniverseEmbedRuntime } from "./embed-service.js";
 
 const validatedConfig = Symbol("validated universe embed configuration");
 const validatedPolicy = Symbol("validated universe response policy");
@@ -17,6 +18,8 @@ export interface UniverseEmbedConfig {
   readonly enabled: boolean;
   readonly ancestors: readonly string[];
   readonly callbackUrl?: string;
+  /** E2: present only when the complete embed runtime is wired (wiring/universe.ts). */
+  readonly runtime?: UniverseEmbedRuntime;
 }
 
 const BASE_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'";
@@ -125,7 +128,7 @@ export function universeEmbedPolicy(config: UniverseEmbedConfig): EmbedResponseP
 
 export function writeEmbedResponse(response: ServerResponse, status: number, body: string,
   contentType: string, policy: EmbedResponsePolicy = APP_POLICY,
-  headers: Readonly<Record<string, string>> = {}): void {
+  headers: Readonly<Record<string, string | readonly string[]>> = {}): void {
   const additional = Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
   // A caller cannot add XFO to the embed display, nor remove it from app policy.
   delete additional["x-frame-options"];

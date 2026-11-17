@@ -45,6 +45,10 @@
     "./notifications": {
       "types": "./dist/notifications/index.d.ts",
       "import": "./dist/notifications/index.js"
+    },
+    "./universe": {
+      "types": "./dist/universe/index.d.ts",
+      "import": "./dist/universe/index.js"
     }
   },
   "files": [

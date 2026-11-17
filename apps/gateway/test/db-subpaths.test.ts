@@ -21,7 +21,7 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions"].sort());
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./universe"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
@@ -35,6 +35,12 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   const assertions = await moduleFor("@studenthub/db/assertions");
   assert.deepEqual(Object.keys(assertions), ["PostgresReplayStore"]);
   assert.equal(typeof assertions.PostgresReplayStore, "function");
+  // Universe embed is subpath-only too (E2): the root golden stays unchanged.
+  assert.deepEqual(manifest.exports["./universe"], {
+    types: "./dist/universe/index.d.ts", import: "./dist/universe/index.js",
+  });
+  const universe = await moduleFor("@studenthub/db/universe");
+  assert.deepEqual(Object.keys(universe).sort(), ["PostgresUniverseEmbedStore", "universeEmbedDigest"]);
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {
