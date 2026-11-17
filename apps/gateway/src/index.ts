@@ -32,7 +32,7 @@ import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
 import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import {
-  type BrowserLoginApplication, profileDocument, renderError, renderLanding, renderSignedOut,
+  type BrowserLoginApplication, profileDocument, renderError, renderLanding, renderSignedOut, renderAccessPaused,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
 } from "./web-ui.js";
 import {addNotificationBell} from "./web-ui.js";
@@ -352,6 +352,7 @@ export function createGatewayServer(
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (html && result.body?.error === "access_paused") { writeHtml(response, 403, renderAccessPaused()); return; }
       if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
       writeBrowserResponseSafely(response, result);
       return;

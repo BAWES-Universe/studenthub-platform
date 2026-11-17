@@ -341,6 +341,11 @@ export function renderSignedOut(login?: BrowserLoginApplication): string {
   return document("Signed out", `<header class="topbar">${brand}<a class="text-link" href="/">Back to StudentHub</a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB ACCOUNT</div><h1>You’re signed out.</h1><p>You’ve been signed out of StudentHub. On a shared device, close the browser when you’re done.</p>${signIn(login).replace("Continue with Universe", "Sign in again")}</main>`);
 }
 
+/** Access lane A6: shown at sign-in to a person whose access staff paused. */
+export function renderAccessPaused(): string {
+  return document("Access paused", `<header class="topbar">${brand}<a class="text-link" href="/">Back to StudentHub</a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB ACCOUNT</div><h1>Your StudentHub access is paused.</h1><p>StudentHub staff have paused your access, so you can’t sign in for now. Your Universe account is not affected. If you think this is a mistake, contact StudentHub support.</p></main>`);
+}
+
 export function renderError(status: number, login?: BrowserLoginApplication): string {
   const [title, message] = status === 401
     ? ["Let’s get you signed in.", "Sign in to view your profile. If you were already here, your session may have ended."]

@@ -313,6 +313,9 @@ export const createLoginApplication: LoginApplicationFactory = (
         );
         if (binding === "mismatch" || binding === "locked") return rejected();
       }
+      if (await dependencies.accessPause?.isPaused(identity.personId)) {
+        return { status: 403, body: { error: "access_paused" } };
+      }
       const sessionId = opaqueToken(dependencies);
       const reference = upstream ? upstreamReferenceFrom(claims) : undefined;
       if (reference) {

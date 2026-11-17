@@ -329,6 +329,7 @@ export function createRuntimeLoginFromEnv(
     },
     jwks: new RefreshingJwksResolver(issuer, jwksUrl),
     ...(upstream ? { upstreamSessions: upstream.port } : {}),
+    accessPause: { isPaused: async (personId) => (await accessLane.services.pauses.paused([personId])).has(personId) },
   }, {
     issuer,
     clientId: value("OIDC_CLIENT_ID"),

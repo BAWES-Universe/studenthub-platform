@@ -156,6 +156,12 @@ export interface LoginDependencies {
   readonly jwks: JwksResolver;
   readonly upstreamSessions?: UpstreamSessions;
   readonly upstreamLog?: (event: UpstreamSessionEvent) => void;
+  /** Access lane A6: a paused person gets no session (403 access_paused). */
+  readonly accessPause?: AccessPauseReader;
+}
+
+export interface AccessPauseReader {
+  isPaused(personId: string): Promise<boolean>;
 }
 
 export interface LoginConfig {

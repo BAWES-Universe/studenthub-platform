@@ -6,9 +6,15 @@ import {
   REASON_MAX,
   grantCatalogue,
   mayOpenAccessAdmin,
+  mayPauseAccount,
   parseGrantChange,
   parseGrantToken,
   parsePeopleQuery,
+  parsePauseRequest,
+  type AccountPause,
+  type AccountPauseService,
+  type AccountPauseStore,
+  type PauseRefusal,
   type AccessGrantRow,
   type AccessGrantService,
   type AccessEventRow,
@@ -42,6 +48,8 @@ export interface AccessPorts {
   /** Absent when the signing key is not configured: the pages are read-only. */
   readonly writes?: AccessGrantService;
   readonly operatorOrgIds?: readonly string[];
+  /** A6: pause and resume a person's access. Writes absent without the signing key. */
+  readonly pauses?: { readonly reads: Pick<AccountPauseStore, "pause">; readonly writes?: AccountPauseService };
 }
 
 export type AccessPageWriter = (status: number, title: string, body: string) => void;
@@ -49,6 +57,7 @@ export type AccessPageWriter = (status: number, title: string, body: string) => 
 const SESSION = "__Host-studenthub_session";
 const BODY_LIMIT = 8192;
 const PERSON = /^\/admin\/access\/people\/([^/]+)$/;
+const PAUSE = /^\/admin\/access\/people\/([^/]+)\/(pause|resume)$/;
 
 export const ROLE_NAMES: Readonly<Record<string, string>> = Object.freeze({
   candidate: "Candidate", staff: "Staff", admin: "Administrator",
@@ -159,7 +168,36 @@ export interface PersonPageModel {
   readonly revocable: ReadonlySet<string>;
   readonly writable: boolean;
   readonly isSelf: boolean;
-  readonly done?: "granted" | "revoked" | "unchanged";
+  readonly done?: "granted" | "revoked" | "unchanged" | "paused" | "resumed";
+  /** A6: the live pause, when the pause ports exist. */
+  readonly pause?: AccountPause | null;
+  /** A6: whether this caller may pause or resume this person. */
+  readonly pausable?: boolean;
+}
+
+const PAUSE_REFUSAL_TEXT: Readonly<Record<PauseRefusal, string>> = Object.freeze({
+  self_change: "You can’t pause your own access. Ask another administrator.",
+  unknown_person: "This person no longer exists.",
+  not_allowed: "You don’t have the right to pause or resume this person’s access.",
+  already_paused: "This person’s access is already paused.",
+  not_paused: "This person’s access isn’t paused.",
+});
+const PAUSE_REFUSAL_STATUS: Readonly<Record<PauseRefusal, number>> = Object.freeze({
+  self_change: 403, unknown_person: 404, not_allowed: 403, already_paused: 409, not_paused: 409,
+});
+
+function renderPauseSection(model: PersonPageModel): string {
+  const e = escapeHtml;
+  if (model.pause === undefined) return "";
+  const { person, pause } = model;
+  const action = pause ? "resume" : "pause";
+  const form = model.pausable && !model.isSelf
+    ? `<form method="post" action="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/${action}`)}"><input type="hidden" name="targetPrincipalId" value="${e(person.principalId)}"><input type="hidden" name="action" value="${action}"><label for="pause-reason">Reason (shown to administrators only)</label><textarea id="pause-reason" name="reason" minlength="3" maxlength="${REASON_MAX}" required></textarea><button class="sign-out" type="submit">${pause ? "Resume access" : "Pause access"}</button></form>`
+    : "";
+  const status = pause
+    ? `<p><strong>Access paused</strong> on ${e(dateText(pause.pausedAt))} by ${e(personName(pause.pausedBy))}: ${e(pause.reason)}</p><p>${pause.grants.length + pause.storeGrants.length} role${pause.grants.length + pause.storeGrants.length === 1 ? "" : "s"} will be given back on resume, except at a deleted company or a removed store.</p>`
+    : `<p>Pausing takes every role away, signs ${e(personName(person))} out everywhere on their next request, and refuses sign-in until access is resumed. Their profile is hidden from companies while paused.</p>`;
+  return `<section><h2>Account</h2>${status}${form}</section>`;
 }
 
 const reasonField = (id: string): string =>
@@ -168,7 +206,8 @@ const reasonField = (id: string): string =>
 export function renderPersonAccess(model: PersonPageModel): string {
   const e = escapeHtml;
   const { person } = model;
-  const notice = model.done === "granted" ? "The role was given." : model.done === "revoked" ? "The role was taken away." : model.done === "unchanged" ? "Nothing changed: the person already held this." : "";
+  const notice = model.done === "granted" ? "The role was given." : model.done === "revoked" ? "The role was taken away." : model.done === "unchanged" ? "Nothing changed: the person already held this."
+    : model.done === "paused" ? "Access was paused." : model.done === "resumed" ? "Access was resumed." : "";
   const grantRows = model.grants.length === 0
     ? `<p class="empty-contexts" role="status">${e(personName(person))} holds no roles.</p>`
     : `<div class="directory-table"><table><caption>Roles held</caption><thead><tr><th>Organization</th><th>Role</th><th>Scope</th><th>Given by</th><th>When</th><th>Reason</th>${model.writable && !model.isSelf ? "<th>Change</th>" : ""}</tr></thead><tbody>${model.grants.map((grant, index) => {
@@ -190,7 +229,7 @@ export function renderPersonAccess(model: PersonPageModel): string {
   const history = model.history.length === 0 ? `<p class="empty-contexts">No changes recorded on this page yet.</p>`
     : `<div class="directory-table"><table><caption>Changes (latest ${model.history.length})</caption><thead><tr><th>When</th><th>Change</th><th>Organization</th><th>Role</th><th>Scope</th><th>By</th><th>Reason</th></tr></thead><tbody>${model.history.map((event) =>
       `<tr><td>${e(dateText(event.occurredAt))}</td><td>${event.action === "grant" ? "Given" : "Taken away"}</td><td>${e(event.orgName)}</td><td>${e(ROLE_NAMES[event.role] ?? event.role)}</td><td>${e(SCOPE_NAMES[event.scope] ?? event.scope)}</td><td>${e(personName(event.actor))}</td><td>${e(event.reason)}</td></tr>`).join("")}</tbody></table></div>`;
-  return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}<section><h2>Roles</h2>${grantRows}</section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
+  return layout(`<p><a class="text-link" href="/admin/access">← Find another person</a></p><div class="profile-heading"><h1>${e(personName(person))}<span class="accent">.</span></h1></div><p>${e(person.email ?? "No email address recorded")}</p>${notice ? `<section class="notice context-notice" role="status"><strong>${e(notice)}</strong></section>` : ""}${renderPauseSection(model)}<section><h2>Roles</h2>${grantRows}</section><section><h2>Give a role</h2>${give}</section><section><h2>History</h2>${history}</section>`, "access");
 }
 
 export function renderGrantReview(input: {
@@ -224,6 +263,13 @@ export function renderAccessRefusal(reason: GrantRefusal | "invalid_request" | "
   return layout(`<div class="error-page"><h1>Nothing was changed.</h1><p>${escapeHtml(text)}</p><a class="button primary" href="${escapeHtml(back)}">Back</a></div>`, "access");
 }
 
+export function renderPauseRefusal(reason: PauseRefusal | "invalid_request" | "unavailable", back: string): string {
+  const text = reason === "invalid_request" ? "Some details were missing or not valid. The reason must be 3 to 500 characters."
+    : reason === "unavailable" ? "Access changes are unavailable right now. Please try again in a moment."
+      : PAUSE_REFUSAL_TEXT[reason];
+  return layout(`<div class="error-page"><h1>Nothing was changed.</h1><p>${escapeHtml(text)}</p><a class="button primary" href="${escapeHtml(back)}">Back</a></div>`, "access");
+}
+
 export function renderOwnAccess(rows: readonly OwnAccessRow[]): string {
   const e = escapeHtml;
   const list = rows.length === 0
@@ -254,7 +300,9 @@ export async function handleAccess(
   const path = url.pathname;
   const isOwn = path === "/profile/access";
   const personMatch = PERSON.exec(path);
-  const isAdminPath = path === "/admin/access" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null;
+  const pauseMatch = PAUSE.exec(path);
+  const isAdminPath = path === "/admin/access" || path === "/admin/access/preview" || path === "/admin/access/confirm" || personMatch !== null
+    || (pauseMatch !== null && ports?.pauses !== undefined);
   if (!isOwn && !isAdminPath) return false;
   if (!ports) return false;
   const session = sessionCookie(req.headers.cookie);
@@ -285,10 +333,11 @@ export async function handleAccess(
     const person = await ports.reads.person(principalId);
     if (!person) return false;
     const orgQuery = (url.searchParams.get("org") ?? "").trim().slice(0, 200);
-    const [grants, history, found] = await Promise.all([
+    const [grants, history, found, pause] = await Promise.all([
       ports.reads.grants(principalId),
       ports.reads.history(principalId),
       orgQuery ? ports.reads.findOrganizations(orgQuery) : Promise.resolve(undefined),
+      ports.pauses ? ports.pauses.reads.pause(principalId) : Promise.resolve(undefined),
     ]);
     // Ancestors of the held grants' organizations, for the "take away" offer: one batched read.
     const held = await ports.reads.organizations([...new Set(grants.map((grant) => grant.orgId))]);
@@ -308,8 +357,49 @@ export async function handleAccess(
       revocable,
       writable: ports.writes !== undefined,
       isSelf: principalId === caller,
-      ...(done === "granted" || done === "revoked" || done === "unchanged" ? { done } : {}),
+      ...(done === "granted" || done === "revoked" || done === "unchanged" || done === "paused" || done === "resumed" ? { done } : {}),
+      ...(ports.pauses ? {
+        pause: pause ?? null,
+        pausable: ports.pauses.writes !== undefined && mayPauseAccount(caller, principalId, callerGrants,
+          pause ? pause.grants : grants, ports.operatorOrgIds),
+      } : {}),
     }));
+    return true;
+  }
+
+  if (pauseMatch && ports.pauses) {
+    if (req.method !== "POST") return false;
+    let principalId: string;
+    try { principalId = decodeURIComponent(pauseMatch[1]!); } catch { return false; }
+    const back = personHref(principalId);
+    if (!origin || req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {
+      req.resume();
+      write(403, "Access", renderPauseRefusal("invalid_request", back));
+      return true;
+    }
+    const form = await readForm(req);
+    const request = form && Object.keys(form).every((key) => key === "targetPrincipalId" || key === "action" || key === "reason")
+      ? parsePauseRequest(form) : undefined;
+    if (!request || request.targetPrincipalId !== principalId || request.action !== pauseMatch[2]) {
+      write(400, "Access", renderPauseRefusal("invalid_request", back));
+      return true;
+    }
+    if (!ports.pauses.writes) {
+      write(503, "Access", renderPauseRefusal("unavailable", back));
+      return true;
+    }
+    try {
+      const outcome = await ports.pauses.writes.change(caller, request, `access_${randomUUID()}`);
+      if (outcome.kind === "refused") {
+        write(PAUSE_REFUSAL_STATUS[outcome.reason], "Access", renderPauseRefusal(outcome.reason, back));
+        return true;
+      }
+      res.writeHead(303, { location: personHref(principalId, { done: outcome.kind }), "cache-control": "no-store" });
+      res.end();
+    } catch {
+      if (!res.headersSent) write(503, "Access", renderPauseRefusal("unavailable", back));
+      else res.destroy();
+    }
     return true;
   }
 
