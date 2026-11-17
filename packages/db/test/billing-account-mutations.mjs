@@ -22,6 +22,8 @@ const mutations = [
     'SELECT id AS org_id FROM organizations WHERE parent_org_id = (SELECT parent_org_id FROM billing_account WHERE id = $1) ORDER BY id', true],
   ['skip open-lines port', 'SHU-263/AC-04 detach-open-lines', 'membership',
     'if (await this.options.openLines.hasOpenLines(orgId))', 'if (false)', false],
+  ['detach a non-member', 'SHU-263/AC-04 detach-open-lines', 'membership',
+    "if (!(await tx.listMembers(accountId)).includes(orgId))", 'if (false)', false],
   ['drop unique account index', 'SHU-263/AC-05 one-account-per-currency', 'postgres-billing-account-store',
     'insertAccount: async (account, receipt) => {', 'insertAccount: async (account, receipt) => { await client.query("DROP INDEX IF EXISTS billing_account_parent_currency");', true],
   ['write audit outside transaction', 'SHU-263/AC-06 audit-atomic', 'postgres-billing-account-store',

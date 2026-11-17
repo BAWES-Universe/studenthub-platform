@@ -50,6 +50,9 @@ test('SHU-263/AC-04 detach-open-lines', async () => {
   assert.deepEqual(await f.accounts.members(admin, f.account.id), []);
   assert.deepEqual(f.store.state.audits.map(a => a.operation), ['create', 'attach', 'detach']);
   assert.deepEqual(f.store.state.audits[2].occurredAt, FIXED_BILLING_TIME);
+  await assert.rejects(f.membership.detach(admin, f.account.id, 'A1'), error('not_found', 404, 'A1'));
+  await assert.rejects(f.membership.detach(admin, f.account.id, 'A2'), error('not_found', 404, 'A2'));
+  assert.equal(f.store.state.audits.length, 3, 'a refused detach writes no audit row');
 });
 test('SHU-263/AC-07 policy-denies-by-default', async () => {
   const f = await fixture();

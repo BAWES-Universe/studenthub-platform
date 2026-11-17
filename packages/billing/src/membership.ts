@@ -30,6 +30,8 @@ export class BillingMembership {
       if (!account) throw new BillingAccountError(404, 'not_found');
       const context = await authorizeBilling(caller, account.parentOrgId, this.options.authz);
       await requireCoverage(caller, orgId, this.options.authz);
+      // Detaching a non-member is refused so the audit never records a detach that did not happen.
+      if (!(await tx.listMembers(accountId)).includes(orgId)) throw new BillingAccountError(404, 'not_found', orgId);
       if (await this.options.openLines.hasOpenLines(orgId)) throw new BillingAccountError(409, 'member_has_open_lines', orgId);
       await tx.detach(accountId, orgId);
       await tx.audit({ actorRef: actorReference(context.principalId), operation: 'detach', accountId, orgIds: [orgId], occurredAt: this.options.clock?.now() ?? await tx.now() });
