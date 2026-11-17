@@ -336,6 +336,11 @@ export function renderLanding(login?: BrowserLoginApplication): string {
   return document("Welcome", `<div class="entry"><header class="entry-header">${brand}<span class="eyebrow">YOUR STUDENTHUB</span></header><main id="main" class="entry-grid"><section class="intro"><div class="eyebrow">ONE ACCOUNT. YOUR NEXT CHAPTER.</div><h1>Good to<br>have you here<span class="accent">.</span></h1><p class="intro-copy">Your profile. Your possibilities.<br>One place to be yourself.</p><div class="intro-foot"><span class="line"></span><span>Connected through BAWES Universe</span></div></section><section class="sign-in" aria-labelledby="welcome"><div class="section-number" aria-hidden="true">01 / WELCOME</div><h2 id="welcome">Make yourself<br>at home.</h2><p>Use your Universe account to open your StudentHub profile.</p>${signIn(login)}<p class="small">Already signed in?</p><a class="text-link" href="/profile">Open my profile <span aria-hidden="true">→</span></a><div class="sign-in-note"><strong>One person. One account.</strong><p>You don’t need a separate login for each role.</p></div></section></main><footer class="entry-footer"><span>StudentHub · Connected by Universe</span><span>Profile access is read-only for now.</span></footer></div>`);
 }
 
+/** SHU-457: public, needs no session and shows nothing personal. */
+export function renderSignedOut(login?: BrowserLoginApplication): string {
+  return document("Signed out", `<header class="topbar">${brand}<a class="text-link" href="/">Back to StudentHub</a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB ACCOUNT</div><h1>You’re signed out.</h1><p>You’ve been signed out of StudentHub. On a shared device, close the browser when you’re done.</p>${signIn(login).replace("Continue with Universe", "Sign in again")}</main>`);
+}
+
 export function renderError(status: number, login?: BrowserLoginApplication): string {
   const [title, message] = status === 401
     ? ["Let’s get you signed in.", "Sign in to view your profile. If you were already here, your session may have ended."]

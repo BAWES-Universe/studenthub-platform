@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createSyntheticLoginRig, runLoginConformance } from "@studenthub/login-contract";
-import type { AuthorizationStore } from "@studenthub/login-contract";
+import { createSyntheticLoginRig, FakeUpstreamSessions, runLoginConformance, runUpstreamSessionConformance, UPSTREAM_SESSION_SCENARIOS } from "@studenthub/login-contract";
+import type { AuthorizationStore, UpstreamSessionEvent } from "@studenthub/login-contract";
 
-import { createLoginApplication } from "../src/login-application.js";
+import { createLoginApplication, upstreamCheckSeconds } from "../src/login-application.js";
 import {
   createRuntimeLoginFromEnv,
+  DiscoveryUpstreamSessions,
   HttpOidcTransport,
   RefreshingJwksResolver,
+  upstreamSessionsFromEnv,
 } from "../src/login-runtime.js";
 
 test("the real gateway login implementation satisfies the executable OIDC contract", async () => {
@@ -182,4 +184,128 @@ test("stalled OIDC token and JWKS requests terminate at the configured bound", a
     resolver.resolve("https://identity.test.invalid/", "synthetic-key"),
     { name: "TimeoutError" },
   );
+});
+
+// SHU-457: signing out ends the session everywhere.
+
+test("SHU457_PORT the gateway login passes the upstream session scenarios, and without the port behaves as before", async () => {
+  const report = await runUpstreamSessionConformance(createLoginApplication);
+  assert.equal(report.ok, true, report.results.filter((result) => !result.ok).map((result) => `${result.name}: ${result.detail}`).join("\n"));
+  assert.equal(report.results.length, UPSTREAM_SESSION_SCENARIOS.length);
+  // Without the port: no reference is recorded even when the token has a sid, and no upstream is asked.
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+  const authorization = rig.provider.authorizationRequests.at(-1)!;
+  const callback = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize({ sid: "sid-1" } as never) });
+  assert.equal(callback.status, 302);
+  assert.deepEqual([...rig.sessions.records.values()].map((record) => Object.keys(record).sort()), [["id", "personId"]]);
+});
+
+const SID = "synthetic-upstream-session-1";
+async function signedIn(rig: ReturnType<typeof createSyntheticLoginRig>, sid: string | null = SID) {
+  await rig.app.start({ browserSessionId: "browser-a", returnTo: "https://studenthub.test.invalid/home" });
+  const authorization = rig.provider.authorizationRequests.at(-1)!;
+  const response = await rig.app.callback({ browserSessionId: "browser-a", state: authorization.state, code: rig.provider.authorize(sid ? { sid } as never : {}) });
+  assert.equal(response.status, 302);
+  return /^__Host-studenthub_session=([^;]+)/.exec(response.headers!["set-cookie"]!)![1]!;
+}
+
+test("SHU457_RECORD only a plain bounded sid is recorded, and a token without one is checked by its own expiry", async () => {
+  for (const [sid, expected] of [[SID, SID], ["has space", undefined], ["x".repeat(256), undefined], [null, undefined]] as const) {
+    const upstream = new FakeUpstreamSessions();
+    const rig = createSyntheticLoginRig(createLoginApplication, { upstream, upstreamCheckSeconds: 900 });
+    const id = await signedIn(rig, sid);
+    assert.equal(rig.sessions.records.get(id)?.upstreamReference, expected);
+    rig.clock.epoch += 10_000;
+    assert.equal((await rig.app.profile({ sessionId: id })).status, expected ? 401 : 200);
+  }
+});
+
+test("SHU457_SIGN_OUT local sign-out is first and complete, and the upstream failure is logged as a count and a class", async () => {
+  const upstream = new FakeUpstreamSessions();
+  upstream.endAnswer = "hang";
+  const events: UpstreamSessionEvent[] = [];
+  const rig = createSyntheticLoginRig(createLoginApplication, { upstream, upstreamCheckSeconds: 900, upstreamTimeoutMs: 20 });
+  const id = await signedIn(rig);
+  const started = Date.now();
+  const response = await rig.app.logout(id);
+  assert.ok(Date.now() - started < 15, "the response does not wait for the upstream");
+  assert.equal(response.status, 204);
+  assert.match(response.headers!["set-cookie"]!, /^__Host-studenthub_session=; .*Max-Age=0$/);
+  assert.equal(rig.sessions.records.size, 0);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  events.push(...rig.upstreamEvents);
+  assert.deepEqual(events, [{ event: "upstream_end_unreachable", reason: "timeout", count: 1 }]);
+  // A second unknown session id signs out the same way and asks nothing upstream.
+  assert.equal((await rig.app.logout("never-issued")).status, 204);
+  assert.deepEqual(upstream.ended, [SID]);
+});
+
+test("SHU457_BOUND T is one setting from 60 to 3600 seconds, default 900, and the bound holds at its edges", async () => {
+  assert.equal(upstreamCheckSeconds(undefined), 900);
+  for (const ok of [60, 3600]) assert.equal(upstreamCheckSeconds(ok), ok);
+  for (const bad of [59, 3601, 900.5, Number.NaN]) assert.throws(() => upstreamCheckSeconds(bad), RangeError);
+  assert.throws(() => createSyntheticLoginRig(createLoginApplication, { upstream: new FakeUpstreamSessions(), upstreamCheckSeconds: 30 }), RangeError);
+  const upstream = new FakeUpstreamSessions();
+  const rig = createSyntheticLoginRig(createLoginApplication, { upstream, upstreamCheckSeconds: 60 });
+  const id = await signedIn(rig);
+  const start = rig.clock.epoch;
+  rig.clock.epoch = start + 59;
+  await rig.app.profile({ sessionId: id });
+  assert.equal(upstream.checked.length, 0);
+  upstream.activity = "ended";
+  rig.clock.epoch = start + 60;
+  assert.equal((await rig.app.profile({ sessionId: id })).status, 401, "ended elsewhere stops working within T");
+  assert.deepEqual(upstream.checked, [SID]);
+  assert.equal(rig.upstreamEvents.length, 0);
+});
+
+test("SHU457_BOUND runtime: the port is off unless turned on, and T is validated", () => {
+  assert.equal(upstreamSessionsFromEnv({}, "https://identity.test.invalid/", "client"), undefined);
+  assert.equal(upstreamSessionsFromEnv({ LOGIN_UPSTREAM_SESSIONS: "off" }, "https://identity.test.invalid/", "client"), undefined);
+  assert.equal(upstreamSessionsFromEnv({ LOGIN_UPSTREAM_SESSIONS: "on" }, "https://identity.test.invalid/", "client")?.checkSeconds, 900);
+  assert.equal(upstreamSessionsFromEnv({ LOGIN_UPSTREAM_SESSIONS: "on", LOGIN_UPSTREAM_CHECK_SECONDS: "60" }, "https://identity.test.invalid/", "client")?.checkSeconds, 60);
+  for (const bad of ["59", "3601", "15m", "", " 900"]) {
+    assert.throws(() => upstreamSessionsFromEnv({ LOGIN_UPSTREAM_SESSIONS: "on", LOGIN_UPSTREAM_CHECK_SECONDS: bad }, "https://identity.test.invalid/", "client"));
+  }
+  assert.throws(() => upstreamSessionsFromEnv({ LOGIN_UPSTREAM_SESSIONS: "yes" }, "https://identity.test.invalid/", "client"));
+  assert.throws(() => upstreamSessionsFromEnv({ LOGIN_UPSTREAM_CHECK_SECONDS: "900" }, "https://identity.test.invalid/", "client"));
+});
+
+test("SHU457_ADAPTER the discovery adapter ends the session at the end-session endpoint with the client id and the reference, in a form body", async () => {
+  const ISSUER = "https://identity.test.invalid/application/o/studenthub/";
+  const calls: { url: string; method: string; body: string; redirect?: RequestRedirect }[] = [];
+  let discovery: Record<string, unknown> = { issuer: ISSUER, end_session_endpoint: "https://identity.test.invalid/application/o/studenthub/end-session/" };
+  let endStatus = 302;
+  const fakeIssuer = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, method: init?.method ?? "GET", body: init?.body ? String(init.body) : "", ...(init?.redirect ? { redirect: init.redirect } : {}) });
+    assert.ok(init?.signal, "every issuer call is bounded");
+    if (url.endsWith("/.well-known/openid-configuration")) return new Response(JSON.stringify(discovery), { status: 200 });
+    if (url === discovery.end_session_endpoint) return new Response(null, { status: endStatus });
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  const adapter = new DiscoveryUpstreamSessions(ISSUER, "studenthub-client", 3_000, fakeIssuer);
+  assert.equal(await adapter.end(SID), "ended");
+  assert.equal(calls[0]!.url, "https://identity.test.invalid/application/o/studenthub/.well-known/openid-configuration");
+  const end = calls[1]!;
+  assert.equal(end.method, "POST");
+  assert.equal(end.url, discovery.end_session_endpoint, "nothing is added to the URL");
+  assert.equal(end.body, new URLSearchParams({ client_id: "studenthub-client", sid: SID }).toString());
+  assert.equal(end.redirect, "manual");
+  assert.equal(await adapter.end(SID), "ended");
+  assert.equal(calls.filter((call) => call.url.endsWith("openid-configuration")).length, 1, "discovery is read once");
+  endStatus = 500;
+  assert.equal(await adapter.end(SID), "unreachable");
+  assert.equal(await adapter.isActive(SID), "unknown", "the issuer offers no tokenless liveness query, so the bound decides");
+
+  for (const document of [{ issuer: ISSUER }, { issuer: ISSUER, end_session_endpoint: "http://identity.test.invalid/end" }, { issuer: "https://other.invalid/", end_session_endpoint: "https://identity.test.invalid/end" }]) {
+    discovery = document;
+    calls.length = 0;
+    const other = new DiscoveryUpstreamSessions(ISSUER, "studenthub-client", 3_000, fakeIssuer);
+    assert.equal(await other.end(SID), "unreachable");
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0, "no end call without a trusted https endpoint");
+  }
+  const down = new DiscoveryUpstreamSessions(ISSUER, "studenthub-client", 3_000, (async () => { throw new Error("offline"); }) as typeof fetch);
+  assert.equal(await down.end(SID), "unreachable");
 });

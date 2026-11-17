@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import pg from "pg";
+
+import { PostgresLoginStore, runMigrations } from "@studenthub/db";
+import type { SessionStore } from "@studenthub/login-contract";
+
+const databaseUrl = process.env.DATABASE_URL ?? "";
+let pool: pg.Pool;
+let store: PostgresLoginStore;
+
+before(async () => {
+  if (!databaseUrl) throw new Error("DATABASE_URL is required for the Postgres upstream-session tests");
+  pool = new pg.Pool({ connectionString: databaseUrl });
+  await runMigrations(pool);
+  store = new PostgresLoginStore({ connectionString: databaseUrl });
+});
+
+after(async () => {
+  await store.close();
+  await pool.end();
+});
+
+const NOW = Math.floor(Date.now() / 1000);
+
+async function person(): Promise<string> {
+  const id = `a5-${randomUUID()}`;
+  await pool.query("INSERT INTO principals (id) VALUES ($1)", [id]);
+  return id;
+}
+
+test("SHU457_RECORD migration 0404 adds the reference and the two times to login_sessions and nothing else", async () => {
+  const { rows } = await pool.query<{ column_name: string; is_nullable: string; data_type: string }>(
+    `SELECT column_name, is_nullable, data_type FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'login_sessions' ORDER BY ordinal_position`,
+  );
+  assert.deepEqual(rows.map((row) => [row.column_name, row.is_nullable, row.data_type]), [
+    ["id", "NO", "text"], ["person_id", "NO", "text"], ["expires_at", "NO", "timestamp with time zone"],
+    ["upstream_session_ref", "YES", "text"], ["last_confirmed_at", "YES", "timestamp with time zone"], ["last_checked_at", "YES", "timestamp with time zone"],
+  ]);
+});
+
+test("SHU457_RECORD a session keeps the reference and its times, and one without stays as before", async () => {
+  const personId = await person();
+  const withRef = randomUUID(), plain = randomUUID();
+  await store.sessions.put({ id: withRef, personId, upstreamReference: "sid-1", lastCheckedAt: NOW, lastConfirmedAt: NOW });
+  await store.sessions.put({ id: plain, personId });
+  assert.deepEqual(await store.sessions.get(withRef), { id: withRef, personId, upstreamReference: "sid-1", lastCheckedAt: NOW, lastConfirmedAt: NOW });
+  assert.deepEqual(await store.sessions.get(plain), { id: plain, personId });
+  const { rows } = await pool.query("SELECT upstream_session_ref, last_checked_at FROM login_sessions WHERE person_id = $1 AND upstream_session_ref IS NULL", [personId]);
+  assert.deepEqual(rows, [{ upstream_session_ref: null, last_checked_at: null }]);
+  // take deletes and returns the reference in one statement.
+  assert.equal((await store.sessions.take!(withRef))?.upstreamReference, "sid-1");
+  assert.equal(await store.sessions.get(withRef), undefined);
+  assert.equal(await store.sessions.take!(withRef), undefined);
+});
+
+test("SHU457_BOUND the conditional claim lets exactly one of many concurrent requests check, and confirm only moves forward", async () => {
+  const personId = await person();
+  const id = randomUUID();
+  await store.sessions.put({ id, personId, upstreamReference: "sid-2", lastCheckedAt: NOW - 900, lastConfirmedAt: NOW - 900 });
+  const second = new PostgresLoginStore({ connectionString: databaseUrl });
+  try {
+    const claims = await Promise.all(Array.from({ length: 8 }, (_, index) => (index % 2 ? second : store).sessions.claimUpstreamCheck!(id, NOW - 900, NOW)));
+    assert.equal(claims.filter(Boolean).length, 1, "one request wins the right to check");
+  } finally {
+    await second.close();
+  }
+  assert.equal((await store.sessions.get(id))?.lastCheckedAt, NOW, "the claim sets last checked");
+  assert.equal(await store.sessions.claimUpstreamCheck!(id, NOW - 900, NOW + 1), false, "not again within T");
+  assert.equal((await store.sessions.get(id))?.lastConfirmedAt, NOW - 900, "the claim leaves last confirmed");
+  await store.sessions.confirmUpstream!(id, NOW);
+  await store.sessions.confirmUpstream!(id, NOW - 10);
+  assert.equal((await store.sessions.get(id))?.lastConfirmedAt, NOW);
+  const plain = randomUUID();
+  await store.sessions.put({ id: plain, personId });
+  assert.equal(await store.sessions.claimUpstreamCheck!(plain, NOW, NOW), false, "a session without a reference is never claimed");
+});
+
+test("SHU457_BOUND a check put on the store applies to every reader of its sessions", async () => {
+  const checked = new PostgresLoginStore({ connectionString: databaseUrl });
+  try {
+    const personId = await person();
+    const id = randomUUID();
+    await checked.sessions.put({ id, personId, upstreamReference: "sid-3", lastCheckedAt: NOW, lastConfirmedAt: NOW });
+    const seen: string[] = [];
+    checked.checkSessionsWith((plain: SessionStore) => ({
+      ...plain,
+      async get(sessionId) { seen.push(sessionId); const session = await plain.get(sessionId); if (session) await plain.delete(sessionId); return undefined; },
+    }));
+    assert.equal(await checked.sessions.get(id), undefined, "the check decides");
+    assert.deepEqual(seen, [id]);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM login_sessions WHERE id IS NOT NULL AND person_id = $1", [personId])).rows[0].n, 0);
+    assert.equal((checked.sessions as unknown as Record<symbol, unknown>)[Symbol.for("studenthub.login.upstream-confirming")], true);
+  } finally {
+    await checked.close();
+  }
+});
