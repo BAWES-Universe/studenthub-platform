@@ -4,3 +4,4 @@ export { AUTHORIZATION_MUTATION_OPERATIONS, organizationAuditRef, principalAudit
 export type { AuthorizationMutationAuditRecord, AuthorizationMutationContext, AuthorizationMutationOperation } from "../authorization-audit.js";
 export { PostgresAccessGrantsStore } from "./postgres-access-grants-store.js";
 export { PostgresAccessInvitationsStore } from "./postgres-access-invitations-store.js";
+export { PostgresAccessContactsStore } from "./postgres-access-contacts-store.js";

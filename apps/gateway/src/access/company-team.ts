@@ -3,11 +3,14 @@ import type { SessionStore } from "@studenthub/login-contract";
 import {
   MAX_PENDING_INVITATIONS,
   isInvitationTokenShape,
+  type CompanyContactsService,
   type CompanyTeamService,
+  type ContactsView,
   type InvitationRefusal,
   type TeamView,
 } from "../../../../packages/access/src/index.js";
 import { ROLE_NAMES, SCOPE_NAMES, escapeHtml, readForm, sessionCookie, type AccessPageWriter } from "./admin-access.js";
+import { contactsHref, renderContactsTable } from "./company-contacts.js";
 
 /**
  * Access lane A2: a company's Team page and email invitations.
@@ -29,6 +32,8 @@ import { ROLE_NAMES, SCOPE_NAMES, escapeHtml, readForm, sessionCookie, type Acce
 export interface CompanyTeamPorts {
   readonly sessions: Pick<SessionStore, "get">;
   readonly team: CompanyTeamService;
+  /** A3: the company's contacts, shown below its members. */
+  readonly contacts?: CompanyContactsService;
 }
 
 export const INVITE_COOKIE = "__Host-studenthub_invite";
@@ -75,7 +80,7 @@ function simplePage(heading: string, message: string, back?: { href: string; lab
 
 // --- Rendering -----------------------------------------------------------------
 
-export function renderTeam(view: TeamView): string {
+export function renderTeam(view: TeamView, contacts?: ContactsView | null): string {
   const roleOptions = view.options.map((option) => `<option value="${e(option.role)}">${e(ROLE_NAMES[option.role] ?? option.role)}</option>`).join("");
   const scopes = [...new Set(view.options.flatMap((option) => option.scopes))];
   const scopeOptions = scopes.map((scope) => `<option value="${e(scope)}">${e(SCOPE_NAMES[scope] ?? scope)}</option>`).join("");
@@ -92,7 +97,9 @@ export function renderTeam(view: TeamView): string {
   const invite = view.writable
     ? `<h2>Invite someone</h2><form class="directory-filters" method="post" action="${e(teamHref(view.orgId, "/invite"))}"><label>Email address<input type="email" name="email" maxlength="254" required></label><label>Role<select name="role" required>${roleOptions}</select></label><label>Scope<select name="scope" required>${scopeOptions}</select></label><button class="sign-out" type="submit">Create invitation</button></form><p>The person accepts by signing in with Universe under this address. The link works for 7 days.</p>`
     : `<p role="status">You can see this team but only its owners can change it.</p>`;
-  return layout(`<div class="profile-heading"><h1>${e(view.orgName)} team<span class="accent">.</span></h1></div>${members}<h2>Invitations</h2>${pending}${invite}`);
+  const contactsBlock = contacts
+    ? `<h2>Contacts</h2>${renderContactsTable(contacts, false)}<p><a class="text-link" href="${e(contactsHref(view.orgId))}">${contacts.writable ? "Add or change contacts" : "Open contacts"}</a></p>` : "";
+  return layout(`<div class="profile-heading"><h1>${e(view.orgName)} team<span class="accent">.</span></h1></div>${members}${contactsBlock}<h2>Invitations</h2>${pending}${invite}`);
 }
 
 export function renderInviteCreated(orgId: string, result: { readonly email: string; readonly link: string; readonly mailed: boolean; readonly expiresAt: string }): string {
@@ -225,7 +232,7 @@ export async function handleCompanyTeam(
   };
 
   if (action === undefined) {
-    write(200, `${view.orgName} team`, renderTeam(view));
+    write(200, `${view.orgName} team`, renderTeam(view, ports.contacts ? await ports.contacts.view(principalId, view.orgId) : undefined));
     return true;
   }
   const targetId = isRemove ? decode(teamMatch[4]!) : undefined;

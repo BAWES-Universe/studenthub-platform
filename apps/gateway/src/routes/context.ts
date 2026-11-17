@@ -23,6 +23,7 @@ import type { AreaHttp } from "../area-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
 import type { AccessPorts } from "../access/admin-access.js";
 import type { CompanyTeamPorts } from "../access/company-team.js";
+import type { CompanyContactsPorts } from "../access/company-contacts.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -44,6 +45,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly legacyLink?: LegacyLinkService;
   readonly access?: AccessPorts;
   readonly team?: CompanyTeamPorts;
+  readonly contacts?: CompanyContactsPorts;
 };
 
 export interface GatewayRouteContext {
