@@ -43,7 +43,9 @@ export interface RecruitStoreOption { readonly store_id: string; readonly name: 
 
 export type RecruitRequestCreateResult = { kind: "created"; requestId: string } | { kind: "not_found" };
 export type RecruitRequestTransitionResult = { kind: "transitioned"; status: Status } | { kind: "not_found" } | { kind: "refused"; status: Status };
-export type RecruitRequestDetail = { readonly request: RecruitRequestRecord; readonly events: readonly RecruitRequestEventRecord[]; readonly canTransition: boolean };
+export type RecruitRequestDetail = { readonly request: RecruitRequestRecord; readonly events: readonly RecruitRequestEventRecord[]; readonly canTransition: boolean; readonly people: readonly RecruitRequestPersonRecord[] };
+/** People suggested to or working through the request, as the company sees them (R4); withdrawn cards are left out. */
+export type RecruitRequestPersonRecord = { readonly person_name: string | null; readonly stage: string };
 
 export interface RecruitRequestsStoreOptions {
   readonly connectionString?: string;
@@ -174,11 +176,15 @@ export class PostgresRecruitRequestsStore {
     if (!row) return null;
     const [read, transition] = await this.#allowed(this.#pool, principalId, row.org_id, [this.options.readDecision, this.options.transitionDecision]);
     if (!read) return null;
-    const events = (await this.#pool.query<RecruitRequestEventRecord>(
-      "SELECT e.from_status, e.to_status, e.close_reason, p.display_name AS actor_name, e.at FROM recruit_request_events e LEFT JOIN principals p ON p.id = e.actor_principal_id WHERE e.request_id = $1::uuid ORDER BY e.at, e.id",
-      [requestId],
-    )).rows;
-    return { request: row, events, canTransition: Boolean(transition) };
+    const [events, people] = await Promise.all([
+      this.#pool.query<RecruitRequestEventRecord>(
+        "SELECT e.from_status, e.to_status, e.close_reason, p.display_name AS actor_name, e.at FROM recruit_request_events e LEFT JOIN principals p ON p.id = e.actor_principal_id WHERE e.request_id = $1::uuid ORDER BY e.at, e.id",
+        [requestId]),
+      this.#pool.query<RecruitRequestPersonRecord>(
+        "SELECT COALESCE(pp.display_name, p.display_name) AS person_name, c.stage FROM recruit_pipeline_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
+        [requestId]),
+    ]);
+    return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows };
   }
 
   /** A company's requests, newest first, one page; null when the caller may not read the company. */

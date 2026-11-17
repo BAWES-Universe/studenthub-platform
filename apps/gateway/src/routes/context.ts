@@ -25,6 +25,7 @@ import type { RecruitRequests } from "../recruit/requests-http.js";
 import type { RecruitPipeline } from "../recruit/pipeline-http.js";
 import type { RecruitChecklist } from "../recruit/checklist-http.js";
 import type { RecruitPeopleSearch } from "../recruit/search-http.js";
+import type { RecruitInvitations } from "../recruit/invitations-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -48,6 +49,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly recruitPipeline?: RecruitPipeline;
   readonly recruitChecklist?: RecruitChecklist;
   readonly recruitPeopleSearch?: RecruitPeopleSearch;
+  readonly recruitInvitations?: RecruitInvitations;
 };
 
 export interface GatewayRouteContext {
