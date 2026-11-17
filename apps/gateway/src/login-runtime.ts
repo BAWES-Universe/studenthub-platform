@@ -15,7 +15,8 @@ import {
 
 import { createLoginApplication } from "./login-application.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
-import { wireAccess, wireAccessLane } from "./wiring/access.js";
+import { wireAccess } from "./wiring/access.js";
+import { wireAccessLane } from "./wiring/access-lane.js";
 import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
