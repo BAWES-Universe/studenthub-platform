@@ -129,6 +129,8 @@ test("WORK_PAGES refusals re-render Track with a plain message; manual times are
   assert.equal(kuwaitInstant("2026-11-17 09:00"), undefined);
   assert.equal(kuwaitInstant("2026-11-17T09:00:30"), "2026-11-17T09:00:30+03:00");
   assert.equal(kuwaitInstant("2026-11-17T09:00:3"), undefined);
+  assert.equal(kuwaitInstant("2026-11-17T09:00:30.9"), "2026-11-17T09:00:30.9+03:00");
+  assert.equal(kuwaitInstant("2026-11-17T09:00:30.1234"), undefined);
   assert.deepEqual([duration(59), duration(3600), duration(5400)], ["0m", "1h", "1h 30m"]);
 });
 

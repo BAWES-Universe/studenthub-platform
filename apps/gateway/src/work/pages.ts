@@ -57,11 +57,11 @@ export function duration(seconds: number): string {
   const h = Math.floor(total / 60), m = total % 60;
   return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
-/** A `datetime-local` value is Kuwait wall time (seconds optional); Kuwait has no daylight saving. */
+/** A `datetime-local` value is Kuwait wall time (seconds and milliseconds optional); Kuwait has no daylight saving. */
 export function kuwaitInstant(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return `${value}:00+03:00`;
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value) ? `${value}+03:00` : undefined;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?$/.test(value) ? `${value}+03:00` : undefined;
 }
 
 export function sessionCookie(header: string | undefined): string | undefined {

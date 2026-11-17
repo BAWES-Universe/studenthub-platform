@@ -68,8 +68,11 @@ const refusal = (code: string) => ({ kind: "error" as const, text: REFUSALS[code
 const sessionTime = (s: WorkSession) => `${longDate(s.workDate)}, ${clock(s.startedAt)} to ${s.endedAt ? `${clock(s.endedAt)} (${duration(s.durationSeconds ?? 0)})` : "now"}`;
 const shortDate = (iso: string) => longDate(kuwaitDate(new Date(iso)));
 /** A Kuwait wall time for a `datetime-local` field. */
-/** Keeps the seconds, so an untouched time is submitted unchanged. */
-const localValue = (iso: string) => new Date(new Date(iso).getTime() + 3 * 3600_000).toISOString().slice(0, 19);
+/** Keeps seconds and milliseconds (when present), so an untouched time is submitted unchanged. */
+const localValue = (iso: string) => {
+  const local = new Date(new Date(iso).getTime() + 3 * 3600_000).toISOString();
+  return local.endsWith(".000Z") ? local.slice(0, 19) : local.slice(0, 23);
+};
 
 async function names(services: WorkHttpServices, ids: Iterable<string>): Promise<ReadonlyMap<string, string>> {
   const list = [...new Set(ids)];
@@ -141,7 +144,7 @@ export async function renderStaffAppeal(services: WorkHttpServices, detail: Appe
     : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(shortDate(u.createdAt))}${u.authorId ? ` · ${esc(people.get(u.authorId) ?? "Staff")}` : ""}${u.readAt ? " · Read" : ""}</p></li>`).join("")}</ul>`;
   const reply = `<form method="post" action="${base}/reply"><label>Title (optional)<input name="title" maxlength="255"></label><label>Reply to the person<textarea name="detail" required maxlength="5000"></textarea></label><button type="submit">Send reply</button></form>`;
   const status = `<form method="post" action="${base}/status"><label>Status<select name="status">${APPEAL_STATUSES.map((s) => `<option value="${s}"${s === appeal.status ? " selected" : ""}>${APPEAL_STATUS[s]}</option>`).join("")}</select></label><button type="submit">Save status</button></form>`;
-  const times = (start: string, end: string) => `<label>Started<input type="datetime-local" step="1" name="startedAt" value="${start}" required></label><label>Ended<input type="datetime-local" step="1" name="endedAt" value="${end}" required></label><label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label>`;
+  const times = (start: string, end: string) => `<label>Started<input type="datetime-local" step="0.001" name="startedAt" value="${start}" required></label><label>Ended<input type="datetime-local" step="0.001" name="endedAt" value="${end}" required></label><label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label>`;
   const fixes = session.endedAt === null ? "" : `<section class="p-card" aria-labelledby="fix-heading"><h2 id="fix-heading">Fix the hours</h2><p>Times are Kuwait time. A correction replaces the appealed entry in every total and in pay; the original stays on record. Both are approved by you.</p>
 <form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${times(localValue(session.startedAt), localValue(session.endedAt))}<button type="submit">Correct these hours</button></form>
 <form method="post" action="${base}/missing-time">${times("", "")}<button type="submit">Add missing time</button></form></section>`;
@@ -162,7 +165,7 @@ export async function renderCorrection(services: WorkHttpServices, actor: string
       if (s.endedAt === null) return undefined;
       const who = (await names(services, [s.personId])).get(s.personId) ?? s.personId;
       return staffShell("Correct hours", "logs", `${message(m)}<section class="p-card"><h2>${esc(who)}</h2><p>${esc(sessionTime(s))} · ${esc(STATUS_LABEL[s.status] ?? s.status)}</p><p>Times are Kuwait time. The correction replaces this entry in every total and in pay, approved by you; the original stays on record.</p>
-<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}"><label>Started<input type="datetime-local" step="1" name="startedAt" value="${localValue(s.startedAt)}" required></label><label>Ended<input type="datetime-local" step="1" name="endedAt" value="${localValue(s.endedAt)}" required></label>
+<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}"><label>Started<input type="datetime-local" step="0.001" name="startedAt" value="${localValue(s.startedAt)}" required></label><label>Ended<input type="datetime-local" step="0.001" name="endedAt" value="${localValue(s.endedAt)}" required></label>
 <label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label><button type="submit">Save correction</button></form></section>`);
     }
     if (!page.next) return undefined;

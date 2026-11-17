@@ -48,7 +48,7 @@ const mutations = [
   ["only staff correct hours from the logs", "const correct = staff && !open ?", "const correct = !open ?", "WORK_REVIEW", review, reviewSuite],
   ["staff screens refuse cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_STAFF", staffPages, staffSuite],
   ["staff placement input is checked", "result = input ? await services.placements.place(actor, input)", "result = true ? await services.placements.place(actor, input)", "WORK_STAFF", staffPages, staffSuite],
-  ["staff correction times are Kuwait time", "const localValue = (iso) => new Date(new Date(iso).getTime() + 3 * 3600_000)", "const localValue = (iso) => new Date(new Date(iso).getTime())", "WORK_STAFF", staffPages, staffSuite],
+  ["staff correction times are Kuwait time", "const local = new Date(new Date(iso).getTime() + 3 * 3600_000)", "const local = new Date(new Date(iso).getTime())", "WORK_STAFF", staffPages, staffSuite],
   ["a manager lists their own store's requests", "(stores === null || (r.orgId === orgId && stores.has(r.storeId)))", "true", "W1_REQUEST_LIST", placement, placementSuite],
   ["a manager's store is in the request's company", "m.storeId === store.id && m.orgId === store.orgId", "m.storeId === store.id", "W1_REQUEST_LIST", placement, placementSuite],
   ["correction links its own company's appeal", "appeal.personId !== original.personId || appeal.orgId !== original.orgId", "appeal.personId !== original.personId", "W6_CORRECT", appeals, appealSuite],

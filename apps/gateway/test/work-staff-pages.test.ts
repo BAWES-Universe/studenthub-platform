@@ -151,7 +151,7 @@ test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corre
   const refused = await post(`/work/appeals/${APPEAL}/missing-time`, "startedAt=2026-11-18T17%3A00&endedAt=2026-11-18T21%3A00&reason=x", { world: { outcome: { kind: "refused", code: "overlaps_session" } } });
   assert.equal(refused.status, 400);
   assert.match(refused.html, /overlap other hours/);
-  assert.match(refused.html, /step="1" name="startedAt" value="2026-11-18T09:00:00"/, "the correction form starts from the session's Kuwait times");
+  assert.match(refused.html, /step="0.001" name="startedAt" value="2026-11-18T09:00:00"/, "the correction form starts from the session's Kuwait times");
   const own = await post(`/work/appeals/${APPEAL}/status`, "status=resolved", { world: { outcome: { kind: "refused", code: "appeal_not_found" }, detail: { ...detail, appeal: { ...appeal, personId: "staff" } } } });
   assert.equal(own.status, 404);
 
@@ -162,6 +162,11 @@ test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corre
   // An untouched prefilled time keeps its seconds.
   await post("/work/corrections", `sessionId=${S1}&appealId=${APPEAL}&startedAt=2026-11-18T09%3A00%3A30&endedAt=2026-11-18T21%3A00&reason=x`, {}, corrected);
   assert.equal((corrected[1]![3] as { startedAt: string }).startedAt, "2026-11-18T09:00:30+03:00");
+  // A timer start with milliseconds is shown and submitted with them, so the payable duration is unchanged.
+  const fractional = await post(`/work/appeals/${APPEAL}/missing-time`, "startedAt=&endedAt=&reason=x", { world: { outcome: { kind: "refused", code: "invalid_input" }, detail: { ...detail, session: session({ startedAt: "2026-11-18T06:00:00.900Z" }) } } });
+  assert.match(fractional.html, /name="startedAt" value="2026-11-18T09:00:00\.900"/);
+  await post("/work/corrections", `sessionId=${S1}&appealId=${APPEAL}&startedAt=2026-11-18T09%3A00%3A00.900&endedAt=2026-11-18T10%3A00&reason=x`, {}, corrected);
+  assert.equal((corrected[2]![3] as { startedAt: string }).startedAt, "2026-11-18T09:00:00.900+03:00");
 });
 
 test("WORK_STAFF A-13 corrections from the work logs: the form finds the session, needs a reason and keeps the date", async () => {
