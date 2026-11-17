@@ -1841,6 +1841,9 @@ async function findQueueConfigPull({ io, credentials, repo, policy, paths, revis
   for (const { pull, claims } of listed) {
     const pr = pull.number;
     const head = pull.head.sha;
+    // A product pull request carries the product label alone, so no other
+    // label can admit coordinator code, workflows or queue config beside it.
+    if (hasLabel(pull, policy.productLabel) && (hasLabel(pull, policy.label) || hasLabel(pull, policy.codeLabel))) continue;
     if (claims.heads.has(head)) continue;
     if (claims.atRevision >= policy.maxHeadsPerPr) {
       capped.push(pr);

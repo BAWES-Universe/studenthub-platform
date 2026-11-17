@@ -100,6 +100,12 @@ const CASES = [
     pattern: "Box review C4:",
   },
   {
+    name: "M16 let another label stand beside the product label",
+    from: "    if (hasLabel(pull, policy.productLabel) && (hasLabel(pull, policy.label) || hasLabel(pull, policy.codeLabel))) continue;",
+    to: "    if (false) continue; // SHU321-M16",
+    pattern: "Box review C4:",
+  },
+  {
     name: "M11 drop the Claude-Session trailer check",
     from: "  if (!commits.every((entry) => SESSION_TRAILER_RE.test(",
     to: "  if (false && !commits.every((entry) => SESSION_TRAILER_RE.test( // SHU321-M11\n",

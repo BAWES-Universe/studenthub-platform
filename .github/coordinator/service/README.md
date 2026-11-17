@@ -321,7 +321,9 @@ renamed file counts under both names):
   workflows or queue config.
 
 `code_label` and `product_label` are optional; without one, no pull request is
-reviewed under it. The least-reviewed candidate at this revision, then the
+reviewed under it. A pull request with `product_label` must carry no other
+policy label; one that does is never a candidate, so coordinator code never
+reaches review beside a product label. The least-reviewed candidate at this revision, then the
 lowest-numbered, is reviewed at its exact head by `codex-verifier`, one per start, once
 per head (`/srv/shu/state/card-review-auto-pr<N>-<head>.json`, written before
 the run with each file's blob), and at most `max_heads_per_pr` heads per pull

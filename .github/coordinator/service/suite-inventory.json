@@ -3231,6 +3231,7 @@
     "SHU-321 mutation M13 let a coordinator code path climb out",
     "SHU-321 mutation M14 let a product path reach .github",
     "SHU-321 mutation M15 review coordinator code under the product label",
+    "SHU-321 mutation M16 let another label stand beside the product label",
     "SHU-321 mutation the unmutated suite passes",
     "SHU-322 B1: a reviewed card queue on main installs in order, reports once and exits for the next start",
     "SHU-322 B2: a coordinator change outside the queue config paths, or a deletion, is a refusal for the owner",
@@ -25856,6 +25857,10 @@
     },
     {
       "name": "SHU-321 mutation M15 review coordinator code under the product label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M16 let another label stand beside the product label",
       "capabilities": []
     },
     {
