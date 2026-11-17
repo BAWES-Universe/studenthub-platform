@@ -1730,7 +1730,6 @@ export function queueConfigPath(file) {
   return QUEUE_CONFIG_PATHS.includes(file) || parts.slice(2, -1).includes("test");
 }
 
-// Any file of the coordinator's own tree.
 // A product path: a plain relative path outside .github, so a product label
 // never carries coordinator code, workflows or queue config.
 export function productPath(file) {
@@ -1738,6 +1737,7 @@ export function productPath(file) {
   return file.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+// Any file of the coordinator's own tree.
 export function coordinatorCodePath(file) {
   if (typeof file !== "string" || !file.startsWith(".github/coordinator/")) return false;
   return !file.split("/").some((part) => !part || part === "." || part === "..");

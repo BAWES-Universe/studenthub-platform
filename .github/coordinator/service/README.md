@@ -308,11 +308,21 @@ When the committed card queue is done (`QUEUE_DONE`), a start of
 `shu-card-run.timer` may review one open queue config pull request with the
 standing review-only card named by `queue_config_review` in `config.json`
 (SHU-304). A candidate is open, not a draft, based on `main`, a branch of the
-pilot repository, labelled `coordinator:queue-config`, changes only
-`config.json`, `card-contracts.mjs` (additions only),
-`service/suite-inventory.json` or files under a coordinator `test/` directory,
-and every commit carries a `Claude-Session:` trailer. The lowest-numbered
-candidate is reviewed at its exact head by `codex-verifier`, one per start, once
+pilot repository, and every commit carries a `Claude-Session:` trailer. It also
+carries one of the policy's labels and changes only that label's paths (a
+renamed file counts under both names):
+
+- `label` (`coordinator:queue-config`): `config.json`, `card-contracts.mjs`
+  (additions only), `service/suite-inventory.json` or files under a
+  coordinator `test/` directory.
+- `code_label` (`coordinator:code`): any file under `.github/coordinator/`.
+- `product_label` (`box:product-review`): any plain relative path outside
+  `.github/`, so a product pull request never carries coordinator code,
+  workflows or queue config.
+
+`code_label` and `product_label` are optional; without one, no pull request is
+reviewed under it. The least-reviewed candidate at this revision, then the
+lowest-numbered, is reviewed at its exact head by `codex-verifier`, one per start, once
 per head (`/srv/shu/state/card-review-auto-pr<N>-<head>.json`, written before
 the run with each file's blob), and at most `max_heads_per_pr` heads per pull
 request per installed revision (`REVIEW_CAP`). The run arms, ticks, reverts and
