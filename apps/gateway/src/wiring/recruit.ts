@@ -7,6 +7,7 @@ import { createRecruitPipeline } from "../recruit/pipeline-http.js";
 import { createRecruitRequests } from "../recruit/requests-http.js";
 import { createRecruitPeopleSearch } from "../recruit/search-http.js";
 import { createRecruitInvitations } from "../recruit/invitations-http.js";
+import { createRecruitEmployerView } from "../recruit/employer-view-http.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
 
@@ -21,6 +22,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
   readonly recruitChecklist: ReturnType<typeof createRecruitChecklist>;
   readonly recruitPeopleSearch: ReturnType<typeof createRecruitPeopleSearch>;
   readonly recruitInvitations: ReturnType<typeof createRecruitInvitations>;
+  readonly recruitEmployerView: ReturnType<typeof createRecruitEmployerView>;
 }> {
   const operators = DEFAULT_OPERATOR_ORG_IDS;
   // One pool for the whole recruit area; the stores borrow it and never end it.
@@ -65,6 +67,8 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
       recruitChecklist: createRecruitChecklist({ sessions: access.loginStore.sessions, store: checklist }),
       recruitPeopleSearch: createRecruitPeopleSearch({ sessions: access.loginStore.sessions, store: people }),
       recruitInvitations: createRecruitInvitations({ sessions: access.loginStore.sessions, store: invitations }),
+      // Employer document links come from the documents area once it issues them; until then the page says so.
+      recruitEmployerView: createRecruitEmployerView({ sessions: access.loginStore.sessions, store: requests }),
     },
     async close() { await pool.end(); },
   };

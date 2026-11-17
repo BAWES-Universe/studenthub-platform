@@ -26,6 +26,11 @@ Shared seams, additive lines only (one contiguous block each, no other line chan
 - `apps/gateway/src/contributions/index.ts`: `RECRUIT_CONTRIBUTION` in the merge list
 - `apps/gateway/src/ui/profile-copy.ts`: recruit navigation label keys only
 
+Lease extension, 2026-11-17 (coordinator, for decision SHU-200 employer document links), additive only:
+- `packages/private-documents/src/employer-delivery.ts` (new file beside `staff-delivery.ts`; no existing private-documents line changes), `packages/private-documents/test/employer-delivery.test.mjs`, `packages/private-documents/test/employer-delivery-mutations.mjs`
+- `apps/gateway/test/contributions.test.ts` and `apps/gateway/test/profile-kit.test.ts`: the recruit navigation entry and the copy count it moves
+- Store-manager sight codes against the access lane's A4 read port (`managedStores(principalId)`, PR #509 lane); until A4 lands the requests store takes it as an optional option and no store manager has sight
+
 Read only: `packages/search/**` (Typesense adapter), `packages/notifications/**` and `packages/db/src/notifications/**` (outbox), `packages/organizations/**`, `packages/pay-contracts/**`, `tools/legacy-import/**`.
 
 Excludes: workflows, `.github/coordinator/**`, `apps/gateway/src/index.ts`, `web-ui.ts`, any payroll path (GPT pay lease), any other lane's package.
@@ -35,13 +40,13 @@ Excludes: workflows, `.github/coordinator/**`, `apps/gateway/src/index.ts`, `web
 | Slice | Outcome | Legacy | Migration |
 |---|---|---|---|
 | R1 | A company raises a request, tracks it with one status convention (draft, open, filling, filled, closed) and an activity list; staff see all requests | `Request.php`, company and staff `RequestController` | 0450 |
-| R2 | Staff assign a recruiter and move people through a checked pipeline (suggested, contacted, interviewing, offered, placed, withdrawn), with request checklists; placing hands over to work assignment exactly once | `Story.php`, `StoryController`, `RequestChecklist` | 0451 to 0452 |
-| R3 | Staff and employers search people looking for work, server side, with facets; no index key in a browser | staff and company `AlgoliaController` | 0453 |
-| R4 | Suggestions to the company (accept, reject) and invitations to people (seen, accept, decline), events to the notification outbox | `Suggestion`, `Invitation` controllers, `cron/every-minute` | 0454 to 0455 |
-| R5 | Employers see the people suggested, invited or assigned to their requests and stores, as legacy (decision SHU-200: documents through signed, audited links) | company candidate views | none |
-| R6 | Interviews and versioned evaluations, with internal and shared notes kept apart | `RequestInterview`, `InterviewEvaluation`, `CandidateEvaluation` | 0456 to 0457 |
-| R7 | Job board as legacy: staff publish, people browse and apply once, "My applications"; closed or draft jobs refuse applications (decision SHU-207) | `Job`, candidate `JobController`, `RequestApplication` | 0458 to 0459 |
-| R9 | Full-timer track kept as a second candidate type on the same pipeline (legacy benchmark rule) | `FulltimerController` | 0460 |
+| R2 | Staff assign a recruiter and move people through a checked pipeline (suggested, contacted, interviewing, offered, placed, withdrawn), with request checklists; placing hands over to work assignment exactly once | `Story.php`, `StoryController`, `RequestChecklist` | 0451 to 0452 (built) |
+| R3 | Staff and employers search people looking for work, server side, with facets; no index key in a browser | staff and company `AlgoliaController` | none (built) |
+| R4 | Suggestions to the company (accept, reject) and invitations to people (seen, accept, decline), events to the notification outbox | `Suggestion`, `Invitation` controllers, `cron/every-minute` | 0453 (built) |
+| R5 | Employers see the people suggested, invited or assigned to their requests and stores, as legacy (decision SHU-200: documents through signed, audited links) | company candidate views | 0454 (document view audit) |
+| R6 | Interviews and versioned evaluations, with internal and shared notes kept apart | `RequestInterview`, `InterviewEvaluation`, `CandidateEvaluation` | 0455 |
+| R7 | Job board as legacy: staff publish, people browse and apply once, "My applications"; closed or draft jobs refuse applications (decision SHU-207) | `Job`, candidate `JobController`, `RequestApplication` | 0456 to 0457 |
+| R9 | Full-timer track kept as a second candidate type on the same pipeline (legacy benchmark rule) | `FulltimerController` | 0458 |
 | Import | Legacy rows map into the new tables; rows that do not map land in the reconciliation report | all of the above | none |
 
 Individual hirers (R8) are not in legacy and not in this release.

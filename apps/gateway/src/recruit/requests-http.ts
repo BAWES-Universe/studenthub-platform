@@ -20,7 +20,7 @@ export interface RecruitRequestsStore {
   stores(principalId: string, orgId: string): Promise<readonly { store_id: string; name: string }[] | null>;
   create(principalId: string, orgId: string, input: RequestFields): Promise<{ kind: "created"; requestId: string } | { kind: "not_found" }>;
   transition(principalId: string, requestId: string, to: RequestStatus, closeReason: CloseReason | null): Promise<{ kind: "transitioned"; status: RequestStatus } | { kind: "not_found" } | { kind: "refused"; status: RequestStatus }>;
-  get(principalId: string, requestId: string): Promise<{ request: RequestRow; events: readonly RequestEventRow[]; canTransition: boolean; people?: readonly { person_name: string | null; stage: string }[] } | null>;
+  get(principalId: string, requestId: string): Promise<{ request: RequestRow; events: readonly RequestEventRow[]; canTransition: boolean; people?: readonly { person_principal_id: string; person_name: string | null; stage: string }[] } | null>;
   listCompany(principalId: string, orgId: string, query: { status?: RequestStatus; cursor?: RequestCursor; limit: number }): Promise<readonly RequestRow[] | null>;
   listStaff(principalId: string, query: { status?: RequestStatus; cursor?: RequestCursor; limit: number }): Promise<readonly RequestRow[] | null>;
 }
@@ -32,7 +32,7 @@ export interface RecruitRequests {
   stores(session: string | undefined, orgId: string): Promise<RecruitResult<{ stores: readonly { storeId: string; name: string }[] }>>;
   create(session: string | undefined, body: unknown): Promise<RecruitResult<{ requestId: string }>>;
   transition(session: string | undefined, requestId: string, body: unknown): Promise<RecruitResult<{ requestId: string; status: RequestStatus }>>;
-  get(session: string | undefined, requestId: string): Promise<RecruitResult<{ request: RequestView; activity: readonly RequestEventView[]; people: readonly { name: string | null; stage: string }[] }>>;
+  get(session: string | undefined, requestId: string): Promise<RecruitResult<{ request: RequestView; activity: readonly RequestEventView[]; people: readonly { personId: string; name: string | null; stage: string }[] }>>;
   listCompany(session: string | undefined, params: URLSearchParams): Promise<RecruitResult<RecruitPage & { orgId: string }>>;
   listStaff(session: string | undefined, params: URLSearchParams): Promise<RecruitResult<RecruitPage>>;
 }
@@ -103,7 +103,7 @@ export function createRecruitRequests(p: { sessions: Pick<SessionStore, "get">; 
       if (!id) return UNAUTHORIZED;
       if (!isRecruitId(requestId)) return NOT_FOUND;
       const r = await p.store.get(id, requestId.toLowerCase());
-      return r ? { status: 200, body: { request: requestView(r.request, r.canTransition), activity: r.events.map(requestEventView), people: (r.people ?? []).map((x) => ({ name: x.person_name, stage: x.stage })) } } : NOT_FOUND;
+      return r ? { status: 200, body: { request: requestView(r.request, r.canTransition), activity: r.events.map(requestEventView), people: (r.people ?? []).map((x) => ({ personId: x.person_principal_id, name: x.person_name, stage: x.stage })) } } : NOT_FOUND;
     },
     async listCompany(s, params) {
       const id = await principal(s);
@@ -151,7 +151,7 @@ const PAY_LABEL = { hourly: "Hourly", fixed_price: "Fixed price", monthly_salary
 const GENDER_LABEL = { any: "Any", male: "Male", female: "Female", other: "Other" } as const;
 
 const STAGE_LABEL: Readonly<Record<string, string>> = { suggested: "Suggested", contacted: "Contacted", interviewing: "Interviewing", offered: "Offered", placed: "Placed" };
-export function renderRequestPage(body: { request: RequestView; activity: readonly RequestEventView[]; people?: readonly { name: string | null; stage: string }[] }): string {
+export function renderRequestPage(body: { request: RequestView; activity: readonly RequestEventView[]; people?: readonly { personId: string; name: string | null; stage: string }[] }): string {
   const r = body.request;
   const row = (label: string, value: string) => `<div><dt>${html(label)}</dt><dd>${value}</dd></div>`;
   const facts = [
@@ -166,7 +166,7 @@ export function renderRequestPage(body: { request: RequestView; activity: readon
     ? ["fulfilled", "cancelled"].map((reason) => `<form method="post" action="/recruit/requests/${html(r.requestId)}/transition"><input type="hidden" name="to" value="closed"><input type="hidden" name="closeReason" value="${reason}"><button class="button" type="submit">Close as ${reason}</button></form>`).join("")
     : `<form method="post" action="/recruit/requests/${html(r.requestId)}/transition"><input type="hidden" name="to" value="${to}"><button class="button" type="submit">Move to ${STATUS_LABEL[to]}</button></form>`).join("");
   const activity = body.activity.map((e) => `<li><time datetime="${html(e.at)}">${html(when(e.at))}</time>: ${e.from ? `${html(STATUS_LABEL[e.from])} → ` : "Created as "}${html(statusText(e.to, e.closeReason))}${e.actor ? ` by ${html(e.actor)}` : ""}</li>`).join("");
-  return `<main id="main" class="profile-main"><h1>${html(r.positionTitle)}<span class="accent">.</span></h1><dl>${facts}</dl>${actions ? `<section aria-label="Change status">${actions}</section>` : ""}<section><h2>People</h2>${body.people?.length ? `<ul>${body.people.map((x) => `<li>${html(x.name ?? "Unnamed person")} · ${html(STAGE_LABEL[x.stage] ?? x.stage)}</li>`).join("")}</ul>` : "<p>No one has been suggested yet.</p>"}</section><section><h2>Activity</h2><ol>${activity}</ol></section><p><a class="text-link" href="/recruit/requests?${html(new URLSearchParams({ org: r.orgId }).toString())}">All requests of this company</a></p></main>`;
+  return `<main id="main" class="profile-main"><h1>${html(r.positionTitle)}<span class="accent">.</span></h1><dl>${facts}</dl>${actions ? `<section aria-label="Change status">${actions}</section>` : ""}<section><h2>People</h2>${body.people?.length ? `<ul>${body.people.map((x) => `<li><a class="text-link" href="/recruit/requests/${html(r.requestId)}/people/${html(encodeURIComponent(x.personId))}">${html(x.name ?? "Unnamed person")}</a> · ${html(STAGE_LABEL[x.stage] ?? x.stage)}</li>`).join("")}</ul>` : "<p>No one has been suggested yet.</p>"}</section><section><h2>Activity</h2><ol>${activity}</ol></section><p><a class="text-link" href="/recruit/requests?${html(new URLSearchParams({ org: r.orgId }).toString())}">All requests of this company</a></p></main>`;
 }
 
 export function renderRequestForm(orgId: string, stores: readonly { storeId: string; name: string }[], error?: string): string {
@@ -273,7 +273,7 @@ export async function handleRecruitRequests(
         let id: string;
         try { id = decodeURIComponent(one[1]!); } catch { wantsHtml ? pageError(404) : send({ status: 404, body: { error: "not_found" } }); return true; }
         const r = await s.get(session, id);
-        answer(r, () => renderRequestPage((r as { body: { request: RequestView; activity: readonly RequestEventView[]; people: readonly { name: string | null; stage: string }[] } }).body), r.status === 200 ? r.body.request.positionTitle : "Request");
+        answer(r, () => renderRequestPage((r as { body: { request: RequestView; activity: readonly RequestEventView[]; people: readonly { personId: string; name: string | null; stage: string }[] } }).body), r.status === 200 ? r.body.request.positionTitle : "Request");
         return true;
       }
       send({ status: 404, body: { error: "not_found" } });

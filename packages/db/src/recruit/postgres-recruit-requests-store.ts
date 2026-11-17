@@ -45,7 +45,15 @@ export type RecruitRequestCreateResult = { kind: "created"; requestId: string } 
 export type RecruitRequestTransitionResult = { kind: "transitioned"; status: Status } | { kind: "not_found" } | { kind: "refused"; status: Status };
 export type RecruitRequestDetail = { readonly request: RecruitRequestRecord; readonly events: readonly RecruitRequestEventRecord[]; readonly canTransition: boolean; readonly people: readonly RecruitRequestPersonRecord[] };
 /** People suggested to or working through the request, as the company sees them (R4); withdrawn cards are left out. */
-export type RecruitRequestPersonRecord = { readonly person_name: string | null; readonly stage: string };
+export type RecruitRequestPersonLink = { readonly stage: string | null; readonly invitation_status: string | null };
+export type RecruitRequestPersonProfile = {
+  readonly principal_id: string; readonly name: string | null; readonly arabic_name: string | null; readonly objective: string | null; readonly introduction: string | null;
+  readonly preferred_time: string | null; readonly gender: string | null; readonly birth_date: string | null; readonly driving_licence: boolean | null;
+  readonly nationality_name: string | null; readonly area_name: string | null; readonly job_search_status: string | null;
+};
+export type RecruitRequestPersonRecordRow = { readonly kind: "education" | "experience" | "skill"; readonly fields: Record<string, unknown>; readonly university: string | null; readonly degree: string | null; readonly major: string | null };
+export type RecruitRequestPersonDetail = { readonly person: RecruitRequestPersonProfile; readonly records: readonly RecruitRequestPersonRecordRow[]; readonly link: RecruitRequestPersonLink; readonly staff: boolean };
+export type RecruitRequestPersonRecord = { readonly person_principal_id: string; readonly person_name: string | null; readonly stage: string };
 
 export interface RecruitRequestsStoreOptions {
   readonly connectionString?: string;
@@ -54,6 +62,8 @@ export interface RecruitRequestsStoreOptions {
   readonly readDecision: Decision;
   readonly transitionDecision: Decision;
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
+  /** Stores the principal manages (access lane A4); empty when not a store manager. Defaults to none. */
+  readonly managedStores?: (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
   readonly transitionAllowed: (from: Status, to: Status) => boolean;
 }
 
@@ -181,10 +191,52 @@ export class PostgresRecruitRequestsStore {
         "SELECT e.from_status, e.to_status, e.close_reason, p.display_name AS actor_name, e.at FROM recruit_request_events e LEFT JOIN principals p ON p.id = e.actor_principal_id WHERE e.request_id = $1::uuid ORDER BY e.at, e.id",
         [requestId]),
       this.#pool.query<RecruitRequestPersonRecord>(
-        "SELECT COALESCE(pp.display_name, p.display_name) AS person_name, c.stage FROM recruit_pipeline_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
+        "SELECT c.person_principal_id, COALESCE(pp.display_name, p.display_name) AS person_name, c.stage FROM recruit_pipeline_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
         [requestId]),
     ]);
     return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows };
+  }
+
+  /**
+   * A person as a request's company sees them (R5): profile fields, background records and how they are linked
+   * to the request. Null unless the caller may read the request (or is operator staff) and the person has a card
+   * or an invitation on it; the caller then decides with the injected rule whether the link still gives sight.
+   */
+  async person(principalId: string, requestId: string, personId: string): Promise<RecruitRequestPersonDetail | null> {
+    const request = (await this.#pool.query<{ org_id: string; store_id: string }>("SELECT org_id, store_id FROM recruit_requests WHERE id = $1::uuid", [requestId])).rows[0];
+    if (!request) return null;
+    const [read, staff] = await this.#allowed(this.#pool, principalId, request.org_id, [this.options.readDecision, (rows) => this.options.staffDecision(rows)]);
+    // A store manager sees the people of requests for the stores they manage, and no other.
+    const manages = !read && !staff && (await this.options.managedStores?.(principalId) ?? []).some((s) => s.orgId === request.org_id && s.storeId === request.store_id);
+    if (!read && !staff && !manages) return null;
+    const link = (await this.#pool.query<RecruitRequestPersonLink>(
+      `SELECT (SELECT stage FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS stage,
+        (SELECT status FROM recruit_invitations WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS invitation_status`, [requestId, personId])).rows[0]!;
+    if (link.stage === null && link.invitation_status === null) return null;
+    const [person, records] = await Promise.all([
+      this.#pool.query<RecruitRequestPersonProfile>(
+        `SELECT p.id AS principal_id, COALESCE(pp.display_name, p.display_name) AS name, pp.arabic_name, pp.objective, pp.introduction, pp.preferred_time, pp.gender,
+          to_char(pp.birth_date, 'YYYY-MM-DD') AS birth_date, pp.driving_licence, ci.name AS nationality_name, ai.name AS area_name, pp.job_search_status
+         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id = p.id
+         LEFT JOIN catalogue_items ci ON ci.id = pp.nationality_id AND ci.catalogue_type = 'country'
+         LEFT JOIN person_locations pl ON pl.principal_id = p.id LEFT JOIN catalogue_items ai ON ai.id = pl.area_id
+         WHERE p.id = $1::text`, [personId]),
+      this.#pool.query<RecruitRequestPersonRecordRow>(
+        `SELECT r.kind, r.fields, u.name AS university, d.name AS degree, m.name AS major
+         FROM candidate_profile_records r
+         LEFT JOIN catalogue_items u ON r.fields->>'universityId' ~ '^[0-9a-f-]{36}$' AND u.id = (r.fields->>'universityId')::uuid AND u.catalogue_type = 'university'
+         LEFT JOIN catalogue_items d ON r.fields->>'degreeId' ~ '^[0-9a-f-]{36}$' AND d.id = (r.fields->>'degreeId')::uuid AND d.catalogue_type = 'degree'
+         LEFT JOIN catalogue_items m ON r.fields->>'majorId' ~ '^[0-9a-f-]{36}$' AND m.id = (r.fields->>'majorId')::uuid AND m.catalogue_type = 'major'
+         WHERE r.owner_principal_id = $1::text AND r.status = 'active' AND r.kind IN ('education', 'experience', 'skill') ORDER BY r.created_at, r.id`, [personId]),
+    ]);
+    if (!person.rows[0]) return null;
+    return { person: person.rows[0], records: records.rows, link, staff: Boolean(staff) };
+  }
+
+  /** Records one employer document link issued or opened (R5); append-only. */
+  async recordEmployerDocumentView(view: { viewerPrincipalId: string; subjectPrincipalId: string; requestId: string; operation: "issue" | "deliver"; documentType: string; documentVersion: string }): Promise<void> {
+    await this.#pool.query("INSERT INTO recruit_employer_document_views(viewer_principal_id, subject_principal_id, request_id, operation, document_type, document_version) VALUES($1::text, $2::text, $3::uuid, $4::text, $5::text, $6::text)",
+      [view.viewerPrincipalId, view.subjectPrincipalId, view.requestId, view.operation, view.documentType, view.documentVersion]);
   }
 
   /** A company's requests, newest first, one page; null when the caller may not read the company. */
