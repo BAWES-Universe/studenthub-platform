@@ -107,6 +107,31 @@ test("WORK_STAFF A-12 placements: pick a company, see requests and placements, p
   assert.match(conflict.html, /clocked in there/);
 });
 
+test("WORK_STAFF accepting a request can name the pay contract; bad terms are refused before the service runs", async () => {
+  const CONTRACT = "ffffffff-0000-4000-8000-000000000001";
+  const answered: unknown[][] = [];
+  const a = await post("/work/assignments/request", `org=co&requestId=${REQ}&decision=accept&payContractId=${CONTRACT.toUpperCase()}`, {}, answered);
+  assert.deepEqual([a.headers.location, answered[0]], ["/work/assignments?org=co&done=accepted", ["decideRequest", "staff", REQ, "accept", { placement: { payContractId: CONTRACT } }]]);
+  const bad: unknown[][] = [];
+  for (const body of ["payContractId=nope", "startDate=2026-02-30"]) assert.equal((await post("/work/assignments/request", `org=co&requestId=${REQ}&decision=accept&${body}`, {}, bad)).status, 400, body);
+  assert.equal(bad.filter((c) => c[0] === "decideRequest").length, 0);
+  const page = await request("/work/assignments?org=co", { world: { requests: [{ id: REQ, personId: "person-1", storeId: STORE, orgId: "co", status: "pending", note: null, requestedAt: "2026-11-18T06:00:00.000Z" }] } });
+  assert.match(page.html, /action="\/work\/assignments\/request">[\s\S]*name="payContractId"/);
+});
+
+test("WORK_STAFF staff appeals can be narrowed to one company, kept on the older link; a bad company is refused", async () => {
+  const calls: unknown[][] = [];
+  const many = Array.from({ length: 50 }, () => appeal);
+  const list = await request("/work/appeals?as=staff&org=co", { world: { appeals: many } }, calls);
+  assert.deepEqual(calls[0], ["list", "staff", { status: "", after: null, orgId: "co" }]);
+  assert.match(list.html, /name="org" value="co"/);
+  assert.match(list.html, /Older appeals/);
+  assert.match(list.html, /&amp;org=co&amp;after=/);
+  const none: unknown[][] = [];
+  assert.equal((await request("/work/appeals?as=staff&org=a%20b", {}, none)).status, 400);
+  assert.equal(none.length, 0);
+});
+
 test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corrections, all in Kuwait time", async () => {
   const calls: unknown[][] = [];
   const list = await request("/work/appeals?as=staff&status=submitted", {}, calls);
@@ -126,7 +151,7 @@ test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corre
   const refused = await post(`/work/appeals/${APPEAL}/missing-time`, "startedAt=2026-11-18T17%3A00&endedAt=2026-11-18T21%3A00&reason=x", { world: { outcome: { kind: "refused", code: "overlaps_session" } } });
   assert.equal(refused.status, 400);
   assert.match(refused.html, /overlap other hours/);
-  assert.match(refused.html, /value="2026-11-18T09:00"/, "the correction form starts from the session's Kuwait times");
+  assert.match(refused.html, /step="1" name="startedAt" value="2026-11-18T09:00:00"/, "the correction form starts from the session's Kuwait times");
   const own = await post(`/work/appeals/${APPEAL}/status`, "status=resolved", { world: { outcome: { kind: "refused", code: "appeal_not_found" }, detail: { ...detail, appeal: { ...appeal, personId: "staff" } } } });
   assert.equal(own.status, 404);
 
@@ -134,6 +159,9 @@ test("WORK_STAFF A-13 appeals: staff list, replies, status, added time and corre
   const c = await post("/work/corrections", `sessionId=${S1}&appealId=${APPEAL}&startedAt=2026-11-18T09%3A00&endedAt=2026-11-18T21%3A00&reason=store+log`, {}, corrected);
   assert.deepEqual([c.headers.location, corrected[0]], [`/work/appeals/${APPEAL}?done=entered`,
     ["correct", "staff", S1, { startedAt: "2026-11-18T09:00:00+03:00", endedAt: "2026-11-18T21:00:00+03:00", reason: "store log", appealId: APPEAL }]]);
+  // An untouched prefilled time keeps its seconds.
+  await post("/work/corrections", `sessionId=${S1}&appealId=${APPEAL}&startedAt=2026-11-18T09%3A00%3A30&endedAt=2026-11-18T21%3A00&reason=x`, {}, corrected);
+  assert.equal((corrected[1]![3] as { startedAt: string }).startedAt, "2026-11-18T09:00:30+03:00");
 });
 
 test("WORK_STAFF A-13 corrections from the work logs: the form finds the session, needs a reason and keeps the date", async () => {
@@ -142,7 +170,7 @@ test("WORK_STAFF A-13 corrections from the work logs: the form finds the session
   assert.equal(form.status, 200);
   assert.deepEqual(calls[0], ["all", "staff", { from: "2026-11-18", to: "2026-11-18" }, { after: null }]);
   assert.match(form.html, /name="reason" required/);
-  assert.match(form.html, /value="2026-11-18T11:30"/);
+  assert.match(form.html, /value="2026-11-18T11:30:00"/);
   assert.equal((await request(`/work/corrections/new?session=${S1}&date=2026-11-18`, { world: { rows: null } })).status, 404);
   assert.equal((await request(`/work/corrections/new?session=${S1}&date=2026-11-18`, { world: { rows: [{ session: session({ endedAt: null }), decision: null }] } })).status, 404);
   assert.equal((await request(`/work/corrections/new?session=x&date=2026-11-18`)).status, 404);

@@ -20,7 +20,7 @@ function appeal(over: Record<string, unknown> = {}) {
   return { id: APPEAL_ID, sessionId: session().id, personId: "person", orgId: "co", storeId: STORE, reason: "I stayed until 9 <pm>", status: "in_progress",
     createdAt: "2026-11-18T19:00:00.000Z", updatedAt: "x", ...over };
 }
-interface World { placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown }
+interface World { placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown; pages?: unknown[][] }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const rows = world.rows ?? [];
   const totals = { approvedSeconds: 3600, pendingSeconds: 9000, rejectedSeconds: 0, open: 0 };
@@ -30,7 +30,12 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
     personFor: async (id: string) => id === SESSION ? "person" : undefined,
     placements: { mine: async (...args: unknown[]) => { calls.push(["placementsMine", ...args]); return world.placements ?? []; } },
     sessions: { today: async () => ({ open: world.open ?? null, assignment: world.assignment ?? null }), start: record("start"), stop: record("stop"), discard: record("discard"), addManual: record("addManual") },
-    views: { mine: async (...args: unknown[]) => { calls.push(["mine", ...args]); return { rows, totals, next: null }; } },
+    views: { mine: async (...args: unknown[]) => {
+      calls.push(["mine", ...args]);
+      if (!world.pages) return { rows, totals, next: null };
+      const at = args[2] === null ? 0 : Number(args[2]);
+      return { rows: world.pages[at], totals, next: at + 1 < world.pages.length ? String(at + 1) : null };
+    } },
     appeals: {
       mine: async (...args: unknown[]) => { calls.push(["appealsMine", ...args]); return world.appeals ?? []; },
       detail: async (...args: unknown[]) => { calls.push(["detail", ...args]); return world.detail ?? { kind: "refused", code: "appeal_not_found" }; },
@@ -122,6 +127,8 @@ test("WORK_PAGES refusals re-render Track with a plain message; manual times are
   assert.equal((await post("/work/track/manual", "startedAt=2026-11-17T09%3A00Z&endedAt=2026-11-17T13%3A15", {}, calls)).status, 400);
   assert.equal(calls.length, 1);
   assert.equal(kuwaitInstant("2026-11-17 09:00"), undefined);
+  assert.equal(kuwaitInstant("2026-11-17T09:00:30"), "2026-11-17T09:00:30+03:00");
+  assert.equal(kuwaitInstant("2026-11-17T09:00:3"), undefined);
   assert.deepEqual([duration(59), duration(3600), duration(5400)], ["0m", "1h", "1h 30m"]);
 });
 
@@ -145,6 +152,17 @@ test("WORK_PAGES History lists the month by day and a day shows each decision th
   assert.match(day.html, /Reason: late &lt;again&gt;/);
   assert.match(day.html, /Note: see manager/);
   assert.equal((await request("/work/history/2026-02-30")).status, 404);
+});
+
+test("WORK_PAGES a day and a new appeal follow every page of that day, so no session is dropped", async () => {
+  const calls: unknown[][] = [];
+  const later = session({ id: "bbbbbbbb-0000-4000-8000-000000000007", status: "rejected" });
+  const pages = [[{ session: session(), decision: null }], [{ session: later, decision: null }]];
+  const day = await request("/work/history/2026-11-18", { world: { pages } }, calls);
+  assert.equal(day.html.split("Appeal these hours").length - 1, 1);
+  assert.deepEqual(calls.filter((c) => c[0] === "mine").map((c) => c[3]), [null, "1"]);
+  const form = await request(`/work/appeals/new?session=${later.id}&date=2026-11-18`, { world: { pages } });
+  assert.match(form.html, new RegExp(`name="sessionId" value="${later.id}"`));
 });
 
 test("WORK_PAGES appeals: raised from a day's closed session, listed, and opened by their owner only", async () => {

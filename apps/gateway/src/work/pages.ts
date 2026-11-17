@@ -57,9 +57,11 @@ export function duration(seconds: number): string {
   const h = Math.floor(total / 60), m = total % 60;
   return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
-/** A `datetime-local` value is Kuwait wall time; Kuwait has no daylight saving. */
+/** A `datetime-local` value is Kuwait wall time (seconds optional); Kuwait has no daylight saving. */
 export function kuwaitInstant(value: string | undefined): string | undefined {
-  return value !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) ? `${value}:00+03:00` : undefined;
+  if (value === undefined) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return `${value}:00+03:00`;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value) ? `${value}+03:00` : undefined;
 }
 
 export function sessionCookie(header: string | undefined): string | undefined {
@@ -213,8 +215,17 @@ export async function renderAppeals(services: WorkHttpServices, person: string, 
   return shell("Appeals", "appeals", `<section class="p-card">${items}${older}</section>`);
 }
 
+/** Every session of one day (a day rarely needs a second page, but none is dropped). */
+async function wholeDay(services: WorkHttpServices, person: string, date: string): Promise<{ rows: HoursPage<PersonDecisionView>["rows"]; totals: HoursPage<PersonDecisionView>["totals"] }> {
+  const range = parseRange(date, date)!;
+  let page = await services.views.mine(person, range, null);
+  const rows = [...page.rows];
+  for (let pages = 1; page.next && pages < HISTORY_PAGE_CAP; pages++) { page = await services.views.mine(person, range, page.next); rows.push(...page.rows); }
+  return { rows, totals: page.totals };
+}
+
 export async function renderNewAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, sessionId: string, date: string, error: string | null): Promise<string | undefined> {
-  const page = await services.views.mine(person, parseRange(date, date)!, null);
+  const page = await wholeDay(services, person, date);
   const found = page.rows.find((r) => r.session.id === sessionId && r.session.endedAt !== null && r.session.status === "rejected");
   if (!found) return undefined;
   const where = await storeName(names, found.session.storeId);
@@ -238,8 +249,7 @@ export async function renderAppeal(services: WorkHttpServices, names: StoreNames
 }
 
 export async function renderDay(services: WorkHttpServices, names: StoreNames | undefined, person: string, date: string): Promise<string> {
-  const range = parseRange(date, date)!;
-  const page = await services.views.mine(person, range, null);
+  const page = await wholeDay(services, person, date);
   const storeIds = [...new Set(page.rows.map((r) => r.session.storeId))];
   const known = storeIds.length && names ? await names(storeIds) : new Map<string, string>();
   const items = page.rows.length === 0 ? `<div class="p-empty"><p>No hours logged on this day.</p></div>`

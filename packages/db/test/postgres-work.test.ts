@@ -179,8 +179,12 @@ test("W3_PG a clock-in racing a placement end date waits for it and is refused, 
     await ender.query("SELECT 1 FROM work_assignments WHERE id = $1 FOR UPDATE", [assignmentId]);
     await ender.query("UPDATE work_assignments SET end_date = '2026-11-18' WHERE id = $1", [assignmentId]);
     const start = session.start(w.person, HERE);
-    // The start has read the still-open placement and now waits on the assignment row.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Wait until the start is actually blocked on the assignment row, then commit the end date.
+    for (let i = 0; i < 100; i++) {
+      const { rows } = await pool.query("SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()");
+      if (rows[0].n > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     await ender.query("COMMIT");
     assert.deepEqual(await start, { kind: "refused", code: "not_assigned" });
   } finally {
@@ -452,6 +456,12 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
     legacyDecidedBy: d.legacyDecidedBy, decidedAt: d.decidedAt?.toISOString() ?? null });
   const day = toDecision(feedback("d", 1, null, "2026-11-10 20:00:00"));
   const reject = toDecision(feedback("r", 2, "2", "2026-11-10 21:00:00"));
+  // A decision naming a session that belongs to someone else's day is refused, never relinked.
+  const stray = toDecision(feedback("x", 2, "2", "2026-11-10 22:00:00"));
+  for (const wrong of [{ personId: w.staff }, { workDate: "2026-11-11" }]) {
+    const refusedStray = await imports.importDecisions([{ ...stray, ...wrong }]);
+    assert.deepEqual(refusedStray.refused, [{ legacyRef: stray.legacyRef, code: "no_session" }], JSON.stringify(wrong));
+  }
   const decided = await imports.importDecisions([day, reject]);
   assert.deepEqual([decided.inserted, decided.refused], [2, []]);
   const linked = (await pool.query(`SELECT s.legacy_ref, d.legacy_ref AS decision FROM work_sessions s JOIN work_decisions d ON d.id = s.decision_id

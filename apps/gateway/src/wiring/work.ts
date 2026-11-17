@@ -37,10 +37,14 @@ export interface WorkWiringPorts {
 /**
  * Work and hours (W-1 to W-7). Needs both the cutover switch and the safe-write
  * signing key; otherwise nothing is built and /api/work and the /work screens
- * answer 503, so legacy stays the only writer of hours until cutover.
+ * answer 503, so legacy stays the only writer of hours until cutover. Turning the
+ * switch on also needs the store-manager (access A4) and notice (comms) ports.
  */
 export function wireWork(settings: WiringSettings, access: Access, ports: WorkWiringPorts = {}): Wired<{ readonly work?: WorkHttpServices }> {
   if (ports.enabled !== true || !settings.safeWriteKey) return { services: {}, async close() {} };
+  // Without these ports store managers could not act and people would get no
+  // decision notices, so turning the lane on before they are wired stops startup.
+  if (!ports.managedStores || !ports.notices) throw new Error("WORK_LANE_ENABLED=true needs the store-manager and notice ports");
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const grants: GrantsPort = access.authzStore;
   const managed = ports.managedStores ?? NO_MANAGED_STORES;

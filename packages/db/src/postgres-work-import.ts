@@ -122,7 +122,9 @@ export class PostgresWorkImportStore {
       const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_decisions WHERE legacy_ref = $1", [row.legacyRef]);
       if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
       const { rows: sessions } = row.scope === "session"
-        ? await client.query<{ id: string }>("SELECT id FROM work_sessions WHERE legacy_ref = $1", [row.sessionLegacyRef])
+        // The session must belong to the decision's own person, company, store and day, or the relink could hand it to someone else.
+        ? await client.query<{ id: string }>(`SELECT id FROM work_sessions WHERE legacy_ref = $1 AND person_principal_id = $2 AND org_id = $3 AND store_id = $4
+            AND work_date = $5::date`, [row.sessionLegacyRef, row.personId, row.orgId, row.storeId, row.workDate])
         : await client.query<{ id: string }>(`SELECT id FROM work_sessions WHERE source = 'import' AND person_principal_id = $1 AND store_id = $2 AND work_date = $3::date
             AND deleted_at IS NULL ORDER BY started_at, id`, [row.personId, row.storeId, row.workDate]);
       if (row.scope === "session" && sessions.length === 0) { tally.refused.push({ legacyRef: row.legacyRef, code: "no_session" }); return; }

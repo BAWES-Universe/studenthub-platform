@@ -68,7 +68,8 @@ const refusal = (code: string) => ({ kind: "error" as const, text: REFUSALS[code
 const sessionTime = (s: WorkSession) => `${longDate(s.workDate)}, ${clock(s.startedAt)} to ${s.endedAt ? `${clock(s.endedAt)} (${duration(s.durationSeconds ?? 0)})` : "now"}`;
 const shortDate = (iso: string) => longDate(kuwaitDate(new Date(iso)));
 /** A Kuwait wall time for a `datetime-local` field. */
-const localValue = (iso: string) => new Date(new Date(iso).getTime() + 3 * 3600_000).toISOString().slice(0, 16);
+/** Keeps the seconds, so an untouched time is submitted unchanged. */
+const localValue = (iso: string) => new Date(new Date(iso).getTime() + 3 * 3600_000).toISOString().slice(0, 19);
 
 async function names(services: WorkHttpServices, ids: Iterable<string>): Promise<ReadonlyMap<string, string>> {
   const list = [...new Set(ids)];
@@ -102,7 +103,7 @@ export async function renderAssignments(services: WorkHttpServices, actor: strin
 <form method="post" action="/work/assignments/end">${hidden}<input type="hidden" name="assignmentId" value="${a.id}"><label>End date<input type="date" name="endDate" value="${a.endDate ?? ""}"></label><button type="submit">Save end date</button></form></li>`;
   };
   const requestItem = (r: AssignmentRequest) => `<li class="p-card"><h3>${person(r.personId)}</h3><p>${store(r.storeId)} · asked ${esc(shortDate(r.requestedAt))} · ${esc(REQUEST_STATUS[r.status] ?? r.status)}</p>${r.note ? `<p>Their note: ${esc(r.note)}</p>` : ""}
-<form method="post" action="/work/assignments/request">${hidden}<input type="hidden" name="requestId" value="${r.id}"><label>Start date (optional)<input type="date" name="startDate"></label><label>Reason (optional)<input name="reason" maxlength="500"></label><button type="submit" name="decision" value="accept">Accept and place</button> <button type="submit" name="decision" value="reject">Decline</button></form></li>`;
+<form method="post" action="/work/assignments/request">${hidden}<input type="hidden" name="requestId" value="${r.id}"><label>Start date (optional)<input type="date" name="startDate"></label><label>Pay contract ID (only when more than one matches)<input name="payContractId" maxlength="36"></label><label>Reason (optional)<input name="reason" maxlength="500"></label><button type="submit" name="decision" value="accept">Accept and place</button> <button type="submit" name="decision" value="reject">Decline</button></form></li>`;
   const storeField = storeList ? `<label>Store<select name="storeId" required>${storeList.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>` : `<label>Store ID<input name="storeId" required maxlength="36"></label>`;
   const place = `<section class="p-card" aria-labelledby="place-heading"><h2 id="place-heading">Place a person</h2><form method="post" action="/work/assignments/place">${hidden}<label>Their StudentHub ID<input name="personId" required maxlength="256"></label>${storeField}
 <label>Start date<input type="date" name="startDate" required></label><label>End date (optional)<input type="date" name="endDate"></label><label>Pay contract ID (only when more than one matches)<input name="payContractId" maxlength="36"></label><button type="submit">Place</button></form></section>`;
@@ -112,18 +113,19 @@ export async function renderAssignments(services: WorkHttpServices, actor: strin
 
 /** A-13 list; `undefined` when the actor isn't staff. */
 export async function renderStaffAppeals(services: WorkHttpServices, actor: string, query: URLSearchParams): Promise<string | undefined> {
-  const status = query.get("status") ?? "", after = parseAppealCursor(query.get("after"));
-  if (after === undefined) return undefined;
-  const list = await services.appeals.list(actor, { status, after });
+  const status = query.get("status") ?? "", after = parseAppealCursor(query.get("after")), org = query.get("org")?.trim() || "";
+  if (after === undefined || (org !== "" && !ORG_ID.test(org))) return undefined;
+  // Staff of one company list that company's appeals; operator staff may leave the company out.
+  const list = await services.appeals.list(actor, { status, after, ...(org ? { orgId: org } : {}) });
   if (!Array.isArray(list)) return undefined;
   const appeals = list as readonly WorkAppeal[];
   const people = await names(services, appeals.map((a) => a.personId));
   const option = (value: string, label: string) => `<option value="${value}"${status === value ? " selected" : ""}>${label}</option>`;
-  const filter = `<form method="get" action="/work/appeals" class="p-card" aria-label="Filter"><input type="hidden" name="as" value="staff"><label>Status<select name="status">${option("", "All")}${APPEAL_STATUSES.map((s) => option(s, APPEAL_STATUS[s]!)).join("")}</select></label><button type="submit">Show</button></form>`;
+  const filter = `<form method="get" action="/work/appeals" class="p-card" aria-label="Filter"><input type="hidden" name="as" value="staff"><label>Company ID (optional)<input name="org" value="${esc(org)}" maxlength="256"></label><label>Status<select name="status">${option("", "All")}${APPEAL_STATUSES.map((s) => option(s, APPEAL_STATUS[s]!)).join("")}</select></label><button type="submit">Show</button></form>`;
   const items = appeals.length === 0 ? `<div class="p-empty"><p>No appeals match.</p></div>`
     : `<ul>${appeals.map((a) => `<li><a href="/work/appeals/${a.id}">${esc(people.get(a.personId) ?? a.personId)}</a>, raised ${esc(shortDate(a.createdAt))}: <strong>${esc(APPEAL_STATUS[a.status] ?? a.status)}</strong>. ${esc(a.reason.length > 120 ? `${a.reason.slice(0, 119)}…` : a.reason)}</li>`).join("")}</ul>`;
   const last = appeals[appeals.length - 1];
-  const older = appeals.length === 50 && last ? `<p><a href="/work/appeals?as=staff&amp;status=${encodeURIComponent(status)}&amp;after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">Older appeals</a></p>` : "";
+  const older = appeals.length === 50 && last ? `<p><a href="/work/appeals?as=staff&amp;status=${encodeURIComponent(status)}${org ? `&amp;org=${encodeURIComponent(org)}` : ""}&amp;after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">Older appeals</a></p>` : "";
   return staffShell("Appeals", "appeals", `${filter}<section class="p-card">${items}${older}</section>`);
 }
 
@@ -139,7 +141,7 @@ export async function renderStaffAppeal(services: WorkHttpServices, detail: Appe
     : `<ul class="p-stack">${updates.map((u) => `<li class="p-card">${u.title ? `<h3>${esc(u.title)}</h3>` : ""}<p>${esc(u.detail)}</p><p>${esc(shortDate(u.createdAt))}${u.authorId ? ` · ${esc(people.get(u.authorId) ?? "Staff")}` : ""}${u.readAt ? " · Read" : ""}</p></li>`).join("")}</ul>`;
   const reply = `<form method="post" action="${base}/reply"><label>Title (optional)<input name="title" maxlength="255"></label><label>Reply to the person<textarea name="detail" required maxlength="5000"></textarea></label><button type="submit">Send reply</button></form>`;
   const status = `<form method="post" action="${base}/status"><label>Status<select name="status">${APPEAL_STATUSES.map((s) => `<option value="${s}"${s === appeal.status ? " selected" : ""}>${APPEAL_STATUS[s]}</option>`).join("")}</select></label><button type="submit">Save status</button></form>`;
-  const times = (start: string, end: string) => `<label>Started<input type="datetime-local" name="startedAt" value="${start}" required></label><label>Ended<input type="datetime-local" name="endedAt" value="${end}" required></label><label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label>`;
+  const times = (start: string, end: string) => `<label>Started<input type="datetime-local" step="1" name="startedAt" value="${start}" required></label><label>Ended<input type="datetime-local" step="1" name="endedAt" value="${end}" required></label><label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label>`;
   const fixes = session.endedAt === null ? "" : `<section class="p-card" aria-labelledby="fix-heading"><h2 id="fix-heading">Fix the hours</h2><p>Times are Kuwait time. A correction replaces the appealed entry in every total and in pay; the original stays on record. Both are approved by you.</p>
 <form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${times(localValue(session.startedAt), localValue(session.endedAt))}<button type="submit">Correct these hours</button></form>
 <form method="post" action="${base}/missing-time">${times("", "")}<button type="submit">Add missing time</button></form></section>`;
@@ -160,7 +162,7 @@ export async function renderCorrection(services: WorkHttpServices, actor: string
       if (s.endedAt === null) return undefined;
       const who = (await names(services, [s.personId])).get(s.personId) ?? s.personId;
       return staffShell("Correct hours", "logs", `${message(m)}<section class="p-card"><h2>${esc(who)}</h2><p>${esc(sessionTime(s))} · ${esc(STATUS_LABEL[s.status] ?? s.status)}</p><p>Times are Kuwait time. The correction replaces this entry in every total and in pay, approved by you; the original stays on record.</p>
-<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}"><label>Started<input type="datetime-local" name="startedAt" value="${localValue(s.startedAt)}" required></label><label>Ended<input type="datetime-local" name="endedAt" value="${localValue(s.endedAt)}" required></label>
+<form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${s.id}"><input type="hidden" name="date" value="${date}"><label>Started<input type="datetime-local" step="1" name="startedAt" value="${localValue(s.startedAt)}" required></label><label>Ended<input type="datetime-local" step="1" name="endedAt" value="${localValue(s.endedAt)}" required></label>
 <label>Reason (required)<input name="reason" required maxlength="255"></label><label>Note (optional)<textarea name="note" maxlength="1000"></textarea></label><button type="submit">Save correction</button></form></section>`);
     }
     if (!page.next) return undefined;
@@ -200,7 +202,8 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
         return true;
       }
       if (appealList) {
-        if (parseAppealCursor(url.searchParams.get("after")) === undefined) { write(res, ...plain(400, "Page not found", "That list page isn't valid.")); return true; }
+        const org = url.searchParams.get("org")?.trim() ?? "";
+        if (parseAppealCursor(url.searchParams.get("after")) === undefined || (org !== "" && !ORG_ID.test(org))) { write(res, ...plain(400, "Page not found", "That list page isn't valid.")); return true; }
         const html = await renderStaffAppeals(services, actor, url.searchParams);
         if (html) write(res, 200, html); else denied();
         return true;
@@ -221,7 +224,7 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
     if (assignments) {
       const action = ASSIGNMENT_POST.exec(path)![1]!;
       const form = await readForm(req, action === "place" ? ["org", "personId", "storeId", "startDate", "endDate", "payContractId"]
-        : action === "end" ? ["org", "assignmentId", "endDate"] : ["org", "requestId", "decision", "startDate", "reason"]);
+        : action === "end" ? ["org", "assignmentId", "endDate"] : ["org", "requestId", "decision", "startDate", "payContractId", "reason"]);
       const org = form?.org?.trim() ?? "";
       if (!form || !ORG_ID.test(org)) { write(res, ...plain(400, "Not saved", "Open the company again and retry.")); return true; }
       let result: { kind: string; code?: string };
@@ -234,9 +237,12 @@ export async function handleStaffPages(req: IncomingMessage, res: ServerResponse
       } else if (action === "end") {
         result = await services.placements.setEndDate(actor, (form.assignmentId ?? "").toLowerCase(), form.endDate ? form.endDate : null);
       } else {
-        const decision = form.decision;
-        result = decision === "accept" || decision === "reject"
-          ? await services.placements.decideRequest(actor, form.requestId ?? "", decision, { ...(form.reason ? { reason: form.reason } : {}), ...(decision === "accept" && form.startDate ? { placement: { startDate: form.startDate } } : {}) })
+        const decision = form.decision, contract = form.payContractId?.trim().toLowerCase();
+        const terms = { ...(form.startDate ? { startDate: form.startDate } : {}), ...(contract ? { payContractId: contract } : {}) };
+        // The same checks as a new placement's terms, before the service runs.
+        const valid = (!terms.startDate || parseRange(terms.startDate, terms.startDate)) && (!contract || UUID.test(contract));
+        result = (decision === "accept" || decision === "reject") && valid
+          ? await services.placements.decideRequest(actor, form.requestId ?? "", decision, { ...(form.reason ? { reason: form.reason } : {}), ...(decision === "accept" && Object.keys(terms).length ? { placement: terms } : {}) })
           : { kind: "refused", code: "invalid_input" };
       }
       if (result.kind !== "refused") { redirect(res, `/work/assignments?org=${encodeURIComponent(org)}&done=${result.kind}`); return true; }
