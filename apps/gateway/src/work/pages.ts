@@ -8,8 +8,8 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-  APPEAL_PAGE_SIZE, parseAppealCursor, parseLocation, parseRange, kuwaitDate,
-  type AppealDetail, type Assignment, type HoursPage, type PersonDecisionView, type SessionOutcome, type WorkAppeal, type WorkSession,
+  APPEAL_PAGE_SIZE, formatCursor, parseAppealCursor, parseCursor, parseLocation, parseRange, kuwaitDate,
+  type AppealDetail, type HoursCursor, type Assignment, type HoursPage, type PersonDecisionView, type SessionOutcome, type WorkAppeal, type WorkSession,
 } from "../../../../packages/work/src/index.js";
 import { pageDocument } from "../web-ui.js";
 import type { WorkHttpServices } from "./http.js";
@@ -215,18 +215,27 @@ export async function renderAppeals(services: WorkHttpServices, person: string, 
   return shell("Appeals", "appeals", `<section class="p-card">${items}${older}</section>`);
 }
 
-/** Every session of one day (a day rarely needs a second page, but none is dropped). */
-async function wholeDay(services: WorkHttpServices, person: string, date: string): Promise<{ rows: HoursPage<PersonDecisionView>["rows"]; totals: HoursPage<PersonDecisionView>["totals"] }> {
+/**
+ * Sessions of one day from `after`, up to `cap` pages (a day rarely needs a
+ * second page). `next` is where the following screen continues, so none is dropped.
+ */
+async function dayPages(services: WorkHttpServices, person: string, date: string, after: HoursCursor | null, cap: number):
+  Promise<{ rows: HoursPage<PersonDecisionView>["rows"]; totals: HoursPage<PersonDecisionView>["totals"]; next: HoursCursor | null }> {
   const range = parseRange(date, date)!;
-  let page = await services.views.mine(person, range, null);
+  let page = await services.views.mine(person, range, after);
   const rows = [...page.rows];
-  for (let pages = 1; page.next && pages < HISTORY_PAGE_CAP; pages++) { page = await services.views.mine(person, range, page.next); rows.push(...page.rows); }
-  return { rows, totals: page.totals };
+  for (let pages = 1; page.next && pages < cap; pages++) { page = await services.views.mine(person, range, page.next); rows.push(...page.rows); }
+  return { rows, totals: page.totals, next: page.next };
 }
 
 export async function renderNewAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, sessionId: string, date: string, error: string | null): Promise<string | undefined> {
-  const page = await wholeDay(services, person, date);
-  const found = page.rows.find((r) => r.session.id === sessionId && r.session.endedAt !== null && r.session.status === "rejected");
+  // Follows the day to its end: it stops at the session, and a day holds only the person's own non-overlapping hours.
+  let found: HoursPage<PersonDecisionView>["rows"][number] | undefined, after: HoursCursor | null = null;
+  do {
+    const page = await dayPages(services, person, date, after, HISTORY_PAGE_CAP);
+    found = page.rows.find((r) => r.session.id === sessionId && r.session.endedAt !== null && r.session.status === "rejected");
+    after = page.next;
+  } while (!found && after);
   if (!found) return undefined;
   const where = await storeName(names, found.session.storeId);
   return shell("Appeal hours", "appeals", `${error ? notice("error", error) : ""}<section class="p-card"><h2>${esc(sessionTime(found.session))}</h2><p>${esc(where)} · ${esc(STATUS_LABEL[found.session.status] ?? found.session.status)}</p>
@@ -248,14 +257,15 @@ export async function renderAppeal(services: WorkHttpServices, names: StoreNames
   return shell("Appeal", "appeals", `${message ? notice("success", message) : ""}${head}${fixes}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">Replies from StudentHub</h2>${replies}</section><nav class="p-card"><a href="/work/appeals">All appeals</a></nav>`);
 }
 
-export async function renderDay(services: WorkHttpServices, names: StoreNames | undefined, person: string, date: string): Promise<string> {
-  const page = await wholeDay(services, person, date);
+export async function renderDay(services: WorkHttpServices, names: StoreNames | undefined, person: string, date: string, after: HoursCursor | null = null): Promise<string> {
+  const page = await dayPages(services, person, date, after, HISTORY_PAGE_CAP);
   const storeIds = [...new Set(page.rows.map((r) => r.session.storeId))];
   const known = storeIds.length && names ? await names(storeIds) : new Map<string, string>();
   const items = page.rows.length === 0 ? `<div class="p-empty"><p>No hours logged on this day.</p></div>`
     : `<ul class="p-stack">${page.rows.map((r) => sessionItem(r.session, r.decision, known.get(r.session.storeId) ?? "Your store")).join("")}</ul>`;
   const totals = `<p>Approved ${duration(page.totals.approvedSeconds)} · Waiting ${duration(page.totals.pendingSeconds)} · Rejected ${duration(page.totals.rejectedSeconds)}</p>`;
-  return shell(longDate(date), "history", `<section class="p-card">${totals}${items}</section><nav class="p-card"><a href="/work/history?month=${date.slice(0, 7)}">Back to ${esc(monthLabel(date.slice(0, 7)))}</a></nav>`);
+  const later = page.next ? `<p><a href="/work/history/${date}?after=${encodeURIComponent(formatCursor(page.next))}">Later sessions on this day</a></p>` : "";
+  return shell(longDate(date), "history", `<section class="p-card">${totals}${items}${later}</section><nav class="p-card"><a href="/work/history?month=${date.slice(0, 7)}">Back to ${esc(monthLabel(date.slice(0, 7)))}</a></nav>`);
 }
 
 const PLACED_BY: Readonly<Record<string, string>> = { staff: "Placed by StudentHub", request: "Placed at the company's request", recruit: "Placed after recruitment", import: "Placed in the old system" };
@@ -335,7 +345,9 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
     const day = DAY.exec(path)?.[1];
     if (req.method === "GET" && day) {
       if (!parseRange(day, day)) { write(res, ...plain(404, "Day not found", "That isn't a valid date.")); return true; }
-      write(res, 200, await renderDay(services, names, person, day));
+      const after = parseCursor(url.searchParams.get("after"));
+      if (after === undefined || (after && after.workDate !== day)) { write(res, ...plain(400, "Page not found", "That page of the day isn't valid.")); return true; }
+      write(res, 200, await renderDay(services, names, person, day, after));
       return true;
     }
     if (req.method === "GET" && path === "/work/appeals") {

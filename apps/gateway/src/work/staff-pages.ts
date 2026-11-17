@@ -58,9 +58,12 @@ const DONE: Readonly<Record<string, string>> = {
   posted: "Your reply was sent.", updated: "The appeal status was saved.", entered: "The hours were saved and approved.",
 };
 
-function staffShell(title: string, current: "assignments" | "logs" | "appeals", body: string): string {
+/** The appeal list for staff, kept to one company when the staff member covers only that company. */
+const appealList = (org?: string) => `/work/appeals?as=staff${org ? `&amp;org=${encodeURIComponent(org)}` : ""}`;
+
+function staffShell(title: string, current: "assignments" | "logs" | "appeals", body: string, org?: string): string {
   const tab = (path: string, key: string, label: string) => `<a href="${path}"${key === current ? ' aria-current="page"' : ""}>${label}</a>`;
-  const nav = `<nav class="p-card" aria-label="Staff work">${tab("/work/assignments", "assignments", "Placements")} · ${tab("/work/logs", "logs", "Work logs")} · ${tab("/work/appeals?as=staff", "appeals", "Appeals")}</nav>`;
+  const nav = `<nav class="p-card" aria-label="Staff work">${tab("/work/assignments", "assignments", "Placements")} · ${tab("/work/logs", "logs", "Work logs")} · ${tab(appealList(org), "appeals", "Appeals")}</nav>`;
   return pageDocument(title, `<main id="main" class="profile-ui"><div class="p-shell"><div class="p-main p-stack"><header class="p-header"><h1>${esc(title)}</h1></header>${nav}${body}</div></div></main>`);
 }
 const message = (m: { kind: "success" | "error"; text: string } | null) => m ? notice(m.kind, m.text) : "";
@@ -129,7 +132,7 @@ export async function renderStaffAppeals(services: WorkHttpServices, actor: stri
     : `<ul>${appeals.map((a) => `<li><a href="/work/appeals/${a.id}">${esc(people.get(a.personId) ?? a.personId)}</a>, raised ${esc(shortDate(a.createdAt))}: <strong>${esc(APPEAL_STATUS[a.status] ?? a.status)}</strong>. ${esc(a.reason.length > 120 ? `${a.reason.slice(0, 119)}…` : a.reason)}</li>`).join("")}</ul>`;
   const last = appeals[appeals.length - 1];
   const older = appeals.length === 50 && last ? `<p><a href="/work/appeals?as=staff&amp;status=${encodeURIComponent(status)}${org ? `&amp;org=${encodeURIComponent(org)}` : ""}&amp;after=${encodeURIComponent(`${last.createdAt}~${last.id}`)}">Older appeals</a></p>` : "";
-  return staffShell("Appeals", "appeals", `${filter}<section class="p-card">${items}${older}</section>`);
+  return staffShell("Appeals", "appeals", `${filter}<section class="p-card">${items}${older}</section>`, org || undefined);
 }
 
 /** A-13 detail for staff; the service has already checked the actor may see this appeal. */
@@ -148,7 +151,7 @@ export async function renderStaffAppeal(services: WorkHttpServices, detail: Appe
   const fixes = session.endedAt === null ? "" : `<section class="p-card" aria-labelledby="fix-heading"><h2 id="fix-heading">Fix the hours</h2><p>Times are Kuwait time. A correction replaces the appealed entry in every total and in pay; the original stays on record. Both are approved by you.</p>
 <form method="post" action="/work/corrections"><input type="hidden" name="sessionId" value="${session.id}"><input type="hidden" name="appealId" value="${appeal.id}">${times(localValue(session.startedAt), localValue(session.endedAt))}<button type="submit">Correct these hours</button></form>
 <form method="post" action="${base}/missing-time">${times("", "")}<button type="submit">Add missing time</button></form></section>`;
-  return staffShell("Appeal", "appeals", `${message(m)}${head}${done}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">Replies</h2>${replies}${reply}${status}</section>${fixes}<nav class="p-card"><a href="/work/appeals?as=staff">All appeals</a></nav>`);
+  return staffShell("Appeal", "appeals", `${message(m)}${head}${done}<section class="p-card" aria-labelledby="replies-heading"><h2 id="replies-heading">Replies</h2>${replies}${reply}${status}</section>${fixes}<nav class="p-card"><a href="${appealList(appeal.orgId)}">All appeals</a></nav>`, appeal.orgId);
 }
 
 /** A-13 correction form for one session; `undefined` when the actor can't see it or it can't be corrected. */

@@ -44,7 +44,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   if (ports.enabled !== true || !settings.safeWriteKey) return { services: {}, async close() {} };
   // Without these ports store managers could not act and people would get no
   // decision notices, so turning the lane on before they are wired stops startup.
-  if (!ports.managedStores || !ports.notices) throw new Error("WORK_LANE_ENABLED=true needs the store-manager and notice ports");
+  if (!ports.managedStores || typeof ports.notices?.onDecided !== "function" || typeof ports.notices.onUndone !== "function") throw new Error("WORK_LANE_ENABLED=true needs the store-manager and notice ports");
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const grants: GrantsPort = access.authzStore;
   const managed = ports.managedStores ?? NO_MANAGED_STORES;

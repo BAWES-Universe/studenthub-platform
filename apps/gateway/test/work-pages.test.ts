@@ -33,8 +33,8 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
     views: { mine: async (...args: unknown[]) => {
       calls.push(["mine", ...args]);
       if (!world.pages) return { rows, totals, next: null };
-      const at = args[2] === null ? 0 : Number(args[2]);
-      return { rows: world.pages[at], totals, next: at + 1 < world.pages.length ? String(at + 1) : null };
+      const at = args[2] === null ? 0 : Number((args[2] as { id: string }).id.slice(-12));
+      return { rows: world.pages[at], totals, next: at + 1 < world.pages.length ? { workDate: "2026-11-18", id: `00000000-0000-4000-8000-${String(at + 1).padStart(12, "0")}` } : null };
     } },
     appeals: {
       mine: async (...args: unknown[]) => { calls.push(["appealsMine", ...args]); return world.appeals ?? []; },
@@ -162,9 +162,25 @@ test("WORK_PAGES a day and a new appeal follow every page of that day, so no ses
   const pages = [[{ session: session(), decision: null }], [{ session: later, decision: null }]];
   const day = await request("/work/history/2026-11-18", { world: { pages } }, calls);
   assert.equal(day.html.split("Appeal these hours").length - 1, 1);
-  assert.deepEqual(calls.filter((c) => c[0] === "mine").map((c) => c[3]), [null, "1"]);
+  assert.deepEqual(calls.filter((c) => c[0] === "mine").map((c) => c[3]), [null, { workDate: "2026-11-18", id: "00000000-0000-4000-8000-000000000001" }]);
+  assert.doesNotMatch(day.html, /Later sessions on this day/);
   const form = await request(`/work/appeals/new?session=${later.id}&date=2026-11-18`, { world: { pages } });
   assert.match(form.html, new RegExp(`name="sessionId" value="${later.id}"`));
+});
+
+test("WORK_PAGES a day past the page cap continues on a later screen, and a session there can still be appealed", async () => {
+  const last = session({ id: "bbbbbbbb-0000-4000-8000-000000000006", status: "rejected" });
+  const pages = [...Array.from({ length: 20 }, () => [{ session: session(), decision: null }]), [{ session: last, decision: null }]];
+  const first = await request("/work/history/2026-11-18", { world: { pages } });
+  assert.doesNotMatch(first.html, /Appeal these hours/);
+  const link = /href="\/work\/history\/2026-11-18\?after=([^"]+)">Later sessions on this day/.exec(first.html);
+  assert.equal(link?.[1], encodeURIComponent("2026-11-18~00000000-0000-4000-8000-000000000020"));
+  const rest = await request(`/work/history/2026-11-18?after=${link![1]}`, { world: { pages } });
+  assert.equal(rest.html.split("Appeal these hours").length - 1, 1);
+  assert.doesNotMatch(rest.html, /Later sessions on this day/);
+  const form = await request(`/work/appeals/new?session=${last.id}&date=2026-11-18`, { world: { pages } });
+  assert.match(form.html, new RegExp(`name="sessionId" value="${last.id}"`));
+  for (const bad of ["nope", encodeURIComponent("2026-11-17~00000000-0000-4000-8000-000000000020")]) assert.equal((await request(`/work/history/2026-11-18?after=${bad}`)).status, 400, bad);
 });
 
 test("WORK_PAGES appeals: raised from a day's closed session, listed, and opened by their owner only", async () => {

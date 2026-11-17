@@ -39,8 +39,13 @@ test("PREP_WIRING_WORK_PORTS turning the work lane on without store-manager and 
   const access = { authzStore: {} } as unknown as Parameters<typeof wireWork>[1];
   const managedStores = { async managedStores() { return []; } };
   assert.throws(() => wireWork(settings, access, { enabled: true, managedStores }), /needs the store-manager and notice ports/);
-  assert.throws(() => wireWork(settings, access, { enabled: true, notices: {} }), /needs the store-manager and notice ports/);
-  const wired = wireWork(settings, access, { enabled: true, managedStores, notices: {} });
+  const notices = { async onDecided() {}, async onUndone() {} };
+  assert.throws(() => wireWork(settings, access, { enabled: true, notices }), /needs the store-manager and notice ports/);
+  // An empty or partial notice port would skip notices or their withdrawal, so it counts as missing.
+  for (const partial of [{}, { onDecided: notices.onDecided }, { onUndone: notices.onUndone }]) {
+    assert.throws(() => wireWork(settings, access, { enabled: true, managedStores, notices: partial }), /needs the store-manager and notice ports/, JSON.stringify(Object.keys(partial)));
+  }
+  const wired = wireWork(settings, access, { enabled: true, managedStores, notices });
   assert.ok(wired.services.work);
   await wired.close();
 });
