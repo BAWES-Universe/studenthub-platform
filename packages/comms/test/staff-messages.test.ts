@@ -51,7 +51,7 @@ test("COMMS_STAFF_MSG_VALIDATE kinds, bodies, keys and recipients are closed", (
 });
 
 test("COMMS_STAFF_MSG_RENDER each kind points the person at the page that resolves it", () => {
-  assert.deepEqual(renderStaffMessage("profile_photo_request", null), { text: "StudentHub asked you to add a profile photo.", href: "/profile" });
+  assert.deepEqual(renderStaffMessage("profile_photo_request", null), { text: "StudentHub asked you to add a profile photo.", href: "/profile/documents" });
   assert.deepEqual(renderStaffMessage("civil_id_request", null), { text: "StudentHub asked you to add your civil ID.", href: "/profile/civil-id" });
   assert.deepEqual(renderStaffMessage("message", "Hello"), { text: "Message from StudentHub: Hello", href: "/notifications" });
 });

@@ -82,7 +82,7 @@ export class StaffMessagesService {
 export function renderStaffMessage(kind: StaffMessageKind, body: string | null): { readonly text: string; readonly href: string } {
   switch (kind) {
     case "profile_photo_request":
-      return { text: "StudentHub asked you to add a profile photo.", href: "/profile" };
+      return { text: "StudentHub asked you to add a profile photo.", href: "/profile/documents" };
     case "civil_id_request":
       return { text: "StudentHub asked you to add your civil ID.", href: "/profile/civil-id" };
     case "message":
