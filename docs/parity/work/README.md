@@ -31,6 +31,15 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | Discard and staff delete were hard deletes | Soft delete with who and why; restore possible | W-7 contract |
 | Day totals stored on `candidate_working_date`, rejected time inside `total_time`, day status = last session's status, two repair crons | `work_day_totals` view: approved, pending and rejected seconds and counts, open count; nothing stored, nothing to repair | WK-F3/F4 crons retired; drift impossible by construction |
 | A session past midnight is dated by its start | Same, in Asia/Kuwait | Parity |
+| Save and bulk-save decided any company's sessions (no ownership check) | Every decision is scoped: staff above the company, the company's owners and recruiters (subtree aware), or a store manager for their own store only | Ownership defect |
+| A day decision rewrote every closed session, earlier decisions included | A day decision changes pending closed sessions only; changing a decided session is a session decision | Lost-decision defect |
+| Bulk-save rolled back on a missing day | Same, and also on an out-of-scope or open session; the refusal names the item | Parity, stricter |
+| Undo wrote nothing and kept the old decision link | Undo writes its own decision row; the session points at it. No undo window (legacy has none; D-WK2 keeps legacy) | Audit |
+| Rating had no range | 1 to 5 | Docs said 1 to 5 |
+| A person could read note, rating, reason and is_public through `expand` | The person sees outcome, reason, and the note only when public; never the rating | Leak defect |
+| Date range strings went raw into SQL | Dates parsed and bound; at most a year per request | SQL injection |
+| Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only | Scoping defect |
+| Stats returned the last session's status | Totals over the whole range, split by status | Mixed-status defect |
 
 ## Payable seam for the pay lane (W-2)
 
@@ -43,7 +52,7 @@ current store (legacy dropped hours at an earlier store in the same month).
 
 ## Not yet here
 
-W-4 decisions, W-5 views, W-6 appeals and corrections, the Postgres payable
-source, the reconciliation report against imported legacy day rows, gateway
+W-6 appeals and corrections, the Postgres payable source, decision
+notifications to the person (with the comms lane), the reconciliation report against imported legacy day rows, gateway
 pages, and the legacy import mapping. They land as later slices on the same
 lane.

@@ -33,7 +33,7 @@ class MemorySessions implements SessionStore {
           startedAt: n.startedAt.toISOString(), endedAt: n.endedAt?.toISOString() ?? null,
           durationSeconds: n.endedAt ? Math.floor((n.endedAt.getTime() - n.startedAt.getTime()) / 1000) : null,
           startLocation: n.startLocation, endLocation: n.endLocation, source: n.source, status: n.status, flags: n.flags, note: n.note,
-          correctsSessionId: n.correctsSessionId, deletedAt: null, createdBy: n.createdBy, createdAt: n.startedAt.toISOString(),
+          correctsSessionId: n.correctsSessionId, decisionId: null, deletedAt: null, createdBy: n.createdBy, createdAt: n.startedAt.toISOString(),
         };
         this.sessions.push(s);
         return s;

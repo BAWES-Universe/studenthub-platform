@@ -42,7 +42,7 @@ export interface WorkSessionRecord {
   readonly startLocation: WorkLocation | null; readonly endLocation: WorkLocation | null;
   readonly source: "timer" | "manual" | "correction" | "import"; readonly status: "pending" | "approved" | "rejected";
   readonly flags: readonly ("late_entry" | "location_missing")[]; readonly note: string | null;
-  readonly correctsSessionId: string | null; readonly deletedAt: string | null;
+  readonly correctsSessionId: string | null; readonly decisionId: string | null; readonly deletedAt: string | null;
   readonly createdBy: string | null; readonly createdAt: string;
 }
 export interface NewWorkSessionRecord {
@@ -95,13 +95,13 @@ function requestFromRow(r: RequestRow): WorkAssignmentRequestRecord {
 const SESSION_COLUMNS = `s.id, s.assignment_id, s.person_principal_id, s.org_id, s.store_id, to_char(s.work_date,'YYYY-MM-DD') AS work_date,
  s.started_at, s.ended_at, s.duration_seconds, s.start_latitude::float8 AS start_latitude, s.start_longitude::float8 AS start_longitude,
  s.end_latitude::float8 AS end_latitude, s.end_longitude::float8 AS end_longitude, s.source, s.status, s.flags, s.note,
- s.corrects_session_id, s.deleted_at, s.created_by, s.created_at`;
+ s.corrects_session_id, s.decision_id, s.deleted_at, s.created_by, s.created_at`;
 interface SessionRow {
   id: string; assignment_id: string; person_principal_id: string; org_id: string; store_id: string; work_date: string;
   started_at: Date; ended_at: Date | null; duration_seconds: number | null;
   start_latitude: number | null; start_longitude: number | null; end_latitude: number | null; end_longitude: number | null;
   source: WorkSessionRecord["source"]; status: WorkSessionRecord["status"]; flags: WorkSessionRecord["flags"]; note: string | null;
-  corrects_session_id: string | null; deleted_at: Date | null; created_by: string | null; created_at: Date;
+  corrects_session_id: string | null; decision_id: string | null; deleted_at: Date | null; created_by: string | null; created_at: Date;
 }
 const location = (lat: number | null, long: number | null): WorkLocation | null => lat === null || long === null ? null : Object.freeze({ latitude: lat, longitude: long });
 export function workSessionFromRow(r: SessionRow): WorkSessionRecord {
@@ -109,7 +109,7 @@ export function workSessionFromRow(r: SessionRow): WorkSessionRecord {
     id: r.id, assignmentId: r.assignment_id, personId: r.person_principal_id, orgId: r.org_id, storeId: r.store_id, workDate: r.work_date,
     startedAt: r.started_at.toISOString(), endedAt: r.ended_at ? r.ended_at.toISOString() : null, durationSeconds: r.duration_seconds,
     startLocation: location(r.start_latitude, r.start_longitude), endLocation: location(r.end_latitude, r.end_longitude),
-    source: r.source, status: r.status, flags: Object.freeze([...r.flags]), note: r.note, correctsSessionId: r.corrects_session_id,
+    source: r.source, status: r.status, flags: Object.freeze([...r.flags]), note: r.note, correctsSessionId: r.corrects_session_id, decisionId: r.decision_id,
     deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null, createdBy: r.created_by, createdAt: r.created_at.toISOString(),
   });
 }
@@ -394,5 +394,153 @@ export class PostgresWorkSessionStore {
 
   async transaction<T>(work: (tx: WorkSessionTransaction) => Promise<T>): Promise<T> {
     return this.#db.transaction((client) => work(sessionTransaction(client)));
+  }
+}
+
+export interface WorkDecisionRecord {
+  readonly id: string; readonly orgId: string; readonly storeId: string; readonly personId: string; readonly workDate: IsoDate;
+  readonly scope: "session" | "day"; readonly outcome: "approved" | "rejected" | "undone"; readonly sessionIds: readonly string[];
+  readonly reason: string | null; readonly note: string | null; readonly rating: number | null; readonly notePublic: boolean;
+  readonly batchId: string | null; readonly decidedBy: string; readonly decidedAt: string;
+}
+interface DecisionRow {
+  id: string; org_id: string; store_id: string; person_principal_id: string; work_date: string; scope: "session" | "day";
+  outcome: "approved" | "rejected" | "undone"; session_ids: string[]; reason: string | null; note: string | null; rating: number | null;
+  note_public: boolean; batch_id: string | null; decided_by: string; decided_at: Date;
+}
+const DECISION_COLUMNS = `id, org_id, store_id, person_principal_id, to_char(work_date,'YYYY-MM-DD') AS work_date, scope, outcome, session_ids,
+ reason, note, rating, note_public, batch_id, decided_by, decided_at`;
+function decisionFromRow(r: DecisionRow): WorkDecisionRecord {
+  return Object.freeze({
+    id: r.id, orgId: r.org_id, storeId: r.store_id, personId: r.person_principal_id, workDate: r.work_date, scope: r.scope, outcome: r.outcome,
+    sessionIds: Object.freeze([...r.session_ids]), reason: r.reason, note: r.note, rating: r.rating, notePublic: r.note_public,
+    batchId: r.batch_id, decidedBy: r.decided_by, decidedAt: r.decided_at.toISOString(),
+  });
+}
+
+async function ancestorsOf(q: Queryable, orgId: string): Promise<readonly string[] | undefined> {
+  const { rows } = await q.query<{ id: string; depth: number }>(`WITH RECURSIVE up(id, parent, depth) AS (
+    SELECT id, parent_org_id, 0 FROM organizations WHERE id = $1
+    UNION ALL SELECT o.id, o.parent_org_id, up.depth + 1 FROM organizations o JOIN up ON o.id = up.parent WHERE up.depth < 32)
+   SELECT id, depth FROM up ORDER BY depth`, [orgId]);
+  return rows.length === 0 ? undefined : Object.freeze(rows.slice(1).map((r) => r.id));
+}
+
+export interface WorkDecisionTransaction {
+  lockSessions(ids: readonly string[]): Promise<readonly WorkSessionRecord[]>;
+  lockDay(day: { personId: string; storeId: string; workDate: IsoDate }): Promise<readonly WorkSessionRecord[]>;
+  isReplaced(sessionId: string): Promise<boolean>;
+  insertDecision(d: WorkDecisionRecord): Promise<void>;
+  setStatus(sessionIds: readonly string[], status: "pending" | "approved" | "rejected", decisionId: string): Promise<void>;
+  event(e: WorkEventRecord): Promise<void>;
+  notify(n: WorkDecisionNotice): Promise<void>;
+}
+
+export type WorkDecisionNotice =
+  | { readonly kind: "decided"; readonly personId: string; readonly sessionId: string; readonly decisionId: string; readonly outcome: "approved" | "rejected"; readonly workDate: IsoDate }
+  | { readonly kind: "undone"; readonly personId: string; readonly sessionId: string; readonly withdrawnDecisionId: string };
+
+/**
+ * Notification producers, run on the decision's own client so the notice
+ * commits or rolls back with it. Shapes match `@studenthub/db/comms`
+ * recordWorkSessionDecision / retractWorkSessionDecision.
+ */
+export interface WorkDecisionHooks {
+  onDecided?(client: PoolClient, input: { personPrincipalId: string; sessionId: string; decisionId: string; decision: "approved" | "rejected"; workDate: string }): Promise<unknown>;
+  onUndone?(client: PoolClient, input: { personPrincipalId: string; decisionId: string }): Promise<unknown>;
+}
+
+/** W-4 decisions. */
+export class PostgresWorkDecisionStore {
+  readonly #db: PoolOwner;
+  readonly #hooks: WorkDecisionHooks;
+  constructor(poolOrConfig: PgPool | PoolConfig, hooks: WorkDecisionHooks = {}) { this.#db = new PoolOwner(poolOrConfig); this.#hooks = hooks; }
+  async close(): Promise<void> { await this.#db.close(); }
+  organizationAncestors(orgId: string): Promise<readonly string[] | undefined> { return ancestorsOf(this.#db.pool, orgId); }
+  async transaction<T>(work: (tx: WorkDecisionTransaction) => Promise<T>): Promise<T> {
+    const hooks = this.#hooks;
+    return this.#db.transaction((client) => work({
+      async lockSessions(ids) {
+        const { rows } = await client.query<SessionRow>(`SELECT ${SESSION_COLUMNS} FROM work_sessions s WHERE s.id = ANY($1::uuid[]) ORDER BY s.id FOR UPDATE`, [[...ids]]);
+        return rows.map(workSessionFromRow);
+      },
+      async lockDay(day) {
+        const { rows } = await client.query<SessionRow>(`SELECT ${SESSION_COLUMNS} FROM work_sessions s
+          WHERE s.person_principal_id = $1 AND s.store_id = $2 AND s.work_date = $3::date AND s.ended_at IS NOT NULL AND s.deleted_at IS NULL
+            AND work_session_in_force(s.id) ORDER BY s.id FOR UPDATE`, [day.personId, day.storeId, day.workDate]);
+        return rows.map(workSessionFromRow);
+      },
+      async isReplaced(sessionId) {
+        const { rows } = await client.query<{ forced: boolean }>("SELECT work_session_in_force($1::uuid) AS forced", [sessionId]);
+        return rows[0]?.forced === false;
+      },
+      async insertDecision(d) {
+        await client.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids, reason, note, rating, note_public, batch_id, decided_by, decided_at)
+          VALUES($1,$2,$3,$4,$5::date,$6,$7,$8::uuid[],$9,$10,$11,$12,$13,$14,$15)`,
+        [d.id, d.orgId, d.storeId, d.personId, d.workDate, d.scope, d.outcome, [...d.sessionIds], d.reason, d.note, d.rating, d.notePublic, d.batchId, d.decidedBy, d.decidedAt]);
+      },
+      async setStatus(sessionIds, status, decisionId) {
+        await client.query("UPDATE work_sessions SET status = $2, decision_id = $3 WHERE id = ANY($1::uuid[])", [[...sessionIds], status, decisionId]);
+      },
+      event: (e) => insertEvent(client, e),
+      async notify(n) {
+        if (n.kind === "decided") await hooks.onDecided?.(client, { personPrincipalId: n.personId, sessionId: n.sessionId, decisionId: n.decisionId, decision: n.outcome, workDate: n.workDate });
+        else await hooks.onUndone?.(client, { personPrincipalId: n.personId, decisionId: n.withdrawnDecisionId });
+      },
+    }));
+  }
+}
+
+export interface WorkSessionFilter {
+  readonly personId?: string; readonly orgIds?: readonly string[]; readonly storeIds?: readonly string[];
+  readonly status?: "pending" | "approved" | "rejected"; readonly range: { readonly from: IsoDate; readonly to: IsoDate };
+  readonly after?: { readonly workDate: IsoDate; readonly id: string }; readonly limit?: number;
+}
+
+/** Shared WHERE for W-5 lists and totals; every value is bound. */
+function sessionWhere(f: WorkSessionFilter): { readonly sql: string; readonly values: unknown[] } {
+  const values: unknown[] = [f.personId ?? null, f.orgIds ? [...f.orgIds] : null, f.storeIds ? [...f.storeIds] : null, f.status ?? null, f.range.from, f.range.to];
+  const sql = `WITH RECURSIVE tree(id) AS (
+     SELECT id FROM organizations WHERE $2::text[] IS NOT NULL AND id = ANY($2::text[])
+     UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id)
+   SELECT %COLUMNS% FROM work_sessions s
+   WHERE s.deleted_at IS NULL AND work_session_in_force(s.id)
+     AND ($1::text IS NULL OR s.person_principal_id = $1) AND ($2::text[] IS NULL OR s.org_id IN (SELECT id FROM tree))
+     AND ($3::uuid[] IS NULL OR s.store_id = ANY($3::uuid[]))
+     AND ($4::text IS NULL OR (s.status = $4 AND s.ended_at IS NOT NULL))
+     AND s.work_date BETWEEN $5::date AND $6::date`;
+  return { sql, values };
+}
+
+/** W-5 reads. */
+export class PostgresWorkHoursViewStore {
+  readonly #db: PoolOwner;
+  constructor(poolOrConfig: PgPool | PoolConfig) { this.#db = new PoolOwner(poolOrConfig); }
+  async close(): Promise<void> { await this.#db.close(); }
+  organizationAncestors(orgId: string): Promise<readonly string[] | undefined> { return ancestorsOf(this.#db.pool, orgId); }
+
+  async listSessions(f: WorkSessionFilter): Promise<readonly WorkSessionRecord[]> {
+    const { sql, values } = sessionWhere(f);
+    values.push(f.after?.workDate ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit ?? 100, 1), 501));
+    const { rows } = await this.#db.pool.query<SessionRow>(`${sql.replace("%COLUMNS%", SESSION_COLUMNS)}
+      AND ($7::date IS NULL OR (s.work_date, s.id) > ($7::date, $8::uuid))
+      ORDER BY s.work_date, s.id LIMIT $9`, values);
+    return Object.freeze(rows.map(workSessionFromRow));
+  }
+
+  async totals(f: WorkSessionFilter): Promise<{ approvedSeconds: number; pendingSeconds: number; rejectedSeconds: number; open: number }> {
+    const { sql, values } = sessionWhere(f);
+    const { rows } = await this.#db.pool.query<{ approved: string; pending: string; rejected: string; open: number }>(sql.replace("%COLUMNS%",
+      `coalesce(sum(s.duration_seconds) FILTER (WHERE s.status = 'approved'), 0)::text AS approved,
+       coalesce(sum(s.duration_seconds) FILTER (WHERE s.status = 'pending' AND s.ended_at IS NOT NULL), 0)::text AS pending,
+       coalesce(sum(s.duration_seconds) FILTER (WHERE s.status = 'rejected'), 0)::text AS rejected,
+       count(*) FILTER (WHERE s.ended_at IS NULL)::int AS open`), values);
+    const r = rows[0];
+    return { approvedSeconds: Number(r?.approved ?? 0), pendingSeconds: Number(r?.pending ?? 0), rejectedSeconds: Number(r?.rejected ?? 0), open: r?.open ?? 0 };
+  }
+
+  async decisions(ids: readonly string[]): Promise<readonly WorkDecisionRecord[]> {
+    const { rows } = await this.#db.pool.query<DecisionRow>(`SELECT ${DECISION_COLUMNS} FROM work_decisions WHERE id = ANY($1::uuid[])`, [[...ids]]);
+    return Object.freeze(rows.map(decisionFromRow));
   }
 }

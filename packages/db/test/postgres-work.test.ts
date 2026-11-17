@@ -4,11 +4,11 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
-import { PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
-import { PlacementService, SessionService } from "../../work/src/index.js";
+import { PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
+import { DecisionService, HoursViews, PlacementService, SessionService, WorkScope } from "../../work/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
-let pool: pg.Pool, authz: PostgresAuthzStore, placements: PostgresWorkPlacementStore, sessions: PostgresWorkSessionStore;
+let pool: pg.Pool, authz: PostgresAuthzStore, placements: PostgresWorkPlacementStore, sessions: PostgresWorkSessionStore, decisionStore: PostgresWorkDecisionStore, viewStore: PostgresWorkHoursViewStore;
 before(async () => {
   if (!URL) throw Error("DATABASE_URL is required to run the db suite");
   pool = new pg.Pool({ connectionString: URL });
@@ -16,6 +16,8 @@ before(async () => {
   authz = new PostgresAuthzStore(pool);
   placements = new PostgresWorkPlacementStore(pool);
   sessions = new PostgresWorkSessionStore(pool);
+  decisionStore = new PostgresWorkDecisionStore(pool);
+  viewStore = new PostgresWorkHoursViewStore(pool);
 });
 after(async () => pool.end());
 
@@ -56,6 +58,8 @@ function services(now: { value: Date }) {
   return {
     placement: new PlacementService({ store: placements, grants: authz, newId, now: () => now.value }),
     session: new SessionService({ store: sessions, newId, now: () => now.value }),
+    decision: new DecisionService({ store: decisionStore, grants: authz, newId, now: () => now.value }),
+    views: new HoursViews(viewStore, new WorkScope(authz, { managedStores: async () => [] }, (o) => viewStore.organizationAncestors(o)), async () => []),
   };
 }
 const events = async (subject: string) => (await pool.query("SELECT kind, actor_principal_id, detail FROM work_events WHERE subject_id = $1 ORDER BY id", [subject])).rows;
@@ -208,4 +212,89 @@ test("W1_PG recruit placement is idempotent on the card, also under a race", asy
   assert.equal(ids.size, 1);
   assert.deepEqual([a, b].map((x) => x.kind === "placed" && x.created).sort(), [false, true]);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_assignments WHERE recruit_card_id = $1", [card])).rows[0].n, 1);
+});
+
+async function workedDay(w: Awaited<ReturnType<typeof world>>, now: { value: Date }) {
+  const { placement, session } = services(now);
+  await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate: "2026-11-01" });
+  const ids: string[] = [];
+  for (const [start, end] of [["06:00", "08:00"], ["09:00", "10:00"], ["11:00", "11:30"]] as const) {
+    const out = await session.addManual(w.person, { startedAt: `2026-11-18T${start}:00Z`, endedAt: `2026-11-18T${end}:00Z` });
+    ids.push(out.kind === "added" ? out.session.id : "");
+  }
+  return ids;
+}
+
+test("W4_PG decisions are scoped, all or nothing, and recorded once; the day path skips decided sessions", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const { decision } = services(now);
+  const [a, b, c] = await workedDay(w, now);
+  assert.deepEqual(await decision.decideSessions(w.rivalOwner, [a], { decision: "approve" }), { kind: "refused", code: "session_not_found", index: 0 });
+  assert.deepEqual(await decision.decideSessions(w.owner, [a, randomUUID()], { decision: "approve" }), { kind: "refused", code: "session_not_found", index: 1 });
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_decisions WHERE person_principal_id = $1", [w.person])).rows[0].n, 0);
+  assert.equal((await decision.decideSessions(w.owner, [b], { decision: "reject", reason: "break", rating: 2 })).kind, "decided");
+  const day = await decision.decideDays(w.owner, [{ personId: w.person, storeId: w.store, workDate: "2026-11-18" }], { decision: "approve" });
+  assert.equal(day.kind === "decided" && day.changed, 2);
+  const rows = (await pool.query("SELECT id, status, decision_id FROM work_sessions WHERE id = ANY($1::uuid[]) ORDER BY started_at", [[a, b, c]])).rows;
+  assert.deepEqual(rows.map((r) => r.status), ["approved", "rejected", "approved"]);
+  const [total] = await sessions.dayTotals({ personId: w.person, from: "2026-11-18", to: "2026-11-18" });
+  assert.deepEqual([total?.approvedSeconds, total?.rejectedSeconds, total?.pendingSeconds], [9000, 3600, 0]);
+  await assert.rejects(pool.query("UPDATE work_decisions SET reason = 'x'"), /append-only/);
+  await assert.rejects(pool.query("UPDATE work_sessions SET decision_id = $2 WHERE id = $1", [a, rows[1].decision_id]), /does not name this session/);
+  assert.equal((await decision.undo(w.owner, b, "mistake")).kind, "decided");
+  assert.equal((await pool.query("SELECT status FROM work_sessions WHERE id = $1", [b])).rows[0].status, "pending");
+  assert.deepEqual((await events(b)).map((e) => e.kind), ["session.added", "session.rejected", "session.undone"]);
+});
+
+test("W4_PG notification hooks run on the decision's own transaction; a hook failure rolls the decision back", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const [a] = await workedDay(w, now);
+  const seen: string[] = [];
+  let fail = true;
+  const hooked = new PostgresWorkDecisionStore(pool, {
+    async onDecided(client, input) {
+      // The hook sees the uncommitted decision through its own client.
+      const { rows } = await client.query("SELECT status FROM work_sessions WHERE id = $1", [input.sessionId]);
+      seen.push(`decided:${input.decision}:${rows[0].status}:${input.personPrincipalId === w.person}`);
+      if (fail) throw new Error("comms down");
+    },
+    async onUndone(_client, input) { seen.push(`undone:${input.decisionId}`); },
+  });
+  let n = 0;
+  const svc = new DecisionService({ store: hooked, grants: authz, newId: () => randomUUID() + (n++, ""), now: () => now.value });
+  await assert.rejects(svc.decideSessions(w.owner, [a], { decision: "approve" }), /comms down/);
+  assert.equal((await pool.query("SELECT status FROM work_sessions WHERE id = $1", [a])).rows[0].status, "pending");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_decisions WHERE $1 = ANY(session_ids)", [a])).rows[0].n, 0);
+  fail = false;
+  const out = await svc.decideSessions(w.owner, [a], { decision: "approve" });
+  assert.equal(out.kind, "decided");
+  await svc.undo(w.owner, a);
+  assert.deepEqual(seen, ["decided:approved:approved:true", "decided:approved:approved:true", `undone:${out.kind === "decided" ? out.decisions[0]!.id : ""}`]);
+});
+
+test("W5_PG views: the person sees no rating or private note; another company sees nothing; totals split; paging stable", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const { decision, views } = services(now);
+  const [a, b] = await workedDay(w, now);
+  await decision.decideSessions(w.owner, [a], { decision: "approve", note: "private note", rating: 4 });
+  await decision.decideSessions(w.owner, [b], { decision: "reject", reason: "late", note: "public note", notePublic: true });
+  const range = { from: "2026-11-01", to: "2026-11-30" };
+  const mine = await views.mine(w.person, range, null);
+  assert.equal(mine.rows.length, 3);
+  assert.equal(JSON.stringify(mine).includes("private note"), false);
+  assert.equal(JSON.stringify(mine).includes("rating"), false);
+  assert.equal(mine.rows.find((r) => r.session.id === b)?.decision?.note, "public note");
+  assert.deepEqual(mine.totals, { approvedSeconds: 7200, pendingSeconds: 1800, rejectedSeconds: 3600, open: 0 });
+  const company = await views.company(w.owner, w.company, range);
+  assert.equal("rows" in company && company.rows.find((r) => r.session.id === a)?.decision?.rating, 4);
+  assert.deepEqual(await views.company(w.rivalOwner, w.company, range), { kind: "refused", code: "forbidden" });
+  const group = await views.company(w.staff, w.group, range, { status: "rejected" });
+  assert.deepEqual("rows" in group && group.rows.map((r) => r.session.id), [b]);
+  const first = await viewStore.listSessions({ personId: w.person, range, limit: 2 });
+  const rest = await viewStore.listSessions({ personId: w.person, range, limit: 2, after: { workDate: first[1]!.workDate, id: first[1]!.id } });
+  assert.deepEqual([...first, ...rest].map((s) => s.id).sort(), [a, b, (await viewStore.listSessions({ personId: w.person, range, limit: 10 })).map((s) => s.id).find((id) => id !== a && id !== b)].sort());
+  assert.equal(rest.length, 1);
 });

@@ -36,6 +36,8 @@ export interface WorkSession {
   readonly flags: readonly SessionFlag[];
   readonly note: string | null;
   readonly correctsSessionId: string | null;
+  /** The latest decision on this session (W-4); null while never decided. */
+  readonly decisionId: string | null;
   readonly deletedAt: string | null;
   readonly createdBy: string | null;
   readonly createdAt: string;

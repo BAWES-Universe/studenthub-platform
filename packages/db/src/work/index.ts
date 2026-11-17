@@ -1,5 +1,6 @@
-export { PostgresWorkPlacementStore, PostgresWorkSessionStore, workSessionFromRow } from "../postgres-work-store.js";
+export { PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore, workSessionFromRow } from "../postgres-work-store.js";
 export type {
-  NewWorkSessionRecord, WorkAssignmentRecord, WorkAssignmentRequestRecord, WorkDayTotal, WorkEventRecord, WorkLocation,
+  WorkDecisionHooks, WorkDecisionNotice,
+  NewWorkSessionRecord, WorkAssignmentRecord, WorkDecisionRecord, WorkDecisionTransaction, WorkSessionFilter, WorkAssignmentRequestRecord, WorkDayTotal, WorkEventRecord, WorkLocation,
   WorkPlacementTransaction, WorkSessionRecord, WorkSessionTransaction,
 } from "../postgres-work-store.js";
