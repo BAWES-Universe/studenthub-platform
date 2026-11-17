@@ -121,12 +121,15 @@ export class PostgresWorkImportStore {
       const digest = workImportDigest(row);
       const { rows: held } = await client.query<{ legacy_digest: string }>("SELECT legacy_digest FROM work_decisions WHERE legacy_ref = $1", [row.legacyRef]);
       if (held[0]) { this.#same(tally, row.legacyRef, held[0].legacy_digest, digest); return; }
+      // The decision's company must own its store, or a day decision could name another company's sessions.
+      const { rows: owned } = await client.query("SELECT 1 FROM organization_stores WHERE id = $1::uuid AND org_id = $2", [row.storeId, row.orgId]);
+      if (owned.length === 0) { tally.refused.push({ legacyRef: row.legacyRef, code: "invalid" }); return; }
       const { rows: sessions } = row.scope === "session"
         // The session must belong to the decision's own person, company, store and day, or the relink could hand it to someone else.
         ? await client.query<{ id: string }>(`SELECT id FROM work_sessions WHERE legacy_ref = $1 AND person_principal_id = $2 AND org_id = $3 AND store_id = $4
             AND work_date = $5::date`, [row.sessionLegacyRef, row.personId, row.orgId, row.storeId, row.workDate])
-        : await client.query<{ id: string }>(`SELECT id FROM work_sessions WHERE source = 'import' AND person_principal_id = $1 AND store_id = $2 AND work_date = $3::date
-            AND deleted_at IS NULL ORDER BY started_at, id`, [row.personId, row.storeId, row.workDate]);
+        : await client.query<{ id: string }>(`SELECT id FROM work_sessions WHERE source = 'import' AND person_principal_id = $1 AND org_id = $4 AND store_id = $2
+            AND work_date = $3::date AND deleted_at IS NULL ORDER BY started_at, id`, [row.personId, row.storeId, row.workDate, row.orgId]);
       if (row.scope === "session" && sessions.length === 0) { tally.refused.push({ legacyRef: row.legacyRef, code: "no_session" }); return; }
       await guarded(client, () => client.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids, reason, note, rating,
         note_public, decided_by, decided_at, legacy_ref, legacy_digest, legacy_decided_by)
@@ -138,7 +141,9 @@ export class PostgresWorkImportStore {
       await client.query(`WITH pick AS (
           SELECT DISTINCT ON (s.id) s.id AS session_id, d.id AS decision_id FROM work_sessions s
           JOIN work_decisions d ON s.id = ANY(d.session_ids) AND d.outcome = s.status AND d.legacy_ref IS NOT NULL
-          WHERE s.source = 'import' AND s.status <> 'pending' ORDER BY s.id, d.decided_at DESC, d.id DESC)
+          -- Only sessions in force: a replaced original keeps its history and is never relinked.
+          WHERE s.source = 'import' AND s.status <> 'pending' AND s.deleted_at IS NULL AND work_session_in_force(s.id)
+          ORDER BY s.id, d.decided_at DESC, d.id DESC)
         UPDATE work_sessions s SET decision_id = p.decision_id FROM pick p WHERE s.id = p.session_id AND s.decision_id IS DISTINCT FROM p.decision_id
           AND (s.decision_id IS NULL OR EXISTS (SELECT 1 FROM work_decisions cur WHERE cur.id = s.decision_id AND cur.legacy_ref IS NOT NULL))`);
     });

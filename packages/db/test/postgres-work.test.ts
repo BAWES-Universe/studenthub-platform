@@ -180,11 +180,13 @@ test("W3_PG a clock-in racing a placement end date waits for it and is refused, 
     await ender.query("UPDATE work_assignments SET end_date = '2026-11-18' WHERE id = $1", [assignmentId]);
     const start = session.start(w.person, HERE);
     // Wait until the start is actually blocked on the assignment row, then commit the end date.
-    for (let i = 0; i < 100; i++) {
+    let blocked = false;
+    for (let i = 0; i < 100 && !blocked; i++) {
       const { rows } = await pool.query("SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()");
-      if (rows[0].n > 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      blocked = rows[0].n > 0;
+      if (!blocked) await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    assert.ok(blocked, "the clock-in never waited on the placement row");
     await ender.query("COMMIT");
     assert.deepEqual(await start, { kind: "refused", code: "not_assigned" });
   } finally {
@@ -488,6 +490,12 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
     const refusedStray = await imports.importDecisions([{ ...stray, ...wrong }]);
     assert.deepEqual(refusedStray.refused, [{ legacyRef: stray.legacyRef, code: "no_session" }], JSON.stringify(wrong));
   }
+  // A company that doesn't own the store can't decide its days or sessions; nothing is written.
+  for (const scope of [day, stray]) {
+    const foreign = await imports.importDecisions([{ ...scope, orgId: w.rival }]);
+    assert.deepEqual(foreign.refused, [{ legacyRef: scope.legacyRef, code: "invalid" }]);
+  }
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_decisions WHERE org_id = $1", [w.rival])).rows[0].n, 0);
   const decided = await imports.importDecisions([day, reject]);
   assert.deepEqual([decided.inserted, decided.refused], [2, []]);
   const linked = (await pool.query(`SELECT s.legacy_ref, d.legacy_ref AS decision FROM work_sessions s JOIN work_decisions d ON d.id = s.decision_id
@@ -504,6 +512,14 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   await pool.query("UPDATE work_sessions SET decision_id = $2 WHERE id = $1", [sessionOne, native]);
   await imports.importDecisions([day, reject]);
   assert.equal((await pool.query("SELECT decision_id FROM work_sessions WHERE id = $1", [sessionOne])).rows[0].decision_id, native);
+  // A replaced imported session is left alone on re-import, even when its correction overlaps it.
+  const sessionTwo = (await pool.query("SELECT id FROM work_sessions WHERE legacy_ref = $1", [two.legacyRef])).rows[0].id;
+  const fixed = await appealService({ value: new Date("2026-11-19T06:00:00Z") }).correct(w.staff, sessionTwo, { startedAt: "2026-11-10T10:00:00Z", endedAt: "2026-11-10T11:30:00Z", reason: "store log" });
+  assert.equal(fixed.kind, "entered", JSON.stringify(fixed));
+  // A later legacy rejection of the replaced session imports, but the replaced row keeps its link and the batch isn't aborted.
+  const later = toDecision(feedback("r2", 2, "2", "2026-11-10 23:00:00"));
+  assert.deepEqual((await imports.importDecisions([day, reject, later])).inserted, 1);
+  assert.equal((await pool.query("SELECT d.legacy_ref FROM work_sessions s JOIN work_decisions d ON d.id = s.decision_id WHERE s.id = $1", [sessionTwo])).rows[0].legacy_ref, reject.legacyRef);
   await assert.rejects(pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids)
     VALUES($1,$2,$3,$4,'2026-11-10','day','approved','{}')`, [randomUUID(), w.company, w.store, w.person]), /work_decisions_actor/);
 });
