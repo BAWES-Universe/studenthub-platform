@@ -21,20 +21,25 @@ Lane in the full-migration plan agreed on the desk (PR #393, 2026-11-17): verifi
 
 | Date | This lane |
 |---|---|
-| 1 Dec | matrix live with lanes recording evidence; importer dry runs for M-4 and M-1; first importer rehearsal on staging (needs the refresh below); mobile inventory confirmed against a store build |
+| 1 Dec | matrix live with lanes recording evidence; daily refresh running; importer dry runs for M-4 and M-1; first importer rehearsal on staging; mobile inventory confirmed against a store build |
 | 10 Dec | every import domain built and dry-run; compatibility layer for all `serve` routes on main |
 | 17 Dec | matrix `release` passes: every gate closed with evidence or a recorded waiver; rollback rehearsed |
 | 31 Dec to 1 Jan | final sync (M-7), K-6 go/no-go with Khalid, K-7 switch |
 
-## Daily read-only legacy refresh on staging (designed, not enabled)
+## Daily read-only legacy refresh on staging
 
-Needed by the importer rehearsal and the pay shadow month. Not enabled until Khalid authorizes it; the matrix row `REFRESH` stays open until then.
+Approved by Khalid on 2026-11-17 (decision record "Added 2026-11-17"): read-only against legacy, no emails, SMS, push or webhooks from staging, real personal data never leaves staging, no production credentials in card workers, off the card-run path. It feeds the importer rehearsal and the pay lane's December shadow month, so it must run daily by 1 Dec.
 
-- Source: a read-only database user on a legacy replica or nightly dump. No legacy write path, no legacy API calls.
-- Target: a staging-only `legacy_mirror` schema, replaced whole each night. Production has no such schema.
-- Consumers read the mirror only: the importer rehearsal (M-6, M-7) and the payroll replay and shadow. No worker that sends email, SMS or push runs against imported rows; the outbox stays disabled on that staging stack.
-- No production credentials in staging workers; the read-only credential lives only in the refresh job.
-- Each run records row counts per table and a duration (X-2 job runs), and a failed or missed run raises one alert.
+Job: `tools/legacy-import/src/refresh-cli.ts` (`node dist/tools/legacy-import/src/refresh-cli.js`), run nightly by cron on the staging host, installed through a Hermes card. It:
+
+- copies the legacy MySQL database into a staging database that must be named `legacy_mirror`, on a different host from the source, with one consistent snapshot (`mysqldump --single-transaction`), then drops mirror tables legacy no longer has;
+- refuses to run unless the source account is read-only (`SHOW GRANTS`: any write privilege, grant option or unreadable role grant stops it before anything is copied);
+- never copies bearer-token tables (`*_token`, `session`, `queue`);
+- passes passwords only through each child's `MYSQL_PWD`, discards mysql's stderr, and reports a fixed code per step, so no value, host or credential reaches a log;
+- writes `last-run.json` with table names, row counts, the row total and timings only, and prints one line in the same terms;
+- takes an exclusive lock, and takes over a lock left by a crash after six hours.
+
+Configuration (root-only env file on the staging host): `LEGACY_REFRESH_SOURCE_URL` (read-only legacy account), `LEGACY_REFRESH_TARGET_URL` (mirror account, `legacy_mirror` database), optional `LEGACY_REFRESH_REPORT` and `LEGACY_REFRESH_LOCK`. Consumers read the mirror only after checking `last-run.json` says `ok`. The matrix row `REFRESH` closes with the first scheduled run's time and counts.
 
 ## Mobile inventory
 
