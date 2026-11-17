@@ -8,23 +8,23 @@
 ## Paths held by this lease
 
 New, owned outright:
-- `packages/recruit/**` (pure domain: statuses, state machines, legacy maps, guards, projections)
-- `packages/db/src/recruit/**`, `packages/db/test/recruit-*.test.ts`
+- `packages/recruit/**` (pure domain: statuses, state machines, legacy maps, guards, projections; no package manifest, compiled by the root build and imported by relative path, like `packages/notifications`)
+- `packages/db/src/recruit/**`, `packages/db/test/postgres-recruit-*.test.ts` (the db runner discovers `postgres-*` only)
 - `packages/db/migrations/0450_*.sql` to `0499_*.sql`
 - `apps/gateway/src/recruit/**`, `apps/gateway/test/recruit-*.test.ts`, `apps/gateway/test/recruit-*-mutations.mjs`
 - `apps/gateway/src/routes/recruit.ts`, `apps/gateway/src/wiring/recruit.ts`, `apps/gateway/src/contributions/recruit.ts`
 - `docs/lanes/recruit/**`, `docs/parity/recruit/**`
 
 Shared seams, additive lines only (one contiguous block each, no other line changed):
-- `packages/db/package.json`: one `./recruit` export
-- `apps/gateway/test/db-subpaths.test.ts`: the `recruit` area and its expected exports
+- `packages/db/package.json`: one `./recruit` export; `packages/db/src/index.ts`: one `export * from "./recruit/index.js"` line (the root golden equals the union of the areas)
+- `apps/gateway/test/db-subpaths.test.ts`: the `recruit` area, its expected exports and the area count
+- `apps/gateway/test/wiring-runtime.test.ts`: the recruit application keys and the pool count (the recruit area uses one shared pool, so the count moves by one for the whole lane)
 - `apps/gateway/src/routes/index.ts`: one import line and the recruit route entries
 - `apps/gateway/test/routes-order.test.ts`: the recruit route names and the new length
 - `apps/gateway/src/routes/context.ts`: one optional `recruit` service field
 - `apps/gateway/src/login-runtime.ts`: one `wireRecruit` call and its close
 - `apps/gateway/src/contributions/index.ts`: `RECRUIT_CONTRIBUTION` in the merge list
 - `apps/gateway/src/ui/profile-copy.ts`: recruit navigation label keys only
-- root `package.json`: one `npm run build -w @studenthub/recruit` step in `build` and `typecheck`; `package-lock.json`: the workspace entry
 
 Read only: `packages/search/**` (Typesense adapter), `packages/notifications/**` and `packages/db/src/notifications/**` (outbox), `packages/organizations/**`, `packages/pay-contracts/**`, `tools/legacy-import/**`.
 
