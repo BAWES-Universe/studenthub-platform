@@ -50,6 +50,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly contacts?: CompanyContactsPorts;
   readonly storeManager?: StoreManagerPorts;
   readonly abuse?: AbuseGatePorts;
+  readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
 };
 
 export interface GatewayRouteContext {

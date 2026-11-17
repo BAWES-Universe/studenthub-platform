@@ -8,3 +8,4 @@ export { PostgresAccessContactsStore } from "./postgres-access-contacts-store.js
 export { PostgresAccessStoreManagersStore } from "./postgres-access-store-managers-store.js";
 export { PostgresAccessPausesStore } from "./postgres-access-pauses-store.js";
 export { PostgresAccessAbuseStore } from "./postgres-access-abuse-store.js";
+export { PostgresAccessStaffViewsStore } from "./postgres-access-staff-views-store.js";

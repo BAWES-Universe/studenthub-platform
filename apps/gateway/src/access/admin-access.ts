@@ -50,6 +50,8 @@ export interface AccessPorts {
   readonly operatorOrgIds?: readonly string[];
   /** A6: pause and resume a person's access. Writes absent without the signing key. */
   readonly pauses?: { readonly reads: Pick<AccountPauseStore, "pause">; readonly writes?: AccountPauseService };
+  /** A9: when StudentHub staff viewed the signed-in person's account, for their own Access page. */
+  readonly views?: { viewedOn(principalId: string): Promise<readonly string[]> };
 }
 
 export type AccessPageWriter = (status: number, title: string, body: string) => void;
@@ -173,6 +175,8 @@ export interface PersonPageModel {
   readonly pause?: AccountPause | null;
   /** A6: whether this caller may pause or resume this person. */
   readonly pausable?: boolean;
+  /** A9: offer "View as this person". */
+  readonly viewAs?: boolean;
 }
 
 const PAUSE_REFUSAL_TEXT: Readonly<Record<PauseRefusal, string>> = Object.freeze({
@@ -197,7 +201,8 @@ function renderPauseSection(model: PersonPageModel): string {
   const status = pause
     ? `<p><strong>Access paused</strong> on ${e(dateText(pause.pausedAt))} by ${e(personName(pause.pausedBy))}: ${e(pause.reason)}</p><p>${pause.grants.length + pause.storeGrants.length} role${pause.grants.length + pause.storeGrants.length === 1 ? "" : "s"} will be given back on resume, except at a deleted company or a removed store.</p>`
     : `<p>Pausing takes every role away, signs ${e(personName(person))} out everywhere on their next request, and refuses sign-in until access is resumed. Their profile is hidden from companies while paused.</p>`;
-  return `<section><h2>Account</h2>${status}${form}</section>`;
+  const view = model.viewAs ? `<p><a class="text-link" href="${e(`/admin/access/people/${encodeURIComponent(person.principalId)}/view`)}">View as ${e(personName(person))}, read-only</a></p>` : "";
+  return `<section><h2>Account</h2>${status}${form}${view}</section>`;
 }
 
 const reasonField = (id: string): string =>
@@ -270,13 +275,13 @@ export function renderPauseRefusal(reason: PauseRefusal | "invalid_request" | "u
   return layout(`<div class="error-page"><h1>Nothing was changed.</h1><p>${escapeHtml(text)}</p><a class="button primary" href="${escapeHtml(back)}">Back</a></div>`, "access");
 }
 
-export function renderOwnAccess(rows: readonly OwnAccessRow[]): string {
+export function renderOwnAccess(rows: readonly OwnAccessRow[], extra = ""): string {
   const e = escapeHtml;
   const list = rows.length === 0
     ? `<p class="empty-contexts" role="status">You hold no staff or company roles. Your profile is yours whatever roles you hold.</p>`
     : `<div class="directory-table"><table><caption>Roles you hold</caption><thead><tr><th>Organization</th><th>Role</th><th>Scope</th></tr></thead><tbody>${rows.map((row) =>
       `<tr><th scope="row">${e(row.orgName)}</th><td>${e(ROLE_NAMES[row.role] ?? row.role)}</td><td>${e(SCOPE_NAMES[row.scope] ?? row.scope)}</td></tr>`).join("")}</tbody></table></div>`;
-  return layout(`<div class="profile-heading"><h1>Your access<span class="accent">.</span></h1><span class="badge">Read-only</span></div><p>These are the roles you hold in StudentHub. An administrator or your company’s owner changes them.</p>${list}`, "own");
+  return layout(`<div class="profile-heading"><h1>Your access<span class="accent">.</span></h1><span class="badge">Read-only</span></div><p>These are the roles you hold in StudentHub. An administrator or your company’s owner changes them.</p>${list}${extra}`, "own");
 }
 
 // --- Request handling ---------------------------------------------------------
@@ -311,7 +316,8 @@ export async function handleAccess(
 
   if (isOwn) {
     if (req.method !== "GET") return false;
-    write(200, "Your access", renderOwnAccess(await ports.reads.ownGrants(caller)));
+    const [own, viewed] = await Promise.all([ports.reads.ownGrants(caller), ports.views ? ports.views.viewedOn(caller) : Promise.resolve([])]);
+    write(200, "Your access", renderOwnAccess(own, viewed.length ? `<section><h2>Staff views</h2><ul>${viewed.map((date) => `<li>StudentHub staff viewed your account on ${escapeHtml(date.slice(0, 10))}</li>`).join("")}</ul></section>` : ""));
     return true;
   }
 
@@ -362,6 +368,7 @@ export async function handleAccess(
         pause: pause ?? null,
         pausable: ports.pauses.writes !== undefined && mayPauseAccount(caller, principalId, callerGrants,
           pause ? pause.grants : grants, ports.operatorOrgIds),
+        viewAs: ports.views !== undefined && mayPauseAccount(caller, principalId, callerGrants, pause ? pause.grants : grants, ports.operatorOrgIds),
       } : {}),
     }));
     return true;

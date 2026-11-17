@@ -4,7 +4,7 @@ import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents
 import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute, peopleDirectoryRoute, civilIdReviewRoute } from "./profile.js";
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
-import { abuseGateRoute, accessRoute, companyContactsRoute, companyTeamRoute, storeManagerRoute } from "./access.js";
+import { abuseGateRoute, accessRoute, companyContactsRoute, companyTeamRoute, staffViewRoute, storeManagerRoute } from "./access.js";
 import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { handleDocumentsActions } from "../documents-actions-http.js";
@@ -71,6 +71,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   peopleDirectoryRoute,
   civilIdReviewRoute,
   accessRoute,
+  staffViewRoute,
   companyTeamRoute,
   companyContactsRoute,
   storeManagerRoute,

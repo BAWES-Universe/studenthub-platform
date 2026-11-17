@@ -4,6 +4,8 @@ import { handleCompanyTeam } from "../access/company-team.js";
 import { handleCompanyContacts } from "../access/company-contacts.js";
 import { handleStoreManager } from "../access/store-manager.js";
 import { handleAbuseGate } from "../access/abuse-gate.js";
+import { handleStaffView } from "../access/staff-view.js";
+import { profileDocument } from "../web-ui.js";
 
 /** Access lane: /admin/access pages and the person's own /profile/access list. */
 export const accessRoute: GatewayRoute = { name: "access", handle: (ctx) =>
@@ -29,3 +31,18 @@ export const storeManagerRoute: GatewayRoute = { name: "store-manager", handle: 
 export const abuseGateRoute: GatewayRoute = { name: "abuse-gate", handle: (ctx) =>
   handleAbuseGate(ctx.request, ctx.response, ctx.login?.abuse, ctx.login?.web?.origin, /text\/html/.test(String(ctx.request.headers.accept ?? "")),
     (status, title, body, headers) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body, undefined, true), headers ?? {}, true)) };
+
+/** Access lane A9: staff view a person's account read-only for 15 minutes. */
+export const staffViewRoute: GatewayRoute = { name: "staff-view", handle: (ctx) => {
+  const login = ctx.login, ports = login?.staffView, profiles = login?.web?.profiles;
+  return handleStaffView(ctx.request, ctx.response, ports && profiles ? {
+    ...ports,
+    render: async (targetPrincipalId) => {
+      const own = await profiles.readOwn({ requesterPrincipalId: targetPrincipalId, targetPersonId: targetPrincipalId });
+      if (own.kind !== "found") return undefined;
+      const page = await profileDocument({ status: 200, body: own.profile as never }, login as never);
+      return page.status === 200 ? page.html : undefined;
+    },
+  } : ports, ctx.login?.web?.origin,
+  (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body, undefined, true), { "cache-control": "no-store" }, true));
+} };
