@@ -68,6 +68,8 @@ const GRANTS: Record<string, WorkGrant[]> = {
   rivalOwner: [{ orgId: "rival", role: "org-owner", scope: "self" }],
   candidate: [{ orgId: "company", role: "candidate", scope: "self" }],
   finance: [{ orgId: "company", role: "finance", scope: "self" }],
+  recruiter: [{ orgId: "root", role: "recruiter", scope: "subtree" }],
+  companyRecruiter: [{ orgId: "company", role: "recruiter", scope: "self" }],
 };
 let ids = 0;
 function service(store = new MemoryPlacements()) {
@@ -235,7 +237,10 @@ test("W1_RECRUIT the recruit stage places once; a repeat returns the same placem
   const card = "11111111-2222-4333-8444-555555555555", request = "66666666-7777-4888-8999-aaaaaaaaaaaa";
   const input = { recruitCardId: card, requestId: request, personId: "person", storeId: STORE, startDate: null, endDate: null };
   assert.deepEqual(await svc.placeFromRecruit("owner", input), { kind: "refused", code: "forbidden" });
-  const first = await svc.placeFromRecruit("staff", input);
+  assert.deepEqual(await svc.placeFromRecruit("companyRecruiter", input), { kind: "refused", code: "forbidden" });
+  // A StudentHub recruiter may place through the recruit stage, but not directly.
+  assert.deepEqual(await svc.place("recruiter", { personId: "person", storeId: STORE }), { kind: "refused", code: "forbidden" });
+  const first = await svc.placeFromRecruit("recruiter", input);
   assert.equal(first.kind === "placed" && first.created, true);
   const again = await svc.placeFromRecruit("staff", input);
   assert.deepEqual(again, { kind: "placed", assignmentId: first.kind === "placed" ? first.assignmentId : "", created: false });

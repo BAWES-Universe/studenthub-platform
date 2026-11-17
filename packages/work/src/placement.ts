@@ -12,7 +12,7 @@
 // such gate and the 10-27 rule is "no regressions" (W-1 draft, rule 6).
 
 import { matchContracts, RATE_RESOLUTION_VERSION, RateResolutionError, type PayContract } from "@studenthub/pay-contracts";
-import { cleanText, sqlState, isIsoDate, isPrincipalId, isUuid, kuwaitDate, isCompanyFor, isStaffFor, OPERATOR_ORG_IDS, type IsoDate, type WorkGrant } from "./common.js";
+import { cleanText, sqlState, isOperatorRecruiter, isIsoDate, isPrincipalId, isUuid, kuwaitDate, isCompanyFor, isStaffFor, OPERATOR_ORG_IDS, type IsoDate, type WorkGrant } from "./common.js";
 
 export const PLACEMENT_WARNINGS = ["civil_id_missing", "civil_id_expires_before_start", "no_pay_contract"] as const;
 export type PlacementWarning = typeof PLACEMENT_WARNINGS[number];
@@ -256,7 +256,10 @@ export class PlacementService {
     };
     const store = await this.#store.store(storeId);
     if (!store) return { kind: "refused", code: "store_not_found" };
-    if (OPERATOR_ORG_IDS.includes(store.orgId) || !isStaffFor(await this.#grants.listGrantsForPrincipal(actorId), store.orgId, store.ancestors)) return { kind: "refused", code: "forbidden" };
+    // The recruit lane has already checked the actor is the request's assigned recruiter or a lead;
+    // StudentHub recruiters (operator org, subtree) may place here, but not through `place`.
+    const grants = await this.#grants.listGrantsForPrincipal(actorId);
+    if (OPERATOR_ORG_IDS.includes(store.orgId) || !(isStaffFor(grants, store.orgId, store.ancestors) || isOperatorRecruiter(grants))) return { kind: "refused", code: "forbidden" };
     const earlier = await replay();
     if (earlier) return earlier;
     const origin: Origin = { source: "recruit", requestId: null, recruitCardId: cardId, recruitRequestId: input.requestId?.toLowerCase() ?? null };

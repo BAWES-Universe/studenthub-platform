@@ -73,6 +73,11 @@ export function isOperatorStaff(grants: readonly WorkGrant[]): boolean {
   return grants.some((g) => STAFF_ROLES.includes(g.role) && OPERATOR_ORG_IDS.includes(g.orgId) && g.scope === "subtree");
 }
 
+/** A StudentHub recruiter (recruiter role on the operator organization, subtree): may place through the recruit stage only. */
+export function isOperatorRecruiter(grants: readonly WorkGrant[]): boolean {
+  return grants.some((g) => g.role === "recruiter" && OPERATOR_ORG_IDS.includes(g.orgId) && g.scope === "subtree");
+}
+
 export function isCompanyFor(grants: readonly WorkGrant[], orgId: string, ancestors: readonly string[]): boolean {
   return grantsCover(grants, COMPANY_ROLES, orgId, ancestors);
 }
