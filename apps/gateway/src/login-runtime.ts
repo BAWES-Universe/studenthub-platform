@@ -15,7 +15,7 @@ import {
 
 import { createLoginApplication } from "./login-application.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
-import { wireAccess } from "./wiring/access.js";
+import { wireAccess, wireAccessLane } from "./wiring/access.js";
 import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
@@ -206,6 +206,7 @@ export function createRuntimeLoginFromEnv(
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
   const ops = wireOps(settings, access.services, organizationArea.services);
+  const accessLane = wireAccessLane(settings, access.services);
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -244,6 +245,7 @@ export function createRuntimeLoginFromEnv(
       ...ops.services,
       ...profile.services.application,
       ...payContractArea.services,
+      ...accessLane.services.application,
       web: {
         origin: new URL(callbackUrl).origin,
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
@@ -256,7 +258,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: runtimeApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),notificationStore.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),accessLane.close(),notificationStore.close()]);
     },
   };
 }
