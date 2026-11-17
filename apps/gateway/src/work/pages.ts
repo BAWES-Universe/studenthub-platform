@@ -229,13 +229,9 @@ async function dayPages(services: WorkHttpServices, person: string, date: string
 }
 
 export async function renderNewAppeal(services: WorkHttpServices, names: StoreNames | undefined, person: string, sessionId: string, date: string, error: string | null): Promise<string | undefined> {
-  // Follows the day to its end: it stops at the session, and a day holds only the person's own non-overlapping hours.
-  let found: HoursPage<PersonDecisionView>["rows"][number] | undefined, after: HoursCursor | null = null;
-  do {
-    const page = await dayPages(services, person, date, after, HISTORY_PAGE_CAP);
-    found = page.rows.find((r) => r.session.id === sessionId && r.session.endedAt !== null && r.session.status === "rejected");
-    after = page.next;
-  } while (!found && after);
+  // One indexed lookup of the person's own session on that day, wherever it falls in the day's pages.
+  const row = await services.views.mineSession(person, date, sessionId);
+  const found = row && row.session.endedAt !== null && row.session.status === "rejected" ? row : undefined;
   if (!found) return undefined;
   const where = await storeName(names, found.session.storeId);
   return shell("Appeal hours", "appeals", `${error ? notice("error", error) : ""}<section class="p-card"><h2>${esc(sessionTime(found.session))}</h2><p>${esc(where)} · ${esc(STATUS_LABEL[found.session.status] ?? found.session.status)}</p>

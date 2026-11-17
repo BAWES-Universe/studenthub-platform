@@ -505,6 +505,7 @@ export class PostgresWorkDecisionStore {
 
 export interface WorkSessionFilter {
   readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeIds?: readonly string[];
+  readonly sessionIds?: readonly string[];
   readonly status?: "pending" | "approved" | "rejected"; readonly range: { readonly from: IsoDate; readonly to: IsoDate };
   readonly after?: { readonly workDate: IsoDate; readonly id: string }; readonly limit?: number;
 }
@@ -512,7 +513,7 @@ export interface WorkSessionFilter {
 /** Shared WHERE for W-5 lists and totals; every value is bound. */
 function sessionWhere(f: WorkSessionFilter): { readonly sql: string; readonly values: unknown[] } {
   const values: unknown[] = [f.personId ?? null, f.orgIds ? [...f.orgIds] : null, f.storeIds ? [...f.storeIds] : null, f.status ?? null, f.range.from, f.range.to,
-    f.includeSubtree === true];
+    f.includeSubtree === true, f.sessionIds ? [...f.sessionIds] : null];
   const sql = `WITH RECURSIVE tree(id) AS (
      SELECT id FROM organizations WHERE $2::text[] IS NOT NULL AND id = ANY($2::text[])
      UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $7::boolean)
@@ -521,7 +522,7 @@ function sessionWhere(f: WorkSessionFilter): { readonly sql: string; readonly va
      AND ($1::text IS NULL OR s.person_principal_id = $1) AND ($2::text[] IS NULL OR s.org_id IN (SELECT id FROM tree))
      AND ($3::uuid[] IS NULL OR s.store_id = ANY($3::uuid[]))
      AND ($4::text IS NULL OR (s.status = $4 AND s.ended_at IS NOT NULL))
-     AND s.work_date BETWEEN $5::date AND $6::date`;
+     AND s.work_date BETWEEN $5::date AND $6::date AND ($8::uuid[] IS NULL OR s.id = ANY($8::uuid[]))`;
   return { sql, values };
 }
 
@@ -565,8 +566,8 @@ export class PostgresWorkHoursViewStore {
     const { sql, values } = sessionWhere(f);
     values.push(f.after?.workDate ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit ?? 100, 1), 501));
     const { rows } = await this.#db.pool.query<SessionRow>(`${sql.replace("%COLUMNS%", SESSION_COLUMNS)}
-      AND ($8::date IS NULL OR (s.work_date, s.id) > ($8::date, $9::uuid))
-      ORDER BY s.work_date, s.id LIMIT $10`, values);
+      AND ($9::date IS NULL OR (s.work_date, s.id) > ($9::date, $10::uuid))
+      ORDER BY s.work_date, s.id LIMIT $11`, values);
     return Object.freeze(rows.map(workSessionFromRow));
   }
 

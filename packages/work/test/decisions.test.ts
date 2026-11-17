@@ -53,7 +53,7 @@ class Memory implements DecisionStore, HoursViewStore {
   }
   #match(f: Omit<SessionFilter, "after" | "limit">) {
     return this.sessions.filter((s) => s.deletedAt === null && !this.replaced.has(s.id) && (!f.personId || s.personId === f.personId)
-      && (!f.orgIds || f.orgIds.some((o) => o === s.orgId || (f.includeSubtree === true && ANCESTORS[s.orgId]?.includes(o)))) && (!f.storeIds || f.storeIds.includes(s.storeId))
+      && (!f.orgIds || f.orgIds.some((o) => o === s.orgId || (f.includeSubtree === true && ANCESTORS[s.orgId]?.includes(o)))) && (!f.storeIds || f.storeIds.includes(s.storeId)) && (!f.sessionIds || f.sessionIds.includes(s.id))
       && (!f.status || (s.status === f.status && s.endedAt !== null)) && s.workDate >= f.range.from && s.workDate <= f.range.to)
       .sort((a, b) => a.workDate.localeCompare(b.workDate) || a.id.localeCompare(b.id));
   }
@@ -241,6 +241,9 @@ test("W5_VIEWS each viewer sees only their scope; totals split by status across 
   assert.deepEqual(page.rows.map((r) => r.session.id).includes(other.id), false);
   assert.deepEqual(page.rows.find((r) => r.session.id === mine.id)?.decision, { outcome: "approved", reason: null, note: null, decidedAt: "2026-11-19T06:00:00.000Z" });
   assert.deepEqual(page.totals, { approvedSeconds: 7200, pendingSeconds: 7200 * 2, rejectedSeconds: 0, open: 1 });
+  // A single-session lookup reads only the person's own session on that day.
+  assert.deepEqual((await views.mineSession("person", mine.workDate, mine.id.toUpperCase()))?.decision?.outcome, "approved");
+  for (const [date, id] of [[mine.workDate, other.id], ["2026-11-01", mine.id], ["nope", mine.id], [mine.workDate, "x"]] as const) assert.equal(await views.mineSession("person", date, id), undefined, `${date} ${id}`);
   const company = await views.company("owner", "company", range);
   assert.equal("rows" in company && company.rows.length, 5 - 1);
   assert.equal("rows" in company && company.rows.find((r) => r.session.id === mine.id)?.decision?.rating, 3);

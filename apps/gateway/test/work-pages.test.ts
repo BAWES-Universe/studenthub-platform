@@ -30,7 +30,11 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
     personFor: async (id: string) => id === SESSION ? "person" : undefined,
     placements: { mine: async (...args: unknown[]) => { calls.push(["placementsMine", ...args]); return world.placements ?? []; } },
     sessions: { today: async () => ({ open: world.open ?? null, assignment: world.assignment ?? null }), start: record("start"), stop: record("stop"), discard: record("discard"), addManual: record("addManual") },
-    views: { mine: async (...args: unknown[]) => {
+    views: { mineSession: async (...args: unknown[]) => {
+      calls.push(["mineSession", ...args]);
+      const all = (world.pages ? world.pages.flat() : rows) as { session: { id: string; workDate: string } }[];
+      return all.find((r) => r.session.id === args[2] && r.session.workDate === args[1]);
+    }, mine: async (...args: unknown[]) => {
       calls.push(["mine", ...args]);
       if (!world.pages) return { rows, totals, next: null };
       const at = args[2] === null ? 0 : Number((args[2] as { id: string }).id.slice(-12));
@@ -178,8 +182,11 @@ test("WORK_PAGES a day past the page cap continues on a later screen, and a sess
   const rest = await request(`/work/history/2026-11-18?after=${link![1]}`, { world: { pages } });
   assert.equal(rest.html.split("Appeal these hours").length - 1, 1);
   assert.doesNotMatch(rest.html, /Later sessions on this day/);
-  const form = await request(`/work/appeals/new?session=${last.id}&date=2026-11-18`, { world: { pages } });
+  const calls: unknown[][] = [];
+  const form = await request(`/work/appeals/new?session=${last.id}&date=2026-11-18`, { world: { pages } }, calls);
   assert.match(form.html, new RegExp(`name="sessionId" value="${last.id}"`));
+  // The appeal form looks the one session up instead of reading the day's pages.
+  assert.deepEqual(calls.map((c) => c[0]), ["mineSession"]);
   for (const bad of ["nope", encodeURIComponent("2026-11-17~00000000-0000-4000-8000-000000000020")]) assert.equal((await request(`/work/history/2026-11-18?after=${bad}`)).status, 400, bad);
 });
 

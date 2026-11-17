@@ -29,6 +29,12 @@ export interface PayableSession {
   readonly source: "timer" | "manual" | "correction" | "import";
   /** When set, this session replaced that one (D-WK3 correction); the original is not payable. */
   readonly correctsSessionId: string | null;
+  /**
+   * The first session of this session's correction chain: itself for an original,
+   * A for both B and C in A → B → C. It never changes, so the pay lane joins a
+   * replacement to whatever it paid in that chain, however often it was corrected.
+   */
+  readonly lineageRootId: string;
   /** The decision that approved it (W-4, or the staff member's own approval of a W-6 correction); null for imported sessions. */
   readonly decisionId: string | null;
   /** Last change to status or existence; lets the pay lane find work changed after a run. */
@@ -64,9 +70,36 @@ export interface PayableQuery {
   readonly payContractId?: string;
 }
 
+/** The session a correction chain resolves to now, wherever its work date moved. */
+export interface PayableLineageSession {
+  readonly sessionId: string;
+  readonly assignmentId: string;
+  readonly orgId: string;
+  readonly workDate: IsoDate;
+  readonly durationSeconds: number | null;
+  readonly status: "pending" | "approved" | "rejected";
+  readonly decisionId: string | null;
+  readonly changedAt: string;
+}
+
+/** One correction chain, read by its root (`PayableSession.lineageRootId`). */
+export interface PayableLineage {
+  readonly rootId: string;
+  /** Every session of the chain from the root, oldest first; only the last can be in force. */
+  readonly sessionIds: readonly string[];
+  /** The chain's session in force now; null when it was discarded. Pay only `approved` with an end. */
+  readonly inForce: PayableLineageSession | null;
+}
+
 /** The read port the pay lane consumes. Results are ordered by orgId, personId, assignmentId. */
 export interface PayableWorkSource {
   payableInputs(query: PayableQuery): Promise<readonly PayableInput[]>;
+  /**
+   * Resolves correction chains by root, outside any period, so a session paid in
+   * a finalized run can be followed after a correction moved it to another
+   * period or out of approval. Unknown roots are left out; ordered by rootId.
+   */
+  lineage(rootIds: readonly string[]): Promise<readonly PayableLineage[]>;
 }
 
 /** Legacy's floor-per-unit display: 3h 25m 9s from 12309 seconds. */

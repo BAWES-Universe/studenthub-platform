@@ -142,7 +142,12 @@ export class PostgresWorkAppealStore {
 
 export interface WorkPayableSessionRecord {
   readonly sessionId: string; readonly workDate: IsoDate; readonly durationSeconds: number; readonly source: "timer" | "manual" | "correction" | "import";
-  readonly correctsSessionId: string | null; readonly decisionId: string | null; readonly changedAt: string;
+  readonly correctsSessionId: string | null; readonly lineageRootId: string; readonly decisionId: string | null; readonly changedAt: string;
+}
+export interface WorkPayableLineageRecord {
+  readonly rootId: string; readonly sessionIds: readonly string[];
+  readonly inForce: { readonly sessionId: string; readonly assignmentId: string; readonly orgId: string; readonly workDate: IsoDate; readonly durationSeconds: number | null;
+    readonly status: "pending" | "approved" | "rejected"; readonly decisionId: string | null; readonly changedAt: string } | null;
 }
 export interface WorkPayableInputRecord {
   readonly version: "studenthub.work.payable-input.v1";
@@ -170,12 +175,17 @@ export class PostgresWorkPayableSource {
     const { rows } = await this.#db.pool.query<{
       assignment_id: string; person_principal_id: string; org_id: string; store_id: string; pay_contract_id: string | null;
       approved: string; pending: string; rejected: string; open: number;
-      sessions: { id: string; work_date: string; duration_seconds: number; source: WorkPayableSessionRecord["source"]; corrects_session_id: string | null; decision_id: string | null; changed_at: string }[] | null;
+      sessions: { id: string; work_date: string; duration_seconds: number; source: WorkPayableSessionRecord["source"]; corrects_session_id: string | null; lineage_root_id: string; decision_id: string | null; changed_at: string }[] | null;
     }>(`WITH RECURSIVE tree(id) AS (
        SELECT id FROM organizations WHERE $3::text IS NOT NULL AND id = $3
        UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $4::boolean)
      , live AS (
-       SELECT s.* FROM work_sessions s
+       SELECT s.*, root.id AS lineage_root_id FROM work_sessions s
+       -- The chain's first session: corrections form a line (a replaced session can't be corrected again).
+       CROSS JOIN LATERAL (WITH RECURSIVE up(id, parent) AS (
+           SELECT s.id, s.corrects_session_id
+           UNION ALL SELECT p.id, p.corrects_session_id FROM work_sessions p JOIN up ON p.id = up.parent)
+         SELECT id FROM up WHERE parent IS NULL) root
        WHERE s.deleted_at IS NULL AND work_session_in_force(s.id) AND s.work_date BETWEEN $1::date AND $2::date
          AND ($3::text IS NULL OR s.org_id IN (SELECT id FROM tree)) AND ($5::text IS NULL OR s.person_principal_id = $5))
      SELECT a.id AS assignment_id, a.person_principal_id, a.org_id, a.store_id, a.pay_contract_id,
@@ -184,7 +194,7 @@ export class PostgresWorkPayableSource {
        coalesce(sum(l.duration_seconds) FILTER (WHERE l.status = 'rejected'), 0)::text AS rejected,
        count(*) FILTER (WHERE l.ended_at IS NULL)::int AS open,
        jsonb_agg(jsonb_build_object('id', l.id, 'work_date', to_char(l.work_date, 'YYYY-MM-DD'), 'duration_seconds', l.duration_seconds,
-         'source', l.source, 'corrects_session_id', l.corrects_session_id, 'decision_id', l.decision_id,
+         'source', l.source, 'corrects_session_id', l.corrects_session_id, 'lineage_root_id', l.lineage_root_id, 'decision_id', l.decision_id,
          'changed_at', to_char(l.status_changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
          ORDER BY l.work_date, l.started_at, l.id) FILTER (WHERE l.status = 'approved' AND l.ended_at IS NOT NULL) AS sessions
      FROM live l JOIN work_assignments a ON a.id = l.assignment_id
@@ -196,7 +206,32 @@ export class PostgresWorkPayableSource {
       payContractId: r.pay_contract_id, period: Object.freeze({ start, end }),
       approvedSeconds: Number(r.approved), pendingSeconds: Number(r.pending), rejectedSeconds: Number(r.rejected), openSessions: r.open,
       sessions: Object.freeze((r.sessions ?? []).map((s) => Object.freeze({ sessionId: s.id, workDate: s.work_date, durationSeconds: s.duration_seconds, source: s.source,
-        correctsSessionId: s.corrects_session_id, decisionId: s.decision_id, changedAt: s.changed_at }))),
+        correctsSessionId: s.corrects_session_id, lineageRootId: s.lineage_root_id, decisionId: s.decision_id, changedAt: s.changed_at }))),
+    })));
+  }
+
+  async lineage(rootIds: readonly string[]): Promise<readonly WorkPayableLineageRecord[]> {
+    const roots = [...new Set(rootIds.map((id) => String(id).toLowerCase()))];
+    if (roots.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) throw new RangeError("lineage roots must be session ids");
+    if (roots.length === 0) return Object.freeze([]);
+    const { rows } = await this.#db.pool.query<{
+      root_id: string; session_ids: string[];
+      in_force: { id: string; assignment_id: string; org_id: string; work_date: string; duration_seconds: number | null; status: "pending" | "approved" | "rejected";
+        decision_id: string | null; changed_at: string } | null;
+    }>(`WITH RECURSIVE chain(root_id, id, depth) AS (
+       SELECT s.id, s.id, 0 FROM work_sessions s WHERE s.id = ANY($1::uuid[]) AND s.corrects_session_id IS NULL
+       UNION ALL SELECT c.root_id, n.id, c.depth + 1 FROM work_sessions n JOIN chain c ON n.corrects_session_id = c.id)
+     SELECT c.root_id, array_agg(c.id::text ORDER BY c.depth) AS session_ids,
+       (SELECT jsonb_build_object('id', s.id, 'assignment_id', s.assignment_id, 'org_id', s.org_id, 'work_date', to_char(s.work_date, 'YYYY-MM-DD'),
+           'duration_seconds', s.duration_seconds, 'status', s.status, 'decision_id', s.decision_id,
+           'changed_at', to_char(s.status_changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+         FROM chain f JOIN work_sessions s ON s.id = f.id
+         WHERE f.root_id = c.root_id AND s.deleted_at IS NULL AND work_session_in_force(s.id)) AS in_force
+     FROM chain c GROUP BY c.root_id ORDER BY c.root_id`, [roots]);
+    return Object.freeze(rows.map((r) => Object.freeze({
+      rootId: r.root_id, sessionIds: Object.freeze([...r.session_ids]),
+      inForce: r.in_force ? Object.freeze({ sessionId: r.in_force.id, assignmentId: r.in_force.assignment_id, orgId: r.in_force.org_id, workDate: r.in_force.work_date,
+        durationSeconds: r.in_force.duration_seconds, status: r.in_force.status, decisionId: r.in_force.decision_id, changedAt: r.in_force.changed_at }) : null,
     })));
   }
 }

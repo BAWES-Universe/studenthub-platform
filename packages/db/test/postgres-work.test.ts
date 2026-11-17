@@ -5,7 +5,7 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
 import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkImportStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
-import { AppealService, DecisionService, mapLegacyFeedback, mapLegacyWorkingHour, HoursViews, PlacementService, SessionService, WorkScope } from "../../work/src/index.js";
+import { AppealService, DecisionService, mapLegacyFeedback, mapLegacyWorkingHour, HoursViews, PlacementService, SessionService, WorkScope, type PayableWorkSource } from "../../work/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool, authz: PostgresAuthzStore, placements: PostgresWorkPlacementStore, sessions: PostgresWorkSessionStore, decisionStore: PostgresWorkDecisionStore, viewStore: PostgresWorkHoursViewStore;
@@ -316,6 +316,11 @@ test("W5_PG views: the person sees no rating or private note; another company se
   assert.equal(JSON.stringify(mine).includes("rating"), false);
   assert.equal(mine.rows.find((r) => r.session.id === b)?.decision?.note, "public note");
   assert.deepEqual(mine.totals, { approvedSeconds: 7200, pendingSeconds: 1800, rejectedSeconds: 3600, open: 0 });
+  // The single-session lookup binds the session id with the person and the day.
+  const day = mine.rows.find((r) => r.session.id === b)!.session.workDate;
+  assert.equal((await views.mineSession(w.person, day, b))?.decision?.note, "public note");
+  assert.equal(await views.mineSession(w.owner, day, b), undefined);
+  assert.equal(await views.mineSession(w.person, "2026-11-01", b), undefined);
   const company = await views.company(w.owner, w.company, range);
   assert.equal("rows" in company && company.rows.find((r) => r.session.id === a)?.decision?.rating, 4);
   assert.deepEqual(await views.company(w.rivalOwner, w.company, range), { kind: "refused", code: "forbidden" });
@@ -415,6 +420,27 @@ test("W6_PG a staff correction replaces the original in totals and in pay input;
   assert.equal((await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.group, includeSubtree: true, personId: w.person })).length, 1);
   assert.equal((await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.group, personId: w.person })).length, 0);
   await assert.rejects(pay.payableInputs({ period: { start: "2026-11-30", end: "2026-11-01" } }), RangeError);
+  assert.ok(input?.sessions.every((s) => s.lineageRootId === (s.correctsSessionId ?? s.sessionId)));
+
+  // A → B → C, and C moves to another day: every link names A as its root, and the chain resolves outside the period.
+  const moved = await appeals.correct(w.staff, correctionId, { startedAt: "2026-11-17T05:00:00Z", endedAt: "2026-11-17T08:00:00Z", reason: "wrong day" });
+  assert.equal(moved.kind, "entered", JSON.stringify(moved));
+  const third = moved.kind === "entered" ? moved.session.id : "";
+  const [afterMove] = await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, personId: w.person });
+  const chained = afterMove?.sessions.find((s) => s.sessionId === third);
+  assert.deepEqual([chained?.correctsSessionId, chained?.lineageRootId, chained?.workDate], [correctionId, a, "2026-11-17"]);
+  assert.equal(afterMove?.sessions.find((s) => s.sessionId === b)?.lineageRootId, b);
+  const [day] = await pay.payableInputs({ period: { start: "2026-11-18", end: "2026-11-18" }, personId: w.person });
+  assert.ok(day?.sessions.every((s) => s.lineageRootId !== a), "the moved chain leaves the old day's input");
+  const source: PayableWorkSource = pay;
+  const chains = await source.lineage([a.toUpperCase(), b, correctionId, randomUUID()]);
+  // Only roots resolve: B is a link, and an unknown id is left out. Ordered by root.
+  assert.deepEqual(chains.map((l) => l.rootId), [a, b].sort());
+  const chain = chains.find((l) => l.rootId === a), own = chains.find((l) => l.rootId === b);
+  assert.deepEqual([chain?.sessionIds, own?.sessionIds, own?.inForce?.sessionId], [[a, correctionId, third], [b], b]);
+  assert.deepEqual([chain?.inForce?.sessionId, chain?.inForce?.workDate, chain?.inForce?.status, chain?.inForce?.durationSeconds, chain?.inForce?.decisionId !== null], [third, "2026-11-17", "approved", 3 * 3600, true]);
+  assert.deepEqual(await source.lineage([]), []);
+  await assert.rejects(source.lineage(["nope"]), RangeError);
 });
 
 test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes are conflicts, rule breaks are reported", async () => {

@@ -30,6 +30,8 @@ export interface SessionFilter {
   readonly includeSubtree?: boolean;
   readonly storeIds?: readonly string[];
   readonly status?: SessionStatus;
+  /** Narrows to these sessions (a single-row lookup). */
+  readonly sessionIds?: readonly string[];
   readonly range: HoursRange;
   readonly after?: HoursCursor;
   readonly limit: number;
@@ -107,6 +109,13 @@ export class HoursViews {
   /** "My hours": the person's own sessions only. */
   async mine(personId: string, range: HoursRange, after: HoursCursor | null): Promise<HoursPage<PersonDecisionView>> {
     return this.#page({ personId, range, ...(after ? { after } : {}), limit: PAGE_SIZE }, personDecisionView);
+  }
+
+  /** One of the person's own sessions in force on `date`, by id; undefined when it isn't theirs or isn't there. */
+  async mineSession(personId: string, date: IsoDate, sessionId: string): Promise<HoursRow<PersonDecisionView> | undefined> {
+    if (!isIsoDate(date) || !isUuid(sessionId)) return undefined;
+    const page = await this.#page({ personId, sessionIds: [sessionId.toLowerCase()], range: { from: date, to: date }, limit: 1 }, personDecisionView);
+    return page.rows[0];
   }
 
   /**
