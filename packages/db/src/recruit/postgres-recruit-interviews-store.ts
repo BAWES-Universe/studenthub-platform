@@ -58,10 +58,10 @@ export type RecruitEvaluateResult = { kind: "evaluated"; version: number } | { k
 type Located = { interview_id: string | null; card_id: string; request_id: string };
 type Access = { read: boolean; write: boolean; internal: boolean };
 
-const SELECT_INTERVIEWS = `SELECT i.id, i.card_id, COALESCE(pp.display_name, p.display_name) AS person_name, i.scheduled_at, i.duration_minutes, i.mode, i.location, i.status,
+const SELECT_INTERVIEWS = `SELECT i.id, i.card_id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, i.scheduled_at, i.duration_minutes, i.mode, i.location, i.status,
   e.outcome, e.rating, e.shared_note, e.internal_note, COALESCE(sp.display_name, s.display_name) AS scheduled_by_name, e.version AS evaluation_version
  FROM recruit_interviews i JOIN recruit_pipeline_cards c ON c.id = i.card_id
- JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id
+ LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
  LEFT JOIN principals s ON s.id = i.scheduled_by_principal_id LEFT JOIN person_profiles sp ON sp.principal_id = i.scheduled_by_principal_id
  LEFT JOIN LATERAL (SELECT outcome, rating, shared_note, internal_note, version FROM recruit_interview_evaluations WHERE interview_id = i.id ORDER BY version DESC LIMIT 1) e ON true`;
 
@@ -112,14 +112,15 @@ export class PostgresRecruitInterviewsStore {
   async #lock(c: pg.PoolClient, principalId: string, located: Located) {
     const request = (await c.query<{ id: string; org_id: string; assigned_recruiter_principal_id: string | null }>(
       "SELECT id, org_id, assigned_recruiter_principal_id FROM recruit_requests WHERE id = $1::uuid FOR UPDATE", [located.request_id])).rows[0]!;
-    const card = (await c.query<{ stage: string; person_principal_id: string; request_id: string }>(
+    const card = (await c.query<{ stage: string; person_principal_id: string | null; request_id: string }>(
       "SELECT stage, person_principal_id, request_id FROM recruit_pipeline_cards WHERE id = $1::uuid FOR UPDATE", [located.card_id])).rows[0]!;
     const interview = located.interview_id ? (await c.query<{ status: Status; card_id: string }>("SELECT status, card_id FROM recruit_interviews WHERE id = $1::uuid FOR UPDATE", [located.interview_id])).rows[0] : undefined;
     const access = await this.#access(c, principalId, request, true);
     return { request, card, interview, access };
   }
 
-  async #outbox(c: pg.PoolClient, kind: OutboxKind, interviewId: string, personId: string, requestId: string) {
+  async #outbox(c: pg.PoolClient, kind: OutboxKind, interviewId: string, personId: string | null, requestId: string) {
+    if (personId === null) return; // a full-timer has no account; staff reach them by phone
     const row = this.options.outbox(kind, interviewId, personId);
     await c.query("INSERT INTO recruit_outbox(kind, recipient_principal_id, request_id, subject_id, dedupe_key) VALUES($1::text, $2::text, $3::uuid, $4::uuid, $5::text) ON CONFLICT (dedupe_key) DO NOTHING",
       [row.kind, row.recipient, requestId, interviewId, row.dedupeKey]);
@@ -191,8 +192,8 @@ export class PostgresRecruitInterviewsStore {
     const [interviews, cards] = await Promise.all([
       this.#pool.query<RecruitInterviewRecord>(`${SELECT_INTERVIEWS} WHERE c.request_id = $1::uuid ORDER BY i.scheduled_at, i.id`, [requestId]),
       this.#pool.query<RecruitInterviewCardOption>(
-        `SELECT c.id, COALESCE(pp.display_name, p.display_name) AS person_name, c.stage FROM recruit_pipeline_cards c
-         JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id
+        `SELECT c.id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage FROM recruit_pipeline_cards c
+         LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
          WHERE c.request_id = $1::uuid ORDER BY person_name NULLS LAST, c.id`, [requestId]),
     ]);
     return {

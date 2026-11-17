@@ -53,7 +53,7 @@ export type RecruitRequestPersonProfile = {
 };
 export type RecruitRequestPersonRecordRow = { readonly kind: "education" | "experience" | "skill"; readonly fields: Record<string, unknown>; readonly university: string | null; readonly degree: string | null; readonly major: string | null };
 export type RecruitRequestPersonDetail = { readonly person: RecruitRequestPersonProfile; readonly records: readonly RecruitRequestPersonRecordRow[]; readonly link: RecruitRequestPersonLink; readonly staff: boolean };
-export type RecruitRequestPersonRecord = { readonly person_principal_id: string; readonly person_name: string | null; readonly stage: string };
+export type RecruitRequestPersonRecord = { readonly person_principal_id: string | null; readonly person_name: string | null; readonly stage: string };
 
 export interface RecruitRequestsStoreOptions {
   readonly connectionString?: string;
@@ -191,7 +191,7 @@ export class PostgresRecruitRequestsStore {
         "SELECT e.from_status, e.to_status, e.close_reason, p.display_name AS actor_name, e.at FROM recruit_request_events e LEFT JOIN principals p ON p.id = e.actor_principal_id WHERE e.request_id = $1::uuid ORDER BY e.at, e.id",
         [requestId]),
       this.#pool.query<RecruitRequestPersonRecord>(
-        "SELECT c.person_principal_id, COALESCE(pp.display_name, p.display_name) AS person_name, c.stage FROM recruit_pipeline_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
+        "SELECT c.person_principal_id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage FROM recruit_pipeline_cards c LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
         [requestId]),
     ]);
     return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows };

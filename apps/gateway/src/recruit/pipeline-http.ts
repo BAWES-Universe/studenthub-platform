@@ -6,13 +6,14 @@ import { html, type RecruitPageWriter } from "./requests-http.js";
 // Recruit R2: the staff pipeline.
 //   GET  /recruit/staff/requests/<id>          pipeline page (JSON or HTML)
 //   POST /recruit/staff/requests/<id>/assign   {recruiterId}
-//   POST /recruit/staff/requests/<id>/cards    {personId}
+//   POST /recruit/staff/requests/<id>/cards    {personId} or {fulltimerId}
 //   POST /recruit/staff/cards/<id>/move        {to}
 // Forms post the same fields urlencoded and are redirected back to the page.
 
 export interface RecruitPipelineStore {
   assign(principalId: string, requestId: string, recruiterId: string): Promise<{ kind: "assigned" | "not_found" | "recruiter_ineligible" | "request_closed" }>;
   addCard(principalId: string, requestId: string, personId: string): Promise<{ kind: "added"; cardId: string } | { kind: "duplicate"; cardId: string } | { kind: "not_found" | "request_not_open" }>;
+  addFulltimerCard(principalId: string, requestId: string, fulltimerId: string): Promise<{ kind: "added"; cardId: string } | { kind: "duplicate"; cardId: string } | { kind: "not_found" | "request_not_open" }>;
   move(principalId: string, cardId: string, to: PipelineStage): Promise<{ kind: "moved"; stage: PipelineStage } | { kind: "refused"; stage: PipelineStage } | { kind: "placement_refused"; code: string } | { kind: "not_found" }>;
   view(principalId: string, requestId: string): Promise<{
     request: { id: string; org_name: string; store_name: string; position_title: string; headcount: number; status: RequestStatus; assigned_recruiter_principal_id: string | null; recruiter_name: string | null; assigned_at: string | Date | null };
@@ -74,8 +75,10 @@ export function createRecruitPipeline(p: { sessions: Pick<SessionStore, "get">; 
       const id = await principal(s);
       if (!id) return UNAUTHORIZED;
       if (!isRecruitId(requestId)) return NOT_FOUND;
-      if (!object(body) || !only(body, "personId") || !PRINCIPAL.test(body.personId as string)) return BAD;
-      const r = await p.store.addCard(id, requestId.toLowerCase(), body.personId as string);
+      const fulltimer = object(body) && only(body, "fulltimerId");
+      if (fulltimer ? !isRecruitId(body.fulltimerId as string) : !object(body) || !only(body, "personId") || !PRINCIPAL.test(body.personId as string)) return BAD;
+      const subject = body as Record<string, string>;
+      const r = fulltimer ? await p.store.addFulltimerCard(id, requestId.toLowerCase(), subject.fulltimerId!.toLowerCase()) : await p.store.addCard(id, requestId.toLowerCase(), subject.personId!);
       if (r.kind === "added" || r.kind === "duplicate") return { status: 200, body: { cardId: r.cardId, created: r.kind === "added" } };
       return r.kind === "not_found" ? NOT_FOUND : { status: 409, body: { error: r.kind } };
     },
@@ -102,12 +105,13 @@ export function renderPipelinePage(body: PipelinePageBody): string {
   const r = body.request;
   const recruiter = r.recruiter ? html(r.recruiter.name ?? "Unnamed recruiter") : "No recruiter yet";
   const assign = body.canAssign && body.recruiters.length ? `<form method="post" action="/recruit/staff/requests/${html(r.requestId)}/assign"><label for="recruiterId">Recruiter</label> <select id="recruiterId" name="recruiterId">${body.recruiters.map((x) => `<option value="${html(x.personId)}"${x.personId === r.recruiter?.personId ? " selected" : ""}>${html(x.name ?? x.personId)}</option>`).join("")}</select> <button class="button" type="submit">Assign</button></form>` : "";
-  const add = body.canMove && (r.status === "open" || r.status === "filling") ? `<form method="post" action="/recruit/staff/requests/${html(r.requestId)}/cards"><label for="personId">Add a person by id</label> <input id="personId" name="personId" required maxlength="256"> <button class="button" type="submit">Add</button></form>` : "";
+  const add = body.canMove && (r.status === "open" || r.status === "filling") ? `<form method="post" action="/recruit/staff/requests/${html(r.requestId)}/cards"><label for="personId">Add a person by id</label> <input id="personId" name="personId" required maxlength="256"> <button class="button" type="submit">Add</button></form><p><a class="text-link" href="/recruit/staff/fulltimers?request=${html(r.requestId)}">Suggest a full-timer</a></p>` : "";
   const columns = PIPELINE_STAGES.map((stage) => {
     const cards = body.stages[stage].map((card) => {
       const moves = card.allowedMoves.map((to) => `<form method="post" action="/recruit/staff/cards/${html(card.cardId)}/move"><input type="hidden" name="requestId" value="${html(r.requestId)}"><input type="hidden" name="to" value="${to}"><button class="button" type="submit">${html(STAGE_LABEL[to])}</button></form>`).join("");
       const history = card.history.map((h) => `<li><time datetime="${html(h.at)}">${html(when(h.at))}</time>: ${h.from ? `${html(STAGE_LABEL[h.from])} → ` : ""}${html(STAGE_LABEL[h.to])}${h.actor ? ` by ${html(h.actor)}` : ""}</li>`).join("");
-      return `<li><strong>${html(card.personName ?? "Unnamed person")}</strong>${moves ? `<div>${moves}</div>` : ""}<details><summary>History</summary><ol>${history}</ol></details></li>`;
+      const name = html(card.personName ?? "Unnamed person");
+      return `<li><strong>${card.fulltimerId ? `<a class="text-link" href="/recruit/staff/fulltimers/${html(card.fulltimerId)}">${name}</a> (full-timer)` : name}</strong>${moves ? `<div>${moves}</div>` : ""}<details><summary>History</summary><ol>${history}</ol></details></li>`;
     }).join("");
     return `<section><h2>${html(STAGE_LABEL[stage])} (${body.stages[stage].length})</h2>${cards ? `<ul>${cards}</ul>` : "<p>None.</p>"}</section>`;
   }).join("");

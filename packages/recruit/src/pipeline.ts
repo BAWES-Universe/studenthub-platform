@@ -84,9 +84,9 @@ export function legacySuggestionStage(value: number): { kind: "mapped"; stage: P
 
 // ---- Views --------------------------------------------------------------
 
-export interface PipelineCardRow { readonly id: string; readonly person_principal_id: string; readonly person_name: string | null; readonly stage: PipelineStage; readonly updated_at: string | Date }
+export interface PipelineCardRow { readonly id: string; readonly person_principal_id: string | null; readonly fulltimer_id?: string | null; readonly person_name: string | null; readonly stage: PipelineStage; readonly updated_at: string | Date }
 export interface PipelineEventRow { readonly card_id: string; readonly from_stage: PipelineStage | null; readonly to_stage: PipelineStage; readonly actor_name: string | null; readonly at: string | Date }
-export interface PipelineCardView { readonly cardId: string; readonly personId: string; readonly personName: string | null; readonly stage: PipelineStage; readonly allowedMoves: readonly PipelineStage[]; readonly history: readonly { from: PipelineStage | null; to: PipelineStage; actor: string | null; at: string }[] }
+export interface PipelineCardView { readonly cardId: string; readonly personId: string | null; readonly fulltimerId: string | null; readonly personName: string | null; readonly stage: PipelineStage; readonly allowedMoves: readonly PipelineStage[]; readonly history: readonly { from: PipelineStage | null; to: PipelineStage; actor: string | null; at: string }[] }
 
 const iso = (value: string | Date) => (value instanceof Date ? value : new Date(value)).toISOString();
 
@@ -97,7 +97,7 @@ export function pipelineView(cards: readonly PipelineCardRow[], events: readonly
   const out = Object.fromEntries(PIPELINE_STAGES.map((stage) => [stage, [] as PipelineCardView[]])) as Record<PipelineStage, PipelineCardView[]>;
   for (const card of cards) {
     out[card.stage].push({
-      cardId: card.id, personId: card.person_principal_id, personName: card.person_name, stage: card.stage,
+      cardId: card.id, personId: card.person_principal_id, fulltimerId: card.fulltimer_id ?? null, personName: card.person_name, stage: card.stage,
       allowedMoves: canMove ? PIPELINE_TRANSITIONS.filter(([from]) => from === card.stage).map(([, to]) => to) : [],
       history: (byCard.get(card.id) ?? []).sort((a, b) => iso(a.at).localeCompare(iso(b.at)))
         .map((e) => ({ from: e.from_stage, to: e.to_stage, actor: e.actor_name, at: iso(e.at) })),

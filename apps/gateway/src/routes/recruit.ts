@@ -6,6 +6,7 @@ import { handleRecruitInvitations } from "../recruit/invitations-http.js";
 import { handleRecruitEmployerView } from "../recruit/employer-view-http.js";
 import { handleRecruitInterviews } from "../recruit/interviews-http.js";
 import { handleRecruitJobs } from "../recruit/jobs-http.js";
+import { handleRecruitFulltimers } from "../recruit/fulltimers-http.js";
 import { wantsHtml } from "../web-ui.js";
 import type { GatewayRoute } from "./context.js";
 
@@ -40,5 +41,9 @@ export const recruitInterviewsRoute: GatewayRoute = { name: "recruit-interviews"
     wantsHtml(ctx.request.headers.accept)) };
 export const recruitJobsRoute: GatewayRoute = { name: "recruit-jobs", handle: (ctx) =>
   handleRecruitJobs(ctx.request, ctx.response, ctx.login?.recruitJobs, ctx.login?.web?.origin,
+    (status, title, body) => ctx.writeHtml(ctx.response, status, status === 401 ? ctx.renderError(401, ctx.login) : ctx.pageDocument(title, body)),
+    wantsHtml(ctx.request.headers.accept)) };
+export const recruitFulltimersRoute: GatewayRoute = { name: "recruit-fulltimers", handle: (ctx) =>
+  handleRecruitFulltimers(ctx.request, ctx.response, ctx.login?.recruitFulltimers, ctx.login?.web?.origin,
     (status, title, body) => ctx.writeHtml(ctx.response, status, status === 401 ? ctx.renderError(401, ctx.login) : ctx.pageDocument(title, body)),
     wantsHtml(ctx.request.headers.accept)) };

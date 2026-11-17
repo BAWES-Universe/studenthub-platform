@@ -101,10 +101,10 @@ export class PostgresRecruitChecklistStore {
     if (!request) return null;
     const [notes, items] = await Promise.all([
       this.#pool.query<RecruitNoteRecord>(
-        `SELECT n.id, n.card_id, COALESCE(cpp.display_name, cp.display_name) AS person_name, n.checklist_item_id, i.name_en AS checklist_name,
+        `SELECT n.id, n.card_id, COALESCE(cpp.display_name, cp.display_name, cf.name) AS person_name, n.checklist_item_id, i.name_en AS checklist_name,
            n.note_type, n.note_text, COALESCE(app.display_name, ap.display_name) AS author_name, n.created_at, n.updated_at
          FROM recruit_request_notes n
-         LEFT JOIN recruit_pipeline_cards c ON c.id = n.card_id LEFT JOIN principals cp ON cp.id = c.person_principal_id LEFT JOIN person_profiles cpp ON cpp.principal_id = c.person_principal_id
+         LEFT JOIN recruit_pipeline_cards c ON c.id = n.card_id LEFT JOIN principals cp ON cp.id = c.person_principal_id LEFT JOIN person_profiles cpp ON cpp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers cf ON cf.id = c.fulltimer_id
          LEFT JOIN recruit_checklist_items i ON i.id = n.checklist_item_id
          LEFT JOIN principals ap ON ap.id = n.author_principal_id LEFT JOIN person_profiles app ON app.principal_id = n.author_principal_id
          WHERE n.request_id = $1::uuid AND n.removed_at IS NULL ORDER BY n.created_at, n.id`, [requestId]),

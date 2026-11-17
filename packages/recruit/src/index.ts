@@ -6,3 +6,4 @@ export * from "./invitations.js";
 export * from "./employer-view.js";
 export * from "./interviews.js";
 export * from "./jobs.js";
+export * from "./fulltimers.js";

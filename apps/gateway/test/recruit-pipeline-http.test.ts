@@ -5,15 +5,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createRecruitPipeline, handleRecruitPipeline, type RecruitPipelineStore } from "../src/recruit/pipeline-http.js";
 
 const ORIGIN = "https://studenthub.example.invalid", SESSION = "d".repeat(43);
-const REQ = "223e4567-e89b-42d3-a456-426614174000", CARD = "323e4567-e89b-42d3-a456-426614174000";
+const REQ = "223e4567-e89b-42d3-a456-426614174000", CARD = "323e4567-e89b-42d3-a456-426614174000", FT = "c23e4567-e89b-42d3-a456-426614174000", FT_CARD = "d23e4567-e89b-42d3-a456-426614174000";
 const calls: string[] = [];
 const store: RecruitPipelineStore = {
   assign: async (_p, r, who) => { calls.push(`assign:${r}:${who}`); return r !== REQ ? { kind: "not_found" } : who === "company-person" ? { kind: "recruiter_ineligible" } : { kind: "assigned" }; },
   addCard: async (_p, r, who) => { calls.push(`add:${r}:${who}`); return r !== REQ ? { kind: "not_found" } : who === "again" ? { kind: "duplicate", cardId: CARD } : { kind: "added", cardId: CARD }; },
+  addFulltimerCard: async (_p, r, who) => { calls.push(`addFulltimer:${r}:${who}`); return r !== REQ ? { kind: "not_found" } : { kind: "added", cardId: CARD }; },
   move: async (_p, c, to) => { calls.push(`move:${c}:${to}`); return c !== CARD ? { kind: "not_found" } : to === "placed" ? { kind: "placement_refused", code: "work_unavailable" } : to === "suggested" ? { kind: "refused", stage: "contacted" } : { kind: "moved", stage: to }; },
   view: async (_p, r) => r !== REQ ? null : {
     request: { id: REQ, org_name: "Co", store_name: "Avenues <x>", position_title: "Cashier", headcount: 2, status: "filling", assigned_recruiter_principal_id: "rec", recruiter_name: "Rami", assigned_at: "2026-11-17T10:00:00.000Z" },
-    cards: [{ id: CARD, person_principal_id: "p1", person_name: "Noor <b>", stage: "contacted", updated_at: "2026-11-17T10:00:00.000Z" }],
+    cards: [{ id: CARD, person_principal_id: "p1", person_name: "Noor <b>", stage: "contacted", updated_at: "2026-11-17T10:00:00.000Z" },
+      { id: FT_CARD, person_principal_id: null, fulltimer_id: FT, person_name: "Fahad <i>", stage: "suggested", updated_at: "2026-11-17T10:00:00.000Z" }],
     events: [{ card_id: CARD, from_stage: null, to_stage: "suggested", actor_name: "Rami", at: "2026-11-17T10:00:00.000Z" }],
     canAssign: true, canMove: true, recruiters: [{ principal_id: "rec", name: "Rami" }],
   },
@@ -65,4 +67,15 @@ test("REC2_HTTP_PAGE the staff page shows stages, names, recruiter and moves, es
   assert.deepEqual([added.status, added.headers.location], [303, `/recruit/staff/requests/${REQ}`]);
   const refused = await call(`/recruit/staff/cards/${CARD}/move`, { body: `requestId=${REQ}&to=placed`, method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, html: true });
   assert.equal(refused.page?.status, 409);
+});
+
+test("REC9_HTTP_PIPELINE a full-timer joins the pipeline by id and shows on the board linked to their record", async () => {
+  calls.length = 0;
+  assert.deepEqual((await call(`/recruit/staff/requests/${REQ}/cards`, post({ fulltimerId: FT.toUpperCase() }))).json, { cardId: CARD, created: true });
+  assert.deepEqual(calls, [`addFulltimer:${REQ}:${FT}`]);
+  assert.equal((await call(`/recruit/staff/requests/${REQ}/cards`, post({ fulltimerId: "not-an-id" }))).status, 400);
+  assert.equal((await call(`/recruit/staff/requests/${REQ}/cards`, post({ fulltimerId: FT, personId: "p1" }))).status, 400);
+  const page = (await call(`/recruit/staff/requests/${REQ}`, { html: true })).page!.body;
+  assert.ok(page.includes(`<a class="text-link" href="/recruit/staff/fulltimers/${FT}">Fahad &lt;i&gt;</a> (full-timer)`));
+  assert.ok(page.includes(`/recruit/staff/fulltimers?request=${REQ}`));
 });

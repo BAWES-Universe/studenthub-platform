@@ -46,7 +46,7 @@ export type RecruitAssignResult = { kind: "assigned" } | { kind: "not_found" } |
 export type RecruitAddCardResult = { kind: "added"; cardId: string } | { kind: "not_found" } | { kind: "request_not_open" } | { kind: "duplicate"; cardId: string };
 export type RecruitMoveResult = { kind: "moved"; stage: Stage } | { kind: "not_found" } | { kind: "refused"; stage: Stage } | { kind: "placement_refused"; code: string };
 
-export interface RecruitPipelineCardRecord { id: string; person_principal_id: string; person_name: string | null; stage: Stage; updated_at: string }
+export interface RecruitPipelineCardRecord { id: string; person_principal_id: string | null; fulltimer_id: string | null; person_name: string | null; stage: Stage; updated_at: string }
 export interface RecruitPipelineEventRecord { card_id: string; from_stage: Stage | null; to_stage: Stage; actor_name: string | null; at: string }
 export interface RecruitPipelineDetail {
   readonly request: { id: string; org_id: string; org_name: string; store_name: string; position_title: string; headcount: number; status: RequestStatus; assigned_recruiter_principal_id: string | null; recruiter_name: string | null; assigned_at: string | null };
@@ -119,17 +119,31 @@ export class PostgresRecruitPipelineStore {
   }
 
   async addCard(principalId: string, requestId: string, personId: string): Promise<RecruitAddCardResult> {
+    return this.#addCard(principalId, requestId, { column: "person_principal_id", id: personId });
+  }
+
+  /** Recruit R9: a full-timer (a staff-held record, no account) joins the same pipeline. */
+  async addFulltimerCard(principalId: string, requestId: string, fulltimerId: string): Promise<RecruitAddCardResult> {
+    return this.#addCard(principalId, requestId, { column: "fulltimer_id", id: fulltimerId });
+  }
+
+  async #addCard(principalId: string, requestId: string, subject: { column: "person_principal_id" | "fulltimer_id"; id: string }): Promise<RecruitAddCardResult> {
     return this.#transaction<RecruitAddCardResult>(async (c) => {
       const request = (await c.query<Locked>(LOCK_REQUEST, [requestId])).rows[0];
       if (!request) return { rollback: { kind: "not_found" } };
       const isLead = this.options.leadDecision(await this.#grants(c, principalId, true));
       if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
       if (!this.options.acceptsCards(request.status)) return { rollback: { kind: "request_not_open" } };
-      if (!(await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [personId])).rowCount) return { rollback: { kind: "not_found" } };
+      const exists = subject.column === "person_principal_id"
+        ? await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [subject.id])
+        : await c.query("SELECT 1 FROM recruit_fulltimers WHERE id = $1::uuid AND archived_at IS NULL FOR SHARE", [subject.id]);
+      if (!exists.rowCount) return { rollback: { kind: "not_found" } };
       const cardId = randomUUID();
-      const inserted = await c.query("INSERT INTO recruit_pipeline_cards(id, request_id, person_principal_id, stage) VALUES($1::uuid, $2::uuid, $3::text, 'suggested') ON CONFLICT (request_id, person_principal_id) DO NOTHING", [cardId, requestId, personId]);
+      const inserted = subject.column === "person_principal_id"
+        ? await c.query("INSERT INTO recruit_pipeline_cards(id, request_id, person_principal_id, stage) VALUES($1::uuid, $2::uuid, $3::text, 'suggested') ON CONFLICT (request_id, person_principal_id) DO NOTHING", [cardId, requestId, subject.id])
+        : await c.query("INSERT INTO recruit_pipeline_cards(id, request_id, fulltimer_id, stage) VALUES($1::uuid, $2::uuid, $3::uuid, 'suggested') ON CONFLICT (request_id, fulltimer_id) WHERE fulltimer_id IS NOT NULL DO NOTHING", [cardId, requestId, subject.id]);
       if (inserted.rowCount !== 1) {
-        const existing = (await c.query<{ id: string }>("SELECT id FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id = $2::text", [requestId, personId])).rows[0]!;
+        const existing = (await c.query<{ id: string }>(`SELECT id FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND ${subject.column} = $2`, [requestId, subject.id])).rows[0]!;
         return { rollback: { kind: "duplicate", cardId: existing.id } };
       }
       await this.#event(c, cardId, null, "suggested", principalId);
@@ -144,12 +158,13 @@ export class PostgresRecruitPipelineStore {
       if (!located) return { rollback: { kind: "not_found" } };
       // Request first, then card: the same lock order as addCard and the cancel cascade.
       const request = (await c.query<Locked>(LOCK_REQUEST, [located.request_id])).rows[0]!;
-      const card = (await c.query<{ stage: Stage; person_principal_id: string }>("SELECT stage, person_principal_id FROM recruit_pipeline_cards WHERE id = $1::uuid FOR UPDATE", [cardId])).rows[0]!;
+      const card = (await c.query<{ stage: Stage; person_principal_id: string | null }>("SELECT stage, person_principal_id FROM recruit_pipeline_cards WHERE id = $1::uuid FOR UPDATE", [cardId])).rows[0]!;
       const isLead = this.options.leadDecision(await this.#grants(c, principalId, true));
       if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
       if (!this.options.transitionAllowed(card.stage, to)) return { rollback: { kind: "refused", stage: card.stage } };
       let assignmentId: string | null = null;
-      if (to === "placed") {
+      // A full-timer has no account to pay: "placed" records the hire without a work assignment.
+      if (to === "placed" && card.person_principal_id !== null) {
         const placed = await this.options.placement.placeFromRecruit(principalId, {
           recruitCardId: cardId, requestId: request.id, personId: card.person_principal_id, storeId: request.store_id, startDate: request.period_start, endDate: request.period_end,
         });
@@ -179,8 +194,9 @@ export class PostgresRecruitPipelineStore {
     if (!request) return null;
     const [cards, events, recruiters] = await Promise.all([
       this.#pool.query<RecruitPipelineCardRecord>(
-        `SELECT c.id, c.person_principal_id, COALESCE(pp.display_name, p.display_name) AS person_name, c.stage, c.updated_at
-         FROM recruit_pipeline_cards c JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id
+        `SELECT c.id, c.person_principal_id, c.fulltimer_id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage, c.updated_at
+         FROM recruit_pipeline_cards c LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id
+         LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
          WHERE c.request_id = $1::uuid ORDER BY c.created_at, c.id`, [requestId]),
       this.#pool.query<RecruitPipelineEventRecord>(
         `SELECT e.card_id, e.from_stage, e.to_stage, COALESCE(pp.display_name, p.display_name) AS actor_name, e.at
