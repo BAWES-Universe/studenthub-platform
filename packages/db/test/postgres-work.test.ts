@@ -100,7 +100,9 @@ test("W1_PG the database itself refuses overlap, a foreign contract, a removed s
   await assert.rejects(pool.query("DELETE FROM work_assignments WHERE id = $1", [first]), /never deleted/);
   await pool.query("UPDATE organization_stores SET status='deleted', deleted_at=now() WHERE id=$1", [w.store]);
   await assert.rejects(insert(randomUUID(), "2026-07-01", null), /store is removed/);
-  await assert.rejects(pool.query("UPDATE work_events SET kind = kind"), /append-only/);
+  const { rows: [event] } = await pool.query<{ id: string }>("INSERT INTO work_events(kind,org_id,person_principal_id,subject_id,actor_principal_id,detail) VALUES('assignment.created',$1,$2,$3,$4,'{}'::jsonb) RETURNING id",
+    [w.company, w.person, first, w.staff]);
+  await assert.rejects(pool.query("UPDATE work_events SET kind = kind WHERE id = $1", [event!.id]), /append-only/);
 });
 
 test("W1_PG a company request is accepted by staff into a placement atomically", async () => {
@@ -163,6 +165,28 @@ test("W3_PG clock in and out with both locations; totals split by status; open s
   assert.equal((await sessions.dayTotals({ orgIds: [w.rival], from: "2026-11-18", to: "2026-11-18" })).length, 0);
   assert.deepEqual(await placement.setEndDate(w.staff, assignmentId, "2026-11-18"), { kind: "ended", endDate: "2026-11-18" });
   assert.deepEqual((await events(s!.id)).map((e) => e.kind), ["session.started", "session.stopped"]);
+});
+
+test("W3_PG a clock-in racing a placement end date waits for it and is refused, never written outside the period", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const { placement, session } = services(now);
+  const placed = await placement.place(w.staff, { personId: w.person, storeId: w.store, startDate: "2026-11-01" });
+  const assignmentId = placed.kind === "placed" ? placed.assignment.id : "";
+  const ender = await pool.connect();
+  try {
+    await ender.query("BEGIN");
+    await ender.query("SELECT 1 FROM work_assignments WHERE id = $1 FOR UPDATE", [assignmentId]);
+    await ender.query("UPDATE work_assignments SET end_date = '2026-11-18' WHERE id = $1", [assignmentId]);
+    const start = session.start(w.person, HERE);
+    // The start has read the still-open placement and now waits on the assignment row.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await ender.query("COMMIT");
+    assert.deepEqual(await start, { kind: "refused", code: "not_assigned" });
+  } finally {
+    ender.release();
+  }
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM work_sessions WHERE assignment_id = $1", [assignmentId])).rows[0].n, 0);
 });
 
 test("W3_PG the database refuses a second open session, editing a closed one, deciding an open one and hard deletes", async () => {
@@ -390,6 +414,10 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   assert.deepEqual(await imports.importPlacements([placement]), { inserted: 0, unchanged: 1, updated: 0, conflicts: [], refused: [] });
   // Legacy later moved the person: the open placement ends (incremental sync).
   assert.equal((await imports.importPlacements([{ ...placement, endDate: "2026-11-30" }])).updated, 1);
+  assert.equal((await imports.importPlacements([{ ...placement, endDate: "2026-11-30" }])).unchanged, 1);
+  // Reopening it or moving its end date is a conflict, never applied.
+  for (const endDate of [null, "2026-12-15"]) assert.equal((await imports.importPlacements([{ ...placement, endDate }])).conflicts.length, 1, String(endDate));
+  assert.equal((await pool.query("SELECT to_char(end_date,'YYYY-MM-DD') AS d FROM work_assignments WHERE legacy_ref = $1", [placement.legacyRef])).rows[0].d, "2026-11-30");
   const moved = await imports.importPlacements([{ ...placement, startDate: "2026-02-01" }]);
   assert.equal(moved.conflicts.length, 1);
   assert.match(moved.conflicts[0]!.existingDigest, /^[0-9a-f]{64}$/);
@@ -424,6 +452,14 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   assert.deepEqual(linked.map((r) => r.decision), [day.legacyRef, reject.legacyRef]);
   assert.deepEqual((await pool.query("SELECT decided_by, legacy_decided_by, rating FROM work_decisions WHERE legacy_ref = $1", [day.legacyRef])).rows[0], { decided_by: null, legacy_decided_by: "contact:44", rating: null });
   assert.equal((await imports.importDecisions([day, reject])).unchanged, 2);
+  // A decision made here after import keeps its link when the import runs again.
+  const native = randomUUID();
+  const sessionOne = (await pool.query("SELECT id FROM work_sessions WHERE legacy_ref = $1", [one.legacyRef])).rows[0].id;
+  await pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids, decided_by)
+    VALUES($1,$2,$3,$4,'2026-11-10','session','approved',$5::uuid[],$6)`, [native, w.company, w.store, w.person, [sessionOne], w.staff]);
+  await pool.query("UPDATE work_sessions SET decision_id = $2 WHERE id = $1", [sessionOne, native]);
+  await imports.importDecisions([day, reject]);
+  assert.equal((await pool.query("SELECT decision_id FROM work_sessions WHERE id = $1", [sessionOne])).rows[0].decision_id, native);
   await assert.rejects(pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids)
     VALUES($1,$2,$3,$4,'2026-11-10','day','approved','{}')`, [randomUUID(), w.company, w.store, w.person]), /work_decisions_actor/);
 });

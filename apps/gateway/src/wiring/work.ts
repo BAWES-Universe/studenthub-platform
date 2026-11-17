@@ -14,7 +14,20 @@ import type { Wired, WiringSettings } from "./context.js";
 
 type Access = ReturnType<typeof wireAccess>["services"];
 
+/**
+ * WORK_LANE_ENABLED: "true" turns the work lane on; unset or "false" keeps it
+ * off; anything else stops startup. Legacy stays the only writer of hours until
+ * cutover, so the lane is off by default even where the signing key is set.
+ */
+export function workLaneEnabled(value: string | undefined): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error("WORK_LANE_ENABLED must be true or false");
+}
+
 export interface WorkWiringPorts {
+  /** The cutover switch (WORK_LANE_ENABLED); off unless set. */
+  readonly enabled?: boolean;
   /** Store managers (access lane A4); none until that lane lands. */
   readonly managedStores?: ManagedStoresPort;
   /** Decision notices to the person (comms lane); none until that lane lands. */
@@ -22,12 +35,12 @@ export interface WorkWiringPorts {
 }
 
 /**
- * Work and hours (W-1 to W-7). Off unless the safe-write signing key is set,
- * like every other gateway write, so a deployment without it serves 503 and
- * legacy stays the writer for hours until cutover.
+ * Work and hours (W-1 to W-7). Needs both the cutover switch and the safe-write
+ * signing key; otherwise nothing is built and /api/work and the /work screens
+ * answer 503, so legacy stays the only writer of hours until cutover.
  */
 export function wireWork(settings: WiringSettings, access: Access, ports: WorkWiringPorts = {}): Wired<{ readonly work?: WorkHttpServices }> {
-  if (!settings.safeWriteKey) return { services: {}, async close() {} };
+  if (ports.enabled !== true || !settings.safeWriteKey) return { services: {}, async close() {} };
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
   const grants: GrantsPort = access.authzStore;
   const managed = ports.managedStores ?? NO_MANAGED_STORES;

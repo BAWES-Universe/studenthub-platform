@@ -200,7 +200,8 @@ export class AppealService {
       if (await tx.isReplaced(original.id)) return { kind: "refused", code: "session_replaced" };
       if (appealId !== null) {
         const appeal = await tx.lockAppeal(appealId);
-        if (!appeal || appeal.personId !== original.personId) return { kind: "refused", code: "appeal_not_found" };
+        // The appeal must be about this person at this company, or one company could attach its correction to another's appeal.
+        if (!appeal || appeal.personId !== original.personId || appeal.orgId !== original.orgId) return { kind: "refused", code: "appeal_not_found" };
       }
       return this.#enter(tx, actorId, original, parsed, original.id, appealId);
     });
@@ -239,7 +240,9 @@ export class AppealService {
         correctsSessionId, createdBy: actorId, appealId,
       });
     } catch (error) {
-      if (sessionConflict(error) === "overlap") return { kind: "refused", code: "overlaps_session" };
+      const conflict = sessionConflict(error);
+      if (conflict === "overlap") return { kind: "refused", code: "overlaps_session" };
+      if (conflict === "outside_assignment") return { kind: "refused", code: "outside_assignment" };
       throw error;
     }
     const decision: WorkDecision = Object.freeze({

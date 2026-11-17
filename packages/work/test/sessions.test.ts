@@ -78,6 +78,9 @@ test("W3_INSTANT manual times need an explicit offset", () => {
   assert.equal(parseInstant("2026-11-18T09:00:00"), undefined);
   assert.equal(parseInstant("2026-11-18"), undefined);
   assert.equal(parseInstant("2026-13-18T09:00:00Z"), undefined);
+  // Date() would roll these over (30 February into March, 24:00 into the next day); they are refused.
+  for (const bad of ["2026-02-30T09:00:00+03:00", "2026-11-18T24:00Z", "2026-11-18T09:60Z", "2026-11-18T09:00:61Z", "2026-11-18T09:00+15:00"]) assert.equal(parseInstant(bad), undefined, bad);
+  assert.equal(parseInstant("2026-11-18T23:59:59.999-05:30")?.toISOString(), "2026-11-19T05:29:59.999Z");
 });
 
 test("W3_CLOCK start then stop: server time, both locations kept (WK-F2 regression)", async () => {

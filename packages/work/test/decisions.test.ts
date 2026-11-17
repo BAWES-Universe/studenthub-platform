@@ -163,6 +163,15 @@ test("W4_DAY bulk days roll back together when one day is missing or out of scop
   assert.equal(store.sessions[0]?.status, "pending");
 });
 
+test("W4_DAY the same day named twice is decided once", async () => {
+  const { store, svc } = setup();
+  store.sessions.push(session());
+  const day = { personId: "person", storeId: STORE_A, workDate: "2026-11-18" };
+  const out = await svc.decideDays("owner", [day, { ...day, storeId: STORE_A.toUpperCase() }], { decision: "approve" });
+  assert.deepEqual(out.kind === "decided" && [out.decisions.length, out.changed], [1, 1]);
+  assert.deepEqual([store.decisionsList.length, store.notices.length], [1, 1]);
+});
+
 test("W4_UNDO undo returns a decided session to pending with its own record", async () => {
   const { store, svc } = setup();
   const a = session();
@@ -249,6 +258,16 @@ test("W5_VIEWS each viewer sees only their scope; totals split by status across 
   const groupSelf = await views.company("groupSelfOwner", "group", range);
   assert.deepEqual("rows" in groupSelf && [groupSelf.rows.length, groupSelf.totals], [0, { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }]);
   assert.deepEqual(await views.company("groupSelfOwner", "company", range), { kind: "refused", code: "forbidden" });
+});
+
+test("W5_VIEWS a revoked grant stops at the next request (the shared scope keeps no grants)", async () => {
+  const { store, views } = setup();
+  store.sessions.push(session());
+  const range = { from: "2026-11-01", to: "2026-11-30" };
+  GRANTS.revocable = [{ orgId: "company", role: "org-owner", scope: "self" }];
+  assert.equal("rows" in await views.company("revocable", "company", range), true);
+  GRANTS.revocable = [];
+  assert.deepEqual(await views.company("revocable", "company", range), { kind: "refused", code: "forbidden" });
 });
 
 test("W5_PAGING paging is stable across equal dates and ends with no cursor", async () => {

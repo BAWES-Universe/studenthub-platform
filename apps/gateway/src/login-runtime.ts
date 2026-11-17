@@ -19,7 +19,7 @@ import { wireAccess } from "./wiring/access.js";
 import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
-import { wireWork } from "./wiring/work.js";
+import { wireWork, workLaneEnabled } from "./wiring/work.js";
 import { wireOps } from "./wiring/ops.js";
 import {PostgresNotificationsStore} from "@studenthub/db/notifications";
 import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
@@ -206,7 +206,7 @@ export function createRuntimeLoginFromEnv(
   const profile = wireProfile(settings, access.services, approvedProfiles);
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
-  const workArea = wireWork(settings, access.services);
+  const workArea = wireWork(settings, access.services, { enabled: workLaneEnabled(env.WORK_LANE_ENABLED) });
   const ops = wireOps(settings, access.services, organizationArea.services);
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),

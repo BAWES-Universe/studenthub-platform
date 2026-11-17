@@ -127,20 +127,22 @@ export class WorkScope {
   readonly #grants: GrantsPort;
   readonly #managed: ManagedStoresPort;
   readonly #ancestors: (orgId: string) => Promise<readonly string[] | undefined>;
-  readonly #cache = new Map<string, { grants: readonly WorkGrant[]; managed: ReadonlySet<string> }>();
+  /** Present only for a scope made for one operation; a long-lived scope reads grants on every call so a revoked grant stops at once. */
+  readonly #cache: Map<string, { grants: readonly WorkGrant[]; managed: ReadonlySet<string> }> | undefined;
 
-  constructor(grants: GrantsPort, managed: ManagedStoresPort, ancestors: (orgId: string) => Promise<readonly string[] | undefined>) {
+  constructor(grants: GrantsPort, managed: ManagedStoresPort, ancestors: (orgId: string) => Promise<readonly string[] | undefined>, options: { readonly perOperation?: boolean } = {}) {
     this.#grants = grants;
     this.#managed = managed;
     this.#ancestors = ancestors;
+    this.#cache = options.perOperation === true ? new Map() : undefined;
   }
 
   async #actor(actorId: string) {
-    let entry = this.#cache.get(actorId);
+    let entry = this.#cache?.get(actorId);
     if (!entry) {
       const [grants, managed] = await Promise.all([this.#grants.listGrantsForPrincipal(actorId), this.#managed.managedStores(actorId)]);
       entry = { grants, managed: new Set(managed.map((m) => m.storeId)) };
-      this.#cache.set(actorId, entry);
+      this.#cache?.set(actorId, entry);
     }
     return entry;
   }
@@ -209,7 +211,7 @@ export class DecisionService {
   }
 
   #scope(): WorkScope {
-    return new WorkScope(this.#grants, this.#managed, (orgId) => this.#store.organizationAncestors(orgId));
+    return new WorkScope(this.#grants, this.#managed, (orgId) => this.#store.organizationAncestors(orgId), { perOperation: true });
   }
 
   /**
@@ -253,8 +255,10 @@ export class DecisionService {
    */
   async decideDays(actorId: string, days: readonly unknown[], input: DecisionInput): Promise<DecideHoursOutcome> {
     const parsed = parseDecision(input);
-    const keys = days.map(parseDayKey);
-    if (!parsed || keys.length === 0 || keys.some((k) => k === undefined)) return { kind: "refused", code: "invalid_input" };
+    const parsedKeys = days.map(parseDayKey);
+    if (!parsed || parsedKeys.length === 0 || parsedKeys.some((k) => k === undefined)) return { kind: "refused", code: "invalid_input" };
+    // The same day twice would read the same pending sessions twice and decide them twice.
+    const keys = [...new Map((parsedKeys as DayKey[]).map((k) => [`${k.personId}|${k.storeId}|${k.workDate}`, k])).values()];
     if (keys.length > MAX_BATCH) return { kind: "refused", code: "too_many" };
     const scope = this.#scope();
     const batchId = keys.length > 1 ? this.#newId() : null;

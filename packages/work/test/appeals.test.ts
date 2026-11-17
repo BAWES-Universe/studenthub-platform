@@ -171,6 +171,10 @@ test("W6_CORRECT open sessions, overlaps and dates outside the placement are ref
   assert.deepEqual(await svc.correct("staff", open.id, { startedAt: "2026-11-18T06:00:00Z", endedAt: "2026-11-18T07:00:00Z", reason }), { kind: "refused", code: "session_open" });
   assert.deepEqual(await svc.correct("staff", a.id, { startedAt: "2026-11-17T06:00:00Z", endedAt: "2026-11-17T09:30:00Z", reason }), { kind: "refused", code: "overlaps_session" });
   assert.deepEqual(await svc.correct("staff", a.id, { startedAt: "2026-10-30T06:00:00Z", endedAt: "2026-10-30T07:00:00Z", reason }), { kind: "refused", code: "outside_assignment" });
+  // An appeal from another company (same person) can't carry this company's correction.
+  const elsewhere: WorkAppeal = { id: uid(), sessionId: uid(), personId: "person", orgId: "rival", storeId: STORE, reason: "x", status: "submitted", createdAt: "2026-11-18T06:00:00.000Z", updatedAt: "2026-11-18T06:00:00.000Z" };
+  store.appeals.push(elsewhere);
+  assert.deepEqual(await svc.correct("staff", b.id, { startedAt: "2026-11-17T09:00:00Z", endedAt: "2026-11-17T10:30:00Z", reason, appealId: elsewhere.id }), { kind: "refused", code: "appeal_not_found" });
   assert.equal((await svc.correct("staff", a.id, { startedAt: "2026-11-17T05:00:00Z", endedAt: "2026-11-17T09:00:00Z", reason })).kind, "entered");
 });
 

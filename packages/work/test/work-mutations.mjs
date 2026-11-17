@@ -40,11 +40,28 @@ const mutations = [
   ["manual times are Kuwait time", ":00+03:00`", ":00Z`", "WORK_PAGES", pages, pagesSuite],
   ["screen script needs the nonce", "`; script-src 'nonce-${nonce}'`", "`; script-src 'unsafe-inline'`", "WORK_PAGES", pages, pagesSuite],
   ["appeal screen is the owner's only", 'if ("kind" in detail || detail.appeal.personId !== person) {', 'if ("kind" in detail) {', "WORK_PAGES", pages, pagesSuite],
+  ["correction links its own company's appeal", "appeal.personId !== original.personId || appeal.orgId !== original.orgId", "appeal.personId !== original.personId", "W6_CORRECT", appeals, appealSuite],
+  ["a day named twice is decided once", "[`${k.personId}|${k.storeId}|${k.workDate}`, k]", "[Math.random(), k]", "W4_DAY", decisions, decisionSuite],
+  ["the shared scope keeps no grants", "this.#cache = options.perOperation === true ? new Map() : undefined;", "this.#cache = new Map();", "W5_VIEWS", decisions, decisionSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];
 
 const root = new URL("../../../", import.meta.url);
+// Every suite must pass unmutated first, or a failing suite would count as kills.
+{
+  const dir = await mkdtemp(new URL("./node_modules/.work-mutation-", root).pathname);
+  try {
+    await cp(new URL("./dist/", root), dir, { recursive: true });
+    await writeFile(join(dir, "package.json"), '{"type":"module"}');
+    for (const suite of new Set(mutations.map((m) => m[5]))) {
+      const run = spawnSync(process.execPath, ["--test", suite], { cwd: dir, encoding: "utf8", timeout: 30000 });
+      assert.equal(run.status, 0, `${suite} fails before any mutation:\n${run.stdout}${run.stderr}`);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 let killed = 0;
 for (const [name, from, to, token, file, suite] of mutations) {
   const dir = await mkdtemp(new URL("./node_modules/.work-mutation-", root).pathname);

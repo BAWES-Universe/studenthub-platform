@@ -76,6 +76,14 @@ test("WORK_HTTP refusals map to 400, 403, 404 and 409 and keep extra detail", as
   assert.equal((await post("/api/work/placements", { personId: "p", storeId: ID })).status, 403);
   assert.deepEqual((await post("/api/work/decisions/sessions", { sessionIds: [ID, ID], decision: "approve" })).json, { error: "session_not_found", index: 1 });
   assert.equal((await post("/api/work/decisions/sessions", { sessionIds: "x" })).status, 400);
+  // Accepting a request checks the placement terms like a new placement, before the service runs.
+  const calls: unknown[][] = [];
+  for (const placement of [{ startDate: "2026-02-30" }, { endDate: "soon" }, { payContractId: "x" }, { storeId: ID }, "terms"]) {
+    assert.equal((await post(`/api/work/placement-requests/${ID}/accept`, { placement }, {}, calls)).status, 400, JSON.stringify(placement));
+  }
+  assert.equal(calls.length, 0);
+  await post(`/api/work/placement-requests/${ID}/accept`, { placement: { startDate: "2026-12-01", endDate: null, payContractId: ID.toUpperCase() } }, {}, calls);
+  assert.deepEqual(calls[0], ["decideRequest", "person", ID, "accept", { placement: { startDate: "2026-12-01", endDate: null, payContractId: ID } }]);
   assert.equal((await request(`/api/work/appeals/${ID}`)).status, 404);
   assert.equal((await post(`/api/work/sessions/${ID}/correct`, { startedAt: "x" })).status, 409);
   assert.equal((await request("/api/work/hours/company/acme?from=2026-11-01&to=2026-11-30")).status, 403);

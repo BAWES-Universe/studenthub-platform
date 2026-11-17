@@ -37,6 +37,7 @@ test("LEGACY_HOUR the legacy defects are reported, never imported silently", () 
   assert.deepEqual(mapLegacyWorkingHour(hour({ start_location_lat: "0", start_location_long: "0" })).session?.flags, ["location_missing"]);
   assert.deepEqual(mapLegacyWorkingHour(hour({ via: "Manual Log", start_location_lat: null, start_location_long: null, end_location_lat: null, end_location_long: null })).session?.flags, []);
   assert.deepEqual(mapLegacyWorkingHour(hour({ start_location_lat: "95" })).issues.map((i) => i.code), ["bad_location"]);
+  assert.deepEqual(mapLegacyWorkingHour(hour({ start_location_lat: null })).issues.map((i) => i.code), ["bad_location"]);
 });
 
 test("LEGACY_FEEDBACK decisions keep the legacy actor; pending rows are not decisions; ratings outside 1-5 drop with a report", () => {
@@ -75,6 +76,8 @@ test("LEGACY_RECONCILE legacy day rows vs totals here: every difference listed, 
     { legacyId: "d-2", legacyCandidateId: "7", legacyStoreId: "3", workDate: "2026-11-17", field: "missing_here", legacy: 100, here: null },
     { legacyId: null, legacyCandidateId: "7", legacyStoreId: "3", workDate: "2026-11-19", field: "missing_in_legacy", legacy: null, here: 60 },
   ]);
+  // A day of zero-length sessions still counts as a day here.
+  assert.deepEqual(reconcileDays([], [{ ...here[1]!, approvedSeconds: 0 }]).map((d) => [d.field, d.here]), [["missing_in_legacy", 0]]);
   const drifted = reconcileDays([{ ...legacy[0]!, total_time: 3600, total_approved: 2 }], [here[0]!]);
   assert.deepEqual(drifted.map((d) => [d.field, d.legacy, d.here]), [["approved_count", 2, 1], ["total_time", 3600, 4200]]);
 });

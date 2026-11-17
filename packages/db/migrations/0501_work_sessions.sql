@@ -89,7 +89,9 @@ BEGIN
  IF TG_OP = 'UPDATE' AND NEW.status <> OLD.status AND NEW.ended_at IS NULL THEN
   RAISE EXCEPTION 'work session: an open session cannot be decided' USING ERRCODE = '23514';
  END IF;
- SELECT person_principal_id, org_id, store_id, start_date, end_date INTO a FROM work_assignments WHERE id = NEW.assignment_id;
+ -- FOR SHARE: a session insert and a placement end-date change serialize on the
+ -- assignment row, so neither can commit a session outside the period.
+ SELECT person_principal_id, org_id, store_id, start_date, end_date INTO a FROM work_assignments WHERE id = NEW.assignment_id FOR SHARE;
  IF a.person_principal_id <> NEW.person_principal_id OR a.org_id <> NEW.org_id OR a.store_id <> NEW.store_id THEN
   RAISE EXCEPTION 'work session does not match its assignment' USING ERRCODE = '23514';
  END IF;

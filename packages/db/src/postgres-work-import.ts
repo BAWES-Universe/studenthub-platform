@@ -75,6 +75,11 @@ export class PostgresWorkImportStore {
       if (existing) {
         if (existing.legacy_digest !== digest) { tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: existing.legacy_digest, incomingDigest: digest }); return; }
         if (existing.end_date === row.endDate) { tally.unchanged++; return; }
+        // Only closing an open-ended placement is an update; reopening or moving an end date is a conflict.
+        if (existing.end_date !== null || row.endDate === null) {
+          tally.conflicts.push({ legacyRef: row.legacyRef, existingDigest: workImportDigest({ ...row, endDate: existing.end_date }), incomingDigest: workImportDigest(row) });
+          return;
+        }
         await guarded(client, () => client.query("UPDATE work_assignments SET end_date = $2::date WHERE id = $1", [existing.id, row.endDate]));
         tally.updated++;
         return;
@@ -132,7 +137,8 @@ export class PostgresWorkImportStore {
           SELECT DISTINCT ON (s.id) s.id AS session_id, d.id AS decision_id FROM work_sessions s
           JOIN work_decisions d ON s.id = ANY(d.session_ids) AND d.outcome = s.status AND d.legacy_ref IS NOT NULL
           WHERE s.source = 'import' AND s.status <> 'pending' ORDER BY s.id, d.decided_at DESC, d.id DESC)
-        UPDATE work_sessions s SET decision_id = p.decision_id FROM pick p WHERE s.id = p.session_id AND s.decision_id IS DISTINCT FROM p.decision_id`);
+        UPDATE work_sessions s SET decision_id = p.decision_id FROM pick p WHERE s.id = p.session_id AND s.decision_id IS DISTINCT FROM p.decision_id
+          AND (s.decision_id IS NULL OR EXISTS (SELECT 1 FROM work_decisions cur WHERE cur.id = s.decision_id AND cur.legacy_ref IS NOT NULL))`);
     });
     return result;
   }

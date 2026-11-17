@@ -5,7 +5,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-  parseAppealCursor, parseCursor, parseLocation, parsePlacementInput, parseRange, formatCursor,
+  isIsoDate, isUuid, parseAppealCursor, parseCursor, parseLocation, parsePlacementInput, parseRange, formatCursor,
   type AppealService, type DecisionService, type HoursViews, type PlacementService, type SessionService, type SessionStatus,
 } from "../../../../packages/work/src/index.js";
 
@@ -45,6 +45,19 @@ const STATUSES = new Set<SessionStatus>(["pending", "approved", "rejected"]);
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+/** The optional placement terms staff may set when accepting a request; each field is checked like a new placement's. */
+function placementTerms(value: Record<string, unknown>): { startDate?: string; endDate?: string | null; payContractId?: string } | undefined {
+  if (Object.keys(value).some((k) => !["startDate", "endDate", "payContractId"].includes(k))) return undefined;
+  const { startDate, endDate, payContractId } = value;
+  if (startDate !== undefined && !isIsoDate(startDate)) return undefined;
+  if (endDate !== undefined && endDate !== null && !isIsoDate(endDate)) return undefined;
+  if (payContractId !== undefined && !isUuid(payContractId)) return undefined;
+  return {
+    ...(startDate !== undefined ? { startDate: startDate as string } : {}),
+    ...(endDate !== undefined ? { endDate: endDate as string | null } : {}),
+    ...(payContractId !== undefined ? { payContractId: (payContractId as string).toLowerCase() } : {}),
+  };
 }
 function sessionCookie(header: string | undefined): string | undefined {
   for (const item of header?.split(";") ?? []) {
@@ -105,11 +118,12 @@ const ROUTES: readonly Route[] = [
     return outcome(await s.placements.request(p, { personId: body.personId, storeId: body.storeId, ...(typeof body.note === "string" ? { note: body.note } : {}) }));
   } },
   { method: "POST", pattern: new RegExp(`^/api/work/placement-requests/(${UUID})/(accept|reject|cancel)$`), handle: async (p, { params, body }, s) => {
-    const placement = record(body.placement);
+    const raw = record(body.placement);
+    const placement = raw ? placementTerms(raw) : undefined;
     if ((body.reason !== undefined && typeof body.reason !== "string") || (body.placement !== undefined && !placement)) return refusal("invalid_input");
     return outcome(await s.placements.decideRequest(p, params[0]!.toLowerCase(), params[1] as "accept" | "reject" | "cancel", {
       ...(typeof body.reason === "string" ? { reason: body.reason } : {}),
-      ...(placement ? { placement: placement as { startDate?: string; endDate?: string | null; payContractId?: string } } : {}),
+      ...(placement ? { placement } : {}),
     }));
   } },
   // W-3 clock in and out.

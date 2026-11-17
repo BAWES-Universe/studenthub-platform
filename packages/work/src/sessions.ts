@@ -6,7 +6,7 @@
 // are kept, there is no geofence, and a late manual entry is accepted and
 // flagged to the approver. Server time is the only clock.
 
-import { cleanText, constraintName, isUuid, sqlState, kuwaitDate, type IsoDate } from "./common.js";
+import { cleanText, constraintName, isIsoDate, isUuid, sqlState, kuwaitDate, type IsoDate } from "./common.js";
 import type { Assignment, WorkEvent } from "./placement.js";
 
 export type SessionSource = "timer" | "manual" | "correction" | "import";
@@ -66,14 +66,19 @@ export interface NewSession {
 }
 
 export class SessionConflict extends Error {
-  constructor(readonly reason: "already_open" | "overlap") { super(`work session ${reason}`); }
+  constructor(readonly reason: "already_open" | "overlap" | "outside_assignment") { super(`work session ${reason}`); }
 }
 
-/** Maps a store error to a session conflict: the in-memory class, or the Postgres unique index / 0501 overlap trigger. */
-export function sessionConflict(error: unknown): "already_open" | "overlap" | undefined {
+/**
+ * Maps a store error to a session conflict: the in-memory class, the Postgres
+ * unique index, the 0501 overlap trigger, or its period check (which runs
+ * under a share lock on the assignment, so a placement ended meanwhile is seen).
+ */
+export function sessionConflict(error: unknown): "already_open" | "overlap" | "outside_assignment" | undefined {
   if (error instanceof SessionConflict) return error.reason;
   if (sqlState(error) === "23505" && constraintName(error) === "work_sessions_one_open") return "already_open";
   if (sqlState(error) === "23P01") return "overlap";
+  if (sqlState(error) === "23514" && error instanceof Error && error.message.includes("outside its assignment period")) return "outside_assignment";
   return undefined;
 }
 
@@ -116,7 +121,10 @@ export function parseLocation(latitude: unknown, longitude: unknown): Location |
 
 /** Instants for manual entry: ISO 8601 with an explicit offset or Z, so the time zone is never guessed. */
 export function parseInstant(value: unknown): Date | undefined {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(value)) return undefined;
+  if (typeof value !== "string") return undefined;
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,3})?)?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  // Date() rolls 30 February into March and 24:00 into the next day; refuse both instead.
+  if (!m || !isIsoDate(m[1]) || Number(m[2]) > 23 || Number(m[3]) > 59 || Number(m[4] ?? 0) > 59 || Number(m[7] ?? 0) > 14 || Number(m[8] ?? 0) > 59) return undefined;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
@@ -161,7 +169,7 @@ export class SessionService {
         });
       } catch (error) {
         const conflict = sessionConflict(error);
-        if (conflict) return { kind: "refused", code: conflict === "already_open" ? "already_working" : "overlaps_session" };
+        if (conflict) return { kind: "refused", code: conflict === "already_open" ? "already_working" : conflict === "outside_assignment" ? "not_assigned" : "overlaps_session" };
         throw error;
       }
       await tx.event(sessionEvent("session.started", session, personId));
@@ -218,7 +226,8 @@ export class SessionService {
           note, correctsSessionId: null, createdBy: personId,
         });
       } catch (error) {
-        if (sessionConflict(error)) return { kind: "refused", code: "overlaps_session" };
+        const conflict = sessionConflict(error);
+        if (conflict) return { kind: "refused", code: conflict === "outside_assignment" ? "outside_assignment" : "overlaps_session" };
         throw error;
       }
       await tx.event(sessionEvent("session.added", session, personId));

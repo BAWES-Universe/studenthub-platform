@@ -74,8 +74,11 @@ originals. The pay lane dedupes on `sessionId` and re-reads sessions whose
 
 `apps/gateway/src/work/http.ts`, JSON under `/api/work/...` (the screens own `/work/...`), wired in `wiring/work.ts`.
 The signed-in person is always the actor; writes need a same-origin JSON POST. It is
-off (503) unless `SAFE_WRITE_SIGNING_KEY` is set, like every gateway write, so legacy
-stays the writer until cutover. Store managers (access lane A4,
+off (503), and so are the screens, unless both `SAFE_WRITE_SIGNING_KEY` and the
+cutover switch `WORK_LANE_ENABLED=true` are set. The switch is off by default, so a
+deployment that already signs other writes still leaves legacy as the only writer of
+hours. The cutover owner turns it on when legacy stops writing hours. Any value other
+than `true` or `false` stops startup. Store managers (access lane A4,
 `PostgresAccessStoreManagersStore.managedStores`) and decision notices (comms lane
 hooks) plug into `wireWork`'s ports when those lanes land.
 

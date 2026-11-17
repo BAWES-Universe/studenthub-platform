@@ -71,6 +71,8 @@ function status(value: unknown): "pending" | "approved" | "rejected" | undefined
 function coordinate(lat: unknown, long: unknown): { latitude: number; longitude: number } | null | undefined {
   const empty = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
   if (empty(lat) && empty(long)) return null;
+  // Half a pair is a defect, not a fix (Number(null) would read as 0).
+  if (empty(lat) || empty(long)) return undefined;
   const a = Number(lat), b = Number(long);
   // Legacy wrote 0,0 when the device gave nothing.
   if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180) return undefined;
@@ -279,7 +281,8 @@ export function reconcileDays(legacy: readonly LegacyDayRow[], here: readonly Da
   }
   for (const h of here) {
     const total = h.approvedSeconds + h.pendingSeconds + h.rejectedSeconds;
-    if (!seen.has(key(h.legacyCandidateId, h.legacyStoreId, h.workDate)) && total > 0) {
+    const count = h.approvedCount + h.pendingCount + h.rejectedCount;
+    if (!seen.has(key(h.legacyCandidateId, h.legacyStoreId, h.workDate)) && (total > 0 || count > 0)) {
       drift.push({ legacyId: null, legacyCandidateId: h.legacyCandidateId, legacyStoreId: h.legacyStoreId, workDate: h.workDate, field: "missing_in_legacy", legacy: null, here: total });
     }
   }

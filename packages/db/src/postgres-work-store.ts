@@ -124,6 +124,7 @@ export async function guarded<T>(client: Queryable, work: () => Promise<T>): Pro
     return result;
   } catch (error) {
     await client.query("ROLLBACK TO SAVEPOINT work_write");
+    await client.query("RELEASE SAVEPOINT work_write");
     throw error;
   }
 }
