@@ -1759,7 +1759,8 @@ export function queueConfigChange(files, head, commits, allowed = queueConfigPat
   if (!Array.isArray(files) || files.length === 0 || files.length >= GITHUB_PAGE) return { ok: false, reason: "its changed files are not one readable page" };
   if (!Array.isArray(commits) || commits.length === 0 || commits.length >= GITHUB_PAGE) return { ok: false, reason: "its commits are not one readable page" };
   if (commits.at(-1)?.sha !== head) return { ok: false, reason: "its head moved while it was read" };
-  const blobs = {};
+  // No prototype, so a product file named __proto__ is an own entry too.
+  const blobs = Object.create(null);
   for (const file of files) {
     const names = [file?.filename, ...(file?.previous_filename === undefined ? [] : [file.previous_filename])];
     if (!names.every(allowed)) return { ok: false, reason: `${String(file?.filename)} is not a ${allowed === queueConfigPath ? "queue config" : allowed === productPath ? "product" : "coordinator"} path` };

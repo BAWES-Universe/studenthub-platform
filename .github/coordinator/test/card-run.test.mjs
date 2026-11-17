@@ -4222,6 +4222,9 @@ test("Box review C4: a box:product-review pull request is reviewed by Codex, and
   assert.deepEqual(run.review, { pr: 260, head: PR_HEAD, base: PR_BASE });
   assert.equal(host.armedRecords[0].reviewer_lane, "codex-verifier");
   assert.equal(JSON.parse(host.files.get(reviewClaim(PATHS, 260, PR_HEAD)).text).files["apps/gateway/src/index.ts"].additions, 9);
+  const proto = reviewHost([queuePull(260, { labels: [PRODUCT], files: [...productFiles(), { filename: "__proto__", status: "added", sha: "9".repeat(40), additions: 1, deletions: 0 }] })]);
+  assert.equal((await attempt(() => autoRun({ io: proto.io, paths: PATHS }))).outcome, "REVIEW_PASS");
+  assert.equal(Object.hasOwn(JSON.parse(proto.files.get(reviewClaim(PATHS, 260, PR_HEAD)).text).files, "__proto__"), true, "a file named __proto__ stays in the claim");
   const files = (edit) => { const list = productFiles(); edit(list); return list; };
   for (const [label, pull] of [
     ["product label on queue config", queuePull(260, { labels: [PRODUCT] })],
