@@ -11,7 +11,6 @@ const mutations = [
   ["filled-takes", "REC7B_RULES", 'return status === "open" || status === "filling";', 'return status !== "draft";'],
   ["decide-twice", "REC7B_RULES", 'return from === "applied" && (to === "accepted" || to === "rejected");', 'return to === "accepted" || to === "rejected";'],
   ["decision-to-recruiter", "REC7B_RULES", "return { kind, recipient: personId,", "return { kind, recipient: recruiterId ?? personId,"],
-  ["interview-pending", "REC7B_RULES", "1: \"accepted\"", "1: \"applied\""],
   ["open-query", "REC7B_VIEW", '!["q", "type", "applied", "page"].includes(key)', "false"],
   ["apply-twice", "REC7B_VIEW", "canApply: !row.application_id && ", "canApply: "],
 ];

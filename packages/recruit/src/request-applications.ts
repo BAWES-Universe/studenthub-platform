@@ -34,11 +34,6 @@ export function requestApplicationOutbox(to: RequestApplicationStatus, applicati
   return { kind, recipient: personId, dedupeKey: `${kind}:${applicationId}` };
 }
 
-/** Legacy request_application.status: 0 applied, 1 interview scheduled, 2 accepted, 3 rejected. An interview means the person was taken on. */
-export function legacyRequestApplicationStatus(value: number): RequestApplicationStatus | undefined {
-  return ({ 0: "applied", 1: "accepted", 2: "accepted", 3: "rejected" } as Readonly<Record<number, RequestApplicationStatus>>)[value];
-}
-
 export function parseOpenRequestQuery(raw: Readonly<Record<string, string | readonly string[] | undefined>>): { readonly q: string | null; readonly positionType: "full_time" | "part_time" | null; readonly applied: boolean; readonly page: number } | undefined {
   for (const key of Object.keys(raw)) if (!["q", "type", "applied", "page"].includes(key) || Array.isArray(raw[key])) return undefined;
   const q = raw.q === undefined || (raw.q as string).trim() === "" ? null : (raw.q as string).trim();

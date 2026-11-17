@@ -17,7 +17,6 @@ test("REC7B_RULES open and filling requests take applications; an application is
   assert.equal(m.requestApplicationOutbox("applied", APP, "person", null), null, "no recruiter yet: staff see it on the request");
   assert.deepEqual(m.requestApplicationOutbox("accepted", APP, "person", "rec"), { kind: "request_application.accepted", recipient: "person", dedupeKey: `request_application.accepted:${APP}` });
   assert.deepEqual(m.requestApplicationOutbox("rejected", APP, "person", null), { kind: "request_application.rejected", recipient: "person", dedupeKey: `request_application.rejected:${APP}` });
-  assert.deepEqual([0, 1, 2, 3, 4].map(m.legacyRequestApplicationStatus), ["applied", "accepted", "accepted", "rejected", undefined]);
 });
 
 test("REC7B_VIEW the board query is closed and the view offers Apply only once and only while the request takes applications", () => {

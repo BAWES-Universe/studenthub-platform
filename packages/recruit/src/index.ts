@@ -8,3 +8,4 @@ export * from "./interviews.js";
 export * from "./jobs.js";
 export * from "./fulltimers.js";
 export * from "./request-applications.js";
+export * from "./legacy-maps.js";
