@@ -35,11 +35,21 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | A day decision rewrote every closed session, earlier decisions included | A day decision changes pending closed sessions only; changing a decided session is a session decision | Lost-decision defect |
 | Bulk-save rolled back on a missing day | Same, and also on an out-of-scope or open session; the refusal names the item | Parity, stricter |
 | Undo wrote nothing and kept the old decision link | Undo writes its own decision row; the session points at it. No undo window (legacy has none; D-WK2 keeps legacy) | Audit |
+| Each feedback save left its own notification, so an old "approved" stayed beside a later "rejected" | A re-decision or undo withdraws the earlier notice; the person's feed shows what stands now | Misleading feed |
 | Rating had no range | 1 to 5 | Docs said 1 to 5 |
 | A person could read note, rating, reason and is_public through `expand` | The person sees outcome, reason, and the note only when public; never the rating | Leak defect |
 | Date range strings went raw into SQL | Dates parsed and bound; at most a year per request | SQL injection |
 | Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only | Scoping defect |
 | Stats returned the last session's status | Totals over the whole range, split by status | Mixed-status defect |
+
+## Decision notifications (comms lane)
+
+`PostgresWorkDecisionStore` takes optional hooks `{ onDecided, onUndone }` with the
+shapes of `recordWorkSessionDecision` and `retractWorkSessionDecision` from
+`@studenthub/db/comms`. They run on the decision's own client, so a notice commits or
+rolls back with the decision. Each changed session gets one `decided` notice; a
+re-decision or an undo first withdraws the earlier decision's notice. Gateway wiring
+passes the comms functions.
 
 ## Payable seam for the pay lane (W-2)
 
@@ -52,7 +62,6 @@ current store (legacy dropped hours at an earlier store in the same month).
 
 ## Not yet here
 
-W-6 appeals and corrections, the Postgres payable source, decision
-notifications to the person (with the comms lane), the reconciliation report against imported legacy day rows, gateway
+W-6 appeals and corrections, the Postgres payable source, the reconciliation report against imported legacy day rows, gateway
 pages, and the legacy import mapping. They land as later slices on the same
 lane.
