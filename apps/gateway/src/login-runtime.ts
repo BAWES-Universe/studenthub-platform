@@ -298,7 +298,7 @@ export function createRuntimeLoginFromEnv(
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
   const ops = wireOps(settings, access.services, organizationArea.services);
-  const accessLane = wireAccessLane(settings, access.services);
+  const accessLane = wireAccessLane(settings, access.services, env);
   // SHU-457: every reader of the login store's sessions gets the bound T check.
   const upstream = upstreamSessionsFromEnv(env, issuer, value("OIDC_CLIENT_ID"));
   if (upstream) {
