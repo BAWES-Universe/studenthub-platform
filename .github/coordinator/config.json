@@ -10095,6 +10095,7 @@
   "queue_config_review": {
     "lane": "SHU-304",
     "code_label": "coordinator:code",
+    "product_label": "box:product-review",
     "label": "coordinator:queue-config",
     "max_heads_per_pr": 3
   }

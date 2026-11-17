@@ -88,6 +88,18 @@ const CASES = [
     pattern: "Box review C1:",
   },
   {
+    name: "M14 let a product path reach .github",
+    from: '  if (typeof file !== "string" || file.startsWith(".github/") || file === ".github") return false;',
+    to: '  if (typeof file !== "string") return false; // SHU321-M14',
+    pattern: "Box review C4:",
+  },
+  {
+    name: "M15 review coordinator code under the product label",
+    from: "    if (!change.ok && hasLabel(pull, policy.productLabel)) change = queueConfigChange(files, head, commits, productPath);",
+    to: "    if (!change.ok && hasLabel(pull, policy.productLabel)) change = queueConfigChange(files, head, commits, () => true); // SHU321-M15",
+    pattern: "Box review C4:",
+  },
+  {
     name: "M11 drop the Claude-Session trailer check",
     from: "  if (!commits.every((entry) => SESSION_TRAILER_RE.test(",
     to: "  if (false && !commits.every((entry) => SESSION_TRAILER_RE.test( // SHU321-M11\n",
