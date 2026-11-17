@@ -13,7 +13,7 @@
 //   has no undo window, and D-WK2 keeps legacy, so there is none here;
 // - rating is 1 to 5 (legacy had no rule).
 
-import { cleanText, isCompanyFor, isOperatorStaff, isStaffFor, isIsoDate, isPrincipalId, isUuid, type IsoDate, type WorkGrant } from "./common.js";
+import { COMPANY_ROLES, STAFF_ROLES, cleanText, isCompanyFor, isOperatorStaff, isStaffFor, isIsoDate, isPrincipalId, isUuid, orgReach, type IsoDate, type WorkGrant } from "./common.js";
 import type { GrantsPort, WorkEvent } from "./placement.js";
 import type { SessionStatus, WorkSession } from "./sessions.js";
 
@@ -164,6 +164,18 @@ export class WorkScope {
   /** Staff or admin of the operator organization: every company's hours. */
   async isOperatorStaff(actorId: string): Promise<boolean> {
     return isOperatorStaff((await this.#actor(actorId)).grants);
+  }
+
+  /** How far staff or company grants reach from `orgId` (self-scoped grants never include sub-companies). */
+  async companyReach(actorId: string, orgId: string): Promise<"none" | "self" | "subtree"> {
+    const ancestors = await this.#ancestors(orgId);
+    if (ancestors === undefined) return "none";
+    return orgReach((await this.#actor(actorId)).grants, [...STAFF_ROLES, ...COMPANY_ROLES], orgId, ancestors);
+  }
+  async staffReach(actorId: string, orgId: string): Promise<"none" | "self" | "subtree"> {
+    const ancestors = await this.#ancestors(orgId);
+    if (ancestors === undefined) return "none";
+    return orgReach((await this.#actor(actorId)).grants, STAFF_ROLES, orgId, ancestors);
   }
 
   async isStaff(actorId: string, orgId: string): Promise<boolean> {

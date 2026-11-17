@@ -12,6 +12,7 @@ const GRANTS: Record<string, WorkGrant[]> = {
   staff: [{ orgId: "root", role: "staff", scope: "subtree" }],
   owner: [{ orgId: "company", role: "org-owner", scope: "self" }],
   rivalStaff: [{ orgId: "rival", role: "staff", scope: "subtree" }],
+  rootSelfStaff: [{ orgId: "root", role: "staff", scope: "self" }],
 };
 const ASSIGNMENT: Assignment = {
   id: "assignment", personId: "person", orgId: "company", storeId: STORE, payContractId: null,
@@ -79,8 +80,9 @@ class Memory implements AppealStore {
     const s = appeal && this.sessions.find((x) => x.id === appeal.sessionId);
     return appeal && s ? { appeal, session: s, updates: this.updates.filter((u) => u.appealId === id).reverse(), entries: this.sessions.filter((x) => x.appealId === id) } : undefined;
   }
-  async listAppeals(f: { personId?: string; status?: string; orgIds?: readonly string[] }) {
-    return this.appeals.filter((a) => (!f.personId || a.personId === f.personId) && (!f.status || a.status === f.status) && (!f.orgIds || f.orgIds.includes(a.orgId)));
+  async listAppeals(f: { personId?: string; status?: string; orgIds?: readonly string[]; includeSubtree?: boolean }) {
+    return this.appeals.filter((a) => (!f.personId || a.personId === f.personId) && (!f.status || a.status === f.status)
+      && (!f.orgIds || f.orgIds.includes(a.orgId) || (f.includeSubtree === true && (ANCESTORS[a.orgId] ?? []).some((o) => f.orgIds!.includes(o)))));
   }
 }
 
@@ -129,6 +131,10 @@ test("W6_STAFF only staff over the company answer, set a named status, and read 
   assert.deepEqual(store.events.map((e) => e.kind), ["appeal.raised", "appeal.status_changed", "appeal.updated"]);
   assert.deepEqual(await svc.list("owner"), { kind: "refused", code: "forbidden" });
   assert.equal((await svc.list("staff", { status: "in_progress" }) as readonly WorkAppeal[]).length, 1);
+  // A company's appeals reach staff above it only through a subtree grant.
+  const everyAppeal = (await svc.list("staff") as readonly WorkAppeal[]).length;
+  assert.equal(everyAppeal > 0 && (await svc.list("staff", { orgId: "root" }) as readonly WorkAppeal[]).length, everyAppeal);
+  assert.deepEqual(await svc.list("rootSelfStaff", { orgId: "root" }), []);
   assert.deepEqual(await svc.list("staff", { from: "2026-11-01", to: "2025-01-01" }), { kind: "refused", code: "invalid_input" });
 });
 

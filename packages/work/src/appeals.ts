@@ -80,8 +80,8 @@ export interface AppealStore {
   organizationAncestors(orgId: string): Promise<readonly string[] | undefined>;
   transaction<T>(work: (tx: AppealTransaction) => Promise<T>): Promise<T>;
   appeal(id: string): Promise<AppealDetail | undefined>;
-  /** Newest first. `orgIds` include sub-companies. */
-  listAppeals(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly status?: AppealStatus; readonly range?: HoursRange;
+  /** Newest first. `orgIds` include sub-companies only with `includeSubtree`. */
+  listAppeals(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly status?: AppealStatus; readonly range?: HoursRange;
     readonly after?: AppealCursor; readonly limit: number }): Promise<readonly WorkAppeal[]>;
 }
 
@@ -148,11 +148,10 @@ export class AppealService {
       range = parseRange(options.from, options.to);
       if (!range) return { kind: "refused", code: "invalid_input" };
     }
-    if (options.orgId !== undefined ? !(await this.#scope.isStaff(actorId, options.orgId)) : !(await this.#scope.isOperatorStaff(actorId))) {
-      return { kind: "refused", code: "forbidden" };
-    }
+    const reach = options.orgId !== undefined ? await this.#scope.staffReach(actorId, options.orgId) : (await this.#scope.isOperatorStaff(actorId)) ? "subtree" : "none";
+    if (reach === "none") return { kind: "refused", code: "forbidden" };
     return this.#store.listAppeals({
-      ...(options.orgId !== undefined ? { orgIds: [options.orgId] } : {}), ...(status ? { status: status as AppealStatus } : {}),
+      ...(options.orgId !== undefined ? { orgIds: [options.orgId], includeSubtree: reach === "subtree" } : {}), ...(status ? { status: status as AppealStatus } : {}),
       ...(range ? { range } : {}), ...(options.after ? { after: options.after } : {}), limit: APPEAL_PAGE_SIZE,
     });
   }

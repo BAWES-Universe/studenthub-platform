@@ -277,7 +277,7 @@ test("W4_PG notification hooks run on the decision's own transaction; a hook fai
 test("W5_PG views: the person sees no rating or private note; another company sees nothing; totals split; paging stable", async () => {
   const w = await world();
   const now = { value: new Date("2026-11-19T06:00:00Z") };
-  const { decision, views } = services(now);
+  const { decision, views, placement } = services(now);
   const [a, b] = await workedDay(w, now);
   await decision.decideSessions(w.owner, [a], { decision: "approve", note: "private note", rating: 4 });
   await decision.decideSessions(w.owner, [b], { decision: "reject", reason: "late", note: "public note", notePublic: true });
@@ -293,6 +293,13 @@ test("W5_PG views: the person sees no rating or private note; another company se
   assert.deepEqual(await views.company(w.rivalOwner, w.company, range), { kind: "refused", code: "forbidden" });
   const group = await views.company(w.staff, w.group, range, { status: "rejected" });
   assert.deepEqual("rows" in group && group.rows.map((r) => r.session.id), [b]);
+  // A self-scoped grant on the parent reaches the parent alone, never its sub-companies (subtree grants do).
+  const groupSelf = await principal("group-self", [{ orgId: w.group, role: "org-owner", scope: "self" }]);
+  const selfView = await views.company(groupSelf, w.group, range);
+  assert.deepEqual("rows" in selfView && [selfView.rows.length, selfView.totals], [0, { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }]);
+  assert.deepEqual(await views.company(groupSelf, w.company, range), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await placement.forOrganization(groupSelf, w.group), []);
+  assert.equal(((await placement.forOrganization(w.staff, w.group)) ?? []).length, 1);
   const first = await viewStore.listSessions({ personId: w.person, range, limit: 2 });
   const rest = await viewStore.listSessions({ personId: w.person, range, limit: 2, after: { workDate: first[1]!.workDate, id: first[1]!.id } });
   assert.deepEqual([...first, ...rest].map((s) => s.id).sort(), [a, b, (await viewStore.listSessions({ personId: w.person, range, limit: 10 })).map((s) => s.id).find((id) => id !== a && id !== b)].sort());
@@ -328,6 +335,8 @@ test("W6_PG appeals: own session only, staff answer, the appellant marks read, r
   assert.equal((await appeals.setStatus(w.staff, appealId, "resolved")).kind, "updated");
   const listed = await appeals.list(w.staff, { orgId: w.group, status: "resolved" });
   assert.deepEqual(Array.isArray(listed) && listed.map((x) => x.id), [appealId]);
+  const groupSelfStaff = await principal("group-self-staff", [{ orgId: w.group, role: "staff", scope: "self" }]);
+  assert.deepEqual(await appeals.list(groupSelfStaff, { orgId: w.group }), []);
   assert.deepEqual((await events(appealId)).map((e) => e.kind), ["appeal.raised", "appeal.updated", "appeal.status_changed"]);
 });
 

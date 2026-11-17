@@ -223,25 +223,25 @@ export class PostgresWorkPlacementStore {
     return rows[0] ? requestFromRow(rows[0]) : undefined;
   }
 
-  /** Newest first. `orgIds` covers each organization and its sub-companies. */
-  async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; storeId?: string }): Promise<readonly WorkAssignmentRecord[]> {
+  /** Newest first. `orgIds` covers each organization, and its sub-companies only with `includeSubtree`. */
+  async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; includeSubtree?: boolean; storeId?: string }): Promise<readonly WorkAssignmentRecord[]> {
     const { rows } = await this.#db.pool.query<AssignmentRow>(`WITH RECURSIVE tree(id) AS (
        SELECT id FROM organizations WHERE $2::text[] IS NOT NULL AND id = ANY($2::text[])
-       UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id)
+       UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $4::boolean)
      SELECT ${ASSIGNMENT_COLUMNS} FROM work_assignments a
      WHERE ($1::text IS NULL OR a.person_principal_id = $1) AND ($2::text[] IS NULL OR a.org_id IN (SELECT id FROM tree))
        AND ($3::uuid IS NULL OR a.store_id = $3::uuid)
-     ORDER BY a.start_date DESC, a.id LIMIT 500`, [filter.personId ?? null, filter.orgIds ?? null, filter.storeId ?? null]);
+     ORDER BY a.start_date DESC, a.id LIMIT 500`, [filter.personId ?? null, filter.orgIds ?? null, filter.storeId ?? null, filter.includeSubtree === true]);
     return Object.freeze(rows.map(assignmentFromRow));
   }
 
-  async listRequests(filter: { orgIds?: readonly string[]; status?: WorkAssignmentRequestRecord["status"] }): Promise<readonly WorkAssignmentRequestRecord[]> {
+  async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; status?: WorkAssignmentRequestRecord["status"] }): Promise<readonly WorkAssignmentRequestRecord[]> {
     const { rows } = await this.#db.pool.query<RequestRow>(`WITH RECURSIVE tree(id) AS (
        SELECT id FROM organizations WHERE $1::text[] IS NOT NULL AND id = ANY($1::text[])
-       UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id)
+       UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $3::boolean)
      SELECT ${REQUEST_COLUMNS} FROM work_assignment_requests
      WHERE ($1::text[] IS NULL OR org_id IN (SELECT id FROM tree)) AND ($2::text IS NULL OR status = $2)
-     ORDER BY requested_at DESC, id LIMIT 500`, [filter.orgIds ?? null, filter.status ?? null]);
+     ORDER BY requested_at DESC, id LIMIT 500`, [filter.orgIds ?? null, filter.status ?? null, filter.includeSubtree === true]);
     return Object.freeze(rows.map(requestFromRow));
   }
 
@@ -503,17 +503,18 @@ export class PostgresWorkDecisionStore {
 }
 
 export interface WorkSessionFilter {
-  readonly personId?: string; readonly orgIds?: readonly string[]; readonly storeIds?: readonly string[];
+  readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeIds?: readonly string[];
   readonly status?: "pending" | "approved" | "rejected"; readonly range: { readonly from: IsoDate; readonly to: IsoDate };
   readonly after?: { readonly workDate: IsoDate; readonly id: string }; readonly limit?: number;
 }
 
 /** Shared WHERE for W-5 lists and totals; every value is bound. */
 function sessionWhere(f: WorkSessionFilter): { readonly sql: string; readonly values: unknown[] } {
-  const values: unknown[] = [f.personId ?? null, f.orgIds ? [...f.orgIds] : null, f.storeIds ? [...f.storeIds] : null, f.status ?? null, f.range.from, f.range.to];
+  const values: unknown[] = [f.personId ?? null, f.orgIds ? [...f.orgIds] : null, f.storeIds ? [...f.storeIds] : null, f.status ?? null, f.range.from, f.range.to,
+    f.includeSubtree === true];
   const sql = `WITH RECURSIVE tree(id) AS (
      SELECT id FROM organizations WHERE $2::text[] IS NOT NULL AND id = ANY($2::text[])
-     UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id)
+     UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $7::boolean)
    SELECT %COLUMNS% FROM work_sessions s
    WHERE s.deleted_at IS NULL AND work_session_in_force(s.id)
      AND ($1::text IS NULL OR s.person_principal_id = $1) AND ($2::text[] IS NULL OR s.org_id IN (SELECT id FROM tree))
@@ -534,8 +535,8 @@ export class PostgresWorkHoursViewStore {
     const { sql, values } = sessionWhere(f);
     values.push(f.after?.workDate ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit ?? 100, 1), 501));
     const { rows } = await this.#db.pool.query<SessionRow>(`${sql.replace("%COLUMNS%", SESSION_COLUMNS)}
-      AND ($7::date IS NULL OR (s.work_date, s.id) > ($7::date, $8::uuid))
-      ORDER BY s.work_date, s.id LIMIT $9`, values);
+      AND ($8::date IS NULL OR (s.work_date, s.id) > ($8::date, $9::uuid))
+      ORDER BY s.work_date, s.id LIMIT $10`, values);
     return Object.freeze(rows.map(workSessionFromRow));
   }
 

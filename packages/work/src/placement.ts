@@ -12,7 +12,7 @@
 // such gate and the 10-27 rule is "no regressions" (W-1 draft, rule 6).
 
 import { matchContracts, RATE_RESOLUTION_VERSION, RateResolutionError, type PayContract } from "@studenthub/pay-contracts";
-import { cleanText, sqlState, isOperatorRecruiter, isIsoDate, isPrincipalId, isUuid, kuwaitDate, isCompanyFor, isStaffFor, OPERATOR_ORG_IDS, type IsoDate, type WorkGrant } from "./common.js";
+import { cleanText, sqlState, isOperatorRecruiter, isIsoDate, isPrincipalId, isUuid, kuwaitDate, isCompanyFor, isStaffFor, orgReach, STAFF_ROLES, COMPANY_ROLES, OPERATOR_ORG_IDS, type IsoDate, type WorkGrant } from "./common.js";
 
 export const PLACEMENT_WARNINGS = ["civil_id_missing", "civil_id_expires_before_start", "no_pay_contract"] as const;
 export type PlacementWarning = typeof PLACEMENT_WARNINGS[number];
@@ -110,8 +110,8 @@ export interface PlacementStore {
   assignment(id: string): Promise<Assignment | undefined>;
   assignmentForRecruitCard(recruitCardId: string): Promise<Assignment | undefined>;
   request(id: string): Promise<AssignmentRequest | undefined>;
-  listAssignments(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly storeId?: string }): Promise<readonly Assignment[]>;
-  listRequests(filter: { readonly orgIds?: readonly string[]; readonly status?: AssignmentRequestStatus }): Promise<readonly AssignmentRequest[]>;
+  listAssignments(filter: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly storeId?: string }): Promise<readonly Assignment[]>;
+  listRequests(filter: { readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly status?: AssignmentRequestStatus }): Promise<readonly AssignmentRequest[]>;
   transaction<T>(work: (tx: PlacementTransaction) => Promise<T>): Promise<T>;
 }
 
@@ -385,8 +385,9 @@ export class PlacementService {
     const ancestors = await this.#store.organizationAncestors(orgId);
     if (ancestors === undefined) return undefined;
     const grants = await this.#grants.listGrantsForPrincipal(actorId);
-    if (!(isStaffFor(grants, orgId, ancestors) || isCompanyFor(grants, orgId, ancestors))) return undefined;
-    return this.#store.listAssignments({ orgIds: [orgId], ...(storeId ? { storeId } : {}) });
+    const reach = orgReach(grants, [...STAFF_ROLES, ...COMPANY_ROLES], orgId, ancestors);
+    if (reach === "none") return undefined;
+    return this.#store.listAssignments({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(storeId ? { storeId } : {}) });
   }
 
   async #place(tx: PlacementTransaction, actorId: string, input: PlacementInput, store: StoreFacts, origin: Origin): Promise<PlaceOutcome> {

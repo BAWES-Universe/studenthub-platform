@@ -82,6 +82,17 @@ export function isCompanyFor(grants: readonly WorkGrant[], orgId: string, ancest
   return grantsCover(grants, COMPANY_ROLES, orgId, ancestors);
 }
 
+/**
+ * How far a staff or company grant reaches from `orgId`: "subtree" when a
+ * covering grant is subtree-scoped (sub-companies included), "self" when only a
+ * self-scoped grant at `orgId` covers it (that organization alone), else "none".
+ */
+export function orgReach(grants: readonly WorkGrant[], roles: readonly string[], orgId: string, ancestors: readonly string[]): "none" | "self" | "subtree" {
+  const covering = grants.filter((g) => roles.includes(g.role) && (g.orgId === orgId || (g.scope === "subtree" && ancestors.includes(g.orgId))));
+  if (covering.some((g) => g.scope === "subtree")) return "subtree";
+  return covering.length > 0 ? "self" : "none";
+}
+
 /** The SQLSTATE of a database error, if the error carries one (the db stores pass pg errors through). */
 export function sqlState(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : undefined;

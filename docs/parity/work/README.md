@@ -39,7 +39,7 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | Rating had no range | 1 to 5 | Docs said 1 to 5 |
 | A person could read note, rating, reason and is_public through `expand` | The person sees outcome, reason, and the note only when public; never the rating | Leak defect |
 | Date range strings went raw into SQL | Dates parsed and bound; at most a year per request | SQL injection |
-| Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only | Scoping defect |
+| Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only; sub-companies are included only for a subtree grant (a self-scoped owner or staff sees that company alone) | Scoping defect |
 | A person could appeal any session id | Only their own session | Ownership defect |
 | Mark-read on an appeal update had no owner check | Only the appellant marks their updates read | Ownership defect |
 | Appeal status took any integer | Four named states (submitted, awaiting review, in progress, resolved) | Bad-input defect |

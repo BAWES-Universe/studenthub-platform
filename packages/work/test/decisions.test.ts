@@ -12,6 +12,7 @@ const GRANTS: Record<string, WorkGrant[]> = {
   staff: [{ orgId: "root", role: "staff", scope: "subtree" }],
   owner: [{ orgId: "company", role: "org-owner", scope: "self" }],
   groupOwner: [{ orgId: "group", role: "org-owner", scope: "subtree" }],
+  groupSelfOwner: [{ orgId: "group", role: "org-owner", scope: "self" }],
   rivalOwner: [{ orgId: "rival", role: "org-owner", scope: "self" }],
   manager: [],
   person: [{ orgId: "company", role: "candidate", scope: "self" }],
@@ -52,7 +53,7 @@ class Memory implements DecisionStore, HoursViewStore {
   }
   #match(f: Omit<SessionFilter, "after" | "limit">) {
     return this.sessions.filter((s) => s.deletedAt === null && !this.replaced.has(s.id) && (!f.personId || s.personId === f.personId)
-      && (!f.orgIds || f.orgIds.some((o) => o === s.orgId || ANCESTORS[s.orgId]?.includes(o))) && (!f.storeIds || f.storeIds.includes(s.storeId))
+      && (!f.orgIds || f.orgIds.some((o) => o === s.orgId || (f.includeSubtree === true && ANCESTORS[s.orgId]?.includes(o)))) && (!f.storeIds || f.storeIds.includes(s.storeId))
       && (!f.status || (s.status === f.status && s.endedAt !== null)) && s.workDate >= f.range.from && s.workDate <= f.range.to)
       .sort((a, b) => a.workDate.localeCompare(b.workDate) || a.id.localeCompare(b.id));
   }
@@ -242,6 +243,12 @@ test("W5_VIEWS each viewer sees only their scope; totals split by status across 
   assert.deepEqual(await views.all("owner", range), { kind: "refused", code: "forbidden" });
   const all = await views.all("staff", range);
   assert.equal("rows" in all && all.rows.length, 5);
+  // A group owner's sub-companies are in reach only through a subtree grant; a self-scoped one sees the group alone.
+  const group = await views.company("groupOwner", "group", range);
+  assert.equal("rows" in group && group.rows.length, 4);
+  const groupSelf = await views.company("groupSelfOwner", "group", range);
+  assert.deepEqual("rows" in groupSelf && [groupSelf.rows.length, groupSelf.totals], [0, { approvedSeconds: 0, pendingSeconds: 0, rejectedSeconds: 0, open: 0 }]);
+  assert.deepEqual(await views.company("groupSelfOwner", "company", range), { kind: "refused", code: "forbidden" });
 });
 
 test("W5_PAGING paging is stable across equal dates and ends with no cursor", async () => {

@@ -25,8 +25,9 @@ export interface HoursCursor { readonly workDate: IsoDate; readonly id: string }
 
 export interface SessionFilter {
   readonly personId?: string;
-  /** Organizations whose stores are included, each with its sub-companies. */
+  /** Organizations whose stores are included; their sub-companies only with `includeSubtree`. */
   readonly orgIds?: readonly string[];
+  readonly includeSubtree?: boolean;
   readonly storeIds?: readonly string[];
   readonly status?: SessionStatus;
   readonly range: HoursRange;
@@ -118,20 +119,20 @@ export class HoursViews {
     const base = { range, ...(options.status ? { status: options.status } : {}), ...(options.after ? { after: options.after } : {}), limit: PAGE_SIZE };
     const ancestors = await this.#store.organizationAncestors(orgId);
     if (ancestors === undefined) return { kind: "refused", code: "forbidden" };
+    // A self-scoped grant reaches this company only; a subtree grant (or staff above) reaches its sub-companies too.
+    const reach = await this.#scope.companyReach(actorId, orgId);
     if (options.storeId !== undefined) {
       if (!isUuid(options.storeId)) return { kind: "refused", code: "invalid_input" };
       const storeId = options.storeId.toLowerCase();
       if (!(await this.#scope.covers(actorId, orgId, storeId))) return { kind: "refused", code: "forbidden" };
       // A manager's store must belong to this company; the org filter keeps a mismatched pair empty.
-      return this.#page({ ...base, orgIds: [orgId], storeIds: [storeId] }, employerDecisionView);
+      return this.#page({ ...base, orgIds: [orgId], includeSubtree: reach === "subtree", storeIds: [storeId] }, employerDecisionView);
     }
     // Company-wide: staff or the company itself; a manager falls back to their own stores in it.
-    if (await this.#scope.coversCompany(actorId, orgId)) {
-      return this.#page({ ...base, orgIds: [orgId] }, employerDecisionView);
-    }
+    if (reach !== "none") return this.#page({ ...base, orgIds: [orgId], includeSubtree: reach === "subtree" }, employerDecisionView);
     const managed = (await this.#managed(actorId)).filter((m) => m.orgId === orgId).map((m) => m.storeId);
     if (managed.length === 0) return { kind: "refused", code: "forbidden" };
-    return this.#page({ ...base, orgIds: [orgId], storeIds: managed }, employerDecisionView);
+    return this.#page({ ...base, orgIds: [orgId], includeSubtree: false, storeIds: managed }, employerDecisionView);
   }
 
   /** Staff across every company (legacy staff list-date). */

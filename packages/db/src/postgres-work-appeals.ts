@@ -122,12 +122,12 @@ export class PostgresWorkAppealStore {
       entries: Object.freeze(entries.rows.map(workSessionFromRow)) });
   }
 
-  async listAppeals(f: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly status?: WorkAppealStatus;
+  async listAppeals(f: { readonly personId?: string; readonly orgIds?: readonly string[]; readonly includeSubtree?: boolean; readonly status?: WorkAppealStatus;
     readonly range?: { readonly from: IsoDate; readonly to: IsoDate }; readonly after?: { readonly createdAt: string; readonly id: string }; readonly limit: number }):
     Promise<readonly WorkAppealRecord[]> {
     const { rows } = await this.#db.pool.query<AppealRow>(`WITH RECURSIVE tree(id) AS (
        SELECT id FROM organizations WHERE $2::text[] IS NOT NULL AND id = ANY($2::text[])
-       UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id)
+       UNION SELECT o.id FROM organizations o JOIN tree t ON o.parent_org_id = t.id WHERE $9::boolean)
      SELECT ${APPEAL_COLUMNS} FROM work_appeals a
      WHERE ($1::text IS NULL OR a.person_principal_id = $1) AND ($2::text[] IS NULL OR a.org_id IN (SELECT id FROM tree))
        AND ($3::text IS NULL OR a.status = $3)
@@ -135,7 +135,7 @@ export class PostgresWorkAppealStore {
        AND ($6::timestamptz IS NULL OR (a.created_at, a.id) < ($6::timestamptz, $7::uuid))
      ORDER BY a.created_at DESC, a.id DESC LIMIT $8`,
     [f.personId ?? null, f.orgIds ? [...f.orgIds] : null, f.status ?? null, f.range?.from ?? null, f.range?.to ?? null,
-      f.after?.createdAt ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit, 1), 200)]);
+      f.after?.createdAt ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit, 1), 200), f.includeSubtree === true]);
     return Object.freeze(rows.map(appealFromRow));
   }
 }

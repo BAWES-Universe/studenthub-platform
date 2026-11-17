@@ -34,8 +34,14 @@ class MemoryPlacements implements PlacementStore {
   async assignment(id: string) { return this.assignments.find((a) => a.id === id); }
   async request(id: string) { return this.requests.find((r) => r.id === id); }
   async assignmentForRecruitCard(id: string) { return this.assignments.find((a) => a.recruitCardId === id); }
-  async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; storeId?: string }) {
-    return this.assignments.filter((a) => (!filter.personId || a.personId === filter.personId) && (!filter.orgIds || filter.orgIds.includes(a.orgId)) && (!filter.storeId || a.storeId === filter.storeId));
+  async listAssignments(filter: { personId?: string; orgIds?: readonly string[]; includeSubtree?: boolean; storeId?: string }) {
+    const under = async (orgId: string) => filter.includeSubtree === true ? (await this.organizationAncestors(orgId)) ?? [] : [];
+    const out = [];
+    for (const a of this.assignments) {
+      const inOrg = !filter.orgIds || filter.orgIds.includes(a.orgId) || (await under(a.orgId)).some((o) => filter.orgIds!.includes(o));
+      if ((!filter.personId || a.personId === filter.personId) && inOrg && (!filter.storeId || a.storeId === filter.storeId)) out.push(a);
+    }
+    return out;
   }
   async listRequests() { return this.requests; }
   async transaction<T>(work: (tx: PlacementTransaction) => Promise<T>): Promise<T> {
@@ -65,6 +71,7 @@ const GRANTS: Record<string, WorkGrant[]> = {
   staff: [{ orgId: "root", role: "staff", scope: "subtree" }],
   owner: [{ orgId: "company", role: "org-owner", scope: "self" }],
   groupOwner: [{ orgId: "group", role: "org-owner", scope: "subtree" }],
+  groupSelfOwner: [{ orgId: "group", role: "org-owner", scope: "self" }],
   rivalOwner: [{ orgId: "rival", role: "org-owner", scope: "self" }],
   candidate: [{ orgId: "company", role: "candidate", scope: "self" }],
   finance: [{ orgId: "company", role: "finance", scope: "self" }],
@@ -230,6 +237,9 @@ test("W1_READ the person sees their places; a company sees its own; another comp
   assert.equal(await svc.forOrganization("rivalOwner", "company"), undefined);
   assert.equal(await svc.forOrganization("candidate", "company"), undefined);
   assert.equal(await svc.forOrganization("owner", "missing"), undefined);
+  // Sub-companies only through a subtree grant.
+  assert.equal((await svc.forOrganization("groupOwner", "group"))?.length, 1);
+  assert.deepEqual(await svc.forOrganization("groupSelfOwner", "group"), []);
 });
 
 test("W1_RECRUIT the recruit stage places once; a repeat returns the same placement; a reused card id is refused", async () => {

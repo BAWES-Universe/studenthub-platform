@@ -30,6 +30,7 @@ const mutations = [
   ["correction by staff only", "!(await this.#scope.isStaff(actorId, original.orgId))", "false", "W6_CORRECT", appeals, appealSuite],
   ["replaced session not corrected twice", "if (await tx.isReplaced(original.id))", "if (false)", "W6_CORRECT", appeals, appealSuite],
   ["correction replaces, added time doesn't", 'source: correctsSessionId ? "correction" : "manual"', 'source: "correction"', "W6_ADD", appeals, appealSuite],
+  ["self-scoped grant stays out of sub-companies", 'return covering.length > 0 ? "self" : "none";', 'return covering.length > 0 ? "subtree" : "none";', "W5_VIEWS", common, decisionSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];
