@@ -71,7 +71,8 @@ export type WorkEventKind =
   | "assignment.created" | "assignment.ended" | "assignment.extended"
   | "assignment_request.created" | "assignment_request.accepted" | "assignment_request.rejected" | "assignment_request.cancelled"
   | "session.started" | "session.stopped" | "session.discarded" | "session.added" | "session.deleted" | "session.restored"
-  | "session.approved" | "session.rejected" | "session.undone";
+  | "session.approved" | "session.rejected" | "session.undone" | "session.corrected"
+  | "appeal.raised" | "appeal.updated" | "appeal.status_changed";
 
 export interface WorkEvent {
   readonly kind: WorkEventKind;

@@ -29,7 +29,7 @@ export interface PayableSession {
   readonly source: "timer" | "manual" | "correction" | "import";
   /** When set, this session replaced that one (D-WK3 correction); the original is not payable. */
   readonly correctsSessionId: string | null;
-  /** The decision that approved it (W-4); null for imported or staff-corrected sessions. */
+  /** The decision that approved it (W-4, or the staff member's own approval of a W-6 correction); null for imported sessions. */
   readonly decisionId: string | null;
   /** Last change to status or existence; lets the pay lane find work changed after a run. */
   readonly changedAt: string;

@@ -43,7 +43,7 @@ export interface WorkSessionRecord {
   readonly source: "timer" | "manual" | "correction" | "import"; readonly status: "pending" | "approved" | "rejected";
   readonly flags: readonly ("late_entry" | "location_missing")[]; readonly note: string | null;
   readonly correctsSessionId: string | null; readonly decisionId: string | null; readonly deletedAt: string | null;
-  readonly createdBy: string | null; readonly createdAt: string;
+  readonly createdBy: string | null; readonly createdAt: string; readonly appealId: string | null;
 }
 export interface NewWorkSessionRecord {
   readonly id: string; readonly assignmentId: string; readonly personId: string; readonly orgId: string; readonly storeId: string;
@@ -51,7 +51,7 @@ export interface NewWorkSessionRecord {
   readonly startLocation: WorkLocation | null; readonly endLocation: WorkLocation | null;
   readonly source: "timer" | "manual" | "correction"; readonly status: "pending" | "approved" | "rejected";
   readonly flags: readonly ("late_entry" | "location_missing")[]; readonly note: string | null;
-  readonly correctsSessionId: string | null; readonly createdBy: string;
+  readonly correctsSessionId: string | null; readonly createdBy: string; readonly appealId?: string | null;
 }
 export interface WorkDayTotal {
   readonly personId: string; readonly assignmentId: string; readonly orgId: string; readonly storeId: string; readonly workDate: IsoDate;
@@ -60,18 +60,18 @@ export interface WorkDayTotal {
   readonly approvedCount: number; readonly pendingCount: number; readonly rejectedCount: number; readonly openCount: number;
 }
 
-type Queryable = Pick<PoolClient, "query">;
+export type Queryable = Pick<PoolClient, "query">;
 
-const ASSIGNMENT_COLUMNS = `a.id, a.person_principal_id, a.org_id, a.store_id, a.pay_contract_id, a.contract_resolution,
+export const ASSIGNMENT_COLUMNS = `a.id, a.person_principal_id, a.org_id, a.store_id, a.pay_contract_id, a.contract_resolution,
  to_char(a.start_date,'YYYY-MM-DD') AS start_date, to_char(a.end_date,'YYYY-MM-DD') AS end_date, a.warnings, a.source,
  a.request_id, a.recruit_card_id, a.recruit_request_id, a.created_by, a.created_at`;
-interface AssignmentRow {
+export interface AssignmentRow {
   id: string; person_principal_id: string; org_id: string; store_id: string; pay_contract_id: string | null;
   contract_resolution: WorkAssignmentRecord["contractResolution"]; start_date: string; end_date: string | null;
   warnings: WorkAssignmentRecord["warnings"]; source: WorkAssignmentRecord["source"]; request_id: string | null;
   recruit_card_id: string | null; recruit_request_id: string | null; created_by: string | null; created_at: Date;
 }
-function assignmentFromRow(r: AssignmentRow): WorkAssignmentRecord {
+export function assignmentFromRow(r: AssignmentRow): WorkAssignmentRecord {
   return Object.freeze({
     id: r.id, personId: r.person_principal_id, orgId: r.org_id, storeId: r.store_id, payContractId: r.pay_contract_id,
     contractResolution: r.contract_resolution, startDate: r.start_date, endDate: r.end_date, warnings: Object.freeze([...r.warnings]),
@@ -92,16 +92,17 @@ function requestFromRow(r: RequestRow): WorkAssignmentRequestRecord {
   });
 }
 
-const SESSION_COLUMNS = `s.id, s.assignment_id, s.person_principal_id, s.org_id, s.store_id, to_char(s.work_date,'YYYY-MM-DD') AS work_date,
+export const SESSION_COLUMNS = `s.id, s.assignment_id, s.person_principal_id, s.org_id, s.store_id, to_char(s.work_date,'YYYY-MM-DD') AS work_date,
  s.started_at, s.ended_at, s.duration_seconds, s.start_latitude::float8 AS start_latitude, s.start_longitude::float8 AS start_longitude,
  s.end_latitude::float8 AS end_latitude, s.end_longitude::float8 AS end_longitude, s.source, s.status, s.flags, s.note,
- s.corrects_session_id, s.decision_id, s.deleted_at, s.created_by, s.created_at`;
-interface SessionRow {
+ s.corrects_session_id, s.decision_id, s.deleted_at, s.created_by, s.created_at, s.appeal_id`;
+export interface SessionRow {
   id: string; assignment_id: string; person_principal_id: string; org_id: string; store_id: string; work_date: string;
   started_at: Date; ended_at: Date | null; duration_seconds: number | null;
   start_latitude: number | null; start_longitude: number | null; end_latitude: number | null; end_longitude: number | null;
   source: WorkSessionRecord["source"]; status: WorkSessionRecord["status"]; flags: WorkSessionRecord["flags"]; note: string | null;
   corrects_session_id: string | null; decision_id: string | null; deleted_at: Date | null; created_by: string | null; created_at: Date;
+  appeal_id: string | null;
 }
 const location = (lat: number | null, long: number | null): WorkLocation | null => lat === null || long === null ? null : Object.freeze({ latitude: lat, longitude: long });
 export function workSessionFromRow(r: SessionRow): WorkSessionRecord {
@@ -110,12 +111,12 @@ export function workSessionFromRow(r: SessionRow): WorkSessionRecord {
     startedAt: r.started_at.toISOString(), endedAt: r.ended_at ? r.ended_at.toISOString() : null, durationSeconds: r.duration_seconds,
     startLocation: location(r.start_latitude, r.start_longitude), endLocation: location(r.end_latitude, r.end_longitude),
     source: r.source, status: r.status, flags: Object.freeze([...r.flags]), note: r.note, correctsSessionId: r.corrects_session_id, decisionId: r.decision_id,
-    deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null, createdBy: r.created_by, createdAt: r.created_at.toISOString(),
+    deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null, createdBy: r.created_by, createdAt: r.created_at.toISOString(), appealId: r.appeal_id,
   });
 }
 
 /** Runs `sql` inside a savepoint so a refused write (overlap, duplicate) leaves the transaction usable. */
-async function guarded<T>(client: Queryable, work: () => Promise<T>): Promise<T> {
+export async function guarded<T>(client: Queryable, work: () => Promise<T>): Promise<T> {
   await client.query("SAVEPOINT work_write");
   try {
     const result = await work();
@@ -127,12 +128,12 @@ async function guarded<T>(client: Queryable, work: () => Promise<T>): Promise<T>
   }
 }
 
-async function insertEvent(client: Queryable, e: WorkEventRecord): Promise<void> {
+export async function insertEvent(client: Queryable, e: WorkEventRecord): Promise<void> {
   await client.query("INSERT INTO work_events(kind,org_id,person_principal_id,subject_id,actor_principal_id,detail) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
     [e.kind, e.orgId, e.personId, e.subjectId, e.actorId, JSON.stringify(e.detail)]);
 }
 
-class PoolOwner {
+export class PoolOwner {
   readonly pool: PgPool;
   readonly #owns: boolean;
   constructor(poolOrConfig: PgPool | PoolConfig) {
@@ -311,24 +312,26 @@ export interface WorkSessionTransaction {
   event(e: WorkEventRecord): Promise<void>;
 }
 
+export async function insertSession(client: PoolClient, s: NewWorkSessionRecord): Promise<WorkSessionRecord> {
+  return guarded(client, async () => {
+    const { rows } = await client.query<SessionRow>(`WITH s AS (INSERT INTO work_sessions(id, assignment_id, person_principal_id, org_id, store_id, work_date, started_at, ended_at,
+      start_latitude, start_longitude, end_latitude, end_longitude, source, status, flags, note, corrects_session_id, created_by, appeal_id)
+      VALUES($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15::text[],$16,$17,$18,$19) RETURNING *) SELECT ${SESSION_COLUMNS} FROM s`,
+    [s.id, s.assignmentId, s.personId, s.orgId, s.storeId, s.workDate, s.startedAt, s.endedAt,
+      s.startLocation?.latitude ?? null, s.startLocation?.longitude ?? null, s.endLocation?.latitude ?? null, s.endLocation?.longitude ?? null,
+      s.source, s.status, [...s.flags], s.note, s.correctsSessionId, s.createdBy, s.appealId ?? null]);
+    if (!rows[0]) throw new Error("work session insert returned no row");
+    return workSessionFromRow(rows[0]);
+  });
+}
+
 function sessionTransaction(client: PoolClient): WorkSessionTransaction {
   const one = async (sql: string, values: unknown[]) => {
     const { rows } = await client.query<SessionRow>(sql, values);
     return rows[0] ? workSessionFromRow(rows[0]) : undefined;
   };
   return {
-    async insert(s) {
-      return guarded(client, async () => {
-        const row = await one(`WITH s AS (INSERT INTO work_sessions(id, assignment_id, person_principal_id, org_id, store_id, work_date, started_at, ended_at,
-          start_latitude, start_longitude, end_latitude, end_longitude, source, status, flags, note, corrects_session_id, created_by)
-          VALUES($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15::text[],$16,$17,$18) RETURNING *) SELECT ${SESSION_COLUMNS} FROM s`,
-        [s.id, s.assignmentId, s.personId, s.orgId, s.storeId, s.workDate, s.startedAt, s.endedAt,
-          s.startLocation?.latitude ?? null, s.startLocation?.longitude ?? null, s.endLocation?.latitude ?? null, s.endLocation?.longitude ?? null,
-          s.source, s.status, [...s.flags], s.note, s.correctsSessionId, s.createdBy]);
-        if (!row) throw new Error("work session insert returned no row");
-        return row;
-      });
-    },
+    insert: (s) => insertSession(client, s),
     lockOpen: (personId) => one(`SELECT ${SESSION_COLUMNS} FROM work_sessions s WHERE s.person_principal_id = $1 AND s.ended_at IS NULL AND s.deleted_at IS NULL FOR UPDATE`, [personId]),
     lock: (id) => one(`SELECT ${SESSION_COLUMNS} FROM work_sessions s WHERE s.id = $1 FOR UPDATE`, [id]),
     async close(id, endedAt, endLocation) {
@@ -418,7 +421,7 @@ function decisionFromRow(r: DecisionRow): WorkDecisionRecord {
   });
 }
 
-async function ancestorsOf(q: Queryable, orgId: string): Promise<readonly string[] | undefined> {
+export async function ancestorsOf(q: Queryable, orgId: string): Promise<readonly string[] | undefined> {
   const { rows } = await q.query<{ id: string; depth: number }>(`WITH RECURSIVE up(id, parent, depth) AS (
     SELECT id, parent_org_id, 0 FROM organizations WHERE id = $1
     UNION ALL SELECT o.id, o.parent_org_id, up.depth + 1 FROM organizations o JOIN up ON o.id = up.parent WHERE up.depth < 32)
@@ -450,6 +453,23 @@ export interface WorkDecisionHooks {
   onUndone?(client: PoolClient, input: { personPrincipalId: string; decisionId: string }): Promise<unknown>;
 }
 
+export async function insertDecision(client: Queryable, d: WorkDecisionRecord): Promise<void> {
+  await client.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids, reason, note, rating, note_public, batch_id, decided_by, decided_at)
+    VALUES($1,$2,$3,$4,$5::date,$6,$7,$8::uuid[],$9,$10,$11,$12,$13,$14,$15)`,
+  [d.id, d.orgId, d.storeId, d.personId, d.workDate, d.scope, d.outcome, [...d.sessionIds], d.reason, d.note, d.rating, d.notePublic, d.batchId, d.decidedBy, d.decidedAt]);
+}
+export async function setSessionStatus(client: Queryable, sessionIds: readonly string[], status: string, decisionId: string): Promise<void> {
+  await client.query("UPDATE work_sessions SET status = $2, decision_id = $3 WHERE id = ANY($1::uuid[])", [[...sessionIds], status, decisionId]);
+}
+export async function notifyHooks(client: PoolClient, hooks: WorkDecisionHooks, n: WorkDecisionNotice): Promise<void> {
+  if (n.kind === "decided") await hooks.onDecided?.(client, { personPrincipalId: n.personId, sessionId: n.sessionId, decisionId: n.decisionId, decision: n.outcome, workDate: n.workDate });
+  else await hooks.onUndone?.(client, { personPrincipalId: n.personId, decisionId: n.withdrawnDecisionId });
+}
+export async function sessionInForce(client: Queryable, sessionId: string): Promise<boolean> {
+  const { rows } = await client.query<{ forced: boolean }>("SELECT work_session_in_force($1::uuid) AS forced", [sessionId]);
+  return rows[0]?.forced === true;
+}
+
 /** W-4 decisions. */
 export class PostgresWorkDecisionStore {
   readonly #db: PoolOwner;
@@ -474,19 +494,10 @@ export class PostgresWorkDecisionStore {
         const { rows } = await client.query<{ forced: boolean }>("SELECT work_session_in_force($1::uuid) AS forced", [sessionId]);
         return rows[0]?.forced === false;
       },
-      async insertDecision(d) {
-        await client.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids, reason, note, rating, note_public, batch_id, decided_by, decided_at)
-          VALUES($1,$2,$3,$4,$5::date,$6,$7,$8::uuid[],$9,$10,$11,$12,$13,$14,$15)`,
-        [d.id, d.orgId, d.storeId, d.personId, d.workDate, d.scope, d.outcome, [...d.sessionIds], d.reason, d.note, d.rating, d.notePublic, d.batchId, d.decidedBy, d.decidedAt]);
-      },
-      async setStatus(sessionIds, status, decisionId) {
-        await client.query("UPDATE work_sessions SET status = $2, decision_id = $3 WHERE id = ANY($1::uuid[])", [[...sessionIds], status, decisionId]);
-      },
+      insertDecision: (d) => insertDecision(client, d),
+      setStatus: (sessionIds, status, decisionId) => setSessionStatus(client, sessionIds, status, decisionId),
       event: (e) => insertEvent(client, e),
-      async notify(n) {
-        if (n.kind === "decided") await hooks.onDecided?.(client, { personPrincipalId: n.personId, sessionId: n.sessionId, decisionId: n.decisionId, decision: n.outcome, workDate: n.workDate });
-        else await hooks.onUndone?.(client, { personPrincipalId: n.personId, decisionId: n.withdrawnDecisionId });
-      },
+      notify: (n) => notifyHooks(client, hooks, n),
     }));
   }
 }

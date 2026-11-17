@@ -41,6 +41,8 @@ export interface WorkSession {
   readonly deletedAt: string | null;
   readonly createdBy: string | null;
   readonly createdAt: string;
+  /** The appeal a staff entry answered (W-6). */
+  readonly appealId?: string | null;
 }
 
 export interface NewSession {
@@ -60,6 +62,7 @@ export interface NewSession {
   readonly note: string | null;
   readonly correctsSessionId: string | null;
   readonly createdBy: string;
+  readonly appealId?: string | null;
 }
 
 export class SessionConflict extends Error {

@@ -1,3 +1,5 @@
+export { PostgresWorkAppealStore, PostgresWorkPayableSource } from "../postgres-work-appeals.js";
+export type { WorkAppealRecord, WorkAppealStatus, WorkAppealTransaction, WorkAppealUpdateRecord, WorkPayableInputRecord, WorkPayableSessionRecord } from "../postgres-work-appeals.js";
 export { PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore, workSessionFromRow } from "../postgres-work-store.js";
 export type {
   WorkDecisionHooks, WorkDecisionNotice,

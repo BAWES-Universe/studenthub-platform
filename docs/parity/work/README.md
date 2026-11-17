@@ -40,6 +40,11 @@ company `StoreController` and `StoreAssignmentRequestController`, candidate
 | A person could read note, rating, reason and is_public through `expand` | The person sees outcome, reason, and the note only when public; never the rating | Leak defect |
 | Date range strings went raw into SQL | Dates parsed and bound; at most a year per request | SQL injection |
 | Company list scoped by a request parameter or the person's current store | Scope from the signed-in actor only | Scoping defect |
+| A person could appeal any session id | Only their own session | Ownership defect |
+| Mark-read on an appeal update had no owner check | Only the appellant marks their updates read | Ownership defect |
+| Appeal status took any integer | Four named states (submitted, awaiting review, in progress, resolved) | Bad-input defect |
+| Staff add-hour wrote an extra approved row beside the original, so both counted | `correct` replaces the session (original kept, out of every total and out of pay); `addMissing` adds time never logged, linked to the appeal; both staff-only with a reason and an approval decision by that staff member | Double-count defect; D-WK3 |
+| Appeal list dates went raw into SQL | Dates parsed and bound | SQL injection |
 | Stats returned the last session's status | Totals over the whole range, split by status | Mixed-status defect |
 
 ## Decision notifications (comms lane)
@@ -59,9 +64,14 @@ session list (id, date, seconds, source, replaced session, decision, last
 change). It computes no money. `splitSeconds` reproduces legacy's floor-per-unit
 display for the replay. Hours are keyed by assignment, not by the person's
 current store (legacy dropped hours at an earlier store in the same month).
+`PostgresWorkPayableSource` (`@studenthub/db/work`) is the Postgres source: one
+input per assignment with any session in force in the period, approved sessions
+listed with their decision and `changedAt`, corrections in place of their
+originals. The pay lane dedupes on `sessionId` and re-reads sessions whose
+`changedAt` is after its run.
 
 ## Not yet here
 
-W-6 appeals and corrections, the Postgres payable source, the reconciliation report against imported legacy day rows, gateway
+The reconciliation report against imported legacy day rows, gateway
 pages, and the legacy import mapping. They land as later slices on the same
 lane.

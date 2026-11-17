@@ -4,8 +4,8 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
-import { PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
-import { DecisionService, HoursViews, PlacementService, SessionService, WorkScope } from "../../work/src/index.js";
+import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
+import { AppealService, DecisionService, HoursViews, PlacementService, SessionService, WorkScope } from "../../work/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool, authz: PostgresAuthzStore, placements: PostgresWorkPlacementStore, sessions: PostgresWorkSessionStore, decisionStore: PostgresWorkDecisionStore, viewStore: PostgresWorkHoursViewStore;
@@ -297,4 +297,75 @@ test("W5_PG views: the person sees no rating or private note; another company se
   const rest = await viewStore.listSessions({ personId: w.person, range, limit: 2, after: { workDate: first[1]!.workDate, id: first[1]!.id } });
   assert.deepEqual([...first, ...rest].map((s) => s.id).sort(), [a, b, (await viewStore.listSessions({ personId: w.person, range, limit: 10 })).map((s) => s.id).find((id) => id !== a && id !== b)].sort());
   assert.equal(rest.length, 1);
+});
+
+function appealService(now: { value: Date }) {
+  const store = new PostgresWorkAppealStore(pool);
+  let n = 0;
+  return new AppealService({ store, scope: new WorkScope(authz, { managedStores: async () => [] }, (o) => store.organizationAncestors(o)), newId: () => randomUUID() + (n++, ""), now: () => now.value });
+}
+
+test("W6_PG appeals: own session only, staff answer, the appellant marks read, rows are append-only", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const [a] = await workedDay(w, now);
+  const appeals = appealService(now);
+  const raised = await appeals.raise(w.person, a, "I stayed until 9");
+  assert.equal(raised.kind, "raised");
+  const appealId = raised.kind === "raised" ? raised.appeal.id : "";
+  assert.deepEqual(await appeals.raise(w.owner, a, "not mine"), { kind: "refused", code: "session_not_found" });
+  await assert.rejects(pool.query("INSERT INTO work_appeals(id, session_id, person_principal_id, org_id, store_id, reason) VALUES($1,$2,$3,$4,$5,'x')",
+    [randomUUID(), a, w.owner, w.company, w.store]), /session of the appellant/);
+  assert.deepEqual(await appeals.postUpdate(w.owner, appealId, { detail: "no" }), { kind: "refused", code: "appeal_not_found" });
+  const posted = await appeals.postUpdate(w.staff, appealId, { title: "Checking", detail: "Looking at the store log" });
+  assert.equal(posted.kind, "posted");
+  const updateId = posted.kind === "posted" ? posted.update.id : "";
+  assert.deepEqual(await appeals.markRead(w.owner, updateId), { kind: "refused", code: "update_not_found" });
+  assert.deepEqual(await appeals.markRead(w.person, updateId), { kind: "read" });
+  await assert.rejects(pool.query("UPDATE work_appeal_updates SET detail = 'x' WHERE id = $1", [updateId]), /append-only/);
+  await assert.rejects(pool.query("UPDATE work_appeals SET reason = 'x' WHERE id = $1", [appealId]), /only the status/);
+  await assert.rejects(pool.query("DELETE FROM work_appeals WHERE id = $1", [appealId]), /never removed/);
+  assert.equal((await appeals.setStatus(w.staff, appealId, "resolved")).kind, "updated");
+  const listed = await appeals.list(w.staff, { orgId: w.group, status: "resolved" });
+  assert.deepEqual(Array.isArray(listed) && listed.map((x) => x.id), [appealId]);
+  assert.deepEqual((await events(appealId)).map((e) => e.kind), ["appeal.raised", "appeal.updated", "appeal.status_changed"]);
+});
+
+test("W6_PG a staff correction replaces the original in totals and in pay input; the original row is kept", async () => {
+  const w = await world();
+  const now = { value: new Date("2026-11-19T06:00:00Z") };
+  const { decision } = services(now);
+  const [a, b, c] = await workedDay(w, now);
+  await decision.decideDays(w.owner, [{ personId: w.person, storeId: w.store, workDate: "2026-11-18" }], { decision: "approve" });
+  await decision.decideSessions(w.owner, [c!], { decision: "reject", reason: "no show" });
+  const appeals = appealService(now);
+  const raised = await appeals.raise(w.person, a, "I stayed until 9");
+  const appealId = raised.kind === "raised" ? raised.appeal.id : "";
+  // Overlapping b (09:00-10:00) is refused by the database's overlap rule.
+  assert.deepEqual(await appeals.correct(w.staff, a, { startedAt: "2026-11-18T06:00:00Z", endedAt: "2026-11-18T09:30:00Z", reason: "log" }), { kind: "refused", code: "overlaps_session" });
+  const fixed = await appeals.correct(w.staff, a, { startedAt: "2026-11-18T05:00:00Z", endedAt: "2026-11-18T09:00:00Z", reason: "store log", appealId });
+  assert.equal(fixed.kind, "entered");
+  const correctionId = fixed.kind === "entered" ? fixed.session.id : "";
+  assert.deepEqual(await appeals.correct(w.staff, a, { startedAt: "2026-11-18T05:00:00Z", endedAt: "2026-11-18T06:00:00Z", reason: "again" }), { kind: "refused", code: "session_replaced" });
+  const added = await appeals.addMissing(w.staff, appealId, { startedAt: "2026-11-18T14:00:00Z", endedAt: "2026-11-18T15:00:00Z", reason: "evening confirmed" });
+  assert.equal(added.kind, "entered");
+  const [total] = await sessions.dayTotals({ personId: w.person, from: "2026-11-18", to: "2026-11-18" });
+  // 4h correction + 1h b + 1h added approved; 30m c rejected; the original 2h is gone from the totals.
+  assert.deepEqual([total?.approvedSeconds, total?.rejectedSeconds, total?.approvedCount], [6 * 3600, 1800, 3]);
+  assert.equal((await pool.query("SELECT deleted_at FROM work_sessions WHERE id = $1", [a])).rows[0].deleted_at, null);
+  await assert.rejects(pool.query("UPDATE work_sessions SET appeal_id = NULL WHERE id = $1", [correctionId]), /identity fields are fixed/);
+  const detail = await appeals.detail(w.person, appealId);
+  assert.equal("entries" in detail && detail.entries.length, 2);
+
+  const pay = new PostgresWorkPayableSource(pool);
+  const [input, ...rest] = await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, personId: w.person });
+  assert.equal(rest.length, 0);
+  assert.deepEqual([input?.approvedSeconds, input?.rejectedSeconds, input?.pendingSeconds, input?.openSessions, input?.storeId], [6 * 3600, 1800, 0, 0, w.store]);
+  assert.deepEqual(input?.sessions.map((s) => [s.sessionId, s.source, s.correctsSessionId]),
+    [[correctionId, "correction", a], [b, "manual", null], [added.kind === "entered" ? added.session.id : "", "manual", null]]);
+  assert.ok(input?.sessions.every((s) => s.decisionId !== null && /Z$/.test(s.changedAt)));
+  assert.deepEqual(await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.rival, includeSubtree: true }), []);
+  assert.equal((await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.group, includeSubtree: true, personId: w.person })).length, 1);
+  assert.equal((await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.group, personId: w.person })).length, 0);
+  await assert.rejects(pay.payableInputs({ period: { start: "2026-11-30", end: "2026-11-01" } }), RangeError);
 });
