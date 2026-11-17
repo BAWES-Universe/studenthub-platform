@@ -23,14 +23,17 @@ test("PREP_NAV default area contributions preserve profile navigation", () => {
   assert.deepEqual(CONTRIBUTIONS.navigation.map(({ key, order, current }) => ({ key, order, ...(current ? { current } : {}) })), [
     { key: "profile", order: 100, current: true },
     { key: "background", order: 200 },
+    { key: "jobs", order: 245 },
     { key: "invitations", order: 250 },
     { key: "workspaces", order: 300 },
   ]);
   assert.deepEqual(CONTRIBUTIONS.profileRows, []);
-  assert.equal(CONTRIBUTIONS.navigation[3]!.visible({}), false);
-  assert.equal(CONTRIBUTIONS.navigation[3]!.visible({ navigation: {} as never }), true);
-  assert.equal(CONTRIBUTIONS.navigation[2]!.visible({ navigation: {} as never }), false, "invitations show only where recruit is wired");
-  assert.equal(CONTRIBUTIONS.navigation[2]!.visible({ recruitInvitations: {} } as never), true);
+  assert.equal(CONTRIBUTIONS.navigation[4]!.visible({}), false);
+  assert.equal(CONTRIBUTIONS.navigation[4]!.visible({ navigation: {} as never }), true);
+  assert.equal(CONTRIBUTIONS.navigation[3]!.visible({ navigation: {} as never }), false, "invitations show only where recruit is wired");
+  assert.equal(CONTRIBUTIONS.navigation[3]!.visible({ recruitInvitations: {} } as never), true);
+  assert.equal(CONTRIBUTIONS.navigation[2]!.visible({ navigation: {} as never }), false, "jobs show only where recruit is wired");
+  assert.equal(CONTRIBUTIONS.navigation[2]!.visible({ recruitJobs: {} } as never), true);
 });
 
 test("PREP_NAV profile HTML remains byte-identical for every login shape and language", async () => {
