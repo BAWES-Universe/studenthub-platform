@@ -114,7 +114,7 @@ export async function renderAssignments(services: WorkHttpServices, actor: strin
   const place = `<section class="p-card" aria-labelledby="place-heading"><h2 id="place-heading">Place a person</h2><form method="post" action="/work/assignments/place">${hidden}<label>Their StudentHub ID<input name="personId" required maxlength="256"></label>${storeField}
 <label>Start date<input type="date" name="startDate" required></label><label>End date (optional)<input type="date" name="endDate"></label><label>Pay contract ID (only when more than one matches)<input name="payContractId" maxlength="36"></label><button type="submit">Place</button></form></section>`;
   const list = (title: string, id: string, items: string[], empty: string) => `<section class="p-card" aria-labelledby="${id}"><h2 id="${id}">${title}</h2>${items.length ? `<ul class="p-stack">${items.join("")}</ul>` : `<div class="p-empty"><p>${empty}</p></div>`}</section>`;
-  return staffShell("Placements", "assignments", `${message(m)}${pick}${list("Requests waiting", "requests-heading", requests.map(requestItem), "No requests are waiting.")}${place}${list("Placements", "placements-heading", placements.map(placementItem), "Nobody is placed at this company.")}`);
+  return staffShell("Placements", "assignments", `${message(m)}${pick}${list("Requests waiting", "requests-heading", requests.map(requestItem), "No requests are waiting.")}${place}${list("Placements", "placements-heading", placements.map(placementItem), "Nobody is placed at this company.")}`, orgId);
 }
 
 /** A-13 list; `undefined` when the actor isn't staff. */

@@ -131,6 +131,8 @@ test("WORK_STAFF staff appeals can be narrowed to one company, kept on the older
   // Returning from an appeal keeps its company, so company-scoped staff land on a list they may see.
   const opened = await post(`/work/appeals/${APPEAL}/missing-time`, "startedAt=&endedAt=&reason=x", { world: { outcome: { kind: "refused", code: "invalid_input" } } });
   assert.equal(opened.html.split('href="/work/appeals?as=staff&amp;org=co"').length - 1, 2);
+  // Entering Appeals from a company's placements keeps that company too.
+  assert.match((await request("/work/assignments?org=co")).html, /href="\/work\/appeals\?as=staff&amp;org=co">Appeals/);
   const none: unknown[][] = [];
   assert.equal((await request("/work/appeals?as=staff&org=a%20b", {}, none)).status, 400);
   assert.equal(none.length, 0);
