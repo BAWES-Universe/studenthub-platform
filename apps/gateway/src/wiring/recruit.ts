@@ -1,13 +1,14 @@
 import pg from "pg";
-import { PostgresRecruitChecklistStore, PostgresRecruitInvitationsStore, PostgresRecruitPeopleSearchStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
+import { PostgresRecruitChecklistStore, PostgresRecruitInterviewsStore, PostgresRecruitInvitationsStore, PostgresRecruitPeopleSearchStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { PEOPLE_SEARCH_PAGE_SIZE, acceptCardEffect, checklistAdminDecision, invitationOutbox, invitationTransitionAllowed, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
+import { PEOPLE_SEARCH_PAGE_SIZE, acceptCardEffect, evaluationAllowed, internalNoteDecision, interviewCompanyDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, checklistAdminDecision, invitationOutbox, invitationTransitionAllowed, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
 import { createRecruitChecklist } from "../recruit/checklist-http.js";
 import { createRecruitPipeline } from "../recruit/pipeline-http.js";
 import { createRecruitRequests } from "../recruit/requests-http.js";
 import { createRecruitPeopleSearch } from "../recruit/search-http.js";
 import { createRecruitInvitations } from "../recruit/invitations-http.js";
 import { createRecruitEmployerView } from "../recruit/employer-view-http.js";
+import { createRecruitInterviews } from "../recruit/interviews-http.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
 
@@ -23,6 +24,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
   readonly recruitPeopleSearch: ReturnType<typeof createRecruitPeopleSearch>;
   readonly recruitInvitations: ReturnType<typeof createRecruitInvitations>;
   readonly recruitEmployerView: ReturnType<typeof createRecruitEmployerView>;
+  readonly recruitInterviews: ReturnType<typeof createRecruitInterviews>;
 }> {
   const operators = DEFAULT_OPERATOR_ORG_IDS;
   // One pool for the whole recruit area; the stores borrow it and never end it.
@@ -60,6 +62,18 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     requestStatusAfter: requestStatusAfterPipeline,
     outbox: invitationOutbox,
   });
+  const interviews = new PostgresRecruitInterviewsStore({
+    pool,
+    companyDecision: (rows, orgId, ancestors) => interviewCompanyDecision(rows, orgId, ancestors, operators),
+    staffDecision: (rows) => recruitStaffDecision(rows, operators),
+    leadDecision: (rows) => pipelineLeadDecision(rows, operators),
+    authority: pipelineAuthority,
+    internalDecision: (rows) => internalNoteDecision(rows, operators),
+    stageAllowed: interviewStageAllowed,
+    transitionAllowed: interviewTransitionAllowed,
+    evaluationAllowed,
+    outbox: interviewOutbox,
+  });
   return {
     services: {
       recruitRequests: createRecruitRequests({ sessions: access.loginStore.sessions, store: requests }),
@@ -69,6 +83,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
       recruitInvitations: createRecruitInvitations({ sessions: access.loginStore.sessions, store: invitations }),
       // Employer document links come from the documents area once it issues them; until then the page says so.
       recruitEmployerView: createRecruitEmployerView({ sessions: access.loginStore.sessions, store: requests }),
+      recruitInterviews: createRecruitInterviews({ sessions: access.loginStore.sessions, store: interviews }),
     },
     async close() { await pool.end(); },
   };
