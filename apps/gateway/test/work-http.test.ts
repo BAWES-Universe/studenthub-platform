@@ -13,7 +13,7 @@ function services(calls: unknown[][]): WorkHttpServices {
     personFor: async (id: string) => id === SESSION ? "person" : undefined,
     placements: { mine: record("mine", []), forOrganization: record("forOrganization", undefined), place: record("place", { kind: "refused", code: "forbidden" }),
       setEndDate: record("setEndDate", { kind: "ended", endDate: "2026-11-30" }), request: record("request", { kind: "refused", code: "duplicate_request" }),
-      decideRequest: record("decideRequest", { kind: "rejected" }) },
+      decideRequest: record("decideRequest", { kind: "rejected" }), requestsFor: record("requestsFor", undefined) },
     sessions: { today: record("today", { open: null, assignment: null }), start: record("start", { kind: "refused", code: "location_required" }),
       stop: record("stop", { kind: "refused", code: "not_working" }), discard: record("discard", { kind: "discarded" }), addManual: record("addManual", { kind: "refused", code: "in_future" }) },
     decisions: { decideSessions: record("decideSessions", { kind: "refused", code: "session_not_found", index: 1 }), decideDays: record("decideDays", { kind: "decided", decisions: [], changed: 0 }),
@@ -88,6 +88,11 @@ test("WORK_HTTP refusals map to 400, 403, 404 and 409 and keep extra detail", as
   assert.equal((await post(`/api/work/sessions/${ID}/correct`, { startedAt: "x" })).status, 409);
   assert.equal((await request("/api/work/hours/company/acme?from=2026-11-01&to=2026-11-30")).status, 403);
   assert.equal((await request("/api/work/placements/company/acme")).status, 403);
+  const listed: unknown[][] = [];
+  assert.equal((await request(`/api/work/placement-requests/company/acme?status=pending&storeId=${ID}`, {}, listed)).status, 403);
+  assert.deepEqual(listed[0], ["requestsFor", "person", "acme", { storeId: ID, status: "pending" }]);
+  assert.equal((await request("/api/work/placement-requests/company/acme?status=open", {}, listed)).status, 400);
+  assert.equal(listed.length, 1);
   assert.equal((await request("/api/work/appeals")).status, 403);
 });
 

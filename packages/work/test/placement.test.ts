@@ -43,7 +43,14 @@ class MemoryPlacements implements PlacementStore {
     }
     return out;
   }
-  async listRequests() { return this.requests; }
+  async listRequests(filter: { orgIds?: readonly string[]; includeSubtree?: boolean; status?: string } = {}) {
+    const out = [];
+    for (const r of this.requests) {
+      const up = filter.includeSubtree === true ? (await this.organizationAncestors(r.orgId)) ?? [] : [];
+      if ((!filter.orgIds || filter.orgIds.includes(r.orgId) || up.some((o) => filter.orgIds!.includes(o))) && (!filter.status || r.status === filter.status)) out.push(r);
+    }
+    return out;
+  }
   async transaction<T>(work: (tx: PlacementTransaction) => Promise<T>): Promise<T> {
     const snapshot = { a: [...this.assignments], r: [...this.requests], e: [...this.events] };
     const overlaps = (a: Assignment, start: string, end: string | null) =>
@@ -79,9 +86,11 @@ const GRANTS: Record<string, WorkGrant[]> = {
   companyRecruiter: [{ orgId: "company", role: "recruiter", scope: "self" }],
 };
 let ids = 0;
+const MANAGED: Record<string, { orgId: string; storeId: string }[]> = { manager: [{ orgId: "company", storeId: STORE }], wrongOrgManager: [{ orgId: "rival", storeId: STORE }] };
 function service(store = new MemoryPlacements()) {
   ids = 0;
-  return { store, svc: new PlacementService({ store, grants: { listGrantsForPrincipal: async (id) => GRANTS[id] ?? [] }, newId: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`, now: () => NOW }) };
+  return { store, svc: new PlacementService({ store, grants: { listGrantsForPrincipal: async (id) => GRANTS[id] ?? [] }, newId: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`, now: () => NOW,
+    managedStores: async (id) => MANAGED[id] ?? [] }) };
 }
 
 test("W1_DATES Kuwait date is used for defaults: 21:30Z on the 17th is the 18th", () => {
@@ -259,4 +268,29 @@ test("W1_RECRUIT the recruit stage places once; a repeat returns the same placem
   assert.deepEqual(await svc.placeFromRecruit("staff", { ...input, personId: "other-person" }), { kind: "refused", code: "recruit_card_reused" });
   assert.deepEqual(await svc.placeFromRecruit("staff", { ...input, recruitCardId: "nope" }), { kind: "refused", code: "invalid_input" });
   assert.deepEqual(store.events.map((e) => e.kind), ["assignment.created"]);
+});
+
+test("W1_REQUEST_LIST staff, the company and the store's manager list requests; a manager asks and cancels for their store only", async () => {
+  const { store, svc } = service();
+  store.stores.set("5c6d7e8f-0000-4000-8000-000000000001", { id: "5c6d7e8f-0000-4000-8000-000000000001", orgId: "company", status: "active", ancestors: ["group", "root"] });
+  const mine = await svc.request("manager", { personId: "person", storeId: STORE, note: "weekends" });
+  assert.equal(mine.kind, "requested");
+  assert.equal((await svc.request("owner", { personId: "other-person", storeId: "5c6d7e8f-0000-4000-8000-000000000001" })).kind, "requested");
+  assert.deepEqual(await svc.request("manager", { personId: "other-person", storeId: "5c6d7e8f-0000-4000-8000-000000000001" }), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await svc.request("wrongOrgManager", { personId: "other-person", storeId: STORE }), { kind: "refused", code: "forbidden" });
+  assert.equal((await svc.requestsFor("owner", "company"))?.length, 2);
+  assert.equal((await svc.requestsFor("staff", "company", { status: "pending" }))?.length, 2);
+  assert.equal((await svc.requestsFor("staff", "company", { status: "accepted" }))?.length, 0);
+  assert.deepEqual((await svc.requestsFor("manager", "company"))?.map((r) => r.storeId), [STORE]);
+  assert.deepEqual((await svc.requestsFor("owner", "company", { storeId: STORE.toUpperCase() }))?.map((r) => r.storeId), [STORE]);
+  assert.equal(await svc.requestsFor("manager", "rival"), undefined);
+  assert.equal(await svc.requestsFor("rivalOwner", "company"), undefined);
+  assert.equal(await svc.requestsFor("groupSelfOwner", "group").then((l) => l?.length), 0, "a self-scoped owner of the group sees none of the sub-company's requests");
+  assert.equal(await svc.requestsFor("groupOwner", "group").then((l) => l?.length), 2);
+  assert.equal(await svc.requestsFor("owner", "company", { storeId: "x" }), undefined);
+  assert.equal(await svc.requestsFor("owner", "nowhere"), undefined);
+  const id = mine.kind === "requested" ? mine.request.id : "";
+  assert.deepEqual(await svc.decideRequest("manager", id, "accept"), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await svc.decideRequest("wrongOrgManager", id, "cancel"), { kind: "refused", code: "forbidden" });
+  assert.deepEqual(await svc.decideRequest("manager", id, "cancel"), { kind: "cancelled" });
 });

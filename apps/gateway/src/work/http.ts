@@ -18,6 +18,12 @@ export interface WorkHttpServices {
   readonly appeals: AppealService;
   /** Store names for the screens; absent means a generic label. */
   readonly storeNames?: (storeIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
+  /** A store's company and name, for the store screens (M-03, M-04); absent means those screens answer 503. */
+  readonly storeInfo?: (storeId: string) => Promise<{ readonly orgId: string; readonly name: string; readonly active: boolean } | undefined>;
+  /** A company's active stores, for the staff placement form; absent means a store ID field. */
+  readonly storesOf?: (orgId: string) => Promise<readonly { readonly id: string; readonly name: string }[]>;
+  /** Names of people shown in employer and staff lists; absent means a generic label. */
+  readonly personNames?: (personIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
 }
 
 type Json = { readonly status: number; readonly body: unknown };
@@ -112,6 +118,12 @@ const ROUTES: readonly Route[] = [
     const end = body.endDate;
     if (end !== null && typeof end !== "string") return refusal("invalid_input");
     return outcome(await s.placements.setEndDate(p, params[0]!.toLowerCase(), end as string | null));
+  } },
+  { method: "GET", pattern: /^\/api\/work\/placement-requests\/company\/([A-Za-z0-9._:-]{1,256})$/, handle: async (p, { params, query }, s) => {
+    const st = query.get("status"), storeId = query.get("storeId");
+    if (st !== null && !["pending", "accepted", "rejected", "cancelled"].includes(st)) return refusal("invalid_input");
+    const list = await s.placements.requestsFor(p, params[0]!, { ...(storeId ? { storeId } : {}), ...(st ? { status: st as "pending" } : {}) });
+    return list ? ok({ requests: list }) : refusal("forbidden");
   } },
   { method: "POST", pattern: /^\/api\/work\/placement-requests$/, handle: async (p, { body }, s) => {
     if (typeof body.personId !== "string" || typeof body.storeId !== "string" || (body.note !== undefined && typeof body.note !== "string")) return refusal("invalid_input");

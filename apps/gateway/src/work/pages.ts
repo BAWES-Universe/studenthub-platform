@@ -1,4 +1,4 @@
-// Work screens for the person (C-11 Track, C-12 History), per the screen
+// Work screens for the person (C-10 Placement, C-11 Track, C-12 History, C-13 Appeals), per the screen
 // navigation contract. Server-rendered forms on the shared page shell, like
 // /profile/area: the actor is the signed-in person from the session cookie,
 // writes are same-origin form posts, and the only script is the nonce'd
@@ -9,10 +9,11 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   APPEAL_PAGE_SIZE, parseAppealCursor, parseLocation, parseRange, kuwaitDate,
-  type AppealDetail, type HoursPage, type PersonDecisionView, type SessionOutcome, type WorkAppeal, type WorkSession,
+  type AppealDetail, type Assignment, type HoursPage, type PersonDecisionView, type SessionOutcome, type WorkAppeal, type WorkSession,
 } from "../../../../packages/work/src/index.js";
 import { pageDocument } from "../web-ui.js";
 import type { WorkHttpServices } from "./http.js";
+import { renderStaffAppeal, staffDone } from "./staff-pages.js";
 
 /** Store names for display; optional so a deployment without it shows a generic label. */
 export type StoreNames = (storeIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
@@ -21,7 +22,7 @@ const TIME_ZONE = "Asia/Kuwait";
 const FORM_LIMIT = 8 * 1024;
 const HISTORY_PAGE_CAP = 20;
 
-const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+export const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 const REFUSALS: Readonly<Record<string, string>> = {
   location_required: "We need your location to clock in or out. Allow location for this site and try again.",
@@ -40,12 +41,12 @@ const DONE: Readonly<Record<string, string>> = {
   discarded: "That session was discarded.",
   added: "Your hours were added and are waiting for approval. They are marked as entered late.",
 };
-const STATUS_LABEL: Readonly<Record<string, string>> = { pending: "Waiting for approval", approved: "Approved", rejected: "Rejected" };
+export const STATUS_LABEL: Readonly<Record<string, string>> = { pending: "Waiting for approval", approved: "Approved", rejected: "Rejected" };
 
-function clock(iso: string): string {
+export function clock(iso: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
 }
-function longDate(date: string): string {
+export function longDate(date: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(`${date}T00:00:00Z`));
 }
 function monthLabel(month: string): string {
@@ -61,7 +62,7 @@ export function kuwaitInstant(value: string | undefined): string | undefined {
   return value !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) ? `${value}:00+03:00` : undefined;
 }
 
-function sessionCookie(header: string | undefined): string | undefined {
+export function sessionCookie(header: string | undefined): string | undefined {
   for (const item of header?.split(";") ?? []) {
     const [key, ...parts] = item.trim().split("=");
     const value = parts.join("=");
@@ -69,7 +70,7 @@ function sessionCookie(header: string | undefined): string | undefined {
   }
   return undefined;
 }
-async function readForm(req: IncomingMessage, allowed: readonly string[]): Promise<Record<string, string> | undefined> {
+export async function readForm(req: IncomingMessage, allowed: readonly string[]): Promise<Record<string, string> | undefined> {
   if (req.headers["content-type"] !== "application/x-www-form-urlencoded" || Number(req.headers["content-length"]) > FORM_LIMIT) { req.resume(); return undefined; }
   const chunks: Buffer[] = [];
   let size = 0;
@@ -87,7 +88,7 @@ async function readForm(req: IncomingMessage, allowed: readonly string[]): Promi
   return out;
 }
 
-function write(res: ServerResponse, status: number, html: string, nonce?: string): void {
+export function write(res: ServerResponse, status: number, html: string, nonce?: string): void {
   const script = nonce ? `; script-src 'nonce-${nonce}'` : "";
   res.writeHead(status, {
     "cache-control": "no-store", "content-type": "text/html; charset=utf-8", "referrer-policy": "same-origin", "x-content-type-options": "nosniff",
@@ -96,21 +97,21 @@ function write(res: ServerResponse, status: number, html: string, nonce?: string
   });
   res.end(html);
 }
-function redirect(res: ServerResponse, location: string): void {
+export function redirect(res: ServerResponse, location: string): void {
   res.writeHead(303, { location, "cache-control": "no-store" });
   res.end();
 }
 
-type Tab = "track" | "history" | "appeals";
-const TABS: readonly [Tab, string][] = [["track", "Track"], ["history", "History"], ["appeals", "Appeals"]];
+type Tab = "assignment" | "track" | "history" | "appeals";
+const TABS: readonly [Tab, string][] = [["assignment", "Placement"], ["track", "Track"], ["history", "History"], ["appeals", "Appeals"]];
 const nav = (current: Tab) =>
   `<nav class="p-card" aria-label="Work">${TABS.map(([tab, label]) => `<a href="/work/${tab}"${tab === current ? ' aria-current="page"' : ""}>${label}</a>`).join(" · ")}</nav>`;
 function shell(title: string, current: Tab, body: string): string {
   return pageDocument(title, `<main id="main" class="profile-ui"><div class="p-shell"><div class="p-main p-stack"><header class="p-header"><h1>${esc(title)}</h1></header>${nav(current)}${body}</div></div></main>`);
 }
-const notice = (kind: "success" | "error", message: string) =>
+export const notice = (kind: "success" | "error", message: string) =>
   `<section class="p-notice p-notice-${kind}" role="${kind === "error" ? "alert" : "status"}"><p>${esc(message)}</p></section>`;
-const plain = (status: number, title: string, message: string) => [status, pageDocument(title, `<main id="main" class="error-page"><h1>${esc(title)}</h1><p>${esc(message)}</p></main>`)] as const;
+export const plain = (status: number, title: string, message: string) => [status, pageDocument(title, `<main id="main" class="error-page"><h1>${esc(title)}</h1><p>${esc(message)}</p></main>`)] as const;
 
 // The only script: fill the location fields of a form marked data-location, then submit it.
 const LOCATION_JS = `document.querySelectorAll("form[data-location]").forEach(function(f){f.addEventListener("submit",function(e){if(f.dataset.located)return;e.preventDefault();var s=document.getElementById("location-status");if(!navigator.geolocation){s.textContent="This browser can't share your location.";return}s.textContent="Getting your location...";navigator.geolocation.getCurrentPosition(function(p){f.elements.latitude.value=String(p.coords.latitude);f.elements.longitude.value=String(p.coords.longitude);f.dataset.located="1";f.submit()},function(){s.textContent="We couldn't get your location. Allow location for this site and try again."},{enableHighAccuracy:true,timeout:20000,maximumAge:0})})})`;
@@ -247,6 +248,33 @@ export async function renderDay(services: WorkHttpServices, names: StoreNames | 
   return shell(longDate(date), "history", `<section class="p-card">${totals}${items}</section><nav class="p-card"><a href="/work/history?month=${date.slice(0, 7)}">Back to ${esc(monthLabel(date.slice(0, 7)))}</a></nav>`);
 }
 
+const PLACED_BY: Readonly<Record<string, string>> = { staff: "Placed by StudentHub", request: "Placed at the company's request", recruit: "Placed after recruitment", import: "Placed in the old system" };
+const period = (a: Assignment) => a.endDate ? `${longDate(a.startDate)} to ${longDate(a.endDate)}` : `From ${longDate(a.startDate)}, no end date`;
+
+/** C-10: where the person is placed now, next and before (legacy assignment detail). */
+export async function renderPlacements(services: WorkHttpServices, names: StoreNames | undefined, person: string, today: string): Promise<string> {
+  const all = await services.placements.mine(person);
+  const known = all.length && names ? await names([...new Set(all.map((a) => a.storeId))]) : new Map<string, string>();
+  const where = (a: Assignment) => known.get(a.storeId) ?? "A store";
+  const current = all.filter((a) => a.startDate <= today && (a.endDate === null || a.endDate >= today));
+  const next = all.filter((a) => a.startDate > today).sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const past = all.filter((a) => a.endDate !== null && a.endDate < today).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const item = (a: Assignment) => `<li><a href="/work/assignment/${a.id}">${esc(where(a))}</a>: ${esc(period(a))}</li>`;
+  const now = current.length === 0 ? `<div class="p-empty"><p>You aren't placed at a store right now.</p></div>`
+    : current.map((a) => `<p><strong>${esc(where(a))}</strong></p><p>${esc(period(a))}</p><p><a href="/work/assignment/${a.id}">Details</a> · <a href="/work/track">Clock in or out</a></p>`).join("");
+  const section = (id: string, title: string, list: readonly Assignment[]) => list.length ? `<section class="p-card" aria-labelledby="${id}"><h2 id="${id}">${title}</h2><ul>${list.map(item).join("")}</ul></section>` : "";
+  return shell("Placement", "assignment", `<section class="p-card" aria-labelledby="current-heading"><h2 id="current-heading">Where you work now</h2>${now}</section>${section("next-heading", "Coming up", next)}${section("past-heading", "Before", past)}`);
+}
+
+export async function renderPlacement(services: WorkHttpServices, names: StoreNames | undefined, person: string, id: string): Promise<string | undefined> {
+  const a = (await services.placements.mine(person)).find((x) => x.id === id);
+  if (!a) return undefined;
+  const where = await storeName(names, a.storeId);
+  return shell(where, "assignment", `<section class="p-card"><dl class="p-fields"><div><dt>Store</dt><dd>${esc(where)}</dd></div><div><dt>Period</dt><dd>${esc(period(a))}</dd></div>
+<div><dt>How</dt><dd>${esc(PLACED_BY[a.source] ?? "Placed")}</dd></div></dl></section><nav class="p-card"><a href="/work/history">Your hours</a> · <a href="/work/assignment">All placements</a></nav>`);
+}
+
+const PLACEMENT = /^\/work\/assignment\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DAY = /^\/work\/history\/(\d{4}-\d{2}-\d{2})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -263,7 +291,8 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
   const track = path === "/work/track" || /^\/work\/track\/(start|stop|discard|manual)$/.test(path);
   const history = path === "/work/history" || DAY.test(path);
   const appeals = path === "/work/appeals" || path === "/work/appeals/new" || APPEAL.test(path);
-  if (!track && !history && !appeals) return false;
+  const placement = path === "/work/assignment" || PLACEMENT.test(path);
+  if (!track && !history && !appeals && !placement) return false;
   try {
     if (!services || !origin) { req.resume(); write(res, ...plain(503, "Work is unavailable", "Hours tracking isn't switched on here yet.")); return true; }
     const sessionId = sessionCookie(req.headers.cookie);
@@ -274,6 +303,16 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
       const done = url.searchParams.get("done");
       const page = await renderTrack(services, names, person, done && DONE[done] ? { kind: "success", text: DONE[done]! } : null, now());
       write(res, 200, page.html, page.nonce);
+      return true;
+    }
+    if (req.method === "GET" && path === "/work/assignment") {
+      write(res, 200, await renderPlacements(services, names, person, kuwaitDate(now())));
+      return true;
+    }
+    const placementId = PLACEMENT.exec(path)?.[1];
+    if (req.method === "GET" && placementId) {
+      const html = await renderPlacement(services, names, person, placementId);
+      if (html) write(res, 200, html); else write(res, ...plain(404, "Placement not found", "This placement isn't yours or doesn't exist."));
       return true;
     }
     if (req.method === "GET" && path === "/work/history") {
@@ -304,7 +343,9 @@ export async function handleWorkPages(req: IncomingMessage, res: ServerResponse,
     const appealId = APPEAL.exec(path)?.[1];
     if (req.method === "GET" && appealId) {
       const detail = await services.appeals.detail(person, appealId);
-      if ("kind" in detail || detail.appeal.personId !== person) { write(res, ...plain(404, "Appeal not found", "This appeal isn't yours or doesn't exist.")); return true; }
+      if ("kind" in detail) { write(res, ...plain(404, "Appeal not found", "This appeal isn't yours or doesn't exist.")); return true; }
+      // The service shows an appeal to its owner and to staff of its company; staff get the A-13 view.
+      if (detail.appeal.personId !== person) { write(res, 200, await renderStaffAppeal(services, detail, staffDone(url.searchParams.get("done")))); return true; }
       // Opening the appeal reads its replies (legacy marked them read from the app).
       for (const u of detail.updates) if (u.readAt === null && u.authorId !== person) await services.appeals.markRead(person, u.id);
       const done = url.searchParams.get("done");

@@ -539,6 +539,28 @@ export class PostgresWorkHoursViewStore {
     return new Map(rows.map((r) => [r.id, r.name]));
   }
 
+  /** A store's company and name, for screens addressed by store; undefined when it doesn't exist. */
+  async storeInfo(storeId: string): Promise<{ readonly orgId: string; readonly name: string; readonly active: boolean } | undefined> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(storeId)) return undefined;
+    const { rows } = await this.#db.pool.query<{ org_id: string; name: string; status: string }>("SELECT org_id, name, status FROM organization_stores WHERE id = $1::uuid", [storeId]);
+    const row = rows[0];
+    return row ? Object.freeze({ orgId: row.org_id, name: row.name, active: row.status === "active" }) : undefined;
+  }
+
+  /** A company's active stores, by name, for staff placement forms. */
+  async storesOf(orgId: string): Promise<readonly { readonly id: string; readonly name: string }[]> {
+    const { rows } = await this.#db.pool.query<{ id: string; name: string }>("SELECT id::text AS id, name FROM organization_stores WHERE org_id = $1 AND status = 'active' ORDER BY name, id", [orgId]);
+    return Object.freeze(rows.map((r) => Object.freeze({ id: r.id, name: r.name })));
+  }
+
+  /** Display names for people in a list the caller may already read; the profile name wins over the account name. */
+  async personNames(personIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    if (personIds.length === 0) return new Map();
+    const { rows } = await this.#db.pool.query<{ id: string; name: string | null }>(
+      "SELECT p.id, COALESCE(pp.display_name, p.display_name) AS name FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id = p.id WHERE p.id = ANY($1::text[])", [[...personIds]]);
+    return new Map(rows.filter((r) => r.name).map((r) => [r.id, r.name!]));
+  }
+
   async listSessions(f: WorkSessionFilter): Promise<readonly WorkSessionRecord[]> {
     const { sql, values } = sessionWhere(f);
     values.push(f.after?.workDate ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit ?? 100, 1), 501));

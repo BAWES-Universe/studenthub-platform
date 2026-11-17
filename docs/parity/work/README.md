@@ -85,7 +85,7 @@ hooks) plug into `wireWork`'s ports when those lanes land.
 | Who | Routes |
 |---|---|
 | Person | `GET /api/work/today`, `POST /api/work/sessions/{start,stop,discard,manual}`, `GET /api/work/hours/mine`, `GET /api/work/placements/mine`, `POST /api/work/appeals`, `GET /api/work/appeals/mine`, `GET /api/work/appeals/:id`, `POST /api/work/appeal-updates/:id/read` |
-| Company, store manager | `GET /api/work/hours/company/:orgId`, `GET /api/work/placements/company/:orgId`, `POST /api/work/placement-requests`, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
+| Company, store manager | `GET /api/work/hours/company/:orgId`, `GET /api/work/placements/company/:orgId`, `GET /api/work/placement-requests/company/:orgId`, `POST /api/work/placement-requests`, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
 | Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/correct` |
 
 ## Legacy import mapping and reconciliation (M-5, W-7)
@@ -123,12 +123,32 @@ the latest legacy decision with its status. Legacy ids keep their underscores
 
 The person comes from the session cookie, and posts need the same origin and a form body. A refusal shows the Track page again with a plain message (400 or 409).
 
+## Screens: employer and staff (C-10, O-11, M-03, M-04, A-12, A-13)
+
+`apps/gateway/src/work/review-pages.ts` and `staff-pages.ts`, same pattern as the person's screens (no script on these pages). Every read and write goes through the work services, which check the actor's grants on each request.
+
+| Screen | Path | What it does |
+|---|---|---|
+| C-10 Placement | `/work/assignment[/:id]` | Where the person works now, what is coming up and where they worked before |
+| O-11 Work review | `/organization/:orgId/work` | The company's hours by date range, status and store, with names; approve or reject the selected sessions with a reason, note (private unless shared) and rating; undo a decision. Filters survive the post |
+| M-03 Time approvals | `/store/:storeId/time-approvals` | The same queue for one store, waiting hours by default; only that store's manager (or the company, or staff) |
+| M-04 Assignment changes | `/store/:storeId/assignment-changes` | Ask StudentHub for a person at the store, follow the answer, cancel a waiting request |
+| A-12 Work | `/work/assignments?org=`, `/work/logs` | Staff: a company's placements and waiting requests; place, end or extend, accept or decline. Work logs across companies with a person filter, the same decisions, and "Correct these hours" |
+| A-13 Appeals and corrections | `/work/appeals?as=staff`, `/work/appeals/:id`, `/work/corrections` | Staff list appeals by status; on an appeal, reply, set the status, correct the appealed hours or add missing time (Kuwait time, reason required); correct any closed session from the logs |
+
+| Legacy | Here | Why |
+|---|---|---|
+| A store manager could not see or cancel the company's placement requests | A store's manager lists, asks for and cancels requests for their own stores (the store must belong to the request's company) | M-04 contract |
+| No way to list requests outside the accept screen | `PlacementService.requestsFor` and `GET /api/work/placement-requests/company/:orgId`, scoped like the other company lists | API gap |
+| One appeal page for everyone | `/work/appeals/:id` shows the person's view to the appellant and the staff view to staff of that company; anyone else gets 404 | W-6 ownership |
+| The A-13 list shares `/work/appeals` with the person's list | `?as=staff` asks for the staff list; the server checks the staff grant on every request (contract rule 1) | No context switch exists yet |
+
 ## Not yet here
 
-- The remaining screens of the lane (C-10, O-11, M-03, M-04, A-12 to A-14 in `docs/parity/target-screen-navigation-contract.md`).
+- A-14 (staff my work: standup, leave, expenses and their own sessions); it depends on the P1 and F4 lanes.
+- A session detail page for M-03 (`/store/:storeId/time-approvals/:sessionId`); each session is decided in the queue for now.
 - A "Work" entry in the main navigation. This goes through the shared `apps/gateway/src/contributions` seam and copy keys, as its own small change.
 - Arabic copy for the work screens.
 - A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
-- `/work/appeals` is the person's list. The staff list (A-13) shares the path in a staff context and comes with the staff screens.
 - Wiring the store-manager and notice ports once the access and comms lanes land.
 - The importer run itself (cutover lane, M-5).

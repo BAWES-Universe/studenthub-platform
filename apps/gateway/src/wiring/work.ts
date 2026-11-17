@@ -53,12 +53,15 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
   const newId = () => randomUUID();
   const work: WorkHttpServices = {
     personFor: async (sessionId) => (await access.loginStore.sessions.get(sessionId))?.personId,
-    placements: new PlacementService({ store: placementStore, grants, newId }),
+    placements: new PlacementService({ store: placementStore, grants, newId, managedStores: (actorId) => managed.managedStores(actorId) }),
     sessions: new SessionService({ store: sessionStore, newId }),
     decisions: new DecisionService({ store: decisionStore, grants, managedStores: managed, newId }),
     views: new HoursViews(viewStore, scope, (actorId) => managed.managedStores(actorId)),
     appeals: new AppealService({ store: appealStore, scope, newId }),
     storeNames: (ids) => viewStore.storeNames(ids),
+    storeInfo: (id) => viewStore.storeInfo(id),
+    personNames: (ids) => viewStore.personNames(ids),
+    storesOf: (orgId) => viewStore.storesOf(orgId),
   };
   return {
     services: { work },

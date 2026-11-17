@@ -20,7 +20,7 @@ function appeal(over: Record<string, unknown> = {}) {
   return { id: APPEAL_ID, sessionId: session().id, personId: "person", orgId: "co", storeId: STORE, reason: "I stayed until 9 <pm>", status: "in_progress",
     createdAt: "2026-11-18T19:00:00.000Z", updatedAt: "x", ...over };
 }
-interface World { open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown }
+interface World { placements?: unknown[]; open?: unknown; assignment?: unknown; rows?: unknown[]; outcome?: unknown; appeals?: unknown[]; detail?: unknown; raised?: unknown }
 function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const rows = world.rows ?? [];
   const totals = { approvedSeconds: 3600, pendingSeconds: 9000, rejectedSeconds: 0, open: 0 };
@@ -28,6 +28,7 @@ function services(calls: unknown[][], world: World = {}): WorkHttpServices {
   const record = (name: string) => async (...args: unknown[]) => { calls.push([name, ...args]); return result; };
   return {
     personFor: async (id: string) => id === SESSION ? "person" : undefined,
+    placements: { mine: async (...args: unknown[]) => { calls.push(["placementsMine", ...args]); return world.placements ?? []; } },
     sessions: { today: async () => ({ open: world.open ?? null, assignment: world.assignment ?? null }), start: record("start"), stop: record("stop"), discard: record("discard"), addManual: record("addManual") },
     views: { mine: async (...args: unknown[]) => { calls.push(["mine", ...args]); return { rows, totals, next: null }; } },
     appeals: {
@@ -61,8 +62,9 @@ async function request(path: string, o: Opt = {}, calls: unknown[][] = []) {
 }
 const post = (path: string, body: string, extra: Opt = {}, calls: unknown[][] = []) => request(path, { method: "POST", origin: ORIGIN, body, ...extra }, calls);
 
-test("WORK_PAGES only Track and History paths; signed-out and switched-off answers", async () => {
-  assert.equal((await request("/work/assignment")).handled, false);
+test("WORK_PAGES only the person's work paths; signed-out and switched-off answers", async () => {
+  assert.equal((await request("/work/assignmentx")).handled, false);
+  assert.equal((await request("/work/assignment/not-a-uuid")).handled, false);
   assert.equal((await request("/work/appeals/not-a-uuid")).handled, false);
   assert.equal((await request("/api/work/today")).handled, false);
   assert.equal((await request("/work/trackx")).handled, false);
@@ -177,6 +179,28 @@ test("WORK_PAGES appeals: raised from a day's closed session, listed, and opened
   assert.match(opened.html, /Corrected to Wednesday, 18 November 2026, 09:00 to 21:00 \(12h\)/);
   assert.match(opened.html, /<h3>Checking<\/h3><p>Looking at the store log<\/p><p>Thursday, 19 November 2026 · New<\/p>/);
   assert.deepEqual(seen.filter((c) => c[0] === "markRead"), [["markRead", "person", unread.id]]);
-  assert.equal((await request(`/work/appeals/${APPEAL_ID}`, { world: { detail: { ...detail, appeal: appeal({ personId: "someone" }) } } })).status, 404);
+  // The service only returns someone else's appeal to staff of its company; they get the staff view, and nothing is marked read.
+  const staffSeen: unknown[][] = [];
+  const staffView = await request(`/work/appeals/${APPEAL_ID}`, { world: { detail: { ...detail, appeal: appeal({ personId: "someone" }) } } }, staffSeen);
+  assert.equal(staffView.status, 200);
+  assert.match(staffView.html, /Reply to the person/);
+  assert.equal(staffSeen.filter((c) => c[0] === "markRead").length, 0);
   assert.equal((await request(`/work/appeals/${APPEAL_ID}`)).status, 404);
+});
+
+test("WORK_PAGES Placement shows where the person works now, next and before, and only their own placements open", async () => {
+  const place = (id: string, startDate: string, endDate: string | null, source = "staff") => ({ id: `eeeeeeee-0000-4000-8000-00000000000${id}`, personId: "person", orgId: "co", storeId: STORE, startDate, endDate, source });
+  const placements = [place("1", "2026-11-01", null), place("2", "2027-01-01", "2027-01-31"), place("3", "2026-01-01", "2026-03-31", "request")];
+  const calls: unknown[][] = [];
+  const page = await request("/work/assignment", { world: { placements } }, calls);
+  assert.equal(page.status, 200);
+  assert.deepEqual(calls[0], ["placementsMine", "person"]);
+  assert.match(page.html, /Where you work now<\/h2><p><strong>Avenues &lt;Mall&gt;<\/strong><\/p><p>From Sunday, 1 November 2026, no end date<\/p>/);
+  assert.match(page.html, /Coming up[\s\S]*Friday, 1 January 2027 to Sunday, 31 January 2027/);
+  assert.match(page.html, /Before[\s\S]*Thursday, 1 January 2026 to Tuesday, 31 March 2026/);
+  assert.match(page.html, /aria-current="page">Placement/);
+  assert.match((await request("/work/assignment")).html, /aren't placed at a store right now/);
+  const one = await request(`/work/assignment/${placements[2]!.id}`, { world: { placements } });
+  assert.match(one.html, /Placed at the company&#39;s request/);
+  assert.equal((await request("/work/assignment/eeeeeeee-0000-4000-8000-000000000009", { world: { placements } })).status, 404);
 });

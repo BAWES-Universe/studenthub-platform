@@ -326,6 +326,14 @@ test("W5_PG views: the person sees no rating or private note; another company se
   assert.equal(((await placement.forOrganization(w.staff, w.group)) ?? []).length, 1);
   assert.deepEqual([...await viewStore.storeNames([w.store, randomUUID()])], [[w.store, "Avenues"]]);
   assert.equal((await viewStore.storeNames([])).size, 0);
+  assert.deepEqual(await viewStore.storeInfo(w.store), { orgId: w.company, name: "Avenues", active: true });
+  assert.equal(await viewStore.storeInfo(randomUUID()), undefined);
+  assert.equal(await viewStore.storeInfo("not-a-store"), undefined);
+  await pool.query("UPDATE principals SET display_name = 'Sara' WHERE id = $1", [w.person]);
+  assert.deepEqual([...await viewStore.personNames([w.person, w.owner, "nobody"])], [[w.person, "Sara"]]);
+  assert.equal((await viewStore.personNames([])).size, 0);
+  assert.deepEqual(await viewStore.storesOf(w.company), [{ id: w.store, name: "Avenues" }]);
+  assert.deepEqual(await viewStore.storesOf("no-such-company"), []);
   const first = await viewStore.listSessions({ personId: w.person, range, limit: 2 });
   const rest = await viewStore.listSessions({ personId: w.person, range, limit: 2, after: { workDate: first[1]!.workDate, id: first[1]!.id } });
   assert.deepEqual([...first, ...rest].map((s) => s.id).sort(), [a, b, (await viewStore.listSessions({ personId: w.person, range, limit: 10 })).map((s) => s.id).find((id) => id !== a && id !== b)].sort());

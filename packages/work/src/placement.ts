@@ -212,6 +212,8 @@ export interface PlacementServiceOptions {
   readonly grants: GrantsPort;
   readonly newId: () => string;
   readonly now?: () => Date;
+  /** Stores the actor manages (access lane A4); none when the lane is not wired. */
+  readonly managedStores?: (actorId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
 }
 
 export class PlacementService {
@@ -219,12 +221,18 @@ export class PlacementService {
   readonly #grants: GrantsPort;
   readonly #newId: () => string;
   readonly #now: () => Date;
+  readonly #managed: (actorId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
 
   constructor(options: PlacementServiceOptions) {
     this.#store = options.store;
     this.#grants = options.grants;
     this.#newId = options.newId;
     this.#now = options.now ?? (() => new Date());
+    this.#managed = options.managedStores ?? (async () => []);
+  }
+
+  async #manages(actorId: string, store: { readonly id: string; readonly orgId: string }): Promise<boolean> {
+    return (await this.#managed(actorId)).some((m) => m.storeId === store.id && m.orgId === store.orgId);
   }
 
   /** Staff place a person directly. */
@@ -289,7 +297,8 @@ export class PlacementService {
     const store = await this.#store.store(input.storeId.toLowerCase());
     if (!store) return { kind: "refused", code: "store_not_found" };
     const grants = await this.#grants.listGrantsForPrincipal(actorId);
-    if (OPERATOR_ORG_IDS.includes(store.orgId) || !(isCompanyFor(grants, store.orgId, store.ancestors) || isStaffFor(grants, store.orgId, store.ancestors))) return { kind: "refused", code: "forbidden" };
+    if (OPERATOR_ORG_IDS.includes(store.orgId) || !(isCompanyFor(grants, store.orgId, store.ancestors) || isStaffFor(grants, store.orgId, store.ancestors)
+      || await this.#manages(actorId, store))) return { kind: "refused", code: "forbidden" };
     if (store.status !== "active") return { kind: "refused", code: "store_removed" };
     if (!(await this.#store.personExists(input.personId))) return { kind: "refused", code: "person_not_found" };
     const request: AssignmentRequest = Object.freeze({
@@ -319,7 +328,8 @@ export class PlacementService {
     if (!store) return { kind: "refused", code: "store_not_found" };
     const grants = await this.#grants.listGrantsForPrincipal(actorId);
     const staff = isStaffFor(grants, store.orgId, store.ancestors);
-    const allowed = decision === "cancel" ? staff || isCompanyFor(grants, store.orgId, store.ancestors) : staff;
+    // A store manager may cancel a request for their own store (M-04); only staff accept or reject.
+    const allowed = decision === "cancel" ? staff || isCompanyFor(grants, store.orgId, store.ancestors) || await this.#manages(actorId, store) : staff;
     if (!allowed) return { kind: "refused", code: "forbidden" };
     return this.#store.transaction(async (tx): Promise<DecideOutcome> => {
       const request = await tx.lockRequest(existing.id);
@@ -388,6 +398,27 @@ export class PlacementService {
     const reach = orgReach(grants, [...STAFF_ROLES, ...COMPANY_ROLES], orgId, ancestors);
     if (reach === "none") return undefined;
     return this.#store.listAssignments({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(storeId ? { storeId } : {}) });
+  }
+
+  /**
+   * Placement requests at an organization's stores, newest first. Staff and the
+   * company see every store (sub-companies only for a subtree grant); a store
+   * manager sees the requests for the stores they manage there. Legacy listed
+   * them per store inside the company and staff screens.
+   */
+  async requestsFor(actorId: string, orgId: string, options: { readonly storeId?: string; readonly status?: AssignmentRequestStatus } = {}): Promise<readonly AssignmentRequest[] | undefined> {
+    if (options.storeId !== undefined && !isUuid(options.storeId)) return undefined;
+    const storeId = options.storeId?.toLowerCase();
+    const ancestors = await this.#store.organizationAncestors(orgId);
+    if (ancestors === undefined) return undefined;
+    const reach = orgReach(await this.#grants.listGrantsForPrincipal(actorId), [...STAFF_ROLES, ...COMPANY_ROLES], orgId, ancestors);
+    let stores: ReadonlySet<string> | null = null;
+    if (reach === "none") {
+      stores = new Set((await this.#managed(actorId)).filter((m) => m.orgId === orgId).map((m) => m.storeId));
+      if (stores.size === 0) return undefined;
+    }
+    const list = await this.#store.listRequests({ orgIds: [orgId], includeSubtree: reach === "subtree", ...(options.status ? { status: options.status } : {}) });
+    return list.filter((r) => (stores === null || (r.orgId === orgId && stores.has(r.storeId))) && (storeId === undefined || r.storeId === storeId));
   }
 
   async #place(tx: PlacementTransaction, actorId: string, input: PlacementInput, store: StoreFacts, origin: Origin): Promise<PlaceOutcome> {

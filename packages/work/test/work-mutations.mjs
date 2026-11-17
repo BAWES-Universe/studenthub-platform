@@ -9,6 +9,8 @@ const placementSuite = "packages/work/test/placement.test.js", sessionSuite = "p
 const decisions = "packages/work/src/decisions.js", views = "packages/work/src/views.js", decisionSuite = "packages/work/test/decisions.test.js";
 const appeals = "packages/work/src/appeals.js", appealSuite = "packages/work/test/appeals.test.js";
 const pages = "apps/gateway/src/work/pages.js", pagesSuite = "apps/gateway/test/work-pages.test.js";
+const staffPages = "apps/gateway/src/work/staff-pages.js", staffSuite = "apps/gateway/test/work-staff-pages.test.js";
+const review = "apps/gateway/src/work/review-pages.js", reviewSuite = "apps/gateway/test/work-review-pages.test.js";
 const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
 const mutations = [
   ["staff-only placement", "store.ancestors))\n            return { kind: \"refused\", code: \"forbidden\" };\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "store.ancestors))\n            ;\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "W1_PLACE", placement, placementSuite],
@@ -39,7 +41,16 @@ const mutations = [
   ["screens refuse cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_PAGES", pages, pagesSuite],
   ["manual times are Kuwait time", ":00+03:00`", ":00Z`", "WORK_PAGES", pages, pagesSuite],
   ["screen script needs the nonce", "`; script-src 'nonce-${nonce}'`", "`; script-src 'unsafe-inline'`", "WORK_PAGES", pages, pagesSuite],
-  ["appeal screen is the owner's only", 'if ("kind" in detail || detail.appeal.personId !== person) {', 'if ("kind" in detail) {', "WORK_PAGES", pages, pagesSuite],
+  ["someone else's appeal gets the staff view, not the person's", "if (detail.appeal.personId !== person) {", "if (false) {", "WORK_PAGES", pages, pagesSuite],
+  ["review posts return to their own screen", "(value === place.base || value.startsWith(`${place.base}?`))", "true", "WORK_REVIEW", review, reviewSuite],
+  ["review refuses cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_REVIEW", review, reviewSuite],
+  ["open hours can't be selected", 'const box = open ? "" :', 'const box = false ? "" :', "WORK_REVIEW", review, reviewSuite],
+  ["only staff correct hours from the logs", "const correct = staff && !open ?", "const correct = !open ?", "WORK_REVIEW", review, reviewSuite],
+  ["staff screens refuse cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_STAFF", staffPages, staffSuite],
+  ["staff placement input is checked", "result = input ? await services.placements.place(actor, input)", "result = true ? await services.placements.place(actor, input)", "WORK_STAFF", staffPages, staffSuite],
+  ["staff correction times are Kuwait time", "const localValue = (iso) => new Date(new Date(iso).getTime() + 3 * 3600_000)", "const localValue = (iso) => new Date(new Date(iso).getTime())", "WORK_STAFF", staffPages, staffSuite],
+  ["a manager lists their own store's requests", "(stores === null || (r.orgId === orgId && stores.has(r.storeId)))", "true", "W1_REQUEST_LIST", placement, placementSuite],
+  ["a manager's store is in the request's company", "m.storeId === store.id && m.orgId === store.orgId", "m.storeId === store.id", "W1_REQUEST_LIST", placement, placementSuite],
   ["correction links its own company's appeal", "appeal.personId !== original.personId || appeal.orgId !== original.orgId", "appeal.personId !== original.personId", "W6_CORRECT", appeals, appealSuite],
   ["a day named twice is decided once", "[`${k.personId}|${k.storeId}|${k.workDate}`, k]", "[Math.random(), k]", "W4_DAY", decisions, decisionSuite],
   ["the shared scope keeps no grants", "this.#cache = options.perOperation === true ? new Map() : undefined;", "this.#cache = new Map();", "W5_VIEWS", decisions, decisionSuite],
