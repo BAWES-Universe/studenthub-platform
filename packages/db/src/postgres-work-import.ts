@@ -141,6 +141,8 @@ export class PostgresWorkImportStore {
       await client.query(`WITH pick AS (
           SELECT DISTINCT ON (s.id) s.id AS session_id, d.id AS decision_id FROM work_sessions s
           JOIN work_decisions d ON s.id = ANY(d.session_ids) AND d.outcome = s.status AND d.legacy_ref IS NOT NULL
+            -- Only a decision on the session's own day: one stored for another company, store or person is never linked.
+            AND d.org_id = s.org_id AND d.store_id = s.store_id AND d.person_principal_id = s.person_principal_id AND d.work_date = s.work_date
           -- Only sessions in force: a replaced original keeps its history and is never relinked.
           WHERE s.source = 'import' AND s.status <> 'pending' AND s.deleted_at IS NULL AND work_session_in_force(s.id)
           ORDER BY s.id, d.decided_at DESC, d.id DESC)

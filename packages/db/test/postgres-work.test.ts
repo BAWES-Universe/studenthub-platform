@@ -504,6 +504,14 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   assert.deepEqual(linked.map((r) => r.decision), [day.legacyRef, reject.legacyRef]);
   assert.deepEqual((await pool.query("SELECT decided_by, legacy_decided_by, rating FROM work_decisions WHERE legacy_ref = $1", [day.legacyRef])).rows[0], { decided_by: null, legacy_decided_by: "contact:44", rating: null });
   assert.equal((await imports.importDecisions([day, reject])).unchanged, 2);
+  // A later legacy decision already stored for another company, person or date naming the session is never linked to it.
+  const sessionTwoId = (await pool.query("SELECT id FROM work_sessions WHERE legacy_ref = $1", [two.legacyRef])).rows[0].id;
+  for (const [i, org, person, date] of [[1, w.rival, w.person, "2026-11-10"], [2, w.company, w.staff, "2026-11-10"], [3, w.company, w.person, "2026-11-11"]] as const) {
+    await pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids, legacy_ref, legacy_digest, legacy_decided_by, decided_at)
+      VALUES($1,$2,$3,$4,$5,'session','rejected',$6::uuid[],$7,repeat('0',64),'contact:44',$8)`, [randomUUID(), org, w.store, person, date, [sessionTwoId], `cwlf_${tag}-stray${i}`, `2026-11-10T2${i}:30:00Z`]);
+  }
+  await imports.importDecisions([day, reject]);
+  assert.equal((await pool.query("SELECT d.legacy_ref FROM work_sessions s JOIN work_decisions d ON d.id = s.decision_id WHERE s.id = $1", [sessionTwoId])).rows[0].legacy_ref, reject.legacyRef);
   // A decision made here after import keeps its link when the import runs again.
   const native = randomUUID();
   const sessionOne = (await pool.query("SELECT id FROM work_sessions WHERE legacy_ref = $1", [one.legacyRef])).rows[0].id;
