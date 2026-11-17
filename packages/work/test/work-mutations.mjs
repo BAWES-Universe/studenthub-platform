@@ -8,6 +8,7 @@ const placement = "packages/work/src/placement.js", sessions = "packages/work/sr
 const placementSuite = "packages/work/test/placement.test.js", sessionSuite = "packages/work/test/sessions.test.js";
 const decisions = "packages/work/src/decisions.js", views = "packages/work/src/views.js", decisionSuite = "packages/work/test/decisions.test.js";
 const appeals = "packages/work/src/appeals.js", appealSuite = "packages/work/test/appeals.test.js";
+const pages = "apps/gateway/src/work/pages.js", pagesSuite = "apps/gateway/test/work-pages.test.js";
 const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
 const mutations = [
   ["staff-only placement", "store.ancestors))\n            return { kind: \"refused\", code: \"forbidden\" };\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "store.ancestors))\n            ;\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "W1_PLACE", placement, placementSuite],
@@ -35,6 +36,10 @@ const mutations = [
   ["legacy times are Kuwait", "+03:00`", "Z`", "LEGACY_TIME", legacy, legacySuite],
   ["legacy total_time is checked", "Number(row.total_time) !== seconds", "false", "LEGACY_HOUR", legacy, legacySuite],
   ["legacy day counts are counts", '["approved_count", n(row.total_approved), h.approvedCount]', '["approved_count", n(row.total_approved), h.approvedSeconds]', "LEGACY_RECONCILE", legacy, legacySuite],
+  ["screens refuse cross-origin posts", 'if (req.headers.origin !== origin || req.headers["sec-fetch-site"] === "cross-site") {', 'if (false) {', "WORK_PAGES", pages, pagesSuite],
+  ["manual times are Kuwait time", ":00+03:00`", ":00Z`", "WORK_PAGES", pages, pagesSuite],
+  ["screen script needs the nonce", "`; script-src 'nonce-${nonce}'`", "`; script-src 'unsafe-inline'`", "WORK_PAGES", pages, pagesSuite],
+  ["appeal screen is the owner's only", 'if ("kind" in detail || detail.appeal.personId !== person) {', 'if ("kind" in detail) {', "WORK_PAGES", pages, pagesSuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];

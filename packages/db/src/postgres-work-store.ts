@@ -531,6 +531,13 @@ export class PostgresWorkHoursViewStore {
   async close(): Promise<void> { await this.#db.close(); }
   organizationAncestors(orgId: string): Promise<readonly string[] | undefined> { return ancestorsOf(this.#db.pool, orgId); }
 
+  /** Display names of stores, for the work screens (a removed store keeps its name). */
+  async storeNames(storeIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    if (storeIds.length === 0) return new Map();
+    const { rows } = await this.#db.pool.query<{ id: string; name: string }>("SELECT id::text AS id, name FROM organization_stores WHERE id = ANY($1::uuid[])", [[...storeIds]]);
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
   async listSessions(f: WorkSessionFilter): Promise<readonly WorkSessionRecord[]> {
     const { sql, values } = sessionWhere(f);
     values.push(f.after?.workDate ?? null, f.after?.id ?? null, Math.min(Math.max(f.limit ?? 100, 1), 501));

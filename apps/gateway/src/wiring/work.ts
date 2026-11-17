@@ -45,6 +45,7 @@ export function wireWork(settings: WiringSettings, access: Access, ports: WorkWi
     decisions: new DecisionService({ store: decisionStore, grants, managedStores: managed, newId }),
     views: new HoursViews(viewStore, scope, (actorId) => managed.managedStores(actorId)),
     appeals: new AppealService({ store: appealStore, scope, newId }),
+    storeNames: (ids) => viewStore.storeNames(ids),
   };
   return {
     services: { work },

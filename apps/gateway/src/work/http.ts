@@ -16,6 +16,8 @@ export interface WorkHttpServices {
   readonly decisions: DecisionService;
   readonly views: HoursViews;
   readonly appeals: AppealService;
+  /** Store names for the screens; absent means a generic label. */
+  readonly storeNames?: (storeIds: readonly string[]) => Promise<ReadonlyMap<string, string>>;
 }
 
 type Json = { readonly status: number; readonly body: unknown };
@@ -162,7 +164,7 @@ const ROUTES: readonly Route[] = [
     outcome(await s.appeals.correct(p, params[0], { startedAt: body.startedAt, endedAt: body.endedAt, reason: body.reason, note: body.note, appealId: body.appealId })) },
 ];
 
-/** Handles `/api/work/...`; returns false for other paths. Pages (C-10..13, O-11, M-03..04, A-12..13) own `/work/...`. */
+/** Handles `/api/work/...`; returns false for other paths. Screens (work/pages.ts) own `/work/...`. */
 export async function handleWork(req: IncomingMessage, res: ServerResponse, services: WorkHttpServices | undefined, origin: string | undefined): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://invalid");
   if (url.pathname !== "/api/work" && !url.pathname.startsWith("/api/work/")) return false;

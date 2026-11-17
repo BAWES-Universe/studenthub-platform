@@ -106,9 +106,26 @@ reported and the batch goes on. Imported decisions then link each decided sessio
 the latest legacy decision with its status. Legacy ids keep their underscores
 (`can_wrk_hr_<uuid>`), which migration 0504 allows.
 
+## Screens: Track, History and Appeals (C-11 to C-13)
+
+`apps/gateway/src/work/pages.ts` serves `/work/track`, `/work/history[/:date]` and `/work/appeals[/:id]`. The pages are rendered on the server with the shared page shell and profile card styles, and they call the same services as the JSON API.
+
+| Legacy | Here | Why |
+|---|---|---|
+| Track tab started and stopped with the app's last known position, or `0,0` | Clock in and Clock out ask the browser for a fresh position on the press; without one the server refuses (D-WK1). The only script on the page is that step, under a per-response CSP nonce | D-WK1 |
+| Manual log and end-session screens | One "Forgot to clock in?" form on Track, read as Kuwait time; the hours are marked as entered late and wait for approval | D-WK1 |
+| Discarding an open session was not possible; people logged a wrong end time | Discard removes the open session (soft delete, kept on record) | Data quality |
+| Work history listed dates, then hours per date | History lists one month by day with totals by status (approved, waiting, rejected); a day lists each session with its store, status, marks (entered late, corrected, no location) and the reason and note when the employer made the note public | Parity, W-5 privacy |
+| Candidate could appeal any session id; staff replies were marked read by id with no owner check | "Appeal these hours" appears on the person's own rejected sessions in History, as in legacy; the appeal page opens for its owner only and shows the status, staff replies (newest first, new ones marked) and any correction or added time; opening it marks the replies read | Ownership defect (W-6) |
+
+The person comes from the session cookie, and posts need the same origin and a form body. A refusal shows the Track page again with a plain message (400 or 409).
+
 ## Not yet here
 
-The lane's screens (C-10 to C-13, O-11, M-03, M-04, A-12 to A-14 in
-`docs/parity/target-screen-navigation-contract.md`) on top of this API, wiring of the
-store-manager and notice ports once the access and comms lanes land, and the importer
-run itself (cutover lane, M-5).
+- The remaining screens of the lane (C-10, O-11, M-03, M-04, A-12 to A-14 in `docs/parity/target-screen-navigation-contract.md`).
+- A "Work" entry in the main navigation. This goes through the shared `apps/gateway/src/contributions` seam and copy keys, as its own small change.
+- Arabic copy for the work screens.
+- A reply box for the person on an appeal: the contract lists `appeals.self.comment`, but W-6 lets only staff post updates, as legacy did. This is to be confirmed with the legacy rules before it is added.
+- `/work/appeals` is the person's list. The staff list (A-13) shares the path in a staff context and comes with the staff screens.
+- Wiring the store-manager and notice ports once the access and comms lanes land.
+- The importer run itself (cutover lane, M-5).

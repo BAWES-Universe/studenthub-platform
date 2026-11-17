@@ -300,6 +300,8 @@ test("W5_PG views: the person sees no rating or private note; another company se
   assert.deepEqual(await views.company(groupSelf, w.company, range), { kind: "refused", code: "forbidden" });
   assert.deepEqual(await placement.forOrganization(groupSelf, w.group), []);
   assert.equal(((await placement.forOrganization(w.staff, w.group)) ?? []).length, 1);
+  assert.deepEqual([...await viewStore.storeNames([w.store, randomUUID()])], [[w.store, "Avenues"]]);
+  assert.equal((await viewStore.storeNames([])).size, 0);
   const first = await viewStore.listSessions({ personId: w.person, range, limit: 2 });
   const rest = await viewStore.listSessions({ personId: w.person, range, limit: 2, after: { workDate: first[1]!.workDate, id: first[1]!.id } });
   assert.deepEqual([...first, ...rest].map((s) => s.id).sort(), [a, b, (await viewStore.listSessions({ personId: w.person, range, limit: 10 })).map((s) => s.id).find((id) => id !== a && id !== b)].sort());
