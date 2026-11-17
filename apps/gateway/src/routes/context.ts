@@ -23,6 +23,8 @@ import type { AreaHttp } from "../area-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
 import type { RecruitRequests } from "../recruit/requests-http.js";
 import type { RecruitPipeline } from "../recruit/pipeline-http.js";
+import type { RecruitChecklist } from "../recruit/checklist-http.js";
+import type { RecruitPeopleSearch } from "../recruit/search-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -44,6 +46,8 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly legacyLink?: LegacyLinkService;
   readonly recruitRequests?: RecruitRequests;
   readonly recruitPipeline?: RecruitPipeline;
+  readonly recruitChecklist?: RecruitChecklist;
+  readonly recruitPeopleSearch?: RecruitPeopleSearch;
 };
 
 export interface GatewayRouteContext {

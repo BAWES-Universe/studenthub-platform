@@ -1,9 +1,11 @@
 import pg from "pg";
-import { PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
+import { PostgresRecruitChecklistStore, PostgresRecruitPeopleSearchStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
+import { PEOPLE_SEARCH_PAGE_SIZE, checklistAdminDecision, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
+import { createRecruitChecklist } from "../recruit/checklist-http.js";
 import { createRecruitPipeline } from "../recruit/pipeline-http.js";
 import { createRecruitRequests } from "../recruit/requests-http.js";
+import { createRecruitPeopleSearch } from "../recruit/search-http.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
 
@@ -15,6 +17,8 @@ const PLACEMENT_UNAVAILABLE: RecruitPlacementPort = { placeFromRecruit: async ()
 export function wireRecruit(settings: WiringSettings, access: Access, placement: RecruitPlacementPort = PLACEMENT_UNAVAILABLE): Wired<{
   readonly recruitRequests: ReturnType<typeof createRecruitRequests>;
   readonly recruitPipeline: ReturnType<typeof createRecruitPipeline>;
+  readonly recruitChecklist: ReturnType<typeof createRecruitChecklist>;
+  readonly recruitPeopleSearch: ReturnType<typeof createRecruitPeopleSearch>;
 }> {
   const operators = DEFAULT_OPERATOR_ORG_IDS;
   // One pool for the whole recruit area; the stores borrow it and never end it.
@@ -39,10 +43,14 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     placement,
     operatorOrgIds: operators,
   });
+  const checklist = new PostgresRecruitChecklistStore({ pool, adminDecision: (rows) => checklistAdminDecision(rows, operators), notesDecision: (rows) => recruitNotesDecision(rows, operators) });
+  const people = new PostgresRecruitPeopleSearchStore({ pool, searchDecision: (rows) => peopleSearchDecision(rows, operators), tokens: searchTokens, pageSize: PEOPLE_SEARCH_PAGE_SIZE });
   return {
     services: {
       recruitRequests: createRecruitRequests({ sessions: access.loginStore.sessions, store: requests }),
       recruitPipeline: createRecruitPipeline({ sessions: access.loginStore.sessions, store: pipeline }),
+      recruitChecklist: createRecruitChecklist({ sessions: access.loginStore.sessions, store: checklist }),
+      recruitPeopleSearch: createRecruitPeopleSearch({ sessions: access.loginStore.sessions, store: people }),
     },
     async close() { await pool.end(); },
   };
