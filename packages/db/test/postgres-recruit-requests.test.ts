@@ -124,13 +124,13 @@ test("REC1_ACTIVITY a status change and its activity row commit together; a fail
 test("REC1_CANCEL closing as cancelled clears the recruiter in the same change; a recruiter grantee cannot close", async () => {
   const orgId = await organization(), storeId = await store(orgId), owner = await principal(orgId), recruiter = await principal(orgId, "recruiter"), staff = await principal("root", "staff", "subtree");
   const id = await create(orgId, recruiter, storeId);
-  await pool.query("UPDATE recruit_requests SET assigned_recruiter_principal_id = $2 WHERE id = $1", [id, staff]);
+  await pool.query("UPDATE recruit_requests SET assigned_recruiter_principal_id = $2, assigned_at = now() WHERE id = $1", [id, staff]);
   assert.deepEqual(await requests.transition(recruiter, id, "closed", "cancelled"), { kind: "not_found" });
   assert.equal((await statusOf(id)).status, "open");
   assert.deepEqual(await requests.transition(owner, id, "closed", "cancelled"), { kind: "transitioned", status: "closed" });
   assert.deepEqual(await statusOf(id), { status: "closed", close_reason: "cancelled", assigned_recruiter_principal_id: null });
   const kept = await create(orgId, owner, storeId);
-  await pool.query("UPDATE recruit_requests SET assigned_recruiter_principal_id = $2 WHERE id = $1", [kept, staff]);
+  await pool.query("UPDATE recruit_requests SET assigned_recruiter_principal_id = $2, assigned_at = now() WHERE id = $1", [kept, staff]);
   assert.equal((await requests.transition(staff, kept, "closed", "fulfilled")).kind, "transitioned");
   assert.equal((await statusOf(kept)).assigned_recruiter_principal_id, staff, "a fulfilled close keeps the recruiter");
   assert.equal((await requests.get(recruiter, id))?.canTransition, false, "recruiter reads without actions");
@@ -138,7 +138,7 @@ test("REC1_CANCEL closing as cancelled clears the recruiter in the same change; 
 
 test("REC1_READS company and staff pages: newest first, stable cursor, status filter, drafts hidden from staff, other companies invisible", async () => {
   const orgId = await organization(), other = await organization(), storeId = await store(orgId), otherStore = await store(other);
-  const owner = await principal(orgId), otherOwner = await principal(other), staff = await principal("root", "admin", "subtree"), stranger = await principal(other, "recruiter");
+  const owner = await principal(orgId), otherOwner = await principal(other), staff = await principal("root", "staff", "subtree"), stranger = await principal(other, "recruiter");
   const ids = [];
   for (let i = 0; i < 5; i += 1) ids.push(await create(orgId, owner, storeId, { positionTitle: `Role ${i}` }));
   const draft = await create(orgId, owner, storeId, { draft: true });
