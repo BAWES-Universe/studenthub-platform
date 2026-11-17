@@ -58,9 +58,11 @@ CREATE UNIQUE INDEX company_invitations_one_pending_idx
   ON company_invitations (org_id, role, invited_email_normalized, coalesce(store_id, '00000000-0000-0000-0000-000000000000'::uuid))
   WHERE used_at IS NULL AND revoked_at IS NULL;
 
--- Store grants and their removal are recorded with scope 'store'.
+-- Store grants and their removal are recorded with scope 'store'. The event
+-- log keeps the store id without a foreign key, like its other ids, so it
+-- never cascades with the store or its company.
 ALTER TABLE access_grant_events
-  ADD COLUMN store_id UUID REFERENCES organization_stores (id),
+  ADD COLUMN store_id UUID,
   DROP CONSTRAINT access_grant_events_role_check,
   ADD CONSTRAINT access_grant_events_role_check CHECK (role IN ('candidate', 'staff', 'admin', 'org-owner', 'recruiter', 'finance', 'store-manager')),
   DROP CONSTRAINT access_grant_events_scope_check,
