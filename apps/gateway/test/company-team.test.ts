@@ -44,12 +44,13 @@ function world() {
     async team(orgId, now) {
       return {
         members: grants.filter((grant) => grant.orgId === orgId).map((grant) => ({ principalId: grant.principalId, displayName: people[grant.principalId]!.displayName, email: people[grant.principalId]!.email, role: grant.role, scope: grant.scope })),
-        invitations: pending(orgId, now).map((item) => ({ id: item.id, email: item.email, role: item.role, scope: item.scope, invitedBy: { principalId: item.invitedBy, displayName: people[item.invitedBy]!.displayName }, expiresAt: item.expiresAt.toISOString() })),
+        storeManagers: [], stores: [],
+        invitations: pending(orgId, now).map((item) => ({ id: item.id, store: null, email: item.email, role: item.role, scope: item.scope, invitedBy: { principalId: item.invitedBy, displayName: people[item.invitedBy]!.displayName }, expiresAt: item.expiresAt.toISOString() })),
       };
     },
     async invitation(tokenHash, now) {
       const item = invitations.find((row) => row.tokenHash === tokenHash && !row.usedAt && !row.revokedAt && row.expiresAt > now);
-      return item ? { orgId: item.orgId, orgName: orgs[item.orgId]!.name, role: item.role, scope: item.scope } : null;
+      return item ? { orgId: item.orgId, orgName: orgs[item.orgId]!.name, role: item.role, scope: item.scope, storeName: null } : null;
     },
     async invite(input) {
       const open = pending(input.orgId, input.now);
@@ -78,6 +79,7 @@ function world() {
       grants.push({ principalId: input.principalId, orgId: item.orgId, role: item.role, scope: item.scope });
       return { kind: "accepted", orgId: item.orgId, role: item.role, scope: item.scope };
     },
+    async removeStoreManager() { return { kind: "refused", reason: "not_found" }; },
     async removeMember(input) {
       const target = grants.filter((grant) => grant.principalId === input.targetId && grant.orgId === input.orgId);
       const decision = input.decide({ callerGrants: held(input.callerId), orgLive: input.orgId in orgs, orgAncestors: ancestors(input.orgId), targetGrants: target,

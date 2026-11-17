@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isGrantScope, type GrantScope, type Role } from "@studenthub/contracts";
 import { grantCovers, type GrantOption, type HeldGrant } from "./grant-catalogue.js";
+import { STORE_MANAGER, decideStoreAccessChange } from "./store-access.js";
 
 /**
  * Access lane A2: a company owner invites people to the team by email. The
@@ -74,6 +75,7 @@ export const INVITATION_REFUSALS = [
   "already_member",
   "not_found",
   "last_owner",
+  "unknown_store",
 ] as const;
 export type InvitationRefusal = (typeof INVITATION_REFUSALS)[number];
 
@@ -83,12 +85,17 @@ export interface InviteSnapshot {
   readonly orgAncestors: readonly string[];
   readonly pendingCount: number;
   readonly duplicatePending: boolean;
+  /** A4: the named store of a store manager invitation, as read in the transaction. */
+  readonly store?: null | { readonly orgId: string; readonly status: string };
 }
 
-export function decideInvite(orgId: string, input: { readonly role: string; readonly scope: string }, snapshot: InviteSnapshot):
+export function decideInvite(orgId: string, input: { readonly role: string; readonly scope: string; readonly storeId?: string | null }, snapshot: InviteSnapshot):
   { readonly kind: "ok" } | { readonly kind: "refused"; readonly reason: InvitationRefusal } {
   if (!snapshot.orgLive) return { kind: "refused", reason: "unknown_organization" };
-  return decideInviterRight(snapshot.callerGrants, orgId, snapshot.orgAncestors, input) ??
+  const right = input.storeId || input.role === STORE_MANAGER
+    ? decideStoreInviterRight(snapshot.callerGrants, orgId, snapshot.orgAncestors, input, snapshot.store ?? null)
+    : decideInviterRight(snapshot.callerGrants, orgId, snapshot.orgAncestors, input);
+  return right ??
     (snapshot.duplicatePending ? { kind: "refused", reason: "duplicate_invitation" }
       : snapshot.pendingCount >= MAX_PENDING_INVITATIONS ? { kind: "refused", reason: "too_many_invitations" }
         : { kind: "ok" });
@@ -109,6 +116,20 @@ export function decideInviterRight(
   return null;
 }
 
+/** A4: a store manager offer names one active store of this company, at self scope, from an owner, staff or admin. */
+export function decideStoreInviterRight(
+  grants: readonly HeldGrant[],
+  orgId: string,
+  ancestors: readonly string[],
+  input: { readonly role: string; readonly scope: string; readonly storeId?: string | null },
+  store: null | { readonly orgId: string; readonly status: string },
+): { readonly kind: "refused"; readonly reason: InvitationRefusal } | null {
+  if (input.role !== STORE_MANAGER || !input.storeId || input.scope !== "self") return { kind: "refused", reason: "role_not_allowed" };
+  const decision = decideStoreAccessChange(orgId, { callerGrants: grants, orgLive: true, orgAncestors: ancestors, store });
+  if (decision.kind === "refused") return { kind: "refused", reason: decision.reason === "not_allowed" ? "not_owner" : "unknown_store" };
+  return null;
+}
+
 export type AcceptOutcome =
   | { readonly kind: "accepted"; readonly orgId: string; readonly role: string; readonly scope: GrantScope }
   | { readonly kind: "already_held"; readonly orgId: string }
@@ -119,7 +140,11 @@ export interface AcceptSnapshot {
   readonly invitation: null | {
     readonly orgId: string; readonly role: string; readonly scope: GrantScope; readonly email: string;
     readonly invitedBy: string; readonly expiresAt: Date; readonly usedAt: Date | null; readonly revokedAt: Date | null;
+    /** A4: set for a store manager invitation. */
+    readonly storeId?: string | null;
   };
+  /** A4: the invitation's store as read in the transaction. */
+  readonly store?: null | { readonly orgId: string; readonly status: string };
   readonly now: Date;
   readonly orgLive: boolean;
   readonly orgAncestors: readonly string[];
@@ -136,7 +161,10 @@ export function decideAccept(snapshot: AcceptSnapshot): { readonly kind: "accept
   const invitation = snapshot.invitation;
   if (!invitation || invitation.usedAt || invitation.revokedAt || snapshot.now.getTime() >= invitation.expiresAt.getTime()) return { kind: "invalid" };
   if (!snapshot.orgLive) return { kind: "invalid" };
-  if (decideInviterRight(snapshot.inviterGrants, invitation.orgId, snapshot.orgAncestors, invitation)) return { kind: "invalid" };
+  const right = invitation.storeId
+    ? decideStoreInviterRight(snapshot.inviterGrants, invitation.orgId, snapshot.orgAncestors, invitation, snapshot.store ?? null)
+    : decideInviterRight(snapshot.inviterGrants, invitation.orgId, snapshot.orgAncestors, invitation);
+  if (right) return { kind: "invalid" };
   if (!emailMatches(snapshot.principalEmail, invitation.email)) return { kind: "wrong_address" };
   return { kind: "accept" };
 }

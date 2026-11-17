@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
 import {
   MAX_PENDING_INVITATIONS,
+  STORE_MANAGER,
   isInvitationTokenShape,
   type CompanyContactsService,
   type CompanyTeamService,
@@ -38,10 +39,10 @@ export interface CompanyTeamPorts {
 
 export const INVITE_COOKIE = "__Host-studenthub_invite";
 const INVITE_COOKIE_SECONDS = 3600;
-const TEAM = /^\/workspace\/companies\/([^/]+)\/team(?:\/(invite|invitations\/([^/]+)\/revoke|members\/([^/]+)\/remove))?$/;
+const TEAM = /^\/workspace\/companies\/([^/]+)\/team(?:\/(invite|invitations\/([^/]+)\/revoke|members\/([^/]+)\/remove|stores\/([0-9a-f-]{36})\/managers\/([^/]+)\/remove))?$/;
 const INVITATION = /^\/invitations\/([^/]+)(\/accept)?$/;
 
-const REFUSAL_TEXT: Readonly<Record<InvitationRefusal | "invalid_email" | "invalid_request" | "unavailable", string>> = Object.freeze({
+const REFUSAL_TEXT: Readonly<Record<InvitationRefusal | "invalid_email" | "not_allowed" | "invalid_request" | "unavailable", string>> = Object.freeze({
   invalid_email: "Enter one email address, like name@example.com.",
   not_owner: "Only an owner of this company can change its team.",
   role_not_allowed: "You can’t invite for this role or scope here.",
@@ -51,12 +52,14 @@ const REFUSAL_TEXT: Readonly<Record<InvitationRefusal | "invalid_email" | "inval
   already_member: "This person already holds this role here.",
   not_found: "This person or invitation is no longer on the team.",
   last_owner: "This is the company’s last owner. Make someone else an owner first.",
+  unknown_store: "This store was removed or doesn’t belong to this company.",
+  not_allowed: "Only an owner of this company, or StudentHub staff, can change store managers.",
   invalid_request: "Something in the form was not right. Go back and try again.",
   unavailable: "The team can’t be changed right now. Please try again later.",
 });
 const REFUSAL_STATUS: Readonly<Record<keyof typeof REFUSAL_TEXT, number>> = Object.freeze({
   invalid_email: 400, not_owner: 403, role_not_allowed: 403, unknown_organization: 404, duplicate_invitation: 409,
-  too_many_invitations: 409, already_member: 409, not_found: 404, last_owner: 409, invalid_request: 400, unavailable: 503,
+  too_many_invitations: 409, already_member: 409, not_found: 404, last_owner: 409, unknown_store: 404, not_allowed: 403, invalid_request: 400, unavailable: 503,
 });
 
 export const INVITATION_DEAD_TEXT = "This invitation is no longer valid";
@@ -92,14 +95,23 @@ export function renderTeam(view: TeamView, contacts?: ContactsView | null): stri
   const pending = view.invitations.length === 0
     ? `<p class="empty-contexts" role="status">No pending invitations.</p>`
     : `<div class="directory-table"><table><caption>Pending invitations</caption><thead><tr><th>Email address</th><th>Role</th><th>Invited by</th><th>Expires</th>${view.writable ? "<th>Change</th>" : ""}</tr></thead><tbody>${view.invitations.map((invitation) =>
-      `<tr><th scope="row">${e(invitation.email)}</th><td>${e(ROLE_NAMES[invitation.role] ?? invitation.role)}</td><td>${e(name(invitation.invitedBy))}</td><td>${e(dateText(invitation.expiresAt))}</td>${view.writable
+      `<tr><th scope="row">${e(invitation.email)}</th><td>${e(ROLE_NAMES[invitation.role] ?? invitation.role)}${invitation.store ? ` · ${e(invitation.store.name)}` : ""}</td><td>${e(name(invitation.invitedBy))}</td><td>${e(dateText(invitation.expiresAt))}</td>${view.writable
         ? `<td><form method="post" action="${e(teamHref(view.orgId, `/invitations/${encodeURIComponent(invitation.id)}/revoke`))}"><button class="sign-out" type="submit">Revoke</button></form></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
   const invite = view.writable
     ? `<h2>Invite someone</h2><form class="directory-filters" method="post" action="${e(teamHref(view.orgId, "/invite"))}"><label>Email address<input type="email" name="email" maxlength="254" required></label><label>Role<select name="role" required>${roleOptions}</select></label><label>Scope<select name="scope" required>${scopeOptions}</select></label><button class="sign-out" type="submit">Create invitation</button></form><p>The person accepts by signing in with Universe under this address. The link works for 7 days.</p>`
     : `<p role="status">You can see this team but only its owners can change it.</p>`;
+  const storeOptions = view.stores.map((store) => `<option value="${e(store.storeId)}">${e(store.name)}</option>`).join("");
+  const managers = view.storeManagers.length === 0
+    ? `<p class="empty-contexts" role="status">No store managers.</p>`
+    : `<div class="directory-table"><table><caption>Store managers (each sees only their store)</caption><thead><tr><th>Name</th><th>Store</th>${view.storesWritable ? "<th>Change</th>" : ""}</tr></thead><tbody>${view.storeManagers.map((manager) =>
+      `<tr><th scope="row">${e(name(manager))}</th><td>${e(manager.storeName)}</td>${view.storesWritable
+        ? `<td><a class="text-link" href="${e(teamHref(view.orgId, `/stores/${manager.storeId}/managers/${encodeURIComponent(manager.principalId)}/remove`))}">Remove store access</a></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  const storeOffer = view.storesWritable && view.stores.length > 0
+    ? `<form class="directory-filters" method="post" action="${e(teamHref(view.orgId, "/invite"))}"><input type="hidden" name="role" value="${STORE_MANAGER}"><input type="hidden" name="scope" value="self"><label>Email address<input type="email" name="email" maxlength="254" required></label><label>Store<select name="storeId" required>${storeOptions}</select></label><button class="sign-out" type="submit">Invite a store manager</button></form>` : "";
+  const storesBlock = `<h2>Store managers</h2>${managers}${storeOffer}`;
   const contactsBlock = contacts
     ? `<h2>Contacts</h2>${renderContactsTable(contacts, false)}<p><a class="text-link" href="${e(contactsHref(view.orgId))}">${contacts.writable ? "Add or change contacts" : "Open contacts"}</a></p>` : "";
-  return layout(`<div class="profile-heading"><h1>${e(view.orgName)} team<span class="accent">.</span></h1></div>${members}${contactsBlock}<h2>Invitations</h2>${pending}${invite}`);
+  return layout(`<div class="profile-heading"><h1>${e(view.orgName)} team<span class="accent">.</span></h1></div>${members}${storesBlock}${contactsBlock}<h2>Invitations</h2>${pending}${invite}`);
 }
 
 export function renderInviteCreated(orgId: string, result: { readonly email: string; readonly link: string; readonly mailed: boolean; readonly expiresAt: string }): string {
@@ -115,8 +127,17 @@ export function renderRemoveConfirm(view: TeamView, principalId: string): string
   return layout(`<div class="profile-heading"><h1>Remove ${e(name(first))}?<span class="accent">.</span></h1></div><p>${e(name(first))} will lose ${e(roles)} on ${e(view.orgName)}. Roles they hold on other companies stay.</p><form method="post" action="${e(teamHref(view.orgId, `/members/${encodeURIComponent(principalId)}/remove`))}"><button class="sign-out" type="submit">Remove ${e(name(first))} from the team</button></form><p><a class="text-link" href="${e(teamHref(view.orgId))}">Cancel</a></p>`);
 }
 
-export function renderInvitation(token: string, invitation: { readonly orgName: string; readonly role: string; readonly scope: string }): string {
-  return layout(`<div class="profile-heading"><h1>Join ${e(invitation.orgName)}<span class="accent">.</span></h1></div><p>You were invited to ${e(invitation.orgName)} as ${e(ROLE_NAMES[invitation.role] ?? invitation.role)} (${e(SCOPE_NAMES[invitation.scope] ?? invitation.scope)}).</p><form method="post" action="/invitations/${e(token)}/accept"><button class="sign-out" type="submit">Accept the invitation</button></form>`);
+export function renderStoreManagerRemoveConfirm(view: TeamView, storeId: string, principalId: string): string | undefined {
+  const manager = view.storeManagers.find((row) => row.storeId === storeId && row.principalId === principalId);
+  if (!manager) return undefined;
+  return layout(`<div class="profile-heading"><h1>Remove ${e(name(manager))}’s access to ${e(manager.storeName)}?<span class="accent">.</span></h1></div><p>${e(name(manager))} will no longer see ${e(manager.storeName)}. Nothing else they hold changes.</p><form method="post" action="${e(teamHref(view.orgId, `/stores/${storeId}/managers/${encodeURIComponent(principalId)}/remove`))}"><button class="sign-out" type="submit">Remove access to ${e(manager.storeName)}</button></form><p><a class="text-link" href="${e(teamHref(view.orgId))}">Cancel</a></p>`);
+}
+
+export function renderInvitation(token: string, invitation: { readonly orgName: string; readonly role: string; readonly scope: string; readonly storeName?: string | null }): string {
+  const what = invitation.storeName
+    ? `the store manager of ${e(invitation.storeName)}, a store of ${e(invitation.orgName)}`
+    : `${e(ROLE_NAMES[invitation.role] ?? invitation.role)} (${e(SCOPE_NAMES[invitation.scope] ?? invitation.scope)})`;
+  return layout(`<div class="profile-heading"><h1>Join ${e(invitation.orgName)}<span class="accent">.</span></h1></div><p>You were invited to ${e(invitation.orgName)} as ${what}.</p><form method="post" action="/invitations/${e(token)}/accept"><button class="sign-out" type="submit">Accept the invitation</button></form>`);
 }
 
 // --- Handler -------------------------------------------------------------------
@@ -217,7 +238,8 @@ export async function handleCompanyTeam(
   if (!orgId || !principalId) return false;
   const action = teamMatch[2];
   const isRemove = teamMatch[4] !== undefined;
-  const expected = action === undefined || (isRemove && req.method === "GET") ? "GET" : "POST";
+  const isStoreRemove = teamMatch[5] !== undefined;
+  const expected = action === undefined || ((isRemove || isStoreRemove) && req.method === "GET") ? "GET" : "POST";
   if (req.method !== expected) return false;
 
   const view = await ports.team.team(principalId, orgId);
@@ -235,17 +257,19 @@ export async function handleCompanyTeam(
     write(200, `${view.orgName} team`, renderTeam(view, ports.contacts ? await ports.contacts.view(principalId, view.orgId) : undefined));
     return true;
   }
-  const targetId = isRemove ? decode(teamMatch[4]!) : undefined;
-  if (isRemove && req.method === "GET") {
-    if (!view.writable || !targetId) return false;
-    const page = renderRemoveConfirm(view, targetId);
+  const targetId = isRemove ? decode(teamMatch[4]!) : isStoreRemove ? decode(teamMatch[6]!) : undefined;
+  const storeId = isStoreRemove ? teamMatch[5]! : undefined;
+  if ((isRemove || isStoreRemove) && req.method === "GET") {
+    if (!targetId || !(isRemove ? view.writable : view.storesWritable)) return false;
+    const page = isRemove ? renderRemoveConfirm(view, targetId) : renderStoreManagerRemoveConfirm(view, storeId!, targetId);
     if (!page) return refuse("not_found");
     write(200, "Remove from team", page);
     return true;
   }
 
-  // Writes: same-origin form posts by an owner only.
-  if (!view.writable) {
+  // Writes: same-origin form posts. Company roles by an owner; store manager access by an owner, staff or admin.
+  const storeWrite = isStoreRemove || action === "invite";
+  if (!view.writable && !(storeWrite && view.storesWritable)) {
     req.resume();
     return false;
   }
@@ -257,14 +281,23 @@ export async function handleCompanyTeam(
   try {
     if (action === "invite") {
       const form = await readForm(req);
-      if (!form || Object.keys(form).some((key) => key !== "email" && key !== "role" && key !== "scope")) return refuse("invalid_request");
-      const result = await ports.team.invite(principalId, view.orgId, { email: form.email ?? "", role: form.role ?? "", scope: form.scope ?? "" }, web!.origin!);
+      if (!form || Object.keys(form).some((key) => key !== "email" && key !== "role" && key !== "scope" && key !== "storeId")) return refuse("invalid_request");
+      // Staff and admin offer store access only; a company role from them is answered as an unknown path.
+      if (form.role !== STORE_MANAGER && !view.writable) return false;
+      const result = await ports.team.invite(principalId, view.orgId, {
+        email: form.email ?? "", role: form.role ?? "", scope: form.scope ?? "", ...(form.storeId !== undefined ? { storeId: form.storeId } : {}),
+      }, web!.origin!);
       if (result.kind === "refused") return refuse(result.reason);
       res.setHeader("cache-control", "no-store");
       write(201, "Invitation created", renderInviteCreated(view.orgId, result));
       return true;
     }
     req.resume();
+    if (isStoreRemove) {
+      if (!targetId) return refuse("invalid_request");
+      const result = await ports.team.removeStoreManager(principalId, view.orgId, storeId!, targetId);
+      return result.kind === "refused" ? refuse(result.reason) : redirect(res, teamHref(view.orgId));
+    }
     if (isRemove) {
       if (!targetId) return refuse("invalid_request");
       const result = await ports.team.remove(principalId, view.orgId, targetId);

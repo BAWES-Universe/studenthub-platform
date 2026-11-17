@@ -52,11 +52,12 @@ const PERSON = /^\/admin\/access\/people\/([^/]+)$/;
 
 export const ROLE_NAMES: Readonly<Record<string, string>> = Object.freeze({
   candidate: "Candidate", staff: "Staff", admin: "Administrator",
-  "org-owner": "Organization owner", recruiter: "Recruiter", finance: "Finance",
+  "org-owner": "Organization owner", recruiter: "Recruiter", finance: "Finance", "store-manager": "Store manager",
 });
 export const SCOPE_NAMES: Readonly<Record<string, string>> = Object.freeze({
   self: "This organization only",
   subtree: "This organization and its sub-companies",
+  store: "One store",
 });
 
 const REFUSAL_TEXT: Readonly<Record<GrantRefusal, string>> = Object.freeze({

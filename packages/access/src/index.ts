@@ -5,3 +5,4 @@ export * from "./invitations.js";
 export * from "./invitation-mail.js";
 export * from "./invitation-service.js";
 export * from "./company-contacts.js";
+export * from "./store-access.js";

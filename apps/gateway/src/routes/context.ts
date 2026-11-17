@@ -24,6 +24,7 @@ import type { PeopleDirectoryPage } from "../people-directory.js";
 import type { AccessPorts } from "../access/admin-access.js";
 import type { CompanyTeamPorts } from "../access/company-team.js";
 import type { CompanyContactsPorts } from "../access/company-contacts.js";
+import type { StoreManagerPorts } from "../access/store-manager.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -46,6 +47,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly access?: AccessPorts;
   readonly team?: CompanyTeamPorts;
   readonly contacts?: CompanyContactsPorts;
+  readonly storeManager?: StoreManagerPorts;
 };
 
 export interface GatewayRouteContext {

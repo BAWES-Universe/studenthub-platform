@@ -5,3 +5,4 @@ export type { AuthorizationMutationAuditRecord, AuthorizationMutationContext, Au
 export { PostgresAccessGrantsStore } from "./postgres-access-grants-store.js";
 export { PostgresAccessInvitationsStore } from "./postgres-access-invitations-store.js";
 export { PostgresAccessContactsStore } from "./postgres-access-contacts-store.js";
+export { PostgresAccessStoreManagersStore } from "./postgres-access-store-managers-store.js";
