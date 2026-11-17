@@ -88,7 +88,8 @@ export const RELEASE_STEPS: Readonly<Record<string, string>> = {
   "PAY-REPLAY": "Twelve-month payroll replay with zero unexplained difference",
   "PAY-SHADOW": "December shadow month with zero unexplained difference",
   "MOBILE-COMPAT": "Installed mobile builds work against the platform with legacy API retired",
-  "REFRESH": "Daily read-only legacy refresh on staging (needs Khalid's authorization)",
+  "REFRESH": "Daily read-only legacy refresh on staging",
+  "SWITCHES": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours",
 };
 
 export const mobileKey = (endpoint: Pick<MobileEndpoint, "method" | "path">): string =>

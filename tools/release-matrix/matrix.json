@@ -2533,7 +2533,17 @@
       }
     },
     "REFRESH": {
-      "title": "Daily read-only legacy refresh on staging (needs Khalid's authorization)",
+      "title": "Daily read-only legacy refresh on staging",
+      "lane": "cutover",
+      "gates": {
+        "done": {
+          "state": "done",
+          "evidence": "Installed from 6bc7e62 by Hermes; first run ok 2026-11-17 16:35:09Z-16:40:47Z, 123 tables, 865823 rows; daily timer 00:30 UTC. Report: PR #504 comment 6954521676"
+        }
+      }
+    },
+    "SWITCHES": {
+      "title": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours",
       "lane": "cutover",
       "gates": {
         "done": {
