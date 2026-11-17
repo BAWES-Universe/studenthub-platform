@@ -9,3 +9,4 @@ export { PostgresAccessStoreManagersStore } from "./postgres-access-store-manage
 export { PostgresAccessPausesStore } from "./postgres-access-pauses-store.js";
 export { PostgresAccessAbuseStore } from "./postgres-access-abuse-store.js";
 export { PostgresAccessStaffViewsStore } from "./postgres-access-staff-views-store.js";
+export { PostgresAccessRegistrationsStore } from "./postgres-access-registrations-store.js";

@@ -52,6 +52,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly storeManager?: import("./access/store-manager.js").StoreManagerPorts;
   readonly abuse?: import("./access/abuse-gate.js").AbuseGatePorts;
   readonly staffView?: import("./access/staff-view.js").StaffViewPorts;
+  readonly registrations?: import("./access/company-registration.js").CompanyRegistrationPorts;
   readonly exports?: ExportsHttp;
   readonly organizationAccountManager?: OrganizationAccountManager;
   /** SHU-84 safe write; absent unless a signing key is configured. */

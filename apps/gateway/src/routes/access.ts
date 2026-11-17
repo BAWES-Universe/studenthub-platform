@@ -5,6 +5,7 @@ import { handleCompanyContacts } from "../access/company-contacts.js";
 import { handleStoreManager } from "../access/store-manager.js";
 import { handleAbuseGate } from "../access/abuse-gate.js";
 import { handleStaffView } from "../access/staff-view.js";
+import { handleCompanyRegistration } from "../access/company-registration.js";
 import { profileDocument } from "../web-ui.js";
 
 /** Access lane: /admin/access pages and the person's own /profile/access list. */
@@ -46,3 +47,8 @@ export const staffViewRoute: GatewayRoute = { name: "staff-view", handle: (ctx) 
   } : ports, ctx.login?.web?.origin,
   (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body, undefined, true), { "cache-control": "no-store" }, true));
 } };
+
+/** Access lane A7: a company signs up and staff approve it. */
+export const companyRegistrationRoute: GatewayRoute = { name: "company-registration", handle: (ctx) =>
+  handleCompanyRegistration(ctx.request, ctx.response, ctx.login?.registrations, ctx.login?.web?.origin,
+    (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body, undefined, true), { "cache-control": "no-store" }, true)) };

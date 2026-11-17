@@ -9,3 +9,4 @@ export * from "./store-access.js";
 export * from "./account-pause.js";
 export * from "./abuse.js";
 export * from "./staff-view.js";
+export * from "./company-registration.js";

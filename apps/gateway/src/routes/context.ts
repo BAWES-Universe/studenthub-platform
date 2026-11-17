@@ -51,6 +51,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly storeManager?: StoreManagerPorts;
   readonly abuse?: AbuseGatePorts;
   readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
+  readonly registrations?: import("../access/company-registration.js").CompanyRegistrationPorts;
 };
 
 export interface GatewayRouteContext {

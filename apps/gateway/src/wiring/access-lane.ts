@@ -1,11 +1,12 @@
-import { PostgresAccessAbuseStore, PostgresAccessContactsStore, PostgresAccessGrantsStore, PostgresAccessInvitationsStore, PostgresAccessPausesStore, PostgresAccessStaffViewsStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
-import { blockListOf, createAccessGrantService, createAccountPauseService, parseTrustedProxies, createCompanyContactsService, createCompanyTeamService } from "../../../../packages/access/src/index.js";
+import { PostgresAccessAbuseStore, PostgresAccessContactsStore, PostgresAccessGrantsStore, PostgresAccessInvitationsStore, PostgresAccessPausesStore, PostgresAccessRegistrationsStore, PostgresAccessStaffViewsStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
+import { blockListOf, createAccessGrantService, createAccountPauseService, parseTrustedProxies, createCompanyContactsService, createCompanyRegistrationService, createCompanyTeamService } from "../../../../packages/access/src/index.js";
 import type { AccessPorts } from "../access/admin-access.js";
 import type { CompanyTeamPorts } from "../access/company-team.js";
 import type { CompanyContactsPorts } from "../access/company-contacts.js";
 import type { StoreManagerPorts } from "../access/store-manager.js";
 import type { AbuseGatePorts } from "../access/abuse-gate.js";
 import type { StaffViewPorts } from "../access/staff-view.js";
+import type { CompanyRegistrationPorts } from "../access/company-registration.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
 
@@ -18,10 +19,11 @@ import type { Wired, WiringSettings } from "./context.js";
  * access (writes with the signing key, like A1); sign-in reads the pause.
  * A8: the address block list and per-person limits; GATEWAY_TRUSTED_PROXIES
  * names the proxies whose forwarding headers are read. A9: staff view a
- * person's account read-only for 15 minutes.
+ * person's account read-only for 15 minutes. A7: "Register a company" and
+ * the staff review queue.
  */
 export function wireAccessLane(settings: WiringSettings, access: ReturnType<typeof wireAccess>["services"], env: NodeJS.ProcessEnv = {}): Wired<{
-  readonly application: { readonly access: AccessPorts; readonly team: CompanyTeamPorts; readonly contacts: CompanyContactsPorts; readonly storeManager: StoreManagerPorts; readonly abuse: AbuseGatePorts; readonly staffView: StaffViewPorts };
+  readonly application: { readonly access: AccessPorts; readonly team: CompanyTeamPorts; readonly contacts: CompanyContactsPorts; readonly storeManager: StoreManagerPorts; readonly abuse: AbuseGatePorts; readonly staffView: StaffViewPorts; readonly registrations: CompanyRegistrationPorts };
   readonly pauses: PostgresAccessPausesStore;
 }> {
   const store = new PostgresAccessGrantsStore({ connectionString: settings.databaseUrl });
@@ -32,6 +34,7 @@ export function wireAccessLane(settings: WiringSettings, access: ReturnType<type
   const writes = settings.safeWriteKey ? createAccessGrantService({ store, secret: settings.safeWriteKey }) : undefined;
   const pauses = new PostgresAccessPausesStore({ connectionString: settings.databaseUrl });
   const views = new PostgresAccessStaffViewsStore({ connectionString: settings.databaseUrl });
+  const registrations = new PostgresAccessRegistrationsStore({ connectionString: settings.databaseUrl });
   const abuse = new PostgresAccessAbuseStore({ connectionString: settings.databaseUrl });
   const trustedProxies = blockListOf(parseTrustedProxies(env.GATEWAY_TRUSTED_PROXIES));
   const pauseWrites = settings.safeWriteKey ? createAccountPauseService({ store: pauses }) : undefined;
@@ -43,7 +46,8 @@ export function wireAccessLane(settings: WiringSettings, access: ReturnType<type
       storeManager: { sessions: access.loginStore.sessions, stores: storeManagers },
       abuse: { sessions: access.loginStore.sessions, store: abuse, reads: store, trustedProxies },
       staffView: { sessions: access.loginStore.sessions, reads: store, views },
+      registrations: { sessions: access.loginStore.sessions, reads: store, registrations, service: createCompanyRegistrationService({ store: registrations }) },
     }, pauses },
-    async close() { await Promise.all([store.close(), invitations.close(), contactStore.close(), storeManagers.close(), pauses.close(), abuse.close(), views.close()]); },
+    async close() { await Promise.all([store.close(), invitations.close(), contactStore.close(), storeManagers.close(), pauses.close(), abuse.close(), views.close(), registrations.close()]); },
   };
 }
