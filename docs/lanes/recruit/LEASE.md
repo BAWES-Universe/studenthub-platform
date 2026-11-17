@@ -45,8 +45,9 @@ Excludes: workflows, `.github/coordinator/**`, `apps/gateway/src/index.ts`, `web
 | R4 | Suggestions to the company (accept, reject) and invitations to people (seen, accept, decline), events to the notification outbox | `Suggestion`, `Invitation` controllers, `cron/every-minute` | 0453 (built) |
 | R5 | Employers see the people suggested, invited or assigned to their requests and stores, as legacy (decision SHU-200: documents through signed, audited links) | company candidate views | 0454 (document view audit) |
 | R6 | Interviews and versioned evaluations, with internal and shared notes kept apart | `RequestInterview`, `InterviewEvaluation`, `CandidateEvaluation` | 0455 |
-| R7 | Job board as legacy: staff publish, people browse and apply once, "My applications"; closed or draft jobs refuse applications (decision SHU-207) | `Job`, candidate `JobController`, `RequestApplication` | 0456 to 0457 |
-| R9 | Full-timer track kept as a second candidate type on the same pipeline (legacy benchmark rule) | `FulltimerController` | 0458 |
+| R7 | Job board as legacy: staff publish, people browse and apply once, "My applications"; closed or draft jobs refuse applications (decision SHU-207) | `Job`, `JobInterest`, candidate `JobController` | 0456 (built) |
+| R7b | People browse open requests and apply once; the company or the request's recruiter accepts an applicant onto the pipeline (then interviews, R6) or rejects them | `RequestApplication`, candidate and company `RequestController` | 0458 (built) |
+| R9 | Full-timer track kept as a second candidate type on the same pipeline (legacy benchmark rule) | `FulltimerController` | 0457 (built) |
 | Import | Legacy rows map into the new tables; rows that do not map land in the reconciliation report | all of the above | none |
 
 Individual hirers (R8) are not in legacy and not in this release.
