@@ -40,7 +40,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
     types: "./dist/comms/index.d.ts", import: "./dist/comms/index.js",
   });
   const comms = await moduleFor("@studenthub/db/comms");
-  assert.deepEqual(Object.keys(comms), ["PostgresStaffMessagesStore"]);
+  assert.deepEqual(Object.keys(comms).sort(), ["PostgresStaffMessagesStore", "recordWorkSessionDecision", "retractWorkSessionDecision"]);
   assert.equal(typeof comms.PostgresStaffMessagesStore, "function");
 });
 

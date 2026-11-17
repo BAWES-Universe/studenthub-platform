@@ -15,7 +15,8 @@ CREATE TABLE staff_messages (
 );
 CREATE INDEX staff_messages_recipient_created_idx ON staff_messages(recipient_principal_id,created_at DESC);
 
--- One closed payload rule per kind, replacing the single-kind checks of 0352.
+-- One closed payload rule per kind, replacing the single-kind checks of 0352. Work session
+-- decisions (legacy types 8 and 9) are written by the work lane inside its decision transaction.
 ALTER TABLE notifications DROP CONSTRAINT notifications_kind_check;
 ALTER TABLE notifications DROP CONSTRAINT notifications_subject_reference_check;
 ALTER TABLE notifications DROP CONSTRAINT notifications_parameters_check;
@@ -30,4 +31,10 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_kind_payload_check CHECK 
  (kind='staff.message'
   AND subject_reference ~ '^staff_message:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
   AND parameters='{}'::jsonb)
+ OR
+ (kind IN ('work.session_approved','work.session_rejected')
+  AND subject_reference ~ '^work_session:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+  AND jsonb_typeof(parameters)='object'
+  AND parameters=jsonb_build_object('workDate',parameters->'workDate')
+  AND parameters->>'workDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
 );

@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresNotificationsStore, runMigrations } from "@studenthub/db";
-import { PostgresStaffMessagesStore } from "@studenthub/db/comms";
+import { PostgresStaffMessagesStore, recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
 
 const URL = process.env.DATABASE_URL ?? "";
 const person = `comms-${randomUUID()}`, other = `comms-${randomUUID()}`, staff = `comms-${randomUUID()}`, org = `comms-${randomUUID()}`;
@@ -87,4 +87,29 @@ test("COMMS_STAFF_MSG_SCHEMA payload rules are closed per kind", async () => {
   await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'civil_id_request','text',$3)", [person, staff, `k-${randomUUID()}`]));
   await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',NULL,$3)", [person, staff, `k-${randomUUID()}`]));
   await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',' padded ',$3)", [person, staff, `k-${randomUUID()}`]));
+});
+
+test("COMMS_WORK_DECISION_PG a decision inside the caller's transaction is recorded once, rolled back with it, and retracted on undo", async () => {
+  const workPerson = `comms-${randomUUID()}`;
+  await new PostgresAuthzStore(pool).registerPrincipal(createPrincipal({ id: workPerson, pbuuids: [], email: `${workPerson}@example.invalid` }));
+  const notice = { personPrincipalId: workPerson, sessionId: randomUUID(), decisionId: randomUUID(), decision: "approved" as const, workDate: "2026-11-10" };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await recordWorkSessionDecision(client, { ...notice, decisionId: randomUUID() });
+    await client.query("ROLLBACK");
+    await client.query("BEGIN");
+    await recordWorkSessionDecision(client, notice);
+    await recordWorkSessionDecision(client, notice);
+    await client.query("COMMIT");
+  } finally { client.release(); }
+  const rows = await feed.list(workPerson, 25, 0);
+  assert.deepEqual(rows.map(r => [r.kind, r.subjectReference, r.parameters]), [["work.session_approved", `work_session:${notice.sessionId}`, { workDate: "2026-11-10" }]]);
+  assert.equal(await feed.countVisibleUnread(workPerson), 1);
+  await retractWorkSessionDecision(pool, { personPrincipalId: other, decisionId: notice.decisionId });
+  assert.equal(await feed.countVisibleUnread(workPerson), 1);
+  await retractWorkSessionDecision(pool, { personPrincipalId: workPerson, decisionId: notice.decisionId });
+  assert.deepEqual(await feed.list(workPerson, 25, 0), []);
+  await assert.rejects(recordWorkSessionDecision(pool, { ...notice, decisionId: randomUUID(), workDate: "10/11/2026" }));
+  await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'work.session_rejected',$2,$3::jsonb,$4)", [workPerson, `work_session:${notice.sessionId}`, JSON.stringify({ workDate: "2026-11-10", note: "stored" }), `x-${randomUUID()}`]));
 });
