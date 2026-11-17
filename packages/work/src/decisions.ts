@@ -33,7 +33,8 @@ export interface WorkDecision {
   readonly rating: number | null;
   readonly notePublic: boolean;
   readonly batchId: string | null;
-  readonly decidedBy: string;
+  /** Null only for an imported legacy decision whose contact has no principal. */
+  readonly decidedBy: string | null;
   readonly decidedAt: string;
 }
 

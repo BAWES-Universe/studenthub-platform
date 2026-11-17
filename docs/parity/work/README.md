@@ -70,8 +70,45 @@ listed with their decision and `changedAt`, corrections in place of their
 originals. The pay lane dedupes on `sessionId` and re-reads sessions whose
 `changedAt` is after its run.
 
+## Gateway API
+
+`apps/gateway/src/work/http.ts`, JSON under `/api/work/...` (the screens own `/work/...`), wired in `wiring/work.ts`.
+The signed-in person is always the actor; writes need a same-origin JSON POST. It is
+off (503) unless `SAFE_WRITE_SIGNING_KEY` is set, like every gateway write, so legacy
+stays the writer until cutover. Store managers (access lane A4,
+`PostgresAccessStoreManagersStore.managedStores`) and decision notices (comms lane
+hooks) plug into `wireWork`'s ports when those lanes land.
+
+| Who | Routes |
+|---|---|
+| Person | `GET /api/work/today`, `POST /api/work/sessions/{start,stop,discard,manual}`, `GET /api/work/hours/mine`, `GET /api/work/placements/mine`, `POST /api/work/appeals`, `GET /api/work/appeals/mine`, `GET /api/work/appeals/:id`, `POST /api/work/appeal-updates/:id/read` |
+| Company, store manager | `GET /api/work/hours/company/:orgId`, `GET /api/work/placements/company/:orgId`, `POST /api/work/placement-requests`, `POST /api/work/decisions/{sessions,days}`, `POST /api/work/sessions/:id/undo` |
+| Staff | `POST /api/work/placements`, `POST /api/work/placements/:id/end-date`, `POST /api/work/placement-requests/:id/{accept,reject,cancel}`, `GET /api/work/hours/all`, `GET /api/work/appeals`, `POST /api/work/appeals/:id/{updates,status,missing-time}`, `POST /api/work/sessions/:id/correct` |
+
+## Legacy import mapping and reconciliation (M-5, W-7)
+
+`packages/work/src/legacy.ts` is the mapping the importer calls; it reads and writes
+nothing. Legacy datetimes are Asia/Kuwait. `candidate_working_hour` rows import as
+`source = 'import'` with `legacy_ref = cwh:<uuid>`; open rows, end before start and
+bad statuses are reported, not imported; a null or wrong `total_time` is reported and
+the duration comes from the times. `candidate_work_log_feedback` rows import as
+decisions (`cwlf:<uuid>`), keeping the legacy contact in `legacy_decided_by` when it
+has no principal (migration 0504); ratings outside 1 to 5 import as null with a
+report. Placements come from where hours were logged (`derivePlacements`), with the
+current store open-ended. `reconcileDays` compares legacy `candidate_working_date`
+(`total_time` in seconds of every status; `total_approved`, `total_pending`,
+`total_rejected` are session counts) with the totals here and lists every difference.
+`PostgresWorkImportStore` (`@studenthub/db/work`) writes the mapped rows in one
+transaction per batch, keyed by legacy reference with a stored digest: a re-run writes
+nothing, a changed row is a conflict with both digests, an open placement that legacy
+has since ended is updated, and a row the work rules refuse (overlap, no placement) is
+reported and the batch goes on. Imported decisions then link each decided session to
+the latest legacy decision with its status. Legacy ids keep their underscores
+(`can_wrk_hr_<uuid>`), which migration 0504 allows.
+
 ## Not yet here
 
-The reconciliation report against imported legacy day rows, gateway
-pages, and the legacy import mapping. They land as later slices on the same
-lane.
+The lane's screens (C-10 to C-13, O-11, M-03, M-04, A-12 to A-14 in
+`docs/parity/target-screen-navigation-contract.md`) on top of this API, wiring of the
+store-manager and notice ports once the access and comms lanes land, and the importer
+run itself (cutover lane, M-5).

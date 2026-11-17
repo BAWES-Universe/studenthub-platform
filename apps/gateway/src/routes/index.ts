@@ -36,6 +36,8 @@ const civilIdSuggestionRoute: GatewayRoute = { name: "civil-id-suggestion", hand
   (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.request, ctx.response, ctx.login?.area) };
 
+import { workRoute } from "./work.js";
+
 export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
   candidateDocumentsRoute,
@@ -68,6 +70,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   areaRoute,
   peopleDirectoryRoute,
   civilIdReviewRoute,
+  workRoute,
 ];
 
 export { runRoutes } from "./context.js";

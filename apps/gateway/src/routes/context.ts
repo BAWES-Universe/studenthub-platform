@@ -40,6 +40,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationDeletion?: OrganizationDeletion;
   readonly organizationCreation?: OrganizationCreation;
   readonly legacyLink?: LegacyLinkService;
+  readonly work?: import("../work/http.js").WorkHttpServices;
 };
 
 export interface GatewayRouteContext {

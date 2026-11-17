@@ -38,7 +38,7 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   // Work is subpath-only too (work and hours lane): the root golden stays unchanged.
   assert.deepEqual(manifest.exports["./work"], { types: "./dist/work/index.d.ts", import: "./dist/work/index.js" });
   const work = await moduleFor("@studenthub/db/work");
-  assert.deepEqual(Object.keys(work).sort(), ["PostgresWorkAppealStore", "PostgresWorkDecisionStore", "PostgresWorkHoursViewStore", "PostgresWorkPayableSource", "PostgresWorkPlacementStore", "PostgresWorkSessionStore", "workSessionFromRow"]);
+  assert.deepEqual(Object.keys(work).sort(), ["PostgresWorkAppealStore", "PostgresWorkDecisionStore", "PostgresWorkHoursViewStore", "PostgresWorkImportStore", "PostgresWorkPayableSource", "PostgresWorkPlacementStore", "PostgresWorkSessionStore", "workImportDigest", "workSessionFromRow"]);
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {

@@ -56,7 +56,7 @@ export interface PersonDecisionView {
 export interface EmployerDecisionView extends PersonDecisionView {
   readonly rating: number | null;
   readonly notePublic: boolean;
-  readonly decidedBy: string;
+  readonly decidedBy: string | null;
 }
 
 export interface HoursTotals { readonly approvedSeconds: number; readonly pendingSeconds: number; readonly rejectedSeconds: number; readonly open: number }

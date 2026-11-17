@@ -404,12 +404,12 @@ export interface WorkDecisionRecord {
   readonly id: string; readonly orgId: string; readonly storeId: string; readonly personId: string; readonly workDate: IsoDate;
   readonly scope: "session" | "day"; readonly outcome: "approved" | "rejected" | "undone"; readonly sessionIds: readonly string[];
   readonly reason: string | null; readonly note: string | null; readonly rating: number | null; readonly notePublic: boolean;
-  readonly batchId: string | null; readonly decidedBy: string; readonly decidedAt: string;
+  readonly batchId: string | null; readonly decidedBy: string | null; readonly decidedAt: string;
 }
 interface DecisionRow {
   id: string; org_id: string; store_id: string; person_principal_id: string; work_date: string; scope: "session" | "day";
   outcome: "approved" | "rejected" | "undone"; session_ids: string[]; reason: string | null; note: string | null; rating: number | null;
-  note_public: boolean; batch_id: string | null; decided_by: string; decided_at: Date;
+  note_public: boolean; batch_id: string | null; decided_by: string | null; decided_at: Date;
 }
 const DECISION_COLUMNS = `id, org_id, store_id, person_principal_id, to_char(work_date,'YYYY-MM-DD') AS work_date, scope, outcome, session_ids,
  reason, note, rating, note_public, batch_id, decided_by, decided_at`;

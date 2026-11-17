@@ -8,6 +8,7 @@ const placement = "packages/work/src/placement.js", sessions = "packages/work/sr
 const placementSuite = "packages/work/test/placement.test.js", sessionSuite = "packages/work/test/sessions.test.js";
 const decisions = "packages/work/src/decisions.js", views = "packages/work/src/views.js", decisionSuite = "packages/work/test/decisions.test.js";
 const appeals = "packages/work/src/appeals.js", appealSuite = "packages/work/test/appeals.test.js";
+const legacy = "packages/work/src/legacy.js", legacySuite = "packages/work/test/legacy.test.js";
 const mutations = [
   ["staff-only placement", "store.ancestors))\n            return { kind: \"refused\", code: \"forbidden\" };\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "store.ancestors))\n            ;\n        return this.#store.transaction((tx) => this.#place(tx, actorId, input, store, STAFF_ORIGIN));", "W1_PLACE", placement, placementSuite],
   ["civil ID inclusive", "civilId.expiry < startDate", "civilId.expiry <= startDate", "W1_WARN", placement, placementSuite],
@@ -31,6 +32,9 @@ const mutations = [
   ["replaced session not corrected twice", "if (await tx.isReplaced(original.id))", "if (false)", "W6_CORRECT", appeals, appealSuite],
   ["correction replaces, added time doesn't", 'source: correctsSessionId ? "correction" : "manual"', 'source: "correction"', "W6_ADD", appeals, appealSuite],
   ["self-scoped grant stays out of sub-companies", 'return covering.length > 0 ? "self" : "none";', 'return covering.length > 0 ? "subtree" : "none";', "W5_VIEWS", common, decisionSuite],
+  ["legacy times are Kuwait", "+03:00`", "Z`", "LEGACY_TIME", legacy, legacySuite],
+  ["legacy total_time is checked", "Number(row.total_time) !== seconds", "false", "LEGACY_HOUR", legacy, legacySuite],
+  ["legacy day counts are counts", '["approved_count", n(row.total_approved), h.approvedCount]', '["approved_count", n(row.total_approved), h.approvedSeconds]', "LEGACY_RECONCILE", legacy, legacySuite],
   ["private note hidden", "note: d.notePublic ? d.note : null", "note: d.note", "W5_PRIVATE", views, decisionSuite],
   ["stable paging cursor", "next: sessions.length > filter.limit && last ? { workDate: last.workDate, id: last.id } : null", "next: null", "W5_PAGING", views, decisionSuite],
 ];

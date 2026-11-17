@@ -4,8 +4,8 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
-import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
-import { AppealService, DecisionService, HoursViews, PlacementService, SessionService, WorkScope } from "../../work/src/index.js";
+import { PostgresWorkAppealStore, PostgresWorkDecisionStore, PostgresWorkHoursViewStore, PostgresWorkImportStore, PostgresWorkPayableSource, PostgresWorkPlacementStore, PostgresWorkSessionStore } from "@studenthub/db/work";
+import { AppealService, DecisionService, mapLegacyFeedback, mapLegacyWorkingHour, HoursViews, PlacementService, SessionService, WorkScope } from "../../work/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool, authz: PostgresAuthzStore, placements: PostgresWorkPlacementStore, sessions: PostgresWorkSessionStore, decisionStore: PostgresWorkDecisionStore, viewStore: PostgresWorkHoursViewStore;
@@ -377,4 +377,51 @@ test("W6_PG a staff correction replaces the original in totals and in pay input;
   assert.equal((await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.group, includeSubtree: true, personId: w.person })).length, 1);
   assert.equal((await pay.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, orgId: w.group, personId: w.person })).length, 0);
   await assert.rejects(pay.payableInputs({ period: { start: "2026-11-30", end: "2026-11-01" } }), RangeError);
+});
+
+test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes are conflicts, rule breaks are reported", async () => {
+  const w = await world();
+  const imports = new PostgresWorkImportStore(pool);
+  const tag = randomUUID().slice(0, 8);
+  const placement = { legacyRef: `cand:${tag}:A`, personId: w.person, orgId: w.company, storeId: w.store, startDate: "2026-01-01", endDate: null, payContractId: null };
+  assert.deepEqual(await imports.importPlacements([placement]), { inserted: 1, unchanged: 0, updated: 0, conflicts: [], refused: [] });
+  assert.deepEqual(await imports.importPlacements([placement]), { inserted: 0, unchanged: 1, updated: 0, conflicts: [], refused: [] });
+  // Legacy later moved the person: the open placement ends (incremental sync).
+  assert.equal((await imports.importPlacements([{ ...placement, endDate: "2026-11-30" }])).updated, 1);
+  const moved = await imports.importPlacements([{ ...placement, startDate: "2026-02-01" }]);
+  assert.equal(moved.conflicts.length, 1);
+  assert.match(moved.conflicts[0]!.existingDigest, /^[0-9a-f]{64}$/);
+
+  const legacyRow = (id: string, start: string, end: string, status = 1) => ({ candidate_working_hour_uuid: `can_wrk_hr_${tag}-${id}`, candidate_id: 7, store_id: 3, date: start.slice(0, 10),
+    start_time: start, end_time: end, total_time: null, start_location_lat: null, start_location_long: null, end_location_lat: null, end_location_long: null, note: null, status, via: "Manual Log" });
+  const toImport = (row: ReturnType<typeof legacyRow>) => {
+    const s = mapLegacyWorkingHour(row).session!;
+    return { legacyRef: s.legacyRef, placementLegacyRef: placement.legacyRef, workDate: s.workDate, startedAt: s.startedAt.toISOString(), endedAt: s.endedAt.toISOString(),
+      startLocation: s.startLocation, endLocation: s.endLocation, status: s.status, flags: s.flags, note: s.note };
+  };
+  const one = toImport(legacyRow("1", "2026-11-10 09:00:00", "2026-11-10 12:00:00"));
+  const two = toImport(legacyRow("2", "2026-11-10 13:00:00", "2026-11-10 14:00:00", 2));
+  const clash = toImport(legacyRow("3", "2026-11-10 11:00:00", "2026-11-10 13:30:00"));
+  const orphan = { ...toImport(legacyRow("4", "2026-11-11 09:00:00", "2026-11-11 10:00:00")), placementLegacyRef: "cand:none" };
+  const sessionsResult = await imports.importSessions([one, two, clash, orphan]);
+  assert.deepEqual([sessionsResult.inserted, sessionsResult.refused], [2, [{ legacyRef: clash.legacyRef, code: "overlap" }, { legacyRef: orphan.legacyRef, code: "no_placement" }]]);
+  assert.equal((await imports.importSessions([one, two])).unchanged, 2);
+
+  const feedback = (id: string, status: number, hourId: string | null, at: string) => mapLegacyFeedback({ cwlf_uuid: `cwlf_${tag}-${id}`, candidate_id: 7, store_id: 3, date: "2026-11-10",
+    candidate_working_hour_uuid: hourId ? `can_wrk_hr_${tag}-${hourId}` : null, status, note: null, reason: null, is_public: 0, rating: 9, created_by: 44, created_at: at }).decision!;
+  const toDecision = (d: ReturnType<typeof feedback>) => ({ legacyRef: d.legacyRef, personId: w.person, orgId: w.company, storeId: w.store, workDate: d.workDate, scope: d.scope,
+    sessionLegacyRef: d.legacySessionRef, outcome: d.outcome, reason: d.reason, note: d.note, rating: d.rating, notePublic: d.notePublic, decidedBy: null,
+    legacyDecidedBy: d.legacyDecidedBy, decidedAt: d.decidedAt?.toISOString() ?? null });
+  const day = toDecision(feedback("d", 1, null, "2026-11-10 20:00:00"));
+  const reject = toDecision(feedback("r", 2, "2", "2026-11-10 21:00:00"));
+  const decided = await imports.importDecisions([day, reject]);
+  assert.deepEqual([decided.inserted, decided.refused], [2, []]);
+  const linked = (await pool.query(`SELECT s.legacy_ref, d.legacy_ref AS decision FROM work_sessions s JOIN work_decisions d ON d.id = s.decision_id
+    WHERE s.legacy_ref = ANY($1) ORDER BY s.started_at`, [[one.legacyRef, two.legacyRef]])).rows;
+  // The approved session links to the day approval; the rejected one to its own later rejection.
+  assert.deepEqual(linked.map((r) => r.decision), [day.legacyRef, reject.legacyRef]);
+  assert.deepEqual((await pool.query("SELECT decided_by, legacy_decided_by, rating FROM work_decisions WHERE legacy_ref = $1", [day.legacyRef])).rows[0], { decided_by: null, legacy_decided_by: "contact:44", rating: null });
+  assert.equal((await imports.importDecisions([day, reject])).unchanged, 2);
+  await assert.rejects(pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids)
+    VALUES($1,$2,$3,$4,'2026-11-10','day','approved','{}')`, [randomUUID(), w.company, w.store, w.person]), /work_decisions_actor/);
 });
