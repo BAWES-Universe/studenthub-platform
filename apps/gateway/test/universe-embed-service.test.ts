@@ -283,6 +283,7 @@ test('E2 connect needs the exact Origin and the per-transaction value', async ()
     [{ ...form }, `t=${browser.token()}`],
     [{ ...form, origin: EMBED }, 't=wrong'],
     [{ ...form, origin: EMBED }, `t=${browser.token()}&t=${browser.token()}`],
+    [{ ...form, origin: EMBED }, `t=${encodeURIComponent('é'.repeat(43))}`],
   ] as const) {
     const reply = await browser.go('POST', '/universe/embed/connect', headers, body);
     assert.equal(reply.status, 400);

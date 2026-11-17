@@ -87,8 +87,10 @@ function messagePage(lang: "en" | "ar", message: string, extra = ""): string {
 }
 
 function sameToken(provided: unknown, expected: string): boolean {
-  if (typeof provided !== "string" || provided.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (typeof provided !== "string") return false;
+  // Compare byte lengths: a multi-byte value of the same character length must refuse, not throw.
+  const a = Buffer.from(provided), b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function singleHeader(request: IncomingMessage, name: string): string | undefined {
