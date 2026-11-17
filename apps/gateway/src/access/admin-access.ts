@@ -81,7 +81,7 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 }
 
-function sessionCookie(header: string | undefined): string | undefined {
+export function sessionCookie(header: string | undefined): string | undefined {
   for (const item of header?.split(";") ?? []) {
     const [key, ...parts] = item.trim().split("=");
     const value = parts.join("=");
@@ -90,7 +90,7 @@ function sessionCookie(header: string | undefined): string | undefined {
   return undefined;
 }
 
-async function readForm(req: IncomingMessage): Promise<Record<string, string> | undefined> {
+export async function readForm(req: IncomingMessage): Promise<Record<string, string> | undefined> {
   if (!req.headers["content-type"]?.startsWith("application/x-www-form-urlencoded") ||
     Number(req.headers["content-length"]) > BODY_LIMIT) {
     req.resume();

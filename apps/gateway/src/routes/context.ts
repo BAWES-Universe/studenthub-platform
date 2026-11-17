@@ -22,6 +22,7 @@ import type { CivilIdReviewHttpService } from "../civil-id-review-http.js";
 import type { AreaHttp } from "../area-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
 import type { AccessPorts } from "../access/admin-access.js";
+import type { CompanyTeamPorts } from "../access/company-team.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -42,6 +43,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationCreation?: OrganizationCreation;
   readonly legacyLink?: LegacyLinkService;
   readonly access?: AccessPorts;
+  readonly team?: CompanyTeamPorts;
 };
 
 export interface GatewayRouteContext {
