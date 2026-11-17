@@ -4,8 +4,9 @@
  * node dist/tools/release-matrix/src/cli.js release   fails while anything is open
  * node dist/tools/release-matrix/src/cli.js seed      rewrite matrix.json from sources
  */
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { checkContract } from "./contract.js";
 import { MATRIX_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "./files.js";
@@ -64,4 +65,14 @@ function main(command: string | undefined): number {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) process.exitCode = main(process.argv[2]);
+/** True when this module is the entry point, however the path is spelled (spaces, symlinks). */
+export function isEntryPoint(moduleUrl: string, argv1: string | undefined): boolean {
+  if (!argv1) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(path.resolve(argv1));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint(import.meta.url, process.argv[1])) process.exitCode = main(process.argv[2]);

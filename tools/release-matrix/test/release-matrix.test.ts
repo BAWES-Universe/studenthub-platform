@@ -7,7 +7,7 @@ import { checkContract, idsIn, parseContract } from "../src/contract.js";
 import { CONTRACT_PATH, loadContract, loadInventory, loadMatrix, repoRoot } from "../src/files.js";
 import { blockers, checkInventory, checkMatrix, mobileKey, type Matrix, type MobileInventory } from "../src/matrix.js";
 import { laneForOwner, seedMatrix } from "../src/seed.js";
-import { renderReport } from "../src/cli.js";
+import { isEntryPoint, renderReport } from "../src/cli.js";
 
 const root = repoRoot();
 const markdown = readFileSync(path.join(root, CONTRACT_PATH), "utf8");
@@ -145,4 +145,22 @@ test("seeding keeps recorded evidence and adds rows the contract gains", () => {
   const seeded = seedMatrix(contract, inventory, previous);
   assert.deepEqual(seeded.screens["U-01"]!.gates.built, { state: "done", evidence: "PR #1 at 0123abcd" });
   assert.deepEqual(seeded.screens["U-02"]!.gates.built, { state: "open" });
+});
+
+test("the CLI recognises itself as the entry point through a symlink or a path with spaces", async () => {
+  const { mkdtempSync, symlinkSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { pathToFileURL, fileURLToPath } = await import("node:url");
+  const cli = new URL("../src/cli.js", import.meta.url);
+  const dir = mkdtempSync(path.join(tmpdir(), "release matrix "));
+  try {
+    const link = path.join(dir, "cli link.js");
+    symlinkSync(fileURLToPath(cli), link);
+    assert.equal(isEntryPoint(cli.href, link), true);
+    assert.equal(isEntryPoint(pathToFileURL(link).href, fileURLToPath(cli)), true);
+    assert.equal(isEntryPoint(cli.href, path.join(dir, "missing.js")), false);
+    assert.equal(isEntryPoint(cli.href, undefined), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
