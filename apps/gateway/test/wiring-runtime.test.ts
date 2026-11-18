@@ -13,7 +13,7 @@ const env = {
   OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
 };
 
-const always = ["adminJobs", "adminOutbox", "area", "callback", "companies", "exports", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "people", "profile", "start", "web"].sort();
+const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "callback", "companies", "contacts", "exports", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "people", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequestApplications", "recruitRequests", "registrations", "staffView", "start", "storeManager", "team", "web"].sort();
 const signed = [...always, "bankDetails", "browserEdit", "organizationApprovedToHire", "organizationCommercialTerms", "organizationDeletion", "organizationNotes", "organizationProfile", "organizationStatus", "preferences", "profileEdit"].sort();
 const KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -53,8 +53,8 @@ test("PREP_WIRING_WORK_PORTS turning the work lane on without store-manager and 
 test("PREP_WIRING_SOURCE keeps construction out of the login runtime", async () => {
   const source = await readFile(new URL("../src/login-runtime.js", import.meta.url), "utf8");
   for (const forbidden of ["new Postgres", "new pg.Pool", "new OrganizationRepository", "new ExportService"]) assert.doesNotMatch(source, new RegExp(forbidden.replace(".", "\\.")));
-  for (const module of ["access", "profile", "organizations", "pay-contracts", "ops", "work"]) assert.equal(source.split(`./wiring/${module}.js`).length - 1, 1);
-  for (const module of ["access", "profile", "organizations", "pay-contracts", "ops", "work"]) {
+  for (const module of ["access", "access-lane", "profile", "organizations", "pay-contracts", "ops", "work"]) assert.equal(source.split(`./wiring/${module}.js`).length - 1, 1);
+  for (const module of ["access", "access-lane", "profile", "organizations", "pay-contracts", "ops", "work"]) {
     const wired = await readFile(new URL(`../src/wiring/${module}.js`, import.meta.url), "utf8");
     assert.equal([...wired.matchAll(/export function wire[A-Za-z]+/g)].length, 1);
   }
@@ -63,7 +63,7 @@ test("PREP_WIRING_SOURCE keeps construction out of the login runtime", async () 
 test("PREP_WIRING_COUNT closes every independently constructed pool exactly once", async (t) => {
   const ended = new Map<pg.Pool, number>();
   t.mock.method(pg.Pool.prototype, "end", async function(this: pg.Pool) { ended.set(this, (ended.get(this) ?? 0) + 1); });
-  for (const [environment, expected] of [[env, 20], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 26]] as const) {
+  for (const [environment, expected] of [[env, 29], [{ ...env, SAFE_WRITE_SIGNING_KEY: KEY }, 35]] as const) {
     ended.clear();
     const runtime = createRuntimeLoginFromEnv(environment)!;
     await runtime.close();

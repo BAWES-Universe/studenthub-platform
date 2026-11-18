@@ -13,14 +13,15 @@ const contextModule = process.env.SHU497_CONTEXT_MODULE ?? new URL("../src/route
 test("PREP_ORDER routes retain the exact gateway handler order", async () => {
   const { ROUTES } = await import(routesModule) as typeof import("../src/routes/index.js");
   assert.deepEqual(ROUTES.map((route) => route.name), [
-    "catalogue", "candidate-documents", "documents-upload", "documents-actions", "organization-documents", "profile-edit-page", "profile-edit",
+    "abuse-gate", "catalogue", "candidate-documents", "documents-upload", "documents-actions", "organization-documents", "profile-edit-page", "profile-edit",
     "profile-browser-edit", "language-preference-page", "language-preference", "bank-details", "profile-avatar",
     "organization-profile", "organization-status", "organization-commercial-terms",
     "organization-approved-to-hire", "organization-notes", "pay-contracts", "organization-brands",
     "organization-stores", "organization-deletion", "organization-creation",
-    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area", "people-directory", "civil-id-review", "work",
+    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area", "people-directory", "civil-id-review", "access", "staff-view", "company-registration", "company-team", "company-contacts", "store-manager",
+    "recruit-requests", "recruit-pipeline", "recruit-checklist", "recruit-people-search", "recruit-invitations", "recruit-employer-view", "recruit-interviews", "recruit-jobs", "recruit-fulltimers", "recruit-request-applications", "work",
   ]);
-  assert.equal(ROUTES.length, 32);
+  assert.equal(ROUTES.length, 49);
   for (const route of ROUTES) assert.equal(typeof route.handle, "function");
 });
 

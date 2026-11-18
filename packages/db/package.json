@@ -49,7 +49,11 @@
     "./work": {
       "types": "./dist/work/index.d.ts",
       "import": "./dist/work/index.js"
-      },
+    },
+    "./recruit": {
+      "types": "./dist/recruit/index.d.ts",
+      "import": "./dist/recruit/index.js"
+    },
     "./billing": {
       "types": "./dist/billing/index.d.ts",
       "import": "./dist/billing/index.js"

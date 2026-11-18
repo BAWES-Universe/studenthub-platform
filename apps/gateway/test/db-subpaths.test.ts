@@ -3,16 +3,17 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const areas = ["profile", "access", "catalogue", "organizations", "pay-contracts", "ops", "documents", "notifications"] as const;
+const areas = ["profile", "access", "catalogue", "organizations", "pay-contracts", "ops", "documents", "notifications", "recruit"] as const;
 const expected = {
   profile: ["BANK_DETAILS_OPERATION", "LANGUAGES", "LANGUAGE_FIELD", "LegacyCandidateAlreadyLinkedError", "PERSON_PROFILE_FIELDS", "PersonProfileBrowserRetryableError", "PostgresBankDetailsStore", "PostgresLegacyLinkStore", "PostgresPersonLocationStore", "PostgresPersonProfileStore", "PostgresProfileRecordStore", "PostgresReferenceResolver", "PostgresSafeWriteStore", "PrincipalAlreadyLinkedError", "SAFE_WRITE_OPERATION", "personRecordRef", "safeWritePrincipalRef"],
-  access: ["AUTHORIZATION_MUTATION_OPERATIONS", "PostgresAuthzStore", "PostgresLoginStore", "organizationAuditRef", "principalAuditRef", "readLiveLoginSessionPerson", "requestAuditRef"],
+  access: ["AUTHORIZATION_MUTATION_OPERATIONS", "PostgresAccessAbuseStore", "PostgresAccessContactsStore", "PostgresAccessGrantsStore", "PostgresAccessInvitationsStore", "PostgresAccessPausesStore", "PostgresAccessRegistrationsStore", "PostgresAccessStaffViewsStore", "PostgresAccessStoreManagersStore", "PostgresAuthzStore", "PostgresLoginStore", "organizationAuditRef", "principalAuditRef", "readLiveLoginSessionPerson", "requestAuditRef"],
   catalogue: ["PostgresCatalogueStore"],
   organizations: ["ORGANIZATION_ACCOUNT_MANAGER_OPERATION", "ORGANIZATION_APPROVED_TO_HIRE_OPERATION", "ORGANIZATION_BRAND_LINK_OPERATION", "ORGANIZATION_BRAND_UNLINK_OPERATION", "ORGANIZATION_COMMERCIAL_TERMS_OPERATION", "ORGANIZATION_CREATE_OPERATION", "ORGANIZATION_DELETION_OPERATION", "ORGANIZATION_NOTES_OPERATION", "ORGANIZATION_PROFILE_OPERATION", "ORGANIZATION_STATUS_OPERATION", "ORGANIZATION_STORE_CREATE_OPERATION", "ORGANIZATION_STORE_REMOVE_OPERATION", "ORGANIZATION_STORE_UPDATE_OPERATION", "PostgresOrganizationAccountManagerReads", "PostgresOrganizationAccountManagerStore", "PostgresOrganizationApprovedToHireStore", "PostgresOrganizationBrandsStore", "PostgresOrganizationCommercialTermsStore", "PostgresOrganizationCreationStore", "PostgresOrganizationDeletionStore", "PostgresOrganizationNotesStore", "PostgresOrganizationProfileReads", "PostgresOrganizationProfileStore", "PostgresOrganizationStatusStore", "PostgresOrganizationStoresStore"],
   "pay-contracts": ["PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATION", "PostgresFinanceReferenceResolver", "PostgresPayContractSafeWriteStore", "PostgresPayContractStore"],
   ops: ["DEFAULT_DATABASE_URL", "PostgresExportsStore", "PostgresJobRunsStore", "bootstrapAdmin", "databaseUrl", "runMigrations"],
   documents: [],
   notifications: ["EMAIL_CLAIM_LEASE_SECONDS", "PostgresEmailOutboxStore", "PostgresNotificationsStore", "recordOrganizationStatusChanged"],
+  recruit: ["PostgresRecruitChecklistStore", "PostgresRecruitFulltimersStore", "PostgresRecruitInterviewsStore", "PostgresRecruitInvitationsStore", "PostgresRecruitJobsStore", "PostgresRecruitPeopleSearchStore", "PostgresRecruitPipelineStore", "PostgresRecruitRequestApplicationsStore", "PostgresRecruitRequestsStore", "RECRUIT_SYSTEM_ACTOR_REF"],
 } as const;
 
 async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
@@ -88,6 +89,6 @@ test("PREP_CLOSURE deployment closure follows database subpaths and pinned migra
 });
 
 test("PREP_STABLE database subpaths preserve values without adding behavior", () => {
-  assert.equal(areas.length, 8);
+  assert.equal(areas.length, 9);
   assert.equal(new Set(areas.flatMap(area => expected[area])).size, areas.flatMap(area => expected[area]).length);
 });

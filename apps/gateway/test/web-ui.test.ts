@@ -300,14 +300,37 @@ test("unavailable profile dependencies render a safe retry state without killing
   assert.equal((await fetch(`${f.url}/health`)).status, 200);
 });
 
-test("browser logout deletes the actual session, clears its cookie and returns to the landing page", async (t) => {
+test("browser logout deletes the actual session, clears its cookie and lands on the Signed out page", async (t) => {
   const f = await fixture(t);
   const response = await fetch(`${f.url}/logout`, { method: "POST", headers: { ...BROWSER, origin: ORIGIN }, redirect: "manual" });
   assert.equal(response.status, 303);
-  assert.equal(response.headers.get("location"), "/");
+  assert.equal(response.headers.get("location"), "/signed-out");
   assert.match(response.headers.get("set-cookie")!, /Max-Age=0/);
   assert.equal(await f.rig.sessions.get(SESSION), undefined);
   assert.equal((await fetch(`${f.url}/profile`, { headers: BROWSER })).status, 401);
+});
+
+test("SHU457_SIGNED_OUT_PAGE the Signed out page is public, personal-data free, and offers Sign in again", async (t) => {
+  const f = await fixture(t);
+  for (const headers of [{ accept: "text/html" }, BROWSER]) {
+    const response = await fetch(`${f.url}/signed-out`, { headers });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+    const html = await response.text();
+    assert.match(html, /You’re signed out\./);
+    assert.match(html, /href="\/login\/universe\?return_to=[^"]+">Sign in again/);
+    assert.doesNotMatch(html, /noor@example|do-not-display|person-|Sign out/);
+  }
+  const unconfigured = createGatewayServer();
+  await new Promise<void>((resolve) => unconfigured.listen(0, "127.0.0.1", resolve));
+  t.after(() => { unconfigured.closeAllConnections(); unconfigured.close(); });
+  const port = (unconfigured.address() as import("node:net").AddressInfo).port;
+  const page = await fetch(`http://127.0.0.1:${port}/signed-out`, { headers: { accept: "text/html" } });
+  assert.equal(page.status, 200, "no login configuration needed");
+  assert.match(await page.text(), /You’re signed out\./);
+  // A non-browser client keeps its 204.
+  const api = await fetch(`${f.url}/logout`, { method: "POST", headers: { cookie: BROWSER.cookie } });
+  assert.equal(api.status, 204);
 });
 
 /**
@@ -356,7 +379,7 @@ test("the sign-out form succeeds under the referrer policy the profile page is a
     headers: { ...BROWSER, origin, "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
   });
   assert.equal(response.status, 303, `a same-origin sign-out under "${policy}" sends Origin "${origin}"`);
-  assert.equal(response.headers.get("location"), "/");
+  assert.equal(response.headers.get("location"), "/signed-out");
   assert.equal(await f.rig.sessions.get(SESSION), undefined, "sign-out must end the session");
   // The privacy property the old header was chosen for still holds: leaving
   // for Universe never carries the page path.

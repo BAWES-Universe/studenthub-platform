@@ -23,6 +23,10 @@ interface StateRow {
 interface SessionRow {
   id: string;
   person_id: string;
+  upstream_session_ref: string | null;
+  last_checked_at: string | null;
+  last_confirmed_at: string | null;
+  last_settled_at: string | null;
 }
 
 interface IdentityRow {
@@ -64,8 +68,12 @@ export class PostgresLoginStore {
     };
     this.sessions = {
       put: (record) => this.#putSession(record),
-      get: (id) => this.#getSession(id),
+      get: (id) => this.#sessionRead(id),
       delete: (id) => this.#deleteSession(id),
+      take: (id) => this.#takeSession(id),
+      claimUpstreamCheck: (id, checkedAtOrBefore, now) => this.#claimUpstreamCheck(id, checkedAtOrBefore, now),
+      confirmUpstream: (id, now) => this.#confirmUpstream(id, now),
+      settleUpstreamCheck: (id, checkedAt) => this.#settleUpstreamCheck(id, checkedAt),
     };
     this.identities = {
       findBySubject: (issuer, subject) => this.#findIdentity(issuer, subject),
@@ -76,6 +84,29 @@ export class PostgresLoginStore {
       // authentication binding mechanism.
       findLegacyMatch: async () => undefined,
     };
+  }
+
+  #sessionRead: (id: string) => Promise<LoginSession | undefined> = (id) => this.#getSession(id);
+
+  /**
+   * SHU-457: puts a check in front of every session read made through
+   * `sessions.get`, for every module that holds this store's sessions. The
+   * check receives the plain store (its own reads are not checked again).
+   */
+  checkSessionsWith(check: (plain: SessionStore) => SessionStore): void {
+    const plain: SessionStore = {
+      put: (record) => this.#putSession(record),
+      get: (id) => this.#getSession(id),
+      delete: (id) => this.#deleteSession(id),
+      take: (id) => this.#takeSession(id),
+      claimUpstreamCheck: (id, checkedAtOrBefore, now) => this.#claimUpstreamCheck(id, checkedAtOrBefore, now),
+      confirmUpstream: (id, now) => this.#confirmUpstream(id, now),
+      settleUpstreamCheck: (id, checkedAt) => this.#settleUpstreamCheck(id, checkedAt),
+    };
+    const checked = check(plain);
+    this.#sessionRead = (id) => checked.get(id);
+    // The login application sees the mark and does not check a second time.
+    Object.defineProperty(this.sessions, Symbol.for("studenthub.login.upstream-confirming"), { value: true });
   }
 
   async close(): Promise<void> {
@@ -115,9 +146,15 @@ export class PostgresLoginStore {
   async #putSession(record: LoginSession): Promise<void> {
     await this.#pool.query(
       `WITH expired AS (DELETE FROM login_sessions WHERE expires_at <= now())
-       INSERT INTO login_sessions (id, person_id, expires_at)
-       VALUES ($1, $2, now() + ($3 * interval '1 second'))`,
-      [storedToken(record.id), record.personId, this.#sessionTtlSeconds],
+       INSERT INTO login_sessions (id, person_id, expires_at, upstream_session_ref, last_checked_at, last_confirmed_at)
+       VALUES ($1, $2, now() + ($3 * interval '1 second'), $4::text,
+               to_timestamp($5::double precision), to_timestamp($6::double precision))`,
+      [
+        storedToken(record.id), record.personId, this.#sessionTtlSeconds,
+        record.upstreamReference ?? null,
+        record.upstreamReference ? record.lastCheckedAt ?? null : null,
+        record.upstreamReference ? record.lastConfirmedAt ?? null : null,
+      ],
     );
   }
 
@@ -126,12 +163,58 @@ export class PostgresLoginStore {
       `WITH expired AS (
          DELETE FROM login_sessions WHERE id = $1 AND expires_at <= now()
        )
-       SELECT id, person_id FROM login_sessions WHERE id = $1 AND expires_at > now()`,
+       SELECT id, person_id, upstream_session_ref,
+              extract(epoch FROM last_checked_at)::text AS last_checked_at,
+              extract(epoch FROM last_confirmed_at)::text AS last_confirmed_at,
+              extract(epoch FROM last_settled_at)::text AS last_settled_at
+         FROM login_sessions WHERE id = $1 AND expires_at > now()`,
       [storedToken(id)],
     );
     const row = rows[0];
-    if (!row) return undefined;
-    return { id, personId: row.person_id };
+    return row ? sessionFromRow(id, row) : undefined;
+  }
+
+  async #takeSession(id: string): Promise<LoginSession | undefined> {
+    const { rows } = await this.#pool.query<SessionRow>(
+      `DELETE FROM login_sessions WHERE id = $1
+       RETURNING id, person_id, upstream_session_ref,
+                 extract(epoch FROM last_checked_at)::text AS last_checked_at,
+                 extract(epoch FROM last_confirmed_at)::text AS last_confirmed_at,
+              extract(epoch FROM last_settled_at)::text AS last_settled_at`,
+      [storedToken(id)],
+    );
+    const row = rows[0];
+    return row ? sessionFromRow(id, row) : undefined;
+  }
+
+  // The once-per-T throttle: only the request whose UPDATE moves
+  // last_checked_at wins the right to ask the issuer.
+  async #claimUpstreamCheck(id: string, checkedAtOrBefore: number, now: number): Promise<boolean> {
+    const result = await this.#pool.query(
+      `UPDATE login_sessions SET last_checked_at = to_timestamp($3::double precision)
+        WHERE id = $1 AND expires_at > now() AND upstream_session_ref IS NOT NULL
+          AND (last_checked_at IS NULL OR last_checked_at <= to_timestamp($2::double precision))`,
+      [storedToken(id), checkedAtOrBefore, now],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async #confirmUpstream(id: string, now: number): Promise<void> {
+    await this.#pool.query(
+      `UPDATE login_sessions
+          SET last_confirmed_at = GREATEST(last_confirmed_at, to_timestamp($2::double precision))
+        WHERE id = $1`,
+      [storedToken(id), now],
+    );
+  }
+
+  async #settleUpstreamCheck(id: string, checkedAt: number): Promise<void> {
+    await this.#pool.query(
+      `UPDATE login_sessions
+          SET last_settled_at = GREATEST(last_settled_at, to_timestamp($2::double precision))
+        WHERE id = $1`,
+      [storedToken(id), checkedAt],
+    );
   }
 
   async #deleteSession(id: string): Promise<void> {
@@ -273,6 +356,18 @@ export class PostgresLoginStore {
     );
     return (result.rowCount ?? 0) > 0;
   }
+}
+
+function sessionFromRow(id: string, row: SessionRow): LoginSession {
+  if (!row.upstream_session_ref) return { id, personId: row.person_id };
+  return {
+    id,
+    personId: row.person_id,
+    upstreamReference: row.upstream_session_ref,
+    ...(row.last_checked_at !== null ? { lastCheckedAt: Number(row.last_checked_at) } : {}),
+    ...(row.last_confirmed_at !== null ? { lastConfirmedAt: Number(row.last_confirmed_at) } : {}),
+    ...(row.last_settled_at !== null ? { lastSettledAt: Number(row.last_settled_at) } : {}),
+  };
 }
 
 function positiveTtl(value: number, name: string): number {

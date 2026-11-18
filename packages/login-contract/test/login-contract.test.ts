@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LOGIN_CONTRACT_SCENARIOS, LOGIN_CONTRACT_VERSION, runLoginConformance } from "../src/index.js";
+import { LOGIN_CONTRACT_SCENARIOS, LOGIN_CONTRACT_VERSION, UPSTREAM_SESSION_SCENARIOS, runLoginConformance, runUpstreamSessionConformance } from "../src/index.js";
 import { referenceLoginFactory, type ReferenceFaults } from "./reference-adapter.js";
 
 test("the conforming deterministic reference adapter satisfies every SHU-60 scenario", async () => {
@@ -9,7 +9,7 @@ test("the conforming deterministic reference adapter satisfies every SHU-60 scen
   assert.equal(report.ok, true, JSON.stringify(report.results, null, 2));
   assert.deepEqual(report.results.map(({ name }) => name), LOGIN_CONTRACT_SCENARIOS);
   assert.ok(report.results.length >= 7);
-  assert.equal(LOGIN_CONTRACT_VERSION, "1.0.0");
+  assert.equal(LOGIN_CONTRACT_VERSION, "1.1.0");
 });
 
 const CONTROL_MUTATIONS: ReadonlyArray<readonly [keyof ReferenceFaults, string, string]> = [
@@ -60,4 +60,14 @@ test("every named security control is load-bearing in the executable corpus", as
       );
     });
   }
+});
+
+test("SHU457_PORT the upstream scenarios are separate and fail for an application that ignores the port", async () => {
+  // The 1.0.0 scenarios above are unchanged; the port's scenarios only bind an
+  // application that accepts it (the gateway proves it passes them).
+  assert.equal(UPSTREAM_SESSION_SCENARIOS.length, 6);
+  assert.ok(UPSTREAM_SESSION_SCENARIOS.every((name) => !LOGIN_CONTRACT_SCENARIOS.includes(name)));
+  const report = await runUpstreamSessionConformance(referenceLoginFactory());
+  assert.equal(report.ok, false);
+  assert.ok(report.results.filter(({ ok }) => !ok).length >= 4, JSON.stringify(report.results, null, 2));
 });
