@@ -46,6 +46,10 @@
       "types": "./dist/notifications/index.d.ts",
       "import": "./dist/notifications/index.js"
     },
+    "./recruit": {
+      "types": "./dist/recruit/index.d.ts",
+      "import": "./dist/recruit/index.js"
+    },
     "./billing": {
       "types": "./dist/billing/index.d.ts",
       "import": "./dist/billing/index.js"

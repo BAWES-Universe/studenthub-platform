@@ -24,6 +24,7 @@ import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
 import { wireOps } from "./wiring/ops.js";
+import { wireRecruit } from "./wiring/recruit.js";
 import {PostgresNotificationsStore} from "@studenthub/db/notifications";
 import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
 import {createNotificationsHttp} from "./notifications-http.js";
@@ -298,6 +299,7 @@ export function createRuntimeLoginFromEnv(
   const organizationArea = wireOrganizations(settings, access.services);
   const payContractArea = wirePayContracts(settings, access.services);
   const ops = wireOps(settings, access.services, organizationArea.services);
+  const recruitArea = wireRecruit(settings, access.services);
   const accessLane = wireAccessLane(settings, access.services, env);
   // SHU-457: every reader of the login store's sessions gets the bound T check.
   const upstream = upstreamSessionsFromEnv(env, issuer, value("OIDC_CLIENT_ID"));
@@ -348,6 +350,7 @@ export function createRuntimeLoginFromEnv(
       ...ops.services,
       ...profile.services.application,
       ...payContractArea.services,
+      ...recruitArea.services,
       ...accessLane.services.application,
       web: {
         origin: new URL(callbackUrl).origin,
@@ -361,7 +364,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: runtimeApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),accessLane.close(),notificationStore.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(), accessLane.close(), recruitArea.close(),notificationStore.close()]);
     },
   };
 }
