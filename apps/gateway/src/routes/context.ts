@@ -20,6 +20,7 @@ import type { CivilIdService } from "@studenthub/profile";
 import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
 import type { CivilIdReviewHttpService } from "../civil-id-review-http.js";
 import type { AreaHttp } from "../area-http.js";
+import type { StaffMessagesHttpService } from "../comms/staff-messages-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
@@ -40,6 +41,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationDeletion?: OrganizationDeletion;
   readonly organizationCreation?: OrganizationCreation;
   readonly legacyLink?: LegacyLinkService;
+  readonly staffMessages?: StaffMessagesHttpService;
 };
 
 export interface GatewayRouteContext {

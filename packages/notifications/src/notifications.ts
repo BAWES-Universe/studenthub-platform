@@ -7,22 +7,94 @@ export type NotificationParameters={readonly "organization.status_changed":{read
 export type NotificationSubjectReference={readonly "organization.status_changed":`organization:${string}`;readonly "staff.message":`staff_message:${string}`;readonly "work.session_approved":`work_session:${string}`;readonly "work.session_rejected":`work_session:${string}`};
 type EventOf<K extends NotificationKind>={readonly id:string;readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly createdAt:Date|string;readonly readAt:Date|string|null};
 export type NotificationEvent<K extends NotificationKind=NotificationKind>={[P in K]:EventOf<P>}[K];
-export interface NotificationRecordPort{record<K extends NotificationKind>(event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string}):Promise<void>}
-export async function recordNotification<K extends NotificationKind>(port:NotificationRecordPort,event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string}):Promise<void>{if(!NOTIFICATION_KINDS.includes(event.kind))throw new TypeError("unknown notification kind");await port.record({...event,dedupeKey:event.dedupeKey})}
-export interface NotificationEventStore{list(recipient:string,limit:number,offset:number):Promise<readonly NotificationEvent[]>;countVisibleUnread?(recipient:string):Promise<number>;markRead(recipient:string,id:string):Promise<boolean>;markAllRead(recipient:string):Promise<void>}
+/** A stored feed row as the registry sees it: any registered kind, its parameters still unchecked. */
+export interface FeedRow{readonly id:string;readonly recipientPrincipalId:string;readonly kind:string;readonly subjectReference:string;readonly parameters:unknown;readonly createdAt:Date|string;readonly readAt:Date|string|null}
+export interface NotificationEventStore{list(recipient:string,limit:number,offset:number,kinds?:readonly string[]):Promise<readonly FeedRow[]>;countVisibleUnread?(recipient:string):Promise<number>;markRead(recipient:string,id:string):Promise<boolean>;markAllRead(recipient:string):Promise<void>}
 export interface NotificationOrganization{readonly id:string;readonly name:string;readonly parentOrgId?:string}
 export interface StoredStaffMessage{readonly id:string;readonly kind:StaffMessageKind;readonly body:string|null}
 /** readStaffMessages must return only messages addressed to the recipient; a feed row whose message is missing is not shown. */
 export interface NotificationSubjectStore{readOrganizations(ids:readonly string[]):Promise<readonly NotificationOrganization[]>;liveOrganizationIds(ids:readonly string[]):Promise<ReadonlySet<string>>;readStaffMessages?(recipient:string,ids:readonly string[]):Promise<readonly StoredStaffMessage[]>}
 export interface RenderedNotification{readonly id:string;readonly text:string;readonly href:string;readonly createdAt:string;readonly read:boolean}
 export interface NotificationPage{readonly items:readonly RenderedNotification[];readonly unreadCount:number;readonly page:number}
-/** The person's hours history for one day (screen contract C-12). */
-export const workHistoryHref=(workDate:string)=>`/work/history/${encodeURIComponent(workDate)}`;
+export interface NotificationLine{readonly text:string;readonly href:string}
+export interface NotificationRenderContext{readonly recipient:string;readonly subjects:NotificationSubjectStore;readonly authz:Pick<AuthzStore,"listGrantsForPrincipal">}
+
+/**
+ * One feed kind. It owns the closed check of its stored subject reference and parameters
+ * (the same rule as the database CHECK), how its subject id is read from the reference, and
+ * how one page of its rows is rendered. Subjects are read once per page, never per row. A row
+ * the definition cannot show (missing subject, no longer visible) is left out of the page.
+ */
+export interface NotificationKindDefinition{
+ readonly kind:string;
+ /** The subject id inside a well-formed reference, or null when the reference is not this kind's. */
+ subject(reference:string):string|null;
+ parameters(value:unknown):boolean;
+ render(rows:readonly FeedRow[],context:NotificationRenderContext):Promise<ReadonlyMap<string,NotificationLine>>;
+}
+const KIND=/^[a-z][a-z_]*(?:\.[a-z][a-z_]*)+$/;
+/** The registered kinds. A lane adds a kind with one definition here (and its database payload rule), not an edit to the feed. */
+export class NotificationKindRegistry{
+ readonly #byKind=new Map<string,NotificationKindDefinition>();
+ constructor(definitions:readonly NotificationKindDefinition[]){for(const d of definitions){if(!KIND.test(d.kind))throw new TypeError(`invalid notification kind ${d.kind}`);if(this.#byKind.has(d.kind))throw new TypeError(`duplicate notification kind ${d.kind}`);this.#byKind.set(d.kind,d)}}
+ kinds():readonly string[]{return[...this.#byKind.keys()]}
+ get(kind:string):NotificationKindDefinition|undefined{return this.#byKind.get(kind)}
+ /** True when the row's kind is registered and its reference and parameters pass that kind's check. */
+ accepts(row:Pick<FeedRow,"kind"|"subjectReference"|"parameters">):boolean{const d=this.#byKind.get(row.kind);return!!d&&d.subject(row.subjectReference)!==null&&d.parameters(row.parameters)}
+ /** A types filter: every entry must be a registered kind, at most one of each. Returns null when any entry is not. */
+ types(values:readonly string[]):readonly string[]|null{if(values.some(v=>!this.#byKind.has(v)))return null;return values.length?[...new Set(values)]:[]}
+}
+
+const plainObject=(value:unknown):value is Record<string,unknown>=>typeof value==="object"&&value!==null&&!Array.isArray(value);
+const onlyKeys=(value:Record<string,unknown>,keys:readonly string[])=>Object.keys(value).length===keys.length&&keys.every(k=>k in value);
+const prefixed=(prefix:string,pattern:RegExp)=>(reference:string)=>reference.startsWith(prefix)&&pattern.test(reference.slice(prefix.length))?reference.slice(prefix.length):null;
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,TOKEN=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+function isCalendarDate(value:unknown):value is string{if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;const parsed=new Date(`${value}T00:00:00Z`);return!Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value}
+
 const labels={active:"Active",under_review:"Under review",inactive:"Inactive",none:"Not set"} as const;
 function visible(grants:readonly RoleGrant[],org:NotificationOrganization,byId:ReadonlyMap<string,NotificationOrganization>):boolean{return grants.some(g=>g.orgId===org.id||g.scope==="subtree"&&(()=>{let at=org.parentOrgId;while(at){if(at===g.orgId)return true;at=byId.get(at)?.parentOrgId}return false})())}
+const organizationSubject=prefixed("organization:",/^.+$/);
+export const organizationStatusChangedKind:NotificationKindDefinition={
+ kind:"organization.status_changed",
+ subject:organizationSubject,
+ parameters:value=>plainObject(value)&&onlyKeys(value,["status"])&&typeof value.status==="string"&&value.status in labels,
+ async render(rows,{recipient,subjects,authz}){const ids=[...new Set(rows.map(r=>organizationSubject(r.subjectReference)!))];const [organizations,live,grants]=await Promise.all([subjects.readOrganizations(ids),subjects.liveOrganizationIds(ids),authz.listGrantsForPrincipal(recipient)]);const byId=new Map(organizations.map(o=>[o.id,o])),lines=new Map<string,NotificationLine>();for(const row of rows){const id=organizationSubject(row.subjectReference)!,org=byId.get(id);if(!org||!live.has(id)||!visible(grants,org,byId))continue;const status=(row.parameters as {status:keyof typeof labels}).status;lines.set(row.id,{text:`${org.name} status changed to ${labels[status]}.`,href:`/workspace?${new URLSearchParams({org_id:id,role:"org-owner"})}`})}return lines}
+};
+const staffSubject=prefixed("staff_message:",UUID);
+export const staffMessageKind:NotificationKindDefinition={
+ kind:"staff.message",
+ subject:staffSubject,
+ parameters:value=>plainObject(value)&&Object.keys(value).length===0,
+ async render(rows,{recipient,subjects}){const ids=[...new Set(rows.map(r=>staffSubject(r.subjectReference)!))];const messages=subjects.readStaffMessages?await subjects.readStaffMessages(recipient,ids):[];const byId=new Map(messages.map(m=>[m.id,m])),lines=new Map<string,NotificationLine>();for(const row of rows){const message=byId.get(staffSubject(row.subjectReference)!);if(!message||!isStaffMessageKind(message.kind))continue;lines.set(row.id,renderStaffMessage(message.kind,message.body))}return lines}
+};
+/** The person's hours history for one day (screen contract C-12). */
+export const workHistoryHref=(workDate:string)=>`/work/history/${encodeURIComponent(workDate)}`;
+const workDecisionKind=(decision:"approved"|"rejected"):NotificationKindDefinition=>({
+ kind:`work.session_${decision}`,
+ subject:prefixed("work_session:",TOKEN),
+ parameters:value=>plainObject(value)&&onlyKeys(value,["workDate"])&&isCalendarDate(value.workDate),
+ async render(rows){return new Map(rows.map(row=>{const workDate=(row.parameters as {workDate:string}).workDate;return[row.id,{text:`Your hours for ${workDate} were ${decision}.`,href:workHistoryHref(workDate)}]}))}
+});
+export const workSessionApprovedKind=workDecisionKind("approved"),workSessionRejectedKind=workDecisionKind("rejected");
+export const NOTIFICATION_REGISTRY=new NotificationKindRegistry([organizationStatusChangedKind,staffMessageKind,workSessionApprovedKind,workSessionRejectedKind]);
+
+export interface NotificationRecordPort{record<K extends NotificationKind>(event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string}):Promise<void>}
+export async function recordNotification<K extends NotificationKind>(port:NotificationRecordPort,event:{readonly recipientPrincipalId:string;readonly kind:K;readonly subjectReference:NotificationSubjectReference[K];readonly parameters:NotificationParameters[K];readonly dedupeKey:string},registry:NotificationKindRegistry=NOTIFICATION_REGISTRY):Promise<void>{if(!registry.accepts(event))throw new TypeError("unknown notification kind or payload");await port.record({...event,dedupeKey:event.dedupeKey})}
+
 export class NotificationsService{
- constructor(private readonly events:NotificationEventStore,private readonly subjects:NotificationSubjectStore,private readonly authz:Pick<AuthzStore,"listGrantsForPrincipal">){}
- async list(recipient:string,page=1):Promise<NotificationPage>{if(!Number.isSafeInteger(page)||page<1)throw new RangeError("page must be positive");const rows=await this.events.list(recipient,25,(page-1)*25);const orgRows=rows.filter((r):r is EventOf<"organization.status_changed">=>r.kind==="organization.status_changed"),messageRows=rows.filter((r):r is EventOf<"staff.message">=>r.kind==="staff.message");const ids=[...new Set(orgRows.map(r=>r.subjectReference.slice(13)))],messageIds=[...new Set(messageRows.map(r=>r.subjectReference.slice(14)))];const [organizations,live,grants,messages]=await Promise.all([this.subjects.readOrganizations(ids),this.subjects.liveOrganizationIds(ids),this.authz.listGrantsForPrincipal(recipient),messageIds.length&&this.subjects.readStaffMessages?this.subjects.readStaffMessages(recipient,messageIds):Promise.resolve([] as readonly StoredStaffMessage[])]);const byId=new Map(organizations.map(o=>[o.id,o])),messageById=new Map(messages.map(m=>[m.id,m]));const items=rows.flatMap((row):RenderedNotification[]=>{const base={id:row.id,createdAt:new Date(row.createdAt).toISOString(),read:row.readAt!==null};if(row.kind==="staff.message"){const message=messageById.get(row.subjectReference.slice(14));if(!message||!isStaffMessageKind(message.kind))return[];return[{...base,...renderStaffMessage(message.kind,message.body)}]}if(row.kind==="work.session_approved"||row.kind==="work.session_rejected")return[{...base,text:`Your hours for ${row.parameters.workDate} were ${row.kind==="work.session_approved"?"approved":"rejected"}.`,href:workHistoryHref(row.parameters.workDate)}];if(row.kind!=="organization.status_changed")return[];const id=row.subjectReference.slice(13),org=byId.get(id);if(!org||!live.has(id)||!visible(grants,org,byId))return[];return[{id:row.id,text:`${org.name} status changed to ${labels[row.parameters.status]}.`,href:`/workspace?${new URLSearchParams({org_id:id,role:"org-owner"})}`,createdAt:base.createdAt,read:base.read}]});return{items,unreadCount:items.filter(i=>!i.read).length,page}}
+ constructor(private readonly events:NotificationEventStore,private readonly subjects:NotificationSubjectStore,private readonly authz:Pick<AuthzStore,"listGrantsForPrincipal">,readonly registry:NotificationKindRegistry=NOTIFICATION_REGISTRY){}
+ /** One page of the person's feed. types narrows it to registered kinds; an unregistered type is a RangeError. */
+ async list(recipient:string,page=1,types:readonly string[]=[]):Promise<NotificationPage>{
+  if(!Number.isSafeInteger(page)||page<1)throw new RangeError("page must be positive");
+  const kinds=this.registry.types(types);if(!kinds)throw new RangeError("unknown notification type");
+  const rows=(await this.events.list(recipient,25,(page-1)*25,kinds.length?kinds:undefined)).filter(r=>this.registry.accepts(r)&&(!kinds.length||kinds.includes(r.kind)));
+  const groups=new Map<string,FeedRow[]>();for(const row of rows)groups.set(row.kind,[...groups.get(row.kind)??[],row]);
+  const context={recipient,subjects:this.subjects,authz:this.authz};
+  const rendered=await Promise.all([...groups].map(([kind,group])=>this.registry.get(kind)!.render(group,context)));
+  const lines=new Map(rendered.flatMap(m=>[...m]));
+  const items=rows.flatMap((row):RenderedNotification[]=>{const line=lines.get(row.id);return line?[{id:row.id,text:line.text,href:line.href,createdAt:new Date(row.createdAt).toISOString(),read:row.readAt!==null}]:[]});
+  return{items,unreadCount:items.filter(i=>!i.read).length,page}
+ }
  async count(recipient:string):Promise<number>{return this.events.countVisibleUnread?this.events.countVisibleUnread(recipient):(await this.list(recipient,1)).unreadCount}
  markRead(recipient:string,id:string){return this.events.markRead(recipient,id)}
  markAllRead(recipient:string){return this.events.markAllRead(recipient)}

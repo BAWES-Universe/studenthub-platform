@@ -120,3 +120,13 @@ test("COMMS_WORK_DECISION_PG a decision inside the caller's transaction is recor
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'work.session_approved',$2,'{\"workDate\":null}'::jsonb,$3)", [workPerson, `work_session:${notice.sessionId}`, `x-${randomUUID()}`]));
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'work.session_rejected',$2,$3::jsonb,$4)", [workPerson, `work_session:${notice.sessionId}`, JSON.stringify({ workDate: "2026-11-10", note: "stored" }), `x-${randomUUID()}`]));
 });
+
+test("COMMS_FEED_TYPES_PG the stored list narrows to the requested kinds before paging", async () => {
+  const sent = await send({ recipientPrincipalId: other, kind: "profile_photo_request" });
+  const id = (sent as { id: string }).id;
+  const staffOnly = await feed.list(other, 100, 0, ["staff.message"]);
+  assert.ok(staffOnly.length >= 1 && staffOnly.every(r => r.kind === "staff.message"));
+  assert.ok(staffOnly.some(r => r.subjectReference === `staff_message:${id}`));
+  assert.ok((await feed.list(other, 100, 0)).some(r => r.kind === "organization.status_changed"));
+  assert.deepEqual(await feed.list(other, 100, 0, ["work.session_rejected"]), []);
+});
