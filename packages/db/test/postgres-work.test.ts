@@ -531,3 +531,95 @@ test("LEGACY_PG import is keyed by legacy ref: re-runs write nothing, changes ar
   await assert.rejects(pool.query(`INSERT INTO work_decisions(id, org_id, store_id, person_principal_id, work_date, scope, outcome, session_ids)
     VALUES($1,$2,$3,$4,'2026-11-10','day','approved','{}')`, [randomUUID(), w.company, w.store, w.person]), /work_decisions_actor/);
 });
+
+// Real Work HTTP -> services -> PostgreSQL transactions. Only the not-yet-wired
+// A4 manager lookup and Comms notice adapter are synthetic; no outbound sends.
+test("WORK_INTEGRATION_PG tracking, decisions, appeal and correction keep transactional notices", async (t) => {
+  const { createServer } = await import("node:http");
+  const { handleWork } = await import("../../../apps/gateway/src/work/http.js");
+  const w = await world();
+  const manager = await principal("manager");
+  const managed = { managedStores: async (id: string) => id === manager ? [{ orgId: w.company, storeId: w.store }] : [] };
+  const now = { value: new Date("2026-11-18T06:00:00Z") };
+  const noticeTable = `work_test_notices_${randomUUID().replaceAll("-", "")}`;
+  await pool.query(`CREATE TABLE ${noticeTable}(decision_id uuid PRIMARY KEY, person_id text NOT NULL, session_id uuid NOT NULL)`);
+  t.after(async () => { await pool.query(`DROP TABLE ${noticeTable}`); });
+  let fail: "decided" | "undone" | null = null;
+  const hooks = {
+    async onDecided(client: pg.PoolClient, n: { personPrincipalId: string; sessionId: string; decisionId: string }) {
+      await client.query(`INSERT INTO ${noticeTable} VALUES($1,$2,$3)`, [n.decisionId, n.personPrincipalId, n.sessionId]);
+      if (fail === "decided") throw Error("synthetic decided adapter failure");
+    },
+    async onUndone(client: pg.PoolClient, n: { personPrincipalId: string; decisionId: string }) {
+      await client.query(`DELETE FROM ${noticeTable} WHERE decision_id=$1 AND person_id=$2`, [n.decisionId, n.personPrincipalId]);
+      if (fail === "undone") throw Error("synthetic undone adapter failure");
+    },
+  };
+  const base = services(now);
+  const decision = new DecisionService({ store: new PostgresWorkDecisionStore(pool, hooks), grants: authz, managedStores: managed, newId: randomUUID, now: () => now.value });
+  const scope = new WorkScope(authz, managed, (o) => viewStore.organizationAncestors(o));
+  const appeals = new AppealService({ store: new PostgresWorkAppealStore(pool, hooks), scope, newId: randomUUID, now: () => now.value });
+  const cookies = new Map([["p".repeat(43), w.person], ["s".repeat(43), w.staff], ["m".repeat(43), manager]]);
+  const origin = "https://work.synthetic.invalid";
+  const server = createServer((req, res) => {
+    void handleWork(req, res, { personFor: async (id) => cookies.get(id), placements: base.placement, sessions: base.session,
+      decisions: decision, views: base.views, appeals }, origin).then(handled => { if (!handled) { res.writeHead(404); res.end(); } });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const request = async (actor: "p" | "s" | "m", path: string, body?: unknown) => {
+    const res = await fetch(`http://127.0.0.1:${address.port}${path}`, { method: body === undefined ? "GET" : "POST",
+      headers: { cookie: `__Host-studenthub_session=${actor.repeat(43)}`, origin, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: res.status, body: await res.json() };
+  };
+  const placed = await request("s", "/api/work/placements", { personId: w.person, storeId: w.store, startDate: "2026-11-01" });
+  assert.equal(placed.body.kind, "placed");
+  assert.equal((await request("p", "/api/work/sessions/start", HERE)).body.kind, "started");
+  now.value = new Date("2026-11-18T08:00:00Z");
+  const stopped = await request("p", "/api/work/sessions/stop", THERE);
+  assert.equal(stopped.body.kind, "stopped");
+  const id: string = stopped.body.session.id;
+  const history = await request("p", "/api/work/hours/mine?from=2026-11-01&to=2026-11-30");
+  assert.equal(history.body.totals.pendingSeconds, 7200);
+  const snapshot = async () => ({
+    sessions: (await pool.query("SELECT id,status,decision_id FROM work_sessions WHERE person_principal_id=$1 ORDER BY id", [w.person])).rows,
+    decisions: (await pool.query("SELECT id FROM work_decisions WHERE person_principal_id=$1 ORDER BY id", [w.person])).rows,
+    events: (await pool.query("SELECT id FROM work_events WHERE person_principal_id=$1 ORDER BY id", [w.person])).rows,
+    notices: (await pool.query(`SELECT * FROM ${noticeTable} ORDER BY decision_id`)).rows,
+  });
+  // Hook writes happen before commit and must roll back with Work on failure.
+  const before = await snapshot();
+  fail = "decided";
+  assert.equal((await request("m", "/api/work/decisions/sessions", { sessionIds: [id], decision: "approve" })).status, 503);
+  assert.deepEqual(await snapshot(), before);
+  fail = null;
+  assert.equal((await request("m", "/api/work/decisions/sessions", { sessionIds: [id], decision: "approve" })).body.kind, "decided");
+  const approved = await snapshot();
+  assert.equal(approved.notices.length, 1);
+  fail = "undone";
+  assert.equal((await request("m", `/api/work/sessions/${id}/undo`, { reason: "Synthetic recheck" })).status, 503);
+  assert.deepEqual(await snapshot(), approved);
+  fail = null;
+  assert.equal((await request("m", `/api/work/sessions/${id}/undo`, { reason: "Recheck completed" })).body.kind, "decided");
+  assert.equal((await snapshot()).notices.length, 0);
+  assert.equal((await request("m", "/api/work/decisions/sessions", { sessionIds: [id], decision: "approve" })).body.kind, "decided");
+  // Repeat approval replaces the decision and current notice, not the duration.
+  assert.equal((await request("m", "/api/work/decisions/sessions", { sessionIds: [id], decision: "approve" })).body.kind, "decided");
+  assert.equal((await snapshot()).notices.length, 1);
+  assert.equal((await request("p", "/api/work/hours/mine?from=2026-11-01&to=2026-11-30")).body.totals.approvedSeconds, 7200);
+  assert.equal((await request("m", "/api/work/decisions/sessions", { sessionIds: [id], decision: "reject", reason: "Please correct time" })).body.kind, "decided");
+  const appeal = await request("p", "/api/work/appeals", { sessionId: id, reason: "Finished an hour later" });
+  assert.equal(appeal.body.kind, "raised");
+  now.value = new Date("2026-11-18T12:00:00Z");
+  const corrected = await request("s", `/api/work/sessions/${id}/correct`, { startedAt: "2026-11-18T06:00:00Z", endedAt: "2026-11-18T09:00:00Z", reason: "Verified finish", appealId: appeal.body.appeal.id });
+  assert.equal(corrected.body.kind, "entered");
+  const payable = new PostgresWorkPayableSource(pool);
+  const inputs = await payable.payableInputs({ period: { start: "2026-11-01", end: "2026-11-30" }, personId: w.person });
+  assert.equal(inputs.reduce((sum, row) => sum + row.approvedSeconds, 0), 10800);
+  assert.equal(inputs[0]?.sessions[0]?.lineageRootId, id);
+  const lineage = await payable.lineage([id]);
+  assert.equal(lineage[0]?.inForce?.sessionId, corrected.body.session.id);
+});
