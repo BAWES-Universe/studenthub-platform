@@ -33,3 +33,36 @@ export async function whileUncommitted<T>(pool: pg.Pool, sql: string, params: re
 /** Revokes every grant a principal holds, in a transaction left open while `action` runs. */
 export const revokeDuring = <T>(pool: pg.Pool, principalId: string, action: () => Promise<T>) =>
   whileUncommitted(pool, "DELETE FROM grants WHERE principal_id = $1::text", [principalId], action);
+
+/**
+ * Holds the organization tree lock exclusively (as a reparent or an Access grant change does) while `action` runs,
+ * and reports whether `rowSql` could still take its row lock (NOWAIT) once `action` was blocked on the tree: a write
+ * that takes the tree lock before any row lock holds no row while it waits, so a three-way deadlock cannot form.
+ */
+export async function rowFreeWhileTreeHeld<T>(pool: pg.Pool, rowSql: string, params: readonly unknown[], action: () => Promise<T>): Promise<{ rowFree: boolean; result: T }> {
+  const held = await pool.connect();
+  try {
+    await held.query("BEGIN");
+    await held.query("SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree'))");
+    const pid = (await held.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    const pending = action();
+    pending.catch(() => undefined);
+    for (let i = 0; i < 500; i++) {
+      if ((await pool.query("SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))", [pid])).rowCount) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const probe = await pool.connect();
+    let rowFree = true;
+    try {
+      await probe.query("BEGIN");
+      await probe.query(rowSql, [...params]);
+    } catch { rowFree = false; } finally { await probe.query("ROLLBACK").catch(() => undefined); probe.release(); }
+    await held.query("COMMIT");
+    return { rowFree, result: await pending };
+  } catch (error) {
+    await held.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    held.release();
+  }
+}

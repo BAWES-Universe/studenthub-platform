@@ -6,7 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import { recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type RequestStatus } from "../../recruit/src/index.js";
-import { revokeDuring, whileUncommitted } from "./recruit-races.js";
+import { revokeDuring, rowFreeWhileTreeHeld, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS = ["root"];
@@ -214,4 +214,11 @@ test("REC1_FORGET deleting a principal forgets them on closed requests and their
   await assert.rejects(pool.query("UPDATE recruit_requests SET created_by_principal_id = $2 WHERE id = $1", [requestId, await principal(orgId)]), /read-only/);
   await assert.rejects(pool.query("UPDATE recruit_request_events SET to_status = 'open' WHERE request_id = $1", [requestId]), /append-only/);
   await assert.rejects(pool.query("UPDATE recruit_request_events SET actor_principal_id = NULL, actor_ref = $2 WHERE request_id = $1", [requestId, "1".repeat(64)]), /append-only/);
+});
+
+test("REC1_LOCK_ORDER a transition waiting on the organization tree holds no request row", async () => {
+  const orgId = await organization(), storeId = await store(orgId), owner = await principal(orgId), requestId = await create(orgId, owner, storeId);
+  const r = await rowFreeWhileTreeHeld(pool, "SELECT 1 FROM recruit_requests WHERE id = $1 FOR UPDATE NOWAIT", [requestId], () => requests.transition(owner, requestId, "filling", null));
+  assert.equal(r.rowFree, true);
+  assert.equal(r.result.kind, "transitioned");
 });

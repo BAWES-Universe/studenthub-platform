@@ -12,7 +12,7 @@ const env = {
   OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
 };
 
-const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "callback", "companies", "contacts", "exports", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "people", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequests", "registrations", "staffView", "start", "storeManager", "team", "web"].sort();
+const always = ["abuse", "access", "adminJobs", "adminOutbox", "area", "callback", "companies", "contacts", "exports", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "people", "profile", "recruitChecklist", "recruitEmployerView", "recruitFulltimers", "recruitInterviews", "recruitInvitations", "recruitJobs", "recruitPeopleSearch", "recruitPipeline", "recruitRequestApplications", "recruitRequests", "registrations", "staffView", "start", "storeManager", "team", "web"].sort();
 const signed = [...always, "bankDetails", "browserEdit", "organizationApprovedToHire", "organizationCommercialTerms", "organizationDeletion", "organizationNotes", "organizationProfile", "organizationStatus", "preferences", "profileEdit"].sort();
 
 test("PREP_WIRING_SHAPE preserves application and web keys with and without signing", async () => {

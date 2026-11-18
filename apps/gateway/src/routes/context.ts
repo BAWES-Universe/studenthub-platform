@@ -35,6 +35,7 @@ import type { CompanyTeamPorts } from "../access/company-team.js";
 import type { CompanyContactsPorts } from "../access/company-contacts.js";
 import type { StoreManagerPorts } from "../access/store-manager.js";
 import type { AbuseGatePorts } from "../access/abuse-gate.js";
+import type { RecruitRequestApplications } from "../recruit/request-applications-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -70,6 +71,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly abuse?: AbuseGatePorts;
   readonly staffView?: import("../access/staff-view.js").StaffViewPorts;
   readonly registrations?: import("../access/company-registration.js").CompanyRegistrationPorts;
+  readonly recruitRequestApplications?: RecruitRequestApplications;
 };
 
 export interface GatewayRouteContext {
