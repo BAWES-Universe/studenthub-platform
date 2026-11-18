@@ -182,8 +182,10 @@ timer's `planRun` accepts a review only for it. No other review lane is ever
 admitted, a malformed `queue_config_review` admits none, and every binding of
 the record (exact head, base, author family, a reviewer outside that family) is
 still checked as for any review-only run. The timer arms it only once the queue
-is done, on one labelled queue config pull request at its exact head, with
-`codex-verifier` reviewing a Claude-written change (`service/card-run.mjs`).
+is done, on one pull request at its exact head that carries one of the policy's
+labels and changes only that label's paths (queue config, coordinator code or
+product; see `service/README.md`), with `codex-verifier` reviewing a
+Claude-written change (`service/card-run.mjs`).
 
 A review whose launch is uncertain (`LAUNCH_UNKNOWN`) is resumed only while
 its pull request is still the approved one under an armed review-only record.
