@@ -241,10 +241,10 @@ async function signIn(h: Awaited<ReturnType<typeof harness>>, browser = new Brow
   return { browser, done };
 }
 
-async function verifyHost(h: Awaited<ReturnType<typeof harness>>, browser: Browser, over: Partial<ActorAssertionClaims> = {}) {
+async function verifyHost(h: Awaited<ReturnType<typeof harness>>, browser: Browser, over: Partial<ActorAssertionClaims> = {}, key?: string) {
   const challenge = JSON.parse((await browser.api('POST', '/universe/embed/challenge', {})).body).challenge as string;
   assert.match(challenge, /^[A-Za-z0-9_-]{43}$/);
-  return { challenge, reply: JSON.parse((await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(challenge, over) })).body) };
+  return { challenge, reply: JSON.parse((await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(challenge, over, key) })).body) };
 }
 
 test('E2 display: browser binding first, one instance kept on reload, frameable only as the embed shell', async () => {
@@ -412,7 +412,8 @@ test('E2 lease: host A with platform B, wrong issuer/audience, replayed or old c
   ];
   for (const [over, state] of cases) {
     const { browser } = await signIn(h);
-    const { reply } = await verifyHost(h, browser, over);
+    // The other issuer signs its own claims, so only the explicit host-issuer check can refuse it.
+    const { reply } = await verifyHost(h, browser, over, over.iss === 'someone-else' ? h.other.privateKeyPem : undefined);
     assert.deepEqual(reply, { state });
     assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/profile')).body), { state: 'signed_out' });
   }
@@ -518,6 +519,20 @@ test('E2 a store outage while starting sign-in is an outage, not a start-again',
     { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
   assert.equal(connect.status, 503);
   assert.equal(h.rig.provider.authorizationRequests.length, 0);
+});
+
+test('E2 a store failure while completing sign-in answers 503 and leaves no session', async () => {
+  const h = await harness();
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  await browser.go('POST', '/universe/embed/connect', { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  const request = h.rig.provider.authorizationRequests.at(-1)!;
+  const sessionsBefore = h.rig.sessions.records.size;
+  h.store.completeHandoff = async () => { throw new Error('database down'); };
+  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  assert.equal(callback.status, 503);
+  assert.equal(callback.headers['set-cookie'], undefined);
+  assert.equal(h.rig.sessions.records.size, sessionsBefore, 'the new session was removed');
 });
 
 test('E2 link and data states come from My profile\'s reader with provenance', async () => {

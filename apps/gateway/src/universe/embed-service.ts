@@ -372,6 +372,8 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     const wrapped = completingStores(runtime.login.dependencies.states, runtime.login.dependencies.sessions, runtime.store);
     const application = createLoginApplication({ ...runtime.login.dependencies, ...wrapped }, runtime.login.config);
     const result = await application.callback({ browserSessionId: browser, state: state[0], code: code[0] });
+    // A store failure during completion is an outage: rethrown so the request answers 503.
+    if (wrapped.failure() !== undefined) throw wrapped.failure();
     const location = result.headers?.location;
     const cookie = result.headers?.["set-cookie"];
     if (result.status !== 302 || location !== `${config.origin}${DONE_PATH}` || typeof cookie !== "string") { startAgain(); return true; }
