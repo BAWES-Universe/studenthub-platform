@@ -16,7 +16,7 @@ import { handoffBoundStates } from '../src/universe/embed-login-states.js';
 import { LEASE_SECONDS, type EmbedProfileView, type UniverseEmbedRuntime } from '../src/universe/embed-service.js';
 import { UNIVERSE_EMBED_E2_SCRIPT } from '../src/universe/embed-script.js';
 import { sameProviderSubjectMapping } from '../src/universe/host-identity.js';
-import { embedProfilesFrom, wireUniverse } from '../src/wiring/universe.js';
+import { assertSameSiteEmbed, embedProfilesFrom, wireUniverse } from '../src/wiring/universe.js';
 
 const MAIN = 'https://app.example.test', EMBED = 'https://embed.example.test', UNIVERSE = 'https://universe.example.test';
 const PUSHER = 'universe-pusher@test', AUDIENCE = 'studenthub-embed/identity@test';
@@ -146,7 +146,12 @@ function send(server: Server, method: string, path: string, headers: Record<stri
   });
 }
 
-/** A browser cookie jar for the embed host (all cookies are __Host-, Path=/). */
+/**
+ * A browser cookie jar for the embed host (all cookies are __Host-, Path=/).
+ * It sends every cookie on every request, which is only how a real browser
+ * behaves when the embed and all its frame ancestors are one site (SameSite=Lax).
+ * wireUniverse refuses any other topology (assertSameSiteEmbed, tested below).
+ */
 class Browser {
   jar = new Map<string, string>();
   constructor(readonly server: Server) {}
@@ -454,8 +459,10 @@ test('E2 wiring: absent E2 names keep E1 behaviour; partial or unpinned configur
     OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', OIDC_AUTHORIZATION_URL: 'https://identity.test.invalid/a',
     OIDC_TOKEN_URL: 'https://identity.test.invalid/t', OIDC_JWKS_URL: 'https://identity.test.invalid/j',
     UNIVERSE_EMBED_PUSHER_ISSUER: PUSHER, UNIVERSE_EMBED_PUSHER_KEYS: keys, UNIVERSE_EMBED_IDENTITY_AUDIENCE: AUDIENCE,
-    UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'user_email', UNIVERSE_EMBED_HOST_MAPPING: 'same_provider_subject' };
-  for (const broken of [{ UNIVERSE_EMBED_HOST_MAPPING: 'preferred_email' }, { UNIVERSE_EMBED_IDENTITY_AUDIENCE: 'studenthub-embed/identity@prod' },
+    UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'user_email', UNIVERSE_EMBED_HOST_MAPPING: 'same_provider_subject',
+    UNIVERSE_EMBED_SITE: 'example.test' };
+  for (const broken of [{ UNIVERSE_EMBED_SITE: 'other.test' }, { UNIVERSE_EMBED_SITE: 'test' }, { UNIVERSE_EMBED_SITE: 'Example.test' },
+    { UNIVERSE_EMBED_SITE: 'embed.example.test' }, { UNIVERSE_EMBED_HOST_MAPPING: 'preferred_email' }, { UNIVERSE_EMBED_IDENTITY_AUDIENCE: 'studenthub-embed/identity@prod' },
     { UNIVERSE_EMBED_PUSHER_KEYS: '{}' }, { UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'anything' }]) {
     await assert.rejects(wireUniverse({ ...full, ...broken }, base, reader), /Invalid Universe embed E2 configuration/);
   }
@@ -464,4 +471,26 @@ test('E2 wiring: absent E2 names keep E1 behaviour; partial or unpinned configur
   const wired = await wireUniverse(full, base, reader);
   assert.ok(wired.config?.runtime);
   await wired.close();
+});
+
+test('E2 only runs same-site: a cross-site Universe ancestor refuses startup, because Lax cookies would never reach the iframe', async () => {
+  // The service tests' cookie jar assumes same-site delivery; this guarantee is what makes that true.
+  assert.doesNotThrow(() => assertSameSiteEmbed('example.test', EMBED, [UNIVERSE, 'https://dev.example.test:8443', 'https://example.test']));
+  for (const ancestors of [['https://universe.other.test'], [UNIVERSE, 'https://evil-example.test'], ['https://example.test.evil.test'], []]) {
+    assert.throws(() => assertSameSiteEmbed('example.test', EMBED, ancestors), /Invalid Universe embed E2 configuration/, ancestors.join(','));
+  }
+  assert.throws(() => assertSameSiteEmbed('example.test', 'https://embed.other.test', [UNIVERSE]), /Invalid Universe embed E2 configuration/);
+  for (const site of ['', 'test', '.example.test', 'example..test', '127.0.0.1', 'EXAMPLE.test', 'example.test.']) {
+    assert.throws(() => assertSameSiteEmbed(site, EMBED, [UNIVERSE]), /Invalid Universe embed E2 configuration/, site);
+  }
+  const reader = { readOwn: async () => ({ kind: 'unavailable' as const }) };
+  const cross = createUniverseEmbedConfigFromEnv({ UNIVERSE_EMBED_ORIGIN: EMBED, UNIVERSE_EMBED_ENABLED: 'true',
+    UNIVERSE_EMBED_ANCESTORS: 'https://universe.other.test', UNIVERSE_EMBED_OIDC_CALLBACK_URL: `${EMBED}/login/callback` }, MAIN)!;
+  const keys = JSON.stringify({ k1: (await generateEd25519KeyPair()).publicKeyPem });
+  await assert.rejects(wireUniverse({ DATABASE_URL: 'postgres://synthetic:synthetic@127.0.0.1:1/synthetic', OIDC_ISSUER: 'https://identity.test.invalid/',
+    OIDC_CLIENT_ID: 'c', OIDC_CLIENT_SECRET: 's', OIDC_AUTHORIZATION_URL: 'https://identity.test.invalid/a',
+    OIDC_TOKEN_URL: 'https://identity.test.invalid/t', OIDC_JWKS_URL: 'https://identity.test.invalid/j',
+    UNIVERSE_EMBED_PUSHER_ISSUER: PUSHER, UNIVERSE_EMBED_PUSHER_KEYS: keys, UNIVERSE_EMBED_IDENTITY_AUDIENCE: AUDIENCE,
+    UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'user_email', UNIVERSE_EMBED_HOST_MAPPING: 'same_provider_subject',
+    UNIVERSE_EMBED_SITE: 'example.test' }, cross, reader), /Invalid Universe embed E2 configuration/);
 });

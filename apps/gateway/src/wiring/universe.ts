@@ -19,6 +19,7 @@ const E2_NAMES = [
   "UNIVERSE_EMBED_IDENTITY_AUDIENCE",
   "UNIVERSE_EMBED_HOST_SUBJECT_FORMAT",
   "UNIVERSE_EMBED_HOST_MAPPING",
+  "UNIVERSE_EMBED_SITE",
 ] as const;
 const LOGIN_NAMES = ["DATABASE_URL", "OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET",
   "OIDC_AUTHORIZATION_URL", "OIDC_TOKEN_URL", "OIDC_JWKS_URL"] as const;
@@ -63,6 +64,28 @@ export function embedProfilesFrom(reader: OwnProfileReader): EmbedProfileSource 
       return { state: "populated", fields: out };
     },
   };
+}
+
+/**
+ * E2's cookies are `__Host-`, SameSite=Lax. A browser sends them to the embed
+ * iframe and to the sign-in form's top-level POST only when the embed host and
+ * every frame ancestor are one schemeful site. Cross-site (or partitioned)
+ * embedding is not supported, so it refuses startup instead of failing in the
+ * browser. UNIVERSE_EMBED_SITE names the registrable domain explicitly (no
+ * public-suffix guessing); every host must be that domain or a subdomain of it.
+ */
+export function assertSameSiteEmbed(site: string, embedOrigin: string, ancestors: readonly string[]): void {
+  const labels = site.split(".");
+  if (site !== site.toLowerCase() || labels.length < 2
+    || !labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+    || /^[0-9]+$/.test(labels[labels.length - 1]!)) fail();
+  if (ancestors.length === 0) fail();
+  for (const value of [embedOrigin, ...ancestors]) {
+    const url = new URL(value);
+    if (url.protocol !== "https:") fail();
+    const host = url.hostname;
+    if (host !== site && !host.endsWith(`.${site}`)) fail();
+  }
 }
 
 function subjectFormat(value: string): SubjectPolicy {
@@ -112,6 +135,7 @@ export async function wireUniverse(
   if (present.length !== E2_NAMES.length || !config.enabled || !config.callbackUrl || !profiles) fail();
   for (const name of LOGIN_NAMES) if (!env[name] || env[name]!.trim() !== env[name]) fail();
   if (new URL(config.callbackUrl).pathname !== "/login/callback") fail();
+  assertSameSiteEmbed(env.UNIVERSE_EMBED_SITE!, config.origin, config.ancestors);
   // E0 pins exactly one rule. Only the same-provider rule is implemented.
   if (env.UNIVERSE_EMBED_HOST_MAPPING !== "same_provider_subject") fail();
   const pusherIssuer = env.UNIVERSE_EMBED_PUSHER_ISSUER!;
