@@ -69,3 +69,13 @@ test("A8_BLOCKS only an operator admin changes the block list, with a reason", (
   assert.equal(parseBlockChange({ action: "ban", cidr: "203.0.113.7", reason: "Credential stuffing" }), undefined);
   assert.equal(parseBlockChange({ action: "unblock", cidr: "203.0.113.7/24", reason: "Credential stuffing" }), undefined);
 });
+
+test("A8_BLOCKS an IPv6 rule never matches an IPv4 address, nor an IPv4 rule an IPv6 one", () => {
+  const list = blockListOf([parseCidr("::/16")!, parseCidr("2001:db8::/32")!]);
+  assert.equal(listed(list, "203.0.113.9"), false, "::/16 covers mapped IPv4 in Node's BlockList, but not here");
+  assert.equal(listed(list, "0:1::1"), true);
+  const v4 = blockListOf([parseCidr("0.0.0.0/8")!, parseCidr("203.0.113.0/24")!]);
+  assert.equal(listed(v4, "::1"), false);
+  assert.equal(listed(v4, "203.0.113.9"), true);
+  assert.equal(listed(v4, "not an address"), false);
+});

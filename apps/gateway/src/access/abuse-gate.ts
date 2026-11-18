@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { BlockList } from "node:net";
 import type { SessionStore } from "@studenthub/login-contract";
 import {
   PERSON_LIMITS,
@@ -14,6 +13,7 @@ import {
   parseCidr,
   windowStart,
   type AbuseStore,
+  type AddressList,
   type AccessReadStore,
   type IpBlockRow,
 } from "../../../../packages/access/src/index.js";
@@ -36,7 +36,7 @@ export interface AbuseGatePorts {
   readonly sessions: Pick<SessionStore, "get">;
   readonly store: AbuseStore;
   readonly reads: Pick<AccessReadStore, "callerGrants">;
-  readonly trustedProxies: BlockList;
+  readonly trustedProxies: AddressList;
   readonly operatorOrgIds?: readonly string[];
   readonly nowEpochSeconds?: () => number;
   /** How long a read block list is used before it is read again (default 15 s). */
@@ -45,7 +45,7 @@ export interface AbuseGatePorts {
 
 export type AbusePageWriter = (status: number, title: string, body: string, headers?: Record<string, string>) => void;
 
-interface HeldList { readonly list: BlockList; readonly rows: readonly IpBlockRow[]; readonly readAt: number; readonly generation: number }
+interface HeldList { readonly list: AddressList; readonly rows: readonly IpBlockRow[]; readonly readAt: number; readonly generation: number }
 interface ListState { held?: HeldList; inflight?: { readonly generation: number; readonly read: Promise<HeldList | undefined> }; generation: number; failedAt?: number }
 
 const states = new WeakMap<AbuseGatePorts, ListState>();
@@ -68,7 +68,7 @@ function deadline<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
  * restore the old list). A slow read is waited on for REFRESH_DEADLINE_MS at
  * most; the request then goes on with the last list.
  */
-async function blockList(ports: AbuseGatePorts, now: number, fresh = false): Promise<HeldList | undefined> {
+export async function blockList(ports: AbuseGatePorts, now: number, fresh = false): Promise<HeldList | undefined> {
   let state = states.get(ports);
   if (!state) { state = { generation: 0 }; states.set(ports, state); }
   const { held } = state;
@@ -81,15 +81,21 @@ async function blockList(ports: AbuseGatePorts, now: number, fresh = false): Pro
   let inflight = state.inflight;
   if (!inflight || inflight.generation < generation) {
     const s = state;
-    const read = ports.store.blocks().then((rows) => {
+    // The read itself is bounded, so a hung query releases the shared entry
+    // and counts as a failure instead of holding every later request.
+    const failed = () => { if (generation === s.generation) s.failedAt = now; return undefined; };
+    const read = deadline(ports.store.blocks(), REFRESH_DEADLINE_MS).then((rows) => {
+      if (rows === undefined) return failed();
       const next: HeldList = { rows, list: blockListOf(rows.map((row) => parseCidr(row.cidr)).filter((cidr) => cidr !== undefined)), readAt: now, generation };
-      if (!s.held || s.held.generation <= generation) { s.held = next; s.failedAt = undefined; }
+      // Only a read of the current generation is published: one superseded by
+      // a block change must not restore the old list or reset the retry clock.
+      if (generation === s.generation) { s.held = next; s.failedAt = undefined; }
       return next;
-    }, () => { s.failedAt = now; return undefined; }).finally(() => { if (s.inflight?.read === read) s.inflight = undefined; });
+    }, failed).finally(() => { if (s.inflight?.read === read) s.inflight = undefined; });
     inflight = { generation, read };
     state.inflight = inflight;
   }
-  const read = fresh ? await inflight.read : await deadline(inflight.read, REFRESH_DEADLINE_MS);
+  const read = await inflight.read;
   return read ?? (fresh ? undefined : state.held);
 }
 

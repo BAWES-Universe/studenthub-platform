@@ -127,18 +127,32 @@ export function cidrText(cidr: Cidr): string {
   return `${cidr.address}/${cidr.prefix}`;
 }
 
-export function blockListOf(cidrs: readonly Cidr[]): BlockList {
-  const list = new BlockList();
-  for (const cidr of cidrs) list.addSubnet(cidr.address, cidr.prefix, cidr.family);
-  return list;
+/**
+ * One BlockList per family. Node's BlockList matches an IPv4 address against
+ * IPv6 rules through the mapped form, so a single list would let an IPv6 rule
+ * such as ::/16 cover every IPv4 caller. Mapped addresses are normalized to
+ * IPv4 before they get here, so each family is checked only against its own.
+ */
+export interface AddressList {
+  readonly ipv4: BlockList;
+  readonly ipv6: BlockList;
 }
 
-export function listed(list: BlockList, address: string): boolean {
-  return list.check(address, isIP(address) === 4 ? "ipv4" : "ipv6");
+export function blockListOf(cidrs: readonly Cidr[]): AddressList {
+  const list = { ipv4: new BlockList(), ipv6: new BlockList() };
+  for (const cidr of cidrs) list[cidr.family].addSubnet(cidr.address, cidr.prefix, cidr.family);
+  return Object.freeze(list);
+}
+
+export function listed(list: AddressList, address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return list.ipv4.check(address, "ipv4");
+  if (family === 6) return list.ipv6.check(address, "ipv6");
+  return false;
 }
 
 /** The client address: the socket peer, or, behind a trusted proxy, the rightmost untrusted forwarded address. */
-export function clientAddress(remoteAddress: string | undefined, forwardedFor: string | string[] | undefined, trustedProxies: BlockList): string | undefined {
+export function clientAddress(remoteAddress: string | undefined, forwardedFor: string | string[] | undefined, trustedProxies: AddressList): string | undefined {
   const peer = remoteAddress ? normalizeAddress(remoteAddress) : undefined;
   if (!peer || !listed(trustedProxies, peer)) return peer;
   const header = Array.isArray(forwardedFor) ? forwardedFor.join(",") : forwardedFor ?? "";

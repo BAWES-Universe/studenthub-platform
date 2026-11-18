@@ -125,3 +125,32 @@ test("A9_RULES a grant removed while the form is read starts nothing; a view tha
   assert.match(html, /This view has ended\./);
   assert.doesNotMatch(html, /Phone ending 1234/);
 });
+
+test("A9_RULES a right, a session or the view lost while the profile renders sends nothing of it", async (t) => {
+  const w = world();
+  const http = await serve(t, { staffView: w.staffView, access: w.access, web: { origin: ORIGIN } });
+  assert.equal((await start(http, "s")).status, 303);
+  const view = () => http("/admin/access/people/person-1/view", { headers: cookie("s") });
+  const reads = w.staffView.reads as { callerGrants: (id: string) => Promise<readonly { orgId: string; role: string; scope: string }[]> };
+  const callerGrants = reads.callerGrants;
+  const views = w.staffView.views as { grantsOf: (id: string) => Promise<readonly { orgId: string; role: string; scope: string }[]> };
+  const grantsOf = views.grantsOf;
+  const sessions = w.staffView.sessions as { get: (id: string) => Promise<{ id: string; personId: string } | undefined> };
+  const session = sessions.get;
+  const cases: [string, () => void, number, RegExp | undefined][] = [
+    ["staff grant revoked", () => { reads.callerGrants = async () => []; }, 404, undefined],
+    ["signed out", () => { sessions.get = async () => undefined; }, 404, undefined],
+    ["target became staff", () => { views.grantsOf = async () => [{ orgId: "root", role: "staff", scope: "subtree" }]; }, 200, /This view has ended\./],
+  ];
+  for (const [label, lose, status, body] of cases) {
+    (w.staffView as { render: StaffViewPorts["render"] }).render = async () => { lose(); return PROFILE; };
+    const response = await view();
+    const html = await response.text();
+    assert.equal(response.status, status, label);
+    if (body) assert.match(html, body, label);
+    assert.doesNotMatch(html, /Phone ending 1234/, label);
+    reads.callerGrants = callerGrants; views.grantsOf = grantsOf; sessions.get = session;
+  }
+  (w.staffView as { render: StaffViewPorts["render"] }).render = async () => PROFILE;
+  assert.match(await (await view()).text(), /Phone ending 1234/, "with nothing lost the profile is shown");
+});

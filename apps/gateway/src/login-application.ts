@@ -105,7 +105,9 @@ export function confirmingSessions(store: SessionStore, options: UpstreamConfirm
     [CONFIRMING]: true,
     put: (record) => store.put(record),
     delete: (id) => store.delete(id),
-    ...(store.take ? { take: (id: string) => store.take!(id) } : {}),
+    // Sign-out takes the row from the unchecked store: ending a session must
+    // never wait on (or be refused by) an upstream check.
+    take: (id: string) => takeSession(store, id),
     ...(store.claimUpstreamCheck ? { claimUpstreamCheck: (id: string, before: number, now: number) => store.claimUpstreamCheck!(id, before, now) } : {}),
     ...(store.confirmUpstream ? { confirmUpstream: (id: string, now: number) => store.confirmUpstream!(id, now) } : {}),
     ...(store.settleUpstreamCheck ? { settleUpstreamCheck: (id: string, checkedAt: number) => store.settleUpstreamCheck!(id, checkedAt) } : {}),
@@ -131,8 +133,12 @@ export function confirmingSessions(store: SessionStore, options: UpstreamConfirm
     if (shared) return shared;
     // A check claimed elsewhere and not yet answered: its answer may be
     // `ended`, so this request never rides on the row as it was before it.
-    if (unsettled(session) && now - session.lastCheckedAt! < waitSeconds) return settled(id);
-    if (session.lastCheckedAt !== undefined && now - session.lastCheckedAt < bound) return session;
+    if (unsettled(session)) {
+      if (now - session.lastCheckedAt! < waitSeconds) return settled(id);
+      // A claim that never settled (its process died mid-check) is not a
+      // recent answer: refuse, without deleting, until a new claim is allowed.
+      if (now - session.lastCheckedAt! < bound) return undefined;
+    } else if (session.lastCheckedAt !== undefined && now - session.lastCheckedAt < bound) return session;
     const run = check(id, reference, now);
     inflight.set(id, run);
     try {

@@ -17,7 +17,9 @@ CREATE INDEX person_request_counts_window_idx ON person_request_counts (window_s
 
 CREATE TABLE ip_blocks (
   id             UUID PRIMARY KEY,
-  cidr           CIDR NOT NULL,
+  -- An IPv4-mapped IPv6 network is stored as IPv4, so one network has one row
+  -- and the row the page shows is the row an unblock finds.
+  cidr           CIDR NOT NULL CHECK (family(cidr) = 4 OR NOT (cidr <<= '::ffff:0.0.0.0/96'::cidr)),
   reason         TEXT NOT NULL CHECK (char_length(reason) BETWEEN 3 AND 500),
   created_by     TEXT NOT NULL,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),

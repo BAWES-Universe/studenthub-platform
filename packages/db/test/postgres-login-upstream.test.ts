@@ -133,3 +133,25 @@ test("SHU457_BOUND a reader in another process waits for an in-flight check and 
     await second.close();
   }
 });
+
+test("SHU457_BOUND a claim that never settled is not a recent answer: refused until T passes, then checked again", async () => {
+  let calls = 0;
+  const wrapped = confirmingSessions(store.sessions, {
+    upstream: { isActive: async () => { calls += 1; return "active"; }, end: async () => "ended" } as never,
+    clock: { nowEpochSeconds: () => NOW }, boundSeconds: 900, timeoutMs: 200, log: () => undefined,
+  });
+  // A process claimed the check a minute ago and died before it answered.
+  const dead = randomUUID();
+  await store.sessions.put({ id: dead, personId: await person(), upstreamReference: "sid-dead-claim", lastCheckedAt: NOW - 60, lastConfirmedAt: NOW - 120 });
+  const started = Date.now();
+  assert.equal(await wrapped.get(dead), undefined, "the unanswered claim does not let the request through");
+  assert.ok(Date.now() - started < 1_000, "past the wait window it refuses at once");
+  assert.ok(await store.sessions.get(dead), "refusing deletes nothing");
+  assert.equal(calls, 0, "no second check inside T");
+
+  // Once T has passed since that claim, a new check may be claimed and answers.
+  const old = randomUUID();
+  await store.sessions.put({ id: old, personId: await person(), upstreamReference: "sid-old-claim", lastCheckedAt: NOW - 901, lastConfirmedAt: NOW - 1000 });
+  assert.equal((await wrapped.get(old))?.id, old);
+  assert.equal(calls, 1);
+});

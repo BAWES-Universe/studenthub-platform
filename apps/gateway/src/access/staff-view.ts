@@ -120,7 +120,15 @@ export async function handleStaffView(
     page(503, "This profile couldn’t be loaded.", "Try again in a moment. The view stays open until it ends.");
     return true;
   }
-  if (!viewOpen(open, (ports.now ?? (() => new Date()))())) {
+  // Rendering takes time: before the profile leaves, check again that the
+  // caller is still signed in and an administrator, that the view may still
+  // be held, and that it is still open. A lost right reads as the unknown path.
+  const callerAfter = (await ports.sessions.get(session!))?.personId;
+  const callerGrantsAfter = callerAfter === caller ? await ports.reads.callerGrants(caller) : undefined;
+  if (!callerGrantsAfter || !mayOpenAccessAdmin(callerGrantsAfter, ports.operatorOrgIds)) return false;
+  const stillAllowed = mayViewAs(caller, targetId, callerGrantsAfter, await ports.views.grantsOf(targetId), ports.operatorOrgIds);
+  const openAfter = stillAllowed ? await ports.views.open(caller, targetId) : null;
+  if (!openAfter || openAfter.id !== open.id || !viewOpen(openAfter, (ports.now ?? (() => new Date()))())) {
     page(200, "This view has ended.", "Views last 15 minutes. Start a new one from this person’s access page if you still need it.");
     return true;
   }

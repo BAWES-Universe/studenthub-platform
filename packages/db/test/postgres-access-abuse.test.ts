@@ -52,6 +52,8 @@ test("A8_BLOCKS blocks keep who, when and why, can be removed once, and are neve
   await assert.rejects(pool.query("UPDATE ip_blocks SET reason = 'edited' WHERE cidr = $1::cidr", [net]), /only be removed, once/);
   await assert.rejects(pool.query("UPDATE ip_blocks SET id = gen_random_uuid() WHERE cidr = $1::cidr AND created_by = $2", [net, admin]), /only be removed, once/);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM ip_blocks WHERE cidr = $1::cidr AND created_by = $2", [net, admin])).rows[0].n, 1, "this test's row stays");
+  // A mapped IPv6 network would have two spellings and an unblock could miss it: it is stored as IPv4 only.
+  await assert.rejects(pool.query("INSERT INTO ip_blocks (id, cidr, reason, created_by) VALUES (gen_random_uuid(), '::ffff:203.0.113.0/120', 'mapped', $1)", [admin]), /check constraint/);
 });
 
 test("A8_BLOCKS an admin grant revoked while the block waits for the caller's lock blocks nothing", async () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { createGatewayServer } from "../src/index.js";
-import type { AbuseGatePorts } from "../src/access/abuse-gate.js";
+import { blockList, type AbuseGatePorts } from "../src/access/abuse-gate.js";
 import { PERSON_LIMITS, blockListOf, parseTrustedProxies, type AbuseStore, type IpBlockRow } from "../../../packages/access/src/index.js";
 
 const ORIGIN = "https://studenthub.example.invalid";
@@ -131,4 +131,36 @@ test("A8_BLOCKS an admin right lost between the page check and the write changes
     headers: { ...cookieFor("a"), origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" } });
   assert.equal(response.status, 404);
   assert.deepEqual(w.changes, [], "nothing was written");
+});
+
+test("A8_BLOCKS a block-list read superseded by a change never publishes the old list as fresh", async () => {
+  const w = world();
+  const ports: AbuseGatePorts = { ...w.ports, blockListSeconds: 60 };
+  const pending: { resolve: (rows: readonly IpBlockRow[]) => void; reject: (error: Error) => void }[] = [];
+  const real = ports.store.blocks.bind(ports.store);
+  ports.store.blocks = () => new Promise((resolve, reject) => { pending.push({ resolve, reject }); });
+  const now = 1_800_000_000;
+  const before = blockList(ports, now); // a read of the list as it was before a change
+  const after = blockList(ports, now, true); // the change starts a new generation
+  pending[0]!.resolve([]); // the old read answers after the change
+  assert.deepEqual((await before)?.rows, [], "the request that started it uses what it read");
+  pending[1]!.reject(new Error("read failed")); // and the read after the change fails
+  assert.equal(await after, undefined);
+  w.block("203.0.113.0/24");
+  ports.store.blocks = real;
+  // The old list was never held, so a read after the retry pause sees the block.
+  const held = await blockList(ports, now + 6);
+  assert.equal(held?.rows.length, 1);
+});
+
+test("A8_BLOCKS a hung block-list read is bounded and released, so later requests don't wait on it", async (t) => {
+  const w = world();
+  w.ports.store.blocks = () => new Promise(() => {});
+  const http = await serve(t, w.ports);
+  let started = Date.now();
+  assert.equal((await http("/")).status, 200, "the request goes on without a list");
+  assert.ok(Date.now() - started < 3_000);
+  started = Date.now();
+  assert.equal((await http("/")).status, 200);
+  assert.ok(Date.now() - started < 500, "a failed read is not retried at once");
 });
