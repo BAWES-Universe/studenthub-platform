@@ -4,3 +4,4 @@ export * from "./decimal-string.js";
 export * from "./document.js";
 export * from "./numbering-rules.js";
 export * from "./fixtures.js";
+export * from "./legacy-invoices.js";
