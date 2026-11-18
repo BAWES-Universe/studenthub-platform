@@ -39,15 +39,20 @@ CREATE UNIQUE INDEX universe_embed_handoffs_current_idx ON universe_embed_handof
   WHERE status IN ('pending', 'completed');
 CREATE INDEX universe_embed_handoffs_expiry_idx ON universe_embed_handoffs(expires_at);
 
+-- Binding generations come from one sequence, so a value is never reused, not
+-- even by a later binding of the same instance: a verification or refusal that
+-- read an earlier binding can never match (lease or delete) a replacement.
+CREATE SEQUENCE universe_embed_binding_generation_seq AS integer;
+
 -- The embed binding and its host-verification lease. One per instance.
--- generation advances on every accepted attestation; a challenge is valid only
+-- generation changes on every accepted attestation; a challenge is valid only
 -- for the generation it was issued in, so an old challenge can never renew.
 CREATE TABLE universe_embed_bindings (
   instance_id uuid PRIMARY KEY REFERENCES universe_embed_instances(id) ON DELETE CASCADE,
   browser_binding_digest text NOT NULL CHECK (length(browser_binding_digest) = 43),
   session_digest text NOT NULL CHECK (length(session_digest) = 43),
   person_id text NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-  generation integer NOT NULL DEFAULT 0 CHECK (generation >= 0),
+  generation integer NOT NULL DEFAULT nextval('universe_embed_binding_generation_seq') CHECK (generation > 0),
   lease_host_subject_digest text CHECK (lease_host_subject_digest IS NULL OR length(lease_host_subject_digest) = 43),
   lease_expires_at timestamptz CHECK (lease_expires_at IS NULL OR isfinite(lease_expires_at)),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -58,7 +63,7 @@ CREATE INDEX universe_embed_bindings_person_idx ON universe_embed_bindings(perso
 CREATE TABLE universe_embed_challenges (
   challenge_digest text PRIMARY KEY CHECK (length(challenge_digest) = 43),
   instance_id uuid NOT NULL REFERENCES universe_embed_bindings(instance_id) ON DELETE CASCADE,
-  generation integer NOT NULL CHECK (generation >= 0),
+  generation integer NOT NULL CHECK (generation > 0),
   expires_at timestamptz NOT NULL CHECK (isfinite(expires_at))
 );
 CREATE INDEX universe_embed_challenges_instance_idx ON universe_embed_challenges(instance_id);

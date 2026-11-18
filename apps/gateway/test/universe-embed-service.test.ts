@@ -36,6 +36,8 @@ class MemoryEmbedStore implements UniverseEmbedStore {
   readonly locked = new Set<string>();
   readonly subjects = new Map<string, string[]>();
   leaseWrites: Array<{ iat: number }> = [];
+  /** Like the database sequence: a generation value is never reused. */
+  nextGeneration = 1;
   async ensureInstance(browser: string, ref: string, ttl: number) {
     const b = digest(browser);
     let id = [...this.instances].find(([, v]) => v.browser === b && v.expires > this.now)?.[0];
@@ -52,7 +54,9 @@ class MemoryEmbedStore implements UniverseEmbedStore {
     return i && i.browser === digest(browser) && i.expires > this.now ? id : undefined;
   }
   async createHandoff(instance: string, browser: string, ttl: number) {
-    for (const h of this.handoffs.values()) if (h.instance === instance && (h.status === 'pending' || h.status === 'completed')) h.status = 'superseded';
+    for (const h of this.handoffs.values()) if (h.instance === instance && (h.status === 'pending' || h.status === 'completed')) {
+      Object.assign(h, { status: 'superseded', session: undefined, person: undefined });
+    }
     const id = randomUUID();
     this.handoffs.set(id, { instance, browser: digest(browser), status: 'pending', expires: this.now + ttl });
     return id;
@@ -74,7 +78,7 @@ class MemoryEmbedStore implements UniverseEmbedStore {
       && x.session === digest(session) && x.status === 'completed' && x.expires > this.now);
     if (!h) return undefined;
     h.status = 'consumed';
-    this.bindings.set(instance, { browser: digest(browser), session: digest(session), person: h.person!, generation: 0 });
+    this.bindings.set(instance, { browser: digest(browser), session: digest(session), person: h.person!, generation: this.nextGeneration++ });
     for (const [k, c] of this.challenges) if (c.instance === instance) this.challenges.delete(k);
     return h.person;
   }
@@ -85,7 +89,8 @@ class MemoryEmbedStore implements UniverseEmbedStore {
     return { personId: b.person, generation: b.generation, locked: this.locked.has(b.person),
       ...(live ? { lease: { hostSubjectDigest: b.leaseSubject!, expiresAt: new Date(b.leaseExpires! * 1000) } } : {}) };
   }
-  async invalidateBinding(instance: string) {
+  async invalidateBinding(instance: string, generation?: number) {
+    if (generation !== undefined && this.bindings.get(instance)?.generation !== generation) return;
     this.bindings.delete(instance);
     for (const [k, c] of this.challenges) if (c.instance === instance) this.challenges.delete(k);
   }
@@ -109,7 +114,7 @@ class MemoryEmbedStore implements UniverseEmbedStore {
     if (!b || b.generation !== generation || sessionExpires === undefined) return undefined;
     const expires = Math.min(iat + seconds, sessionExpires);
     if (expires <= this.now) return undefined;
-    Object.assign(b, { generation: generation + 1, leaseSubject: digest(subject), leaseExpires: expires });
+    Object.assign(b, { generation: this.nextGeneration++, leaseSubject: digest(subject), leaseExpires: expires });
     return new Date(expires * 1000);
   }
   async identitySubjects(person: string, issuer: string) { return this.subjects.get(`${person}\u0000${issuer}`) ?? []; }
@@ -176,7 +181,7 @@ class Browser {
   }
 }
 
-async function harness(options: { profile?: EmbedProfileView } = {}) {
+async function harness(options: { profile?: EmbedProfileView; duringRead?: () => void } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   const store = new MemoryEmbedStore();
   const pusher = await generateEd25519KeyPair();
@@ -190,12 +195,13 @@ async function harness(options: { profile?: EmbedProfileView } = {}) {
     login: { dependencies: { oidc: rig.provider, jwks: rig.provider, clock: rig.clock, entropy: rig.entropy, states: rig.states,
       sessions: rig.sessions, identities: rig.identities, authorization: rig.authorization },
       config: { ...rig.config, allowedReturnUrls: [`${EMBED}/universe/embed/done`] } },
+    authorizationOrigin: new URL(rig.config.issuer).origin,
     hostIdentity: { pusherIssuer: PUSHER, audience: AUDIENCE, subjectPolicy: { humanSubjectPattern: /^universe:student:[a-z0-9-]+$/ },
       keys: async (issuer, kid) => issuer === PUSHER && (kid === undefined || kid === 'k1') ? pusher.publicKeyPem
         : issuer === 'someone-else' ? other.publicKeyPem : undefined,
       replay: new MemoryReplayStore() },
     mapping: sameProviderSubjectMapping(rig.config.issuer, (person, issuer) => store.identitySubjects(person, issuer)),
-    profiles: { async read(person) { profileReads.push(person); return options.profile ?? { state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic Person', source: 'imported_snapshot' }] }; } },
+    profiles: { async read(person) { profileReads.push(person); options.duringRead?.(); return options.profile ?? { state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic Person', source: 'imported_snapshot' }] }; } },
   };
   const config: UniverseEmbedConfig = Object.freeze({ ...base, runtime });
   const server = createGatewayServer(undefined, undefined, undefined, undefined, null, undefined,
@@ -204,7 +210,7 @@ async function harness(options: { profile?: EmbedProfileView } = {}) {
     const now = Math.floor(Date.now() / 1000);
     return signAssertion({ v: 1, iss: PUSHER, kid: 'k1', aud: AUDIENCE, sub: SUBJECT, iat: now, exp: now + 60, jti: challenge, ...over }, key);
   };
-  return { rig, store, server, attest, profileReads, other };
+  return { rig, store, server, attest, profileReads, other, runtime };
 }
 
 /** Load the frame, sign in through the handoff, return to /done. */
@@ -214,6 +220,8 @@ async function signIn(h: Awaited<ReturnType<typeof harness>>, browser = new Brow
   const connect = await browser.go('POST', '/universe/embed/connect',
     { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
   assert.equal(connect.status, 302);
+  // The redirect target is the origin the display's form-action allows.
+  assert.equal(new URL(String(connect.headers.location)).origin, h.runtime.authorizationOrigin);
   const request = h.rig.provider.authorizationRequests.at(-1)!;
   const code = h.rig.provider.authorize();
   const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${code}`);
@@ -237,6 +245,8 @@ test('E2 display: browser binding first, one instance kept on reload, frameable 
   assert.deepEqual(cookies.map(c => c.split('=')[0]), ['__Host-studenthub_browser', '__Host-studenthub_embed']);
   for (const c of cookies) assert.match(c, /; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
   assert.match(String(first.headers['content-security-policy']), new RegExp(`frame-ancestors ${UNIVERSE};`));
+  // The connect form is redirected to the identity provider; form-action must allow exactly that origin.
+  assert.match(String(first.headers['content-security-policy']), new RegExp(`form-action 'self' ${new URL(h.rig.config.issuer).origin};`));
   assert.equal(first.headers['x-frame-options'], undefined);
   assert.equal(h.store.instances.size, 1);
   const reload = await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
@@ -467,7 +477,8 @@ test('E2 wiring: absent E2 names keep E1 behaviour; partial or unpinned configur
     UNIVERSE_EMBED_SITE: 'example.test' };
   for (const broken of [{ UNIVERSE_EMBED_SITE: 'other.test' }, { UNIVERSE_EMBED_SITE: 'test' }, { UNIVERSE_EMBED_SITE: 'Example.test' },
     { UNIVERSE_EMBED_SITE: 'embed.example.test' }, { UNIVERSE_EMBED_HOST_MAPPING: 'preferred_email' }, { UNIVERSE_EMBED_IDENTITY_AUDIENCE: 'studenthub-embed/identity@prod' },
-    { UNIVERSE_EMBED_PUSHER_KEYS: '{}' }, { UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'anything' }]) {
+    { UNIVERSE_EMBED_PUSHER_KEYS: '{}' }, { UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'anything' },
+    { UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'hashed_user_id' }, { OIDC_AUTHORIZATION_URL: 'http://identity.test.invalid/a' }]) {
     await assert.rejects(wireUniverse({ ...full, ...broken }, base, reader), /Invalid Universe embed E2 configuration/);
   }
   const disabled = createUniverseEmbedConfigFromEnv({ UNIVERSE_EMBED_ORIGIN: EMBED, UNIVERSE_EMBED_ENABLED: 'false' }, MAIN);
@@ -642,4 +653,72 @@ test('E2 script: a ready status without a live client lease re-verifies instead 
   assert.equal(rig.shown(), false);
   assert.deepEqual(rig.calls, ['GET /universe/embed/status', 'POST /universe/embed/challenge']);
   assert.equal(rig.posted.length, 1);
+});
+
+test('E2 profile: a read that outlasts the lease releases no fields', async () => {
+  let h!: Awaited<ReturnType<typeof harness>>;
+  h = await harness({ duringRead: () => { const b = [...h.store.bindings.values()][0]!; h.store.now = b.leaseExpires! + 1; } });
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
+  const reply = JSON.parse((await browser.api('GET', '/universe/embed/profile')).body);
+  assert.deepEqual(reply, { state: 'needs_universe' });
+  assert.equal(h.profileReads.length, 1, 'the read happened, but its fields were not sent');
+});
+
+test('E2 a stale refusal never deletes a renewed or replaced binding', async () => {
+  const h = await harness();
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
+  // Two tabs of the same frame ask for challenges in the same generation.
+  const a = JSON.parse((await browser.api('POST', '/universe/embed/challenge', {})).body).challenge as string;
+  const b = JSON.parse((await browser.api('POST', '/universe/embed/challenge', {})).body).challenge as string;
+  const first = JSON.parse((await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(a) })).body);
+  assert.equal(first.state, 'ready');
+  // The other tab's challenge is now stale; its refusal must not remove the renewed binding.
+  const second = JSON.parse((await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(b) })).body);
+  assert.deepEqual(second, { state: 'start_again' });
+  assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/status')).body), { state: 'ready' });
+  // A failure against the current version still invalidates it.
+  const c = JSON.parse((await browser.api('POST', '/universe/embed/challenge', {})).body).challenge as string;
+  const bad = JSON.parse((await browser.api('POST', '/universe/embed/identity', { attestation: await h.attest(c, { aud: 'wrong' }) })).body);
+  assert.deepEqual(bad, { state: 'start_again' });
+  assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/status')).body), { state: 'signed_out' });
+  // Generations never repeat across rebinds, so an old version cannot match a new binding.
+  const instance = [...h.store.bindings.keys()][0];
+  assert.equal(instance, undefined);
+});
+
+test('E2 a new connect after the callback but before /done supersedes cleanly', async () => {
+  const h = await harness();
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  const post = () => browser.go('POST', '/universe/embed/connect', { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  assert.equal((await post()).status, 302);
+  const request = h.rig.provider.authorizationRequests.at(-1)!;
+  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  assert.equal(callback.status, 302);
+  assert.equal((await post()).status, 302, 'superseding a completed handoff starts a new sign-in');
+  const old = [...h.store.handoffs.values()].find(x => x.status === 'superseded')!;
+  assert.equal(old.session, undefined);
+  assert.equal(old.person, undefined);
+  assert.equal((await browser.go('GET', '/universe/embed/done')).status, 400, 'the superseded completion cannot be used');
+});
+
+test('E2 script: while waiting for the sign-in tab, the frame notices the completed sign-in', async () => {
+  const rig = scriptRig();
+  let status = 'signed_out';
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: status }));
+  rig.routes.set('POST /universe/embed/challenge', async () => ({ challenge: 'c1' }));
+  await rig.start();
+  assert.equal(rig.body.getAttribute('data-state'), 'signed_out');
+  for (const fn of rig.ids.connect!.listeners.get('submit') ?? []) fn({});
+  assert.equal(rig.body.getAttribute('data-state'), 'waiting');
+  await rig.advance(3_000);
+  assert.equal(rig.body.getAttribute('data-state'), 'waiting', 'still signing in: the waiting message stays');
+  status = 'needs_universe';
+  await rig.advance(3_000);
+  assert.equal(rig.body.getAttribute('data-state'), 'needs_universe');
+  assert.equal(rig.posted.length, 1, 'verification started without any visibility change');
 });

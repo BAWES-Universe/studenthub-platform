@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createPublicKey } from "node:crypto";
-import { HASHED_USER_ID_SUBJECT_POLICY, UNIVERSE_SUBJECT_POLICY, USER_EMAIL_SUBJECT_POLICY, type SubjectPolicy } from "@bawes/actor-assertion";
+import { UNIVERSE_SUBJECT_POLICY, USER_EMAIL_SUBJECT_POLICY, type SubjectPolicy } from "@bawes/actor-assertion";
 import { InMemoryIssuerKeyRegistry } from "@studenthub/contracts";
 import { PostgresLoginStore } from "@studenthub/db/access";
 import { PostgresReplayStore } from "@studenthub/db/assertions";
@@ -88,9 +88,13 @@ export function assertSameSiteEmbed(site: string, embedOrigin: string, ancestors
   }
 }
 
+/**
+ * same_provider_subject compares the attested subject with the platform's
+ * stored external subject, which the login keeps in its own (email) form. Only
+ * the matching host format is accepted; hashed_user_id could never match.
+ */
 function subjectFormat(value: string): SubjectPolicy {
-  if (value === "user_email") return USER_EMAIL_SUBJECT_POLICY;
-  if (value === "hashed_user_id") return HASHED_USER_ID_SUBJECT_POLICY;
+  if (value === "user_email" && UNIVERSE_SUBJECT_POLICY === USER_EMAIL_SUBJECT_POLICY) return USER_EMAIL_SUBJECT_POLICY;
   return fail();
 }
 
@@ -147,6 +151,10 @@ export async function wireUniverse(
   const subjectPolicy = subjectFormat(env.UNIVERSE_EMBED_HOST_SUBJECT_FORMAT!);
   const registry = await pusherKeys(pusherIssuer, env.UNIVERSE_EMBED_PUSHER_KEYS!);
 
+  let authorization: URL;
+  try { authorization = new URL(env.OIDC_AUTHORIZATION_URL!); } catch { return fail(); }
+  if (authorization.protocol !== "https:") fail();
+
   const databaseUrl = env.DATABASE_URL!;
   const loginStore = new PostgresLoginStore({ connectionString: databaseUrl });
   const store = new PostgresUniverseEmbedStore({ connectionString: databaseUrl });
@@ -176,6 +184,7 @@ export async function wireUniverse(
         subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
       },
     },
+    authorizationOrigin: authorization.origin,
     hostIdentity: { pusherIssuer, audience, subjectPolicy, keys: registryKeyResolver(registry), replay },
     mapping: sameProviderSubjectMapping(issuer, (personId, at) => store.identitySubjects(personId, at)),
     profiles: embedProfilesFrom(profiles),

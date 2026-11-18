@@ -43,6 +43,8 @@ export interface UniverseEmbedRuntime {
   readonly sessions: SessionStore;
   /** The separate embed login instance: own callback, own static return. */
   readonly login: { readonly dependencies: LoginDependencies; readonly config: LoginConfig };
+  /** Exact https origin of the authorization endpoint the connect form is redirected to. */
+  readonly authorizationOrigin: string;
   readonly hostIdentity: HostIdentityConfig;
   readonly mapping: HostIdentityMapping;
   readonly profiles: EmbedProfileSource;
@@ -159,8 +161,9 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     if (!view) return { kind: "refused", state: "signed_out" };
     const session = await runtime.sessions.get(sessionId);
     if (!session || session.personId !== view.personId || view.locked) {
-      // Session replacement or revocation, or a lock: the binding and lease go.
-      await runtime.store.invalidateBinding(instanceId);
+      // Session replacement or revocation, or a lock: the binding and lease go,
+      // but only the version read here (a concurrent /done may have replaced it).
+      await runtime.store.invalidateBinding(instanceId, view.generation);
       return { kind: "refused", state: session ? "start_again" : "signed_out" };
     }
     return { kind: "bound", instanceId, personId: view.personId, generation: view.generation, verified: view.lease !== undefined,
@@ -197,7 +200,7 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
         + `<p id="link" hidden><a href="${escapeHtml(config.mainOrigin)}/profile/link-account" target="_blank" rel="noopener">${escapeHtml(text.link)}</a></p>`
         + `<p id="full" hidden><a href="${escapeHtml(config.mainOrigin)}/profile" target="_blank" rel="noopener">${escapeHtml(text.full)}</a></p>`;
       const dataset = ` data-state="loading" data-token="${escapeHtml(token)}" data-hosts="${escapeHtml(config.ancestors.join(" "))}"`;
-      writeEmbedResponse(response, 200, page(lang, main, true, dataset), HTML_TYPE, universeEmbedPolicy(config),
+      writeEmbedResponse(response, 200, page(lang, main, true, dataset), HTML_TYPE, universeEmbedPolicy(config, runtime.authorizationOrigin),
         set.length ? { "set-cookie": set } : {});
       return true;
     }
@@ -218,6 +221,12 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       if (!bound.verified) { json(response, 200, { state: "needs_universe" }); return true; }
       // The link state is read fresh on every profile response.
       const view = await runtime.profiles.read(bound.personId);
+      // The read can outlast the lease or the binding: authorize again before releasing fields.
+      const again = await binding();
+      if (again.kind === "refused") { json(response, 200, { state: again.state }); return true; }
+      if (!again.verified || again.generation !== bound.generation || again.personId !== bound.personId) {
+        json(response, 200, { state: "needs_universe" }); return true;
+      }
       json(response, 200, view.state === "populated" ? { state: view.state, fields: view.fields } : { state: view.state });
       return true;
     }
@@ -240,15 +249,20 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       const bound = await binding();
       if (bound.kind === "refused") { json(response, 200, { state: bound.state }); return true; }
       const refuse = async (state: "start_again" | "different_account") => {
-        // A failed verification or renewal invalidates the binding and its lease.
-        await runtime.store.invalidateBinding(bound.instanceId);
+        // A failed verification or renewal invalidates the binding version it checked;
+        // a binding renewed or replaced meanwhile (another tab, another /done) stays.
+        await runtime.store.invalidateBinding(bound.instanceId, bound.generation);
         json(response, 200, { state });
       };
       if (!body || Object.keys(body).length !== 1) return refuse("start_again").then(() => true);
       const attestation = await verifyHostAttestation(body.attestation, runtime.hostIdentity);
       if (!attestation.ok) return refuse("start_again").then(() => true);
       const generation = await runtime.store.consumeChallenge(bound.instanceId, attestation.challenge);
-      if (generation === undefined || generation !== bound.generation) return refuse("start_again").then(() => true);
+      if (generation === undefined || generation !== bound.generation) {
+        // A used, expired or older-generation challenge says nothing about the current
+        // binding (another tab may have just renewed it): refuse without invalidating.
+        json(response, 200, { state: "start_again" }); return true;
+      }
       if (bound.leaseSubjectDigest !== undefined && bound.leaseSubjectDigest !== universeEmbedDigest(attestation.subject)) {
         return refuse("different_account").then(() => true);
       }

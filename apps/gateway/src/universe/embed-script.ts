@@ -197,6 +197,8 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
     var g = generation;
     call("GET", "/universe/embed/status").then(function (reply) {
       if (g !== generation) return;
+      // Sign-in still in progress in the other tab: keep the waiting message.
+      if (reply.state === "signed_out" && body.getAttribute("data-state") === "waiting") return;
       if (reply.state === "ready") {
         if (!leaseLive()) { expireLease(g); return; }
         if (profileEl.hidden) loadProfile(g);
@@ -224,8 +226,12 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   // Each tick also enforces the lease deadline, in case a timer was delayed.
   setInterval(function () {
     if (!profileEl.hidden && !leaseLive()) expireLease(generation);
-    if (document.visibilityState === "visible" && body.getAttribute("data-state") !== "waiting") revalidate();
+    if (document.visibilityState === "visible") revalidate();
   }, 60000);
+  // While waiting for the sign-in tab, notice the completed handoff promptly.
+  setInterval(function () {
+    if (document.visibilityState === "visible" && body.getAttribute("data-state") === "waiting") revalidate();
+  }, 3000);
   show("loading");
   revalidate();
 })();

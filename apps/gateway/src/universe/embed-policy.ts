@@ -118,11 +118,18 @@ export function createUniverseEmbedConfigFromEnv(
   });
 }
 
-/** No string/header input can construct a frameable policy without validation. */
-export function universeEmbedPolicy(config: UniverseEmbedConfig): EmbedResponsePolicy {
+/**
+ * No string/header input can construct a frameable policy without validation.
+ * E2: the sign-in form posts to this origin and is redirected (302) to the
+ * identity provider; browsers check form-action on that redirect too, so the
+ * exact authorization endpoint origin may be added (validated like any origin).
+ */
+export function universeEmbedPolicy(config: UniverseEmbedConfig, formActionOrigin?: string): EmbedResponsePolicy {
   if (!config[validatedConfig] || !config.enabled || config.ancestors.length === 0) return fail();
+  const csp = formActionOrigin === undefined ? BASE_CSP
+    : BASE_CSP.replace("form-action 'self'", `form-action 'self' ${origin(formActionOrigin).origin}`);
   return Object.freeze({ [validatedPolicy]: true as const, headers: Object.freeze({ ...commonHeaders,
-    "content-security-policy": `${BASE_CSP}; frame-ancestors ${config.ancestors.join(" ")}; script-src 'self'; connect-src 'self'`,
+    "content-security-policy": `${csp}; frame-ancestors ${config.ancestors.join(" ")}; script-src 'self'; connect-src 'self'`,
   }) });
 }
 

@@ -100,34 +100,37 @@ test("E2_DB /done refuses a completed handoff whose session is no longer live", 
 test("E2_DB challenges are one-use and generation-bound; the lease ends at min(iat + 600, session expiry)", async () => {
   const b = await bound();
   const view = await store.readBinding(b.instance, b.browser, b.session);
-  assert.deepEqual(view, { personId: person, generation: 0, locked: false });
+  const g0 = view!.generation;
+  assert.ok(g0 > 0);
+  assert.deepEqual(view, { personId: person, generation: g0, locked: false });
   const c1 = ref(), c2 = ref();
   assert.equal(await store.issueChallenge(b.instance, b.browser, b.session, c1, 60), true);
   assert.equal(await store.issueChallenge(b.instance, b.browser, b.session, c2, 60), true);
   assert.equal(await store.issueChallenge(b.instance, b.browser, ref(), ref(), 60), false, "another session cannot ask");
-  assert.equal(await store.consumeChallenge(b.instance, c1), 0);
+  assert.equal(await store.consumeChallenge(b.instance, c1), g0);
   assert.equal(await store.consumeChallenge(b.instance, c1), undefined, "one use");
   const iat = Math.floor(await dbNow()) - 50;
-  const expires = await store.writeLease(b.instance, 0, "subject@example.test", iat, 600);
+  const expires = await store.writeLease(b.instance, g0, "subject@example.test", iat, 600);
   assert.equal(expires!.getTime() / 1000, iat + 600, "late attestation: lease ends at iat + 600, not receipt + 600");
   assert.equal(await store.consumeChallenge(b.instance, c2), undefined, "an old-generation challenge cannot renew");
-  assert.equal(await store.writeLease(b.instance, 0, "subject@example.test", iat, 600), undefined, "stale generation");
+  assert.equal(await store.writeLease(b.instance, g0, "subject@example.test", iat, 600), undefined, "stale generation");
   const leased = await store.readBinding(b.instance, b.browser, b.session);
-  assert.equal(leased?.generation, 1);
+  const g1 = leased!.generation;
+  assert.notEqual(g1, g0);
   assert.equal(leased?.lease?.hostSubjectDigest, universeEmbedDigest("subject@example.test"));
 
   // Session expiry caps the lease.
   await pool.query("UPDATE login_sessions SET expires_at = clock_timestamp() + interval '120 seconds' WHERE id=$1", [universeEmbedDigest(b.session)]);
   const c3 = ref();
   await store.issueChallenge(b.instance, b.browser, b.session, c3, 60);
-  assert.equal(await store.consumeChallenge(b.instance, c3), 1);
-  const capped = await store.writeLease(b.instance, 1, "subject@example.test", Math.floor(await dbNow()), 600);
+  assert.equal(await store.consumeChallenge(b.instance, c3), g1);
+  const capped = await store.writeLease(b.instance, g1, "subject@example.test", Math.floor(await dbNow()), 600);
   assert.ok(capped!.getTime() / 1000 <= (await dbNow()) + 121);
   // An attestation whose iat + 600 is already past writes no lease.
   const c4 = ref();
   await store.issueChallenge(b.instance, b.browser, b.session, c4, 60);
-  await store.consumeChallenge(b.instance, c4);
-  assert.equal(await store.writeLease(b.instance, 2, "subject@example.test", Math.floor(await dbNow()) - 700, 600), undefined);
+  const g2 = (await store.consumeChallenge(b.instance, c4))!;
+  assert.equal(await store.writeLease(b.instance, g2, "subject@example.test", Math.floor(await dbNow()) - 700, 600), undefined);
 });
 
 test("E2_DB lock, invalidation and stored digests", async () => {
@@ -143,4 +146,49 @@ test("E2_DB lock, invalidation and stored digests", async () => {
             (SELECT json_agg(h) FROM universe_embed_handoffs h) c, (SELECT json_agg(x) FROM universe_embed_bindings x) d,
             (SELECT json_agg(y) FROM universe_embed_challenges y) e`)).rows);
   for (const value of [b.browser, b.cookie, b.state, b.session]) assert.equal(dump.includes(value), false);
+});
+
+test("E2_DB generations never repeat across rebinds: a stale lease write or refusal cannot touch a replacement binding", async () => {
+  const b = await bound();
+  const c = ref();
+  assert.equal(await store.issueChallenge(b.instance, b.browser, b.session, c, 60), true);
+  const checked = (await store.consumeChallenge(b.instance, c))!;
+  // Before the lease write lands, another /done rebinds the same instance (same or another person).
+  const handoff = await store.createHandoff(b.instance, b.browser, 600);
+  const state = ref(), session = ref();
+  await store.attachState(handoff, state);
+  await login.sessions.put({ id: session, personId: person });
+  await store.completeHandoff(state, session, person);
+  assert.equal(await store.consumeHandoff(b.instance, b.browser, session), person);
+  const replacement = (await store.readBinding(b.instance, b.browser, session))!;
+  assert.notEqual(replacement.generation, checked);
+  assert.equal(await store.writeLease(b.instance, checked, "subject@example.test", Math.floor(await dbNow()), 600), undefined,
+    "the stale verification writes no lease onto the replacement");
+  await store.invalidateBinding(b.instance, checked);
+  assert.ok(await store.readBinding(b.instance, b.browser, session), "a stale refusal leaves the replacement");
+  await store.invalidateBinding(b.instance, replacement.generation);
+  assert.equal(await store.readBinding(b.instance, b.browser, session), undefined, "a refusal of the current version removes it");
+});
+
+test("E2_DB superseding a completed handoff clears its completion, and connects racing /done never deadlock", async () => {
+  const browser = ref(), state = ref(), session = ref();
+  const instance = await store.ensureInstance(browser, ref(), 43_200);
+  const h1 = await store.createHandoff(instance, browser, 600);
+  await store.attachState(h1, state);
+  await login.sessions.put({ id: session, personId: person });
+  assert.equal(await store.completeHandoff(state, session, person), true);
+  await store.createHandoff(instance, browser, 600);
+  const old = (await pool.query("SELECT status, session_digest, person_id FROM universe_embed_handoffs WHERE id=$1", [h1])).rows[0];
+  assert.deepEqual(old, { status: "superseded", session_digest: null, person_id: null });
+  assert.equal(await store.consumeHandoff(instance, browser, session), undefined);
+
+  for (let i = 0; i < 10; i++) {
+    const s = ref(), st = ref();
+    const h = await store.createHandoff(instance, browser, 600);
+    await store.attachState(h, st);
+    await login.sessions.put({ id: s, personId: person });
+    await store.completeHandoff(st, s, person);
+    const results = await Promise.allSettled([store.consumeHandoff(instance, browser, s), store.createHandoff(instance, browser, 600)]);
+    assert.deepEqual(results.map(r => r.status), ["fulfilled", "fulfilled"]);
+  }
 });

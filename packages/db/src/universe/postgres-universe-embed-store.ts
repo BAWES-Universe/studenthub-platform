@@ -26,7 +26,8 @@ export interface UniverseEmbedStore {
   completeHandoff(state: string, sessionId: string, personId: string): Promise<boolean>;
   consumeHandoff(instanceId: string, browserBinding: string, sessionId: string): Promise<string | undefined>;
   readBinding(instanceId: string, browserBinding: string, sessionId: string): Promise<UniverseEmbedBindingView | undefined>;
-  invalidateBinding(instanceId: string): Promise<void>;
+  /** Without a generation: remove the binding. With one: remove it only if it is still that version. */
+  invalidateBinding(instanceId: string, generation?: number): Promise<void>;
   issueChallenge(instanceId: string, browserBinding: string, sessionId: string, challenge: string, ttlSeconds: number): Promise<boolean>;
   consumeChallenge(instanceId: string, challenge: string): Promise<number | undefined>;
   writeLease(instanceId: string, generation: number, hostSubject: string, issuedAtEpochSeconds: number, leaseSeconds: number): Promise<Date | undefined>;
@@ -100,8 +101,9 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
           WHERE id = $1 AND browser_binding_digest = $2 AND expires_at > clock_timestamp() FOR UPDATE`,
         [instanceId, browser]);
       if (locked.rowCount !== 1) throw new Error("embed instance unavailable");
+      // A completed handoff loses its session and person when superseded.
       await client.query(
-        `UPDATE universe_embed_handoffs SET status = 'superseded'
+        `UPDATE universe_embed_handoffs SET status = 'superseded', session_digest = NULL, person_id = NULL
           WHERE instance_id = $1 AND status IN ('pending', 'completed')`, [instanceId]);
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO universe_embed_handoffs (instance_id, browser_binding_digest, destination, status, expires_at)
@@ -131,6 +133,12 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
     const browser = universeEmbedDigest(browserBinding);
     const session = universeEmbedDigest(sessionId);
     return this.#tx(async (client) => {
+      // Same lock order as createHandoff (instance, then handoff), so the two never deadlock.
+      const locked = await client.query(
+        `SELECT id FROM universe_embed_instances
+          WHERE id = $1 AND browser_binding_digest = $2 AND expires_at > clock_timestamp() FOR UPDATE`,
+        [instanceId, browser]);
+      if (locked.rowCount !== 1) return undefined;
       const { rows } = await client.query<{ person_id: string }>(
         `UPDATE universe_embed_handoffs SET status = 'consumed'
           WHERE instance_id = $1 AND browser_binding_digest = $2 AND session_digest = $3
@@ -176,8 +184,14 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
     };
   }
 
-  async invalidateBinding(instanceId: string): Promise<void> {
-    await this.#pool.query("DELETE FROM universe_embed_bindings WHERE instance_id = $1", [instanceId]);
+  async invalidateBinding(instanceId: string, generation?: number): Promise<void> {
+    // With a generation, only the binding version the caller checked is removed;
+    // a replacement or renewed binding (a different generation) stays.
+    if (generation === undefined) {
+      await this.#pool.query("DELETE FROM universe_embed_bindings WHERE instance_id = $1", [instanceId]);
+    } else {
+      await this.#pool.query("DELETE FROM universe_embed_bindings WHERE instance_id = $1 AND generation = $2", [instanceId, generation]);
+    }
   }
 
   async issueChallenge(instanceId: string, browserBinding: string, sessionId: string, challenge: string, ttlSeconds: number): Promise<boolean> {
@@ -210,7 +224,7 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
     // receipt time + lease, so a late attestation cannot add time.
     const { rows } = await this.#pool.query<{ lease_expires_at: Date }>(
       `UPDATE universe_embed_bindings b
-          SET generation = b.generation + 1,
+          SET generation = nextval('universe_embed_binding_generation_seq'),
               lease_host_subject_digest = $3,
               lease_expires_at = LEAST(to_timestamp($4::double precision) + ($5 * interval '1 second'), s.expires_at)
          FROM login_sessions s
