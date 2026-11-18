@@ -178,3 +178,14 @@ test("A6_RULES a staff grant revoked while the pause waits pauses nobody", async
   assert.deepEqual(await held(target), [{ org_id: acme, role: "recruiter", scope: "self" }]);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM account_pauses WHERE principal_id = $1", [target])).rows[0].n, 0);
 });
+
+test("A6_RULES a grant a paused person holds counts too: staff cannot resume a person who holds an operator admin role", async () => {
+  const admin = await person([{ orgId: ROOT, role: "admin", scope: "subtree" }]);
+  const staff = await person([{ orgId: ROOT, role: "staff", scope: "subtree" }]);
+  const target = await person([{ orgId: await company(), role: "recruiter" }]);
+  assert.equal((await service.change(admin, { targetPrincipalId: target, action: "pause", reason })).kind, "paused");
+  // Written past the grant guards, as a direct database change would be.
+  await authz.grantMany(target, [{ orgId: ROOT, role: "admin", scope: "subtree" }]);
+  assert.deepEqual(await service.change(staff, { targetPrincipalId: target, action: "resume", reason }), { kind: "refused", reason: "not_allowed" });
+  assert.equal((await service.change(admin, { targetPrincipalId: target, action: "resume", reason })).kind, "resumed", "an operator admin still can");
+});

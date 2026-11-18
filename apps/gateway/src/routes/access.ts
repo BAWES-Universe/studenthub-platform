@@ -51,4 +51,5 @@ export const staffViewRoute: GatewayRoute = { name: "staff-view", handle: (ctx) 
 /** Access lane A7: a company signs up and staff approve it. */
 export const companyRegistrationRoute: GatewayRoute = { name: "company-registration", handle: (ctx) =>
   handleCompanyRegistration(ctx.request, ctx.response, ctx.login?.registrations, ctx.login?.web?.origin,
-    (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body, undefined, true), { "cache-control": "no-store" }, true)) };
+    (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body, undefined, true), { "cache-control": "no-store" }, true),
+    ctx.login?.web?.returnTo) };

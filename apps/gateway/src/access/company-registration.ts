@@ -102,6 +102,8 @@ export async function handleCompanyRegistration(
   ports: CompanyRegistrationPorts | undefined,
   origin: string | undefined,
   write: RegistrationPageWriter,
+  /** The configured sign-in return target; the login route refuses a sign-in without one. */
+  returnTo?: string,
 ): Promise<boolean> {
   if (!ports) return false;
   const url = new URL(req.url ?? "/", "http://gateway.invalid");
@@ -116,7 +118,9 @@ export async function handleCompanyRegistration(
   if (path === REGISTER) {
     if (!caller) {
       req.resume();
-      write(200, "Register a company", `<header class="topbar">${brand}</header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB</div><h1>Register a company</h1><p>Sign in first, then come back to this page to register your company.</p><p><a class="button primary" href="/login/universe">Sign in</a></p></main>`);
+      write(200, "Register a company", `<header class="topbar">${brand}</header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB</div><h1>Register a company</h1>${returnTo
+        ? `<p>Sign in first, then come back to this page to register your company.</p><p><a class="button primary" href="/login/universe?return_to=${escapeHtml(encodeURIComponent(returnTo))}">Sign in</a></p>`
+        : "<p>Sign-in is temporarily unavailable. Please try again later.</p>"}</main>`);
       return true;
     }
     if (req.method === "GET") {

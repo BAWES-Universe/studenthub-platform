@@ -7,6 +7,7 @@ import { createRuntimeOrganizationDocumentsFromEnv } from './organization-docume
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
 import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
+import { managedStores } from "../../../packages/access/src/index.js";
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -303,8 +304,15 @@ export function createGatewayServer(
         const principalId=identity.status===200&&typeof identity.body?.personId==="string"?identity.body.personId:undefined;
         if(principalId&&await login.civilIdReview.isStaff(principalId))civilIdReviewCount=await login.civilIdReview.store.countPending({excludePrincipalId:principalId});
       }catch{civilIdReviewCount=undefined;}
+      // A4: a person who manages a store gets a My stores link, even with no company role.
+      let managesStores=false;
+      if(html&&login?.storeManager&&result.status===200)try{
+        const session=cookieValue(request.headers.cookie,"__Host-studenthub_session");
+        const personId=session?(await login.storeManager.sessions.get(session))?.personId:undefined;
+        managesStores=personId?managedStores(personId,await login.storeManager.stores.rows(personId)).length>0:false;
+      }catch{managesStores=false;}
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined, civilIdReviewCount) : renderError(503)), {}, true);
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined, civilIdReviewCount, managesStores) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }

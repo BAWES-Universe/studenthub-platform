@@ -106,7 +106,9 @@ export class PostgresAccessPausesStore {
       const decision = input.decide(Object.freeze({
         callerGrants: callerGrants.rows.map((row) => ({ orgId: row.org_id, role: row.role, scope: row.scope })),
         targetExists: Boolean(exists.rowCount),
-        targetGrants: pause ? pause.suspended_grants : held.rows.map((row) => ({ orgId: row.org_id, role: row.role, scope: row.scope })),
+        // A paused person holds no grants in normal operation, but any that
+        // exist count too: the stronger of the two sets decides who may resume.
+        targetGrants: [...(pause ? pause.suspended_grants : []), ...held.rows.map((row) => ({ orgId: row.org_id, role: row.role, scope: row.scope }))],
         paused: pause !== undefined,
       }));
       if (decision.kind !== "apply") {

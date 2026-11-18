@@ -38,9 +38,13 @@ export function mediaType(contentType: string | readonly string[] | undefined): 
   return value.split(";", 1)[0]!.trim().toLowerCase();
 }
 
+/** Routes that take a file as JSON (base64 bytes in the body): uploads whatever their media type. */
+const JSON_UPLOAD_PATHS = new Set(["/organization-documents/upload", "/organization-documents/replace"]);
+
 /** Which limit a request counts against, or undefined for a read. */
-export function limitKind(method: string | undefined, contentType: string | readonly string[] | undefined): LimitKind | undefined {
+export function limitKind(method: string | undefined, contentType: string | readonly string[] | undefined, path?: string): LimitKind | undefined {
   if (!method || !WRITE_METHODS.has(method.toUpperCase())) return undefined;
+  if (path !== undefined && JSON_UPLOAD_PATHS.has(path)) return "upload";
   const type = mediaType(contentType);
   return UPLOAD_TYPES.has(type) || type.startsWith("image/") ? "upload" : "write";
 }

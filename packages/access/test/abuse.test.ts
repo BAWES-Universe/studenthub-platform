@@ -91,3 +91,10 @@ test("A8_LIMITS uploads are recognized by media type whatever the parameters, sp
   assert.equal(mediaType(" Application/X-WWW-Form-Urlencoded ; charset=UTF-8"), "application/x-www-form-urlencoded");
   assert.equal(mediaType(undefined), "");
 });
+
+test("A8_LIMITS the JSON document upload routes count as uploads; other JSON writes stay writes", () => {
+  assert.equal(limitKind("POST", "application/json", "/organization-documents/upload"), "upload");
+  assert.equal(limitKind("POST", "application/json", "/organization-documents/replace"), "upload");
+  assert.equal(limitKind("POST", "application/json", "/organization-documents/uploads"), "write");
+  assert.equal(limitKind("GET", undefined, "/organization-documents/upload"), undefined);
+});

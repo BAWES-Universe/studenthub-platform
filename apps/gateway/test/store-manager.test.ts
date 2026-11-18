@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { createGatewayServer } from "../src/index.js";
+import { renderWorkspace } from "../src/web-ui.js";
 import type { StoreManagerPorts } from "../src/access/store-manager.js";
 import type { ManagedStoreRow } from "../../../packages/access/src/index.js";
 
@@ -60,4 +61,10 @@ test("A4_INDEPENDENT a company role opens no store; the store pages read only th
   assert.match(empty, /You don’t manage a store/);
   assert.deepEqual([...new Set(http.reads)].sort(), ["manager-1", "recruiter-1"].filter((id) => http.reads.includes(id)).sort());
   assert.ok(http.reads.every((id) => id === "recruiter-1"), "each request reads the signed-in person's own rows only");
+});
+
+test("A4_NO_LEAK a person who manages a store gets a My stores link in the workspace, even with no company role", () => {
+  const page = { status: 200, body: { contexts: [], active: null } } as never;
+  assert.match(renderWorkspace(page, {} as never, false, undefined, true), /href="\/workspace\/my-stores">My stores</);
+  assert.doesNotMatch(renderWorkspace(page, {} as never), /my-stores/, "no link for a person who manages no store");
 });

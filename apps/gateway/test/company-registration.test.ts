@@ -52,10 +52,17 @@ const post = (http: Awaited<ReturnType<typeof serve>>, path: string, key: string
 
 test("A7_SIGN_UP a signed-in person registers a company once, staff approve it, and the person sees the outcome", async (t) => {
   const w = world();
-  const http = await serve(t, { registrations: w.ports, web: { origin: ORIGIN } });
+  const http = await serve(t, { registrations: w.ports, web: { origin: ORIGIN, returnTo: `${ORIGIN}/profile` } });
   const signedOut = await http("/companies/register");
   assert.equal(signedOut.status, 200);
-  assert.match(await signedOut.text(), /Sign in first/);
+  const signedOutHtml = await signedOut.text();
+  assert.match(signedOutHtml, /Sign in first/);
+  // The login route refuses a sign-in without a return target, so the link carries the configured one.
+  assert.ok(signedOutHtml.includes(`href="/login/universe?return_to=${encodeURIComponent(`${ORIGIN}/profile`)}"`), "A7_SIGN_UP the sign-in link carries return_to");
+  const noTarget = await serve(t, { registrations: w.ports, web: { origin: ORIGIN } });
+  const unavailable = await (await noTarget("/companies/register")).text();
+  assert.match(unavailable, /Sign-in is temporarily unavailable/);
+  assert.doesNotMatch(unavailable, /login\/universe/);
   assert.match(await (await http("/companies/register", { headers: cookie("p") })).text(), /name="companyName"/);
   const sent = await post(http, "/companies/register", "p", FORM);
   assert.equal(sent.status, 303);

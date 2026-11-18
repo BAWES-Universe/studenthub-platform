@@ -176,3 +176,19 @@ test("A8_BLOCKS a form is read by its media type, whatever the parameters or cas
   assert.equal(response.status, 303);
   assert.deepEqual(w.changes, ["block:198.51.100.0/24:admin-1"]);
 });
+
+test("A8_LIMITS a bearer session is charged like a cookie, and JSON document uploads count as uploads", async (t) => {
+  const w = world();
+  const http = await serve(t, w.ports);
+  const window = (kind: "write" | "upload") => `person-1|${kind}|${1_800_000_000 - (1_800_000_000 % PERSON_LIMITS[kind].windowSeconds)}`;
+  const bearer = { authorization: `Bearer ${"p".repeat(43)}`, accept: "application/json", "content-type": "application/json" };
+  await http("/organization-documents/upload", { method: "POST", headers: bearer, body: "{}" });
+  await http("/organization-documents/replace", { method: "POST", headers: bearer, body: "{}" });
+  assert.equal(w.counts.get(window("upload")), 2, "both document routes charge the upload limit, through the bearer session");
+  await http("/organization-documents/other", { method: "POST", headers: bearer, body: "{}" });
+  assert.equal(w.counts.get(window("write")), 1, "an ordinary JSON write stays a write");
+  await http("/organization-documents/upload", { method: "POST", headers: { ...bearer, authorization: "Bearer not-a-session" }, body: "{}" });
+  assert.equal(w.counts.get(window("upload")), 2, "a malformed bearer token charges nobody");
+  const admin = await http("/admin/ip-blocks", { headers: { authorization: `Bearer ${"a".repeat(43)}` } });
+  assert.equal(admin.status, 404, "the block-list page takes the session cookie only");
+});

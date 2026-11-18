@@ -43,6 +43,11 @@ export interface AbuseGatePorts {
   readonly blockListSeconds?: number;
 }
 
+function bearerSession(header: string | undefined): string | undefined {
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+  return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : undefined;
+}
+
 export type AbusePageWriter = (status: number, title: string, body: string, headers?: Record<string, string>) => void;
 
 interface HeldList { readonly list: AddressList; readonly rows: readonly IpBlockRow[]; readonly readAt: number; readonly generation: number }
@@ -152,10 +157,14 @@ export async function handleAbuseGate(
   }
 
   // Signing out is never limited: a limited person must still be able to end their session.
-  const kind = path === "/logout" ? undefined : limitKind(req.method, req.headers["content-type"]);
-  const session = sessionCookie(req.headers.cookie);
+  const kind = path === "/logout" ? undefined : limitKind(req.method, req.headers["content-type"], path);
+  // The block-list page is cookie-only. A counted request is charged with the
+  // same credential the document routes accept: a bearer session token, else
+  // the session cookie, so both transports charge the same person.
+  const admin = path === "/admin/ip-blocks";
+  const session = admin ? sessionCookie(req.headers.cookie) : bearerSession(req.headers.authorization) ?? sessionCookie(req.headers.cookie);
   let person: string | undefined;
-  if ((kind || path === "/admin/ip-blocks") && session) {
+  if ((kind || admin) && session) {
     // A failed lookup skips the count (a brake, not a gate); the admin page
     // then answers as an unknown path, and every other route keeps its own
     // authentication.
@@ -182,7 +191,7 @@ export async function handleAbuseGate(
     }
   }
 
-  if (path !== "/admin/ip-blocks") return false;
+  if (!admin) return false;
   if (!person || (req.method !== "GET" && req.method !== "POST")) return false;
   if (!mayManageBlocks(await ports.reads.callerGrants(person), ports.operatorOrgIds)) return false;
   if (req.method === "GET") {
