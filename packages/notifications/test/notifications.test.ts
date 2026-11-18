@@ -49,3 +49,10 @@ test("COMMS_FEED_TYPES the types filter is checked against the registry and narr
  assert.deepEqual(NOTIFICATION_REGISTRY.types(["staff.message"]),["staff.message"]);
  assert.equal(NOTIFICATION_REGISTRY.types(["staff.message","Staff.Message"]),null);
 });
+test("COMMS_FEED_REGISTRY dates and enums match the database rule exactly",()=>{
+ const work=(workDate:unknown)=>NOTIFICATION_REGISTRY.accepts({kind:"work.session_rejected",subjectReference:"work_session:s1",parameters:{workDate}});
+ assert.deepEqual(["2028-02-29","0001-01-01","2026-12-31"].map(work),[true,true,true]);
+ assert.deepEqual(["2026-02-29","0000-01-01","2026-04-31","2026-13-01",20261110,null].map(work),[false,false,false,false,false,false]);
+ const status=(value:unknown)=>NOTIFICATION_REGISTRY.accepts({kind:"organization.status_changed",subjectReference:"organization:org",parameters:{status:value}});
+ assert.deepEqual(["active","under_review","inactive","none","toString","constructor","Active"].map(status),[true,true,true,true,false,false,false]);
+});

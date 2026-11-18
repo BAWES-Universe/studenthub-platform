@@ -6,9 +6,10 @@
 type Client = { query(text: string, values?: readonly unknown[]): Promise<unknown> };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-// Date.parse rolls 2026-02-29 over to 1 March, so the parsed day must round-trip.
+// Date.parse rolls 2026-02-29 over to 1 March, so the parsed day must round-trip; year 0000 is
+// refused as the database's notification_calendar_date refuses it.
 const isCalendarDate = (value: string) => {
-  if (typeof value !== "string" || !DATE.test(value)) return false;
+  if (typeof value !== "string" || !DATE.test(value) || value.startsWith("0000")) return false;
   const parsed = Date.parse(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
 };

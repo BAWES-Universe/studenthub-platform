@@ -16,6 +16,15 @@ CREATE TABLE staff_messages (
 );
 CREATE INDEX staff_messages_recipient_created_idx ON staff_messages(recipient_principal_id,created_at DESC);
 
+-- A real calendar date written YYYY-MM-DD (2026-02-29 and year 0000 are refused). The feed's
+-- registry applies the same rule, so every row the database accepts is a row the feed shows.
+CREATE FUNCTION notification_calendar_date(value text) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+ IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN RETURN false; END IF;
+ RETURN to_char(value::date,'YYYY-MM-DD')=value;
+EXCEPTION WHEN others THEN RETURN false;
+END $$;
+
 -- One closed payload rule per kind, replacing the single-kind checks of 0352. Work session
 -- decisions (legacy types 8 and 9) are written by the work lane inside its decision transaction.
 ALTER TABLE notifications DROP CONSTRAINT notifications_kind_check;
@@ -26,7 +35,7 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_kind_payload_check CHECK 
   AND subject_reference ~ '^organization:.+'
   AND jsonb_typeof(parameters)='object'
   AND parameters=jsonb_build_object('status',parameters->'status')
-  AND parameters->>'status' IS NOT NULL
+  AND jsonb_typeof(parameters->'status')='string'
   AND parameters->>'status' IN ('active','under_review','inactive','none'))
  OR
  (kind='staff.message'
@@ -37,6 +46,6 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_kind_payload_check CHECK 
   AND subject_reference ~ '^work_session:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
   AND jsonb_typeof(parameters)='object'
   AND parameters=jsonb_build_object('workDate',parameters->'workDate')
-  AND parameters->>'workDate' IS NOT NULL
-  AND parameters->>'workDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+  AND jsonb_typeof(parameters->'workDate')='string'
+  AND notification_calendar_date(parameters->>'workDate'))
 );

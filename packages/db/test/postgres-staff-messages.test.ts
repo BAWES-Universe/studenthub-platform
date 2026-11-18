@@ -5,6 +5,7 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresNotificationsStore, runMigrations } from "@studenthub/db";
 import { PostgresStaffMessagesStore, recordWorkSessionDecision, retractWorkSessionDecision } from "@studenthub/db/comms";
+import { NOTIFICATION_REGISTRY } from "../../notifications/src/notifications.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const person = `comms-${randomUUID()}`, other = `comms-${randomUUID()}`, staff = `comms-${randomUUID()}`, org = `comms-${randomUUID()}`;
@@ -129,4 +130,62 @@ test("COMMS_FEED_TYPES_PG the stored list narrows to the requested kinds before 
   assert.ok(staffOnly.some(r => r.subjectReference === `staff_message:${id}`));
   assert.ok((await feed.list(other, 100, 0)).some(r => r.kind === "organization.status_changed"));
   assert.deepEqual(await feed.list(other, 100, 0, ["work.session_rejected"]), []);
+});
+
+// The feed shows exactly the rows the database accepts: for every payload below, the database
+// CHECK and the registry's check for that kind agree. A row the database took but the feed
+// dropped would still be counted by the unread bell.
+test("COMMS_FEED_DB_PARITY_PG the database payload rule and the registry agree on every edge", async () => {
+  const uuid = randomUUID();
+  const cases: [string, string, unknown][] = [
+    ["organization.status_changed", `organization:${org}`, { status: "active" }],
+    ["organization.status_changed", `organization:${org}`, { status: "none" }],
+    ["organization.status_changed", `organization:${org}`, { status: "toString" }],
+    ["organization.status_changed", `organization:${org}`, { status: "Active" }],
+    ["organization.status_changed", `organization:${org}`, { status: 1 }],
+    ["organization.status_changed", `organization:${org}`, { status: null }],
+    ["organization.status_changed", `organization:${org}`, {}],
+    ["organization.status_changed", `organization:${org}`, { status: "active", extra: true }],
+    ["organization.status_changed", "organization:", { status: "active" }],
+    ["organization.status_changed", "organization:a\nb", { status: "active" }],
+    ["organization.status_changed", `org:${org}`, { status: "active" }],
+    ["staff.message", `staff_message:${uuid}`, {}],
+    ["staff.message", `staff_message:${uuid.toUpperCase()}`, {}],
+    ["staff.message", "staff_message:not-a-uuid", {}],
+    ["staff.message", `staff_message:${uuid}`, { text: "stored" }],
+    ["staff.message", `staff_message:${uuid}`, []],
+    ...["work.session_approved", "work.session_rejected"].flatMap((kind): [string, string, unknown][] => [
+      [kind, "work_session:s1", { workDate: "2026-11-10" }],
+      [kind, "work_session:s1", { workDate: "2028-02-29" }],
+      [kind, "work_session:s1", { workDate: "0001-01-01" }],
+      [kind, "work_session:s1", { workDate: "2026-02-29" }],
+      [kind, "work_session:s1", { workDate: "2026-13-01" }],
+      [kind, "work_session:s1", { workDate: "2026-04-31" }],
+      [kind, "work_session:s1", { workDate: "2026-00-10" }],
+      [kind, "work_session:s1", { workDate: "0000-01-01" }],
+      [kind, "work_session:s1", { workDate: "2026-1-10" }],
+      [kind, "work_session:s1", { workDate: " 2026-11-10" }],
+      [kind, "work_session:s1", { workDate: 20261110 }],
+      [kind, "work_session:s1", { workDate: null }],
+      [kind, "work_session:s1", {}],
+      [kind, "work_session:s1", { workDate: "2026-11-10", note: "x" }],
+      [kind, "work_session:-bad", { workDate: "2026-11-10" }],
+      [kind, `work_session:${"a".repeat(129)}`, { workDate: "2026-11-10" }],
+    ]),
+    ["unknown.kind", "x:y", {}],
+  ];
+  let accepted = 0;
+  for (const [kind, subjectReference, parameters] of cases) {
+    const reference = subjectReference;
+    const client = await pool.connect();
+    let stored = true;
+    try {
+      await client.query("BEGIN");
+      await client.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,$2,$3,$4::jsonb,$5)",
+        [person, kind, reference, JSON.stringify(parameters), `parity-${randomUUID()}`]);
+    } catch { stored = false; } finally { await client.query("ROLLBACK"); client.release(); }
+    assert.equal(stored, NOTIFICATION_REGISTRY.accepts({ kind, subjectReference: reference, parameters }), `${kind} ${JSON.stringify(reference)} ${JSON.stringify(parameters)}`);
+    if (stored) accepted++;
+  }
+  assert.equal(accepted, 10);
 });

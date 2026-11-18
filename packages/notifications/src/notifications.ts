@@ -49,15 +49,16 @@ const plainObject=(value:unknown):value is Record<string,unknown>=>typeof value=
 const onlyKeys=(value:Record<string,unknown>,keys:readonly string[])=>Object.keys(value).length===keys.length&&keys.every(k=>k in value);
 const prefixed=(prefix:string,pattern:RegExp)=>(reference:string)=>reference.startsWith(prefix)&&pattern.test(reference.slice(prefix.length))?reference.slice(prefix.length):null;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,TOKEN=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-function isCalendarDate(value:unknown):value is string{if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;const parsed=new Date(`${value}T00:00:00Z`);return!Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value}
+/** Same rule as the database's notification_calendar_date: a real date, year 0001 or later. */
+function isCalendarDate(value:unknown):value is string{if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith("0000"))return false;const parsed=new Date(`${value}T00:00:00Z`);return!Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value}
 
 const labels={active:"Active",under_review:"Under review",inactive:"Inactive",none:"Not set"} as const;
 function visible(grants:readonly RoleGrant[],org:NotificationOrganization,byId:ReadonlyMap<string,NotificationOrganization>):boolean{return grants.some(g=>g.orgId===org.id||g.scope==="subtree"&&(()=>{let at=org.parentOrgId;while(at){if(at===g.orgId)return true;at=byId.get(at)?.parentOrgId}return false})())}
-const organizationSubject=prefixed("organization:",/^.+$/);
+const organizationSubject=prefixed("organization:",/^[\s\S]+$/);
 export const organizationStatusChangedKind:NotificationKindDefinition={
  kind:"organization.status_changed",
  subject:organizationSubject,
- parameters:value=>plainObject(value)&&onlyKeys(value,["status"])&&typeof value.status==="string"&&value.status in labels,
+ parameters:value=>plainObject(value)&&onlyKeys(value,["status"])&&typeof value.status==="string"&&Object.hasOwn(labels,value.status),
  async render(rows,{recipient,subjects,authz}){const ids=[...new Set(rows.map(r=>organizationSubject(r.subjectReference)!))];const [organizations,live,grants]=await Promise.all([subjects.readOrganizations(ids),subjects.liveOrganizationIds(ids),authz.listGrantsForPrincipal(recipient)]);const byId=new Map(organizations.map(o=>[o.id,o])),lines=new Map<string,NotificationLine>();for(const row of rows){const id=organizationSubject(row.subjectReference)!,org=byId.get(id);if(!org||!live.has(id)||!visible(grants,org,byId))continue;const status=(row.parameters as {status:keyof typeof labels}).status;lines.set(row.id,{text:`${org.name} status changed to ${labels[status]}.`,href:`/workspace?${new URLSearchParams({org_id:id,role:"org-owner"})}`})}return lines}
 };
 const staffSubject=prefixed("staff_message:",UUID);
