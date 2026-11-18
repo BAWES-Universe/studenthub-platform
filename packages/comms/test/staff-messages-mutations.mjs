@@ -7,6 +7,9 @@ import {join} from 'node:path';
 const mutations=[
  ['staff gate','if (!(await this.authority.isStaff(senderPrincipalId)))','if (!(await this.authority.isStaff("staff-1")))','COMMS_STAFF_MSG_AUTH','packages/comms/test/staff-messages.test.js','packages/comms/src/staff-messages.js'],
  ['body limit','[...body].length > STAFF_MESSAGE_BODY_MAX','[...body].length > STAFF_MESSAGE_BODY_MAX + 1','COMMS_STAFF_MSG_VALIDATE','packages/comms/test/staff-messages.test.js','packages/comms/src/staff-messages.js'],
+ ['types filter is closed','if (values.some(v => !this.#byKind.has(v)))','if (false)','COMMS_FEED_TYPES','packages/notifications/test/notifications.test.js','packages/notifications/src/notifications.js'],
+ ['registry checks payloads','&& d.parameters(row.parameters)','&& true','COMMS_FEED_REGISTRY','packages/notifications/test/notifications.test.js','packages/notifications/src/notifications.js'],
+ ['send route staff gate','if (!staff) {','if (false) {','COMMS_STAFF_SEND_HTTP','apps/gateway/test/staff-messages-http.test.js','apps/gateway/src/comms/staff-messages-http.js'],
  ['feed renders the stored body','renderStaffMessage(message.kind, message.body)','renderStaffMessage(message.kind, null)','COMMS_FEED_STAFF','packages/notifications/test/notifications.test.js','packages/notifications/src/notifications.js'],
 ];
 const root=new URL('../../../',import.meta.url);
