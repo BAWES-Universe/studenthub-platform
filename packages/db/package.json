@@ -45,6 +45,10 @@
     "./notifications": {
       "types": "./dist/notifications/index.d.ts",
       "import": "./dist/notifications/index.js"
+    },
+    "./billing": {
+      "types": "./dist/billing/index.d.ts",
+      "import": "./dist/billing/index.js"
     }
   },
   "files": [
@@ -57,6 +61,7 @@
     "bootstrap:admin": "npm run build && node dist/bootstrap-admin.js"
   },
   "dependencies": {
+    "@studenthub/billing": "1.0.0",
     "@studenthub/contracts": "0.1.0",
     "@studenthub/login-contract": "1.0.0",
     "@studenthub/pay-contracts": "1.0.0",

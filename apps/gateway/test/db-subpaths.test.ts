@@ -21,7 +21,7 @@ async function moduleFor(specifier: string): Promise<Record<string, unknown>> {
 
 test("PREP_EXPORTS explicit database area exports resolve with their assigned values", async () => {
   const manifest = JSON.parse(await readFile(resolve("packages/db/package.json"), "utf8")) as { exports: Record<string, Record<string, string>> };
-  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions"].sort());
+  assert.deepEqual(Object.keys(manifest.exports).sort(), [".", ...areas.map(area => `./${area}`), "./assertions", "./billing"].sort());
   assert.equal(JSON.stringify(manifest.exports).includes("*"), false);
   for (const area of areas) {
     assert.deepEqual(manifest.exports[`./${area}`], { types: `./dist/${area}/index.d.ts`, import: `./dist/${area}/index.js` });
@@ -35,6 +35,12 @@ test("PREP_EXPORTS explicit database area exports resolve with their assigned va
   const assertions = await moduleFor("@studenthub/db/assertions");
   assert.deepEqual(Object.keys(assertions), ["PostgresReplayStore"]);
   assert.equal(typeof assertions.PostgresReplayStore, "function");
+  // Billing is subpath-only too (invoices lane, migrations 0590 to 0599).
+  assert.deepEqual(manifest.exports["./billing"], {
+    types: "./dist/billing/index.d.ts", import: "./dist/billing/index.js",
+  });
+  const billing = await moduleFor("@studenthub/db/billing");
+  assert.deepEqual(Object.keys(billing).sort(), ["PostgresBillingAccountStore", "PostgresLegacyInvoiceStore", "PostgresOrgRegistry", "allocateInvoiceNumber", "issueInvoice", "resolveInvoice"]);
 });
 
 test("PREP_ROOT_SAME root database exports are the unchanged golden set and identical area objects", async () => {
