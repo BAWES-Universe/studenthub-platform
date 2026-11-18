@@ -196,20 +196,28 @@ export class PostgresRecruitInterviewsStore {
     // The assignment, the caller's grants and the interviews come from one snapshot, so access never mixes two moments.
     const c = await this.#pool.connect();
     let broken = false;
+    let result: { page: RecruitRequestInterviews; people: readonly { id: string; person_principal_id: string }[] } | null;
     try {
       await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      const result = await this.#forRequest(c, principalId, requestId);
+      result = await this.#forRequest(c, principalId, requestId);
       await c.query("COMMIT");
-      return result;
     } catch (error) {
       try { await c.query("ROLLBACK"); } catch { broken = true; }
       throw error;
     } finally {
       c.release(broken);
     }
+    if (!result) return null;
+    // The company does not see paused people's cards or interviews (access lane A6); internal callers do. Asked only
+    // after the snapshot's client is released, so a page never holds one pool connection while waiting for another.
+    const { page, people } = result;
+    if (people.length === 0) return page;
+    const paused = await this.options.paused(people.map((p) => p.person_principal_id));
+    const hidden = new Set(people.filter((p) => paused.has(p.person_principal_id)).map((p) => p.id));
+    return { ...page, interviews: page.interviews.filter((row) => !hidden.has(row.card_id)), cards: page.cards.filter((card) => !hidden.has(card.id)) };
   }
 
-  async #forRequest(c: pg.PoolClient, principalId: string, requestId: string): Promise<RecruitRequestInterviews | null> {
+  async #forRequest(c: pg.PoolClient, principalId: string, requestId: string): Promise<{ page: RecruitRequestInterviews; people: readonly { id: string; person_principal_id: string }[] } | null> {
     const request = (await c.query<{ id: string; org_id: string; assigned_recruiter_principal_id: string | null; position_title: string; store_name: string; org_name: string }>(
       `SELECT r.id, r.org_id, r.assigned_recruiter_principal_id, r.position_title, s.name AS store_name, o.name AS org_name
        FROM recruit_requests r JOIN organizations o ON o.id = r.org_id JOIN organization_stores s ON s.id = r.store_id WHERE r.id = $1::uuid`, [requestId])).rows[0];
@@ -222,20 +230,15 @@ export class PostgresRecruitInterviewsStore {
         `SELECT c.id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage FROM recruit_pipeline_cards c
          LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id
          WHERE c.request_id = $1::uuid ORDER BY person_name NULLS LAST, c.id`, [requestId]);
-    // The company does not see paused people's cards or interviews (access lane A6); internal callers do.
-    const hidden = new Set<string>();
-    if (!access.internal) {
-      const people = (await c.query<{ id: string; person_principal_id: string }>(
-        "SELECT id, person_principal_id FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id IS NOT NULL", [requestId])).rows;
-      const paused = await this.options.paused(people.map((p) => p.person_principal_id));
-      for (const p of people) if (paused.has(p.person_principal_id)) hidden.add(p.id);
-    }
-    return {
+    // For a caller who is not internal, the people behind the cards, so forRequest can hide paused ones.
+    const people = access.internal ? [] : (await c.query<{ id: string; person_principal_id: string }>(
+      "SELECT id, person_principal_id FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id IS NOT NULL", [requestId])).rows;
+    return { page: {
       request: { id: request.id, position_title: request.position_title, store_name: request.store_name, org_name: request.org_name },
-      interviews: interviews.rows.filter((row) => !hidden.has(row.card_id)).map((row) => (access.internal ? row : { ...row, internal_note: null })),
-      cards: cards.rows.filter((card) => !hidden.has(card.id) && this.options.stageAllowed(card.stage)),
+      interviews: interviews.rows.map((row) => (access.internal ? row : { ...row, internal_note: null })),
+      cards: cards.rows.filter((card) => this.options.stageAllowed(card.stage)),
       canWrite: access.write, seesInternal: access.internal,
-    };
+    }, people };
   }
 
   /** The person's own interviews: when, where and the outcome; never a rating or a note. */

@@ -170,6 +170,13 @@ test("REC7B_PAUSED a paused applicant is hidden from the company; staff and the 
   assert.equal((await change("pause")).kind, "paused");
   assert.deepEqual((await applications.forRequest(s.owner, s.requestId))!.applications.map((x) => x.person_name), ["Sara"]);
   for (const who of [s.staff, s.recruiter]) assert.deepEqual(new Set((await applications.forRequest(who, s.requestId))!.applications.map((x) => x.person_name)), new Set(["Noor", "Sara"]));
+  // The paused port is asked after the snapshot's connection is released: a one-connection pool still answers.
+  const small = new pg.Pool({ connectionString: URL, max: 1 });
+  try {
+    const one = new PostgresRecruitRequestApplicationsStore({ ...applications.options, pool: small, paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool: small }).paused(ids) });
+    const within = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the page waited for a second connection")), 5000).unref())]);
+    assert.deepEqual((await within(one.forRequest(s.owner, s.requestId)))!.applications.map((x) => x.person_name), ["Sara"]);
+  } finally { await small.end(); }
   assert.equal((await change("resume")).kind, "resumed");
   assert.equal((await applications.forRequest(s.owner, s.requestId))!.applications.length, 2);
 });

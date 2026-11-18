@@ -171,6 +171,13 @@ test("REC6_PAUSED a paused person's interviews and card are hidden from the comp
     const page = (await interviews.forRequest(who, s.requestId))!;
     assert.deepEqual([page.interviews.length, page.cards.length], [1, 1]);
   }
+  // The paused port is asked after the snapshot's connection is released: a one-connection pool still answers.
+  const small = new pg.Pool({ connectionString: URL, max: 1 });
+  try {
+    const one = new PostgresRecruitInterviewsStore({ ...interviews.options, pool: small, paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool: small }).paused(ids) });
+    const within = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the page waited for a second connection")), 5000).unref())]);
+    assert.deepEqual((await within(one.forRequest(s.owner, s.requestId)))!.interviews.length, 0);
+  } finally { await small.end(); }
   assert.equal((await change("resume")).kind, "resumed");
   assert.equal((await interviews.forRequest(s.owner, s.requestId))!.interviews.length, 1);
 });
