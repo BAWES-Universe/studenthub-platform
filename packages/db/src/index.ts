@@ -13,3 +13,4 @@ export * from "./pay-contracts/index.js";
 export * from "./ops/index.js";
 export * from "./documents/index.js";
 export * from "./notifications/index.js";
+export * from "./recruit/index.js";
