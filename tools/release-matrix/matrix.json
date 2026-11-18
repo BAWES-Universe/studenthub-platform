@@ -2543,7 +2543,7 @@
       }
     },
     "SWITCHES": {
-      "title": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours",
+      "title": "Lane switches turned on at cutover as legacy stops writing each domain: WORK_LANE_ENABLED=true (with SAFE_WRITE_SIGNING_KEY) when legacy stops writing hours, after the work ports are wired in login-runtime (access managedStores and comms notices)",
       "lane": "cutover",
       "gates": {
         "done": {
