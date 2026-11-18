@@ -6,6 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import { recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type RequestStatus } from "../../recruit/src/index.js";
+import { PostgresAccessPausesStore } from "@studenthub/db";
 import { revokeDuring, rowFreeWhileTreeHeld, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -25,7 +26,7 @@ before(async () => {
     transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS),
     staffDecision: (r) => recruitStaffDecision(r, OPS),
     transitionAllowed: requestTransitionAllowed,
-    managedStores: async () => [],
+    managedStores: async () => [], paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
 });
 after(async () => pool.end());

@@ -62,11 +62,10 @@ export interface RecruitRequestsStoreOptions {
   readonly readDecision: Decision;
   readonly transitionDecision: Decision;
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
-  /**
-   * Stores the principal manages; empty when they manage none. Required, so production wiring names its source:
-   * until the access lane's store-manager grants land, that source is NO_STORE_MANAGERS (nobody manages a store).
-   */
+  /** Stores the principal manages now (the access lane's store-manager grants, A4); empty when they manage none. */
   readonly managedStores: (principalId: string) => Promise<readonly { readonly orgId: string; readonly storeId: string }[]>;
+  /** Which of these people are paused (access lane A6). A paused person's profile is hidden from employers; operator staff still see it. */
+  readonly paused: (principalIds: readonly string[]) => Promise<ReadonlySet<string>>;
   readonly transitionAllowed: (from: Status, to: Status) => boolean;
 }
 
@@ -193,7 +192,7 @@ export class PostgresRecruitRequestsStore {
   async get(principalId: string, requestId: string): Promise<RecruitRequestDetail | null> {
     const row = (await this.#pool.query<RecruitRequestRecord>(`SELECT ${COLUMNS} FROM ${FROM} WHERE r.id = $1::uuid`, [requestId])).rows[0];
     if (!row) return null;
-    const [read, transition] = await this.#allowed(this.#pool, principalId, row.org_id, [this.options.readDecision, this.options.transitionDecision]);
+    const [read, transition, staff] = await this.#allowed(this.#pool, principalId, row.org_id, [this.options.readDecision, this.options.transitionDecision, (rows) => this.options.staffDecision(rows)]);
     if (!read) return null;
     const [events, people] = await Promise.all([
       this.#pool.query<RecruitRequestEventRecord>(
@@ -203,7 +202,9 @@ export class PostgresRecruitRequestsStore {
         "SELECT c.person_principal_id, COALESCE(pp.display_name, p.display_name, f.name) AS person_name, c.stage FROM recruit_pipeline_cards c LEFT JOIN principals p ON p.id = c.person_principal_id LEFT JOIN person_profiles pp ON pp.principal_id = c.person_principal_id LEFT JOIN recruit_fulltimers f ON f.id = c.fulltimer_id WHERE c.request_id = $1::uuid AND c.stage <> 'withdrawn' ORDER BY c.created_at, c.id",
         [requestId]),
     ]);
-    return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows };
+    // The company does not see paused people on its request; operator staff do.
+    const hidden = staff ? new Set<string>() : await this.options.paused(people.rows.flatMap((p) => p.person_principal_id ? [p.person_principal_id] : []));
+    return { request: row, events: events.rows, canTransition: Boolean(transition), people: people.rows.filter((p) => !p.person_principal_id || !hidden.has(p.person_principal_id)) };
   }
 
   /**
@@ -218,6 +219,8 @@ export class PostgresRecruitRequestsStore {
     // A store manager sees the people of requests for the stores they manage, and no other.
     const manages = !read && !staff && (await this.options.managedStores(principalId)).some((s) => s.orgId === request.org_id && s.storeId === request.store_id);
     if (!read && !staff && !manages) return null;
+    // A paused person's profile is hidden from employers (access lane A6); operator staff still see it.
+    if (!staff && (await this.options.paused([personId])).has(personId)) return null;
     const link = (await this.#pool.query<RecruitRequestPersonLink>(
       `SELECT (SELECT stage FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS stage,
         (SELECT status FROM recruit_invitations WHERE request_id = $1::uuid AND person_principal_id = $2::text) AS invitation_status`, [requestId, personId])).rows[0]!;

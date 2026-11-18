@@ -1,7 +1,8 @@
 import pg from "pg";
 import { PostgresRecruitChecklistStore, PostgresRecruitFulltimersStore, PostgresRecruitInterviewsStore, PostgresRecruitInvitationsStore, PostgresRecruitJobsStore, PostgresRecruitPeopleSearchStore, PostgresRecruitPipelineStore, PostgresRecruitRequestApplicationsStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
+import { PostgresAccessPausesStore, PostgresAccessStoreManagersStore } from "@studenthub/db/access";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { OPEN_REQUEST_PAGE_SIZE, requestApplicationOutbox, requestApplicationTransitionAllowed, requestTakesApplications, FULLTIMER_PAGE_SIZE, JOB_PAGE_SIZE, PEOPLE_SEARCH_PAGE_SIZE, fulltimerNameKey, fulltimerStaffDecision, acceptCardEffect, applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobCandidateDecision, jobStaffDecision, NO_STORE_MANAGERS, evaluationAllowed, internalNoteDecision, interviewCompanyDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, checklistAdminDecision, invitationOutbox, invitationTransitionAllowed, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
+import { OPEN_REQUEST_PAGE_SIZE, requestApplicationOutbox, requestApplicationTransitionAllowed, requestTakesApplications, FULLTIMER_PAGE_SIZE, JOB_PAGE_SIZE, PEOPLE_SEARCH_PAGE_SIZE, fulltimerNameKey, fulltimerStaffDecision, acceptCardEffect, applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobCandidateDecision, jobStaffDecision, evaluationAllowed, internalNoteDecision, interviewCompanyDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, checklistAdminDecision, invitationOutbox, invitationTransitionAllowed, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
 import { createRecruitChecklist } from "../recruit/checklist-http.js";
 import { createRecruitPipeline } from "../recruit/pipeline-http.js";
 import { createRecruitRequests } from "../recruit/requests-http.js";
@@ -35,6 +36,10 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
   const operators = DEFAULT_OPERATOR_ORG_IDS;
   // One pool for the whole recruit area; the stores borrow it and never end it.
   const pool = new pg.Pool({ connectionString: settings.databaseUrl });
+  // The access lane's read ports, on the same pool: the stores a person manages now (A4) and who is paused (A6).
+  const storeManagers = new PostgresAccessStoreManagersStore({ pool });
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const paused = (principalIds: readonly string[]) => pauses.paused(principalIds);
   const requests = new PostgresRecruitRequestsStore({
     pool,
     createDecision: (rows, orgId, ancestors) => requestCreateDecision(rows, orgId, ancestors, operators),
@@ -42,8 +47,9 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     transitionDecision: (rows, orgId, ancestors) => requestTransitionDecision(rows, orgId, ancestors, operators),
     staffDecision: (rows) => recruitStaffDecision(rows, operators),
     transitionAllowed: requestTransitionAllowed,
-    // Store managers see their store's people once the access lane's store-manager grants land (A4); until then nobody manages a store.
-    managedStores: NO_STORE_MANAGERS,
+    // A store manager sees the people of requests for the stores they manage (A4); paused people are hidden from employers (A6).
+    managedStores: (principalId) => storeManagers.managedStores(principalId),
+    paused,
   });
   const pipeline = new PostgresRecruitPipelineStore({
     pool,
@@ -85,6 +91,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     transitionAllowed: interviewTransitionAllowed,
     evaluationAllowed,
     outbox: interviewOutbox,
+    paused,
   });
   const jobs = new PostgresRecruitJobsStore({
     pool,
@@ -110,6 +117,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     requestStatusAfter: requestStatusAfterPipeline,
     outbox: requestApplicationOutbox,
     pageSize: OPEN_REQUEST_PAGE_SIZE,
+    paused,
   });
   return {
     services: {

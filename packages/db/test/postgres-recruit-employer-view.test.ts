@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
+import { PostgresAccessPausesStore, PostgresAccessStoreManagersStore } from "@studenthub/db";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitInvitationsStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import {
-NO_STORE_MANAGERS, jobCandidateDecision, acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
+  jobCandidateDecision, acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitNotesDecision, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
 
@@ -24,7 +25,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: NO_STORE_MANAGERS,
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: (id) => new PostgresAccessStoreManagersStore({ pool }).managedStores(id), paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -92,7 +93,7 @@ test("REC5_SIGHT a company reads people on its own requests only; links decide; 
   assert.deepEqual((await requests.person(s.owner, s.requestId, noor))!.link, { stage: "withdrawn", invitation_status: null }, "the page decides that a withdrawn card gives no sight");
 });
 
-test("REC5_STORE_MANAGER a store manager sees the people of their own store's requests only; the production source names nobody", async () => {
+test("REC5_STORE_MANAGER a store manager sees the people of their own store's requests only, through the access lane's store grants", async () => {
   const s = await setup(), noor = await person();
   const manager = await person();
   const sibling = ((await stores.create(s.owner, s.orgId, { name: "Marina", location: null, brandId: null, mallId: null })) as { storeId: string }).storeId;
@@ -100,13 +101,35 @@ test("REC5_STORE_MANAGER a store manager sees the people of their own store's re
   await pipeline.assign(s.staff, siblingRequest, s.recruiter);
   await pipeline.addCard(s.recruiter, s.requestId, noor);
   await pipeline.addCard(s.recruiter, siblingRequest, noor);
-  const managed = new PostgresRecruitRequestsStore({ ...requests.options, pool, managedStores: async (id) => id === manager ? [{ orgId: s.orgId, storeId: s.storeId }] : [] });
-  const seen = (await managed.person(manager, s.requestId, noor))!;
+  assert.equal(await requests.person(manager, s.requestId, noor), null, "no store grant: nothing");
+  const grant = randomUUID();
+  await pool.query("INSERT INTO store_manager_access (id, org_id, store_id, principal_id, granted_by) VALUES ($1, $2, $3, $4, $5)", [grant, s.orgId, s.storeId, manager, s.owner]);
+  const seen = (await requests.person(manager, s.requestId, noor))!;
   assert.deepEqual(seen.link, { stage: "suggested", invitation_status: null });
   assert.equal(seen.staff, false);
-  assert.equal(await managed.person(manager, siblingRequest, noor), null, "a sibling store's request stays hidden");
+  assert.equal(await requests.person(manager, siblingRequest, noor), null, "a sibling store's request stays hidden");
   const other = await setup();
   await pipeline.addCard(other.recruiter, other.requestId, noor);
-  assert.equal(await managed.person(manager, other.requestId, noor), null, "another company's store stays hidden");
-  assert.equal(await requests.person(manager, s.requestId, noor), null, "with the production source nobody manages a store yet");
+  assert.equal(await requests.person(manager, other.requestId, noor), null, "another company's store stays hidden");
+  await pool.query("UPDATE store_manager_access SET revoked_at = clock_timestamp(), revoked_by = $2 WHERE id = $1", [grant, s.owner]);
+  assert.equal(await requests.person(manager, s.requestId, noor), null, "a revoked store grant gives no sight");
+});
+
+test("REC5_PAUSED a paused person is hidden from the company and store managers, not from operator staff; resuming shows them again", async () => {
+  const s = await setup(), noor = await person(), sara = await person();
+  await profile(noor);
+  await pipeline.addCard(s.recruiter, s.requestId, noor);
+  await pipeline.addCard(s.recruiter, s.requestId, sara);
+  const manager = await person();
+  await pool.query("INSERT INTO store_manager_access (id, org_id, store_id, principal_id, granted_by) VALUES ($1, $2, $3, $4, $5)", [randomUUID(), s.orgId, s.storeId, manager, s.owner]);
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const change = (action: "pause" | "resume") => pauses.apply({ callerId: s.staff, request: { targetPrincipalId: noor, action, reason: "test pause" }, decide: () => ({ kind: "apply" }) });
+  assert.equal((await change("pause")).kind, "paused");
+  assert.equal(await requests.person(s.owner, s.requestId, noor), null, "the company does not see a paused person's profile");
+  assert.equal(await requests.person(manager, s.requestId, noor), null, "nor does the store manager");
+  assert.equal((await requests.person(s.staff, s.requestId, noor))!.staff, true, "operator staff still do");
+  assert.deepEqual((await requests.get(s.owner, s.requestId))!.people.map((p) => p.person_principal_id), [sara], "the company's request page lists only people who are not paused");
+  assert.deepEqual(new Set((await requests.get(s.staff, s.requestId))!.people.map((p) => p.person_principal_id)), new Set([noor, sara]));
+  assert.equal((await change("resume")).kind, "resumed");
+  assert.equal((await requests.person(s.owner, s.requestId, noor))!.person.name, "Noor Sabah");
 });

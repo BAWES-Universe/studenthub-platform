@@ -5,6 +5,7 @@ import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitPipelineStore, PostgresRecruitRequestApplicationsStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
+import { PostgresAccessPausesStore } from "@studenthub/db";
 import { revokeDuring, rowFreeWhileTreeHeld } from "./recruit-races.js";
 import {
   acceptCardEffect, interviewCompanyDecision, jobCandidateDecision, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision,
@@ -26,7 +27,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [],
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [], paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -37,7 +38,7 @@ before(async () => {
     pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS),
     recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
     authority: pipelineAuthority, takesApplications: requestTakesApplications, transitionAllowed: requestApplicationTransitionAllowed, acceptCardEffect,
-    requestStatusAfter: requestStatusAfterPipeline, outbox: requestApplicationOutbox, pageSize: 2,
+    requestStatusAfter: requestStatusAfterPipeline, outbox: requestApplicationOutbox, pageSize: 2, paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
 });
 after(async () => pool.end());
@@ -158,4 +159,17 @@ test("REC7B_LOCK_ORDER a decision waiting on the organization tree holds no requ
   const r = await rowFreeWhileTreeHeld(pool, "SELECT 1 FROM recruit_requests WHERE id = $1 FOR UPDATE NOWAIT", [s.requestId], () => applications.decide(s.owner, a, "rejected"));
   assert.equal(r.rowFree, true, "the request row is free while the decision waits for the tree");
   assert.deepEqual(r.result, { kind: "decided", status: "rejected", cardId: null });
+});
+
+test("REC7B_PAUSED a paused applicant is hidden from the company; staff and the request's recruiter still see them", async () => {
+  const tag = `rec7b${randomUUID().slice(0, 8)}`, s = await setup(`Cashier ${tag}`), noor = await person([], "Noor"), sara = await person([], "Sara");
+  await pipeline.assign(s.staff, s.requestId, s.recruiter);
+  for (const who of [noor, sara]) assert.equal((await applications.apply(who, s.requestId)).kind, "applied");
+  const pauses = new PostgresAccessPausesStore({ pool });
+  const change = (action: "pause" | "resume") => pauses.apply({ callerId: s.staff, request: { targetPrincipalId: noor, action, reason: "test pause" }, decide: () => ({ kind: "apply" }) });
+  assert.equal((await change("pause")).kind, "paused");
+  assert.deepEqual((await applications.forRequest(s.owner, s.requestId))!.applications.map((x) => x.person_name), ["Sara"]);
+  for (const who of [s.staff, s.recruiter]) assert.deepEqual(new Set((await applications.forRequest(who, s.requestId))!.applications.map((x) => x.person_name)), new Set(["Noor", "Sara"]));
+  assert.equal((await change("resume")).kind, "resumed");
+  assert.equal((await applications.forRequest(s.owner, s.requestId))!.applications.length, 2);
 });

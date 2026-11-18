@@ -8,6 +8,7 @@ import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitJob
 import {
   applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobCandidateDecision, jobStaffDecision, recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type JobFields,
 } from "../../recruit/src/index.js";
+import { PostgresAccessPausesStore } from "@studenthub/db";
 import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -25,7 +26,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [],
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [], paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
   jobs = new PostgresRecruitJobsStore({ pool, staffDecision: (r) => jobStaffDecision(r, OPS), candidateDecision: jobCandidateDecision, acceptsApplications: jobAcceptsApplications, transitionAllowed: applicationTransitionAllowed, outbox: applicationOutbox, pageSize: 2 });
 });

@@ -10,6 +10,7 @@ jobCandidateDecision,   evaluationAllowed, fulltimerNameKey, fulltimerStaffDecis
   pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed,
   requestTransitionDecision, type FulltimerFields,
 } from "../../recruit/src/index.js";
+import { PostgresAccessPausesStore } from "@studenthub/db";
 import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -28,7 +29,7 @@ before(async () => {
   stores = new PostgresOrganizationStoresStore({ pool, writeDecision: organizationStoreWriteDecision, readDecision: organizationStoreReadDecision });
   requests = new PostgresRecruitRequestsStore({
     pool, createDecision: (r, o, a) => requestCreateDecision(r, o, a, OPS), readDecision: (r, o, a) => requestReadDecision(r, o, a, OPS),
-    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [],
+    transitionDecision: (r, o, a) => requestTransitionDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), transitionAllowed: requestTransitionAllowed, managedStores: async () => [], paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
   pipeline = new PostgresRecruitPipelineStore({
     pool, assignDecision: (r) => pipelineAssignDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), candidateDecision: jobCandidateDecision,
@@ -38,7 +39,7 @@ before(async () => {
   fulltimers = new PostgresRecruitFulltimersStore({ pool, staffDecision: (r) => fulltimerStaffDecision(r, OPS), nameKey: fulltimerNameKey, pageSize: 2 });
   interviews = new PostgresRecruitInterviewsStore({
     pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
-    authority: pipelineAuthority, internalDecision: (r) => internalNoteDecision(r, OPS), stageAllowed: interviewStageAllowed, transitionAllowed: interviewTransitionAllowed, evaluationAllowed, outbox: interviewOutbox,
+    authority: pipelineAuthority, internalDecision: (r) => internalNoteDecision(r, OPS), stageAllowed: interviewStageAllowed, transitionAllowed: interviewTransitionAllowed, evaluationAllowed, outbox: interviewOutbox, paused: (ids: readonly string[]) => new PostgresAccessPausesStore({ pool }).paused(ids),
   });
 });
 after(async () => pool.end());
