@@ -32,18 +32,24 @@ test("PREP_WIRING_WORK_SWITCH a work lane switch other than true or false stops 
   assert.throws(() => createRuntimeLoginFromEnv({ ...env, SAFE_WRITE_SIGNING_KEY: KEY, WORK_LANE_ENABLED: "yes" }), /WORK_LANE_ENABLED must be true or false/);
 });
 
-test("PREP_WIRING_WORK_PORTS turning the work lane on without store-manager and notice ports stops startup", async (t) => {
+test("PREP_WIRING_WORK_PORTS the store-manager port comes from the access lane; turning the work lane on without the notice hooks stops startup", async (t) => {
   t.mock.method(pg.Pool.prototype, "end", async () => {});
-  assert.throws(() => createRuntimeLoginFromEnv({ ...env, SAFE_WRITE_SIGNING_KEY: KEY, WORK_LANE_ENABLED: "true" }), /needs the store-manager and notice ports/);
+  // The runtime wires the access lane's real store-manager port, so the only thing
+  // missing is the comms lane's notice hooks, and startup names exactly that.
+  assert.throws(() => createRuntimeLoginFromEnv({ ...env, SAFE_WRITE_SIGNING_KEY: KEY, WORK_LANE_ENABLED: "true" }),
+    (error: Error) => /needs the comms lane's decision notice hooks/.test(error.message) && !/store-manager/.test(error.message));
   const settings = { databaseUrl: env.DATABASE_URL, safeWriteKey: Buffer.from(KEY, "base64") } as unknown as Parameters<typeof wireWork>[0];
   const access = { authzStore: {} } as unknown as Parameters<typeof wireWork>[1];
   const managedStores = { async managedStores() { return []; } };
-  assert.throws(() => wireWork(settings, access, { enabled: true, managedStores }), /needs the store-manager and notice ports/);
+  assert.throws(() => wireWork(settings, access, { enabled: true, managedStores }), /needs the comms lane's decision notice hooks/);
   const notices = { async onDecided() {}, async onUndone() {} };
-  assert.throws(() => wireWork(settings, access, { enabled: true, notices }), /needs the store-manager and notice ports/);
+  // Without an explicit port the access lane's store-manager store is used.
+  const withAccessStores = wireWork(settings, access, { enabled: true, notices });
+  assert.ok(withAccessStores.services.work);
+  await withAccessStores.close();
   // An empty or partial notice port would skip notices or their withdrawal, so it counts as missing.
   for (const partial of [{}, { onDecided: notices.onDecided }, { onUndone: notices.onUndone }]) {
-    assert.throws(() => wireWork(settings, access, { enabled: true, managedStores, notices: partial }), /needs the store-manager and notice ports/, JSON.stringify(Object.keys(partial)));
+    assert.throws(() => wireWork(settings, access, { enabled: true, managedStores, notices: partial }), /needs the comms lane's decision notice hooks/, JSON.stringify(Object.keys(partial)));
   }
   const wired = wireWork(settings, access, { enabled: true, managedStores, notices });
   assert.ok(wired.services.work);
