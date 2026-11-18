@@ -46,7 +46,7 @@ Excludes: workflows, `.github/coordinator/**`, `apps/gateway/src/index.ts`, `web
 | R5 | Employers see the people suggested, invited or assigned to their requests and stores, as legacy (decision SHU-200: documents through signed, audited links) | company candidate views | 0454 (document view audit) |
 | R6 | Interviews and versioned evaluations, with internal and shared notes kept apart | `RequestInterview`, `InterviewEvaluation`, `CandidateEvaluation` | 0455 |
 | R7 | Job board as legacy: staff publish, people browse and apply once, "My applications"; closed or draft jobs refuse applications (decision SHU-207) | `Job`, `JobInterest`, candidate `JobController` | 0456 (built) |
-| R7b | People browse open requests and apply once; the company or the request's recruiter accepts an applicant onto the pipeline (then interviews, R6) or rejects them; legacy value maps for the importer | `RequestApplication`, candidate and company `RequestController` | 0458 (built; second PR from this branch after this one merges, so each PR stays under the box's 100-file review page) |
+| R7b | Candidates browse open requests and apply once (as with the job board, company and staff accounts get nothing); the company or the request's recruiter accepts an applicant onto the pipeline (then interviews, R6) or rejects them | `RequestApplication`, candidate and company `RequestController` | 0458 (built) |
 | R9 | Full-timer track kept as a second candidate type on the same pipeline (legacy benchmark rule) | `FulltimerController` | 0457 (built) |
 | Import | Legacy rows map into the new tables; rows that do not map land in the reconciliation report | all of the above | none |
 
