@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { verifyAssertion, type KeyResolver, type ReplayStore, type SubjectPolicy } from "@bawes/actor-assertion";
 
 /** E2 host attestation bounds (universe-bot-bridge.md: new callers 60 s lifetime, 5 s skew). */
@@ -50,7 +51,12 @@ export type AttestationResult =
 /** Verifies a `bawes-aa.v1` host attestation. Every failure is a plain refusal. */
 export async function verifyHostAttestation(token: unknown, config: HostIdentityConfig): Promise<AttestationResult> {
   if (typeof token !== "string" || token.length === 0 || token.length > 4096) return { ok: false };
-  const result = await verifyAssertion(token, config.keys, config.replay, {
+  // The challenge is a bearer reference: the shared replay table only ever sees its digest.
+  const replay: ReplayStore = {
+    consume: (issuer, jti, expiresAt, now, constraints) =>
+      config.replay.consume(issuer, createHash("sha256").update(jti).digest("base64url"), expiresAt, now, constraints),
+  };
+  const result = await verifyAssertion(token, config.keys, replay, {
     expectedAudience: config.audience,
     subjectPolicy: config.subjectPolicy,
     maxLifetimeSeconds: ATTESTATION_LIFETIME_SECONDS,

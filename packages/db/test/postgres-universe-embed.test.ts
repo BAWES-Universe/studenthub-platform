@@ -82,8 +82,20 @@ test("E2_DB completion refuses superseded or expired handoffs and /done consumes
 
   const ok = await bound();
   assert.equal(await store.consumeHandoff(ok.instance, ok.browser, ok.session), undefined, "already used");
+
+  // While still completed, each wrong instance, browser binding or session is refused on its own.
+  const browser2 = ref(), state2 = ref(), session2 = ref();
+  const instance2 = await store.ensureInstance(browser2, ref(), 43_200);
+  const h4 = await store.createHandoff(instance2, browser2, 600);
+  await store.attachState(h4, state2);
+  await login.sessions.put({ id: session2, personId: person });
+  assert.equal(await store.completeHandoff(state2, session2, person), true);
   const other = await store.ensureInstance(ref(), ref(), 43_200);
-  assert.equal(await store.consumeHandoff(other, ok.browser, ok.session), undefined);
+  assert.equal(await store.consumeHandoff(other, browser2, session2), undefined, "wrong instance");
+  assert.equal(await store.consumeHandoff(instance2, ref(), session2), undefined, "wrong browser binding");
+  assert.equal(await store.consumeHandoff(instance2, browser2, ref()), undefined, "wrong session");
+  assert.equal(await store.consumeHandoff(instance2, browser2, session2), person, "the right triple consumes it");
+  assert.equal(await store.consumeHandoff(instance2, browser2, session2), undefined, "once");
 });
 
 test("E2_DB /done refuses a completed handoff whose session is no longer live", async () => {
@@ -111,7 +123,8 @@ test("E2_DB challenges are one-use and generation-bound; the lease ends at min(i
   assert.equal(await store.consumeChallenge(b.instance, c1), undefined, "one use");
   const iat = Math.floor(await dbNow()) - 50;
   const expires = await store.writeLease(b.instance, g0, "subject@example.test", iat, 600);
-  assert.equal(expires!.getTime() / 1000, iat + 600, "late attestation: lease ends at iat + 600, not receipt + 600");
+  assert.equal(expires!.expiresAt.getTime() / 1000, iat + 600, "late attestation: lease ends at iat + 600, not receipt + 600");
+  assert.ok(expires!.remainingSeconds > 545 && expires!.remainingSeconds <= 550, "remaining time is measured by database time");
   assert.equal(await store.consumeChallenge(b.instance, c2), undefined, "an old-generation challenge cannot renew");
   assert.equal(await store.writeLease(b.instance, g0, "subject@example.test", iat, 600), undefined, "stale generation");
   const leased = await store.readBinding(b.instance, b.browser, b.session);
@@ -125,7 +138,8 @@ test("E2_DB challenges are one-use and generation-bound; the lease ends at min(i
   await store.issueChallenge(b.instance, b.browser, b.session, c3, 60);
   assert.equal(await store.consumeChallenge(b.instance, c3), g1);
   const capped = await store.writeLease(b.instance, g1, "subject@example.test", Math.floor(await dbNow()), 600);
-  assert.ok(capped!.getTime() / 1000 <= (await dbNow()) + 121);
+  assert.ok(capped!.expiresAt.getTime() / 1000 <= (await dbNow()) + 121);
+  assert.ok(capped!.remainingSeconds <= 120);
   // An attestation whose iat + 600 is already past writes no lease.
   const c4 = ref();
   await store.issueChallenge(b.instance, b.browser, b.session, c4, 60);
@@ -191,4 +205,15 @@ test("E2_DB superseding a completed handoff clears its completion, and connects 
     const results = await Promise.allSettled([store.consumeHandoff(instance, browser, s), store.createHandoff(instance, browser, 600)]);
     assert.deepEqual(results.map(r => r.status), ["fulfilled", "fulfilled"]);
   }
+});
+
+test("E2_DB handoffCurrent is true only for the pending, state-bound handoff", async () => {
+  const browser = ref();
+  const instance = await store.ensureInstance(browser, ref(), 43_200);
+  const h1 = await store.createHandoff(instance, browser, 600);
+  assert.equal(await store.handoffCurrent(h1), false, "no state yet");
+  await store.attachState(h1, ref());
+  assert.equal(await store.handoffCurrent(h1), true);
+  await store.createHandoff(instance, browser, 600);
+  assert.equal(await store.handoffCurrent(h1), false, "superseded");
 });

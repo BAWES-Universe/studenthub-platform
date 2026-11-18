@@ -18,11 +18,19 @@ export interface UniverseEmbedBindingView {
 }
 
 /** The persistence port used by the gateway embed service. */
+export interface UniverseEmbedLease {
+  readonly expiresAt: Date;
+  /** Seconds until expiry, measured by the database clock that enforces it. */
+  readonly remainingSeconds: number;
+}
+
 export interface UniverseEmbedStore {
   ensureInstance(browserBinding: string, newRef: string, ttlSeconds: number): Promise<string>;
   findInstance(ref: string, browserBinding: string): Promise<string | undefined>;
   createHandoff(instanceId: string, browserBinding: string, ttlSeconds: number): Promise<string>;
   attachState(handoffId: string, state: string): Promise<boolean>;
+  /** True while the handoff is still the pending, state-bound, unexpired one. */
+  handoffCurrent(handoffId: string): Promise<boolean>;
   completeHandoff(state: string, sessionId: string, personId: string): Promise<boolean>;
   consumeHandoff(instanceId: string, browserBinding: string, sessionId: string): Promise<string | undefined>;
   readBinding(instanceId: string, browserBinding: string, sessionId: string): Promise<UniverseEmbedBindingView | undefined>;
@@ -30,7 +38,8 @@ export interface UniverseEmbedStore {
   invalidateBinding(instanceId: string, generation?: number): Promise<void>;
   issueChallenge(instanceId: string, browserBinding: string, sessionId: string, challenge: string, ttlSeconds: number): Promise<boolean>;
   consumeChallenge(instanceId: string, challenge: string): Promise<number | undefined>;
-  writeLease(instanceId: string, generation: number, hostSubject: string, issuedAtEpochSeconds: number, leaseSeconds: number): Promise<Date | undefined>;
+  /** Writes the lease; returns its expiry and the seconds left by database time. */
+  writeLease(instanceId: string, generation: number, hostSubject: string, issuedAtEpochSeconds: number, leaseSeconds: number): Promise<UniverseEmbedLease | undefined>;
   identitySubjects(personId: string, issuer: string): Promise<readonly string[]>;
 }
 
@@ -49,17 +58,22 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
 
   async #tx<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.#pool.connect();
+    let result: T;
     try {
       await client.query("BEGIN");
-      const result = await work(client);
+      result = await work(client);
       await client.query("COMMIT");
-      return result;
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
+      let broken: Error | undefined;
+      await client.query("ROLLBACK").catch((rollbackError: unknown) => {
+        broken = rollbackError instanceof Error ? rollbackError : new Error("rollback failed");
+      });
+      // A client that may still be inside a transaction is discarded, never pooled.
+      client.release(broken);
       throw error;
-    } finally {
-      client.release();
     }
+    client.release();
+    return result;
   }
 
   async ensureInstance(browserBinding: string, newRef: string, ttlSeconds: number): Promise<string> {
@@ -72,8 +86,10 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
         `INSERT INTO universe_embed_instances (browser_binding_digest, expires_at)
          VALUES ($1, clock_timestamp() + ($2 * interval '1 second'))
          ON CONFLICT (browser_binding_digest) DO NOTHING`, [browser, positive(ttlSeconds)]);
+      // Only a live instance may be named by the new cookie (findInstance accepts nothing else).
       const { rows } = await client.query<{ id: string }>(
-        "SELECT id FROM universe_embed_instances WHERE browser_binding_digest = $1", [browser]);
+        "SELECT id FROM universe_embed_instances WHERE browser_binding_digest = $1 AND expires_at > clock_timestamp() FOR UPDATE",
+        [browser]);
       const id = rows[0]?.id;
       if (!id) throw new Error("embed instance unavailable");
       await client.query(
@@ -121,6 +137,13 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
     return rowCount === 1;
   }
 
+  async handoffCurrent(handoffId: string): Promise<boolean> {
+    const { rowCount } = await this.#pool.query(
+      `SELECT 1 FROM universe_embed_handoffs
+        WHERE id = $1 AND status = 'pending' AND state_digest IS NOT NULL AND expires_at > clock_timestamp()`, [handoffId]);
+    return rowCount === 1;
+  }
+
   async completeHandoff(state: string, sessionId: string, personId: string): Promise<boolean> {
     const { rowCount } = await this.#pool.query(
       `UPDATE universe_embed_handoffs SET status = 'completed', session_digest = $2, person_id = $3
@@ -147,8 +170,10 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
       const personId = rows[0]?.person_id;
       if (!personId) return undefined;
       // The session must still be live by database time when the binding is recorded.
+      // Checked and share-locked inside this transaction, so the session cannot be
+      // deleted between this check and the binding insert.
       const live = await client.query(
-        "SELECT 1 FROM login_sessions WHERE id = $1 AND person_id = $2 AND expires_at > clock_timestamp()",
+        "SELECT 1 FROM login_sessions WHERE id = $1 AND person_id = $2 AND expires_at > clock_timestamp() FOR SHARE",
         [session, personId]);
       if (live.rowCount !== 1) return undefined;
       // A new binding never inherits a lease, challenge or generation-bound state.
@@ -218,11 +243,11 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
   }
 
   async writeLease(instanceId: string, generation: number, hostSubject: string,
-    issuedAtEpochSeconds: number, leaseSeconds: number): Promise<Date | undefined> {
+    issuedAtEpochSeconds: number, leaseSeconds: number): Promise<UniverseEmbedLease | undefined> {
     if (!Number.isFinite(issuedAtEpochSeconds)) throw new TypeError("issuedAt must be finite");
     // Expiry = min(attestation iat + lease, platform session expiry). Never
     // receipt time + lease, so a late attestation cannot add time.
-    const { rows } = await this.#pool.query<{ lease_expires_at: Date }>(
+    const { rows } = await this.#pool.query<{ lease_expires_at: Date; remaining: number }>(
       `UPDATE universe_embed_bindings b
           SET generation = nextval('universe_embed_binding_generation_seq'),
               lease_host_subject_digest = $3,
@@ -231,9 +256,10 @@ export class PostgresUniverseEmbedStore implements UniverseEmbedStore {
         WHERE b.instance_id = $1 AND b.generation = $2
           AND s.id = b.session_digest AND s.person_id = b.person_id AND s.expires_at > clock_timestamp()
           AND LEAST(to_timestamp($4::double precision) + ($5 * interval '1 second'), s.expires_at) > clock_timestamp()
-      RETURNING b.lease_expires_at`,
+      RETURNING b.lease_expires_at, extract(epoch FROM b.lease_expires_at - clock_timestamp())::float8 AS remaining`,
       [instanceId, generation, universeEmbedDigest(hostSubject), issuedAtEpochSeconds, positive(leaseSeconds)]);
-    return rows[0]?.lease_expires_at;
+    const row = rows[0];
+    return row ? { expiresAt: row.lease_expires_at, remainingSeconds: Number(row.remaining) } : undefined;
   }
 
   async identitySubjects(personId: string, issuer: string): Promise<readonly string[]> {

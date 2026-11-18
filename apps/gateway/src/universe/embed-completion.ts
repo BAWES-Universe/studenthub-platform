@@ -39,7 +39,9 @@ export function completingStores(states: LoginStateStore, sessions: SessionStore
         try {
           ok = await store.completeHandoff(consumed, record.id, record.personId);
         } finally {
-          if (!ok) await sessions.delete(record.id).catch(() => undefined);
+          // A failed cleanup is not hidden: it propagates (logged as a 5xx), and the
+          // orphaned session was never sent to any browser, so it cannot be used.
+          if (!ok) await sessions.delete(record.id);
         }
         if (!ok) throw new Error("handoff refused completion");
       },

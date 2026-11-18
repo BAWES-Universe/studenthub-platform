@@ -107,16 +107,29 @@ function singleHeader(request: IncomingMessage, name: string): string | undefine
   return found;
 }
 
-async function readBody(request: IncomingMessage): Promise<string | undefined> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-    size += buffer.length;
-    if (size > MAX_BODY_BYTES) return undefined;
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
+/**
+ * Reads at most MAX_BODY_BYTES. Past the cap it stops listening without
+ * destroying the socket, so the refusal can still be sent (with Connection:
+ * close); Node discards the unread remainder.
+ */
+function readBody(request: IncomingMessage): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const done = (value: string | undefined) => {
+      request.off("data", onData); request.off("end", onEnd); request.off("error", onError);
+      resolve(value);
+    };
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) { request.pause(); done(undefined); return; }
+      chunks.push(buffer);
+    };
+    const onEnd = () => done(Buffer.concat(chunks).toString("utf8"));
+    const onError = () => done(undefined);
+    request.on("data", onData); request.on("end", onEnd); request.on("error", onError);
+  });
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown> | undefined> {
@@ -267,18 +280,21 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
         return refuse("different_account").then(() => true);
       }
       if (!await runtime.mapping.matches(attestation.subject, bound.personId)) return refuse("different_account").then(() => true);
-      const expires = await runtime.store.writeLease(bound.instanceId, generation, attestation.subject, attestation.issuedAt, LEASE_SECONDS);
-      if (!expires) return refuse("start_again").then(() => true);
+      const lease = await runtime.store.writeLease(bound.instanceId, generation, attestation.subject, attestation.issuedAt, LEASE_SECONDS);
+      if (!lease) return refuse("start_again").then(() => true);
       // The client clears rendered profile data at this deadline on its own clock,
       // measured from when it sent the request (never later than the server lease).
+      // Remaining time by the database clock that enforces the lease, less a small margin.
       const leaseSeconds = Math.max(0, Math.min(LEASE_SECONDS,
-        Math.floor((expires.getTime() - Date.now()) / 1000) - LEASE_CLOCK_MARGIN_SECONDS));
+        Math.floor(lease.remainingSeconds) - LEASE_CLOCK_MARGIN_SECONDS));
       json(response, 200, { state: "ready", leaseSeconds,
         renewAfterSeconds: leaseSeconds > 60 ? Math.min(RENEW_AFTER_SECONDS, leaseSeconds - 60) : leaseSeconds });
       return true;
     }
     case "POST /universe/embed/connect": {
-      const startAgain = () => writeEmbedResponse(response, 400, messagePage(lang, PAGE_TEXT[lang].again), HTML_TYPE, APP_POLICY);
+      // A refusal may leave an unread (oversized) body behind: close the connection after it.
+      const startAgain = () => writeEmbedResponse(response, 400, messagePage(lang, PAGE_TEXT[lang].again), HTML_TYPE, APP_POLICY,
+        { connection: "close" });
       if (!exactOrigin() || !browser || !embedRef
         || !/^application\/x-www-form-urlencoded(\s*;|$)/i.test(String(request.headers["content-type"] ?? ""))) { startAgain(); return true; }
       const raw = await readBody(request);

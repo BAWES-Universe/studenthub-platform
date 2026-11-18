@@ -87,13 +87,15 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   }
   function leaseLive() { return leaseDeadline > 0 && performance.now() < leaseDeadline; }
   // Lease deadline or renewal: rendered data goes first, then verification restarts.
+  // A new generation, so replies to requests started under the old lease are ignored.
   function expireLease(g) {
     if (g !== generation) return;
+    generation += 1;
     if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
     leaseDeadline = 0;
     clearProfile();
     show("needs_universe");
-    verify(g);
+    verify(generation);
   }
   // Synchronous clear: runs inside pagehide / hidden visibilitychange handlers.
   function hideAll() {
@@ -113,10 +115,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
       method: method, credentials: "same-origin", cache: "no-store", redirect: "error",
       headers: headers, body: payload ? JSON.stringify(payload) : undefined, signal: controller.signal
     }).then(function (response) {
-      clearTimeout(timer);
       if (!response.ok) throw new Error("status " + response.status);
       return response.json();
-    }, function (error) { clearTimeout(timer); throw error; });
+    }).finally(function () { clearTimeout(timer); });
   }
   function fail(g) { if (g === generation) { stopTimers(); clearProfile(); show("error"); } }
 
@@ -145,6 +146,8 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
     call("GET", "/universe/embed/profile").then(function (reply) {
       if (g !== generation) return;
       if (reply.state === "populated" && !leaseLive()) { expireLease(g); return; }
+      // Never insert profile fields into a hidden document; becoming visible re-checks.
+      if (document.visibilityState !== "visible") { clearProfile(); return; }
       if (reply.state === "populated" && Array.isArray(reply.fields)) render(reply.fields); else clearProfile();
       show(reply.state);
     }).catch(function () { fail(g); });
@@ -184,6 +187,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
         leaseDeadline = sentAt + lease;
         var left = leaseDeadline - performance.now();
         if (left <= 0) { expireLease(g); return; }
+        // This lease starts a new generation: earlier status and profile replies are ignored.
+        generation += 1;
+        g = generation;
         if (renewTimer) clearTimeout(renewTimer);
         // One timer: renewal, never later than the deadline; renewal clears the profile first.
         renewTimer = setTimeout(function () { expireLease(g); }, Math.max(0, Math.min(renewIn - (performance.now() - sentAt), left)));
@@ -233,6 +239,7 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
     if (document.visibilityState === "visible" && body.getAttribute("data-state") === "waiting") revalidate();
   }, 3000);
   show("loading");
-  revalidate();
+  // A frame that loads in a background tab waits for the visible transition.
+  if (document.visibilityState === "visible") revalidate();
 })();
 `;

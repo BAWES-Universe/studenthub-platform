@@ -79,6 +79,11 @@ export function assertSameSiteEmbed(site: string, embedOrigin: string, ancestors
   if (site !== site.toLowerCase() || labels.length < 2
     || !labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
     || /^[0-9]+$/.test(labels[labels.length - 1]!)) fail();
+  // The site must be a registrable domain, not a public suffix such as co.uk or
+  // com.kw (browsers treat hosts under a public suffix as different sites).
+  // Without a bundled public-suffix list, refuse the common two-label suffix
+  // shapes: a generic second level under a two-letter country code.
+  if (labels.length === 2 && labels[1]!.length === 2 && PUBLIC_SECOND_LEVELS.has(labels[0]!)) fail();
   if (ancestors.length === 0) fail();
   for (const value of [embedOrigin, ...ancestors]) {
     const url = new URL(value);
@@ -93,6 +98,17 @@ export function assertSameSiteEmbed(site: string, embedOrigin: string, ancestors
  * stored external subject, which the login keeps in its own (email) form. Only
  * the matching host format is accepted; hashed_user_id could never match.
  */
+const PUBLIC_SECOND_LEVELS = new Set(["ac", "co", "com", "edu", "gov", "gv", "ltd", "me", "mil", "net", "nic", "or", "org", "plc", "sch"]);
+
+/**
+ * Browsers keep cookies per host, not per port, so the embed must not share
+ * a hostname with the main application (its __Host- session cookie would be
+ * replaced or cleared by the embed login).
+ */
+export function assertSeparateHosts(mainOrigin: string, embedOrigin: string): void {
+  if (new URL(mainOrigin).hostname === new URL(embedOrigin).hostname) fail();
+}
+
 function subjectFormat(value: string): SubjectPolicy {
   if (value === "user_email" && UNIVERSE_SUBJECT_POLICY === USER_EMAIL_SUBJECT_POLICY) return USER_EMAIL_SUBJECT_POLICY;
   return fail();
@@ -140,6 +156,7 @@ export async function wireUniverse(
   for (const name of LOGIN_NAMES) if (!env[name] || env[name]!.trim() !== env[name]) fail();
   if (new URL(config.callbackUrl).pathname !== "/login/callback") fail();
   assertSameSiteEmbed(env.UNIVERSE_EMBED_SITE!, config.origin, config.ancestors);
+  assertSeparateHosts(config.mainOrigin, config.origin);
   // E0 pins exactly one rule. Only the same-provider rule is implemented.
   if (env.UNIVERSE_EMBED_HOST_MAPPING !== "same_provider_subject") fail();
   const pusherIssuer = env.UNIVERSE_EMBED_PUSHER_ISSUER!;

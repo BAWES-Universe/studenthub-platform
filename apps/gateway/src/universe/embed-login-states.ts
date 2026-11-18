@@ -16,6 +16,8 @@ export function handoffBoundStates(base: LoginStateStore, store: UniverseEmbedSt
       used = true;
       if (!await store.attachState(handoffId, record.state)) throw new Error("handoff is no longer current");
       await base.put(record);
+      // A newer connect may have superseded this handoff while the state was written.
+      if (!await store.handoffCurrent(handoffId)) throw new Error("handoff is no longer current");
     },
     consume: (state) => base.consume(state),
   };
