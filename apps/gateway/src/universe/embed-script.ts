@@ -69,6 +69,8 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   // A sign-in started in the other tab; kept apart from the visible state, which a
   // visibility change resets, so the waiting message and its quick poll come back.
   var signingIn = false;
+  // Status replies can overlap (the 3 s poll during sign-in): only the newest one counts.
+  var statusSeq = 0;
 
   function clearProfile() {
     while (profileEl.firstChild) profileEl.removeChild(profileEl.firstChild);
@@ -77,7 +79,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   function show(state) {
     statusEl.textContent = text[state] || text.error;
     body.setAttribute("data-state", state);
-    connect.hidden = state !== "signed_out";
+    // While waiting, the sign-in stays offered: a closed sign-in tab can be retried
+    // (a new start supersedes the old handoff).
+    connect.hidden = !(state === "signed_out" || state === "waiting");
     signout.hidden = !(state === "different_account" || state === "start_again");
     link.hidden = state !== "not_linked";
     full.hidden = state !== "open_in_universe";
@@ -204,8 +208,9 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
 
   function revalidate() {
     var g = generation;
+    var s = ++statusSeq;
     call("GET", "/universe/embed/status").then(function (reply) {
-      if (g !== generation) return;
+      if (g !== generation || s !== statusSeq) return;
       // Sign-in still in progress in the other tab: keep (or restore) the waiting message.
       if (reply.state === "signed_out" && signingIn) { show("waiting"); return; }
       signingIn = false;
@@ -218,7 +223,7 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
       clearProfile();
       if (reply.state === "needs_universe") { show("needs_universe"); verify(g); return; }
       show(reply.state);
-    }).catch(function () { fail(g); });
+    }).catch(function () { if (s === statusSeq) fail(g); });
   }
 
   connect.addEventListener("submit", function () { signingIn = true; show("waiting"); });

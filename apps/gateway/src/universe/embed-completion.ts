@@ -39,7 +39,12 @@ export function completingStores(states: LoginStateStore, sessions: SessionStore
       async put(record) {
         if (consumed === undefined || completed) throw new Error("no consumed embed state");
         completed = true;
-        await sessions.put(record);
+        try {
+          await sessions.put(record);
+        } catch (error) {
+          failure = error;
+          throw error;
+        }
         let ok = false;
         try {
           ok = await store.completeHandoff(consumed, record.id, record.personId);
