@@ -76,7 +76,7 @@ export class PostgresRecruitFulltimersStore {
   async #check(c: pg.PoolClient, input: RecruitFulltimerInput, self: string | null): Promise<RecruitFulltimerWriteResult | null> {
     for (const [field, type] of REFS) {
       const id = input[field];
-      if (id && !(await c.query("SELECT 1 FROM catalogue_items WHERE id = $1::uuid AND catalogue_type = $2::text", [id, type])).rowCount) return { kind: "reference_invalid", field };
+      if (id && !(await c.query("SELECT 1 FROM catalogue_items WHERE id = $1::uuid AND catalogue_type = $2::text FOR SHARE", [id, type])).rowCount) return { kind: "reference_invalid", field };
     }
     // Serialise duplicate checks on the name key so two creates cannot both pass.
     await c.query("SELECT pg_advisory_xact_lock(hashtext('recruit_fulltimer:' || $1::text))", [this.options.nameKey(input.name)]);

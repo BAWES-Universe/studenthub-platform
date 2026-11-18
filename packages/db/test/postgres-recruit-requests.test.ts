@@ -6,6 +6,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import { organizationStoreReadDecision, organizationStoreWriteDecision } from "@studenthub/organizations";
 import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitRequestsStore, runMigrations } from "@studenthub/db";
 import { recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type RequestStatus } from "../../recruit/src/index.js";
+import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS = ["root"];
@@ -171,4 +172,15 @@ test("REC1_RACE two simultaneous transitions of one request commit exactly one w
     assert.equal((await statusOf(id)).status, "filling");
     assert.equal(await eventCount(id), 2);
   }
+});
+
+test("REC1_REVOKE_RACE a grant revoked while a create or a transition is in flight refuses it; nothing is written", async () => {
+  const orgId = await organization(), storeId = await store(orgId);
+  const creator = await principal(orgId);
+  assert.deepEqual(await revokeDuring(pool, creator, () => requests.create(creator, orgId, fields(storeId))), { kind: "not_found" });
+  const owner = await principal(orgId), requestId = await create(orgId, owner, storeId);
+  const closer = await principal(orgId);
+  assert.deepEqual(await revokeDuring(pool, closer, () => requests.transition(closer, requestId, "closed", "cancelled")), { kind: "not_found" });
+  assert.equal((await statusOf(requestId)).status, "open");
+  assert.equal(await eventCount(requestId), 1);
 });

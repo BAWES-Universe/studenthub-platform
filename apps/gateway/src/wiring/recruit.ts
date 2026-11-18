@@ -61,6 +61,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
   const invitations = new PostgresRecruitInvitationsStore({
     pool,
     leadDecision: (rows) => pipelineLeadDecision(rows, operators),
+    recruiterEligible: (rows) => pipelineRecruiterEligible(rows, operators),
     staffDecision: (rows) => recruitNotesDecision(rows, operators),
     authority: pipelineAuthority,
     acceptsCards: requestAcceptsCards,
@@ -75,6 +76,7 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     companyDecision: (rows, orgId, ancestors) => interviewCompanyDecision(rows, orgId, ancestors, operators),
     staffDecision: (rows) => recruitStaffDecision(rows, operators),
     leadDecision: (rows) => pipelineLeadDecision(rows, operators),
+    recruiterEligible: (rows) => pipelineRecruiterEligible(rows, operators),
     authority: pipelineAuthority,
     internalDecision: (rows) => internalNoteDecision(rows, operators),
     stageAllowed: interviewStageAllowed,

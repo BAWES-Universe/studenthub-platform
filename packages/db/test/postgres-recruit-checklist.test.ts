@@ -9,6 +9,7 @@ import {
 jobCandidateDecision,   checklistAdminDecision, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitNotesDecision, recruitStaffDecision,
   requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
+import { revokeDuring, whileUncommitted } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec2b-ops-${randomUUID()}`;
@@ -124,4 +125,29 @@ test("REC2B_EDIT staff edit type and text and remove softly; a removed note is g
   await assert.rejects(pool.query("UPDATE recruit_request_notes SET note_text = 'x' WHERE id = $1", [noteId]), /read-only/);
   const view = (await checklist.requestNotes(s.staff, s.requestId))!;
   assert.deepEqual([view.notes.length, view.doneItemIds], [0, []], "a removed note no longer ticks its step");
+});
+
+test("REC2B_REVOKE_RACE a grant revoked while a checklist or note write is in flight refuses the write; a step removed while a note ticks it refuses the note", async () => {
+  const s = await setup();
+  const step = ((await checklist.createItem(s.admin, item(`Step ${randomUUID()}`, 1))) as { itemId: string }).itemId;
+  const note = ((await checklist.addNote(s.staff, s.requestId, { type: "internal_note", text: "first", checklistItemId: null, cardId: null })) as { noteId: string }).noteId;
+  const admin = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, admin, () => checklist.createItem(admin, item("late", 2))), { kind: "not_found" });
+  const admin2 = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, admin2, () => checklist.updateItem(admin2, step, item("late", 2))), { kind: "not_found" });
+  const admin3 = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, admin3, () => checklist.removeItem(admin3, step)), { kind: "not_found" });
+  const writer = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, writer, () => checklist.addNote(writer, s.requestId, { type: "internal_note", text: "late", checklistItemId: null, cardId: null })), { kind: "not_found" });
+  const editor = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, editor, () => checklist.editNote(editor, note, "internal_note", "late")), { kind: "not_found" });
+  const remover = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, remover, () => checklist.removeNote(remover, note)), { kind: "not_found" });
+  const view = (await checklist.requestNotes(s.staff, s.requestId))!;
+  assert.deepEqual(view.notes.map((n) => [n.id, n.note_text]), [[note, "first"]], "no in-flight write landed");
+  assert.equal((await checklist.items(s.staff))!.find((i) => i.id === step)?.name_en.startsWith("Step"), true);
+  const ticked = await whileUncommitted(pool, "UPDATE recruit_checklist_items SET status = 'deleted', updated_at = clock_timestamp() WHERE id = $1::uuid", [step],
+    () => checklist.addNote(s.staff, s.requestId, { type: "task", text: "done", checklistItemId: step, cardId: null }));
+  assert.deepEqual(ticked, { kind: "item_not_found" });
+  assert.equal((await pool.query("SELECT 1 FROM recruit_request_notes WHERE checklist_item_id = $1::uuid", [step])).rowCount, 0, "no note points at a removed step");
 });

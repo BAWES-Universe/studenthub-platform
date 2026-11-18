@@ -32,7 +32,7 @@ before(async () => {
     placement: { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }) }, operatorOrgIds: OPS,
   });
   invitations = new PostgresRecruitInvitationsStore({
-    pool, leadDecision: (r) => pipelineLeadDecision(r, OPS), staffDecision: (r) => recruitNotesDecision(r, OPS), authority: pipelineAuthority, acceptsCards: requestAcceptsCards,
+    pool, leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), staffDecision: (r) => recruitNotesDecision(r, OPS), authority: pipelineAuthority, acceptsCards: requestAcceptsCards,
     transitionAllowed: invitationTransitionAllowed, acceptCardEffect, requestStatusAfter: requestStatusAfterPipeline, candidateDecision: jobCandidateDecision, outbox: invitationOutbox,
   });
 });

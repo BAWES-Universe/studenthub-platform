@@ -34,69 +34,101 @@ export class PostgresRecruitChecklistStore {
   }
   async close() { if (this.#owns) await this.#pool.end(); }
 
-  async #grants(principalId: string): Promise<Grant[]> {
-    return (await this.#pool.query<Grant>("SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text", [principalId])).rows;
+  async #grants(c: pg.Pool | pg.PoolClient, principalId: string, lock = false): Promise<Grant[]> {
+    return (await c.query<Grant>(`SELECT org_id, role, scope FROM grants WHERE principal_id = $1::text${lock ? " FOR SHARE" : ""}`, [principalId])).rows;
+  }
+
+  /**
+   * Every write decides inside its own transaction on grants read FOR SHARE, so a revocation either commits first
+   * (and the write is refused) or waits until the write has committed; it can never land between check and write.
+   */
+  async #transaction<T>(work: (c: pg.PoolClient) => Promise<T | { rollback: T }>): Promise<T> {
+    const c = await this.#pool.connect();
+    let broken = false;
+    try {
+      await c.query("BEGIN");
+      const result = await work(c);
+      if (typeof result === "object" && result !== null && "rollback" in result) {
+        await c.query("ROLLBACK");
+        return (result as { rollback: T }).rollback;
+      }
+      await c.query("COMMIT");
+      return result as T;
+    } catch (error) {
+      try { await c.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally {
+      c.release(broken);
+    }
   }
 
   /** Active items for anyone who may write notes or keep the checklist; null otherwise. */
   async items(principalId: string): Promise<RecruitChecklistItemRecord[] | null> {
-    const grants = await this.#grants(principalId);
+    const grants = await this.#grants(this.#pool, principalId);
     if (!this.options.notesDecision(grants) && !this.options.adminDecision(grants)) return null;
     return (await this.#pool.query<RecruitChecklistItemRecord>("SELECT id, name_en, name_ar, required, sort_order FROM recruit_checklist_items WHERE status = 'active' ORDER BY sort_order, id")).rows;
   }
 
   async createItem(principalId: string, input: RecruitChecklistItemInput): Promise<{ kind: "created"; itemId: string } | { kind: "not_found" }> {
-    if (!this.options.adminDecision(await this.#grants(principalId))) return { kind: "not_found" };
-    const id = randomUUID();
-    await this.#pool.query("INSERT INTO recruit_checklist_items(id, name_en, name_ar, required, sort_order) VALUES($1::uuid, $2::text, $3::text, $4::boolean, $5::int)", [id, input.nameEn, input.nameAr, input.required, input.sortOrder]);
-    return { kind: "created", itemId: id };
+    return this.#transaction<{ kind: "created"; itemId: string } | { kind: "not_found" }>(async (c) => {
+      if (!this.options.adminDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
+      const id = randomUUID();
+      await c.query("INSERT INTO recruit_checklist_items(id, name_en, name_ar, required, sort_order) VALUES($1::uuid, $2::text, $3::text, $4::boolean, $5::int)", [id, input.nameEn, input.nameAr, input.required, input.sortOrder]);
+      return { kind: "created", itemId: id };
+    });
   }
 
   async updateItem(principalId: string, itemId: string, input: RecruitChecklistItemInput): Promise<{ kind: "updated" | "not_found" }> {
-    if (!this.options.adminDecision(await this.#grants(principalId))) return { kind: "not_found" };
-    const r = await this.#pool.query("UPDATE recruit_checklist_items SET name_en = $2::text, name_ar = $3::text, required = $4::boolean, sort_order = $5::int, updated_at = clock_timestamp() WHERE id = $1::uuid AND status = 'active'", [itemId, input.nameEn, input.nameAr, input.required, input.sortOrder]);
-    return { kind: r.rowCount === 1 ? "updated" : "not_found" };
+    return this.#transaction<{ kind: "updated" | "not_found" }>(async (c) => {
+      if (!this.options.adminDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
+      const r = await c.query("UPDATE recruit_checklist_items SET name_en = $2::text, name_ar = $3::text, required = $4::boolean, sort_order = $5::int, updated_at = clock_timestamp() WHERE id = $1::uuid AND status = 'active'", [itemId, input.nameEn, input.nameAr, input.required, input.sortOrder]);
+      return r.rowCount === 1 ? { kind: "updated" } : { rollback: { kind: "not_found" } };
+    });
   }
 
   async removeItem(principalId: string, itemId: string): Promise<{ kind: "removed" | "not_found" }> {
-    if (!this.options.adminDecision(await this.#grants(principalId))) return { kind: "not_found" };
-    const r = await this.#pool.query("UPDATE recruit_checklist_items SET status = 'deleted', updated_at = clock_timestamp() WHERE id = $1::uuid AND status = 'active'", [itemId]);
-    return { kind: r.rowCount === 1 ? "removed" : "not_found" };
+    return this.#transaction<{ kind: "removed" | "not_found" }>(async (c) => {
+      if (!this.options.adminDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
+      const r = await c.query("UPDATE recruit_checklist_items SET status = 'deleted', updated_at = clock_timestamp() WHERE id = $1::uuid AND status = 'active'", [itemId]);
+      return r.rowCount === 1 ? { kind: "removed" } : { rollback: { kind: "not_found" } };
+    });
   }
 
   async addNote(principalId: string, requestId: string, input: RecruitNoteInput): Promise<RecruitNoteWriteResult> {
-    if (!this.options.notesDecision(await this.#grants(principalId))) return { kind: "not_found" };
-    const checks = await this.#pool.query<{ request: boolean; item: boolean; card: boolean }>(
-      `SELECT EXISTS(SELECT 1 FROM recruit_requests WHERE id = $1::uuid) AS request,
-        ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM recruit_checklist_items WHERE id = $2::uuid AND status = 'active')) AS item,
-        ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM recruit_pipeline_cards WHERE id = $3::uuid AND request_id = $1::uuid)) AS card`,
-      [requestId, input.checklistItemId, input.cardId]);
-    const c = checks.rows[0]!;
-    if (!c.request) return { kind: "not_found" };
-    if (!c.item) return { kind: "item_not_found" };
-    if (!c.card) return { kind: "card_not_found" };
-    const id = randomUUID();
-    await this.#pool.query(
-      "INSERT INTO recruit_request_notes(id, request_id, card_id, checklist_item_id, note_type, note_text, author_principal_id, updated_by_principal_id) VALUES($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, $6::text, $7::text, $7::text)",
-      [id, requestId, input.cardId, input.checklistItemId, input.type, input.text, principalId]);
-    return { kind: "created", noteId: id };
+    return this.#transaction<RecruitNoteWriteResult>(async (c) => {
+      if (!this.options.notesDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
+      // The request, the ticked step and the named card are read FOR SHARE: a step removed at the same moment either
+      // commits first (and the note is refused) or waits until the note has committed.
+      if (!(await c.query("SELECT 1 FROM recruit_requests WHERE id = $1::uuid FOR SHARE", [requestId])).rowCount) return { rollback: { kind: "not_found" } };
+      if (input.checklistItemId !== null && !(await c.query("SELECT 1 FROM recruit_checklist_items WHERE id = $1::uuid AND status = 'active' FOR SHARE", [input.checklistItemId])).rowCount) return { rollback: { kind: "item_not_found" } };
+      if (input.cardId !== null && !(await c.query("SELECT 1 FROM recruit_pipeline_cards WHERE id = $1::uuid AND request_id = $2::uuid FOR SHARE", [input.cardId, requestId])).rowCount) return { rollback: { kind: "card_not_found" } };
+      const id = randomUUID();
+      await c.query(
+        "INSERT INTO recruit_request_notes(id, request_id, card_id, checklist_item_id, note_type, note_text, author_principal_id, updated_by_principal_id) VALUES($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, $6::text, $7::text, $7::text)",
+        [id, requestId, input.cardId, input.checklistItemId, input.type, input.text, principalId]);
+      return { kind: "created", noteId: id };
+    });
   }
 
   async editNote(principalId: string, noteId: string, type: NoteType, text: string): Promise<RecruitNoteWriteResult> {
-    if (!this.options.notesDecision(await this.#grants(principalId))) return { kind: "not_found" };
-    const r = await this.#pool.query("UPDATE recruit_request_notes SET note_type = $2::text, note_text = $3::text, updated_by_principal_id = $4::text, updated_at = clock_timestamp() WHERE id = $1::uuid AND removed_at IS NULL", [noteId, type, text, principalId]);
-    return { kind: r.rowCount === 1 ? "updated" : "not_found" };
+    return this.#transaction<RecruitNoteWriteResult>(async (c) => {
+      if (!this.options.notesDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
+      const r = await c.query("UPDATE recruit_request_notes SET note_type = $2::text, note_text = $3::text, updated_by_principal_id = $4::text, updated_at = clock_timestamp() WHERE id = $1::uuid AND removed_at IS NULL", [noteId, type, text, principalId]);
+      return r.rowCount === 1 ? { kind: "updated" } : { rollback: { kind: "not_found" } };
+    });
   }
 
   async removeNote(principalId: string, noteId: string): Promise<RecruitNoteWriteResult> {
-    if (!this.options.notesDecision(await this.#grants(principalId))) return { kind: "not_found" };
-    const r = await this.#pool.query("UPDATE recruit_request_notes SET removed_at = clock_timestamp(), updated_by_principal_id = $2::text, updated_at = clock_timestamp() WHERE id = $1::uuid AND removed_at IS NULL", [noteId, principalId]);
-    return { kind: r.rowCount === 1 ? "removed" : "not_found" };
+    return this.#transaction<RecruitNoteWriteResult>(async (c) => {
+      if (!this.options.notesDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
+      const r = await c.query("UPDATE recruit_request_notes SET removed_at = clock_timestamp(), updated_by_principal_id = $2::text, updated_at = clock_timestamp() WHERE id = $1::uuid AND removed_at IS NULL", [noteId, principalId]);
+      return r.rowCount === 1 ? { kind: "removed" } : { rollback: { kind: "not_found" } };
+    });
   }
 
   /** A request's notes (oldest first) and the checklist items any note has ticked, in three queries; null when refused or unknown. */
   async requestNotes(principalId: string, requestId: string): Promise<{ title: string; notes: RecruitNoteRecord[]; items: RecruitChecklistItemRecord[]; doneItemIds: string[]; cards: { id: string; person_name: string | null }[] } | null> {
-    if (!this.options.notesDecision(await this.#grants(principalId))) return null;
+    if (!this.options.notesDecision(await this.#grants(this.#pool, principalId))) return null;
     const request = (await this.#pool.query<{ position_title: string }>("SELECT position_title FROM recruit_requests WHERE id = $1::uuid", [requestId])).rows[0];
     if (!request) return null;
     const [notes, items, cards] = await Promise.all([

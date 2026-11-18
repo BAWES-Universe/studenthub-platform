@@ -20,8 +20,10 @@ export interface RecruitInvitationsStoreOptions {
   readonly connectionString?: string;
   readonly pool?: pg.Pool;
   readonly leadDecision: (rows: readonly Grant[]) => boolean;
+  /** Recruiter or staff on an operator organization: an assigned recruiter keeps authority only while this holds. */
+  readonly recruiterEligible: (rows: readonly Grant[]) => boolean;
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
-  readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean) => boolean;
+  readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean, isRecruiter: boolean) => boolean;
   readonly acceptsCards: (status: RequestStatus) => boolean;
   readonly transitionAllowed: (from: Status, to: Status, actor: "person" | "staff") => boolean;
   readonly acceptCardEffect: (stage: Stage | null) => "insert_contacted" | "move_contacted" | "keep" | "refuse";
@@ -86,8 +88,8 @@ export class PostgresRecruitInvitationsStore {
     return this.#transaction<RecruitInviteResult>(async (c) => {
       const request = (await c.query<Locked>(LOCK_REQUEST, [requestId])).rows[0];
       if (!request) return { rollback: { kind: "not_found" } };
-      const isLead = this.options.leadDecision(await this.#grants(c, principalId, true));
-      if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
+      const callerGrants = await this.#grants(c, principalId, true), isLead = this.options.leadDecision(callerGrants), isRecruiter = this.options.recruiterEligible(callerGrants);
+      if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter)) return { rollback: { kind: "not_found" } };
       if (!this.options.acceptsCards(request.status)) return { rollback: { kind: "request_not_open" } };
       if (!(await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [personId])).rowCount) return { rollback: { kind: "not_found" } };
       if (!this.options.candidateDecision(await this.#grants(c, personId, true))) return { rollback: { kind: "not_found" } };
@@ -119,9 +121,11 @@ export class PostgresRecruitInvitationsStore {
       const request = (await c.query<Locked>(LOCK_REQUEST, [located.request_id])).rows[0]!;
       const invitation = (await c.query<Invitation>("SELECT id, request_id, person_principal_id, invited_by_principal_id, status FROM recruit_invitations WHERE id = $1::uuid FOR UPDATE", [invitationId])).rows[0]!;
       if (actor === "person" && invitation.person_principal_id !== principalId) return { rollback: { kind: "not_found" } };
+      // Accepting adds a pipeline card, so the person must still hold a candidate grant, read FOR SHARE like every other write's check.
+      if (actor === "person" && to === "accepted" && !this.options.candidateDecision(await this.#grants(c, principalId, true))) return { rollback: { kind: "not_found" } };
       if (actor === "staff") {
-        const isLead = this.options.leadDecision(await this.#grants(c, principalId, true));
-        if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
+        const callerGrants = await this.#grants(c, principalId, true), isLead = this.options.leadDecision(callerGrants), isRecruiter = this.options.recruiterEligible(callerGrants);
+        if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter)) return { rollback: { kind: "not_found" } };
       }
       if (invitation.status === to && to === "seen") return { rollback: { kind: "done", status: "seen", cardId: null } };
       if (!this.options.transitionAllowed(invitation.status, to, actor)) return { rollback: { kind: "refused", status: invitation.status } };

@@ -66,9 +66,12 @@ export function pipelineRecruiterEligible(rows: readonly RecruitGrantRow[], oper
   return covers(rows, ["recruiter", "staff"], operators);
 }
 
-/** Only the request's assigned recruiter or a lead adds or moves a card. */
-export function pipelineAuthority(principalId: string, assignedRecruiterId: string | null, isLead: boolean): boolean {
-  return isLead || (assignedRecruiterId !== null && assignedRecruiterId === principalId);
+/**
+ * Only the request's assigned recruiter or a lead adds or moves a card. The assignment alone is not enough: the
+ * assigned recruiter must still hold a recruiter grant, so revoking it ends their authority over the request too.
+ */
+export function pipelineAuthority(principalId: string, assignedRecruiterId: string | null, isLead: boolean, isRecruiter: boolean): boolean {
+  return isLead || (isRecruiter && assignedRecruiterId !== null && assignedRecruiterId === principalId);
 }
 
 export function parsePipelineStage(value: unknown): PipelineStage | undefined {

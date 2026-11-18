@@ -25,7 +25,9 @@ export interface RecruitInterviewsStoreOptions {
   /** Operator staff, who read every request's interviews. */
   readonly staffDecision: (rows: readonly Grant[]) => boolean;
   readonly leadDecision: (rows: readonly Grant[]) => boolean;
-  readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean) => boolean;
+  /** Recruiter or staff on an operator organization: an assigned recruiter keeps authority only while this holds. */
+  readonly recruiterEligible: (rows: readonly Grant[]) => boolean;
+  readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean, isRecruiter: boolean) => boolean;
   /** Who reads and writes internal notes. */
   readonly internalDecision: (rows: readonly Grant[]) => boolean;
   readonly stageAllowed: (stage: string) => boolean;
@@ -84,7 +86,7 @@ export class PostgresRecruitInterviewsStore {
         [request.org_id])).rows.map((r) => r.id);
       company = this.options.companyDecision(grants, request.org_id, ancestors);
     }
-    const pipeline = this.options.authority(principalId, request.assigned_recruiter_principal_id, this.options.leadDecision(grants));
+    const pipeline = this.options.authority(principalId, request.assigned_recruiter_principal_id, this.options.leadDecision(grants), this.options.recruiterEligible(grants));
     return { read: staff || company || pipeline, write: company || pipeline, internal: this.options.internalDecision(grants) };
   }
 

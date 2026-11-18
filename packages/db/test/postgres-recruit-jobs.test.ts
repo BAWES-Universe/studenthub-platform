@@ -8,6 +8,7 @@ import { PostgresAuthzStore, PostgresOrganizationStoresStore, PostgresRecruitJob
 import {
   applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobCandidateDecision, jobStaffDecision, recruitStaffDecision, requestCreateDecision, requestReadDecision, requestTransitionAllowed, requestTransitionDecision, type JobFields,
 } from "../../recruit/src/index.js";
+import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec7-ops-${randomUUID()}`;
@@ -130,4 +131,19 @@ test("REC7_DECIDE staff shortlist or reject once; the person hears; nobody else 
   const outbox = (await pool.query<{ kind: string; recipient_principal_id: string }>("SELECT kind, recipient_principal_id FROM recruit_outbox WHERE subject_id = $1 ORDER BY id", [app])).rows.map((r) => [r.kind, r.recipient_principal_id]);
   assert.deepEqual(outbox, [["application.shortlisted", noor], ["application.rejected", noor]]);
   assert.deepEqual(await jobs.decide(s.staff, randomUUID(), "rejected"), { kind: "not_found" });
+});
+
+test("REC7_REVOKE_RACE staff losing the grant while publishing, editing or deciding, or a candidate losing it while applying, is refused", async () => {
+  const s = await setup();
+  const publisher = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, publisher, () => jobs.create(publisher, job(s.requestId))), { kind: "not_found" });
+  const jobId = ((await jobs.create(s.staff, job(s.requestId))) as { jobId: string }).jobId;
+  const editor = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, editor, () => jobs.update(editor, jobId, job(s.requestId, { position: "late" }))), { kind: "not_found" });
+  const noor = await candidate(), sami = await candidate();
+  assert.deepEqual(await revokeDuring(pool, sami, () => jobs.apply(sami, jobId, null)), { kind: "not_found" });
+  const applicationId = ((await jobs.apply(noor, jobId, null)) as { applicationId: string }).applicationId;
+  const decider = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, decider, () => jobs.decide(decider, applicationId, "shortlisted")), { kind: "not_found" });
+  assert.deepEqual((await jobs.applications(s.staff, jobId))!.map((a) => [a.person_principal_id, a.status]), [[noor, "interested"]]);
 });

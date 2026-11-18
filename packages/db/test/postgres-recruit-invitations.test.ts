@@ -9,6 +9,7 @@ import {
 jobCandidateDecision,   acceptCardEffect, invitationOutbox, invitationTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitNotesDecision, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
+import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec4-ops-${randomUUID()}`;
@@ -32,7 +33,7 @@ before(async () => {
     placement: { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }) }, operatorOrgIds: OPS,
   });
   invitations = new PostgresRecruitInvitationsStore({
-    pool, leadDecision: (r) => pipelineLeadDecision(r, OPS), staffDecision: (r) => recruitNotesDecision(r, OPS), authority: pipelineAuthority, acceptsCards: requestAcceptsCards,
+    pool, leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS), staffDecision: (r) => recruitNotesDecision(r, OPS), authority: pipelineAuthority, acceptsCards: requestAcceptsCards,
     transitionAllowed: invitationTransitionAllowed, acceptCardEffect, requestStatusAfter: requestStatusAfterPipeline, candidateDecision: jobCandidateDecision, outbox: invitationOutbox,
   });
 });
@@ -131,4 +132,17 @@ test("REC4_WITHDRAW staff with authority withdraw an open invitation; the person
   const final = (await invitation(b)).status;
   assert.equal((await cards(s.requestId)).some((c) => c.person_principal_id === sara), final === "accepted");
   await assert.rejects(pool.query("UPDATE recruit_outbox SET kind = 'invitation.sent' WHERE subject_id = $1", [b]), /dispatched/);
+});
+
+test("REC4_REVOKE_RACE a recruiter losing the grant while inviting or withdrawing, or a person losing the candidate grant while accepting, is refused", async () => {
+  const s = await setup(), noor = await person(), sami = await person();
+  assert.deepEqual(await revokeDuring(pool, s.recruiter, () => invitations.invite(s.recruiter, s.requestId, noor)), { kind: "not_found" });
+  const lead = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
+  const invited = ((await invitations.invite(lead, s.requestId, noor)) as { invitationId: string }).invitationId;
+  const lead2 = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, lead2, () => invitations.withdraw(lead2, invited)), { kind: "not_found" });
+  assert.deepEqual(await revokeDuring(pool, noor, () => invitations.answer(noor, invited, "accepted")), { kind: "not_found" }, "no longer a candidate: no pipeline card");
+  assert.equal((await pool.query("SELECT 1 FROM recruit_pipeline_cards WHERE request_id = $1::uuid AND person_principal_id = $2::text", [s.requestId, noor])).rowCount, 0);
+  assert.equal((await pool.query<{ status: string }>("SELECT status FROM recruit_invitations WHERE id = $1::uuid", [invited])).rows[0]!.status, "sent");
+  assert.deepEqual(await invitations.invite(lead, s.requestId, sami).then((r) => r.kind), "invited");
 });

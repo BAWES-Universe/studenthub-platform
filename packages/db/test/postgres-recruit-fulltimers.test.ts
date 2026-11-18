@@ -10,6 +10,7 @@ jobCandidateDecision,   evaluationAllowed, fulltimerNameKey, fulltimerStaffDecis
   pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed,
   requestTransitionDecision, type FulltimerFields,
 } from "../../recruit/src/index.js";
+import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec9-ops-${randomUUID()}`;
@@ -36,7 +37,7 @@ before(async () => {
   });
   fulltimers = new PostgresRecruitFulltimersStore({ pool, staffDecision: (r) => fulltimerStaffDecision(r, OPS), nameKey: fulltimerNameKey, pageSize: 2 });
   interviews = new PostgresRecruitInterviewsStore({
-    pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS),
+    pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
     authority: pipelineAuthority, internalDecision: (r) => internalNoteDecision(r, OPS), stageAllowed: interviewStageAllowed, transitionAllowed: interviewTransitionAllowed, evaluationAllowed, outbox: interviewOutbox,
   });
 });
@@ -129,4 +130,17 @@ test("REC9_PHONE_RACE simultaneous saves with different names and one phone: exa
   assert.equal(saved.length, 1);
   const winner = (saved[0] as { fulltimerId: string }).fulltimerId;
   for (const r of results) if (r.kind !== "saved") assert.deepEqual(r, { kind: "duplicate", field: "phone", fulltimerId: winner });
+});
+
+test("REC9_REVOKE_RACE staff losing the grant while creating, editing or archiving a full-timer is refused", async () => {
+  const staff = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  const creator = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, creator, () => fulltimers.create(creator, fields())), { kind: "not_found" });
+  const id = ((await fulltimers.create(staff, fields())) as { fulltimerId: string }).fulltimerId;
+  const editor = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, editor, () => fulltimers.update(editor, id, fields({ name: "Late edit" }))), { kind: "not_found" });
+  const archiver = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, archiver, () => fulltimers.archive(archiver, id, true)), { kind: "not_found" });
+  const stored = (await fulltimers.get(staff, id))!.fulltimer;
+  assert.deepEqual([stored.name.startsWith("Fahad"), stored.archived_at], [true, null]);
 });

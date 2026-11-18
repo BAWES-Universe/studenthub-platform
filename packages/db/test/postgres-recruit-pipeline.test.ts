@@ -9,6 +9,7 @@ import {
 jobCandidateDecision,   pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision,
   requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision, type PipelineStage,
 } from "../../recruit/src/index.js";
+import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec2-ops-${randomUUID()}`;
@@ -207,4 +208,19 @@ test("REC2_VIEW the staff page reads cards, names, recruiter and history in a fi
   assert.equal(view?.cards.find((c) => c.id === cardId)?.person_name, "Noor Al-Sabah");
   assert.deepEqual(view?.events.filter((e) => e.card_id === cardId).map((e) => e.to_stage), ["suggested", "contacted"]);
   assert.equal(view?.canMove, false, "staff who are not the recruiter or a lead see no moves");
+});
+
+test("REC2_REVOKE_RACE revoking the assigned recruiter's or a lead's grant, before or during a write, ends their authority over the request", async () => {
+  const s = await setup(), noor = await person(), sami = await person();
+  assert.equal((await pipeline.assign(s.staff, s.requestId, s.recruiter)).kind, "assigned");
+  const cardId = ((await pipeline.addCard(s.recruiter, s.requestId, noor)) as { cardId: string }).cardId;
+  assert.deepEqual(await revokeDuring(pool, s.recruiter, () => pipeline.move(s.recruiter, cardId, "contacted")), { kind: "not_found" });
+  assert.equal((await card(cardId)).stage, "suggested");
+  assert.deepEqual(await pipeline.addCard(s.recruiter, s.requestId, sami), { kind: "not_found" }, "still assigned, but no longer a recruiter: no authority");
+  const lead = await person([{ orgId: OPS_ORG, role: "admin", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, lead, () => pipeline.addCard(lead, s.requestId, sami)), { kind: "not_found" });
+  const assigner = await person([{ orgId: OPS_ORG, role: "staff", scope: "subtree" }]), next = await person([{ orgId: OPS_ORG, role: "recruiter", scope: "subtree" }]);
+  assert.deepEqual(await revokeDuring(pool, assigner, () => pipeline.assign(assigner, s.requestId, next)), { kind: "not_found" });
+  assert.deepEqual(await revokeDuring(pool, next, () => pipeline.assign(s.staff, s.requestId, next)), { kind: "recruiter_ineligible" }, "a recruiter losing the grant while being assigned is not assigned");
+  assert.equal((await request(s.requestId)).assigned_recruiter_principal_id, s.recruiter);
 });

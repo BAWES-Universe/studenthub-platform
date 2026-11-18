@@ -47,10 +47,11 @@ test("REC2_AUTHORITY staff and admin on an operator assign; only the assigned re
   assert.equal(m.pipelineRecruiterEligible([grant("root", "recruiter", "self")], OPS), false, "placement needs subtree scope");
   assert.equal(m.pipelineRecruiterEligible([grant("root", "staff")], OPS), true);
   assert.equal(m.pipelineRecruiterEligible([grant("co", "recruiter")], OPS), false, "a company recruiter is not a StudentHub recruiter");
-  assert.equal(m.pipelineAuthority("a", "a", false), true);
-  assert.equal(m.pipelineAuthority("b", "a", false), false);
-  assert.equal(m.pipelineAuthority("b", null, false), false);
-  assert.equal(m.pipelineAuthority("b", "a", true), true);
+  assert.equal(m.pipelineAuthority("a", "a", false, true), true);
+  assert.equal(m.pipelineAuthority("a", "a", false, false), false, "an assigned recruiter whose recruiter grant was revoked has no authority");
+  assert.equal(m.pipelineAuthority("b", "a", false, true), false);
+  assert.equal(m.pipelineAuthority("b", null, false, true), false);
+  assert.equal(m.pipelineAuthority("b", "a", true, false), true);
 });
 
 test("REC2_LEGACY suggestion statuses seed cards: suggested and accepted map, anything else is reported", () => {

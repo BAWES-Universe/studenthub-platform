@@ -9,6 +9,7 @@ import {
 jobCandidateDecision,   evaluationAllowed, interviewCompanyDecision, internalNoteDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, pipelineAssignDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed,
   recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision,
 } from "../../recruit/src/index.js";
+import { revokeDuring } from "./recruit-races.js";
 
 const URL = process.env.DATABASE_URL ?? "";
 const OPS_ORG = `rec6-ops-${randomUUID()}`;
@@ -32,7 +33,7 @@ before(async () => {
     placement: { placeFromRecruit: async () => ({ kind: "refused", code: "work_unavailable" }) }, operatorOrgIds: OPS,
   });
   interviews = new PostgresRecruitInterviewsStore({
-    pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS),
+    pool, companyDecision: (r, o, a) => interviewCompanyDecision(r, o, a, OPS), staffDecision: (r) => recruitStaffDecision(r, OPS), leadDecision: (r) => pipelineLeadDecision(r, OPS), recruiterEligible: (r) => pipelineRecruiterEligible(r, OPS),
     authority: pipelineAuthority, internalDecision: (r) => internalNoteDecision(r, OPS), stageAllowed: interviewStageAllowed, transitionAllowed: interviewTransitionAllowed,
     evaluationAllowed, outbox: interviewOutbox,
   });
@@ -116,4 +117,15 @@ test("REC6_CANCEL a scheduled interview is cancelled once; it takes no evaluatio
   assert.deepEqual(await interviews.evaluate(s.recruiter, id, { outcome: "no_show", rating: null, sharedNote: null, internalNote: null }), { kind: "refused", status: "cancelled" });
   assert.deepEqual(await outbox(id), [["interview.scheduled", s.noor], ["interview.cancelled", s.noor]]);
   assert.deepEqual(await interviews.cancel(s.owner, randomUUID()), { kind: "not_found" });
+});
+
+test("REC6_REVOKE_RACE the assigned recruiter or the company losing the grant while scheduling, cancelling or evaluating is refused", async () => {
+  const s = await setup();
+  assert.equal((await pipeline.move(s.recruiter, s.cardId, "contacted")).kind, "moved");
+  const id = ((await interviews.schedule(s.recruiter, s.requestId, fields(s.cardId))) as { interviewId: string }).interviewId;
+  assert.deepEqual(await revokeDuring(pool, s.owner, () => interviews.evaluate(s.owner, id, { outcome: "passed", rating: 4, sharedNote: null, internalNote: null })), { kind: "not_found" });
+  assert.deepEqual(await revokeDuring(pool, s.recruiter, () => interviews.cancel(s.recruiter, id)), { kind: "not_found" });
+  assert.deepEqual(await interviews.schedule(s.recruiter, s.requestId, fields(s.cardId)), { kind: "not_found" }, "still assigned, but no longer a recruiter");
+  assert.equal((await pool.query<{ status: string }>("SELECT status FROM recruit_interviews WHERE id = $1::uuid", [id])).rows[0]!.status, "scheduled");
+  assert.equal((await pool.query("SELECT 1 FROM recruit_interview_evaluations WHERE interview_id = $1::uuid", [id])).rowCount, 0);
 });

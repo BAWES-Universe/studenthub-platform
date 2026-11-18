@@ -56,3 +56,4 @@ Individual hirers (R8) are not in legacy and not in this release.
 
 - Every commit carries a `Claude-Session` trailer. No card ids in PR bodies.
 - Each slice lands as its own reviewable commit range; the PR leaves draft when R1 to R4 pass CI, and stays leased until the lane is released in `contracts/reservations.md`.
+- Every recruit write decides inside its own transaction: the caller's grants (and a subject's candidate grant) are read `FOR SHARE`, referenced rows (request, step, card, store, catalogue item, job) are read `FOR SHARE` or `FOR UPDATE`, then the write runs. A revocation or soft delete either commits first and the write is refused, or waits until the write commits. An assigned recruiter keeps authority over a request only while they still hold a recruiter grant. Each store's db suite has a `*_REVOKE_RACE` test built on `packages/db/test/recruit-races.ts`.

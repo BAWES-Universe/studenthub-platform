@@ -35,7 +35,7 @@ export interface RecruitPipelineStoreOptions {
   readonly recruiterEligible: (rows: readonly Grant[]) => boolean;
   /** Who can be suggested to a request: a principal holding a candidate grant (candidate:self). */
   readonly candidateDecision: (rows: readonly Grant[]) => boolean;
-  readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean) => boolean;
+  readonly authority: (principalId: string, assignedRecruiterId: string | null, isLead: boolean, isRecruiter: boolean) => boolean;
   readonly transitionAllowed: (from: Stage, to: Stage) => boolean;
   readonly acceptsCards: (status: RequestStatus) => boolean;
   readonly requestStatusAfter: (status: RequestStatus, event: PipelineEvent) => RequestStatus | null;
@@ -133,8 +133,8 @@ export class PostgresRecruitPipelineStore {
     return this.#transaction<RecruitAddCardResult>(async (c) => {
       const request = (await c.query<Locked>(LOCK_REQUEST, [requestId])).rows[0];
       if (!request) return { rollback: { kind: "not_found" } };
-      const isLead = this.options.leadDecision(await this.#grants(c, principalId, true));
-      if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
+      const callerGrants = await this.#grants(c, principalId, true), isLead = this.options.leadDecision(callerGrants), isRecruiter = this.options.recruiterEligible(callerGrants);
+      if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter)) return { rollback: { kind: "not_found" } };
       if (!this.options.acceptsCards(request.status)) return { rollback: { kind: "request_not_open" } };
       const exists = subject.column === "person_principal_id"
         ? (await c.query("SELECT 1 FROM principals WHERE id = $1::text FOR SHARE", [subject.id])).rowCount === 1 && this.options.candidateDecision(await this.#grants(c, subject.id, true))
@@ -161,8 +161,8 @@ export class PostgresRecruitPipelineStore {
       // Request first, then card: the same lock order as addCard and the cancel cascade.
       const request = (await c.query<Locked>(LOCK_REQUEST, [located.request_id])).rows[0]!;
       const card = (await c.query<{ stage: Stage; person_principal_id: string | null }>("SELECT stage, person_principal_id FROM recruit_pipeline_cards WHERE id = $1::uuid FOR UPDATE", [cardId])).rows[0]!;
-      const isLead = this.options.leadDecision(await this.#grants(c, principalId, true));
-      if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead)) return { rollback: { kind: "not_found" } };
+      const callerGrants = await this.#grants(c, principalId, true), isLead = this.options.leadDecision(callerGrants), isRecruiter = this.options.recruiterEligible(callerGrants);
+      if (!this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter)) return { rollback: { kind: "not_found" } };
       if (!this.options.transitionAllowed(card.stage, to)) return { rollback: { kind: "refused", stage: card.stage } };
       let assignmentId: string | null = null;
       // A full-timer has no account to pay: "placed" records the hire without a work assignment.
@@ -210,12 +210,12 @@ export class PostgresRecruitPipelineStore {
          FROM grants g JOIN principals p ON p.id = g.principal_id LEFT JOIN person_profiles pp ON pp.principal_id = g.principal_id
          WHERE g.org_id = ANY($1::text[]) AND g.role IN ('recruiter','staff') ORDER BY name NULLS LAST, g.principal_id`, [this.options.operatorOrgIds]),
     ]);
-    const isLead = this.options.leadDecision(grants);
+    const isLead = this.options.leadDecision(grants), isRecruiter = this.options.recruiterEligible(grants);
     const eligible = new Map<string, string | null>();
     for (const row of recruiters.rows) if (this.options.recruiterEligible([row])) eligible.set(row.principal_id, row.name);
     return {
       request, cards: cards.rows, events: events.rows, canAssign: request.status !== "closed",
-      canMove: this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead),
+      canMove: this.options.authority(principalId, request.assigned_recruiter_principal_id, isLead, isRecruiter),
       recruiters: [...eligible].map(([principal_id, name]) => ({ principal_id, name })),
     };
   }

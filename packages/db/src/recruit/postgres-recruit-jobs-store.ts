@@ -87,7 +87,7 @@ export class PostgresRecruitJobsStore {
 
   async #checkRefs(c: pg.PoolClient, input: RecruitJobInput): Promise<"not_found" | "area_invalid" | null> {
     if (!(await c.query("SELECT 1 FROM recruit_requests WHERE id = $1::uuid FOR SHARE", [input.requestId])).rowCount) return "not_found";
-    if (input.areaId && !(await c.query("SELECT 1 FROM catalogue_items WHERE id = $1::uuid AND catalogue_type = 'area'", [input.areaId])).rowCount) return "area_invalid";
+    if (input.areaId && !(await c.query("SELECT 1 FROM catalogue_items WHERE id = $1::uuid AND catalogue_type = 'area' FOR SHARE", [input.areaId])).rowCount) return "area_invalid";
     return null;
   }
 
