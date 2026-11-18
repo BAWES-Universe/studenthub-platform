@@ -69,11 +69,19 @@ test("COMMS_STAFF_SEND_HTTP a repeat submit is already_sent; a reused key, bad i
   assert.equal(x.drafts.length, 1);
 });
 
-test("COMMS_STAFF_SEND_HTTP people who are not staff, signed-out callers and cross-site posts cannot send", async (t) => {
+test("COMMS_STAFF_SEND_HTTP people who are not staff and signed-out callers get the same not found; cross-site posts cannot send", async (t) => {
   const x = await rig(t), path = `/workspace/people/${PERSON}/message`;
   assert.equal((await x.get(path, "s-person")).status, 404);
   assert.equal((await x.post(path, { kind: "civil_id_request", send_key: KEY }, "s-person")).status, 404);
-  assert.equal((await x.post(path, { kind: "civil_id_request", send_key: KEY }, "nobody")).status, 401);
+  // Signed-out and unknown-session callers get the same not found as signed-in non-staff, so the route is not revealed.
+  const nonStaff = await x.post(path, { kind: "civil_id_request", send_key: KEY }, "s-person");
+  for (const session of ["nobody", ""]) {
+    const signedOut = await x.post(path, { kind: "civil_id_request", send_key: KEY }, session);
+    assert.equal(signedOut.status, 404);
+    assert.deepEqual(await signedOut.json(), { status: "not_found" });
+    assert.equal((await x.get(path, session)).status, 404);
+  }
+  assert.deepEqual(await nonStaff.json(), { status: "not_found" });
   assert.equal((await x.post(path, { kind: "civil_id_request", send_key: KEY }, "s-staff", { origin: "https://evil.example" })).status, 403);
   assert.equal((await x.post(path, { kind: "civil_id_request", send_key: KEY }, "s-staff", { "sec-fetch-site": "cross-site" })).status, 403);
   assert.equal(x.drafts.length, 0);

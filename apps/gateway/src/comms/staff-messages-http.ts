@@ -7,7 +7,7 @@ import { pageDocument, wantsHtml, writeHtml } from "../web-ui.js";
 /**
  * Staff sends a document request or a message to one person (legacy types 12 to 14):
  * GET /workspace/people/<person>/message shows the form, POST sends it. Only StudentHub
- * staff see either; anyone else gets not found. The form carries a fresh send key, so a
+ * staff see either; anyone else, signed out included, gets the same not found. The form carries a fresh send key, so a
  * double submit or a retried request is answered `already_sent` and writes nothing.
  */
 export interface StaffMessagesHttpService {
@@ -47,7 +47,7 @@ export async function handleStaffMessages(req: IncomingMessage, res: ServerRespo
   try { recipient = decodeURIComponent(match[1]!); } catch { req.resume(); return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found."); }
   if (!service || !PERSON.test(recipient)) { req.resume(); return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found."); }
   const session = cookie(req.headers.cookie), sender = session ? await authorize(session) : undefined;
-  if (!sender) { req.resume(); return reply(req, res, 401, { status: "unauthorized" }, "Sign in", "Sign in again to continue safely."); }
+  if (!sender) { req.resume(); return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found."); }
   let staff = false; try { staff = await service.isStaff(sender); } catch { /* treated as not staff */ }
   if (!staff) { req.resume(); return reply(req, res, 404, NOT_FOUND, "Not found", "The page could not be found."); }
   if (req.method === "GET") { writeHtml(res, 200, pageDocument("Message this person", formPage(path)), { "cache-control": "no-store" }); return true; }
