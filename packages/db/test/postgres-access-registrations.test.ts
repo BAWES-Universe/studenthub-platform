@@ -110,3 +110,27 @@ test("A7_CONCURRENCY two staff approving the same registration at once create ex
   assert.deepEqual(outcomes.map((outcome) => outcome.kind).sort(), ["approved", "refused"]);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM grants WHERE principal_id = $1", [owner])).rows[0].n, 1);
 });
+
+/** Revokes every grant the person holds in a transaction that commits while `write` waits on it, as a grant change or pause would. */
+async function revokedDuring<T>(principalId: string, write: () => Promise<T>): Promise<T> {
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [principalId]);
+    await holder.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+    const pending = write();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("COMMIT");
+    return await pending;
+  } finally {
+    holder.release();
+  }
+}
+
+test("A7_APPROVE a staff grant revoked while the review waits decides nothing", async () => {
+  const staff = await person([{ orgId: ROOT, role: "staff", scope: "subtree" }]);
+  const id = await submit(await person());
+  const outcome = await revokedDuring(staff, () => service.review(staff, { registrationId: id, action: "approve", reason }));
+  assert.equal(outcome.kind, "refused");
+  assert.equal((await pool.query("SELECT status FROM company_registrations WHERE id = $1", [id])).rows[0].status, "pending");
+});

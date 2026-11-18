@@ -25,7 +25,7 @@ async function person() {
 
 test("A9_RECORD a view keeps both identities, the reason and a 15 minute window; it ends and is never edited", async () => {
   const [staff, target] = [await person(), await person()];
-  const started = await views.start(staff, { targetPrincipalId: target, reason: "Support ticket 1234" });
+  const started = (await views.start(staff, { targetPrincipalId: target, reason: "Support ticket 1234" }, () => true))!;
   assert.equal(Date.parse(started.expiresAt) - Date.parse(started.startedAt), 900_000);
   assert.deepEqual(await views.open(staff, target), started);
   assert.equal(await views.open(target, staff), null, "the view is the staff member's, of this person");
@@ -34,7 +34,7 @@ test("A9_RECORD a view keeps both identities, the reason and a 15 minute window;
   await assert.rejects(pool.query("UPDATE staff_views SET expires_at = expires_at + interval '1 hour' WHERE id = $1", [started.id]), /append-only/);
   await assert.rejects(pool.query("DELETE FROM staff_views WHERE id = $1", [started.id]), /append-only/);
   await assert.rejects(pool.query("INSERT INTO staff_views (id, staff_principal_id, target_principal_id, reason, started_at, expires_at) VALUES ($1, $2, $3, 'Longer', now(), now() + interval '1 hour')", [randomUUID(), staff, target]), /check/i);
-  await assert.rejects(views.start(target, { targetPrincipalId: target, reason: "Myself" }), /check/i, "never oneself");
+  await assert.rejects(views.start(target, { targetPrincipalId: target, reason: "Myself" }, () => true), /check/i, "never oneself");
   // An ended view is not open.
   await pool.query("INSERT INTO staff_views (id, staff_principal_id, target_principal_id, reason, started_at, expires_at) VALUES ($1, $2, $3, 'Earlier', now() - interval '1 hour', now() - interval '45 minutes')", [randomUUID(), staff, target]);
   const other = await person();
@@ -50,4 +50,25 @@ test("A9_RULES a paused person is judged by the grants their pause holds, so a p
   await pool.query("INSERT INTO account_pauses (id, principal_id, paused_by, reason, suspended_grants, suspended_stores) VALUES ($1, $2, $3, $4, $5::jsonb, '[]')",
     [randomUUID(), target, "someone", "Reported for misuse", JSON.stringify([{ orgId: root, role: "admin", scope: "subtree" }])]);
   assert.deepEqual(await views.grantsOf(target), [{ orgId: root, role: "admin", scope: "subtree" }]);
+});
+
+test("A9_RULES a staff grant revoked while the start waits for the caller's lock starts nothing", async () => {
+  const root = `a9-root-${randomUUID()}`;
+  await pool.query("INSERT INTO organizations (id, name) VALUES ($1, $2)", [root, `Root ${root}`]);
+  const [staff, target] = [await person(), await person()];
+  await authz.grantMany(staff, [{ orgId: root, role: "staff", scope: "subtree" }]);
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [staff]);
+    await holder.query("DELETE FROM grants WHERE principal_id = $1", [staff]);
+    const start = views.start(staff, { targetPrincipalId: target, reason: "Support ticket 1234" },
+      (callerGrants) => callerGrants.some((grant) => grant.orgId === root && grant.role === "staff"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("COMMIT");
+    assert.equal(await start, null);
+  } finally {
+    holder.release();
+  }
+  assert.deepEqual(await views.viewedOn(target), [], "no view was recorded");
 });

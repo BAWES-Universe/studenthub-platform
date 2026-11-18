@@ -27,7 +27,8 @@ function world() {
     sessions: { get: async (id) => (SESSIONS[id] ? { id, personId: SESSIONS[id]! } : undefined) },
     reads, operatorOrgIds: ["root"], now: () => now, render: async () => PROFILE,
     views: {
-      async start(staffId, request) {
+      async start(staffId, request, mayStart) {
+        if (!mayStart(await reads.callerGrants(staffId), grants[request.targetPrincipalId] ?? [])) return null;
         const view = { id: String(views.length), staffPrincipalId: staffId, targetPrincipalId: request.targetPrincipalId, reason: request.reason, startedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 900_000).toISOString() };
         views.push(view);
         return view;

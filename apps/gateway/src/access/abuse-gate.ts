@@ -200,7 +200,9 @@ export async function handleAbuseGate(
   if (!request) return refuse("invalid_request");
   if (request.action === "block" && address && listed(blockListOf([request.cidr]), address)) return refuse("own_address");
   try {
-    const outcome = await ports.store.changeBlock(person, request);
+    const outcome = await ports.store.changeBlock(person, request, (grants) => mayManageBlocks(grants, ports.operatorOrgIds));
+    // A right lost since the page check reads as the unknown path, like any other caller without it.
+    if (outcome.kind === "refused" && outcome.reason === "not_allowed") return false;
     if (outcome.kind === "refused") return refuse(outcome.reason);
     await blockList(ports, now, true);
     res.writeHead(303, { location: `/admin/ip-blocks?done=${outcome.kind}`, "cache-control": "no-store" });

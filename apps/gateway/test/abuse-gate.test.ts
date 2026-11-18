@@ -15,7 +15,8 @@ function world(trusted = "127.0.0.0/8") {
   const store: AbuseStore = {
     async hit(principalId, kind, start) { const key = `${principalId}|${kind}|${start}`; counts.set(key, (counts.get(key) ?? 0) + 1); return counts.get(key)!; },
     async blocks() { return rows; },
-    async changeBlock(callerId, request) {
+    async changeBlock(callerId, request, mayChange) {
+      if (!mayChange(await reads.callerGrants(callerId))) return { kind: "refused", reason: "not_allowed" };
       const cidr = `${request.cidr.address}/${request.cidr.prefix}`;
       changes.push(`${request.action}:${cidr}:${callerId}`);
       if (request.action === "block") {
@@ -32,12 +33,13 @@ function world(trusted = "127.0.0.0/8") {
     "admin-1": [{ orgId: "root", role: "admin", scope: "subtree" }], "staff-1": [{ orgId: "root", role: "staff", scope: "subtree" }],
   };
   let now = 1_800_000_000;
+  const reads = { callerGrants: async (id: string) => grants[id] ?? [] };
   const ports: AbuseGatePorts = {
     sessions: { get: async (id) => (SESSIONS[id] ? { id, personId: SESSIONS[id]! } : undefined) },
-    store, reads: { callerGrants: async (id) => grants[id] ?? [] },
+    store, reads,
     trustedProxies: blockListOf(parseTrustedProxies(trusted)), operatorOrgIds: ["root"], nowEpochSeconds: () => now, blockListSeconds: 0,
   };
-  return { ports, changes, counts, block: (cidr: string) => { rows = [...rows, { id: cidr, cidr, reason: "test", createdAt: "2026-11-17T10:00:00.000Z", createdBy: { principalId: "admin-1", displayName: null } }]; }, tick: (seconds: number) => { now += seconds; } };
+  return { ports, changes, counts, grants, block: (cidr: string) => { rows = [...rows, { id: cidr, cidr, reason: "test", createdAt: "2026-11-17T10:00:00.000Z", createdBy: { principalId: "admin-1", displayName: null } }]; }, tick: (seconds: number) => { now += seconds; } };
 }
 
 async function serve(t: TestContext, ports: AbuseGatePorts) {
@@ -115,4 +117,18 @@ test("A8_BLOCKS only an operator admin opens and changes the block list; their o
   assert.equal((await form({ action: "block", cidr: "192.0.2.0/24", reason: "Cross site" }, "https://evil.invalid")).status, 400);
   assert.equal((await form({ action: "unblock", cidr: "198.51.100.0/24", reason: "Shared office" })).status, 303);
   assert.deepEqual(w.changes, ["block:198.51.100.0/24:admin-1", "block:198.51.100.0/24:admin-1", "unblock:198.51.100.0/24:admin-1"]);
+});
+
+test("A8_BLOCKS an admin right lost between the page check and the write changes nothing and reads as the unknown path", async (t) => {
+  const w = world();
+  const http = await serve(t, w.ports);
+  const reads = w.ports.reads as { callerGrants: (id: string) => Promise<readonly { orgId: string; role: string; scope: string }[]> };
+  const original = reads.callerGrants;
+  let calls = 0;
+  // The gateway's page check sees the admin grant; the store's in-transaction read sees it gone.
+  reads.callerGrants = async (id) => (++calls > 1 ? [] : original(id));
+  const response = await http("/admin/ip-blocks", { method: "POST", body: new URLSearchParams({ action: "block", cidr: "198.51.100.0/24", reason: "Credential stuffing" }).toString(),
+    headers: { ...cookieFor("a"), origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" } });
+  assert.equal(response.status, 404);
+  assert.deepEqual(w.changes, [], "nothing was written");
 });

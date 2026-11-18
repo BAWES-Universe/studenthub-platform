@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { createOrganization, createPrincipal } from "@studenthub/contracts";
-import { PostgresAccessPausesStore, PostgresAuthzStore, PostgresLoginStore, runMigrations } from "@studenthub/db";
+import { PostgresAccessPausesStore, PostgresAuthzStore, PostgresLoginStore, principalAuditRef, runMigrations } from "@studenthub/db";
 import { createAccountPauseService, type AccountPauseService } from "../../access/src/index.js";
 
 const URL = process.env.DATABASE_URL ?? "";
@@ -65,7 +65,7 @@ test("A6_PAUSE pausing takes every grant and store grant away, ends sessions and
   const events = (await pool.query("SELECT role, scope, action, actor_principal_id, reason, store_id FROM access_grant_events WHERE target_principal_id = $1 ORDER BY role", [target])).rows;
   assert.deepEqual(events.map((row) => [row.role, row.action, row.actor_principal_id, row.reason]), [
     ["finance", "revoke", staff, `Access paused: ${reason}`], ["recruiter", "revoke", staff, `Access paused: ${reason}`], ["store-manager", "revoke", staff, `Access paused: ${reason}`]]);
-  const audit = (await pool.query("SELECT count(*)::int AS n FROM authorization_mutation_audit WHERE operation = 'grants.revoke' AND target_principal_ref = (SELECT target_principal_ref FROM authorization_mutation_audit ORDER BY id DESC LIMIT 1)")).rows[0].n;
+  const audit = (await pool.query("SELECT count(*)::int AS n FROM authorization_mutation_audit WHERE operation = 'grants.revoke' AND target_principal_ref = $1", [principalAuditRef(target)])).rows[0].n;
   assert.ok(audit >= 1, "the revoke is audited");
   assert.deepEqual(await service.change(staff, { targetPrincipalId: target, action: "pause", reason }), { kind: "refused", reason: "already_paused" });
   await assert.rejects(pool.query("DELETE FROM account_pauses WHERE principal_id = $1", [target]), /never deleted/);
@@ -151,4 +151,30 @@ test("A6_PAUSE a sign-in racing a pause either ends with the pause or is refused
     holder.release();
   }
   assert.equal(await sessions(target), 0);
+});
+
+/** Revokes every grant the person holds in a transaction that commits while `write` waits on it, as a grant change or pause would. */
+async function revokedDuring<T>(principalId: string, write: () => Promise<T>): Promise<T> {
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [principalId]);
+    await holder.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+    const pending = write();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("COMMIT");
+    return await pending;
+  } finally {
+    holder.release();
+  }
+}
+
+test("A6_RULES a staff grant revoked while the pause waits pauses nobody", async () => {
+  const staff = await person([{ orgId: ROOT, role: "staff", scope: "subtree" }]);
+  const acme = await company();
+  const target = await person([{ orgId: acme, role: "recruiter" }]);
+  const outcome = await revokedDuring(staff, () => service.change(staff, { targetPrincipalId: target, action: "pause", reason }));
+  assert.equal(outcome.kind, "refused");
+  assert.deepEqual(await held(target), [{ org_id: acme, role: "recruiter", scope: "self" }]);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM account_pauses WHERE principal_id = $1", [target])).rows[0].n, 0);
 });

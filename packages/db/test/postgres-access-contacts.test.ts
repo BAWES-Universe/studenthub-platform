@@ -100,3 +100,27 @@ test("A3_REMOVE removal keeps the row with removed_at, is never listed, and touc
   await assert.rejects(pool.query("UPDATE company_contacts SET removed_at = NULL, removed_by = NULL WHERE id = $1", [created.id]), /cannot change/);
   await assert.rejects(pool.query("DELETE FROM company_contacts WHERE id = $1", [created.id]), /never deleted/);
 });
+
+/** Revokes every grant the person holds in a transaction that commits while `write` waits on it, as a grant change or pause would. */
+async function revokedDuring<T>(principalId: string, write: () => Promise<T>): Promise<T> {
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [principalId]);
+    await holder.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+    const pending = write();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("COMMIT");
+    return await pending;
+  } finally {
+    holder.release();
+  }
+}
+
+test("A3_CONTACT an owner whose grant is revoked while the write waits writes nothing", async () => {
+  const acme = await company();
+  const owner = await person([{ orgId: acme, role: "org-owner" }]);
+  const outcome = await revokedDuring(owner, () => contacts.create(owner, acme, contact()));
+  assert.equal(outcome.kind, "refused");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM company_contacts WHERE org_id = $1", [acme])).rows[0].n, 0);
+});

@@ -59,8 +59,12 @@ export function viewOpen(view: Pick<StaffView, "startedAt" | "expiresAt">, now: 
 }
 
 export interface StaffViewStore {
-  /** Records a new view (who, whom, why, until when). */
-  start(staffPrincipalId: string, request: StaffViewRequest): Promise<StaffView>;
+  /**
+   * Records a new view (who, whom, why, until when), deciding with `mayStart`
+   * on both people's grants as read inside the write's transaction. Null when refused.
+   */
+  start(staffPrincipalId: string, request: StaffViewRequest,
+    mayStart: (callerGrants: readonly HeldGrant[], targetGrants: readonly HeldGrant[]) => boolean): Promise<StaffView | null>;
   /** The staff member's latest view of this person that is still open, if any. */
   open(staffPrincipalId: string, targetPrincipalId: string): Promise<StaffView | null>;
   /** When StudentHub staff viewed this person's account, newest first (no staff names). */

@@ -231,3 +231,27 @@ test("A2_ACCEPT a paused person's acceptance grants nothing and leaves the link 
   assert.deepEqual(await grantsOn(invitee, acme), []);
   assert.equal((await pool.query("SELECT used_at FROM company_invitations WHERE token_hash = $1", [hashInvitationToken(token)])).rows[0].used_at, null);
 });
+
+/** Revokes every grant the person holds in a transaction that commits while `write` waits on it, as a grant change or pause would. */
+async function revokedDuring<T>(principalId: string, write: () => Promise<T>): Promise<T> {
+  const holder = await pool.connect();
+  try {
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [principalId]);
+    await holder.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+    const pending = write();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await holder.query("COMMIT");
+    return await pending;
+  } finally {
+    holder.release();
+  }
+}
+
+test("A2_INVITE an owner whose grant is revoked while the invite waits invites nobody", async () => {
+  const acme = await company();
+  const owner = await person(address(), [{ orgId: acme, role: "org-owner" }]);
+  const outcome = await revokedDuring(owner, () => service().invite(owner, acme, { email: address(), role: "recruiter", scope: "self" }, ORIGIN));
+  assert.equal(outcome.kind, "refused");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM company_invitations WHERE org_id = $1", [acme])).rows[0].n, 0);
+});

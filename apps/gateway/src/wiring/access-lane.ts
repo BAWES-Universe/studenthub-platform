@@ -23,7 +23,7 @@ import type { Wired, WiringSettings } from "./context.js";
  * the staff review queue.
  *
  * The signing key gates only the writes that use a signed review token (A1
- * grant changes and A6 pauses). A2, A3, A7 and A8 writes have no token: each
+ * grant changes and A6 pauses). A2, A3, A7, A8 and A9 writes have no token: each
  * is a same-origin form post whose caller's right is read again inside the
  * write's transaction, so they run with or without the key.
  */

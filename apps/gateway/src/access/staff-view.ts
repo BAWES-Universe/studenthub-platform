@@ -88,16 +88,18 @@ export async function handleStaffView(
       page(400, "Nothing was started.", "Give a reason of 3 to 500 characters.");
       return true;
     }
-    // Read again after the form: a pause or a removed grant during the read counts.
-    const stillCaller = (await ports.sessions.get(session!))?.personId === caller;
-    const grantsNow = stillCaller ? await ports.reads.callerGrants(caller) : [];
-    const allowedNow = stillCaller && mayOpenAccessAdmin(grantsNow, ports.operatorOrgIds)
-      && mayViewAs(caller, targetId, grantsNow, await ports.views.grantsOf(targetId), ports.operatorOrgIds);
-    if (!allowed || !allowedNow) {
+    if (!allowed) {
       page(403, "Nothing was started.", caller === targetId ? "You can’t view your own account as staff." : "Only an administrator can view the account of someone who works for StudentHub.");
       return true;
     }
-    await ports.views.start(caller, request);
+    // The store decides again on both people's grants inside the write, so a
+    // right lost (or a pause) since the checks above starts nothing.
+    const started = await ports.views.start(caller, request, (callerNow, targetNow) =>
+      mayOpenAccessAdmin(callerNow, ports.operatorOrgIds) && mayViewAs(caller, targetId, callerNow, targetNow, ports.operatorOrgIds));
+    if (!started) {
+      page(403, "Nothing was started.", "Your access changed. Go back and try again.");
+      return true;
+    }
     res.writeHead(303, { location: here, "cache-control": "no-store" });
     res.end();
     return true;

@@ -197,7 +197,7 @@ export interface IpBlockRow {
 
 export type BlockChangeOutcome =
   | { readonly kind: "blocked" | "unblocked" }
-  | { readonly kind: "refused"; readonly reason: "already_blocked" | "not_blocked" | "own_address" };
+  | { readonly kind: "refused"; readonly reason: "already_blocked" | "not_blocked" | "own_address" | "not_allowed" };
 
 /** The Postgres side of A8. */
 export interface AbuseStore {
@@ -205,5 +205,6 @@ export interface AbuseStore {
   hit(principalId: string, kind: LimitKind, windowStartEpochSeconds: number): Promise<number>;
   /** The live block list. */
   blocks(): Promise<readonly IpBlockRow[]>;
-  changeBlock(callerId: string, request: BlockChangeRequest): Promise<BlockChangeOutcome>;
+  /** Re-reads the caller's grants inside the write's transaction and changes nothing unless `mayChange` holds. */
+  changeBlock(callerId: string, request: BlockChangeRequest, mayChange: (callerGrants: readonly HeldGrant[]) => boolean): Promise<BlockChangeOutcome>;
 }

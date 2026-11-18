@@ -3,6 +3,8 @@ import pg from "pg";
 
 /** Access lane A9 (migration 0407): staff views of a person's account. */
 
+type Held = { orgId: string; role: string; scope: string };
+const PRINCIPAL_LOCK_KEY = 5959; // the key PostgresAuthzStore, grant changes and pauses take per principal
 const iso = (value: Date | string): string => (value instanceof Date ? value : new Date(value)).toISOString();
 type Row = { id: string; staff_principal_id: string; target_principal_id: string; reason: string; started_at: Date; expires_at: Date };
 const view = (row: Row) => ({
@@ -28,13 +30,40 @@ export class PostgresAccessStaffViewsStore {
     if (this.#ownsPool) await this.#pool.end();
   }
 
-  async start(staffPrincipalId: string, request: { readonly targetPrincipalId: string; readonly reason: string }) {
-    const { rows } = await this.#pool.query<Row>(
-      `INSERT INTO staff_views (id, staff_principal_id, target_principal_id, reason, started_at, expires_at)
-       SELECT $1, $2, $3, $4, t, t + interval '15 minutes' FROM (SELECT clock_timestamp() AS t) now
-       RETURNING id, staff_principal_id, target_principal_id, reason, started_at, expires_at`,
-      [randomUUID(), staffPrincipalId, request.targetPrincipalId, request.reason]);
-    return view(rows[0]!);
+  /**
+   * One transaction: takes both people's locks (the key every grant change and
+   * pause takes), re-reads both people's grants, asks `mayStart`, and only then
+   * records the view. Null when the caller may no longer start it.
+   */
+  async start(staffPrincipalId: string, request: { readonly targetPrincipalId: string; readonly reason: string },
+    mayStart: (callerGrants: readonly Held[], targetGrants: readonly Held[]) => boolean) {
+    const client = await this.#pool.connect();
+    let broken = false;
+    try {
+      await client.query("BEGIN");
+      for (const principal of [...new Set([staffPrincipalId, request.targetPrincipalId])].sort()) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, $2))", [principal, PRINCIPAL_LOCK_KEY]);
+      }
+      const callerGrants = (await client.query<{ org_id: string; role: string; scope: string }>(
+        "SELECT org_id, role, scope FROM grants WHERE principal_id = $1 ORDER BY id FOR SHARE", [staffPrincipalId])).rows
+        .map((row) => ({ orgId: row.org_id, role: row.role, scope: row.scope }));
+      if (!mayStart(callerGrants, await this.#grantsOf(client, request.targetPrincipalId))) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const { rows } = await client.query<Row>(
+        `INSERT INTO staff_views (id, staff_principal_id, target_principal_id, reason, started_at, expires_at)
+         SELECT $1, $2, $3, $4, t, t + interval '15 minutes' FROM (SELECT clock_timestamp() AS t) now
+         RETURNING id, staff_principal_id, target_principal_id, reason, started_at, expires_at`,
+        [randomUUID(), staffPrincipalId, request.targetPrincipalId, request.reason]);
+      await client.query("COMMIT");
+      return view(rows[0]!);
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally {
+      client.release(broken);
+    }
   }
 
   async open(staffPrincipalId: string, targetPrincipalId: string) {
@@ -52,7 +81,11 @@ export class PostgresAccessStaffViewsStore {
   }
 
   async grantsOf(principalId: string) {
-    const { rows } = await this.#pool.query<{ org_id: string; role: string; scope: string }>(
+    return this.#grantsOf(this.#pool, principalId);
+  }
+
+  async #grantsOf(db: pg.Pool | pg.PoolClient, principalId: string): Promise<Held[]> {
+    const { rows } = await db.query<{ org_id: string; role: string; scope: string }>(
       // A paused person is judged by the grants their pause holds, so pausing an
       // operator admin never opens their account to ordinary staff.
       `SELECT org_id, role, scope FROM (
