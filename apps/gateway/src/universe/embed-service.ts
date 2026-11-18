@@ -73,10 +73,12 @@ function language(request: IncomingMessage): "en" | "ar" {
 const PAGE_TEXT = {
   en: { title: "StudentHub in Universe", signIn: "Sign in", signOut: "Sign out", link: "Link your StudentHub account",
     full: "Open StudentHub", open: "Open this in Universe.", done: "You're signed in. Go back to Universe.",
-    again: "Start again. Close this tab and open StudentHub from Universe.", loading: "Checking your StudentHub account…" },
+    again: "Start again. Close this tab and open StudentHub from Universe.", loading: "Checking your StudentHub account…",
+    paused: "Your StudentHub access is paused, so you can't sign in for now. Your Universe account is not affected. If you think this is a mistake, contact StudentHub support." },
   ar: { title: "StudentHub في Universe", signIn: "تسجيل الدخول", signOut: "تسجيل الخروج", link: "اربط حسابك في StudentHub",
     full: "افتح StudentHub", open: "افتح هذه الصفحة داخل Universe.", done: "تم تسجيل دخولك. عد إلى Universe.",
-    again: "ابدأ من جديد. أغلق هذا التبويب وافتح StudentHub من Universe.", loading: "جارٍ التحقق من حسابك في StudentHub…" },
+    again: "ابدأ من جديد. أغلق هذا التبويب وافتح StudentHub من Universe.", loading: "جارٍ التحقق من حسابك في StudentHub…",
+    paused: "تم إيقاف وصولك إلى StudentHub مؤقتًا، لذا لا يمكنك تسجيل الدخول الآن. حسابك في Universe غير متأثر. إذا كنت تعتقد أن هذا خطأ، فتواصل مع دعم StudentHub." },
 } as const;
 
 function page(lang: "en" | "ar", main: string, script = false, dataset = ""): string {
@@ -382,6 +384,10 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
     const result = await application.callback({ browserSessionId: browser, state: state[0], code: code[0] });
     // A store failure during completion is an outage: rethrown so the request answers 503.
     if (wrapped.failure() !== undefined) throw wrapped.failure();
+    // A paused person is told so (as the main login does), not sent to start again.
+    if (result.status === 403 && result.body?.error === "access_paused") {
+      writeEmbedResponse(response, 403, messagePage(lang, PAGE_TEXT[lang].paused), HTML_TYPE, APP_POLICY); return true;
+    }
     const location = result.headers?.location;
     const cookie = result.headers?.["set-cookie"];
     if (result.status !== 302 || location !== `${config.origin}${DONE_PATH}` || typeof cookie !== "string") { startAgain(); return true; }

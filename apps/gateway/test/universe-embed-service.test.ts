@@ -567,9 +567,22 @@ test('E2 a paused person gets no embed session', async () => {
   const request = h.rig.provider.authorizationRequests.at(-1)!;
   const sessionsBefore = h.rig.sessions.records.size;
   const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
-  assert.equal(callback.status, 400);
+  assert.equal(callback.status, 403);
+  assert.match(callback.body, /access is paused/);
   assert.equal(callback.headers['set-cookie'], undefined);
   assert.equal(h.rig.sessions.records.size, sessionsBefore);
+});
+
+test('E2 a pause that lands between the check and the session insert is a pause, not an outage', async () => {
+  const h = await harness();
+  const browser = new Browser(h.server);
+  await browser.go('GET', '/universe/embed', { 'sec-fetch-dest': 'iframe' });
+  await browser.go('POST', '/universe/embed/connect', { origin: EMBED, 'content-type': 'application/x-www-form-urlencoded' }, `t=${browser.token()}`);
+  const request = h.rig.provider.authorizationRequests.at(-1)!;
+  h.rig.sessions.put = async () => { throw Object.assign(new Error('StudentHub access is paused for this person'), { code: '42501' }); };
+  const callback = await browser.go('GET', `/login/callback?state=${encodeURIComponent(request.state)}&code=${h.rig.provider.authorize()}`);
+  assert.equal(callback.status, 403);
+  assert.match(callback.body, /access is paused/);
 });
 
 test('E2 a failed session insert while completing sign-in answers 503', async () => {
