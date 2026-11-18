@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { universeEmbedNames, runUniverseEmbed } from './universe-embed.mjs';
 import { universeEmbedE2Names, runUniverseEmbedE2 } from './universe-embed-e2.mjs';
+import { withE2Browser } from './e2-browser-process.mjs';
 
 const root = process.cwd();
 const output = path.resolve(process.env.BROWSER_ACCEPTANCE_ARTIFACTS || process.env.BROWSER_ARTIFACT_DIR || 'artifacts/browser-acceptance');
@@ -572,7 +573,7 @@ try {
   const expected=browserManifest.browsers.find(item=>item.name==='chromium');
   evidence.expectedChromiumVersion=expected.browserVersion; evidence.chromiumRevision=expected.revision;
   setupStage='launch-pinned-chromium';
-  browser=await chromium.launch({headless:true,channel:'chromium',args:['--host-resolver-rules=MAP *.browser.test 127.0.0.1, EXCLUDE localhost','--no-proxy-server']});
+  browser=await chromium.launch({headless:true,channel:'chromium'});
   evidence.chromiumVersion=browser.version();
   assert.equal(evidence.chromiumVersion,expected.browserVersion,'Installed Chromium must match pinned Playwright manifest');
   for (const language of ['en','ar']) for (const width of [320,390,1280]) {
@@ -1349,7 +1350,12 @@ try {
     });
   }
   await runUniverseEmbed({browser,run,screenshot,sourceRevision:evidence.candidateSha});
-  await runUniverseEmbedE2({browser,run,screenshot,sourceRevision:evidence.candidateSha});
+  setupStage='launch-isolated-e2-browser';
+  await withE2Browser({chromium,expectedVersion:expected.browserVersion},async e2Browser=>{
+    evidence.e2ChromiumVersion=e2Browser.version();
+    setupStage='execute-isolated-e2-matrix';
+    await runUniverseEmbedE2({browser:e2Browser,run,screenshot,sourceRevision:evidence.candidateSha});
+  });
 } catch {
   evidence.blockedStage=setupStage;
   evidence.blocker='Browser/fixture setup could not complete. Remaining cases are NOT_RUN; no acceptance claim is made. Verify trusted TLS, PostgreSQL, built runtime and installed Chromium.';

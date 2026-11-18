@@ -78,3 +78,20 @@ no sandbox workaround was attempted. Static source review alone does not prove
 that cancel/retry is broken: the real script revalidates on visible return, but
 its waiting state suppresses periodic polling. Native focus/visibility behavior
 is exactly what CI must exercise rather than assuming success or failure.
+
+## Isolated launch correction after CI run 44288442101
+
+Artifact `14420262195`, candidate `21d63b92c76107a747cdb3fd29aa7e01b8db092a`,
+reported `blockedStage: compare-isolated-bfcache-launch`. The baseline language
+cases passed; BFCache, E1 and E2 cases remained NOT_RUN. E2 fixture DNS/proxy
+arguments had been added only to the baseline browser, violating the existing
+assertion that the paired BFCache process differs solely by removing
+`--disable-back-forward-cache`.
+
+The baseline and BFCache launches are now restored unchanged. A separate pinned
+Chromium process owns E2's fixture-specific resolver and no-proxy options, runs
+after E1, and is closed in a finally block even after matrix or version failures.
+The paired-launch comparison and its acceptance criteria are not weakened.
+`e2-browser-process.test.mjs` pins both old launches, argument isolation and
+cleanup on success/failure. These non-browser tests do not establish a successful
+CI rerun or native-cookie proof.

@@ -6,7 +6,7 @@ test('E2 cases are unique and registered in the actual evidence runner',async()=
  assert.equal(new Set(universeEmbedE2Names).size,8);
  const runner=await readFile(new URL('./run.mjs',import.meta.url),'utf8');
  assert.ok(runner.includes('...universeEmbedE2Names]'));
- assert.ok(runner.includes('await runUniverseEmbedE2({browser,run,screenshot,sourceRevision:evidence.candidateSha})'));
+ assert.ok(runner.includes('await runUniverseEmbedE2({browser:e2Browser,run,screenshot,sourceRevision:evidence.candidateSha})'));
 });
 test('E2 production startup refuses unsupported topology',crossSiteStartupRefused);
 test('E2 proof uses native cookie delivery and the actual runtime, not browser request substitution',async()=>{
