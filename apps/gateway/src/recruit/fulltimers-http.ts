@@ -138,6 +138,14 @@ export function renderFulltimer(v: FulltimerView, requests: readonly { cardId: s
 
 const LIST = "/recruit/staff/fulltimers", ONE = /^\/recruit\/staff\/fulltimers\/([^/]+)$/, TOGGLE = /^\/recruit\/staff\/fulltimers\/([^/]+)\/(archive|restore)$/;
 
+type DuplicateBody = { readonly error: "duplicate"; readonly field: "name" | "phone"; readonly fulltimerId: string };
+const isDuplicate = (r: { readonly status: number; readonly body: unknown }): r is { status: 409; body: DuplicateBody } => r.status === 409 && (r.body as { error?: unknown }).error === "duplicate";
+
+/** As legacy did, a refused duplicate names the record that already holds the name or phone. */
+export function renderDuplicate(b: DuplicateBody): string {
+  return `<main id="main" class="error-page"><h1>A full-timer with this ${b.field === "name" ? "name" : "phone number"} already exists.</h1><p><a class="text-link" href="/recruit/staff/fulltimers/${html(b.fulltimerId)}">Open the existing full-timer</a></p><p><a class="text-link" href="${LIST}">Back to full-timers</a></p></main>`;
+}
+
 export async function handleRecruitFulltimers(req: IncomingMessage, res: ServerResponse, s: RecruitFulltimers | undefined, origin: string | undefined, write: RecruitPageWriter, wantsHtml: boolean): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://x"), path = url.pathname;
   const one = ONE.exec(path), toggle = TOGGLE.exec(path);
@@ -161,7 +169,7 @@ export async function handleRecruitFulltimers(req: IncomingMessage, res: ServerR
     const body = await readBody(req, 32768);
     if (!body) { sendJson(res, BAD); return true; }
     const r: RecruitResult<{ fulltimerId: string }> = toggle ? await s.archive(session, decodeSegment(toggle), toggle[2] === "archive") : await s.save(session, one ? decodeSegment(one) : null, body.value);
-    if (body.form) { if (r.status === 200) redirect(res, `/recruit/staff/fulltimers/${r.body.fulltimerId}`); else errorPage(write, r.status, back); }
+    if (body.form) { if (r.status === 200) redirect(res, `/recruit/staff/fulltimers/${r.body.fulltimerId}`); else if (isDuplicate(r)) write(409, "Full-timers", renderDuplicate(r.body)); else errorPage(write, r.status, back); }
     else sendJson(res, r);
   } catch {
     if (!res.headersSent) wantsHtml ? errorPage(write, 503, back) : sendJson(res, { status: 503, body: { error: "recruit_unavailable" } });

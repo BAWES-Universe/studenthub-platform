@@ -31,5 +31,6 @@ test("REC9_PARSE the legacy form: lists split and de-duplicated, phone compacted
     { name: "line\nbreak" }, { name: "A", salary: "1" }])
     assert.equal(m.parseFulltimer(bad, TODAY), undefined, JSON.stringify(bad));
   assert.deepEqual(m.parseFulltimerQuery({ q: " fahad ", currency: "usd", tag: "sales", archived: "1", page: "3", request: "x" }), { q: "fahad", currency: "USD", tag: "sales", archived: true, page: 3 });
+  assert.equal(m.parseFulltimerQuery({ currency: "" })?.currency, "KWD", "a cleared Currency box searches KWD");
   for (const bad of [{ q: ["a", "b"] }, { archived: "yes" }, { currency: "dollars" }, { page: "0" }, { sort: "name" }]) assert.equal(m.parseFulltimerQuery(bad), undefined, JSON.stringify(bad));
 });

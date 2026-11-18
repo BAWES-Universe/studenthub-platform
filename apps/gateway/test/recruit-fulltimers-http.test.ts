@@ -64,4 +64,7 @@ test("REC9_HTTP_PAGE pages escape every value; from a request each person gets a
   assert.deepEqual([saved.status, saved.headers.location], [303, `/recruit/staff/fulltimers/${FT}`]);
   const dup = await call("/recruit/staff/fulltimers", form("name=Dup"));
   assert.equal(dup.page!.status, 409);
+  for (const text of ["A full-timer with this name already exists.", `href="/recruit/staff/fulltimers/${OTHER}"`]) assert.ok(dup.page!.body.includes(text), text);
+  const cleared = await call("/recruit/staff/fulltimers?q=&tag=&currency=", { html: true });
+  assert.equal(cleared.page!.status, 200, "a cleared Currency box still searches");
 });

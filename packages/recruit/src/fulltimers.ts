@@ -99,7 +99,7 @@ export function parseFulltimer(value: unknown, today: string): FulltimerFields |
 export function parseFulltimerQuery(raw: Readonly<Record<string, string | readonly string[] | undefined>>): { readonly q: string | null; readonly currency: string; readonly tag: string | null; readonly archived: boolean; readonly page: number } | undefined {
   for (const key of Object.keys(raw)) if (!["q", "currency", "tag", "archived", "page", "request"].includes(key) || Array.isArray(raw[key])) return undefined;
   const q = text(raw.q, 100), tag = text(raw.tag, 100);
-  const currency = raw.currency === undefined ? "KWD" : /^[A-Za-z]{3}$/.test(raw.currency as string) ? (raw.currency as string).toUpperCase() : undefined;
+  const currency = raw.currency === undefined || raw.currency === "" ? "KWD" : /^[A-Za-z]{3}$/.test(raw.currency as string) ? (raw.currency as string).toUpperCase() : undefined;
   const page = raw.page === undefined ? 1 : /^[1-9]\d{0,2}$/.test(raw.page as string) ? Number(raw.page) : undefined;
   if (q === undefined || tag === undefined || !currency || page === undefined || (raw.archived !== undefined && raw.archived !== "1")) return undefined;
   return { q, currency, tag, archived: raw.archived === "1", page };
