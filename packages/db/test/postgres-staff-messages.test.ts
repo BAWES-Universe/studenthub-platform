@@ -22,7 +22,7 @@ before(async () => {
 after(async () => pool.end());
 
 const send = (over: Partial<Parameters<PostgresStaffMessagesStore["send"]>[0]> = {}) =>
-  messages.send({ recipientPrincipalId: person, senderPrincipalId: staff, kind: "civil_id_request", body: null, sendKey: `k-${randomUUID()}`, ...over });
+  messages.send({ recipientPrincipalId: person, senderPrincipalId: staff, kind: "civil_id_request", body: null, sendKey: randomUUID(), ...over });
 
 test("COMMS_STAFF_MSG_PG a send writes the message and one feed row in the same transaction", async () => {
   const sent = await send({ kind: "message", body: "Bring your contract" });
@@ -36,12 +36,13 @@ test("COMMS_STAFF_MSG_PG a send writes the message and one feed row in the same 
 });
 
 test("COMMS_STAFF_MSG_PG a repeat send key is already_sent with no second row; a reused key is refused", async () => {
-  const sendKey = `k-${randomUUID()}`;
+  const sendKey = randomUUID();
   const first = await send({ sendKey });
   assert.equal(first.status, "sent");
   assert.deepEqual(await send({ sendKey }), { status: "already_sent", id: (first as { id: string }).id });
   const count = await pool.query("SELECT count(*)::int n FROM staff_messages WHERE send_key=$1", [sendKey]);
   assert.equal(count.rows[0].n, 1);
+  assert.deepEqual(await send({ sendKey, kind: "message", body: "different" }), { status: "send_key_conflict" });
   assert.deepEqual(await send({ sendKey, recipientPrincipalId: other }), { status: "send_key_conflict" });
   assert.deepEqual(await send({ sendKey, kind: "profile_photo_request" }), { status: "send_key_conflict" });
   const feedRows = await pool.query("SELECT count(*)::int n FROM notifications WHERE subject_reference=$1", [`staff_message:${(first as { id: string }).id}`]);
@@ -49,7 +50,7 @@ test("COMMS_STAFF_MSG_PG a repeat send key is already_sent with no second row; a
 });
 
 test("COMMS_STAFF_MSG_PG an unknown recipient writes nothing", async () => {
-  const sendKey = `k-${randomUUID()}`;
+  const sendKey = randomUUID();
   assert.deepEqual(await send({ sendKey, recipientPrincipalId: `missing-${randomUUID()}` }), { status: "recipient_not_found" });
   const count = await pool.query("SELECT count(*)::int n FROM staff_messages WHERE send_key=$1", [sendKey]);
   assert.equal(count.rows[0].n, 0);
@@ -84,9 +85,11 @@ test("COMMS_STAFF_MSG_SCHEMA payload rules are closed per kind", async () => {
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'staff.message',$2,'{\"text\":\"stored\"}'::jsonb,$3)", [person, `staff_message:${id}`, `x-${randomUUID()}`]));
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'staff.message',$2,'{}'::jsonb,$3)", [person, `organization:${org}`, `x-${randomUUID()}`]));
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'chat.message',$2,'{}'::jsonb,$3)", [person, `staff_message:${id}`, `x-${randomUUID()}`]));
-  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'civil_id_request','text',$3)", [person, staff, `k-${randomUUID()}`]));
-  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',NULL,$3)", [person, staff, `k-${randomUUID()}`]));
-  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',' padded ',$3)", [person, staff, `k-${randomUUID()}`]));
+  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'civil_id_request','text',$3)", [person, staff, randomUUID()]));
+  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',NULL,$3)", [person, staff, randomUUID()]));
+  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',' padded ',$3)", [person, staff, randomUUID()]));
+  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'message',$3,$4)", [person, staff, "x".repeat(1001), randomUUID()]));
+  await assert.rejects(pool.query("INSERT INTO staff_messages(recipient_principal_id,sender_principal_id,kind,body,send_key) VALUES($1,$2,'civil_id_request',NULL,'not-a-uuid')", [person, staff]));
 });
 
 test("COMMS_WORK_DECISION_PG a decision inside the caller's transaction is recorded once, rolled back with it, and retracted on undo", async () => {
@@ -111,5 +114,8 @@ test("COMMS_WORK_DECISION_PG a decision inside the caller's transaction is recor
   await retractWorkSessionDecision(pool, { personPrincipalId: workPerson, decisionId: notice.decisionId });
   assert.deepEqual(await feed.list(workPerson, 25, 0), []);
   await assert.rejects(recordWorkSessionDecision(pool, { ...notice, decisionId: randomUUID(), workDate: "10/11/2026" }));
+  await assert.rejects(recordWorkSessionDecision(pool, { ...notice, decisionId: randomUUID(), workDate: "2026-02-29" }));
+  await recordWorkSessionDecision(pool, { ...notice, decisionId: randomUUID(), workDate: "2028-02-29" });
+  await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'work.session_approved',$2,'{\"workDate\":null}'::jsonb,$3)", [workPerson, `work_session:${notice.sessionId}`, `x-${randomUUID()}`]));
   await assert.rejects(pool.query("INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key) VALUES($1,'work.session_rejected',$2,$3::jsonb,$4)", [workPerson, `work_session:${notice.sessionId}`, JSON.stringify({ workDate: "2026-11-10", note: "stored" }), `x-${randomUUID()}`]));
 });

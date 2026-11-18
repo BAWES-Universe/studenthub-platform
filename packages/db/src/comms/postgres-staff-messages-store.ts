@@ -15,8 +15,9 @@ export type StaffMessageSendRow =
 
 /**
  * Staff messages (legacy types 12 to 14). The message row and the recipient's feed row are
- * written in one transaction. A repeat send key returns the first message unchanged; the
- * same key for a different recipient, kind or body is refused, never overwritten.
+ * written in one transaction. A repeat send key for the same recipient and kind returns the
+ * first message unchanged, as legacy does even if the text differs; the same key for a
+ * different recipient or kind is refused, never overwritten.
  */
 export class PostgresStaffMessagesStore {
   #pool: pg.Pool | undefined;
@@ -46,7 +47,7 @@ export class PostgresStaffMessagesStore {
           "SELECT id::text id,recipient_principal_id,kind,body FROM staff_messages WHERE send_key=$1", [draft.sendKey]);
         await client.query("COMMIT");
         const row = existing.rows[0];
-        if (row && row.recipient_principal_id === draft.recipientPrincipalId && row.kind === draft.kind && row.body === draft.body) {
+        if (row && row.recipient_principal_id === draft.recipientPrincipalId && row.kind === draft.kind) {
           return { status: "already_sent", id: row.id };
         }
         return { status: "send_key_conflict" };

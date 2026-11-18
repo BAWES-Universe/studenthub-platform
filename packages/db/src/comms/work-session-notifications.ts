@@ -6,6 +6,12 @@
 type Client = { query(text: string, values?: readonly unknown[]): Promise<unknown> };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// Date.parse rolls 2026-02-29 over to 1 March, so the parsed day must round-trip.
+const isCalendarDate = (value: string) => {
+  if (typeof value !== "string" || !DATE.test(value)) return false;
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
+};
 
 export interface WorkSessionDecisionNotice {
   readonly personPrincipalId: string;
@@ -17,7 +23,7 @@ export interface WorkSessionDecisionNotice {
 
 export async function recordWorkSessionDecision(client: Client, notice: WorkSessionDecisionNotice): Promise<void> {
   if (notice.decision !== "approved" && notice.decision !== "rejected") throw new TypeError("unknown work session decision");
-  if (!DATE.test(notice.workDate) || Number.isNaN(Date.parse(`${notice.workDate}T00:00:00Z`))) throw new TypeError("workDate must be YYYY-MM-DD");
+  if (!isCalendarDate(notice.workDate)) throw new TypeError("workDate must be a real YYYY-MM-DD date");
   if (!ID.test(notice.sessionId) || !ID.test(notice.decisionId)) throw new TypeError("invalid work session reference");
   await client.query(
     `INSERT INTO notifications(recipient_principal_id,kind,subject_reference,parameters,dedupe_key)
