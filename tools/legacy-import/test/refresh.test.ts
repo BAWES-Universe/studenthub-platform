@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { acquireLock, runCli, summary } from "../src/refresh-cli.js";
+import { acquireLock, createMysqlClient, runCli, summary } from "../src/refresh-cli.js";
 import {
   isExcluded,
   loadConfig,
@@ -347,4 +347,97 @@ test("a run past its deadline aborts its children, reports failed.timeout and fr
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- Real mysql-tool children: every one, the mysqldump --help probe included, is scoped. ---
+
+/** The TypeScript source, found from the compiled test (dist/tools/legacy-import/test). */
+function cliSource(): string {
+  for (const rel of ["../src/refresh-cli.ts", "../../../../tools/legacy-import/src/refresh-cli.ts"]) {
+    const file = new URL(rel, import.meta.url);
+    if (existsSync(file)) return readFileSync(file, "utf8");
+  }
+  throw new Error("refresh-cli.ts not found");
+}
+
+test("no child process in the refresh CLI bypasses spawnScoped (the flock helper aside)", () => {
+  const source = cliSource();
+  const calls = [...source.matchAll(/\bspawn\(([^,]+),/g)].map((match) => match[1]!.trim());
+  // One spawn inside spawnScoped (command is its parameter) and one for flock, which gets
+  // its own minimal env. Any new spawn, execFile or exec call fails this test.
+  assert.deepEqual(calls.sort(), ['"flock"', "command"]);
+  assert.doesNotMatch(source, /\b(execFile|execFileSync|exec|execSync|spawnSync|fork)\(/);
+  assert.match(source, /spawn\("flock", \[[^\]]*\], \{\s*env: \{ PATH: process\.env\.PATH, LANG: "C" \}/);
+});
+
+/** Fake mysql and mysqldump on PATH that log what each child could see. */
+function fakeTools(dir: string, helpScript: string): string {
+  const bin = path.join(dir, "bin");
+  const log = path.join(dir, "children.log");
+  const record = `legacy=$(env | grep -c '^LEGACY_REFRESH_'); pwd=\${MYSQL_PWD:+set}; if { true >&3; } 2>/dev/null; then fd3=open; else fd3=closed; fi; echo "$(basename "$0") $1 legacy=$legacy pwd=$pwd fd3=$fd3" >> ${JSON.stringify(log)}`;
+  const tools: Record<string, string> = {
+    mysqldump: `#!/bin/sh\n${record}\nif [ "$1" = "--help" ]; then\n${helpScript}\nfi\necho "SELECT 1;"\n`,
+    mysql: `#!/bin/sh\n${record}\nfor a in "$@"; do if [ "$a" = "-e" ]; then echo "uuid-x"; exit 0; fi; done\ncat > /dev/null\n`,
+  };
+  for (const [name, body] of Object.entries(tools)) {
+    writeFileSync(path.join(bin, name), body);
+    chmodSync(path.join(bin, name), 0o755);
+  }
+  return log;
+}
+
+async function withFakeTools(helpScript: string, body: (dir: string, log: string, lockFd: number) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(path.join(tmpdir(), "refresh-children-"));
+  const saved = { PATH: process.env.PATH, SOURCE: process.env.LEGACY_REFRESH_SOURCE_URL, TARGET: process.env.LEGACY_REFRESH_TARGET_URL };
+  const lock = await acquireLock(path.join(dir, "run.lock"));
+  assert.equal(lock.held, true);
+  if (!lock.held) return;
+  try {
+    mkdirSync(path.join(dir, "bin"));
+    const log = fakeTools(dir, helpScript);
+    // The parent holds both credential URLs, as the staging cron job does.
+    process.env.PATH = `${path.join(dir, "bin")}:${saved.PATH ?? ""}`;
+    process.env.LEGACY_REFRESH_SOURCE_URL = SOURCE;
+    process.env.LEGACY_REFRESH_TARGET_URL = TARGET;
+    await body(dir, log, lock.fd);
+  } finally {
+    process.env.PATH = saved.PATH;
+    if (saved.SOURCE === undefined) delete process.env.LEGACY_REFRESH_SOURCE_URL;
+    else process.env.LEGACY_REFRESH_SOURCE_URL = saved.SOURCE;
+    if (saved.TARGET === undefined) delete process.env.LEGACY_REFRESH_TARGET_URL;
+    else process.env.LEGACY_REFRESH_TARGET_URL = saved.TARGET;
+    closeSync(lock.fd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("every mysql child, the mysqldump probe included, gets the scrubbed env and the lock fd", async () => {
+  await withFakeTools('echo "  --set-gtid-purged=name"; exit 0', async (_dir, log, lockFd) => {
+    const client = createMysqlClient(lockFd, new AbortController().signal);
+    const source = parseDatabaseUrl(SOURCE, "source");
+    const target = parseDatabaseUrl(TARGET, "target");
+    assert.equal(await client.serverId(source), "uuid-x");
+    await client.copy(source, target, ["candidate"]);
+    const lines = readFileSync(log, "utf8").trim().split("\n").sort();
+    assert.deepEqual(lines, [
+      "mysql --host=legacy-replica.internal legacy=0 pwd=set fd3=open",
+      "mysql --host=staging-db.internal legacy=0 pwd=set fd3=open",
+      "mysqldump --help legacy=0 pwd=set fd3=open",
+      "mysqldump --host=legacy-replica.internal legacy=0 pwd=set fd3=open",
+    ]);
+  });
+});
+
+test("a hung mysqldump probe is killed and reaped by the run deadline", async () => {
+  await withFakeTools('echo $$ > "$(dirname "$0")/../probe.pid"; exec sleep 30', async (dir, _log, lockFd) => {
+    const deadline = new AbortController();
+    const client = createMysqlClient(lockFd, deadline.signal);
+    const started = Date.now();
+    setTimeout(() => deadline.abort(), 200);
+    await assert.rejects(client.copy(parseDatabaseUrl(SOURCE, "source"), parseDatabaseUrl(TARGET, "target"), ["candidate"]), /probe.aborted/);
+    assert.ok(Date.now() - started < 5000, "the copy waited for the probe instead of the deadline");
+    const pid = Number(readFileSync(path.join(dir, "probe.pid"), "utf8"));
+    // Settled on close, so the probe is already gone (reaped), not merely signalled.
+    assert.throws(() => process.kill(pid, 0), /ESRCH/);
+  });
 });

@@ -13,7 +13,7 @@
  * released by the kernel when the last of them exits or dies, and can never be stale,
  * taken over or released by another run. The lock file itself is never deleted.
  */
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -54,45 +54,65 @@ function childEnv(db: DatabaseUrl): NodeJS.ProcessEnv {
   return { PATH: process.env.PATH, HOME: process.env.HOME, MYSQL_PWD: db.password, LANG: "C" };
 }
 
-/** stdio for a mysql child: the three standard streams, then the run's lock descriptor. */
-type Stdio = ["ignore" | "pipe", "ignore" | "pipe", "ignore"];
-function stdio(streams: Stdio, lockFd: number | undefined): (Stdio[number] | number)[] {
-  return lockFd === undefined ? streams : [...streams, lockFd];
+type Streams = ["ignore" | "pipe", "ignore" | "pipe", "ignore"];
+
+/** How every mysql-tool child of a run is started: see {@link createMysqlClient}. */
+export interface ChildScope {
+  /** The run's lock descriptor, passed as the child's fd 3. */
+  readonly lockFd?: number;
+  /** The run's deadline; abort SIGKILLs the child. */
+  readonly signal?: AbortSignal;
 }
 
 /**
- * The mysql client tools behind MysqlPort. With `lockFd`, every child inherits the run's
- * lock descriptor, so an orphaned mysqldump or load keeps the lock until it exits.
+ * The only way this tool starts a mysql or mysqldump process. Every child gets the scrubbed
+ * environment for `db` (never the parent's, which holds both LEGACY_REFRESH_*_URL values),
+ * the run's lock descriptor as fd 3, and the run's abort signal with SIGKILL. A test fails
+ * if any other spawn call appears in this file besides this one and the flock helper.
+ */
+export function spawnScoped(scope: ChildScope, command: "mysql" | "mysqldump", args: readonly string[], db: DatabaseUrl, streams: Streams): ChildProcess {
+  const stdio: (Streams[number] | number)[] = scope.lockFd === undefined ? [...streams] : [...streams, scope.lockFd];
+  return spawn(command, args, { env: childEnv(db), stdio, signal: scope.signal, killSignal: "SIGKILL" });
+}
+
+/**
+ * The mysql client tools behind MysqlPort. Every child, the mysqldump capability probe
+ * included, starts through {@link spawnScoped}: it inherits the run's lock descriptor (an
+ * orphaned child keeps the lock until it exits), is killed when the run's deadline aborts,
+ * and sees only the password of the database it talks to. Each promise settles on close.
  */
 export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlPort {
-  // An aborted run (deadline passed) kills every child; each promise still waits for close.
-  const killable = { signal, killSignal: "SIGKILL" as const };
+  const scope: ChildScope = { lockFd, signal };
   let gtidOption: Promise<string[]> | undefined;
   /** `--set-gtid-purged=OFF` where this mysqldump knows it (MySQL); MariaDB's does not. */
-  function gtidArgs(): Promise<string[]> {
-    gtidOption ??= new Promise((resolve) => {
-      const probe = spawn("mysqldump", ["--help"], { stdio: ["ignore", "pipe", "ignore"] });
+  function gtidArgs(source: DatabaseUrl): Promise<string[]> {
+    gtidOption ??= new Promise((resolve, reject) => {
+      const probe = spawnScoped(scope, "mysqldump", ["--help"], source, ["ignore", "pipe", "ignore"]);
       let help = "";
       probe.stdout!.setEncoding("utf8");
       probe.stdout!.on("data", (chunk: string) => (help += chunk));
-      probe.on("error", () => resolve([]));
-      probe.on("close", () => resolve(help.includes("--set-gtid-purged") ? ["--set-gtid-purged=OFF"] : []));
+      // "error" (missing binary, abort) is always followed by "close"; settle there only.
+      probe.on("error", () => undefined);
+      probe.on("close", () => {
+        if (signal?.aborted) return reject(new Error("probe.aborted"));
+        resolve(help.includes("--set-gtid-purged") ? ["--set-gtid-purged=OFF"] : []);
+      });
     });
     return gtidOption;
   }
 
   function query(db: DatabaseUrl, sql: string): Promise<string[][]> {
     return new Promise((resolve, reject) => {
-      const child = spawn("mysql", [...mysqlArgs(db), "--batch", "--skip-column-names", "--raw", `--database=${db.database}`, "-e", sql], {
-        env: childEnv(db),
-        stdio: stdio(["ignore", "pipe", "ignore"], lockFd),
-        ...killable,
-      });
+      const child = spawnScoped(scope, "mysql", [...mysqlArgs(db), "--batch", "--skip-column-names", "--raw", `--database=${db.database}`, "-e", sql], db, ["ignore", "pipe", "ignore"]);
       let out = "";
       child.stdout!.setEncoding("utf8");
       child.stdout!.on("data", (chunk: string) => (out += chunk));
-      child.on("error", () => reject(new Error("mysql.spawn")));
+      // "error" (missing binary, abort) is always followed by "close"; settle there only,
+      // so a killed child is reaped before the run moves on.
+      let spawnFailed = false;
+      child.on("error", () => (spawnFailed = true));
       child.on("close", (code) => {
+        if (spawnFailed) return reject(new Error("mysql.spawn"));
         if (code !== 0) return reject(new Error("mysql.exit"));
         resolve(out.split("\n").filter((line) => line.length > 0).map((line) => line.split("\t")));
       });
@@ -121,9 +141,10 @@ export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlP
     },
     async copy(source, target, tables) {
       assertSafe(tables);
-      const gtid = await gtidArgs();
+      const gtid = await gtidArgs(source);
       return new Promise((resolve, reject) => {
-        const dump = spawn(
+        const dump = spawnScoped(
+          scope,
           "mysqldump",
           [
             ...connectionArgs(source),
@@ -138,13 +159,10 @@ export function createMysqlClient(lockFd?: number, signal?: AbortSignal): MysqlP
             source.database,
             ...tables,
           ],
-          { env: childEnv(source), stdio: stdio(["ignore", "pipe", "ignore"], lockFd), ...killable },
+          source,
+          ["ignore", "pipe", "ignore"],
         );
-        const load = spawn("mysql", [...mysqlArgs(target), `--database=${target.database}`], {
-          env: childEnv(target),
-          stdio: stdio(["pipe", "ignore", "ignore"], lockFd),
-          ...killable,
-        });
+        const load = spawnScoped(scope, "mysql", [...mysqlArgs(target), `--database=${target.database}`], target, ["pipe", "ignore", "ignore"]);
         // If either side fails, stop the other (a dump blocked on a full pipe would never
         // exit) and settle only once both have closed, so no child outlives the copy.
         let failed = false;
@@ -231,7 +249,10 @@ export function acquireLock(lockPath: string): Promise<LockResult> {
       if (!result.held) closeSync(fd);
       resolve(result);
     };
-    const helper = spawn("flock", ["--nonblock", "--conflict-exit-code", "75", "3"], { stdio: ["ignore", "ignore", "ignore", fd] });
+    const helper = spawn("flock", ["--nonblock", "--conflict-exit-code", "75", "3"], {
+      env: { PATH: process.env.PATH, LANG: "C" },
+      stdio: ["ignore", "ignore", "ignore", fd],
+    });
     helper.on("error", () => settle({ held: false, code: "lock.unavailable" }));
     helper.on("close", (code) => {
       if (code === 0) settle({ held: true, fd });
