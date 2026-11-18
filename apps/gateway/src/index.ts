@@ -596,7 +596,9 @@ if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
   const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
-  const universeEmbed = createUniverseEmbedConfigFromEnv(process.env, runtimeLogin?.application.web?.origin);
+  const universe = await (await import("./wiring/universe.js")).wireUniverse(process.env,
+    createUniverseEmbedConfigFromEnv(process.env, runtimeLogin?.application.web?.origin), runtimeLogin?.application.web?.profiles);
+  const universeEmbed = universe.config;
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
   const runtimeOrganizationDocuments = await createRuntimeOrganizationDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
@@ -615,7 +617,7 @@ if (entrypoint === import.meta.url) {
     runtimeOrganizationDocuments,
     universeEmbed,
   );
-  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void universe.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });

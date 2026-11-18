@@ -50,6 +50,10 @@
       "types": "./dist/recruit/index.d.ts",
       "import": "./dist/recruit/index.js"
     },
+    "./universe": {
+      "types": "./dist/universe/index.d.ts",
+      "import": "./dist/universe/index.js"
+    },
     "./billing": {
       "types": "./dist/billing/index.d.ts",
       "import": "./dist/billing/index.js"
