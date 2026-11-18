@@ -2245,6 +2245,7 @@
     "SHU-321 R1: only a labelled, allowlisted, Claude-trailered queue config pull request is reviewed, lowest first, one per start",
     "SHU-321 R2: a fork, a draft, a non-main base, a contracts file not edited in place or an extra path is never reviewed",
     "Box review C1: a coordinator:code pull request is reviewed by Codex, and only inside the coordinator",
+    "Box review C4: a box:product-review pull request is reviewed by Codex, and only outside .github",
     "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
     "SHU-321 R4: a head is reviewed once, a pull request at most max_heads_per_pr heads per revision, and a busy host gives the head back",
     "SHU-321 R5: an invalid or paused queue never reviews, a stopped one does (M16), and a pause during discovery wins",
@@ -3228,6 +3229,9 @@
     "SHU-321 mutation M11 drop the Claude-Session trailer check",
     "SHU-321 mutation M12 review coordinator code under the queue label",
     "SHU-321 mutation M13 let a coordinator code path climb out",
+    "SHU-321 mutation M14 let a product path reach .github",
+    "SHU-321 mutation M15 review coordinator code under the product label",
+    "SHU-321 mutation M16 let another label stand beside the product label",
     "SHU-321 mutation the unmutated suite passes",
     "SHU-322 B1: a reviewed card queue on main installs in order, reports once and exits for the next start",
     "SHU-322 B2: a coordinator change outside the queue config paths, or a deletion, is a refusal for the owner",
@@ -19239,6 +19243,10 @@
       "capabilities": []
     },
     {
+      "name": "Box review C4: a box:product-review pull request is reviewed by Codex, and only outside .github",
+      "capabilities": []
+    },
+    {
       "name": "SHU-321 R3: the reviewer of a Claude-written queue config is codex-verifier, and anything else is refused",
       "capabilities": []
     },
@@ -25841,6 +25849,18 @@
     },
     {
       "name": "SHU-321 mutation M13 let a coordinator code path climb out",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M14 let a product path reach .github",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M15 review coordinator code under the product label",
+      "capabilities": []
+    },
+    {
+      "name": "SHU-321 mutation M16 let another label stand beside the product label",
       "capabilities": []
     },
     {
