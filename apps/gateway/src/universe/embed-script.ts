@@ -64,6 +64,8 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   var pending = null;
   var renewTimer = null;
   var pendingTimer = null;
+  // Monotonic deadline (performance.now) after which rendered profile data must be gone.
+  var leaseDeadline = 0;
 
   function clearProfile() {
     while (profileEl.firstChild) profileEl.removeChild(profileEl.firstChild);
@@ -80,7 +82,18 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   function stopTimers() {
     if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
     if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    leaseDeadline = 0;
     pending = null;
+  }
+  function leaseLive() { return leaseDeadline > 0 && performance.now() < leaseDeadline; }
+  // Lease deadline or renewal: rendered data goes first, then verification restarts.
+  function expireLease(g) {
+    if (g !== generation) return;
+    if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
+    leaseDeadline = 0;
+    clearProfile();
+    show("needs_universe");
+    verify(g);
   }
   // Synchronous clear: runs inside pagehide / hidden visibilitychange handlers.
   function hideAll() {
@@ -131,6 +144,7 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
   function loadProfile(g) {
     call("GET", "/universe/embed/profile").then(function (reply) {
       if (g !== generation) return;
+      if (reply.state === "populated" && !leaseLive()) { expireLease(g); return; }
       if (reply.state === "populated" && Array.isArray(reply.fields)) render(reply.fields); else clearProfile();
       show(reply.state);
     }).catch(function () { fail(g); });
@@ -160,12 +174,21 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
     var g = pending.generation;
     pending = null;
     if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    var sentAt = performance.now();
     call("POST", "/universe/embed/identity", { attestation: message.attestation }).then(function (reply) {
       if (g !== generation) return;
-      if (reply.state === "ready") {
-        var renewIn = typeof reply.renewAfterSeconds === "number" ? reply.renewAfterSeconds : 480;
-        renewTimer = setTimeout(function () { verify(g); }, Math.max(0, renewIn) * 1000);
+      if (reply.state === "ready" && typeof reply.leaseSeconds === "number" && reply.leaseSeconds > 0) {
+        // Measured from the send time, so the client deadline is never later than the server lease.
+        var lease = Math.min(reply.leaseSeconds, 600) * 1000;
+        var renewIn = typeof reply.renewAfterSeconds === "number" ? reply.renewAfterSeconds * 1000 : 0;
+        leaseDeadline = sentAt + lease;
+        var left = leaseDeadline - performance.now();
+        if (left <= 0) { expireLease(g); return; }
+        if (renewTimer) clearTimeout(renewTimer);
+        // One timer: renewal, never later than the deadline; renewal clears the profile first.
+        renewTimer = setTimeout(function () { expireLease(g); }, Math.max(0, Math.min(renewIn - (performance.now() - sentAt), left)));
         loadProfile(g);
+      } else if (reply.state === "ready") { fail(g);
       } else { stopTimers(); clearProfile(); show(reply.state); }
     }).catch(function () { fail(g); });
   });
@@ -174,7 +197,11 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
     var g = generation;
     call("GET", "/universe/embed/status").then(function (reply) {
       if (g !== generation) return;
-      if (reply.state === "ready") { if (profileEl.hidden) loadProfile(g); return; }
+      if (reply.state === "ready") {
+        if (!leaseLive()) { expireLease(g); return; }
+        if (profileEl.hidden) loadProfile(g);
+        return;
+      }
       stopTimers();
       clearProfile();
       if (reply.state === "needs_universe") { show("needs_universe"); verify(g); return; }
@@ -194,7 +221,11 @@ export const UNIVERSE_EMBED_E2_SCRIPT = String.raw`"use strict";
     if (document.visibilityState === "hidden") hideAll(); else { hideAll(); revalidate(); }
   });
   // While visible, re-check at least every 60 seconds; failure leaves content cleared.
-  setInterval(function () { if (document.visibilityState === "visible" && body.getAttribute("data-state") !== "waiting") revalidate(); }, 60000);
+  // Each tick also enforces the lease deadline, in case a timer was delayed.
+  setInterval(function () {
+    if (!profileEl.hidden && !leaseLive()) expireLease(generation);
+    if (document.visibilityState === "visible" && body.getAttribute("data-state") !== "waiting") revalidate();
+  }, 60000);
   show("loading");
   revalidate();
 })();

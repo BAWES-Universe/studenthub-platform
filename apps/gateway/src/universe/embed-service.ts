@@ -17,6 +17,8 @@ export const CHALLENGE_TTL_SECONDS = 60;
 export const LEASE_SECONDS = 600;
 /** The script renews from minute 8 of the 10-minute lease. */
 export const RENEW_AFTER_SECONDS = 480;
+/** Subtracted from the lease the client is told, to absorb gateway/database clock skew. */
+export const LEASE_CLOCK_MARGIN_SECONDS = 5;
 export const DONE_PATH = "/universe/embed/done";
 
 export interface EmbedProfileField {
@@ -253,7 +255,12 @@ export async function handleEmbedRuntime(request: IncomingMessage, response: Ser
       if (!await runtime.mapping.matches(attestation.subject, bound.personId)) return refuse("different_account").then(() => true);
       const expires = await runtime.store.writeLease(bound.instanceId, generation, attestation.subject, attestation.issuedAt, LEASE_SECONDS);
       if (!expires) return refuse("start_again").then(() => true);
-      json(response, 200, { state: "ready", renewAfterSeconds: RENEW_AFTER_SECONDS });
+      // The client clears rendered profile data at this deadline on its own clock,
+      // measured from when it sent the request (never later than the server lease).
+      const leaseSeconds = Math.max(0, Math.min(LEASE_SECONDS,
+        Math.floor((expires.getTime() - Date.now()) / 1000) - LEASE_CLOCK_MARGIN_SECONDS));
+      json(response, 200, { state: "ready", leaseSeconds,
+        renewAfterSeconds: leaseSeconds > 60 ? Math.min(RENEW_AFTER_SECONDS, leaseSeconds - 60) : leaseSeconds });
       return true;
     }
     case "POST /universe/embed/connect": {

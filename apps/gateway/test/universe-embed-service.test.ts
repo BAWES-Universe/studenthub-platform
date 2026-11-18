@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { IncomingMessage, type Server } from 'node:http';
 import { Socket } from 'node:net';
+import { runInNewContext } from 'node:vm';
 import { generateEd25519KeyPair, MemoryReplayStore, signAssertion, type ActorAssertionClaims } from '@bawes/actor-assertion';
 import { createSyntheticLoginRig } from '@studenthub/login-contract';
 import type { UniverseEmbedBindingView, UniverseEmbedStore } from '@studenthub/db/universe';
@@ -13,7 +14,7 @@ import { createLoginApplication } from '../src/login-application.js';
 import { createUniverseEmbedConfigFromEnv, type UniverseEmbedConfig } from '../src/universe/embed-policy.js';
 import { requestToken } from '../src/universe/embed-cookies.js';
 import { handoffBoundStates } from '../src/universe/embed-login-states.js';
-import { LEASE_SECONDS, type EmbedProfileView, type UniverseEmbedRuntime } from '../src/universe/embed-service.js';
+import { LEASE_CLOCK_MARGIN_SECONDS, LEASE_SECONDS, type EmbedProfileView, type UniverseEmbedRuntime } from '../src/universe/embed-service.js';
 import { UNIVERSE_EMBED_E2_SCRIPT } from '../src/universe/embed-script.js';
 import { sameProviderSubjectMapping } from '../src/universe/host-identity.js';
 import { assertSameSiteEmbed, embedProfilesFrom, wireUniverse } from '../src/wiring/universe.js';
@@ -269,7 +270,9 @@ test('E2 handoff: connect → callback → done binds the instance; host verific
   assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/profile')).body), { state: 'needs_universe' });
   assert.deepEqual(h.profileReads, [], 'no profile data before host verification');
   const { reply } = await verifyHost(h, browser);
-  assert.deepEqual(reply, { state: 'ready', renewAfterSeconds: 480 });
+  assert.equal(reply.state, 'ready');
+  assert.equal(reply.renewAfterSeconds, 480);
+  assert.ok(reply.leaseSeconds >= 593 && reply.leaseSeconds <= 600 - LEASE_CLOCK_MARGIN_SECONDS, String(reply.leaseSeconds));
   assert.deepEqual(JSON.parse((await browser.api('GET', '/universe/embed/status')).body), { state: 'ready' });
   const profile = JSON.parse((await browser.api('GET', '/universe/embed/profile')).body);
   assert.equal(profile.state, 'populated');
@@ -392,6 +395,7 @@ test('E2 lease ends at attestation iat + 600 s, never at receipt time; expiry cl
   const { reply } = await verifyHost(h, browser, { iat: now - 50, exp: now + 10 });
   assert.equal(reply.state, 'ready');
   assert.equal(h.store.leaseWrites.at(-1)!.iat, now - 50, 'the lease is computed from the attested iat');
+  assert.ok(reply.leaseSeconds <= 550 - LEASE_CLOCK_MARGIN_SECONDS, 'the client is told the remaining lease, not a fresh 600 s');
   assert.equal(LEASE_SECONDS, 600);
   // Renewal with a fresh challenge and the same person succeeds.
   assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
@@ -493,4 +497,149 @@ test('E2 only runs same-site: a cross-site Universe ancestor refuses startup, be
     UNIVERSE_EMBED_PUSHER_ISSUER: PUSHER, UNIVERSE_EMBED_PUSHER_KEYS: keys, UNIVERSE_EMBED_IDENTITY_AUDIENCE: AUDIENCE,
     UNIVERSE_EMBED_HOST_SUBJECT_FORMAT: 'user_email', UNIVERSE_EMBED_HOST_MAPPING: 'same_provider_subject',
     UNIVERSE_EMBED_SITE: 'example.test' }, cross, reader), /Invalid Universe embed E2 configuration/);
+});
+
+/**
+ * Runs the real embed script against a minimal DOM with a controllable clock,
+ * fetch and parent window, so the client-side lease boundary is exercised.
+ */
+function scriptRig() {
+  let now = 1_000;
+  const timers = new Map<number, { at: number; fn: () => void; every?: number }>();
+  let nextId = 1;
+  class El {
+    hidden = false; children: Array<El | { text: string }> = []; attrs = new Map<string, string>();
+    dataset: Record<string, string> = {}; listeners = new Map<string, Array<(e: unknown) => void>>();
+    #text = '';
+    get textContent(): string { return this.#text + this.children.map(c => c instanceof El ? c.textContent : c.text).join(''); }
+    set textContent(value: string) { this.#text = String(value); this.children = []; }
+    get firstChild() { return this.children[0] ?? null; }
+    appendChild(child: El | { text: string }) { this.children.push(child); return child; }
+    removeChild(child: unknown) { this.children = this.children.filter(c => c !== child); return child; }
+    setAttribute(name: string, value: string) { this.attrs.set(name, String(value)); }
+    getAttribute(name: string) { return this.attrs.get(name) ?? null; }
+    addEventListener(type: string, fn: (e: unknown) => void) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]); }
+  }
+  const ids: Record<string, El> = Object.fromEntries(['status', 'profile', 'connect', 'signout', 'link', 'full'].map(id => [id, new El()]));
+  ids.profile!.hidden = true;
+  const body = new El();
+  body.dataset = { hosts: UNIVERSE, token: 't' };
+  const posted: Array<{ message: { challenge: string }; origin: string }> = [];
+  const parent = { postMessage(message: { challenge: string }, origin: string) { posted.push({ message, origin }); } };
+  const windowListeners = new Map<string, Array<(e: unknown) => void>>();
+  const routes = new Map<string, () => Promise<unknown>>();
+  const calls: string[] = [];
+  const document = {
+    body, documentElement: { lang: 'en' }, visibilityState: 'visible',
+    getElementById: (id: string) => ids[id], createElement: () => new El(), createTextNode: (text: string) => ({ text }),
+    addEventListener() {},
+  };
+  const window: Record<string, unknown> = {
+    parent,
+    addEventListener(type: string, fn: (e: unknown) => void) { windowListeners.set(type, [...(windowListeners.get(type) ?? []), fn]); },
+  };
+  const schedule = (fn: () => void, ms: number, every?: number) => { const id = nextId++; timers.set(id, { at: now + Math.max(0, ms), fn, ...(every ? { every } : {}) }); return id; };
+  const context = {
+    window, document, performance: { now: () => now }, AbortController, Promise, JSON, Math, Object, Array, String, Error,
+    setTimeout: (fn: () => void, ms: number) => schedule(fn, ms), clearTimeout: (id: number) => { timers.delete(id); },
+    setInterval: (fn: () => void, ms: number) => schedule(fn, ms, ms),
+    fetch: (path: string, init: { method: string }) => {
+      calls.push(`${init.method} ${path}`);
+      const route = routes.get(`${init.method} ${path}`);
+      const result = route ? route() : new Promise(() => {});
+      return result.then(json => ({ ok: true, status: 200, json: async () => json }));
+    },
+  };
+  const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+  async function settle() { for (let i = 0; i < 10; i++) await flush(); }
+  async function advance(ms: number) {
+    const end = now + ms;
+    for (;;) {
+      const due = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      const [id, t] = due;
+      now = t.at;
+      if (t.every) t.at += t.every; else timers.delete(id);
+      t.fn();
+      await settle();
+    }
+    now = end;
+    await settle();
+  }
+  async function attest() {
+    const { challenge } = posted.at(-1)!.message;
+    for (const fn of windowListeners.get('message') ?? []) {
+      fn({ origin: UNIVERSE, source: parent, data: { type: 'studenthub.embed.identity', v: 1, attestation: `a-${challenge}` } });
+    }
+    await settle();
+  }
+  return {
+    ids, body, routes, calls, posted, advance, settle, attest,
+    start: async () => { window.window = window; runInNewContext(UNIVERSE_EMBED_E2_SCRIPT, { ...context, window }); await settle(); },
+    shown: () => !ids.profile!.hidden && ids.profile!.textContent.includes('Synthetic'),
+  };
+}
+
+test('E2 script: rendered profile data disappears no later than the lease deadline, even when renewal never answers', async () => {
+  const rig = scriptRig();
+  let challenges = 0;
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: 'needs_universe' }));
+  // First challenge answers; every later (renewal) challenge hangs, like a throttled or lost request.
+  rig.routes.set('POST /universe/embed/challenge', () => (challenges++ === 0 ? Promise.resolve({ challenge: 'c1' }) : new Promise(() => {})));
+  rig.routes.set('POST /universe/embed/identity', async () => ({ state: 'ready', leaseSeconds: 30, renewAfterSeconds: 480 }));
+  rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
+  await rig.start();
+  await rig.attest();
+  assert.equal(rig.shown(), true, 'the verified profile renders');
+  await rig.advance(29_999);
+  assert.equal(rig.shown(), true);
+  await rig.advance(1);
+  assert.equal(rig.shown(), false, 'cleared at the deadline, before any renewal answer');
+  assert.equal(rig.ids.profile!.children.length, 0);
+  assert.equal(rig.body.getAttribute('data-state'), 'needs_universe');
+  assert.equal(challenges, 2, 'renewal was attempted after clearing');
+});
+
+test('E2 script: renewal clears first, and a profile reply arriving after the deadline is not rendered', async () => {
+  const rig = scriptRig();
+  let challenge = 0;
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: 'needs_universe' }));
+  rig.routes.set('POST /universe/embed/challenge', async () => ({ challenge: `c${++challenge}` }));
+  rig.routes.set('POST /universe/embed/identity', async () => ({ state: 'ready', leaseSeconds: 595, renewAfterSeconds: 480 }));
+  rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
+  await rig.start();
+  await rig.attest();
+  assert.equal(rig.shown(), true);
+  // Renewal: the profile is cleared before the new challenge is even answered.
+  rig.routes.set('POST /universe/embed/challenge', () => new Promise(() => {}));
+  await rig.advance(480_000);
+  assert.equal(rig.shown(), false);
+  assert.equal(rig.body.getAttribute('data-state'), 'needs_universe');
+
+  // A slow profile response that lands after the client deadline never renders.
+  const late = scriptRig();
+  let release!: (value: unknown) => void;
+  late.routes.set('GET /universe/embed/status', async () => ({ state: 'needs_universe' }));
+  late.routes.set('POST /universe/embed/challenge', async () => ({ challenge: 'c1' }));
+  late.routes.set('POST /universe/embed/identity', async () => ({ state: 'ready', leaseSeconds: 10, renewAfterSeconds: 10 }));
+  late.routes.set('GET /universe/embed/profile', () => new Promise(resolve => { release = resolve; }));
+  await late.start();
+  await late.attest();
+  late.routes.set('POST /universe/embed/challenge', () => new Promise(() => {}));
+  late.routes.set('GET /universe/embed/profile', () => new Promise(() => {}));
+  await late.advance(11_000);
+  release({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] });
+  await late.settle();
+  assert.equal(late.shown(), false);
+});
+
+test('E2 script: a ready status without a live client lease re-verifies instead of showing data', async () => {
+  const rig = scriptRig();
+  rig.routes.set('GET /universe/embed/status', async () => ({ state: 'ready' }));
+  rig.routes.set('POST /universe/embed/challenge', async () => ({ challenge: 'c1' }));
+  rig.routes.set('GET /universe/embed/profile', async () => ({ state: 'populated', fields: [{ key: 'displayName', value: 'Synthetic', source: 'imported_snapshot' }] }));
+  await rig.start();
+  assert.equal(rig.shown(), false);
+  assert.deepEqual(rig.calls, ['GET /universe/embed/status', 'POST /universe/embed/challenge']);
+  assert.equal(rig.posted.length, 1);
 });
