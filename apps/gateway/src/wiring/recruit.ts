@@ -1,7 +1,7 @@
 import pg from "pg";
-import { PostgresRecruitChecklistStore, PostgresRecruitFulltimersStore, PostgresRecruitInterviewsStore, PostgresRecruitInvitationsStore, PostgresRecruitJobsStore, PostgresRecruitPeopleSearchStore, PostgresRecruitPipelineStore, PostgresRecruitRequestApplicationsStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
+import { PostgresRecruitChecklistStore, PostgresRecruitFulltimersStore, PostgresRecruitInterviewsStore, PostgresRecruitInvitationsStore, PostgresRecruitJobsStore, PostgresRecruitPeopleSearchStore, PostgresRecruitPipelineStore, PostgresRecruitRequestsStore, type RecruitPlacementPort } from "@studenthub/db/recruit";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { OPEN_REQUEST_PAGE_SIZE, requestApplicationOutbox, requestApplicationTransitionAllowed, requestTakesApplications, FULLTIMER_PAGE_SIZE, JOB_PAGE_SIZE, PEOPLE_SEARCH_PAGE_SIZE, fulltimerNameKey, fulltimerStaffDecision, acceptCardEffect, applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobStaffDecision, evaluationAllowed, internalNoteDecision, interviewCompanyDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, checklistAdminDecision, invitationOutbox, invitationTransitionAllowed, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
+import { FULLTIMER_PAGE_SIZE, JOB_PAGE_SIZE, PEOPLE_SEARCH_PAGE_SIZE, fulltimerNameKey, fulltimerStaffDecision, acceptCardEffect, applicationOutbox, applicationTransitionAllowed, jobAcceptsApplications, jobStaffDecision, evaluationAllowed, internalNoteDecision, interviewCompanyDecision, interviewOutbox, interviewStageAllowed, interviewTransitionAllowed, checklistAdminDecision, invitationOutbox, invitationTransitionAllowed, peopleSearchDecision, searchTokens, pipelineAssignDecision, recruitNotesDecision, pipelineAuthority, pipelineLeadDecision, pipelineRecruiterEligible, pipelineTransitionAllowed, recruitStaffDecision, requestAcceptsCards, requestCreateDecision, requestReadDecision, requestStatusAfterPipeline, requestTransitionAllowed, requestTransitionDecision } from "../../../../packages/recruit/src/index.js";
 import { createRecruitChecklist } from "../recruit/checklist-http.js";
 import { createRecruitPipeline } from "../recruit/pipeline-http.js";
 import { createRecruitRequests } from "../recruit/requests-http.js";
@@ -11,7 +11,6 @@ import { createRecruitEmployerView } from "../recruit/employer-view-http.js";
 import { createRecruitInterviews } from "../recruit/interviews-http.js";
 import { createRecruitJobs } from "../recruit/jobs-http.js";
 import { createRecruitFulltimers } from "../recruit/fulltimers-http.js";
-import { createRecruitRequestApplications } from "../recruit/request-applications-http.js";
 import type { wireAccess } from "./access.js";
 import type { Wired, WiringSettings } from "./context.js";
 
@@ -30,7 +29,6 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
   readonly recruitInterviews: ReturnType<typeof createRecruitInterviews>;
   readonly recruitJobs: ReturnType<typeof createRecruitJobs>;
   readonly recruitFulltimers: ReturnType<typeof createRecruitFulltimers>;
-  readonly recruitRequestApplications: ReturnType<typeof createRecruitRequestApplications>;
 }> {
   const operators = DEFAULT_OPERATOR_ORG_IDS;
   // One pool for the whole recruit area; the stores borrow it and never end it.
@@ -89,19 +87,6 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
     pageSize: JOB_PAGE_SIZE,
   });
   const fulltimers = new PostgresRecruitFulltimersStore({ pool, staffDecision: (rows) => fulltimerStaffDecision(rows, operators), nameKey: fulltimerNameKey, pageSize: FULLTIMER_PAGE_SIZE });
-  const applications = new PostgresRecruitRequestApplicationsStore({
-    pool,
-    companyDecision: (rows, orgId, ancestors) => interviewCompanyDecision(rows, orgId, ancestors, operators),
-    staffDecision: (rows) => recruitStaffDecision(rows, operators),
-    leadDecision: (rows) => pipelineLeadDecision(rows, operators),
-    authority: pipelineAuthority,
-    takesApplications: requestTakesApplications,
-    transitionAllowed: requestApplicationTransitionAllowed,
-    acceptCardEffect,
-    requestStatusAfter: requestStatusAfterPipeline,
-    outbox: requestApplicationOutbox,
-    pageSize: OPEN_REQUEST_PAGE_SIZE,
-  });
   return {
     services: {
       recruitRequests: createRecruitRequests({ sessions: access.loginStore.sessions, store: requests }),
@@ -114,7 +99,6 @@ export function wireRecruit(settings: WiringSettings, access: Access, placement:
       recruitInterviews: createRecruitInterviews({ sessions: access.loginStore.sessions, store: interviews }),
       recruitJobs: createRecruitJobs({ sessions: access.loginStore.sessions, store: jobs }),
       recruitFulltimers: createRecruitFulltimers({ sessions: access.loginStore.sessions, store: fulltimers }),
-      recruitRequestApplications: createRecruitRequestApplications({ sessions: access.loginStore.sessions, store: applications }),
     },
     async close() { await pool.end(); },
   };

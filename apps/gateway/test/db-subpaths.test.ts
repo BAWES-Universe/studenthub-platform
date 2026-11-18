@@ -13,7 +13,7 @@ const expected = {
   ops: ["DEFAULT_DATABASE_URL", "PostgresExportsStore", "PostgresJobRunsStore", "bootstrapAdmin", "databaseUrl", "runMigrations"],
   documents: [],
   notifications: ["EMAIL_CLAIM_LEASE_SECONDS", "PostgresEmailOutboxStore", "PostgresNotificationsStore", "recordOrganizationStatusChanged"],
-  recruit: ["PostgresRecruitChecklistStore", "PostgresRecruitFulltimersStore", "PostgresRecruitInterviewsStore", "PostgresRecruitInvitationsStore", "PostgresRecruitJobsStore", "PostgresRecruitPeopleSearchStore", "PostgresRecruitPipelineStore", "PostgresRecruitRequestApplicationsStore", "PostgresRecruitRequestsStore", "RECRUIT_SYSTEM_ACTOR_REF"],
+  recruit: ["PostgresRecruitChecklistStore", "PostgresRecruitFulltimersStore", "PostgresRecruitInterviewsStore", "PostgresRecruitInvitationsStore", "PostgresRecruitJobsStore", "PostgresRecruitPeopleSearchStore", "PostgresRecruitPipelineStore", "PostgresRecruitRequestsStore", "RECRUIT_SYSTEM_ACTOR_REF"],
 } as const;
 
 async function moduleFor(specifier: string): Promise<Record<string, unknown>> {

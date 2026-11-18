@@ -30,7 +30,6 @@ import type { RecruitEmployerView } from "../recruit/employer-view-http.js";
 import type { RecruitInterviews } from "../recruit/interviews-http.js";
 import type { RecruitJobs } from "../recruit/jobs-http.js";
 import type { RecruitFulltimers } from "../recruit/fulltimers-http.js";
-import type { RecruitRequestApplications } from "../recruit/request-applications-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -59,7 +58,6 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly recruitInterviews?: RecruitInterviews;
   readonly recruitJobs?: RecruitJobs;
   readonly recruitFulltimers?: RecruitFulltimers;
-  readonly recruitRequestApplications?: RecruitRequestApplications;
 };
 
 export interface GatewayRouteContext {

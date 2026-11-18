@@ -88,7 +88,7 @@ export function renderInvitations(invitations: readonly InvitationView[]): strin
     const facts = [TYPE_LABEL[v.positionType] ?? v.positionType, v.period ? `${v.period.start} to ${v.period.end}` : null, v.location].filter((x): x is string => Boolean(x));
     return `<li><h2>${html(v.positionTitle)}</h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS_LABEL[v.status]}</span></p><p>${facts.map(html).join(" · ")}</p><p>Pay: ${html(v.pay)}${v.payModel ? ` (${html(PAY_LABEL[v.payModel] ?? v.payModel)})` : ""}</p><p class="muted">Invited <time datetime="${html(v.invitedAt)}">${html(when(v.invitedAt))}</time></p>${answer}</li>`;
   };
-  return `<main id="main" class="profile-main"><h1>Invitations<span class="accent">.</span></h1>${invitations.length ? `<ol class="plain">${invitations.map(item).join("")}</ol>` : "<p>You have no invitations yet.</p>"}<p><a class="text-link" href="/recruit/my-interviews">Your interviews</a> · <a class="text-link" href="/recruit/open-requests">Open positions</a></p></main>`;
+  return `<main id="main" class="profile-main"><h1>Invitations<span class="accent">.</span></h1>${invitations.length ? `<ol class="plain">${invitations.map(item).join("")}</ol>` : "<p>You have no invitations yet.</p>"}<p><a class="text-link" href="/recruit/my-interviews">Your interviews</a></p></main>`;
 }
 
 export function renderRequestInvitations(requestId: string, invitations: readonly RequestInvitationView[]): string {
