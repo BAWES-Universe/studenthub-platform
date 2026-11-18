@@ -186,7 +186,7 @@ class Browser {
   }
 }
 
-async function harness(options: { profile?: EmbedProfileView; duringRead?: () => void } = {}) {
+async function harness(options: { profile?: EmbedProfileView; duringRead?: () => void; duringSessionGet?: () => void } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   const store = new MemoryEmbedStore();
   const pusher = await generateEd25519KeyPair();
@@ -194,6 +194,8 @@ async function harness(options: { profile?: EmbedProfileView; duringRead?: () =>
   const base = createUniverseEmbedConfigFromEnv({ UNIVERSE_EMBED_ORIGIN: EMBED, UNIVERSE_EMBED_ENABLED: 'true',
     UNIVERSE_EMBED_ANCESTORS: UNIVERSE, UNIVERSE_EMBED_OIDC_CALLBACK_URL: `${EMBED}/login/callback` }, MAIN)!;
   const profileReads: string[] = [];
+  const sessionGet = rig.sessions.get.bind(rig.sessions);
+  rig.sessions.get = async (id) => { const found = await sessionGet(id); options.duringSessionGet?.(); return found; };
   const runtime: UniverseEmbedRuntime = {
     store,
     sessions: rig.sessions,
@@ -687,6 +689,21 @@ test('E2 profile: a read that outlasts the lease releases no fields', async () =
   const reply = JSON.parse((await browser.api('GET', '/universe/embed/profile')).body);
   assert.deepEqual(reply, { state: 'needs_universe' });
   assert.equal(h.profileReads.length, 1, 'the read happened, but its fields were not sent');
+});
+
+test('E2 profile: a lease that expires during the final session lookup releases no fields', async () => {
+  let h!: Awaited<ReturnType<typeof harness>>;
+  // Expire the lease while the re-check after the read waits on the session store.
+  h = await harness({ duringSessionGet: () => {
+    if (h.profileReads.length === 0) return;
+    const b = [...h.store.bindings.values()][0]!; h.store.now = b.leaseExpires! + 1;
+  } });
+  h.store.subjects.set(`person-1\u0000${h.rig.config.issuer}`, [SUBJECT]);
+  const { browser } = await signIn(h);
+  assert.equal((await verifyHost(h, browser)).reply.state, 'ready');
+  const reply = JSON.parse((await browser.api('GET', '/universe/embed/profile')).body);
+  assert.deepEqual(reply, { state: 'needs_universe' });
+  assert.equal(h.profileReads.length, 1);
 });
 
 test('E2 a stale refusal never deletes a renewed or replaced binding', async () => {
